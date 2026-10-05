@@ -73,8 +73,10 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     second rejected push as --rejected. Each head merged is checked first, by
     script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
-    prose, ends the batch as a head in conflict does. A conflict only in the
-    generated ledgers lands: the tip's side, then their tests' update run
+    prose, ends the batch as a head in conflict does. A card that adds a directory
+    owns its catalog row and the AGENTS.md maps; a conflict only in those maps, or
+    those maps and added catalog rows, resolves as the ledgers do. A conflict only
+    in the generated ledgers lands: the tip's side, then their tests' update run
     (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
     the stream, and after resume land merges the head again. The clone is --repo-dir,
     else the dir= each line names; git uses the caller's environment. After
@@ -239,14 +241,30 @@ type lander struct {
 	st                         *store.Store
 	repoDir, base, check, root string
 	dry, twin                  bool // twin: a mem twin, which has no git
-	out                        []landBatch
-	epoch                      uint64            // the epoch land read: every report is fenced to it
-	diffs                      map[string]string // each card's merge diff, as checkCard read it, for its score
-	toScore                    []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	// conflictKind and conflictPaths are what the last merge that stopped on unmerged paths
+	// left (mergeHead): the conflict fact carries them (conflictCard).
+	conflictKind  string
+	conflictPaths []string
+	out           []landBatch
+	epoch         uint64            // the epoch land read: every report is fenced to it
+	diffs         map[string]string // each card's merge diff, as checkCard read it, for its score
+	toScore       []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
+	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
+	ledgerLog []string
 	// gate is the gate decision's backend, clock, bars and record for a red batch gate
 	// (landgate.go), nil when none is made; gateNote says why none is, once.
-	gate     *landGate
-	gateNote string
+	gate          *landGate
+	gateNote      string
+	baseGateCache map[string]string // base commit SHA -> finding ("" when green)
+	// baseGateFails is the base-gate rule's record of the base commits that failed their
+	// tree gate, kept across rounds with the cache (treeGateBase); baseStop says the last
+	// build stopped on the base's third failure; now and rulesOff are a test's clock and
+	// rules turned off (nil: the app's clock, nova-config's sprint row).
+	baseGateFails map[string]*baseGateFail
+	baseStop      bool
+	now           func() time.Time
+	rulesOff      []string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -292,7 +310,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s land: the sprint is at epoch %d, not %d (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where\n", prog, st.PinnedEpoch(), c.epoch)
 		return 1
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}}
+	if a.baseGateCache == nil {
+		a.baseGateCache = map[string]string{}
+	}
+	if a.baseGateFails == nil {
+		a.baseGateFails = map[string]*baseGateFail{}
+	}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -526,6 +550,12 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	}
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
+	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
+	if why != "" && l.baseStop {
+		// the base-gate rule's third failure: the stream stops with the error, the
+		// coordinator's judgment (treeGateBase)
+		return l.fact(b, sprint.MergeReq{Stream: stream, BaseRed: why}, nil, "base", why)
+	}
 	if why != "" {
 		return refuse(why)
 	}
@@ -579,6 +609,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, cards[:len(merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
 		}
 		merged, failed, why = l.build(ctx, dir, stream, cards, b.Times)
+		b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
 		if why != "" {
 			return refuse(why)
 		}
@@ -671,6 +702,12 @@ func headNotCommit(stream string, c landCard) string {
 type conflictCard struct {
 	landCard
 	why string
+	// kind and paths are the conflict's files, as the merge left them unmerged: "file" when
+	// one is a file no generated ledger owns, "ledger" when every one is a ledger whose
+	// resolution failed, "" when the card failed for any other cause (sprint.MergeReq,
+	// ConflictKind: the conflict rule redoes a file conflict on the tip).
+	kind  string
+	paths []string
 }
 
 // conflict reports the card that ended its batch with the conflict fact: the
@@ -678,7 +715,7 @@ type conflictCard struct {
 // replacement attempt is never blamed).
 func (l *lander) conflict(stream string, f conflictCard) {
 	b := landBatch{Stream: stream, Status: "refused", Cards: 1, IDs: []string{f.id}}
-	l.fact(b, sprint.MergeReq{Stream: stream, Batch: 1, Conflict: f.id, Note: f.why}, []landCard{f.landCard}, "conflict", f.why)
+	l.fact(b, sprint.MergeReq{Stream: stream, Batch: 1, Conflict: f.id, Note: f.why, ConflictKind: f.kind, ConflictPaths: f.paths}, []landCard{f.landCard}, "conflict", f.why)
 }
 
 // fact reports a fact that stops the stream through the merge step, and the
@@ -906,6 +943,15 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
+	baseSha, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return nil, failed, "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
+	}
+	l.baseStop = false
+	if why, stop := l.treeGateBase(ctx, dir, baseSha); why != "" {
+		l.baseStop = stop
+		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
+	}
 	for i := range cards {
 		c := &cards[i]
 		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
@@ -913,15 +959,19 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 			return nil, failed, "the batch branch has no tip before the merge of " + c.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
 		}
 		var card, env string
+		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
 		if card == "" && env == "" {
 			card, env = l.checkCard(ctx, dir, *c, before)
+		}
+		if card == "" && env == "" {
+			card, env = l.gateCard(ctx, dir, *c, before)
 		}
 		switch {
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case card != "":
-			return merged, conflictCard{landCard: *c, why: card}, ""
+			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}, ""
 		}
 		merged = append(merged, c.id)
 	}
@@ -938,7 +988,10 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // hook, the disk, the network), with any merge in progress aborted; both ""
 // when it merged. A head the clone lacks is fetched from origin by its id once.
 // A merge stopped only on generated ledgers is resolved (landledger.go,
-// resolveLedgers), and note is what the card's timeline says of it.
+// resolveLedgers), a shrink-only ledger as the union of both sides' removals
+// (ledgerunion.go, unionLedgers), and the agents maps plus a catalog that both
+// sides only add rows to as the union of those rows then the map family
+// (landledger.go, stageCatalogUnion). note is what the card's timeline says of it.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
 		return why, "", ""
@@ -977,13 +1030,57 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 	why := ""
 	if conflict && inMerge == nil {
 		paths, ours := unmergedPaths(unmerged)
-		if owners, outside := ledgerOwners(paths, l.ledgers()); len(outside) == 0 {
-			var renv string
-			if note, why, renv = l.resolveLedgers(ctx, dir, stream, c, paths, ours, owners); note != "" {
-				return "", "", note
+		l.conflictPaths, l.conflictKind = paths, "file"
+		if allLedgers(paths, l.ledgers()) {
+			l.conflictKind = "ledger"
+		}
+		// the shrink-only ledgers first (ledgerunion.go): each resolved as the union of
+		// both sides' removals and staged; what is left is the generated ledgers a
+		// family regenerates (landledger.go), or a conflict refused as before
+		union, rest := unionPaths(paths, l.ledgers())
+		lines, uwhy, uenv := []string(nil), "", ""
+		if len(union) > 0 {
+			lines, uwhy, uenv = l.unionLedgers(ctx, dir, union)
+		}
+		switch {
+		case uenv != "":
+			env = uenv
+		case uwhy != "":
+			why = "; " + uwhy
+		case len(union) > 0 && len(rest) == 0:
+			msg := unionMessage(c.id, stream, lines)
+			if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
+				env = "the resolved merge of " + c.id + " could not be committed: " + firstLine("", err)
+				break
 			}
-			// the failed resolution ended the merge and restored the clone
-			env, why, inMerge = renv, "; "+why, errors.New("no merge in progress")
+			l.ledgerLog = append(l.ledgerLog, lines...)
+			return "", "", unionNote(union)
+		default:
+			var cline, cwhy, cenv string
+			rest, cline, cwhy, cenv = l.stageCatalogUnion(ctx, dir, rest)
+			switch {
+			case cenv != "":
+				env = cenv
+			case cwhy != "":
+				why = "; " + cwhy
+			default:
+				if owners, outside := ledgerOwners(rest, l.ledgers()); len(outside) == 0 && len(rest) > 0 {
+					var renv string
+					if note, why, renv = l.resolveLedgers(ctx, dir, stream, c, rest, ours, owners); note != "" {
+						if cline != "" {
+							lines = append(lines, cline)
+							note = catalogUnionNote() + "; " + note
+						}
+						l.ledgerLog = append(l.ledgerLog, lines...)
+						if len(union) > 0 {
+							note = unionNote(union) + "; " + note
+						}
+						return "", "", note
+					}
+					// the failed resolution ended the merge and restored the clone
+					env, why, inMerge = renv, "; "+why, errors.New("no merge in progress")
+				}
+			}
 		}
 	}
 	if inMerge == nil {
@@ -1011,10 +1108,12 @@ func (l *lander) ledgers() []landLedger {
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
 // merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
-// sentence fragment or unmatched backquote (E4). A card that fails is taken off the batch
-// branch (reset to before) and ends the batch as a head that does not merge does, with
-// what failed; card and env are mergeHead's. A merge that made no commit (the head is in
-// the base already) is not checked: it changes nothing the base does not hold.
+// sentence fragment or unmatched backquote (E4). A card that adds a directory owns its
+// catalog row and the AGENTS.md maps (diffcheck.Outside). A card that fails is taken
+// off the batch branch (reset to before) and ends the batch as a head that does not
+// merge does, with what failed; card and env are mergeHead's. A merge that made no
+// commit (the head is in the base already) is not checked: it changes nothing the base
+// does not hold.
 func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
 	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || after == before {
@@ -1024,8 +1123,16 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 	if err != nil {
 		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err)
 	}
+	tracked, err := l.git(ctx, dir, "ls-tree", "-r", "--name-only", before)
+	if err != nil {
+		return "", "the files tracked before the merge of " + c.id + " could not be listed: " + firstLine("", err)
+	}
+	beforePaths := []string{}
+	if tracked != "" {
+		beforePaths = strings.Split(tracked, "\n")
+	}
 	var why []string
-	if out := diffcheck.Outside(c.paths, diff); len(out) > 0 {
+	if out := diffcheck.Outside(c.paths, diff, beforePaths); len(out) > 0 {
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}
 	for _, f := range diffcheck.Fragments(diff) {
@@ -1229,4 +1336,13 @@ func firstLine(out string, err error) string {
 		return "no output"
 	}
 	return oneline.Cap(strings.ReplaceAll(out, "\n", " | "), 400)
+}
+
+// allLedgers says every path is a ledger: a shrink-only one (ledgerunion.go) or a generated
+// one a family regenerates (landledger.go). A conflict on those alone is the lander's own to
+// resolve, and one it could not is no conflict the conflict rule redoes.
+func allLedgers(paths []string, ledgers []landLedger) bool {
+	_, rest := unionPaths(paths, ledgers)
+	_, outside := ledgerOwners(rest, ledgers)
+	return len(outside) == 0
 }

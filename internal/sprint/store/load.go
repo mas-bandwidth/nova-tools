@@ -101,6 +101,9 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 	if s.Coordinator, err = st.B.Coordinator(ctx); err != nil {
 		return nil, err
 	}
+	if s.SeatGeneration, err = st.seatGeneration(ctx); err != nil {
+		return nil, err
+	}
 	if extras != nil {
 		for table, want := range extras(s) {
 			t := s.T(table)

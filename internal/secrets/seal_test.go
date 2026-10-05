@@ -213,7 +213,8 @@ func TestSealQuotesTheValue(t *testing.T) {
 			secrets, _, err := ParseDecryptedSecrets([]byte(stdin))
 			require.NoError(t, err, "ParseDecryptedSecrets(%q): %v", stdin, err)
 			got, ok := secrets["TARGET"]
-			require.True(t, ok && got.Loaded(), "TARGET missing from the round-tripped document:\n%s", stdin)
+			require.True(t, ok, "TARGET missing from the round-tripped document:\n%s", stdin)
+			require.True(t, got.Loaded(), "TARGET missing from the round-tripped document:\n%s", stdin)
 			require.NoError(t, got.Use(func(v string) error {
 				assert.Equal(t, tc.value, v, "value changed on the round trip through the seat document")
 				return nil

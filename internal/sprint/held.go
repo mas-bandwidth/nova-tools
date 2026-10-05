@@ -344,8 +344,9 @@ func (c *held) actor(pr *Card) string {
 	switch pr.Col {
 	case Working:
 		wc := s.Fleet.Placed(pr.F("work"))
-		// a friend holds her card whatever her status (no take-back): the deadline rule judges it
-		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up && !IsFriendRow(wc.Row) {
+		// a friend holds her card whatever her status (no take-back), and a member held to
+		// finish (hold.go) its working cards: the deadline rule judges them
+		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up && !IsFriendRow(wc.Row) && !HeldToFinish(s.MemberCtl(wc.Row)) {
 			return ""
 		}
 		field, limit, _, _ := WorkDeadline(s, wc) // the tick's own deadline
@@ -420,6 +421,9 @@ func (c *held) tickOn(pr *Card) string {
 func (c *held) judgment(pr *Card) string {
 	if IsHeld(pr) {
 		return "held by the coordinator (add --held) until release"
+	}
+	if (pr.Col == Ready || pr.Col == Waiting) && StreamHeld(c.s, pr.Row) {
+		return "its stream " + pr.Row + " is held by the coordinator until nova-sprint unhold " + pr.Row
 	}
 	if j := c.judged[pr.ID]; len(j) > 0 {
 		return "open: " + strings.Join(j, ", ")
@@ -514,14 +518,29 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		return strings.Join(held, "; "), "", true
 	case Ready:
 		if name, ok := FriendCard(pr); ok {
-			// a friend's card waits for a friend up below her width (FriendDeal), whose
-			// beats and widths are the friends' records, not the tables'
-			if name == "" {
+			// a friend's card waits for a friend up below her room, DealAhead times her
+			// width (FriendDeal), whose beats and widths are the friends' records, not
+			// the tables'
+			from := ""
+			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+				from, _ = FriendOfRow(wc.F(FieldTakenFrom))
+			}
+			switch {
+			case from != "" && from == name:
+				return "a friend's card taken back from " + name + ", the friend its WHO line names: brief it for another friend, or drop it", "", true
+			case from != "" && name == "":
+				name = "a friend other than " + from
+			case name == "":
 				name = "any friend"
 			}
 			return "a friend's card, waiting for " + name + " to be up with room", "", true
 		}
 		up := s.UpMembers()
+		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {
+			// a bench card waits for a member of its bench up (bench_deal.go): no placement
+			// deals it to another member, so what holds it is its bench's beat and hold
+			return benchWaits(b), "", true
+		}
 		if len(up) == 0 {
 			return "no fleet member is up, and no judgment says so", "", false
 		}

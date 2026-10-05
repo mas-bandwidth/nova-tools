@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -136,6 +137,149 @@ func TestCoverageCountsTheBenchSessionFiles(t *testing.T) {
 
 	store, _, _ := benchStore(t, "b9395d11")
 	require.Equal(t, 1, Coverage(store).Sessions, "a bench store holding one record; the ledger must not read zero over a store it can append to")
+}
+
+func TestConcurrentAppendsUnderOneNewIDToABenchFileLandOneSection(t *testing.T) {
+	t.Parallel()
+
+	const session = "b9395d11"
+	store, file, _ := benchStore(t, session)
+	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
+	const entryID = "beat-concurrent"
+	const text = "concurrent retry storm words"
+
+	// A dry run (write false) neither takes the lock nor creates the file.
+	lockFile := filepath.Join(store, "."+session+".md.lock")
+	resPlan, err := PlanAppend(store, session, "beat-plan", "planned words", "transcript#L1", now, "manual")
+	require.NoError(t, err, "PlanAppend")
+	assert.False(t, resPlan.Persisted)
+	_, err = os.Stat(lockFile)
+	assert.ErrorIs(t, err, fs.ErrNotExist, "dry run must not create the lock file")
+
+	const concurrency = 8
+	type outcome struct {
+		res AppendResult
+		err error
+	}
+	outcomes := make([]outcome, concurrency)
+
+	var ready sync.WaitGroup
+	var done sync.WaitGroup
+	ready.Add(concurrency)
+	done.Add(concurrency)
+	start := make(chan struct{})
+
+	for i := 0; i < concurrency; i++ {
+		go func(idx int) {
+			defer done.Done()
+			ready.Done()
+			<-start
+			res, err := Append(store, session, entryID, text, "transcript#L1", now, "manual")
+			outcomes[idx] = outcome{res: res, err: err}
+		}(i)
+	}
+
+	ready.Wait()
+	close(start)
+	done.Wait()
+
+	var nonDuplicates int
+	for _, o := range outcomes {
+		require.NoError(t, o.err, "concurrent append should succeed")
+		if !o.res.Duplicate {
+			nonDuplicates++
+		}
+	}
+	assert.Equal(t, 1, nonDuplicates, "exactly one append must report Duplicate=false")
+
+	got := testkit.ReadFile(t, file)
+	head := flatHeading(entryID, now)
+	assert.Equal(t, 1, strings.Count(got, head), "the file must hold exactly one heading for the id")
+
+	_, _, err = Index(store, "", 0)
+	require.NoError(t, err, "Index must succeed over the bench store")
+
+	rc, err := Receipt(store, session, entryID)
+	require.NoError(t, err, "Receipt must succeed for the appended entry")
+	assert.Equal(t, entryID, rc.ID)
+
+	_, err = os.Stat(lockFile)
+	require.NoError(t, err, "sibling lock file must exist after append")
+	require.Equal(t, 1, Coverage(store).Sessions, "Coverage must ignore .<session>.md.lock")
+}
+
+func TestABenchAppendReplacesTheFileAtomicallyAndKeepsItsMode(t *testing.T) {
+	t.Parallel()
+
+	const session = "b9395d11"
+	store, file, before := benchStore(t, session)
+	require.NoError(t, os.Chmod(file, 0o600))
+	infoBefore, err := os.Lstat(file)
+	require.NoError(t, err, "lstat bench store file before append")
+
+	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
+	prose := "## 14:05Z beat: atomic replace keeps mode\n- test entry"
+
+	res, err := Append(store, session, "beat-atomic", prose, "transcript#L1", now, "manual")
+	require.NoError(t, err, "Append into bench store")
+	persistedNotPublished(t, res.Persisted, res.Published, "append must report persisted=true published=false, got %+v", res)
+
+	infoAfter, err := os.Lstat(file)
+	require.NoError(t, err, "lstat bench store file after append")
+
+	// The file must be replaced atomically via atomicfile, not appended in place.
+	assert.False(t, os.SameFile(infoBefore, infoAfter), "the bench store file was modified in place; it must be replaced atomically")
+	// The file mode must be preserved exactly across the atomic replacement.
+	assert.Equal(t, infoBefore.Mode(), infoAfter.Mode(), "file mode must be unchanged after atomic replace")
+
+	// Content must be the old bytes plus exactly one new section.
+	got := testkit.ReadFile(t, file)
+	require.True(t, strings.HasPrefix(got, string(before)), "content must start with the old bytes")
+
+	head := flatHeading("beat-atomic", now)
+	assert.Equal(t, 1, strings.Count(got, head), "content must contain exactly one new section heading")
+
+	var expected strings.Builder
+	expected.Write(before)
+	if len(before) > 0 && !strings.HasSuffix(string(before), "\n") {
+		expected.WriteString("\n")
+	}
+	expected.WriteString("\n" + head + "\n\n" + strings.TrimRight(prose, "\n") + "\n")
+	assert.Equal(t, expected.String(), got, "content must be old bytes plus exactly one new section")
+
+	// No temporary sibling remains.
+	entries, err := os.ReadDir(store)
+	require.NoError(t, err, "read store directory")
+	for _, e := range entries {
+		name := e.Name()
+		assert.False(t, strings.Contains(name, "tmp"), "temporary file %q was left behind in store", name)
+		assert.True(t, name == session+".md" || name == "."+session+".md.lock", "unexpected sibling in store: %q", name)
+	}
+}
+
+func TestAppendToBenchFileRefusesSymlink(t *testing.T) {
+	t.Parallel()
+
+	const session = "b9395d11"
+	store, file, _ := benchStore(t, session)
+
+	target := filepath.Join(t.TempDir(), "target.md")
+	raw := testkit.ReadFile(t, file)
+	require.NoError(t, os.WriteFile(target, []byte(raw), 0o644))
+	require.NoError(t, os.Remove(file))
+	require.NoError(t, os.Symlink(target, file))
+
+	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
+
+	// PlanAppend must refuse the symlink
+	_, err := PlanAppend(store, session, "beat-symlink", "words", "transcript#L1", now, "manual")
+	require.Error(t, err, "PlanAppend must refuse symlink target")
+	assert.ErrorContains(t, err, "is a symlink")
+
+	// Append must refuse the symlink
+	_, err = Append(store, session, "beat-symlink", "words", "transcript#L1", now, "manual")
+	require.Error(t, err, "Append must refuse symlink target")
+	assert.ErrorContains(t, err, "is a symlink")
 }
 
 // tail is the last n bytes of s, for a failure that names what it saw without

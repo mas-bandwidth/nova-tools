@@ -22,8 +22,8 @@ func TestProcStatBusyPercent(t *testing.T) {
 	t.Parallel()
 	a, ok := ParseProcStat("cpu  100 0 100 700 100 0 0 0 0 0\ncpu0 1 2 3 4 5 6 7 8 9 10\n")
 	require.True(t, ok, "reading a = %+v %v", a, ok)
-	require.True(t, a.Busy == 200, "reading a = %+v %v", a, ok)
-	require.True(t, a.Total == 1000, "reading a = %+v %v", a, ok)
+	require.Equal(t, uint64(200), a.Busy, "reading a = %+v %v", a, ok)
+	require.Equal(t, uint64(1000), a.Total, "reading a = %+v %v", a, ok)
 	b, _ := ParseProcStat("cpu  400 0 200 900 100 0 0 0 0 0\n")
 	// busy 200 -> 600 (+400) over total 1000 -> 1600 (+600): 66.7%
 	pct, ok := BusyPercent(a, b)
@@ -62,16 +62,16 @@ func TestMeasureLinux(t *testing.T) {
 		Load1:    func() (float64, bool) { return 2, true }}
 	pct, how, st, ok := Measure(src, State{}, t0)
 	require.True(t, ok, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
-	require.True(t, how == HowLoad1, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
-	require.True(t, pct == 25, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
-	require.True(t, st.Ticks != nil, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
-	require.True(t, st.Ticks.Total == 1000, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
+	require.Equal(t, HowLoad1, how, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
+	require.Equal(t, float64(25), pct, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
+	require.NotNil(t, st.Ticks, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
+	require.Equal(t, uint64(1000), st.Ticks.Total, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
 	stat = "cpu  400 0 200 900 100 0 0 0 0 0\n"
 	pct, how, st, ok = Measure(src, st, t0.Add(time.Second))
 	require.True(t, ok, "second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
-	require.True(t, how == HowCPU, "second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
+	require.Equal(t, HowCPU, how, "second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
 	require.True(t, near(pct, 66.67), "second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
-	require.True(t, st.Ticks.Total == 1600, "second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
+	require.Equal(t, uint64(1600), st.Ticks.Total, "second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
 }
 
 // TestMeasureDarwin: top runs at most once every TopEvery; between runs the
@@ -85,9 +85,9 @@ func TestMeasureDarwin(t *testing.T) {
 		Load1: func() (float64, bool) { return 6, true }}
 	pct, how, st, ok := Measure(src, State{}, t0)
 	require.True(t, ok, "first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
-	require.True(t, how == HowCPU, "first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
+	require.Equal(t, HowCPU, how, "first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
 	require.True(t, near(pct, 30), "first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
-	require.True(t, runs == 1, "first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
+	require.Equal(t, 1, runs, "first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
 	line = "CPU usage: 50.00% user, 40.00% sys, 10.00% idle\n"
 	pct, _, st, _ = Measure(src, st, t0.Add(TopEvery-time.Second))
 	require.True(t, near(pct, 30), "within TopEvery = %v runs=%d, want the last reading and no new top", pct, runs)
@@ -98,8 +98,8 @@ func TestMeasureDarwin(t *testing.T) {
 	src.Top = func() (string, error) { return "", errors.New("no top") }
 	pct, how, _, ok = Measure(src, st, t0.Add(3*TopEvery))
 	require.True(t, ok, "failed top = %v %s %v, want 150%% by load1", pct, how, ok)
-	require.True(t, how == HowLoad1, "failed top = %v %s %v, want 150%% by load1", pct, how, ok)
-	require.True(t, pct == 150, "failed top = %v %s %v, want 150%% by load1", pct, how, ok)
+	require.Equal(t, HowLoad1, how, "failed top = %v %s %v, want 150%% by load1", pct, how, ok)
+	require.Equal(t, float64(150), pct, "failed top = %v %s %v, want 150%% by load1", pct, how, ok)
 }
 
 // TestMeasureCapsAndNothing: a load average far past the cores is capped; a
@@ -109,7 +109,7 @@ func TestMeasureCapsAndNothing(t *testing.T) {
 	src := Source{NCPU: 1, Load1: func() (float64, bool) { return 500, true }}
 	pct, _, _, ok := Measure(src, State{}, t0)
 	require.True(t, ok, "pct = %v %v, want the cap %v", pct, ok, MaxPercent)
-	require.True(t, pct == MaxPercent, "pct = %v %v, want the cap %v", pct, ok, MaxPercent)
+	require.Equal(t, MaxPercent, pct, "pct = %v %v, want the cap %v", pct, ok, MaxPercent)
 	_, _, _, ok = Measure(Source{}, State{}, t0)
 	require.False(t, ok, "a source with no reading must measure nothing")
 }
@@ -126,9 +126,9 @@ func TestLocalMeasures(t *testing.T) {
 	src.Top, src.ProcStat = nil, nil
 	pct, how, _, ok := Measure(src, State{}, time.Now())
 	require.True(t, ok, "local = %v %s %v", pct, how, ok)
-	require.True(t, how == HowLoad1, "local = %v %s %v", pct, how, ok)
-	require.True(t, pct >= 0, "local = %v %s %v", pct, how, ok)
-	require.True(t, pct <= MaxPercent, "local = %v %s %v", pct, how, ok)
+	require.Equal(t, HowLoad1, how, "local = %v %s %v", pct, how, ok)
+	require.GreaterOrEqual(t, pct, float64(0), "local = %v %s %v", pct, how, ok)
+	require.LessOrEqual(t, pct, MaxPercent, "local = %v %s %v", pct, how, ok)
 }
 
 // procStat is /proc/stat's cpu line with busy and idle ticks (the rest zero).
@@ -170,13 +170,13 @@ func TestSamplerTakesTheSecondAMeterGives(t *testing.T) {
 	}})
 	pct, ok := s.Step()
 	require.True(t, ok, "first second = %v %v, want 30", pct, ok)
-	require.True(t, pct == 30, "first second = %v %v, want 30", pct, ok)
+	require.Equal(t, float64(30), pct, "first second = %v %v, want 30", pct, ok)
 	fail = true
 	_, ok = s.Step()
 	require.False(t, ok, "a failed reading must not report")
 	_, n, ok := s.Peak(0)
 	require.True(t, ok, "a failed reading must add no sample: count=%d", n)
-	require.True(t, n == 1, "a failed reading must add no sample: count=%d", n)
+	require.Equal(t, uint64(1), n, "a failed reading must add no sample: count=%d", n)
 }
 
 // TestRingReportsTheHighestOfTheLastTen: 10, 70, 20 reports 70; ten more samples of 5
@@ -215,10 +215,10 @@ func TestRingSinceAnEarlierCount(t *testing.T) {
 	}
 	m, ok := r.MaxSince(1)
 	require.True(t, ok, "since 1 = %v %v, want 30 (the 90 was before)", m, ok)
-	require.True(t, m == 30, "since 1 = %v %v, want 30 (the 90 was before)", m, ok)
+	require.Equal(t, float64(30), m, "since 1 = %v %v, want 30 (the 90 was before)", m, ok)
 	m, ok = r.MaxSince(0)
 	require.True(t, ok, "since 0 = %v %v, want 90", m, ok)
-	require.True(t, m == 90, "since 0 = %v %v, want 90", m, ok)
+	require.Equal(t, float64(90), m, "since 0 = %v %v, want 90", m, ok)
 	_, ok = r.MaxSince(4)
 	require.False(t, ok, "no sample since the last count")
 	for i := 0; i < 12; i++ {
@@ -226,7 +226,7 @@ func TestRingSinceAnEarlierCount(t *testing.T) {
 	}
 	m, ok = r.MaxSince(0)
 	require.True(t, ok, "since 0 after 12 more = %v %v, want only the ten held", m, ok)
-	require.True(t, m == 1, "since 0 after 12 more = %v %v, want only the ten held", m, ok)
+	require.Equal(t, float64(1), m, "since 0 after 12 more = %v %v, want only the ten held", m, ok)
 }
 
 // TestTopDropsAZero: top prints the hundredths of a percent without a leading zero,
@@ -258,7 +258,7 @@ func TestLocalSamplerReadsThisMachine(t *testing.T) {
 		pct, ok = s.Step()
 	}
 	require.True(t, ok, "local sample = %v %v, want 0..100", pct, ok)
-	require.True(t, pct >= 0, "local sample = %v %v, want 0..100", pct, ok)
-	require.True(t, pct <= 100, "local sample = %v %v, want 0..100", pct, ok)
+	require.GreaterOrEqual(t, pct, float64(0), "local sample = %v %v, want 0..100", pct, ok)
+	require.LessOrEqual(t, pct, float64(100), "local sample = %v %v, want 0..100", pct, ok)
 	t.Logf("LOCAL-SAMPLE %.1f%% on %d cores", pct, runtime.NumCPU())
 }

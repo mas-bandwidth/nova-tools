@@ -99,7 +99,10 @@ func Make(ctx context.Context, b Backend, s Schema, state, record, id string, in
 		Inputs: inputs, State: state, Answers: answers, Usage: usage}
 	have, err := Append(record, d)
 	if have != nil {
-		return *have, true, err
+		if err != nil {
+			return *have, true, err
+		}
+		return *have, true, Replays(*have, s, state)
 	}
 	return d, false, err
 }
@@ -107,7 +110,13 @@ func Make(ctx context.Context, b Backend, s Schema, state, record, id string, in
 // Replays says the recorded decision is the one an ask of s over state under its id
 // would make, so the ask is answered from the record; else a ConflictError.
 func Replays(have Decision, s Schema, state string) error {
-	return replays(have, s.Name, s.Hash(), state)
+	if err := replays(have, s.Name, s.Hash(), state); err != nil {
+		return err
+	}
+	if err := s.Check(have.Answers); err != nil {
+		return &ConflictError{fmt.Sprintf("the op id %s: %s", have.ID, err.Error())}
+	}
+	return nil
 }
 
 func replays(have Decision, decision, schema, state string) error {

@@ -34,7 +34,8 @@ import (
 //   - a frontier card with no pin is not dealt: it is the coordinator's, one
 //     judgment for the tier;
 //   - a card whose tier (flash when line 1 names none) has no enabled route in its
-//     array is not dealt, one judgment for the tier.
+//     array is not dealt, one judgment for the tier;
+//   - a route with first set is drawn before the others of its tier (preferFirst).
 
 // Route is one route of a model tier as the store holds it (config.RouteKey).
 type Route struct {
@@ -42,12 +43,18 @@ type Route struct {
 	Tier     string `json:"tier"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	Tokens   int    `json:"tokens"` // 0 is unmetered
+	// Harness is the harness a card on it runs under (internal/harness: opencode, the
+	// default, or a headless program of the heavy tier); the member launches by it.
+	Harness string `json:"harness,omitempty"`
+	Tokens  int    `json:"tokens"` // 0 is unmetered
 	// USD is the route's dollar budget per card, a canonical decimal ("0.5"), "" for none:
 	// the harness's reported cost at which native stops the card (nova-tools #5094).
 	USD      string `json:"usd,omitempty"`
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
+	// First is the route's first field. A route with it set is drawn before the
+	// others of its tier (preferFirst; docs/SPEC-SPRINT.md, the deal).
+	First bool `json:"first"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
 	// is priced by (cost.go); every price "" when the route has none.
 	Prices cardcost.Prices `json:"prices"`
@@ -62,6 +69,7 @@ const (
 	FieldModel    = "model"
 	FieldTokens   = "tokens"
 	FieldUSD      = "usd"
+	FieldHarness  = "harness"
 	FieldDeadline = "deadline"
 	FieldRoutes   = "routes"
 	FieldUsage    = "usage"
@@ -74,7 +82,8 @@ const (
 	FieldTier = "tier"
 	// FieldTierNow is the tier the primary is on, written by every deal on a route:
 	// flash first on every card, then the tier the machine escalated it to (NextTier);
-	// the tier its brief's line 1 names is its ceiling.
+	// the tier its brief's line 1 names is its ceiling. Add writes pro on a card whose
+	// gate's measured wall is over the flash bound (gate_wall.go).
 	FieldTierNow = "tier_now"
 )
 
@@ -145,6 +154,35 @@ func (ri routeIndexes) write(p *Plan) {
 	}
 }
 
+// preferFirst is the entry a draw takes from the tier's array at counter at.
+// A route with first set is drawn before the others of its tier: the walk takes
+// the first served entry whose first is set, and an entry without it only when
+// none such remains drawable. steps is every entry walked to reach the one
+// taken, and the amount the index moves (docs/SPEC-SPRINT.md, the deal).
+// RouteFair (tla/RouteIndex.tla) is this walk when no route of the tier has
+// first set. hold leaves skip out while another entry remains drawable, as a
+// redeal leaves out routes already taken.
+func preferFirst(arr []string, served map[string]Route, skip []string, hold bool, at uint64) (r Route, steps uint64, ok bool) {
+	n := uint64(len(arr))
+	take := func(wantFirst bool) (Route, uint64, bool) {
+		for i := uint64(0); i < n; i++ {
+			cur, ok := served[arr[(at+i)%n]]
+			if !ok || hold && contains(skip, cur.Name) {
+				continue
+			}
+			if cur.First != wantFirst {
+				continue
+			}
+			return cur, i + 1, true
+		}
+		return Route{}, 0, false
+	}
+	if r, steps, ok = take(true); ok {
+		return r, steps, true
+	}
+	return take(false)
+}
+
 // routeOf is the route fields of one deal of the primary c; wc is the work card dealt
 // again (nil for a new attempt), whose own route is left out too. With ri the tier's
 // index moves past the entry taken and every entry skipped before it, recorded under
@@ -203,17 +241,13 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		v, _ := s.Fleet.Prop(PropRouteIndex(tier))
 		at, _ = strconv.ParseUint(v, 10, 64)
 	}
-	n := uint64(len(arr))
-	for i := uint64(0); i < n; i++ {
-		r, ok := served[arr[(at+i)%n]]
-		if !ok || fresh && contains(drawn, r.Name) {
-			continue
-		}
+	r, steps, ok := preferFirst(arr, served, drawn, fresh, at)
+	if ok {
 		if ri != nil {
-			ri[tier].r.count += i + 1
-			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
+			ri[tier].r.count += steps
+			ri[tier].moves[c.ID] = strconv.FormatUint(steps, 10)
 		}
-		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
+		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
 		if !pinnedTier(c, m) {
 			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
@@ -236,7 +270,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 // coordinator's and is never dealt (it climbs no ladder); a pinned model runs on its pin;
 // a tier the coordinator pinned (rework --tier, FieldTier) is the card's tier and its
 // ceiling both.
-var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro}
+var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy}
 
 // cardTier is the tier the primary c is on, what its reads, its read count and its
 // escalation go by: the tier its last deal on a route drew (FieldTierNow, which every
@@ -273,6 +307,9 @@ func pinnedTier(c *Card, m cardhdr.Model) bool {
 func ceilingTier(c *Card, m cardhdr.Model) string {
 	if t := c.F(FieldTier); t != "" {
 		return t
+	}
+	if t, ok := criticalTier(c, m); ok {
+		return t // a critical card runs on pro from its first deal (weight.go)
 	}
 	if m.Tier == "" {
 		return cardhdr.RouteFlash
@@ -316,13 +353,17 @@ func (s *Snapshot) NextTier(c *Card) string {
 // readers being conservatively the same tier as the work being done seems
 // fine?"), raised to the read tier set for its stream or the sprint when that is
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
-// a model and names no tier is read on flash; a frontier card, a tier no route
-// serves, is read on pro.
+// a model and names no tier is read on flash. A heavy card is read on heavy. A frontier
+// card, a tier no route serves, is read on heavy, the strongest tier a route serves: a
+// read on pro would be weaker than the writer, which item 27 refuses. The value returned
+// is that collapse: a route drawn for the card is named from it. The tick's ask does not
+// draw that route for a card whose read tier before the collapse is frontier
+// (friend_read.go): that ask is a friend's, one of frontier class (docs/SPEC-SPRINT.md, reads).
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)
 	if t == cardhdr.RouteFrontier {
-		t = cardhdr.RoutePro
+		t = cardhdr.RouteHeavy
 	}
 	if set := s.readTierSetting(pr.Row); set != "" {
 		t = stronger(t, set)
@@ -357,20 +398,16 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 		_, ok := served[name]
 		other = other || ok && !contains(avoid, name)
 	}
-	n := uint64(len(arr))
 	at := ri[tier].r.count
-	for i := uint64(0); i < n; i++ {
-		r, ok := served[arr[(at+i)%n]]
-		if !ok || other && contains(avoid, r.Name) {
-			continue
-		}
-		ri[tier].r.count += i + 1
-		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
-		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
+	r, steps, ok := preferFirst(arr, served, avoid, other, at)
+	if !ok {
+		return map[string]string{FieldTier: tier}
 	}
-	return map[string]string{FieldTier: tier}
+	ri[tier].r.count += steps
+	was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
+	ri[tier].moves[key] = strconv.FormatUint(was+steps, 10)
+	return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
+		FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
 }
 
 // readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
@@ -428,7 +465,7 @@ func TierRoutes(routes []Route) string {
 		return ""
 	}
 	var out []string
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		out = append(out, fmt.Sprintf("%s=%d", t, n[t]))
 	}
 	return strings.Join(out, " ")

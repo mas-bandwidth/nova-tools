@@ -1,15 +1,12 @@
 package secrets
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // KeygenNextLine is the one line that tells the reader what is left to do in the rule
@@ -40,6 +37,13 @@ func keygenLines(asName, keyPath, pubKey, recoveryKey string, placeholder bool) 
 // RunKeygen generates a new age private key and formats the .sops.yaml rule block.
 // It returns the receipt as ordered lines; the caller prints them in that order.
 func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (lines []string, err error) {
+	return runKeygen(realExecCommand, asName, keyPath, ageKeygenPath, storeDir)
+}
+
+// runKeygen is RunKeygen with the one seam the caller supplies. The verb's fake travels
+// here as a parameter (the positional RunKeygen signature is public), never as a package
+// variable.
+func runKeygen(run execCommand, asName, keyPath, ageKeygenPath, storeDir string) (lines []string, err error) {
 	if err := preflight(storeDir, need{asName, "--as <name>", true}, need{keyPath, "--key <path>", false}, need{ageKeygenPath, "--age-keygen <path>", false}); err != nil {
 		return nil, err
 	}
@@ -62,7 +66,7 @@ func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (lines []string,
 	}
 
 	// 2. Binary version probe
-	if _, err := CheckAgeKeygenVersion(ageKeygenPath); err != nil {
+	if _, err := CheckAgeKeygenVersion(run, ageKeygenPath); err != nil {
 		return nil, err
 	}
 
@@ -80,16 +84,9 @@ func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (lines []string,
 	}
 
 	// 4. Generate key
-	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, ageKeygenPath, "-o", keyPath)
-	defer cancel()
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	_, err = cmd.CombinedOutput()
+	_, err = runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", ageKeygenPath, "-o", keyPath)
 	if err != nil {
-		exitCode := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		return nil, fmt.Errorf("age-keygen failed: exit %d (transcript withheld)", exitCode)
+		return nil, fmt.Errorf("age-keygen failed: exit %d (transcript withheld)", exitCodeOf(err, 1))
 	}
 	if err := os.Chmod(keyPath, 0600); err != nil {
 		return nil, fmt.Errorf("failed to chmod 0600 %s: %w", keyPath, err)

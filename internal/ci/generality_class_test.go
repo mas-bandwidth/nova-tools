@@ -43,6 +43,8 @@ import (
 //   occurrences (e.g. "mas-bandwidth mas-bandwidth" or "mas-bandwidth/mas-bandwidth")
 //   and repeated names on one line are individually counted.
 // - Compound standard library names (e.g. TrimSpace, TrimLeadingSpace, IsSpace) are excluded.
+// - A token that is also an English word, in an English phrase (englishPhrases: "leave
+//   space for", "disk space"), is the word; bare, or beside a bare article, it is the name.
 // - Go package import declarations (including "github.com/mas-bandwidth/nova-tools/...")
 //   are identified via real AST import specs and excluded as language-level imports.
 // - Explicitly marked documentation examples in real AST comments (e.g. lines with "e.g.",
@@ -97,6 +99,17 @@ var ignoredCompoundWords = map[string]bool{
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
 var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
+
+// englishPhrases are the English phrases in which a token that is also an ordinary word
+// is that word and no host: group 1 is the word, blanked before the scan. The machine
+// name "space" is the one such token today ("leave space for the footer" drew a finding
+// on the night of 2026-10-03); a phrase is a neighbouring word that makes a sentence of
+// it, never a bare article, so `bench=space`, `the space row` and `space` as a name
+// still count. A token used as a word in another phrase is a row here.
+var englishPhrases = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:leave|leaves|leaving|left|disk|free|enough|more|no|blank|white|trailing|leading|single|double|extra|some|much|little|of)\s+(space)\b`),
+	regexp.MustCompile(`(?i)\b(space)(?:\s+(?:for|between|left|after|before|around|bar|character|characters|than|on\s+disk|to\s+spare)\b|-separated|-delimited)`),
+}
 
 // isMarkedDocExample reports whether a comment line is an explicit documentation example.
 func isMarkedDocExample(comment string) bool {
@@ -262,7 +275,12 @@ func extractTokensFromText(text string) []string {
 	}
 	text = string(textBuf)
 
-	// 2. Scan individual words and handle camelCase transitions
+	// 2. An ordinary English word that is also a token is blanked in its phrase.
+	for _, re := range englishPhrases {
+		text = blankGroup(text, re, 1)
+	}
+
+	// 3. Scan individual words and handle camelCase transitions
 	words := reWord.FindAllString(text, -1)
 	for _, w := range words {
 		low := strings.ToLower(w)
@@ -535,6 +553,10 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"namespace", nil},
 		{"workspace", nil},
 		{"bench=space", []string{"space"}},
+		{"the space row is down", []string{"space"}},
+		{"leave space for the footer", nil},
+		{"// no disk space left; a space-separated list; one space between words", nil},
+		{"\"Leave space for the footer\"", nil},
 		{"mas-bandwidth/nova-tools", []string{"mas-bandwidth"}},
 		{"rowan@mas-bandwidth.com", []string{"mas-bandwidth", "rowan"}},
 		{"// bench name (e.g. \"hulk\", \"space\")", nil},

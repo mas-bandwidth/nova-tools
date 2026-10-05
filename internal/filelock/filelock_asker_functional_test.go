@@ -27,9 +27,7 @@ func TestFunctional_AskerDoesNotDisturbTaker(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "asked.lock")
-	if err := os.WriteFile(path, nil, 0666); err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, os.WriteFile(path, nil, 0666))
 	asker, err := openFileSafe(path, os.O_RDWR, 0)
 	require.NoError(t, err)
 	defer asker.Close()
@@ -58,7 +56,7 @@ func TestFunctional_AskerDoesNotDisturbTaker(t *testing.T) {
 	const takes = 300
 	held, busy := 0, 0
 	var firstHeld error
-	for i := 0; i < takes; i++ {
+	for range takes {
 		lock, err := TryLock(path, "taker")
 		switch {
 		case err == nil:
@@ -77,7 +75,5 @@ func TestFunctional_AskerDoesNotDisturbTaker(t *testing.T) {
 	close(stop)
 	asks := <-done
 	t.Logf("%d takes beside %d asks: %d told held, %d told busy", takes, asks, held, busy)
-	if held > 0 {
-		assert.LessOrEqual(t, held, 0, "told held %d times of %d with nobody holding, only an asker; first: %v", held, takes, firstHeld)
-	}
+	assert.Zero(t, held, "told held %d times of %d with nobody holding, only an asker; first: %v", held, takes, firstHeld)
 }

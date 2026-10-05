@@ -1,6 +1,6 @@
 # Nightly tagged suites: the tests behind an opt-in build tag.
 #
-# Issue #516 splits tests by BUILD TAG rather than by schedule-of-record. The PR
+# This file splits tests by BUILD TAG rather than by schedule-of-record. The PR
 # test jobs in ci.yml run `go test` without any tag, so a test moved behind one
 # simply stops costing per-change time; it still has to run SOMEWHERE, and this
 # file is that somewhere. One leg per tag, `./...` inside the leg, on the same
@@ -17,13 +17,13 @@
 #
 # The legs, and why each one is where it is:
 #
-#   slow      ubuntu + macos  #516's tier: correct tests too slow for the CL budget.
+#   slow      ubuntu + macos  correct tests too slow for the CL budget.
 #   soak      ubuntu          CheckNet exempts these two, so a test carrying one may
-#   nightly   ubuntu          touch the real network (Glenn's rule: unit tests never
+#   nightly   ubuntu          touch the real network (unit tests never
 #                             do). They have a leg before they have a file, so the
 #                             first such test that lands runs the same night rather
 #                             than never.
-#   functional ubuntu         the tests that start a redis-server (#4328): run as
+#   functional ubuntu         the tests that start a redis-server: run as
 #                             whole streams land, and here every night. Its leg
 #                             installs redis-server and sets NOVA_CI=1 so a missing
 #                             binary fails instead of skipping, and passes `slow`

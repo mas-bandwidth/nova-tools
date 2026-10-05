@@ -111,7 +111,7 @@ func TestSettingsCoverSetWritesAndRefusesWhole(t *testing.T) {
 		}{
 			{"not the coordinator", SetReq{ReadTier: "pro", Who: "someone"}, []string{"is the coordinator's alone: coord"}},
 			{"a read tier that is not a tier, and a dealt bound that is not a duration, named together",
-				SetReq{ReadTier: "ultra", DealtMax: "bogus", Who: "coord"}, []string{"wants flash or pro, or default", "wants a duration above zero"}},
+				SetReq{ReadTier: "ultra", DealtMax: "bogus", Who: "coord"}, []string{"wants flash or pro or heavy, or default", "wants a duration above zero"}},
 			{"nothing to set", SetReq{Who: "coord"}, []string{"nothing to set"}},
 			{"a dealt bound with streams named", SetReq{Streams: []string{"s1"}, DealtMax: "6h", Who: "coord"},
 				[]string{"--dealt-max is the sprint's, not a stream's"}},
