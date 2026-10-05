@@ -12,6 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// WithSelftestLander overrides the lander execution for testing.
+func WithSelftestLander(fn func(ctx context.Context, repoDir string) error) SelftestLandOption {
+	return func(c *selftestLandConfig) { c.lander = fn }
+}
+
 // TestSelftestLandLandsACannedCardAndSwitchRollsBack pins:
 // - selftest land lands a canned card on a scratch clone with this binary; green on a good binary, red on a broken lander
 // - server switch keeps the old binary and rolls back on a failed land in the window

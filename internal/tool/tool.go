@@ -16,7 +16,7 @@
 // own status words (STALE beside FAIL). A verb may be hidden (Verb.Hidden): it
 // runs and answers `-h`, and the banner, the usage block and the unknown-verb
 // list do not show it, a probe step verb a user never types. A long-running
-// verb prints each item as it goes (Call.Emit); the Out it returns is the closing
+// verb prints each item as it goes; the Out it returns is the closing
 // line. Call.Ctx is cancelled when the run's context ends and on interrupt
 // (RunContext). A command holds only what its verbs do.
 package tool
@@ -680,7 +680,7 @@ type Call struct {
 	// on it; a context that has ended is the closing line, not the verb's Out.
 	Ctx            context.Context
 	Stdin          io.Reader
-	Stdout, Stderr io.Writer // written by a verb that Prints, and by Emit as each item goes
+	Stdout, Stderr io.Writer // written by a verb that Prints
 	flags          *Flags
 	given          map[string]bool
 	problems       []string
@@ -696,30 +696,6 @@ type Call struct {
 func (c *Call) DryRun() bool {
 	c.dryRead = true
 	return c.given["dry-run"] && c.Bool("dry-run")
-}
-
-// Emit prints one item now, so a long-running verb shows its rows as they
-// happen (skeleton contract 2.4, STANDARD §2: one output structure, two
-// renderings). Text is one item line; --json is one {"item":{...}} line. The
-// Out the verb returns is the closing line, printed after these.
-func (c *Call) Emit(kind string, kv ...any) {
-	o := &Out{token: c.token}
-	o.Item(kind, kv...)
-	it := o.Items[0]
-	if c.asJSON {
-		raw, err := marshal(struct {
-			Item Item `json:"item"`
-		}{it})
-		if err != nil {
-			f := Fail("the result is no JSON, so it is not printed: " + err.Error())
-			f.token = c.token
-			f.Render(c.Stderr, false)
-			return
-		}
-		fmt.Fprintf(c.Stdout, "%s\n", raw)
-		return
-	}
-	fmt.Fprintln(c.Stdout, oneline.Field(c.token)+" "+oneline.Field(strings.ToUpper(it.Kind))+it.Fields.text())
 }
 
 // Get is a declared flag's value, for a flag.Value of the verb's own (a flag.Getter).

@@ -33,11 +33,6 @@ func WithSelftestScratch(dir string) SelftestLandOption {
 	return func(c *selftestLandConfig) { c.scratch = dir }
 }
 
-// WithSelftestLander overrides the lander execution for testing.
-func WithSelftestLander(fn func(ctx context.Context, repoDir string) error) SelftestLandOption {
-	return func(c *selftestLandConfig) { c.lander = fn }
-}
-
 // WithSelftestOutput sets the stdout and stderr destinations.
 func WithSelftestOutput(stdout, stderr io.Writer) SelftestLandOption {
 	return func(c *selftestLandConfig) {
