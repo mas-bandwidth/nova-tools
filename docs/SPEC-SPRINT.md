@@ -889,6 +889,33 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### cycle-time-breakdownb.w1: where a card's wall time goes
+
+**Each card records its stage times on itself** (the owner, 2026-10-04: the
+wall-clock lens, the time from add to landed measured per stage, and the waits
+removed). The steps that already move a card write the stamps; none is
+recomputed from the log. A primary carries `admitted` (added), `ready_at`
+(first ready: add, resolve), `dealt_at` and `taken_at` (its final attempt's
+work card, the deal and take it ran on), `finished_at` (its last finish),
+`rework_s` (the seconds from each finish to the deal of the next attempt,
+summed; written at that attempt's finish), `read_asked_at` and `read_done_at`
+(the first ask and the last ok of the reads its accept counts), `accepted` and
+`landed`; its merge card carries `queued`, stamped at the accept.
+
+`sprint.CycleTimes` reads them from the snapshot: for each stage, the median and
+p90 (nearest rank) in seconds over the primaries landed in the last 24 h. The
+stages are `needs` (added to ready), `deal` (ready to dealt, a card never
+reworked), `take`, `work`, `rework` (a reworked card), `read_wait` (finished to
+first ask), `read` (first ask to last ok), `accept` and `merge` (queued to
+landed). A stage is sampled for a card only when both its stamps are on it and
+in order. The tick keeps the result in the where record (`stage_times`), and
+`where --json` carries it as `stage_times`: `all` and `streams.<stream>`, each
+stage `{median_s, p90_s, n}`; the dashboard draws one stacked bar, where wall
+time goes, from the medians of `all`. A card whose path skips a stamping step
+(a friend's deal or take, a sentinel's release or an ack's release, which do not
+go through the steps above) has no sample for the stages that need it.
+(`TestStageTimesGiveMedianAndP90PerStage`).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
@@ -2124,6 +2151,21 @@ id (`--op`) returns the original result, with no second counter or notification.
   sprint (below) raises the route its reads are drawn on and never their
   count. The reads per machine are unchanged: a reader still runs at its
   machine's width.
+- A reader row carries the tiers it reads (`readers.tiers`, text, no fold;
+  an empty cell means every tier). `reader add <reader>... [--tiers
+  flash[,pro,heavy,frontier]]` and `reader set <reader>... --tiers ...` write
+  them; omitted, `all` and `default` store empty, which is today's behaviour.
+  The ask (`freeReaders`, `enoughReadersUp`, the level, and a returned read
+  asked again in place) counts a reader only for a primary whose read tier
+  (`readTierOf`) the cell names, and never asks a reader a read outside that
+  tier. A card with fewer readers of its tier up than `ReadsNeeded` raises the
+  one existing judgment `fewer than two readers up` and asks nothing of a
+  reader outside the tier. `where` and the reader verbs print the tiers
+  (`all` when the cell is empty). A table created before the column gains it
+  at `init` or at the next `reader set` (and at `reader add` when `--tiers`
+  is given). The model is `tla/ReaderTiers.tla`: no read is asked of a reader
+  outside the primary's tier. `tla/ReadsByRoom.tla` and `tla/DirtyTick.tla`
+  do not name reader tiers.
 - ask deals every primary in review that wants a read to as many different
   readers UP as it wants now, in work order. **Reads are asked one at a time,
   each to a reader with room** (`sprint.ReadsWanted` says how many,
@@ -2534,6 +2576,29 @@ decisions promoted and wait 30m, updated in place while it holds and closed when
 is recorded; `promoted --answers <note>` is held as every answer is (`answered`): an answer
 naming no open judgment refuses the whole step, nothing written
 (`TestTheTickRaisesDevBehindAtTwentyFiveLandingsOrThirtyMinutes`, `TestPromotedHoldsItsAnswers`).
+
+**Dev sync every cycle.** On 2026-10-04 the base and the development branch drifted for an
+afternoon while hundreds of cards landed on each; folding them took 105 conflicts and an evening
+(the owner: "promote every cycle or drift causes a big fuckup"). Each land cycle in which a sync
+is due (`sprint.DevSyncDue`: `sprint.DevSyncEveryLandings` landed since the last sync, counted
+from the store by `sprint.LandedSinceSync`; `sprint.DevSyncAge` since it with nothing landed, as
+dev moves on its own; none recorded; or a conflict open), the land round merges the development
+branch into the base in its clone (`sprint.LandCycleSync`, `sprint.RunDevSync`): fetched, the
+drift counted, merged on a detached base so no local branch ever holds an ungated merge; a clean
+merge goes through the round's own tree gate (`DevSyncReq.Check`, required: a sync with no gate
+refuses) and is pushed onto the base like a batch; a red gate or a refused push pushes nothing.
+The facts are recorded by one pure step, `sprint.DevSynced`, on the step's own snapshot (git runs
+once, outside the plan, which a retry runs again): the drift (commits each side lacks, the last
+sync and its sha) on the merge table's properties and on every stream's control card, the
+dashboard's merge row, and `sprint.DevDriftOf` reads it with the minutes since. A conflict stops
+every stream (cause `dev sync conflict`, its files in `conflict_paths`) with ONE judgment naming
+the files while they are few (`sprint.NDevSyncConflict`); each cycle tries again while it is open,
+bringing its text up to date and raising no second one; the cycle that finds the base holding dev
+(merged by hand, or cleanly) closes it and resumes only the streams it stopped; `sprint.CanLand`
+is false meanwhile (`TestTheBaseTakesTheDevelopmentBranchEveryCycle`, on the twin store and a twin
+repository; `TestADevSyncConflictStopsEveryStreamWithOneJudgment`). Owed, outside this card's
+paths: the call in the land round itself (`nova-sprint land`, before its first batch, with the
+round's tree gate as `Check`), and the drift on `where --json`.
 
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
@@ -3544,6 +3609,10 @@ The handover's first rule, printed above the lines it runs first (`RULE ...`; th
 
 The coordinator key follows the seat's record (found by hand: the server's unit kept `NOVA_SPRINT_ACTOR=<other>` after the seat went to a new holder, approved by the owner; each restart left the key saying the other actor while the record said the holder, the holder's coordinator verbs were refused and the inbox stalled until the key was set by hand). Only init and the seat's own steps write the key, and from the record: init writes the record's holder when the seat has a record, else the first coordinator (`--coordinator`, else its actor) (`store.InitSeat`); `coordinator` writes the key with the record in one commit; the run loop never writes it, whatever actor it runs as. The run loop records the actor it runs as (`store.SetServerActor`: the server's record, written before its first tick and every 30 s, for 2 minutes on Redis; read as the server's while no older than that). `seat` goes on to print `record=<the record's holder> server=<the server's actor or ->` once the seat has a record or a server is recorded, and when the key, the record and the server's actor disagree (`sprint.SeatDrift`: the key is not the record's holder, or the server runs as a named actor other than the holder; the server running as `machine` is no drift) it ends the line `DRIFT <why, with the line to run or change>` and exits 1 (`--json`: `record`, `server`, `drift`, `"status":"drift"`, `"exit":1`). `seat --repair --reason <text>` (the record's holder or the owner; an actor is required) writes the key from the record (`store.SeatRepairStep`, `sprint.RepairSeat`: the record written back unchanged, fenced on its generation, with a happened note, its log line `seat: repaired: the key said <key>, the record <holder>: <reason>, by <actor>`), prints `SEAT REPAIRED key=<holder> was=<key> by=<actor>`, and is refused with nothing written with no reason, by anyone else, with no record (init's key is its record), or when the key already says what the record does. `handover` prints `SERVER <the server's NOVA_SPRINT_ACTOR line to change>` under its first line when the server runs as a named actor other than the holder (`--json` `server`: `actor`, `change`). Test: `internal/sprint/store/seat_key_test.go`, `TestServerStartLeavesTheSeatKeyAndSeatRepairRestoresIt`.
 
+#### fsck-seat-agreement-r.w2
+
+fsck's check `seat-agreement` holds four values to one coordinator: the store's coordinator key, the seat record's holder, the actor the running server was started with (the server's record, written by the run loop that serves, `store.SetServerActor`) and the nova-config sprint row's `coordinator` (found by hand: a server's unit kept an old actor across a handover and each restart left the key naming it against the record, and `nova-config apply` moved the seat because the sprint row still named the previous coordinator). The holder is the record's, else the key's while the seat has no record; a value that names no one (no record, no fresh server's record, an empty row) and a server running as `machine` are no disagreement. The key, the record and the server are read as `seat` reads them (`store.SeatCheck`, `sprint.SeatDrift`), the row with nova-config's library at `--pg` (else NOVA_PG_DSN; an injected reader, `sprint.ConfigCoordinator`) (`sprint.CheckSeatAgreement`, `sprint.FsckSeat`). The check names each fix and runs none: `nova-sprint seat --repair --reason <text>` for the key, the server's `NOVA_SPRINT_ACTOR` line and a restart for the server, `nova-config sprint set --coordinator <holder>` for the row. It prints `FSCK OK check=seat-agreement key=<k> record=<r> server=<s> config=<c>` and exits 0 when they agree, `FSCK DRIFT check=seat-agreement key=<k> record=<r> server=<s> config=<c> <each disagreement with its fix>` and exits 1 when they do not, and exits 2 with `fsck FAILED: the nova-config sprint row was not read: <error>` when the row could not be read (`--json`: `checks` with `check`, `key`, `record`, `server`, `config`, `holder`, `drift`). The command's entry is `cmdFsckSeat` (`cmd/nova-sprint/fsck_seat.go`); the `fsck` verb's row is the fsck verb's own (fsck-held-without-beat), which this check joins. Tests: `internal/sprint/fsck_seat_test.go`, `TestFsckFindsTheSeatKeyAgainstTheRecord`; `cmd/nova-sprint/fsck_seat_test.go`, `TestFsckNamesTheFourSeatValues`.
+
 ### Role views
 
 The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human
@@ -3726,6 +3795,10 @@ when the environment names one (`wins=env:NOVA_SPRINT_REDIS_USER`, `redis-wins=e
 `resolves=yes|no` (exit 1 on no); `seat logout` removes the file (`was=recorded|none`). The code is
 `cmd/nova-sprint/storelogin.go`; `TestABareVerbOpensTheStoreWithTheSeatLoginFromSecrets` measures
 it on the in-memory store with a fake secrets reader.
+
+### bases-view-r.w2
+
+Cards sat on a base nobody watched (2026-10-04: a stream of cards on the coordinator's own branch, its gate red from 12:04 PM), so what the coordinator looked up by hand is a verb. `nova-sprint bases [--json]` (read) prints one row per base a card not landed or dropped names (a placed primary, not a sentinel, its brief's `BASE:` line), keyed by base and `REPO:`, in base order: `BASES <base> repo=<repo> cards=<n> waiting=<n> ready=<n> working=<n> review=<n> merging=<n> ahead=<n> behind=<n> gate=<green|red|-> gated=<RFC3339|->`, then a `NOTE` line per thing not known, then `BASES OK bases=<n> cards=<n>`; `--json` is one object (`bases`, each with its card ids by state; `cards`; `notes`). Ahead and behind are counted against `origin/dev` by `git rev-list --left-right --count` in land's kept clone of the repository (section 7, the clone land keeps under its root), after one fetch of dev and every base named per clone a call; when that fetch fails, one `ls-remote` finds the bases origin does not hold (each a `NOTE`, its counts `-`) and the rest are fetched again. bases clones nothing: a repository land keeps no clone of has its counts `-` and a `NOTE`. The gate is the lander's last record at the base's tip, read from the store: green when a card on the base landed (land gates the tip before it merges), red at the stop of a stream stopped on its base gate (section 8's base-gate rule, its third failure, `cause=base`: its `since`, for the base of each card it holds merging; a refusal before the third is the lander's memory, not the store's); the latest record wins, red on a tie, and `-` when the base was never gated. `add` refuses a card whose `BASE:` is a personal branch, `<name>/*` for the sprint's coordinator, its owner (`init --owner`) or any row of the friends table, naming every such base and `--allow-personal-base`, with nothing written; with the flag it is admitted. The names are read from the store, never written in the code. The code is `cmd/nova-sprint/bases.go` (`basesInUse`, `basesAhead`, `holdBase`, `personalNames`); the test is `TestBasesListsEveryBaseInUseAndAddRefusesAPersonalOne`.
 
 ## 12. The driver
 
@@ -4381,7 +4454,13 @@ While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 min
 configurable via `nova-sprint set --friend-stall-step`):
 1. **Wake turn 1**: a bus message to her (`wakeFriendStall`, the store's `WakeFriend` that
    `tick` and `run` set) pushed into her daemon as a turn; a message not sent is said on
-   stderr and the rung climbs the same.
+   stderr and on the tick's result, and the rung climbs the same. The part only plans the
+   wake: the store's tick (`tickRun.parts`, `internal/sprint/store/tick.go`) hands it a
+   `TickReq.WakeFriend` that keeps the wakes of the plan being made, and sends the last
+   plan's once the part's step commits. A plan made to see whether the part has work, or
+   made again after a commit lost to another writer, wakes no one, so each wake rung wakes
+   her once (2026-10-05: the plan made to see whether the part had work sent the wake too,
+   and every wake went twice; `TestATickWakesAStalledFriendOnceAtEachWakeRung`).
 2. **Wake turn 2**: a second wake bus message.
 3. **Coordinator note**: a pushed judgment (`Kind: Judgment`, `Type: NStalled`,
    `"friend <f> stalled <d>: two wakes unanswered"`).
@@ -4402,13 +4481,15 @@ configurable via `nova-sprint set --friend-stall-step`):
 Every rung emits a happened note (`Kind: Happened`, `Type: "friend stall"`). Any activity
 or card progress resets her to rung 0.
 
-The TLA+ specification `tla/StallLadder.tla` verifies three core invariants:
+The TLA+ specification `tla/StallLadder.tla` verifies five invariants:
 - `NoCardHeldPastBound`: no unstarted card is held by a stalled friend for more than the bound
   (`friend_stall_after + 4 * friend_stall_step`).
 - `NoStartedRedealt`: no started card is taken back or redealt; started cards stay and finish.
 - `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by her
   activity (session activity, a beat naming running cards, or a finish on her row), never by
-  card progress alone. The module's invariant already says "her own activity" and its one
-  activity action (`FriendActivity`) stands for all three; its header comments still say
-  session activity, and widening them (with the TLC rerun the edit makes due, since the
-  recorded runs hash the module) is owed.
+  card progress alone. Its one activity action (`FriendActivity`) stands for all three.
+- `WokenAtEveryWakeRung`: a friend past wake rung n (n = 1, 2) was sent wake n (reversed
+  witness `nowake`: the wake planned and never sent, as `friend-stall-ladder-r` left it).
+- `NoWakeWithoutRung`: a wake is sent only at a rung the ladder climbed, and once
+  (`PlanUncommitted`, a plan the tick makes and does not commit; reversed witness
+  `wakeinplan`: the planner sends the wake as it plans).

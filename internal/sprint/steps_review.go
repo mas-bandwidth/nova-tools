@@ -213,7 +213,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		var inPlace []*Card
 		for _, rc := range returned {
 			failed = append(failed, rc.F(FieldRoute))
-			if len(chosenReaders)+len(again) < want {
+			// in place only on a reader of the card's tier. A reader outside it
+			// is not asked the read again; the card is taken back (retired_by
+			// returned) and the read goes to a reader who reads the tier.
+			if len(chosenReaders)+len(again) < want && s.readerReadsTier(rc.F("reader"), s.readTierOf(c)) {
 				inPlace = append(inPlace, rc)
 				again = append(again, rc.F("reader"))
 				continue
@@ -825,20 +828,22 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			}
 		}
 		if m := s.Merge.Placed(c.ID); m != nil {
-			e := moveEntry(m, c.Row, Queued, nil)
+			e := moveEntry(m, c.Row, Queued, map[string]string{FieldQueued: stamp(s.Now)})
 			sc := c.Score
 			e.Move.Score = &sc
 			u.Changes = append(u.Changes, change(Merge, e))
 		} else {
 			u.Changes = append(u.Changes, change(Merge, createEntry(c.ID, c.Row, Queued, c.Score,
-				map[string]string{"kind": "merge", "primary": c.ID, "stream": c.Row})))
+				map[string]string{"kind": "merge", "primary": c.ID, "stream": c.Row, FieldQueued: stamp(s.Now)})))
 		}
 		var names []string
 		for _, o := range oks {
 			names = append(names, o.F("reader"))
 		}
 		readers := strings.Join(names, ",")
-		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, map[string]string{"readers": readers, "accepted": stamp(s.Now)})))
+		accept := map[string]string{"readers": readers, "accepted": stamp(s.Now)}
+		maps.Copy(accept, readStamps(oks))
+		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, accept)))
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s)", c.ID, strings.ReplaceAll(readers, ",", ", "))
 		if retired > 0 {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)

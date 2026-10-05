@@ -33,6 +33,10 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 		refuse(stderr, " boot", "--pin names the file listing the memories to load; name it")
 		bad = true
 	}
+	if given["root"] && strings.TrimSpace(*root) == "" {
+		refuse(stderr, " boot", "--root names the memory directory and is never guessed from the working directory")
+		bad = true
+	}
 	if bad {
 		return 2
 	}

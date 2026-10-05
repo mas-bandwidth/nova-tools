@@ -65,6 +65,7 @@ type world struct {
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
+	finish    func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -75,7 +76,26 @@ type world struct {
 	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
 	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
-	alive     friend.Aliver // the harness check, when set (a test's fake harness); nil watches the adapter
+	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
+	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+}
+
+// sprintVerb sends one worker verb (progress, finish) to the sprint server and answers its
+// refusal as an error.
+func sprintVerb(ctx context.Context, server string, argv []string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
+	if err != nil {
+		return err
+	}
+	if len(res) != 1 {
+		return fmt.Errorf("%s: the server answered %d results, want 1", argv[0], len(res))
+	}
+	if res[0].Code != 0 {
+		return fmt.Errorf("%s refused: %s", argv[0], strings.TrimSpace(res[0].Stderr))
+	}
+	return nil
 }
 
 func realWorld() world {
@@ -114,23 +134,11 @@ func realWorld() world {
 			}
 			return res[0].Stdout, nil
 		},
-		progress: func(ctx context.Context, server string, argv []string) error {
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
-			if err != nil {
-				return err
-			}
-			if len(res) != 1 {
-				return fmt.Errorf("progress: the server answered %d results, want 1", len(res))
-			}
-			if res[0].Code != 0 {
-				return fmt.Errorf("progress refused: %s", strings.TrimSpace(res[0].Stderr))
-			}
-			return nil
-		},
+		progress: sprintVerb,
+		finish:   sprintVerb,
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
+		settings: friend.OSFS{},
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -205,6 +213,10 @@ func friendTool(w world) *tool.Tool {
 	stateDir := func(f *tool.Flags) {
 		f.String("state-dir", "", "where the state files live (default: ~/.nova-friend/<me>)")
 	}
+	settingFlags := func(f *tool.Flags) {
+		f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)")
+		f.String("model", "", "harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)")
+	}
 	daemonFlags := func(f *tool.Flags) {
 		f.Required("as", "your name, a nova-config friend row")
 		f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
@@ -234,7 +246,7 @@ harness's deliver command), beats to the sprint server while the session answers
 coordinator PING at once (daemon-pong, never presence); presence is the session's answer to a nonce.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
-		Words:     []string{"NONE", "FAIL"},
+		Words:     []string{"NONE", "FAIL", "DRIFT"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
@@ -305,10 +317,20 @@ dir= state= redis=): no store is opened and nothing is written.`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
-				Effect:  tool.LocalWrite + ": writes the launchd agent com.nova.friend-<me> and loads it",
-				Detail: `Writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
+				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
+				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
+settings), each merged into what the file holds and read back, one INSTALL WROTE line each: codex,
+the friend's directory in CODEX_HOME/config.toml [sandbox_workspace_write] writable_roots; dsh, the
+agent preset registry's default and selectedDefault "` + friend.DSHPreset + `" in DSH_HOME/profiles/desktop/cordis.patch.yml
+(a session keeps the preset it was opened under); grok, the wake file (--session, else
+~/.nova-friend/<me>/<me>.wake), made empty, and named in the agent; claude, --config-dir (default
+CLAUDE_CONFIG_DIR) made private and named in the agent; opencode, the friend's directory allowed in
+<dir>/opencode.json and --model there when given. The friend's directory, the writable root, the wake
+file's directory and the config directory must each be a real directory: a symlink (or a config file
+that is one) is refused and nothing is written or loaded. nova-friend check --settings names drift.
+Then writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
 restarted when it dies, pending messages redelivered first), boots out whatever that label runs,
 and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
 ~/Library/Logs (launchd cannot open one on a network volume), and the daemon's state files and
@@ -332,6 +354,7 @@ NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
 					f.String("seat", "", "the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets")
 					f.String("launchd-log", "", "launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)")
 					f.Duration("within", friend.DefaultCheckWithin, "how long the delivery check after loading waits for the session's pong")
+					settingFlags(f)
 					f.Check(func(c *tool.Call) {
 						if c.Str("secrets") != "" && c.Str("seat") == "" {
 							c.Problem("--secrets wants --seat <seat>: the seat the secrets are opened as")
@@ -395,12 +418,19 @@ deliver command says its reason); act, the session never ran the line; reply, th
 reached the bus. The pong goes to --to, else the seat the daemon's status names, else --as itself. Run it
 once a night as a nova-config loop record (docs/TESTING.md). --dry-run checks the flags and the harness
 and prints the line the session would run: nothing is delivered and no store is opened.
+With --settings (and --as, --harness, --dir, and the flags install took: --session, --config-dir,
+--model, --state-dir) the verb compares the harness's settings with what install would write and
+writes nothing: CHECK OK harness= settings=<n> drift=0, or CHECK DRIFT harness= settings=<n> drift=<n>
+at exit 1 with one CHECK DRIFT line per setting, harness= file= name= want= have= (a symlink where a
+real directory belongs is have="symlink to <target>"); install again writes them.
 example: nova-friend check --as ada bob`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the coordinator (the health check); the friend itself with --harness")
 					f.String("harness", "", "the harness the session runs in (delivery check): "+strings.Join(friend.Harnesses, ", "))
 					f.String("dir", "", "the friend's working directory")
-					f.String("session", "", "the session to deliver into (delivery check)")
+					f.String("session", "", "the session to deliver into (delivery check); for grok the wake file (--settings)")
+					f.Bool("settings", false, "compare the harness's settings with what install would write; nothing is delivered or written")
+					settingFlags(f)
 					f.Duration("within", friend.DefaultCheckWithin, "how long to wait for the session's pong (delivery check)")
 					f.String("to", "", "who the pong goes to (default: the seat the daemon's status names, else --as)")
 					f.Duration("since", 24*time.Hour, "the window every fact is judged over: deliveries, deferrals, real messages, the session pong")
@@ -409,6 +439,9 @@ example: nova-friend check --as ada bob`,
 					redis(f)
 					f.Check(func(c *tool.Call) {
 						callArgs.Store(c, f.Args())
+						if c.Bool("settings") && c.Str("harness") == "" {
+							c.Problem("--settings wants --harness, --as and --dir: the friend whose harness settings to compare")
+						}
 						if h := c.Str("harness"); h != "" {
 							if c.Str("as") == "" {
 								c.Problem("--as is required")
@@ -780,6 +813,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return nil
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		Finish: func(ctx context.Context, argv []string) error {
+			if w.finish == nil {
+				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
+			}
+			return w.finish(ctx, server, argv)
+		},
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
 			if err != nil {
@@ -833,6 +872,9 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
 	}
+	if a.Harness == "claude" {
+		a.ConfigDir = c.Str("config-dir")
+	}
 	if len(a.Secrets) > 0 {
 		for _, p := range []struct {
 			name string
@@ -858,14 +900,25 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
+	h := w.harnessSettings(c)
+	if a.Harness == "grok" {
+		a.Session = h.WakePath() // the wake file install made is the one the agent names
+	}
 	src := a.Binary
 	placed, copy, err := friend.PlanBinary(src, a.Home)
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
 	if dry {
+		plan, err := h.Plan()
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
 		a.Binary = placed
 		o := tool.Done().Fact("label", a.Label()).Fact("plist", a.PlistPath()).Fact("launchd_log", a.LaunchdLog)
+		for _, s := range plan {
+			o.Item("plan", "command", tool.Text("write "+s.File+" "+s.Name+"="+s.Want))
+		}
 		if copy {
 			o.Item("plan", "command", tool.Text("copy "+src+" "+placed))
 		}
@@ -874,6 +927,10 @@ func (w world) install(c *tool.Call) *tool.Out {
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + a.Said())
 		return noteGrokMonitor(o, a.Harness, a.Session)
+	}
+	wrote, err := h.Write()
+	if err != nil {
+		return tool.Refuse("the harness's settings: " + err.Error())
 	}
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -885,6 +942,9 @@ func (w world) install(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 	o := tool.Done().Fact("label", a.Label()).Fact("plist", path).Fact("launchd_log", a.LaunchdLog)
+	for _, s := range wrote {
+		o.Item("wrote", "harness", s.Harness, "file", s.File, "name", s.Name, "value", tool.Text(s.Want))
+	}
 	for _, r := range ran {
 		o.Item("ran", "command", tool.Text(r))
 	}
@@ -899,6 +959,17 @@ func (w world) install(c *tool.Call) *tool.Out {
 		o.Note("check: " + res.Line())
 	}
 	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+}
+
+// harnessSettings is what install writes into the friend's harness and
+// check --settings compares (internal/friend/settings.go).
+func (w world) harnessSettings(c *tool.Call) friend.HarnessSettings {
+	h := friend.HarnessSettings{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), Home: w.home, StateDir: c.Str("state-dir"),
+		ConfigDir: c.Str("config-dir"), Model: c.Str("model"), CodexHome: w.getenv("CODEX_HOME"), DSHHome: w.getenv("DSH_HOME"), FS: w.settings}
+	if h.Harness == "grok" {
+		h.Wake = c.Str("session") // for grok, --session names the wake file
+	}
+	return h
 }
 
 // checkTo is whom the check's pong goes to: to, else the seat the daemon's

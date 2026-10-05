@@ -133,6 +133,10 @@ type Daemon struct {
 	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
 	// sprint server); nil stamps none.
 	Progress func(ctx context.Context, cards []Card) error
+	// Finish sends one finish verb to the sprint server (FinishArgv): a lane's card whose
+	// run ended with no REPORT.md (lane_end.go). Nil, or a finish not answered, leaves it to
+	// friend sync, which reads the REPORT.md the lane wrote.
+	Finish func(ctx context.Context, argv []string) error
 
 	m           *Machine
 	status      Status

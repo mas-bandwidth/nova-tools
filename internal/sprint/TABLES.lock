@@ -144,6 +144,11 @@
 # cell with no fold, how long ago her session last wrote a file under her working directory
 # and outbox ("4m ago", "-" when her beat reported none), after status. Held by
 # TestSprintTablesAreLocked; the rule is docs/SPEC-SPRINT.md, last session activity.
+#
+# Change, 2026-10-05, asked by the owner that morning: a reader row had no tiers,
+# so the ask gave a flash reader pro reads and a heavy one. readers.tiers is the
+# column: text, no fold, shown, after broken. An empty cell means every tier.
+# Held by TestSprintTablesAreLocked; the rule is docs/SPEC-SPRINT.md section 6.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -155,6 +160,7 @@ readers.asked count sum shown
 readers.reading count sum shown
 readers.ok count sum shown
 readers.broken count sum shown
+readers.tiers text none shown
 merge.queued count sum shown
 merge.merged count sum shown
 merge.stuck count sum shown

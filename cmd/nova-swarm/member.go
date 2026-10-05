@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -72,6 +73,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
+	maxLoad := fs.Float64("max-load", 0, "the maximum one-minute host `load` at which a local child starts (default 0: no load gate)")
+	warnLoad := fs.Float64("warn-load", 0, "the one-minute host `load` at which a local child start warns, at or below --max-load (default 0: no warning)")
 	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
@@ -129,6 +132,15 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
+	}
+	if math.IsNaN(*maxLoad) || math.IsInf(*maxLoad, 0) || *maxLoad < 0 {
+		f.add("--max-load is the finite maximum one-minute host load at which a local child starts: 0 or more (0 checks nothing)")
+	}
+	if math.IsNaN(*warnLoad) || math.IsInf(*warnLoad, 0) || *warnLoad < 0 {
+		f.add("--warn-load is the finite one-minute host load at which a local child start warns: 0 or more (0 disables the warning)")
+	}
+	if *warnLoad > 0 && (*maxLoad == 0 || *warnLoad > *maxLoad) {
+		f.add("--warn-load requires --max-load and is at or below it")
 	}
 	if *gocacheGiB < 1 {
 		f.add("--gocache-limit is the GiB the shared Go build cache is held under: 1 or more (default 20)")
@@ -193,6 +205,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
+		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
@@ -437,6 +450,8 @@ type nativeRunner struct {
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
 	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
 	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
+	load                                           hostload.Source
+	maxLoad, warnLoad                              float64
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -512,6 +527,18 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		}()
 		r.started(name)
 		return c, nil
+	}
+	// SPEC-FRIEND "The local child load gate": the configured raw one-minute load
+	// decides admission immediately before a new local child is created.
+	if r.maxLoad > 0 && r.load.Load1 != nil {
+		if load, ok := r.load.Load1(); ok {
+			if load > r.maxLoad {
+				return nil, fmt.Errorf("local child refused: one-minute load %.2f is above configured bound %.2f", load, r.maxLoad)
+			}
+			if r.warnLoad > 0 && load >= r.warnLoad && r.stderr != nil {
+				fmt.Fprintf(r.stderr, "nova-swarm member: WARNING local child %s starts at one-minute load %.2f, near configured bound %.2f\n", oneline.Field(p.Card), load, r.maxLoad)
+			}
+		}
 	}
 	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
 		return nil, err

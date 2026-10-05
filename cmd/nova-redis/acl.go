@@ -13,7 +13,9 @@ package main
 //     the rendering never carries) or ACL MISSING per user, then
 //     ACL CHECK OK|DRIFT; exit 1 on any drift.
 //   - acl apply is the same comparison, then ACL SETUSER for each user that
-//     differs (ACL SET lines) and ACL SAVE when the store keeps an ACL file;
+//     differs (ACL SET lines) and ACL SAVE when the store keeps an ACL file
+//     (nova-redis serve keeps one under its --dir, so the users survive a
+//     restart; a store without one gets a NOTE that they will not);
 //     --dry-run prints ACL WOULD-SET for every rendered user from this build
 //     alone, opens no store and writes nothing. A password is never read: a
 //     user keeps the one it has, a new user and one the store shows as nopass
@@ -400,6 +402,8 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		saved = "no-acl-file"
 		if ok {
 			saved = "acl-file"
+		} else {
+			note(c.Stdout, "ACL NOT SAVED: the store keeps no ACL file, so the users set here last until it restarts; run the store with nova-redis serve, which keeps them in <store-dir>/"+aclFileName)
 		}
 	}
 	line(c.Stdout, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at)

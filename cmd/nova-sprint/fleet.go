@@ -71,7 +71,14 @@ read once and a pro card twice, by two different readers, one read at a time
 card's tier. The ask deals a read to a reader up only: a read asked of a
 reader that is not up is asked of another at the next tick, and a card that
 needs more readers than are up is not asked: the tick raises one judgment
-(fewer than two readers up). reader remove takes a row off the readers table, refused while the
+(fewer than two readers up). A reader row carries the tiers it reads: reader add --tiers
+flash[,pro,heavy,frontier] and reader set --tiers. Omitted, all and default
+store an empty cell, which means every tier (today's behaviour). The ask
+counts a reader only for a primary whose read tier it reads, and never asks
+it a read outside those tiers. A card with fewer readers of its tier up than
+it needs raises that same judgment, and a returned read is never asked again
+in place of a reader outside the tier. where prints the tiers, all when the
+cell is empty. reader remove takes a row off the readers table, refused while the
 reader holds a read (asked, reading, ok or broken); reader retire keeps the
 row and its read cards (the history) and takes the reader off the table for
 good: never asked, its queue no beat and reader false, until reader up brings

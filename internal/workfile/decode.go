@@ -101,7 +101,7 @@ func (d decoder) str(at, key string, f worklang.Form) (string, error) {
 // number's spelling, so a leading '+' or leading zeros, which the worklang
 // integer reader takes, is refused here.
 func (d decoder) num(at, key string, f worklang.Form) (int, error) {
-	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > 1<<31 ||
+	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > maxNumber ||
 		f.End-f.Offset != len(strconv.Itoa(int(f.Int))) {
 		return 0, d.errf(at, ":%s wants a positive integer written canonically", key)
 	}

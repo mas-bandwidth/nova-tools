@@ -13,7 +13,7 @@
 > The run records (`RUNS.tsv`) still match these model files, which is all `TestTLCRecordsCoverCurrentModels` checks: it
 > does not check the models against the code. At the contraction pass each is either re-derived from the behaviour the
 > fleet passes proved, or deleted. `BenchStage` is current. The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`,
-> `TableEdit`, `TableOrder`, `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current.
+> `TableEdit`, `TableOrder`, `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current. [`COVERAGE.tsv`](COVERAGE.tsv) lists every state machine with its code, its module and its status (current, partial, stale or missing) and the card that owes a model that is not current; `TestEveryStateMachineHasACurrentModel` (internal/ci) holds it.
 
 The TLA+ modules here are the specifications of the state machines this repo implements (rowan-new SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; Glenn 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in rowan-new `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
 

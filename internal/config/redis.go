@@ -720,11 +720,11 @@ type hashKind struct {
 	kind  string
 	set   string
 	key   func(string) string
-	extra func(name string) []any // derived fields beside the row's; nil for none
+	extra func(row Row) []any // derived fields beside the row's, which the kind's Derive adds; nil for none
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
+	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(r Row) []any { return []any{"log", r.Fields["log"]} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
@@ -787,7 +787,7 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
-		fields = append(fields, h.extra(row.Name)...)
+		fields = append(fields, h.extra(row)...)
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])

@@ -23,6 +23,25 @@ function cents(s) { // "$26.16" -> 2616, "-" -> null; rounded up to the cent
   return isNaN(n) ? null : Math.ceil(n * 100 - 1e-6);
 }
 function money(c) { return "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// whole dollars rounded up, for the Cost breakdown panel only ("Round up to nearest $", "for this case"); money() keeps the cent everywhere else
+function dollars(c) { var d = Math.ceil(c / 100 - 1e-9); return "$" + (d === 0 ? 0 : d).toLocaleString("en-US"); }
+function zoneAbbr(d) {
+  try { var p = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" }).formatToParts(d).filter(function (x) { return x.type === "timeZoneName"; })[0]; return p ? p.value : ""; }
+  catch (e) { return ""; }
+}
+function etaAround(when, ms) {
+  var day = ms >= 86400000 ? when.toLocaleDateString("en-US", { weekday: "short" }) + " " : "";
+  return ("around " + day + clockShort(when) + " " + zoneAbbr(when)).trim();
+}
+// a tile's subline stays on one line: when it does not fit the tile,
+// the shorter forms in turn
+function fits(e) { return e.scrollWidth <= e.clientWidth + 1; }
+var etaAtLast = null;
+function fitEtaAt() {
+  var box = $("eta-at"); if (!box || !etaAtLast) return;
+  var full = etaAround(etaAtLast[0], etaAtLast[1]), forms = [full, full.replace(/^around /, ""), full.replace(/^around /, "").replace(/ [A-Z]{2,5}$/, "")];
+  for (var i = 0; i < forms.length; i++) { setText(box, forms[i]); if (fits(box)) return; }
+}
 function clock(d) { return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }); }
 function clockShort(d) { return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); }
 function etaMs(s) { // "2h20m" -> ms
@@ -290,6 +309,31 @@ function renderOverall(sum, all) {
 }
 window.addEventListener("resize", function () { if (overallLast) renderOverall(overallLast.sum, overallLast.all); });
 
+// Where wall time goes: one stacked bar of the stages' medians over the cards landed in the
+// last 24 h (where --json stage_times, docs/SPEC-SPRINT.md), shown once there is one.
+var WALL_STAGES = [["needs", "waiting on needs"], ["deal", "ready, not dealt"], ["take", "dealt, not taken"], ["work", "work"],
+  ["rework", "rework"], ["read_wait", "waiting for a read"], ["read", "read"], ["accept", "waiting to accept"], ["merge", "merge queue"]];
+var WALL_HUES = [210, 190, 170, 140, 0, 45, 30, 280, 320];
+function wallSpan(s) { return s < 90 ? Math.round(s) + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h"; }
+function renderWall(d) {
+  var panel = $("wall-panel"), st = d.stage_times && d.stage_times.all;
+  var names = st ? WALL_STAGES.filter(function (x) { return st[x[0]]; }) : [];
+  panel.hidden = names.length === 0;
+  if (!names.length) return;
+  var box = $("wall"), lg = $("wall-legend");
+  var total = names.reduce(function (a, x) { return a + st[x[0]].median_s; }, 0);
+  box.textContent = ""; lg.textContent = "";
+  names.forEach(function (x) {
+    var k = x[0], m = st[k], hue = WALL_HUES[WALL_STAGES.findIndex(function (y) { return y[0] === k; })];
+    var seg = el("i"); seg.style.flexGrow = String(Math.max(m.median_s, total / 400)); seg.style.background = "hsl(" + hue + " 60% 55%)";
+    seg.title = x[1] + ": median " + wallSpan(m.median_s) + ", p90 " + wallSpan(m.p90_s) + " over " + m.n + " cards";
+    box.appendChild(seg);
+    var it = el("span"), sw = el("i", "sw"); sw.style.background = seg.style.background;
+    it.appendChild(sw); it.appendChild(el("span", "", x[1] + " " + wallSpan(m.median_s) + " (p90 " + wallSpan(m.p90_s) + ")")); lg.appendChild(it);
+  });
+  $("wall-sub").textContent = ("median per stage, cards landed in the last 24 h · " + wallSpan(total) + " in all");
+}
+
 function fleetLike(box, table, withLoad) {
   var names = Object.keys(table || {});
   var rank = { up: 0, held: 1, down: 2 };
@@ -434,6 +478,21 @@ function renderReaders(d) {
   strip._v.ci.style.color = ci === "red" ? "var(--critical)" : ci === "green" ? "var(--good)" : "var(--text-3)";
 }
 
+// the machine pill: red when the machine line says every provider is out of credit (SPEC.md)
+function setMachine(line) {
+  var text = String(line || "-").replace(/^machine:\s*/, "");
+  // the human page shows RUNNING, STOPPED or STALE; tick lateness is the coordinator's view only
+  var late = /^running\b.*tick late (\d+)s/i.exec(text);
+  if (late) text = Number(late[1]) >= 60 ? "STALE" : "running";
+  else if (/^running\b/i.test(text)) text = "running";
+  setText($("machine"), text);
+  var stopped = /STOPPED/.test(text) && /out of credit/i.test(text);
+  setClass($("machine-chip"), "chip" + (stopped ? " alert" : ""));
+  // the bar pulses only while the machine runs
+  var running = /^(running|STALE)\b/.test(text);
+  var box = $("overall"); if (box) box.classList.toggle("stopped", !running);
+}
+
 function renderHero(d, s) {
   var landed = int(d.landed), all = int(d.all);
   setText($("landed"), landed.toLocaleString("en-US")); setText($("all"), all.toLocaleString("en-US")); setText($("all2"), all.toLocaleString("en-US"));
@@ -442,7 +501,8 @@ function renderHero(d, s) {
   if (m) {
     setText($("eta"), etaText(m[1]));
     var ms = etaMs(m[1]);
-    setText($("eta-at"), ms != null && !isNaN(at) ? "around " + clockShort(new Date(at.getTime() + ms)) : " ");
+    var etaAt = new Date(at.getTime() + ms);
+    if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
   } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
   // the complete cost (docs/SPEC-SPRINT.md, "What a card cost"): every take and read of
@@ -453,14 +513,35 @@ function renderHero(d, s) {
   setHTML($("cost-per"), landed ? money(Math.ceil(recorded / landed)) + " per card" : " ");
   setText($("cost-unreconciled"), money(unreconciled) + " unreconciled" + (s.sum.unpriced ? " · " + s.sum.unpriced + " runs unpriced" : ""));
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
-  setText($("inflight-sub"), ["working", "review", "merging"].filter(function (k) { return s.sum[k] > 0; })
-    .map(function (k) { return s.sum[k] + " " + k; }).join(" · ") || "nothing in flight");
+  inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
   setText($("tput"), throughput == null ? "\u2014" : String(Math.round(throughput)));
   setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
-  setText($("machine"), String(d.machine || "-").replace(/^machine:\s*/, ""));
+  setMachine(d.machine);
 }
+
+// the In flight tile's subline: one line, two parts,
+// "<working> working · <review+merging> review + merge", each number white and its words grey;
+// the separate review and merging counts are in the tooltip
+var inflightLast = null;
+function renderInflight(sum) {
+  var box = $("inflight-sub"); if (!box) return;
+  // the words shorten in turn when the line does not fit the tile (a phone)
+  var forms = [["working", "review + merge"], ["work", "review + merge"], ["work", "rev + merge"], ["work", "rev+mrg"], ["wk", "r+m"]];
+  var draw = function (w) {
+    var parts = [[sum.working, w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
+    box.textContent = "";
+    if (!parts.length) box.textContent = "nothing in flight";
+    parts.forEach(function (p, i) {
+      if (i) box.appendChild(el("span", "pw", " \u00b7 "));
+      box.appendChild(el("span", "pn", String(p[0]))); box.appendChild(el("span", "pw", " " + p[1]));
+    });
+  };
+  for (var i = 0; i < forms.length; i++) { draw(forms[i]); if (fits(box)) break; }
+  setTitle(box, sum.working + " working, " + sum.review + " review, " + sum.merging + " merging");
+}
+window.addEventListener("resize", function () { if (inflightLast) renderInflight(inflightLast); fitEtaAt(); });
 
 // ---------- poll loop ----------
 var lastGood = null, inFlight = false, build = null, throughput = null, throughputMinutes = 0;
@@ -495,11 +576,119 @@ function fitTables() {
   });
 }
 window.addEventListener("resize", fitTables);
+// Spend row: the pie of cards by tier and the ten most expensive streams.
+var TIERS = ["flash", "pro", "heavy", "frontier"], topN = 10, lastSpendData = null;
+window.addEventListener("resize", function () { if (lastSpendData) renderTopStreams(lastSpendData); });
+function tierColor(t) { return "var(--tier-" + (TIERS.indexOf(t) >= 0 ? t : "other") + ")"; }
+function tierCounts(obj) { // {flash: "12", pro: 3} -> [[tier, n], ...] sorted by the ladder, others last
+  var out = [];
+  if (!obj) return out;
+  Object.keys(obj).forEach(function (k) { var n = parseInt(obj[k], 10); if (n > 0) out.push([k, n]); });
+  out.sort(function (a, b) { var ia = TIERS.indexOf(a[0]), ib = TIERS.indexOf(b[0]); if (ia < 0) ia = 99; if (ib < 0) ib = 99; return ia - ib || b[1] - a[1]; });
+  return out;
+}
+
+// The Cost breakdown: the pie is the spend by tier and the
+// tier line in the panel's header is its legend, open or folded. The spend per tier is summed
+// over every stream (tables.work[s].cost_by_tier); a tier at $0 is left out of the pie, the
+// legend and the table alike. One format for the whole panel, decided once: cents (rounded up)
+// when every tier shown is under $10, else whole dollars rounded up ("so we don't get weird
+// stuff where the tiers' rounded $ values don't match the pie"). The pie is drawn from the
+// values the legend shows, in the legend's order: by spend, most first.
+function tierSpend(d) {
+  var work = (d.tables && d.tables.work) || {}, byTier = {};
+  Object.keys(work).forEach(function (k) {
+    var b = work[k].cost_by_tier; if (!b || typeof b !== "object") return;
+    // the four tiers alone: a record with no tier ("untiered") is no tier and is left out
+    TIERS.forEach(function (t) { var c = cents(b[t]); if (c) byTier[t] = (byTier[t] || 0) + c; });
+  });
+  var order = Object.keys(byTier).sort(function (a, b) { return byTier[b] - byTier[a] || a.localeCompare(b); });
+  var inCents = order.length > 0 && order.every(function (t) { return byTier[t] < 1000; });
+  var fmt = inCents ? money : dollars;
+  // a value as shown: the cents, or the whole dollars rounded up, in cents
+  var shown = function (c) { return inCents ? c : Math.ceil(c / 100 - 1e-9) * 100; };
+  return { byTier: byTier, order: order, fmt: fmt, shown: shown };
+}
+
+function renderPie(d) {
+  var svg = $("pie"); if (!svg) return; // no legend below the chart: its legend is the panel's header line
+  var sp = tierSpend(d), vals = sp.order.map(function (t) { return [t, sp.shown(sp.byTier[t])]; });
+  var total = vals.reduce(function (a, v) { return a + v[1]; }, 0);
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  svg.setAttribute("aria-label", "spend by tier");
+  var ns = "http://www.w3.org/2000/svg";
+  if (!total) { // nothing spent, or a build that serves no cost_by_tier
+    var c = document.createElementNS(ns, "circle"); c.setAttribute("cx", 50); c.setAttribute("cy", 50); c.setAttribute("r", 48);
+    c.setAttribute("fill", "var(--tier-other)"); c.setAttribute("opacity", ".35"); svg.appendChild(c);
+    return;
+  }
+  var a0 = -Math.PI / 2;
+  vals.forEach(function (v) {
+    var frac = v[1] / total, a1 = a0 + frac * 2 * Math.PI, p = document.createElementNS(ns, "path");
+    if (frac >= 0.9999) { p.setAttribute("d", "M50,2 A48,48 0 1 1 49.99,2 Z"); }
+    else {
+      var x0 = 50 + 48 * Math.cos(a0), y0 = 50 + 48 * Math.sin(a0), x1 = 50 + 48 * Math.cos(a1), y1 = 50 + 48 * Math.sin(a1);
+      p.setAttribute("d", "M50,50 L" + x0.toFixed(2) + "," + y0.toFixed(2) + " A48,48 0 " + (frac > 0.5 ? 1 : 0) + " 1 " + x1.toFixed(2) + "," + y1.toFixed(2) + " Z");
+    }
+    p.setAttribute("fill", tierColor(v[0]));
+    var tt = document.createElementNS(ns, "title"); tt.textContent = v[0] + " " + sp.fmt(v[1]) + " (" + Math.round(100 * frac) + "%)"; p.appendChild(tt);
+    svg.appendChild(p);
+    a0 = a1;
+  });
+}
+
+function renderTopStreams(d) {
+  var box = $("top-streams"); if (!box) return;
+  lastSpendData = d;
+  var work = (d.tables && d.tables.work) || {}, rows = [];
+  var sp = tierSpend(d), byTier = sp.byTier, order = sp.order, fmt = sp.fmt;
+  Object.keys(work).forEach(function (k) {
+    var w = work[k], ct = cents(w.cost); if (!ct) return;
+    var n = {}; ["waiting", "ready", "working", "review", "merging", "landed"].forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
+    rows.push({ name: k, cost: ct, n: n, per: n.landed ? Math.ceil(ct / n.landed) : null, tiers: tierCounts(w.tiers), byTier: w.cost_by_tier || null });
+  });
+  rows.sort(function (a, b) { return b.cost - a.cost; });
+  box.innerHTML = "";
+  box.style.setProperty("--tier-cols", String(order.length + 1)); // the tiers with spend, then total
+  var pie = $("pie"), rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  var n = 10;
+  if (pie && pie.clientWidth) n = Math.max(3, Math.min(rows.length, Math.round((pie.clientWidth + 4 * rem - 4 * rem - 1 * rem) / (5 * rem))));
+  topN = n;
+  var h = el("div", "row head"); h.appendChild(el("div", "", "stream"));
+  order.forEach(function (t) { h.appendChild(el("div", "num", t)); }); // plain headers, as every table's: the color keys are the legend's alone
+  h.appendChild(el("div", "num", "total")); box.appendChild(h);
+  rows.slice(0, n).forEach(function (r) {
+    var row = el("div", "row");
+    row.appendChild(el("div", "name", r.name));
+    order.forEach(function (t) { // the stream's spend on the tier, in the panel's format
+      var c = r.byTier && cents(r.byTier[t]);
+      row.appendChild(el("div", "num" + (c ? "" : " faint"), c ? fmt(c) : "-"));
+    });
+    row.appendChild(el("div", "num", fmt(r.cost)));
+    box.appendChild(row);
+  });
+  // the pie's legend in the header: each tier as the state legend draws an item, its square in
+  // the tier's color, the name grey and the amount white, in the pie's order, no separators
+  var ts = $("tier-sub");
+  if (ts) {
+    ts.textContent = "";
+    order.forEach(function (t) {
+      var p = el("span"), sw = el("i", "sw"); sw.style.background = tierColor(t);
+      p.appendChild(sw); p.appendChild(el("span", "tn", t)); p.appendChild(el("span", "ta", fmt(sp.shown(byTier[t])))); ts.appendChild(p);
+    });
+    if (!order.length) ts.textContent = "-";
+  }
+  if (!rows.length) box.appendChild(el("div", "row faint", "no stream has spent anything yet"));
+}
+
 function render(d) {
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
+  renderPie(d);
+  renderTopStreams(d);
   renderFleet(d);
   renderFriends(d);
+  renderWall(d);
   renderLanes(d);
   if (SHOW_ALL) renderReaders(d);
   renderHero(d, s);

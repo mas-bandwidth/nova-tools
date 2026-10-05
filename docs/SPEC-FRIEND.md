@@ -7,6 +7,18 @@ of the team", "it must be this way when they start up next time, not just now,
 but always", and "like a network connection: client/server and the coordinator
 is the server; both sides need to know they are connected, continually".
 
+## The local child load gate
+
+Friend work runs as fleet cards. A `nova-swarm member` may configure the raw
+one-minute host-load thresholds `--max-load` and `--warn-load`. Immediately
+before it creates a new local child, it reads that load through `hostload.Source`:
+above the maximum it refuses the launch and names the measured load and bound;
+at or above the warning threshold through the maximum it warns with both values
+and starts. Zero disables the corresponding check, and both default to zero, so
+existing fleet members keep their previous admission behavior. An unavailable
+load reading also leaves that behavior unchanged. The warning threshold requires
+an enabled maximum and cannot exceed it; near is configured, never inferred.
+
 ## The pattern in one sentence
 
 One daemon per friend, started by launchd and never by the model, parks on the
@@ -635,7 +647,8 @@ there, the card is done and the lane takes the next; absent, the same card
 is handed again once, and after `CardTurns` (two) turns without it the card
 is set aside (recorded in `lanes.json`, never handed again by this daemon),
 and the coordinator is told once on the bus, `friend <name>: card <id> not
-finished after 2 turns (lane <n>): <reason>`. The reason is the last turn's:
+finished after 2 turns (lane <n>): <reason>`, and the card is finished failed
+in the sprint (a lane's end, below). The reason is the last turn's:
 a permission the harness refused, a turn stopped silent, the provider's
 refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
@@ -748,6 +761,63 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### lane-end-finishes-the-card.w1 — a lane's end is a finish
+
+The owner, 2026-10-05: "Now let's look at friends. Are they actually doing
+work?" Six one-shot runs had ended overnight without writing `REPORT.md`
+(killed at a cap, or exited early), so friend sync never saw a finish and the
+cards stayed working on the friend's row for up to 14 hours; the coordinator
+closed them by hand with `finish --failed`. A lane is done with a card when
+its `RESULT.md` or `REPORT.md` is there after a turn, or when the card is set
+aside after `CardTurns`; that end is the card's finish (`lane_end.go`):
+
+- the friend wrote `outbox/<job>/REPORT.md`: that is the finish, and friend
+  sync reads it as before; the lane writes nothing over it and sends nothing
+  (`finish=report` on the record);
+- she did not: the lane writes `outbox/<job>/REPORT.md` itself, with
+  `Verdict: FAIL`, or `Verdict: HOLD` with `Head: <sha>` when she pushed, and
+  one paragraph naming the lane and how the run ended: its exit, its wall, the
+  turns it had, the cap that stopped it (`no output for <SilentStop>`) or the
+  permission refused or the harness's error, and the pushed head or
+  `no pushed head found`. It then sends the failed finish to the sprint
+  server, as the friend's row:
+  `finish --as friend.<name> <card>@<gen> --epoch <n> --failed [--head <sha>] --branch <b> --report "friend <name> <verdict>: <paragraph>"`,
+  the words friend sync would use for the same report
+  (`finish=failed sent=server`). A finish the server does not answer within
+  `FinishWait`, or refuses, is said on the record
+  (`sent=sync finish_error=...`) and left to friend sync, which finishes the
+  card from the report the lane wrote.
+
+The card's generation and epoch are read off its job directory,
+`<id>~<epoch>[.g<gen>]` (nova-sprint `friendJobOf`; `ParseJob`); a lane hands
+the generation the queue names (`cardDir`), and the finish names that
+generation, `<card>@<gen>`. The pushed head is the branch the brief's
+STATUS line names, read as `refs/remotes/origin/<branch>` (loose or packed,
+through a worktree's `.git` file too) in a clone under `jobs/<job>/`: a push
+writes it, and no network is asked. A card with a `REPORT.md` is not handed to
+a lane.
+
+A lane marks each card it begins as started in `lanes.json` (`started`, keyed
+by the job, `<id>~<epoch>[.g<gen>]`: its lane, the card and when) and clears it at the card's end. A daemon starting up
+finds every card still marked: the run that held it is gone with the daemon
+that ran it (exited, killed or crashed), so it ends each as above, the report's
+paragraph saying `the run is gone: the lane daemon started up at <t> and found
+the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, by
+job, as a set-aside card is) so it is not handed again. A daemon stopping leaves its running cards marked, for the next
+one to finish.
+
+The model is `internal/friend/tla/LaneEnd.tla` (TLC on a Linux bench, two cards:
+288 distinct states, `NoOrphan`, `HersStands` and `Finished` hold); its
+reversed witness `MCLaneEndBrokenNoWrite.cfg`, a lane that writes nothing at a
+run's end as before this card, breaks `NoOrphan` in 6 states.
+
+Not done here: the claude one-shot runner that marks a job started outside
+nova-friend (the runner that ran the six overnight runs) is not in this
+repository, and `take back`'s refusal of a card with a push is in
+internal/sprint; both are outside this card. A gone run is known by the
+daemon's restart alone: no process id is kept, so a harness that outlived its
+daemon is not checked.
+
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
 
 A lane's child (the harness run that opens its session and each card's turn)
@@ -858,6 +928,59 @@ when every verdict is ok, 1 when any is not, 2 when the check could not run. Wit
 facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `work` and `verdict`, and
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
 internal/friend/check.go; each cites this section.
+
+## Harness settings (internal/friend/settings.go)
+
+The finding of 2026-10-05: each friend's harness was set up by hand-editing
+its config, and each hand edit failed once. One friend's Codex writable root
+was a symlink, and she did no work for ten hours. Another's DeepSeek Harness was
+on the `minimal` agent preset, and the headless runner refused every turn. A
+Grok friend's wake file path and the buds' `CLAUDE_CONFIG_DIR` were typed into
+units. Now
+`nova-friend install --harness <h>` writes the settings, before the agent, with
+one small writer per harness (`settings_<harness>.go`). `nova-friend check
+--settings` compares what is there with what install would write. Both go
+through one list, so check reports exactly what install writes.
+
+| harness | file | setting install writes |
+|---|---|---|
+| every one | `--dir` | a real directory (never made, never a symlink) |
+| codex | `$CODEX_HOME/config.toml` (else `~/.codex`) | `[sandbox_workspace_write] writable_roots` holds `--dir`, added to the roots there; edited by line, so comments and other keys stay |
+| dsh | `$DSH_HOME/profiles/desktop/cordis.patch.yml` (else `~/.dsh`) | the patch entry `agent-preset-registry`, `config.default` and `config.selectedDefault` = `standard`; the desktop profile must exist (the app makes it); edited as a YAML node tree |
+| grok | the wake file, `--session`, else `~/.nova-friend/<me>/<me>.wake` | its directory a real directory (made), the file a file (made empty); the agent's `--session` names it, and the NOTE's monitor line names it |
+| claude | `--config-dir` (default `CLAUDE_CONFIG_DIR`) | a real directory, made private; the agent's `run --config-dir` names it; install refuses claude without one |
+| opencode | `<dir>/opencode.json` | `permission.external_directory["<dir>/**"] = allow` (as `AllowDirs` writes before each turn), and `model` when `--model` names one |
+
+**Rules.** Every path is read first. A symlink where a directory belongs, a
+directory that is a file, a missing directory install does not make (the friend's
+directory, the DSH desktop profile), or a config file that is a symlink is
+refused (`ErrNotRealDir`, exit 2): nothing is written and no agent is loaded.
+The refusal names the path and its target. Install never replaces a symlink,
+because an atomic write over a dotfile repository's link would cut it. A setting
+under a refused path is not read through it, and check shows it as `unread`.
+Each written setting is merged into what the file holds and read back; one
+that still differs is an error. A second install writes nothing. `--dry-run`
+plans each write as `INSTALL PLAN command="write <file> <name>=<value>"` and
+refuses as the install would. A real install says each write as `INSTALL WROTE
+harness= file= name= value=`.
+
+**Check.** `nova-friend check --settings --as <me> --harness <h> --dir <d>`,
+with the flags install took (`--session`, `--config-dir`, `--model`,
+`--state-dir`), writes nothing. It prints `CHECK OK harness= settings=<n>
+drift=0`, or `CHECK DRIFT harness= settings=<n> drift=<n>` at exit 1 with one
+`CHECK DRIFT harness= file= name= want= have=` line per drifted setting and a
+NOTE with the install line that writes them. A symlink is
+`have="symlink to <target>"`.
+
+**What is not measured.** The DSH preset value `standard` is the owner's hand
+fix of 2026-10-04, written into the same key; whether the headless runner
+composes a `standard` session was not measured here (the runner refused a
+`minimal` one). A session keeps the preset it was opened under, so the friend
+opens a new session after install. The Codex key is the documented
+`sandbox_workspace_write.writable_roots`; it takes effect only under
+`sandbox_mode = "workspace-write"`, which install leaves alone. The health check
+(`check` with no `--harness`) does not yet carry settings drift: run
+`--settings` per friend.
 
 ## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
 
