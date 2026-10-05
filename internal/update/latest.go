@@ -20,6 +20,9 @@ func defaultClient() *http.Client {
 		if len(via) > 3 {
 			return fmt.Errorf("redirect limit")
 		}
+		if req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
+			return fmt.Errorf("redirect to another host or scheme")
+		}
 		return nil
 	}}
 }

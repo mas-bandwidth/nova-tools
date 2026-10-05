@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -300,6 +301,44 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	if r.Known() {
 		require.Fail(t, fmt.Sprintln("redirect loop accepted"))
 	}
+}
+func TestDefaultClientRefusesARedirectToAnotherSchemeOrHost(t *testing.T) {
+	t.Parallel()
+
+	c := defaultClient()
+
+	baseReq, _ := http.NewRequest("GET", "https://api.github.com/x", nil)
+	via0 := &http.Request{Method: "GET", URL: &url.URL{Scheme: "https", Host: "api.github.com", Path: "/x"}}
+
+	t.Run("redirect to another host returns error", func(t *testing.T) {
+		via := []*http.Request{via0}
+		req := baseReq.Clone(baseReq.Context())
+		req.URL = &url.URL{Scheme: "https", Host: "evil.example", Path: "/y"}
+		err := c.CheckRedirect(req, via)
+		if err == nil {
+			t.Fatal("want error for redirect to different host")
+		}
+	})
+
+	t.Run("redirect to http scheme returns error", func(t *testing.T) {
+		via := []*http.Request{via0}
+		req := baseReq.Clone(baseReq.Context())
+		req.URL = &url.URL{Scheme: "http", Host: "api.github.com", Path: "/y"}
+		err := c.CheckRedirect(req, via)
+		if err == nil {
+			t.Fatal("want error for redirect to http")
+		}
+	})
+
+	t.Run("redirect to same host and https succeeds", func(t *testing.T) {
+		via := []*http.Request{via0}
+		req := baseReq.Clone(baseReq.Context())
+		req.URL = &url.URL{Scheme: "https", Host: "api.github.com", Path: "/y"}
+		err := c.CheckRedirect(req, via)
+		if err != nil {
+			t.Fatalf("want nil for redirect to same host, got %v", err)
+		}
+	})
 }
 func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	p := manifest(t, row("good", "tool", printer(t, "tool v1.2.3-rc1+dirty\n"), "github:o/r", "none"), row("bad", "tool", "nova-version-no-such-binary", "npm:unused", "none"))
