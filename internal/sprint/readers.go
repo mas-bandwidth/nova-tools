@@ -222,7 +222,10 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // freeReaders is the readers the ask may ask the primary's attempt of: up,
-// with no read card of it at the attempt, placed or retired. A reader is
+// with no read card of it at the attempt, placed or retired, and a class one of
+// the tier's routes applies to (readerApplies: a route's mask decides where its
+// read may be placed, so a fleet reader is never asked a pro read whose pro
+// routes hold only friends). A reader is
 // asked an attempt once: one read card per reader per attempt (ReadCardID),
 // so a reader with a card at this attempt (read, or taken back away, levelled
 // or returned) is not asked it again; the next attempt is read on new cards,
@@ -230,7 +233,7 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	var out []string
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
+		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil && s.readerApplies(pr, rd) {
 			out = append(out, rd)
 		}
 	}
@@ -364,7 +367,7 @@ func sweepReads(s *Snapshot, p *Plan) {
 			return false
 		}
 		for _, rd := range up {
-			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil && s.readFitsReader(c, rd) {
 				return true
 			}
 		}
@@ -519,6 +522,10 @@ func levelReads(s *Snapshot, p *Plan) {
 			avoid := []string{long}
 			for _, rd := range up {
 				if id := ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd); s.Readers.Card(id) != nil || planned[id] {
+					avoid = append(avoid, rd)
+				}
+				// a read moves only to a reader its route's mask holds (route.go)
+				if !s.readFitsReader(q[i], rd) {
 					avoid = append(avoid, rd)
 				}
 			}
