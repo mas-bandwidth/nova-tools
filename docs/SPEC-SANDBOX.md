@@ -171,8 +171,17 @@ The test requirements are listed under **Tests this spec demands**.
    (allow mach-lookup
      (global-name "com.apple.system.opendirectoryd.libinfo")   ; getpwuid, getaddrinfo
      (global-name "com.apple.SecurityServer")                  ; TLS trust evaluation
-     (global-name "com.apple.system.logger"))                  ; os_log
+     (global-name "com.apple.system.logger")                   ; os_log
+     (global-name "com.apple.trustd.agent"))                   ; SecTrustEvaluateWithError: Go's TLS
    ```
+
+   The fourth name is the Go toolchain's (measured 2026-10-04 on a darwin/amd64
+   bench): Go's crypto/x509 verifies a server certificate through
+   `SecTrustEvaluateWithError`, which talks to `com.apple.trustd.agent`, while curl
+   verifies through `SecurityServer`. Under the three-name set `go mod download`
+   failed every fetch with `tls: failed to verify certificate: x509: OSStatus -26276`
+   and the same fetch passed with this name added; `com.apple.trustd` alone did not
+   help, and `pbpaste` stays `rc=1` under the four.
 
    All five pass under it and `pbpaste` is `rc=1`
    (`tools/sandboxcheck`, check `clipboard_denied`). **Accepted width,
@@ -450,6 +459,39 @@ each verb's flags with what each wants, and that verb's own exit codes.
 
 The binary is `nova-sandbox`.
 
+### wall-caps-processes.w1 — the wall caps the tree it runs
+
+The wall bounds the process count and the resident memory of the tree it runs, so one
+runaway command cannot take the machine (289 test processes ran unbounded under one
+`go test`). Defaults: **256 processes** and **8 GiB**.
+
+- **The tree is a process group.** When the command's stdin is not a terminal, the wall
+  starts it as the leader of a process group of its own; the group is counted and the
+  group is killed by its id, never by a pattern. A terminal stdin keeps the caller's
+  group (a child in a background group is stopped by SIGTTIN when it reads the keyboard)
+  and has no caps. A process that leaves the group (`setsid`) leaves the count; the
+  Landlock and seatbelt walls still bound what it can touch.
+- **The count.** Every second the tool counts the live processes of the group (zombies
+  are dead and not counted) and sums their resident bytes: `/proc` on linux, no fork;
+  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped.
+- **Past a cap.** More processes than the cap, or more resident bytes than the cap: the
+  tool sends SIGKILL to the group, waits (bounded) until no live process of it remains,
+  prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the process group was killed`
+  (or `runaway: <n> bytes of memory (cap <c>)`) and exits **137**. Signals the tool
+  receives (SIGINT, SIGTERM) go to the whole group.
+- **Linux, as well.** `RLIMIT_NPROC` is per user, not per tree, so it is a floor under the
+  line and not the line: while the child is forked it is set to the machine's task total
+  plus twice the cap, so a bomb is stopped between two counts, and the tool's own limit is
+  put back at once. `RLIMIT_AS` is not used: it is per process and refuses ordinary
+  programs that reserve a large virtual range. The memory cap is the resident sum above.
+- **Flags.** `run` takes `--max-procs <n>` and `--max-mem <size>` (accepted everywhere,
+  enforced where the tool can count); the bare form carries the defaults. The flags on the
+  bare form are owed in `cmd/nova-sandbox/main.go`, which this card does not edit.
+- **Checked by** `TestWallCapsAForkBomb` (a shell loop that forks until refused, itself
+  capped at 1,000, ends `runaway: <n> processes` with `n` over 256 and no live process of
+  its group), `TestWallCapsLeaveANormalRunAlone` and `TestPolicyOverNamesTheCapPast`
+  (`cmd/nova-sandbox/nproc_cap_test.go`).
+
 ## The run verb — a disposable place, on darwin
 
 ```
@@ -533,7 +575,7 @@ line to run and not an investigation.
 the deadline ended the run, not which signal did it.
 
 **No sudo.** `diskutil apfs addVolume` and `diskutil apfs deleteVolume` on the
-boot container are the ordinary user's to run, measured on the Studio (macOS 26,
+boot container are the ordinary user's to run, measured on the bench (macOS 26,
 arm64): rule 2 holds here as it does everywhere else, and a verb
 that needed root would be a different thing than the one measured.
 
@@ -623,7 +665,7 @@ The disposable-volume implementation serializes creation and verifies cleanup.
 
    exit 125. The cause is **outside this tool**, and was isolated without it: an
    `addVolume` that runs while another one is running leaves the new volume's
-   root `root:wheel drwxr-xr-x` instead of the caller's `glenn:staff
+   root `root:wheel drwxr-xr-x` instead of the caller's `the caller:staff
    drwxrwxr-x`, and it **does not settle** — still denied two seconds later.
    Uncontended, the root is the caller's and writable the instant `diskutil
    info` reports a mount point. The same four runs staggered twelve seconds
@@ -685,7 +727,7 @@ The disposable-volume implementation serializes creation and verifies cleanup.
 
 3. **A reaper is tested against the real listing, never an assumed one.**
    `diskutil apfs list` draws a tree. A trim set containing only `|`, `+`, `-`,
-   `<` and a space misses the `>` that opens each volume record and can report
+   `<` and a blank misses the `>` that opens each volume record and can report
    `SANDBOX REAP OK volumes=0` while a volume remains. The record begins:
 
    ```
@@ -695,7 +737,7 @@ The disposable-volume implementation serializes creation and verifies cleanup.
    Without trimming `>`, this becomes `> Volume disk3s7 …` and does not match
    a reader expecting `Volume`. **A
    reaper that reports a dirty machine clean is worse than no reaper**, so the
-   listing is parsed against a fixture copied off the Studio verbatim — the tree
+   listing is parsed against a fixture copied off the bench verbatim — the tree
    characters are the whole point — and that fixture holds `Macintosh HD` one
    record above the leaked volume, so the test that proves the parser reads is the
    same test that proves it never returns a volume this tool did not make.
@@ -919,7 +961,7 @@ remedy line, and nothing is applied and nothing is dropped.
 card runner's shell has no tty and a password prompt there is a hang nobody sees.
 It is the one command these verbs execute, behind one interface, which is why the
 whole contract above is unit-tested with **no packet, no `nft` and no `sudo`**:
-the resolver is a fake table and the privileged command is a recorder. Johnny's
+the resolver is a fake table and the privileged command is a recorder. The reviewer's
 page asks for exactly that ("unit test feeds a fake resolver + a fake connect"),
 and the one real probe — `github.com:443` connects, `example.com:443` is denied —
 is nightly, on a bench, never in this suite.
@@ -1046,7 +1088,9 @@ range. This departure from the conventions preserves the child's exit status.
 
 The reservation is ambiguous, as it is in `env(1)`: a wrapped command that
 itself exits 125, 126 or 127 — **and on darwin 71** — is indistinguishable from
-the tool's own refusal by exit status alone. The tool's refusals always print a
+the tool's own refusal by exit status alone. A wrapped command that itself
+exits 128+N (for example 143) is likewise indistinguishable from one killed by
+signal N. The tool's refusals always print a
 `SANDBOX REFUSED` line to stderr and the command's do not, and a status the
 command returned is announced after it ends by `SANDBOX DONE exit=<n>`, the last
 line the tool writes; so a caller that needs to tell them apart reads the line,
@@ -1154,7 +1198,7 @@ and opens nothing. `SANDBOX OK` names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
 task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
-path holds a space reaches a reader escaped; a consumer that compares it with a
+path holds a blank reaches a reader escaped; a consumer that compares it with a
 path it holds decodes that field first.
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
@@ -1478,7 +1522,7 @@ directory is its own tree and not a subdirectory of one.
 `-D` parameter escaping is still a live risk and not a formality: one measured
 run of a multi-line profile with seven parameters printed `invalid data type of
 path filter; expected pattern, got boolean` (exit 65) because a referenced
-`(param ...)` had no `-D`, and a path containing a space and a paren aborted a
+`(param ...)` had no `-D`, and a path containing a blank and a paren aborted a
 run (exit 134). Every param the filled profile names must be passed; that, and
 what the tool does with metacharacters in a path, is item 2 of **to verify at
 build**.
@@ -1893,9 +1937,10 @@ Each item is a claim in this document that was written from documentation and
 must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
-1. That the measured three-service `mach-lookup` set
+1. That the measured `mach-lookup` set
    (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
-   `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
+   `com.apple.system.logger`, and `com.apple.trustd.agent` for Go's TLS, measured
+   2026-10-04), with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
    `(allow mach-lookup)` is forbidden and is not the fallback, while
@@ -1904,7 +1949,7 @@ that cannot confirm one changes this document rather than asserting it.
 2. `-D` parameter escaping, which is a live risk and not a formality: one
    measured run of a multi-line profile with seven parameters printed
    `invalid data type of path filter; expected pattern, got boolean`, and a
-   path containing a space and a paren aborted the run (134). Decide from the
+   path containing a blank and a paren aborted the run (134). Decide from the
    measurement whether the tool refuses paths carrying SBPL metacharacters,
    changes how parameters are grouped, or both.
 3. Landlock syscall numbers as used from Go's `syscall` package on both
@@ -2060,7 +2105,7 @@ One per rule:
     environment variable and no file can turn the wall off either — the test
     sets every plausible name and the tool still sandboxes.
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives
-    137; an argument containing a space, a quote, a `$` and a `;` arrives in
+    137; an argument containing a blank, a quote, a `$` and a `;` arrives in
     the child's argv byte-for-byte; stdout and stderr are not interleaved by
     the tool. Per platform: on linux the command is a **child with a pid of its
     own** (the test reads `/proc/self/stat` from the wrapped command and

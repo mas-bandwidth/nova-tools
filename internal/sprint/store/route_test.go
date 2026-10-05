@@ -434,7 +434,7 @@ func TestAPinnedCardLeavesTheRouteIndex(t *testing.T) {
 func TestATierOfOneRouteTakesItAndTheIndexMoves(t *testing.T) {
 	t.Parallel()
 	h := tierHarness(t, map[string][]string{"flash": {"a"}, "pro": {"p", "q"}})
-	h.addReady("s1", 3, briefOf("pro", "")) // flash first: dealt on flash's one route
+	h.addReady("s1", 3, briefOf("flash", "")) // a flash card: dealt on flash's one route
 	h.must(DealStep(sprint.DealReq{}))
 	assert.Equal(t, []string{"a", "a", "a"}, h.dealtRoutes("s1", 3))
 	assert.Equal(t, "3", h.routeIndexOf("flash"))

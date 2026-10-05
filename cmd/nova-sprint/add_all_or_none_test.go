@@ -107,7 +107,7 @@ func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 	cards := func(n int) func(*testApp) {
 		// pro: two readers
 		return func(ta *testApp) {
-			ta.ok(fmt.Sprintf("add --stream s1 --count %d --brief-file %s", n, proBriefFile(t)))
+			ta.ok(fmt.Sprintf("add --stream s1 --count %d --one --brief-file %s", n, proBriefFile(t)))
 		}
 	}
 	for _, tc := range []struct {

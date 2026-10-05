@@ -71,7 +71,7 @@ func TestConnectIsHelloAlone(t *testing.T) {
 	}
 	defer s.Close()
 	if err := s.Client().Get(context.Background(), "k").Err(); err != redis.Nil {
-		require.True(t, err == redis.Nil, "get: %v", err)
+		require.Equal(t, redis.Nil, err, "get: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()

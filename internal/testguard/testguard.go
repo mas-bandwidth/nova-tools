@@ -250,7 +250,7 @@ func resolve(p string) string {
 }
 
 // commandLine renders the child as one line, every word quoted, so a script on
-// stdin or an argument holding a space cannot break the panic into two lines a
+// stdin or an argument holding whitespace cannot break the panic into two lines a
 // reader has to reassemble.
 func commandLine(program string, args []string) string {
 	var b strings.Builder

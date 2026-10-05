@@ -30,7 +30,7 @@ func TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne(t *testing.T) {
 	require.Equal(t, 0, code, "code %d out %q err %q", code, out.String(), errOut.String())
 	require.Equal(t, 0, errOut.Len(), "code %d out %q err %q", code, out.String(), errOut.String())
 	require.True(t, strings.HasPrefix(out.String(), "CI RECEIPT mas-bandwidth/nova-tools sha="+receiptSHA+" run=42 workflow=CI conclusion=success pr=7 ev="), "code %d out %q err %q", code, out.String(), errOut.String())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	rdb := redis.NewClient(&redis.Options{Addr: addr})
 	defer rdb.Close()

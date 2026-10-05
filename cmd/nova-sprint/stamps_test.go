@@ -13,7 +13,7 @@ func TestQueueShowsTheStamps(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	dealt := ta.a.now().UTC().Format(time.RFC3339)
 	ta.a.sleep(time.Minute)

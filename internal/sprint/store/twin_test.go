@@ -206,7 +206,7 @@ func TestAWritingPartsExchangesArePinned(t *testing.T) {
 			got[k] = d
 		}
 	}
-	want := map[string]int{"fence": 2, "shapes": 1, "open": 1, "coord": 1, "changes": 1, "readset": 1, "queue": 1, "acquire": 1, "apply": 1, "release": 1}
+	want := map[string]int{"fence": 2, "shapes": 1, "open": 1, "coord": 1, "kv": 1, "changes": 1, "readset": 1, "queue": 1, "acquire": 1, "apply": 1, "release": 1} // kv: the seat record, read with the coordinator (the seat's generation)
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "a writing part's exchanges: %v, want %v", got, want)
 }
 
@@ -236,7 +236,7 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	// its acquire, one apply for each table it writes, its release; the ask
 	// also catches the readers table up from its change stream; the readers'
 	// beats and holds are read once by the tick, before its parts (first read)
-	want := map[string]int64{"work/drain": 8, "readers/ask": 9}
+	want := map[string]int64{"work/drain": 9, "readers/ask": 10} // one more each since 2026-10-04: the seat record (the seat's generation), read with the coordinator
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 }
 

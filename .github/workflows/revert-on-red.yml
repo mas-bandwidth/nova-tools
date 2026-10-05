@@ -7,8 +7,9 @@
 # one issue naming it, and post ONE comment on the merged pull request naming
 # the revert. It pushes nothing to main: the verb's `--push-revert` (the direct push) is NOT
 # set here, and turns on only after this pull request form has fired correctly once on a
-# real red push. This workflow enables no auto-merge and lands nothing itself (Glenn,
-# 2026-09-18: nothing reaches the dev merge queue but a batch); a person merges the revert.
+# real red push. This workflow enables no auto-merge and lands nothing itself
+# (docs/STANDARD.md section 9, rule 1: nothing reaches the dev merge queue but a batch);
+# a person merges the revert.
 #
 # The guards that keep it from ever fighting itself, all a skip with a notice
 # and exit 0 rather than a failure:

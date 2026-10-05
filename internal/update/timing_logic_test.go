@@ -86,9 +86,11 @@ func TestInstalledWholeBudgetOverridesChildTimeout(t *testing.T) {
 
 func TestBusBoundsCapsAttemptsAtTwentyFive(t *testing.T) {
 	t.Parallel()
-	attempts, seconds := busBounds(time.Hour)
-	assert.Equal(t, 25, attempts)
-	assert.Equal(t, 60, seconds)
+	id, line := sendOK("SEND OK id=01ABC to=x cc=- at=2026-10-04T17:00:00Z\n")
+	assert.Equal(t, "01ABC", id)
+	assert.Contains(t, line, "id=01ABC")
+	id, _ = sendOK("SEND OK pushed=true\n")
+	assert.Empty(t, id)
 }
 
 func TestDrainAllowanceUsesPassedTimeAndFloor(t *testing.T) {

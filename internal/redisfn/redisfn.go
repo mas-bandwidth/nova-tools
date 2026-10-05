@@ -2,7 +2,7 @@
 Package redisfn builds, loads and checks a Redis function library from Lua
 source held in a file system, which for a tool is the Lua it embeds. It knows
 no library by name: a tool describes its own with a Library value and calls
-Source, Digest, Functions, Load, Check, Ensure and LoadMissing on it.
+Digest, Registered, Check, Ensure and LoadMissing on it.
 
 # The source
 
@@ -45,8 +45,8 @@ every other refusal, come before the store is touched; each wraps ErrRefused.
 # Line numbers
 
 Redis names a failing line of the library as user_function:<n>, counted in
-the text above. Locate maps that line back to its file and the line there,
-and Explain does the same to an error's text. A file's header says where the
+the text above; the note a failed call adds to an error names the file and
+the line it came from. A file's header says where the
 file starts: its line 1 is two lines below the header, after the do, so the
 same can be done by hand from the library's code as the store returns it
 (FUNCTION LIST WITHCODE). A carriage return is refused in a file: Lua counts
@@ -55,16 +55,16 @@ line number has to mean one thing.
 
 # The store
 
-Load replaces the library with one command, FUNCTION LOAD REPLACE, after
+A load replaces the library with one command, FUNCTION LOAD REPLACE, after
 which the store holds the whole library it held before or the whole of the
 new one, never a part of either. Check reads the library's code back from
-the store and compares it with Source: the code is the library's identity,
+the store and compares it with its source: the code is the library's identity,
 and no key, no counter and no answer of a function stands in for it.
 
 There are two ways to put a library on a store when it is not there, and
 they differ in what they do to a library that is:
 
-  - Ensure is the deployer's: Check, and then Load when the store does not
+  - Ensure is the deployer's: Check, and then a load when the store does not
     hold this code, so it replaces other code under the name. It is for the
     one place that deploys.
   - LoadMissing is everyone else's: it loads only when the store holds no
@@ -104,7 +104,7 @@ import (
 )
 
 // MaxSourceBytes is the largest source a library may have, 4 MiB: a library
-// whose Source would be longer is refused. Check reads the whole source back
+// whose source would be longer is refused. Check reads the whole source back
 // from the store on every call, so the bound is what one Check may cost. The
 // largest library lifted into this form is under 1 MiB.
 const MaxSourceBytes = 4 << 20
@@ -147,7 +147,7 @@ type Library struct {
 
 	// Glob names the files of Files that belong to the library, in the
 	// syntax of path.Match: "lua/*.lua". Every match must be a file that can
-	// be read and that holds more than white space.
+	// be read and that holds more than whitespace.
 	Glob string
 
 	// Prelude is Lua placed before the first file, outside every file's
@@ -157,7 +157,7 @@ type Library struct {
 
 	// Remedy is what an operator does to put this library on the store, in
 	// the tool's own words ("mytool fn load --redis <addr>"). Check's
-	// error ends with it. When it is empty the error names Load.
+	// error ends with it. When it is empty the error names Ensure.
 	Remedy string
 
 	// Bound is the longest one call of Load, Check, Ensure or LoadMissing
@@ -204,48 +204,15 @@ func DigestOf(source string) string {
 	return hex.EncodeToString(sum[:])[:DigestLength]
 }
 
-// Source returns the library's whole text, the argument of FUNCTION LOAD. It
-// is a function of the name, the prelude and the matched files' names and
-// bytes and of nothing else: not of the order in which the file system lists
-// its files, not of a clock, not of the machine. Its error refuses the
-// library and wraps ErrRefused.
-func (l Library) Source() (string, error) {
-	b, err := l.build()
-	if err != nil {
-		return "", err
-	}
-	return b.source, nil
-}
-
-// Digest returns DigestOf(Source): the identity of the library this binary
-// was built with, which changes when any byte of Source changes. Its error is
-// Source's.
+// Digest returns the digest of the library's source: the identity of the library this binary
+// was built with, which changes when any byte of the source changes. Its error is
+// the build's refusal.
 func (l Library) Digest() (string, error) {
 	b, err := l.build()
 	if err != nil {
 		return "", err
 	}
 	return b.digest, nil
-}
-
-// Functions returns the function names the library registers, as its files
-// spell them, sorted. They are the names the loader can read: those written
-// as a string in a call of redis.register_function, as its first argument or
-// as the function_name of its table. A name the library computes when it
-// loads is not among them, so the store may hold more. No two of them are the
-// same name without case, or Source would refuse the library; the error is
-// Source's.
-func (l Library) Functions() ([]string, error) {
-	b, err := l.build()
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(b.names))
-	for _, name := range b.names {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names, nil
 }
 
 // Function is one function the library registers, as Registered reads it.
@@ -259,10 +226,10 @@ type Function struct {
 	NoWrites bool
 }
 
-// Registered returns every function Functions names, with the file that
-// registers it and its no-writes flag, sorted by name. The flag is read from
-// the table form's flags; the string form registers no flags. Its error is
-// Source's.
+// Registered returns every function the library's files register, with the
+// file that registers it and its no-writes flag, sorted by name. The flag is
+// read from the table form's flags; the string form registers no flags. Its
+// error is the build's refusal.
 func (l Library) Registered() ([]Function, error) {
 	b, err := l.build()
 	if err != nil {
@@ -276,54 +243,8 @@ func (l Library) Registered() ([]Function, error) {
 	return out, nil
 }
 
-// Locate maps a line of Source, counted from 1 as Redis counts it in
-// user_function:<n>, to the file and the line it came from. Every line of
-// Source has an origin; a line outside Source is an error, and so is a
-// library that Source refuses.
-func (l Library) Locate(line int) (Origin, error) {
-	b, err := l.build()
-	if err != nil {
-		return Origin{}, err
-	}
-	o, ok := b.locate(line)
-	if !ok {
-		return Origin{}, fmt.Errorf("redisfn: library %s has %d lines and line %d is not one of them; the line may be of another version of the library", l.Name, b.lines, line)
-	}
-	return o, nil
-}
-
-// Explain returns err with the origin of every line its text names as
-// user_function:<n> written after it: "... [user_function:41 = lua/a.lua:7]".
-// The error it returns wraps err. It returns err itself when err is nil,
-// when its text names no line, and when Source refuses the library. The
-// origin is true of the library this binary was built with, so it is true of
-// an error from a store when Check says that store holds this library.
-func (l Library) Explain(err error) error {
-	if err == nil {
-		return nil
-	}
-	b, berr := l.build()
-	if berr != nil {
-		return err
-	}
-	note := b.explain(err.Error())
-	if note == "" {
-		return err
-	}
-	return &explained{err, note}
-}
-
-type explained struct {
-	err  error
-	note string
-}
-
-func (e *explained) Error() string { return e.err.Error() + " " + e.note }
-
-func (e *explained) Unwrap() error { return e.err }
-
-// built is one library assembled: its source and what Locate, Check and Load
-// need to know of it.
+// built is one library assembled: its source and what Check, the loads and
+// the error notes need to know of it.
 type built struct {
 	name    string
 	remedy  string
@@ -504,8 +425,8 @@ func (b *built) locate(line int) (Origin, bool) {
 
 var lineNamed = regexp.MustCompile(`user_function:([0-9]+)`)
 
-// explain is the note Explain writes after an error's text, or "" when the
-// text names no line.
+// explain is the note a failed call writes after an error's text, or ""
+// when the text names no line.
 func (b *built) explain(text string) string {
 	var notes []string
 	seen := map[string]bool{}
