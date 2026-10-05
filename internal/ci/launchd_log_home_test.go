@@ -34,8 +34,9 @@ var homePrefixes = []string{"{{ nova_home", "{{ ansible_env.HOME", "~/", "$HOME/
 // the file that chooses the path's default (the flag that overrides it is the
 // operator's choice).
 var goPlistWriters = map[string]struct{ defaults, snippet string }{
-	"internal/sprint/seatinstall.go": {"cmd/nova-sprint/seatinstall.go", `filepath.Join(home, "Library", "Logs"`},
-	"internal/friend/launchd.go":     {"cmd/nova-friend/main.go", `filepath.Join(w.home, "Library", "Logs"`},
+	"internal/sprint/seatinstall.go":          {"cmd/nova-sprint/seatinstall.go", `filepath.Join(home, "Library", "Logs"`},
+	"internal/friend/launchd.go":              {"cmd/nova-friend/main.go", `filepath.Join(w.home, "Library", "Logs"`},
+	"internal/sprint/seat_unit_friendsync.go": {"cmd/nova-sprint/friendsync_install.go", `filepath.Join(home, "Library", "Logs", "nova-sprint-friend-sync.log")`},
 }
 
 // isHomeLogPath reports whether a StandardOutPath value starts at a home
