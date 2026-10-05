@@ -990,6 +990,14 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
 
+### merge-tree-node
+
+```
+nova-sprint land-node --stream <s> --as <member> --repo-dir <clone> [--base <branch>] [--check <command>]
+```
+
+A worker verb. The member `--as` names is the actor. On that member's clone it merges the stream's queued cards onto the current base in rank order, runs `--check`, and bisects a red result to the longest green prefix. That prefix is pushed, never forced, to `land/<stream>`. The store records one verdict a card (`landed-in-node`, `red` with the failing gate line, `conflict` with the path, or `ready`) and the `land/<stream>` head. It writes no landed record and it does not push the base. It does not run on the Studio. `nova-sprint help land-node` prints the usage, the flags and the exit codes.
+
 ### A card re-cut as its twin
 
 A card re-cut under a new id is its old card's twin: `add --stream s1 lint-pkg-cairn-tb
