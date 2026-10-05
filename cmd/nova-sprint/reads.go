@@ -510,6 +510,9 @@ type whereView struct {
 	// its balance as the run loop's poll last read it, the spend an hour measured, and
 	// whether its routes serve; absent with no route. The text frame does not draw it.
 	Providers []sprint.ProviderRow `json:"providers,omitempty"`
+	// Reconciles is each provider's latest cost reconciliation (where_reconcile.go): its
+	// count of a day beside the sprint's records of it, and the gap; absent before the first.
+	Reconciles []sprint.ReconcileRow `json:"reconciles,omitempty"`
 	// Lanes is where --json --cards's, read for the dashboard: every machine's lanes with a
 	// holder or a queue (lane list; docs/SPEC-SPRINT.md section 18); absent when none is, and
 	// without --cards. The text frame does not draw it.
@@ -526,6 +529,9 @@ type whereView struct {
 	// Rows is where --json --rows's: every primary's row of the work table, in work
 	// order, its fields but the brief; absent without --rows.
 	Rows []primaryRow `json:"rows,omitempty"`
+	// SpendWindow is where --json --spend-since/--spend-until's: the store's records of each
+	// provider over the window (where_reconcile.go), what the release's spend gate reads.
+	SpendWindow *spendWindowView `json:"spend_window,omitempty"`
 	// Ready, Width, Buffer and Low are the ready buffer a program reads off
 	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
 	// work table's streams, the total width of the fleet members that are up,
@@ -637,6 +643,8 @@ type whereRun struct {
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
+	// spend is --spend-since and --spend-until (where_reconcile.go)
+	spend spendWindowFlags
 }
 
 type releaseFlag struct {
@@ -686,6 +694,8 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	var rel releaseFlag
 	fs.Var(&rel, "release", "show cards left per release, or for the named release")
+	var spend spendWindowFlags
+	spend.add(fs)
 	pos, err := parse(fs, args)
 	if rel.set && rel.name == "" && len(pos) == 1 {
 		rel.name = pos[0]
@@ -716,7 +726,10 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *rows && !c.json {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if why := spend.check(c.json); why != "" {
+		return refuse(stderr, "where", why)
+	}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch, spend: spend}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -783,6 +796,11 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", a.readFailed("where", err, stderr), false
 			}
 			v.Rows = rowsView(s)
+		}
+		if r.c.json && r.spend.set() {
+			if v.SpendWindow, err = spendWindowOf(ctx, st, r.spend); err != nil {
+				return "", a.readFailed("where", err, stderr), false
+			}
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)
@@ -1000,6 +1018,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	b.WriteString(strings.Join(shown, "\n"))
 	if line := facts.StoreLine(); line != "" {
 		b.WriteString("\n" + line + "\n")
+	}
+	v.Reconciles = reconcilesView(shapes)
+	if line := sprint.ReconcileLine(v.Reconciles); line != "" {
+		b.WriteString(line + "\n")
 	}
 	a.goalsView(ctx, st, &v)
 	if v.Providers, err = providersView(ctx, st, shapes, now); err != nil {

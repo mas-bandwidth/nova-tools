@@ -140,6 +140,9 @@ type coordinatorView struct {
 	Rows   []viewRow   `json:"rows,omitempty"`
 	Same   int         `json:"same,omitempty"` // with --since: items left out, unchanged
 	Gone   int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	// Reconciles is each provider's latest cost reconciliation off the fleet table
+	// (sprint.LatestReconciles), drawn as the text's COST RECONCILE line.
+	Reconciles []sprint.ReconcileRow `json:"reconciles,omitempty"`
 }
 
 // workerCard is one of a worker's cards.
@@ -546,6 +549,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	})
 	v.Cursor = cursorOf(itemDigests(v.Items), rowDigests(v.Rows))
 	v.Sum = coordinatorSum(v, merr == nil, machine)
+	v.Reconciles = sprint.LatestReconciles(s.Fleet)
 	return v, nil
 }
 
@@ -671,6 +675,9 @@ func coordinatorText(v coordinatorView) string {
 	}
 	if v.Same+v.Gone > 0 {
 		fmt.Fprintf(&b, "since: same=%d gone=%d\n", v.Same, v.Gone)
+	}
+	if line := sprint.ReconcileLine(v.Reconciles); line != "" {
+		b.WriteString(line + "\n")
 	}
 	b.WriteString("cursor=" + v.Cursor + "\n")
 	return b.String()

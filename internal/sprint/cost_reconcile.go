@@ -17,7 +17,7 @@ import (
 // fleet and friends on API plans."). `nova-sprint cost reconcile` reads each provider's own
 // count of the dollars its key used today (openrouter's GET /api/v1/key, data.usage_daily,
 // the UTC day: internal/provbalance.ReadUsage) and runs this step once; the release's spend
-// check calls it, and the run loop's hourly call (CostReconcileEvery) is still owed. This
+// check reads the same records over its window (RecordedSpendBetween), and the run loop's hourly call (CostReconcileEvery) is still owed. This
 // step sets it beside
 // the sprint's own records of that provider for the same UTC day: every consumer record on
 // every primary (a work card's take or a read's run, whatever its end) whose provider is

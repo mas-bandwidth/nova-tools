@@ -78,8 +78,9 @@ func readWhere(raw string, ok bool) (WhereRecord, bool) {
 // is of this epoch at the work table's revision (an idle tick reads the
 // shape and the record, two exchanges); else the sprint from the twin, brought
 // up to date, and the record written. A twin held by another step of this
-// process, or a clear under the read, leaves it to the next tick.
-func (st *Store) keepWhere(ctx context.Context, m Machine) error {
+// process, or a clear under the read, leaves it to the next tick. routes is the tick's
+// read of the routes, shared (nil reads them for the count alone).
+func (st *Store) keepWhere(ctx context.Context, m Machine, routes *RouteCache) error {
 	kv, err := st.kv()
 	if err != nil {
 		return nil // a store that keeps no records: where counts the cards
@@ -107,7 +108,15 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if err != nil {
 		return err
 	}
-	b, err := json.Marshal(whereOf(snap, m, st.now()))
+	// the routes, so a cost record with no tier is split by its route's (sprint.RunTier):
+	// the tick's one read of them when it made one (a nil cache reads them here)
+	set, err := st.cached(ctx, routes)
+	if err != nil {
+		return err
+	}
+	withRoutes := *snap
+	withRoutes.Routes = set.Routes
+	b, err := json.Marshal(whereOf(&withRoutes, m, st.now()))
 	if err != nil {
 		return err
 	}

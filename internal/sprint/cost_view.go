@@ -3,8 +3,10 @@ package sprint
 import (
 	"cmp"
 	"errors"
+	"maps"
 	"math/big"
-	"sort"
+	"slices"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -25,9 +27,11 @@ type TierCosts struct {
 	// PerLanded is the stream's landed cards' cost per landed card, dollars and cents
 	// rounded up (MoneyText); "-" with nothing landed or nothing priced.
 	PerLanded string `json:"per_landed"`
-	// CostByTier is the stream's spend by the tier each attempt and read ran on, dollars
-	// and cents rounded up, over every card of the stream; a record with no tier is
-	// "untiered".
+	// CostByTier is the stream's spend by the tier each attempt and read ran on, over every
+	// card of the stream, accounting for every dollar of TotalCost: a record with no tier
+	// takes its route's (RunTier), the records past a card's list bound take the card's, and
+	// the cents are split so the tiers sum to TotalCost exactly (splitCents); "untiered" only
+	// for a record with no tier, no route and a card with none.
 	CostByTier map[string]string `json:"cost_by_tier,omitempty"`
 	// TotalCost is the stream's complete recorded spend: every take and read of every card
 	// of it in any column, landed or not, at each record's charged figure (the harness's
@@ -73,7 +77,17 @@ func StreamTierCosts(s *Snapshot) map[string]TierCosts {
 
 func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}}
+	routes := map[string]string{}
+	for _, r := range s.Routes {
+		routes[r.Name] = r.Tier
+	}
 	byTier := map[string]*big.Rat{}
+	add := func(tier string, usd *big.Rat) {
+		if byTier[tier] == nil {
+			byTier[tier] = new(big.Rat)
+		}
+		byTier[tier].Add(byTier[tier], usd)
+	}
 	var landedCost []string
 	var allCost []string
 	landed := 0
@@ -91,21 +105,27 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			}
 			// the card's whole record, whatever its column: every take and read behind it,
 			// the records past the list's bound included (FieldCostTotal)
-			tot := CardCostOf(c).Total
+			cc := CardCostOf(c)
+			tot := cc.Total
 			if tot.Charged != "" {
 				allCost = append(allCost, tot.Charged)
 			}
 			t.UnpricedRuns += tot.Records - tot.ChargedOf
-			for _, con := range CardCostOf(c).Consumers {
+			listed := new(big.Rat)
+			for _, con := range cc.Consumers {
 				usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
 				if err != nil || usd == nil {
 					continue
 				}
-				tier := cmp.Or(con.Tier, "untiered")
-				if byTier[tier] == nil {
-					byTier[tier] = new(big.Rat)
+				listed.Add(listed, usd)
+				add(RunTier(routes, con, c), usd)
+			}
+			// the records past the list's bound are in the card's total and in no list: they
+			// ran on the card's tier, and without them the tiers would not sum to the total
+			if all, err := amountOf(tot.Charged); err == nil && all != nil {
+				if rest := new(big.Rat).Sub(all, listed); rest.Sign() != 0 {
+					add(cmp.Or(attemptTier(c), untiered), rest)
 				}
-				byTier[tier].Add(byTier[tier], usd)
 			}
 		}
 	}
@@ -119,18 +139,85 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			t.TotalCost = cardcost.Cents(total)
 		}
 	}
-	tiers := make([]string, 0, len(byTier))
-	for tier := range byTier {
-		tiers = append(tiers, tier)
-	}
-	sort.Strings(tiers)
-	for _, tier := range tiers {
-		t.CostByTier[tier] = cardcost.Cents(byTier[tier])
-	}
+	maps.Copy(t.CostByTier, splitCents(byTier))
 	if unrec := UnreconciledSpend(s); unrec > 0 {
 		t.Unreconciled = cardcost.Cents(new(big.Rat).SetFloat64(unrec))
 	}
 	return t
+}
+
+// untiered is the tier of a run with no tier, no route and a card with none.
+const untiered = "untiered"
+
+// RunTier is the tier a cost record ran on: the tier it recorded, else its route's (the
+// route row's tier, by name in routes, else the tier the route's name begins with: pro-*,
+// flash-*, heavy-*, frontier-*), else the card's tier (attemptTier), else "untiered".
+func RunTier(routes map[string]string, con Consumer, c *Card) string {
+	if con.Tier != "" {
+		return con.Tier
+	}
+	if r := cmp.Or(con.Route, con.Usage.Route); r != "" {
+		if tier := routes[r]; tier != "" {
+			return tier
+		}
+		for _, tier := range cardhdr.Routes {
+			if strings.HasPrefix(r, tier+"-") {
+				return tier
+			}
+		}
+	}
+	return cmp.Or(attemptTier(c), untiered)
+}
+
+// attemptTier is the tier the card's attempt ran on: the tier it is pinned to, else the tier
+// the deal put it on; "" when it has neither.
+func attemptTier(c *Card) string {
+	if c == nil {
+		return ""
+	}
+	return cmp.Or(c.F(FieldTier), c.F(FieldTierNow))
+}
+
+// splitCents is each tier's dollars as money strings that sum to the whole rounded up to
+// the cent (cardcost.Cents of the sum): each tier's cents rounded down, and the cents left
+// given one each to the tiers with the largest remainders, ties by name.
+func splitCents(byTier map[string]*big.Rat) map[string]string {
+	out := map[string]string{}
+	if len(byTier) == 0 {
+		return out
+	}
+	hundred := big.NewRat(100, 1)
+	whole := new(big.Rat)
+	type part struct {
+		tier  string
+		cents *big.Int
+		frac  *big.Rat
+	}
+	var parts []part
+	given := new(big.Int)
+	for _, tier := range slices.Sorted(maps.Keys(byTier)) {
+		c := new(big.Rat).Mul(byTier[tier], hundred)
+		whole.Add(whole, c)
+		down := new(big.Int).Div(c.Num(), c.Denom()) // floor, for a negative part too
+		parts = append(parts, part{tier, down, new(big.Rat).Sub(c, new(big.Rat).SetInt(down))})
+		given.Add(given, down)
+	}
+	want := new(big.Int).Div(whole.Num(), whole.Denom())
+	if !whole.IsInt() {
+		want.Add(want, big.NewInt(1))
+	}
+	left := new(big.Int).Sub(want, given).Int64()
+	order := slices.Clone(parts)
+	slices.SortStableFunc(order, func(a, b part) int { return b.frac.Cmp(a.frac) })
+	extra := map[string]int64{}
+	for i := 0; left > 0 && len(order) > 0; i, left = i+1, left-1 {
+		extra[order[i%len(order)].tier]++
+	}
+	for _, p := range parts {
+		c := new(big.Int).Add(p.cents, big.NewInt(extra[p.tier]))
+		out[p.tier] = "$" + new(big.Rat).SetFrac(c, big.NewInt(100)).FloatString(2)
+	}
+	return out
 }
 
 // errBadAmount is a dollar amount that is no decimal.

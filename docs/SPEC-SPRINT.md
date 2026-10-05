@@ -59,8 +59,14 @@ the briefs carry), on each `tables.work[<stream>]` row `per_landed` (every table
 cell stays a string, the shape the dashboard's pull decodes), and `stream_costs`
 beside the tables, each stream's `tiers` (its cards by tier) and `cost_by_tier`, its spend by the
 tier each attempt and read ran on (the cost records' tier, not the card's
-ceiling: a flash card escalated to pro shows both; a record with no tier is
-`untiered`), money strings as the cost column shows them. All of it is counted
+ceiling: a flash card escalated to pro shows both), money strings as the cost column shows them.
+**The split accounts for every dollar:** a record with no tier takes its route's (the route
+row's tier, else the tier its route's name begins with, `pro-*`, `flash-*`, `heavy-*`,
+`frontier-*`), else the card's (its pinned tier, else the tier the deal put it on); `untiered`
+only when none of these exists; the records past a card's list bound, in its total and in no
+list, take the card's tier; and the cents are split so the tiers sum to the stream's
+`total_cost` exactly (each tier rounded down, the cents left to the largest remainders)
+(`TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`). All of it is counted
 by the tick from the sprint it reads anyway and kept in the where record
 (store.WhereRecord), never read card by card at `where`; before the first tick
 of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
@@ -1331,8 +1337,22 @@ and one line per provider is printed, `COST provider=<p> day=<d> provider_usd=<$
 gap=<$> share=<n>%` or `COST provider=<p> unknown: <why>`, then `COST RECONCILE OK
 providers=<n> notes=<n>` (with `--json`, the providers' records and the notes written; with
 no provider named by a route, `providers=0` and nothing written; with `--dry-run`, the same
-lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`); the
-release's spend check calls it (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
+lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`)
+(`TestCostReconcileSetsEachProvidersDayBesideTheRecords`). **The release's spend check**
+(SPEC-RELEASE section 14) sets the same records over a release's window beside each provider's
+own count of it (`internal/sprint/costreconcile_window.go`, `sprint.RecordedSpendBetween`: per
+provider, the dollars charged, the tokens counted, the records and the records unpriced, over
+`[from, to)`), and `nova-update release cut` refuses on a gap over 5%
+(`TestTheRecordsOfAWindowAreThatWindowsOnly`). The cut reads them through **`nova-sprint where
+--json --spend-since <t> --spend-until <t>`** (RFC 3339 or a UTC day; the two together, with
+`--json`), which adds `spend_window` `{from, to, providers: {<p>: {usd, tokens, records,
+unpriced}}}` (`TestWhereCarriesTheStoresSpendOfAWindow`). **The latest reconcile is shown:**
+`where --json` and `view coordinator --json` carry `reconciles`, each provider's last
+reconciliation off the fleet table (`provider`, `at`, `known`, `note`, `day`, `provider_usd`,
+`records_usd`, `gap_usd`, `share`, `over`: past 5% and $1.00), and their text a line `COST
+RECONCILE <p> day=<d> provider=<$> records=<$> gap=<$> (<n>%)[ OVER]; ...` (`<p> unknown:
+<why>` for a provider never read); absent before the first reconciliation
+(`TestWhereAndViewCoordinatorShowTheLatestReconcilePerProvider`).
 **Not yet run by the loop:** the read when `nova-sprint run` begins and every hour after
 (outside every tick, as the balance poll does), with the judgment's entry in `Decisions` and
 its line in the help, is owed; until it lands a read is written only when the verb runs.

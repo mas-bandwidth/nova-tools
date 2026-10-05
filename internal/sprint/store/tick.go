@@ -700,7 +700,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		}
 		// a verb moves cards while the machine is STOPPED: where's record
 		// follows them
-		if err := st.keepWhere(ctx, m); err != nil {
+		if err := st.keepWhere(ctx, m, nil); err != nil {
 			return res, fmt.Errorf("where: %w", err)
 		}
 		now := st.now()
@@ -710,7 +710,10 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		hb.Looked = now
 		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
-	seen, err := st.tick(ctx, m, hb, &res)
+	// the routes, read once a tick: by its first part that deals or checks, and by the
+	// where record's count after (where.go)
+	routes := &RouteCache{}
+	seen, err := st.tick(ctx, m, hb, &res, routes)
 	if err == nil && res.Halted == "" && res.Done == "" {
 		// The reminder duty is a part too: it begins only while RUNNING.
 		mt := st.meter()
@@ -732,7 +735,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	if err == nil && res.Stale == "" {
 		// where's record counted from what the tick left (where.go)
 		mt := st.meter()
-		if werr := st.keepWhere(ctx, m); werr != nil {
+		if werr := st.keepWhere(ctx, m, routes); werr != nil {
 			err = fmt.Errorf("where: %w", werr)
 		}
 		res.Times = append(res.Times, mt.part("", "where"))
@@ -847,7 +850,7 @@ func (st *Store) look(ctx context.Context) (Heartbeat, []ntable.Table, error) {
 // finish what was due (a part that lost to other writers, a stale epoch, a
 // halt, or moves due past a bound) leaves a full read due (Full zero), so the
 // next tick reads the state and does the rest.
-func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickResult) (Heartbeat, error) {
+func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickResult, routes *RouteCache) (Heartbeat, error) {
 	looked := st.meter()
 	f, err := st.B.ReadFence(ctx)
 	if err != nil {
@@ -988,7 +991,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates, routes: routes}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
 	if updates == nil {
@@ -1110,7 +1113,7 @@ type tickRun struct {
 	// unshown says a part that brings the display cells up to date was
 	// passed over after a part ran: the tick's end brings them up to date.
 	unshown bool
-	routes  RouteCache // read once, by the tick's first part that deals or checks
+	routes  *RouteCache // read once, by the tick's first part that deals or checks (and the where record's count)
 	// readers is each reader's state as the tick's first read found it (nil: a
 	// store that keeps no beats).
 	readers map[string]string
@@ -1149,7 +1152,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			// deal's judgment of reads whose tier no route serves (route.go,
 			// readRouteMissing) has nothing else to show it; read once a tick, the
 			// cache the parts share
-			set, err := t.st.cached(t.ctx, &t.routes)
+			set, err := t.st.cached(t.ctx, t.routes)
 			if err != nil {
 				t.err = fmt.Errorf("tick %s: %w", part.Name, err)
 				return tickFailed
@@ -1212,7 +1215,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
 		// the deal and the ask draw from the routes (a read card's route,
 		// route.go readRouteOf), and the check asks what the next deal does
-		step.Routes, step.RouteCache = routesPart(part.Name), &t.routes
+		step.Routes, step.RouteCache = routesPart(part.Name), t.routes
 		// the ask, and the parts that ask what the ask does, plan with the readers' states
 		step.Readers = part.Name == "ask" || part.Name == "check" || part.Name == sprint.PartLevelReads
 		step.ReaderStates = t.readers
