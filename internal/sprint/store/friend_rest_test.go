@@ -36,8 +36,7 @@ func TestAFriendsCardIsNeverWithdrawnForARestingRoute(t *testing.T) {
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Class: "flash"}})
 	require.NoError(t, err)
 	beatTick := func() {
-		_, err := h.st.FriendBeat(h.ctx, "amy")
-		require.NoError(t, err)
+		h.up("amy")
 		h.machine()
 	}
 	h.startMachine() // every provider out of credit and no friend up stopped it

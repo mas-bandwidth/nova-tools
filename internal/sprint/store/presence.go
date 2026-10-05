@@ -509,3 +509,40 @@ func (st *Store) orderFleet(ctx context.Context, shape ntable.Table, status map[
 	}
 	return true, ro.RowsOrder(ctx, shape.Name, want)
 }
+
+// friendFinishKey is when a card of the friend's last finished, working to
+// done (FriendFinished): the evidence of her session that a finish is
+// (sprint.FriendEvidence), beside her beat, which is none.
+func friendFinishKey(friend string) string { return "friend-finish:" + friend }
+
+// FriendFinished records that a card of the friend's finished at, working to
+// done, from a report her session wrote (friend sync's collect): her row reads
+// up on it for sprint.FriendFinishWindow. An older finish than the record's
+// writes nothing, and a beat never writes it.
+func (st *Store) FriendFinished(ctx context.Context, friend string, at time.Time) error {
+	kv, err := st.rootKV()
+	if err != nil {
+		return err
+	}
+	at = at.UTC().Truncate(time.Second)
+	if prev, err := st.FriendFinishedAt(ctx, friend); err != nil || !at.After(prev) {
+		return err
+	}
+	return kv.SetKey(ctx, friendFinishKey(friend), at.Format(time.RFC3339))
+}
+
+// FriendFinishedAt is when a card of the friend's last finished, zero when
+// none has or the record cannot be read.
+func (st *Store) FriendFinishedAt(ctx context.Context, friend string) (time.Time, error) {
+	kv, err := st.rootKV()
+	if err != nil {
+		return time.Time{}, err
+	}
+	raw, ok, err := kv.GetKey(ctx, friendFinishKey(friend))
+	if err != nil || !ok {
+		return time.Time{}, err
+	}
+	// ignored: an unreadable record is no finish, which the next finish replaces
+	at, _ := time.Parse(time.RFC3339, raw)
+	return at, nil
+}

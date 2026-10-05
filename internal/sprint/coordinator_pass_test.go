@@ -23,6 +23,9 @@ import (
 type passRig struct {
 	*holdRig
 	pongs map[string]time.Time
+	// answered is each friend's last wake ping answer the rig recorded (friend health):
+	// the store renews only on a newer one.
+	answered map[string]time.Time
 }
 
 // passPongBefore is how long before the rig starts each friend's session last answered.
@@ -30,14 +33,22 @@ const passPongBefore = 5 * time.Minute
 
 func newPassRig(t *testing.T) *passRig {
 	t.Helper()
-	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}}
+	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}, answered: map[string]time.Time{}}
+	rows, err := r.st.FriendRows(r.ctx, r.clock())
+	require.NoError(t, err)
+	for _, row := range rows {
+		if row.Health != nil {
+			r.answered[row.Name] = row.Health.Seen
+		}
+	}
 	r.tick(0)
 	return r
 }
 
 // tick moves the clock by d, beats everyone (each friend with her pong, and her session
 // active, as on a long turn: the stall ladder, friend_stall.go, leaves her be, and the
-// pass alone judges her) and runs one tick.
+// pass alone judges her), records each pong as a wake ping her session answered (her
+// beat is no evidence: she is up only on that answer) and runs one tick.
 func (r *passRig) tick(d time.Duration) {
 	r.t.Helper()
 	r.mu.Lock()
@@ -52,6 +63,11 @@ func (r *passRig) tick(d time.Duration) {
 	for f, pong := range r.pongs {
 		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil, pong)
 		require.NoError(r.t, err)
+		if pong.After(r.answered[f]) {
+			_, _, _, err = r.st.FriendHealth(r.ctx, f, "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: pong, Generation: sprint.FirstSeatGeneration}, "")
+			require.NoError(r.t, err)
+			r.answered[f] = pong
+		}
 	}
 	_, err := r.st.Tick(r.ctx)
 	require.NoError(r.t, err)

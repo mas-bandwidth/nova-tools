@@ -61,6 +61,7 @@ func TestRunReconcilesFriendsEveryTick(t *testing.T) {
 	t.Run("a phantom working count is returned by the next tick, one history line a card", func(t *testing.T) {
 		t.Parallel()
 		ta, root := tickReconcileApp(t, 4)
+		ta.a.sleep(sprint.FriendPongWindow) // her session's pong is out of its window: down, so the returned cards wait in ready
 		writeTestQueueFile(t, ta, root, "amy", `{"tasks":[]}`)
 		out := runTicks(t, ta, 1)
 		for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {

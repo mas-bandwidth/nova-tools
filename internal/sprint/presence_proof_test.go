@@ -9,26 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A friend whose beat carries a session proof older than FriendProofLive is down,
-// however fresh the beat: her daemon beats and her session no longer answers, so
-// the deal, which deals only to a friend up, gives her nothing. A beat carrying no
-// proof is judged by the beat alone (docs/SPEC-FRIEND.md, The push proof).
-func TestAFriendWhoseSessionProofLapsedIsDown(t *testing.T) {
+// A friend's beat, whatever session proof it carries, never makes her up: the beat proves
+// a daemon, and she is up only on evidence from her own session (FriendEvidence;
+// docs/SPEC-FRIEND.md, "Presence is her session's evidence"). The proof a beat carries is
+// kept and read, and is none.
+func TestAFriendWhoseBeatCarriesAProofIsStillDownWithoutEvidence(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 5, 22, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
 		name  string
 		proof time.Time
-		want  string
 	}{
-		{"no proof carried", time.Time{}, Up},
-		{"the proof at its bound", now.Add(-FriendProofLive), Up},
-		{"the proof lapsed", now.Add(-FriendProofLive - time.Second), Down},
+		{"no proof carried", time.Time{}},
+		{"the proof at its bound", now.Add(-FriendProofLive)},
+		{"the proof lapsed", now.Add(-FriendProofLive - time.Second)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			b := Beat{At: now.Add(-time.Second), Proof: c.proof}
-			assert.Equal(t, c.want, FriendStatus(FriendPresence{Beat: b}, now))
+			assert.Equal(t, Down, FriendStatus(FriendPresence{Beat: b}, now))
 			assert.Equal(t, Held, FriendStatus(FriendPresence{Held: true, Beat: b}, now))
 		})
 	}
