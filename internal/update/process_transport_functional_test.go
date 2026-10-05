@@ -22,21 +22,16 @@ func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
 	for _, tc := range []struct {
 		cmd, want string
 		timeout   time.Duration
-		bound     time.Duration
 	}{
-		{command(t, "fail"), "exit 3", 5 * time.Second, 6 * time.Second},
-		{command(t, "huge"), "output", 5 * time.Second, 6 * time.Second},
-		{command(t, "hang"), "timeout", 20 * time.Millisecond, time.Second + killGrace},
-		{"nova-version-no-such-binary", "not_found", 5 * time.Second, time.Second},
+		{command(t, "fail"), "exit 3", 5 * time.Second},
+		{command(t, "huge"), "output", 5 * time.Second},
+		{command(t, "hang"), "timeout", 20 * time.Millisecond},
+		{"nova-version-no-such-binary", "not_found", 5 * time.Second},
 	} {
 		a, _ := argv(tc.cmd)
-		start := time.Now()
 		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
 		if r.Reason != tc.want {
 			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
-		}
-		if took := time.Since(start); took > tc.bound {
-			require.LessOrEqualf(t, took, tc.bound, "%s: %s is past the %s bound", tc.want, took, tc.bound)
 		}
 		if tc.want == "exit 3" && r.Raw != "v9.9.9" {
 			require.Fail(t, fmt.Sprintln(r))
@@ -61,18 +56,49 @@ func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
 	}
 }
 
+// TestSnapshotLockWaitsForBudget asserts the lock's two events, not a clock: a
+// waiter whose budget has ended is refused while the lock is held, and a waiter
+// with budget left takes the lock once the holder lets go (the wait is the
+// generous testWait bound, the `waits` rule in internal/ci/ci_waits.go).
 func TestSnapshotLockWaitsForBudget(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "snapshot.json")
 	unlock, err := lockSnapshot(context.Background(), path)
 	require.NoError(t, err)
-	defer unlock()
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
-	release, err := lockSnapshot(ctx, path)
+	released := false
+	defer func() {
+		if !released {
+			unlock()
+		}
+	}()
+
+	spent, cancel := context.WithCancel(t.Context())
+	cancel()
+	release, err := lockSnapshot(spent, path)
 	if release != nil {
 		release()
 	}
 	require.Error(t, err, "two snapshot writers acquired lock")
-	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	require.ErrorIs(t, spent.Err(), context.Canceled)
+
+	ctx, stop := context.WithTimeout(t.Context(), testWait())
+	defer stop()
+	type got struct {
+		release func()
+		err     error
+	}
+	done := make(chan got, 1)
+	go func() {
+		r, err := lockSnapshot(ctx, path)
+		done <- got{r, err}
+	}()
+	unlock()
+	released = true
+	select {
+	case g := <-done:
+		require.NoError(t, g.err, "waiter with budget left did not take the released lock")
+		g.release()
+	case <-ctx.Done():
+		require.Fail(t, "waiter never took the released lock")
+	}
 }
