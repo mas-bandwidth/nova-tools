@@ -2900,6 +2900,12 @@ the original failed measurement.
 **Its remedy lines.** `stream-print`: build the line as an `Out` (`tool.OK`, `tool.Refuse`, `Out.Item`, `Out.ItemText`) and return it, and put a payload the skeleton cannot render behind a verb that declares `Prints` and writes to `c.Stdout`; `flagset` and `verbflag`: declare the flags with `tool.Flags` in the verb's `Flags` func, and move a tool that is not on `internal/tool` onto it; `exit`: return the verb's `Out` and its exit, or declare `Prints` and return `tool.Exit` — only `main()` calls `os.Exit`.
 **Its narrowings.** It reads the syntax of one file: a write to `c.Stdout`, to `c.Stderr` or to a `bytes.Buffer` a line is assembled in is not a stream print (the skeleton hands those to a verb that declared `Prints`, and a buffer is a value); a stream reached through a variable, a parameter or a helper in another file (`fmt.Fprintf(w, …)`) is not seen, and the per-tool transcript and `tool-answers` walks are the net under that. A verb is exempt from `exit` only where its `Run` literal stands in the same `tool.Verb` literal whose `Flags` func calls `Prints`, so a verb built by a helper that declares `Prints` elsewhere is not exempt. A dispatch is a function that assigns the first argument's element and switches on that name with a string case; a switch on a word cut from a line is not one. Files under `testdata/` are not read, and `tools/` is not a tool package.
 
+### `transport-in-main` — transport as parameter
+
+**The rule.** Transport outside `main()` and `real*()` forbidden.
+**The test.** `TestNoTransportIsBuiltOutsideMain` (`transportinmain_class_test.go`); witness `TestTransportInMainRuleReadsTheShapes`.
+**Its allowlist.** `transport-in-main/` shards.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays
