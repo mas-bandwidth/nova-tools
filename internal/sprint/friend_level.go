@@ -68,7 +68,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	backlog := func(f string) int { return held[f] - width[f] }
 	lanes := func(f string) int { return width[f] - working[f] }
 	for _, f := range seats {
-		room[f.Name], width[f.Name] = friendRoom(f)
+		room[f.Name], width[f.Name] = friendRoom(s, f)
 		row := FriendRow(f.Name)
 		held[f.Name], working[f.Name] = friendLoad(s, f.Name)+dealt[f.Name], s.Fleet.Count(row, Working)+dealtWorking[f.Name]
 		for _, c := range s.Fleet.Cell(row, Ready) {

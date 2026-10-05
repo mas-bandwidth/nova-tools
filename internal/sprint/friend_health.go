@@ -29,7 +29,8 @@ const Asleep = "asleep"
 
 // FriendObservedDownAfter is how long a coordinator's observation of a friend
 // stands before she is down without a newer proof: the keepalive's ten
-// seconds. A friend observed is never up on her own beat again.
+// seconds, friend_observed_down_after's default (policy.go). A friend observed
+// is never up on her own beat again.
 const FriendObservedDownAfter = 10 * time.Second
 
 // HealthStates are the words an observation carries; up alone shows as up.
@@ -145,11 +146,11 @@ type FriendHealthWrite struct {
 // ObservedStatus is the friends' rule over the coordinator's observation at
 // now, for a friend observed at least once: up only when the observation's
 // word is up, under the current seat generation (an old seat's proof never
-// looks up under a new seat), with its proof under FriendObservedDownAfter
-// old and not dated after now (a negative age is no proof); down otherwise,
-// whatever finer word the row keeps.
-func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
-	if age := now.Sub(h.Seen); h.State == Up && h.Generation == generation && age >= 0 && age < FriendObservedDownAfter {
+// looks up under a new seat), with its proof under within old
+// (friend_observed_down_after, policy.go) and not dated after now (a negative
+// age is no proof); down otherwise, whatever finer word the row keeps.
+func ObservedStatus(h FriendHealth, generation uint64, now time.Time, within time.Duration) string {
+	if age := now.Sub(h.Seen); h.State == Up && h.Generation == generation && age >= 0 && age < within {
 		return Up
 	}
 	return Down
@@ -157,10 +158,12 @@ func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
 
 // FriendPresence is everything the friends' rule reads of one friend: the
 // coordinator's hold, her own beat, the coordinator's observation of her,
-// and the seat's generation now.
+// and the seat's generation now; Policy is the policy numbers as read with it
+// (friend_observed_down_after, policy.go), nil their defaults.
 type FriendPresence struct {
 	Held       bool
 	Beat       Beat
 	Health     FriendHealth
 	Generation uint64
+	Policy     PolicyValues
 }

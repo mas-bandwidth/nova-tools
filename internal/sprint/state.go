@@ -315,6 +315,9 @@ type Snapshot struct {
 	// Routes are the model tiers' routes nova-config applied to the store,
 	// read by a step that deals (route.go); nil is none.
 	Routes []Route
+	// Policy is the sprint's policy numbers as the store read them (nova-config's
+	// sprint:<name>), by name; a number it does not hold is its default (policy.go).
+	Policy PolicyValues
 	// Tiers are the tiers' route arrays nova-config applied (the tier kind), by
 	// tier, read with the routes; a tier with none deals from its enabled routes
 	// in name order (tierArray).

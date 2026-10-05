@@ -3451,7 +3451,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: `--attempts` sets the streams' attempt cap, their control cards' `attempts`, over the sprint's (section 2); `--reason` records why the read tier is set as `read_tier_reason`, and `--answers` answers the judgment `raise the read tier of the stream?`; the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
-| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--attempts <n|default>]`: also `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
+| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--attempts <n|default>] [--list]`: `--list` prints every policy number as the tick reads it now, one line each, `SETTING <name>=<value> source=<nova-config|nova-sprint set|default|compiled> default=<d> unit="<u>" range="<r>"` (nova-config once the store reads it), then `SETTINGS n=<count>`, and changes nothing (the policy numbers, below); also `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
@@ -3726,6 +3726,56 @@ when the environment names one (`wins=env:NOVA_SPRINT_REDIS_USER`, `redis-wins=e
 `resolves=yes|no` (exit 1 on no); `seat logout` removes the file (`was=recorded|none`). The code is
 `cmd/nova-sprint/storelogin.go`; `TestABareVerbOpensTheStoreWithTheSeatLoginFromSecrets` measures
 it on the in-memory store with a fake secrets reader.
+
+
+### The policy numbers
+
+The tick's policy numbers are settings (the owner, 2026-10-02: "i just want to set numbers
+as I see fit directly in nova-config"; 2026-10-03: good defaults first, then
+configurable). One table holds each number's name, kind, default (today's value), range,
+unit and meaning (internal/config/policy.go, `SprintPolicies`), and its check refuses a
+value outside the range naming the number and the range (`deal_ahead wants a whole number
+from 1 to 10 (times a member's width), or empty for its default 2; found "0"`). Every use
+site reads its number each pass through the snapshot (internal/sprint/policy.go,
+`PolicyDuration`, `PolicyCount`), never through its constant: the value the store gave
+`Snapshot.Policy` when it is in range; else, for `friend_idle`, `friend_stall_after` and
+`friend_stall_step`, the work table's property `set` writes; else the default, today's
+compiled constant (`sprint.PolicyDefaults`, held equal to the table by
+TestEveryPolicyNumberIsASettingWithItsDefault). `set --list` prints each with its value
+now and its source.
+
+Not yet: the store does not fill `Snapshot.Policy`, and nova-config's sprint row has no
+field for these numbers, so today a number is its default unless `set` changes it. The
+next layer is the store's read of nova-config's `sprint:<name>` with the routes
+(internal/sprint/store/routes.go, for every part of the tick), the readers outside the
+tick (seat check's `member_down_after` and `loop_silence`, the balance poll's
+`balance_poll_every`, the reminder duty's `remind_every`, a friend read's delivery's
+`friend_read_deadline`, the friend rows' `friend_observed_down_after`), then the sprint
+row's fields; a field before its read would take a value and ignore it.
+
+| setting | default | unit | range | what it decides |
+| --- | --- | --- | --- | --- |
+| `deal_ahead` | 2 | times a member's width | 1 to 10 | the cards the deal holds on a member or a friend, ready and working: this times its width |
+| `max_redeals` | 3 | redeals | 0 to 20 | the redeals of one work card before its next deal escalates it or raises the redeal-bound judgment |
+| `max_read_reasks` | 2 | re-asks | 0 to 20 | how often a returned read is asked again in place before it is retired |
+| `read_lease` | 10m0s | duration | 1m to 6h | the lease of a read in progress, renewed by the reader's beat |
+| `readers_window` | 10m0s | duration | 1m to 24h | how long a read may wait asked and not begun before the readers are behind |
+| `friend_read_deadline` | 2h0m0s | duration | 10m to 48h | the deadline of a read card dealt to a friend |
+| `friend_idle` | 20m0s | duration | 1m to 24h | how long a friend holding cards may show no file write before it is an alarm |
+| `friend_stall_after` | 20m0s | duration | 1m to 24h | how long a friend holding cards may show neither file write nor card progress before the stall ladder begins |
+| `friend_stall_step` | 5m0s | duration | 1m to 6h | the time between rungs of the friend stall ladder |
+| `member_down_after` | 45s | duration | 15s to 1h | how long a fleet member may go without a beat before seat check calls it DOWN |
+| `loop_silence` | 15s | duration | 5s to 1h | how long the run loop may go unseen before seat check calls it DOWN |
+| `friend_observed_down_after` | 10s | duration | 5s to 10m | how old the coordinator's up observation of a friend may be before she is down |
+| `overload_timeouts` | 3 | timeouts | 1 to 100 | the timeouts within overload_window that make a member overloaded |
+| `overload_window` | 15m0s | duration | 1m to 24h | the window the overload count is taken over |
+| `promote_cards` | 25 | cards | 1 to 1000 | the cards landed since the last promotion that make dev behind |
+| `promote_age` | 30m0s | duration | 1m to 24h | how long the oldest card landed since the last promotion may wait before dev is behind |
+| `remind_every` | 5m0s | duration | 1m to 24h | the running time between two reminders of one person's goal |
+| `balance_poll_every` | 10m0s | duration | 1m to 24h | how often nova-sprint balance reads each provider's balance |
+| `flash_gate_bound` | 15m0s | duration | 1m to 6h | the gate wall over which nova-sprint add starts a card on pro |
+| `critical_behind` | 10 | cards behind | not a setting yet | a primary with this many behind it is critical and starts on pro; read without a snapshot (IsCritical, ceilingTier, CardTiers) |
+| `rollback_window` | 15m0s | duration | not a setting yet | server switch's rollback window; its own `--window` flag |
 
 ## 12. The driver
 

@@ -498,8 +498,8 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			rec := costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 			set := map[string]string{FieldReadTake + itoa(run): rec, FieldReasked: itoa(returns)}
 			record(pr, readConsumer(s, c, run, "returned", rec))
-			if returns > MaxReadReasks {
-				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, MaxReadReasks)
+			if reasks := s.PolicyCount(PolicyMaxReadReasks); returns > reasks {
+				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, reasks)
 				set["retired"], set["retired_by"] = stamp(s.Now), "returned"
 				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
 					Changes: []Change{change(Readers, removeEntry(c, set))},

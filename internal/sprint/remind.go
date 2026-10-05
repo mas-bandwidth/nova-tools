@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"sort"
@@ -53,6 +54,9 @@ type Goal struct {
 type Goals struct {
 	People []Goal            `json:"people,omitempty"`
 	Noted  map[string]string `json:"noted,omitempty"`
+	// Every is the running time between two pushes to one person (remind_every,
+	// policy.go), as the tick read it; 0 is RemindEvery. Never stored.
+	Every time.Duration `json:"-"`
 }
 
 // Find is the person's index, -1 when there is none.
@@ -126,6 +130,11 @@ func (g Goal) Attempt() time.Time {
 // after start pushes to everyone); or RemindEvery of running time has passed
 // since it, time STOPPED not counting.
 func (g Goal) Due(now, since time.Time, stopped func(from, to time.Time) time.Duration) bool {
+	return g.dueEvery(now, since, stopped, RemindEvery)
+}
+
+// dueEvery is Due with the running time between two pushes.
+func (g Goal) dueEvery(now, since time.Time, stopped func(from, to time.Time) time.Duration, every time.Duration) bool {
 	at := g.Attempt()
 	if g.Pending || at.IsZero() || at.Before(since) {
 		return true
@@ -134,7 +143,7 @@ func (g Goal) Due(now, since time.Time, stopped func(from, to time.Time) time.Du
 	if stopped != nil {
 		d -= stopped(at, now)
 	}
-	return d >= RemindEvery
+	return d >= every
 }
 
 // FailureWhat is the words of the judgment for a person whose route fails.
@@ -176,7 +185,7 @@ func RemindNotes(s *Snapshot, g Goals, who string) Plan {
 func (g Goals) DueAt(now, since time.Time, stopped func(from, to time.Time) time.Duration) []Goal {
 	var out []Goal
 	for _, p := range g.People {
-		if p.Due(now, since, stopped) {
+		if p.dueEvery(now, since, stopped, cmp.Or(g.Every, RemindEvery)) {
 			out = append(out, p)
 		}
 	}

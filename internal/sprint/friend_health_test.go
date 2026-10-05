@@ -98,13 +98,17 @@ func TestObserveFriendPlansTheRecordOrRefuses(t *testing.T) {
 func TestObservedStatusIsUpOrDown(t *testing.T) {
 	t.Parallel()
 	up := obs(Up, h0, 2)
-	assert.Equal(t, Up, ObservedStatus(up, 2, h0), "the first proof is up at once")
-	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter-time.Second)))
-	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter)), "exactly ten seconds is down")
-	assert.Equal(t, Down, ObservedStatus(up, 3, h0), "an old seat's proof never looks up under a new seat")
-	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second)), "a proof dated after now is no proof: a negative age is not under ten seconds")
-	assert.Equal(t, Down, ObservedStatus(obs(Asleep, h0, 2), 2, h0), "asleep shows as down")
-	assert.Equal(t, Down, ObservedStatus(obs(Down, h0, 2), 2, h0))
+	assert.Equal(t, Up, ObservedStatus(up, 2, h0, FriendObservedDownAfter), "the first proof is up at once")
+	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter-time.Second), FriendObservedDownAfter))
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter), FriendObservedDownAfter), "exactly ten seconds is down")
+	assert.Equal(t, Down, ObservedStatus(up, 3, h0, FriendObservedDownAfter), "an old seat's proof never looks up under a new seat")
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second), FriendObservedDownAfter), "a proof dated after now is no proof: a negative age is not under ten seconds")
+	assert.Equal(t, Down, ObservedStatus(obs(Asleep, h0, 2), 2, h0, FriendObservedDownAfter), "asleep shows as down")
+	assert.Equal(t, Down, ObservedStatus(obs(Down, h0, 2), 2, h0, FriendObservedDownAfter))
+	// friend_observed_down_after is the bound: a longer one keeps the same proof up
+	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter), time.Minute))
+	assert.Equal(t, Up, FriendStatus(FriendPresence{Health: up, Generation: 2, Policy: PolicyValues{PolicyFriendObservedDownAfter: "1m"}}, h0.Add(FriendObservedDownAfter)))
+	assert.Equal(t, Down, FriendStatus(FriendPresence{Health: up, Generation: 2}, h0.Add(FriendObservedDownAfter)), "no policy is the default")
 }
 
 // The friends' rule over everything: the coordinator's hold wins; an observed
