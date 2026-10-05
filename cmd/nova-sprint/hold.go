@@ -41,6 +41,7 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	if !release {
 		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a friend's and a stream's working cards withdrawn to ready (default: what is begun finishes)")
 	}
+	dry := fs.Bool("dry-run", false, "check the names and the reason, print what would be held or released, and write nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
@@ -59,6 +60,10 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	}
 	if len(probs) > 0 {
 		return refuse(stderr, name, strings.Join(probs, "; "))
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
+		return 0
 	}
 	st, err := a.store(*c)
 	if err != nil {

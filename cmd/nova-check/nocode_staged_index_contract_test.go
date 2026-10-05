@@ -391,9 +391,22 @@ func noCodeStagedRefusals(t *testing.T) {
 			// NUL separators are interpreted at run time, not embedded in
 			// the script. Everything else the tool asks git -- the root
 			// test, the base detector -- is exec'd through to the real
-			// binary behind the fake.
+			// binary behind the fake. The subcommand is found by scanning
+			// argv, not by position: the tool's own git plumbing runs with
+			// -C and -c configuration overrides in front of the verb, so
+			// no fixed position is the verb.
 			bin := t.TempDir()
-			fakeBin(t, bin, "git", fmt.Sprintf(`case "$3" in
+			fakeBin(t, bin, "git", fmt.Sprintf(`sub=
+skip=0
+for a in "$@"; do
+  if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+  case "$a" in
+  -C|-c) skip=1 ;;
+  -*) ;;
+  *) sub=$a; break ;;
+  esac
+done
+case "$sub" in
   diff-index)
     printf '%s'
     exit 0
