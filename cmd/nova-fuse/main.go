@@ -571,7 +571,16 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 		return 1
 	}
 
-	if name, f, ok := b.Quarantined(surface); ok {
+	// Fail closed on the spelling status displays: oneline.Field shows a stored blank as
+	// \x20, and the natural copy of that token must not answer CLEAR for a blown surface
+	// (security#74 finding 2). Both the typed and the decoded spelling are tested.
+	name, f, ok := b.Quarantined(surface)
+	if !ok {
+		if decoded := unfield(surface); decoded != surface {
+			name, f, ok = b.Quarantined(decoded)
+		}
+	}
+	if ok {
 		fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
 			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
 		return 1
@@ -586,6 +595,55 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	}
 	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
 	return 0
+}
+
+// unfield is the inverse of oneline.Field: it decodes \xNN (one byte) and \uNNNN (one rune)
+// escapes and leaves anything that is not a well-formed escape as typed. cmdCheck uses it
+// so the spelling status displays is tested beside the spelling typed (security#74 f2).
+func unfield(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\\' && i+1 < len(s) && (s[i+1] == 'x' || s[i+1] == 'u') {
+			n := 2
+			if s[i+1] == 'u' {
+				n = 4
+			}
+			if v, ok := hexValue(s, i+2, n); ok {
+				if n == 2 {
+					out = append(out, byte(v))
+				} else {
+					out = append(out, string(rune(v))...)
+				}
+				i += 2 + n
+				continue
+			}
+		}
+		out = append(out, s[i])
+		i++
+	}
+	return string(out)
+}
+
+// hexValue reads exactly n hex digits of s at start, and reports false when there are
+// fewer than n or any is not a hex digit.
+func hexValue(s string, start, n int) (int, bool) {
+	if start+n > len(s) {
+		return 0, false
+	}
+	v := 0
+	for _, c := range []byte(s[start : start+n]) {
+		switch {
+		case c >= '0' && c <= '9':
+			v = v<<4 | int(c-'0')
+		case c >= 'a' && c <= 'f':
+			v = v<<4 | int(c-'a'+10)
+		case c >= 'A' && c <= 'F':
+			v = v<<4 | int(c-'A'+10)
+		default:
+			return 0, false
+		}
+	}
+	return v, true
 }
 
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
