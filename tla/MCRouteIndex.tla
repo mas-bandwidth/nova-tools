@@ -11,4 +11,12 @@ MCArr == [t \in {"flash", "pro"} |-> IF t = "flash" THEN <<"a", "b", "c">> ELSE 
 MCTierOf == [c \in Cards |-> IF c \in ProCards THEN "pro" ELSE "flash"]
 \* a read card is no work card's twin: the reads are left out of the symmetry
 MCSym == Permutations(Cards \ (ProCards \cup Pinned \cup Reads)) \cup Permutations(ProCards \ Reads)
+
+MCClasses == {"friends", "fleet"}
+MCApplies == [r \in {"a", "b", "c", "d", "e"} |->
+  IF r = "a" THEN {"fleet"}
+  ELSE IF r = "b" THEN {"friends"}
+  ELSE IF r = "d" THEN {"friends"}
+  ELSE {"fleet", "friends"}]
+MCClassOf == [c \in Cards |-> IF c \in ProCards THEN "friends" ELSE "fleet"]
 =============================================================================
