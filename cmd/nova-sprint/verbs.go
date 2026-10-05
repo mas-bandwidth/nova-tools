@@ -46,6 +46,7 @@ func init() {
 		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
+		{"release check", "[--json] [--streams <glob>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
@@ -1110,6 +1111,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *replaces != "" {
 		*one = true // a twin is one card
 	}
+	if why := reservedCardID(append(ids, *sentinel)...); why != "" {
+		return refuse(stderr, "add", why)
+	}
 	if *count < 0 {
 		// a negative count admitted no card and opened the stream with an OK
 		return refuse(stderr, "add", fmt.Sprintf("--count wants the number of cards to admit, at least 1, got %d", *count))
@@ -1265,6 +1269,9 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	cards := make([]sprint.CardAdd, 0, len(files))
 	for _, path := range files {
 		id := strings.TrimSuffix(filepath.Base(path), ".md")
+		if why := reservedCardID(id); why != "" {
+			return refuse(stderr, "add", path+": "+why)
+		}
 		if !sprint.ValidID(id) {
 			return refuse(stderr, "add", fmt.Sprintf("%s: the card id is the file's base name without .md, and %q is not one (letters, digits, _ and -)", path, id))
 		}
