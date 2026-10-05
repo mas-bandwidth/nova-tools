@@ -679,6 +679,20 @@ positive it accepts), and a `go` spawned through a variable command name or a
 shell is not seen at all. Full section: *The CI class test against a child `go`
 that inherits the environment*.
 
+### `never-force` — no force-push to shared refs
+
+**The rule.** Every `.go` file, shell script, `Makefile`, and `.github/workflows/*.yml` file in the repository must not use patterns that rewrite shared refs: `push --force`, `push -f`, `--force-with-lease` (unless used with `refs/heads/<personal-branch>`), `push origin +`, and `reset --hard origin/`. The allowed refs are the caller's own job branch (any `origin/<anything>` or `refs/heads/<job-id>`), `dev`, and `main`. The exception categories are test fixtures that assert the rule (code under test whose strings contain the patterns) and clone-reset scripts in `tools/ci/` that reset private clones to fetched tips.
+
+**The mistake it prevents.** A tool that rewrites a shared ref without guarding it can corrupt shared branch history. A hard reset to origin, a force push to dev, or a force push to main can undo commits other team members are working from, causing merge conflicts and lost work.
+
+**The test.** `TestNoForcePushOrHardResetOfASharedRef` (`internal/ci/never_force_class_test.go`), with `TestNeverForceVerbLineMatchesTheSpec`.
+
+**Its allowlist.** `internal/ci/never_force_allowlist.txt`, matched by file and kind; shrink-only. Rows name test fixtures and inline documentation that mention force patterns per the SPEC's exception categories.
+
+**Its remedy lines.** `remedy="remove the force-push pattern; use --force-with-lease=refs/heads/<local-branch> only for local work, never shared refs; cite docs/SPEC-CI.md"`, and `remedy="delete the stale row; the allowlist only shrinks"`.
+
+**Its narrowings.** It reads text, so any occurrence of the pattern strings is detected, including in comments, strings, and documentation. A `--force-with-lease` guard with `refs/heads/` is matched separately and not flagged as a violation. Full section: *The CI class test against force-push and hard-reset of shared refs*.
+
 ### `subproc` — every child process has a bound or a cancellable context
 
 **The rule.** Production code under `cmd/`, `internal/` and `tools/` starts a
