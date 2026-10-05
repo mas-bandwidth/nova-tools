@@ -172,7 +172,7 @@ func (app *application) cmdRowSet(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE ROW SET table=%s row=%s cols=%d trips=%d\n", pos[0], pos[1], n, trips.N())
+	fmt.Fprintf(stdout, "TABLE ROW SET table=%s row=%s cols=%d trips=%d\n", field(pos[0]), field(pos[1]), n, trips.N())
 	printReceipt(stdout, write, *receipt)
 	return 0
 }
