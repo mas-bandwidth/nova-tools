@@ -15,6 +15,10 @@ import (
 // and rolling back if a land fails within the window (docs/SPEC-SPRINT.md section 14).
 // Before the swap it runs the candidate's shadow tick against the store, read-only, and
 // refuses the swap when the shadow fails (shadow.go; install-canary-shadow-tick-r.w1).
+// It writes no unit: the server's unit (serverunit.go, server install) names the target
+// binary's path, which keeps its name across a swap, so the unit and its recorded hash
+// stay as server install wrote them, and the server, exiting 3 on its replaced binary,
+// is restarted on the new one by that unit (install-server-unit-by-verb-rb.w3).
 func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("server switch")
 	rollback := fs.Bool("rollback", false, "roll back to previous binary, or enable automatic rollback on failed land in window")
