@@ -425,7 +425,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		if r+w == 0 {
 			continue
 		}
-		why := ""
+		why, kind := "", "friend stale"
 		switch {
 		case f.Status == sprint.Down:
 			why = "is down"
@@ -436,11 +436,16 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			why = "has never reported"
 		case since > viewStaleReport:
 			why = "has not reported for " + rep
+		case f.Status == sprint.Up && !f.Active.IsZero() && now.Sub(f.Active) > s.FriendIdleAfter():
+			// her daemon answers (she beats) and her session writes nothing: the finding of
+			// 2026-10-04, a friend idle for two hours while the table said up with 8 working
+			kind = "friend idle"
+			why = "has a daemon that answers and a session that has written nothing for " + ageWord(now.Sub(f.Active))
 		}
 		if why == "" {
 			continue
 		}
-		v.Items = append(v.Items, viewItem{K: "f:" + f.Name, T: itemFriend, W: "friend stale", B: r + w,
+		v.Items = append(v.Items, viewItem{K: "f:" + f.Name, T: itemFriend, W: kind, B: r + w,
 			S:    fmt.Sprintf("%s %s and holds %d ready, %d working", f.Name, why, r, w),
 			Next: "nova-sprint friend take " + f.Name + " --all-unstarted --reason '" + f.Name + " " + strings.ReplaceAll(why, "'", "") + "'", age: since})
 	}

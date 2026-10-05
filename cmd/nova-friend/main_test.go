@@ -221,7 +221,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -268,7 +268,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -424,7 +424,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()

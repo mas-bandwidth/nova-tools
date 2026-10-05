@@ -18,6 +18,9 @@ import (
 const (
 	// PropDealtMax is the work table's property: the dealt bound, a duration.
 	PropDealtMax = "dealt_max"
+	// PropFriendIdle is the work table's property: how long a friend holding cards may
+	// show no session activity before it is an alarm, a duration.
+	PropFriendIdle = "friend_idle"
 	// PropReadTier is the work table's property: the sprint's read tier.
 	PropReadTier = "read_tier"
 	// FieldReadTier is a stream's control card's field: the stream's read tier,
@@ -45,6 +48,22 @@ func (s *Snapshot) DealtMax() time.Duration {
 		}
 	}
 	return DealtMaxDefault
+}
+
+// FriendIdleDefault is how long a friend holding cards may show no file write under her
+// working directory and outbox before it is an alarm (nova-sprint set --friend-idle).
+const FriendIdleDefault = 20 * time.Minute
+
+// FriendIdleAfter is that bound: the sprint's setting, else FriendIdleDefault.
+func (s *Snapshot) FriendIdleAfter() time.Duration {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropFriendIdle); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return FriendIdleDefault
 }
 
 // readTierSetting is the read tier set for the stream's reads: the stream's own,
@@ -81,10 +100,11 @@ func stronger(a, b string) string {
 // (brief_bound.go, AttemptsCap). An empty value leaves that setting as it is;
 // ReadTierDefault takes one off.
 type SetReq struct {
-	Streams  []string `json:",omitempty"`
-	ReadTier string   `json:",omitempty"`
-	DealtMax string   `json:",omitempty"`
-	Attempts string   `json:",omitempty"`
+	Streams    []string `json:",omitempty"`
+	ReadTier   string   `json:",omitempty"`
+	DealtMax   string   `json:",omitempty"`
+	Attempts   string   `json:",omitempty"`
+	FriendIdle string   `json:",omitempty"`
 	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
 	// stream's control card (FieldReadTierReason); Answers the judgments this answers.
 	Reason  string   `json:",omitempty"`
@@ -114,11 +134,19 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, err.Error())
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.Attempts == "" {
-		why = append(why, "nothing to set: --read-tier, --dealt-max or --attempts")
+	if r.FriendIdle != "" && r.FriendIdle != ReadTierDefault {
+		if d, err := time.ParseDuration(r.FriendIdle); err != nil || d <= 0 {
+			why = append(why, "--friend-idle wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendIdleDefault.String()+"; found "+r.FriendIdle)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.Attempts == "" && r.FriendIdle == "" {
+		why = append(why, "nothing to set: --read-tier, --dealt-max, --attempts or --friend-idle")
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
+	}
+	if len(r.Streams) > 0 && r.FriendIdle != "" {
+		why = append(why, "--friend-idle is the sprint's, not a stream's: nova-sprint set --friend-idle "+r.FriendIdle)
 	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
@@ -175,7 +203,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}, {PropAttempts, r.Attempts}} {
+	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}, {PropAttempts, r.Attempts}, {PropFriendIdle, r.FriendIdle}} {
 		if kv[1] == "" {
 			continue
 		}
@@ -196,6 +224,8 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
 	case name == PropAttempts:
 		return fmt.Sprintf("default (%d attempts on one brief)", AttemptsDefault)
+	case name == PropFriendIdle:
+		return fmt.Sprintf("default (%s)", FriendIdleDefault)
 	}
 	return "default (each card's own tier)"
 }

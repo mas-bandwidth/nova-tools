@@ -80,6 +80,10 @@ type FriendRow struct {
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
 	Report *sprint.FriendReport `json:"report,omitempty"`
+	// Active is the newest write her daemon found under her working directory and
+	// outbox (sprint.FriendReport.Active), zero when it reported none: the last
+	// session activity column.
+	Active time.Time `json:"active,omitzero"`
 	// Beat is when her last beat came, zero when she has never beaten: how stale her
 	// report is (view coordinator).
 	Beat time.Time `json:"beat,omitzero"`
@@ -201,7 +205,7 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 		return sprint.Beat{}, noFriend(r, friend)
 	}
 	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
-	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil {
+	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}
 	if load != nil {
@@ -284,6 +288,9 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 			}
 		}
 		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		if b.Friend != nil {
+			row.Active = b.Friend.Active
+		}
 		if h.Observed() {
 			row.Health = &h
 		}

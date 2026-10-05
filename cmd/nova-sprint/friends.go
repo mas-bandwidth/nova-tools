@@ -234,11 +234,19 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	queue := fs.String("queue", "", "how many jobs she holds queued, as her daemon counts them")
 	width := fs.String("width", "", "her width as her daemon has it (the deal's is the roster's: friend up --width)")
 	load := fs.String("load", "", "her load as a percent, as fleet beat --load gives a machine's")
+	active := fs.String("active", "", "the newest write under her working directory and outbox, as her daemon found it, RFC3339: her session's last activity")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
 	}
 	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	if *active != "" {
+		at, err := time.Parse(time.RFC3339, *active)
+		if err != nil {
+			return refuse(stderr, name, "--active wants an RFC3339 time, found "+oneline.Escape(*active))
+		}
+		rep.Active = at.UTC().Truncate(time.Second)
+	}
 	for _, n := range []struct {
 		flag, text string
 		min        int
@@ -293,6 +301,10 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if given != nil {
 		line += fmt.Sprintf(" load=%.1f%%", *given)
 		facts["load"] = *given
+	}
+	if !rep.Active.IsZero() {
+		line += " active=" + rep.Active.Format(time.RFC3339)
+		facts["active"] = rep.Active
 	}
 	if len(rep.Running) > 0 {
 		line += " running=" + strings.Join(rep.Running, ",")

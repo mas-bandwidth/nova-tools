@@ -105,6 +105,22 @@ one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
 challenge is open; the status file.
 
+**Last session activity** (2026-10-04: the table said up with 8 working while a friend's
+session sat idle from 2:40 to 4:34 PM, and another read working=0 while she was busy; a pong
+shows the daemon answers, not that her session moves). The beat carries the newest file
+write under her working directory (`NewestWrite`, `Daemon.Activity`): her `outbox`, `inbox`
+and `jobs` first, then the rest of the directory, each root once, never descending into
+`.git`, `.cache` or `node_modules`. The walk is one stat pass bounded in files (2000) and in
+time (50 ms, on the daemon's clock), answers with the newest write it read when it reaches
+either, and runs at most once every `ActivityEvery` (10 s); the beats between carry its last
+answer, and a daemon with no `Activity` carries none. The beat is `friend beat <friend>
+--active <RFC3339>`; the sprint keeps it on her beat record, shows it as the friends
+table's `active` column, and raises a `friend idle` alarm when she holds cards and it is
+older than the `friend_idle` setting (docs/SPEC-SPRINT.md, last session activity). Where the
+harness exposes the session's own turn events, they would be a second source; none is read
+yet, so a session that works without writing a file (a long read, a long think) looks idle
+after the setting, and the alarm says "written nothing", not "stuck".
+
 No clock bounds a turn: a turn that prints keeps running however long it
 takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
 (twenty minutes by default) is stopped, its process group signalled, and the
@@ -370,7 +386,8 @@ run the harness on the volume, and the record says so.
 
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
-here; `ping` and `wait-pong` run the canary by hand. The beat carries no
+here; `ping` and `wait-pong` run the canary by hand. The beat carries the
+last session activity (above) and no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
 
