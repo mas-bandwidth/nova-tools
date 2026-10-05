@@ -4072,3 +4072,41 @@ gives one at a time beside the store, so no two steps of the record interleave.
   `where --json --cards` carries the same rows as `lanes`, which the dashboard's
   copy of the sprint holds (it reads the sprint that way); the page does not draw
   them.
+
+
+## friend-stall-ladder-r.w1
+
+**The friend stall ladder** (docs/SPEC-SPRINT.md, `internal/sprint/friend_stall.go`;
+the model is `tla/StallLadder.tla`). When a friend stalls while holding dealt sprint cards,
+recovery is fully mechanical as a tick part (`PartFriendStall = "friend-stall"`) in the
+fleet update pass (`TickTables`, `TickParts`), with no step needing the coordinator.
+
+A friend holding dealt cards (`Ready` or `Working` on her row) is stalled when neither
+session activity (`FriendReport.Active`, her daemon's report of the newest write under
+her working directory and outbox) nor any card progress stamp (`FieldProgress`) is newer
+than `friend_stall_after` (default 20 minutes, configurable via `nova-sprint set --friend-stall-after`).
+
+While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 minutes,
+configurable via `nova-sprint set --friend-stall-step`):
+1. **Wake turn 1**: a bus message to her (`wakeFriendStall` / `a.sendBus`) pushed into her
+   daemon as a turn.
+2. **Wake turn 2**: a second wake bus message.
+3. **Coordinator note**: a pushed judgment (`Kind: Judgment`, `Type: NStalled`,
+   `"friend <f> stalled <d>: two wakes unanswered"`).
+4. **Unstarted cards taken back**: unstarted cards on her row are taken back (`FriendTake`
+   with `All: true`), each withdrawn on her row with its primary back to `Ready` for the next
+   deal; any started card (one her beat names running or with `FieldProgress` stamped) stays
+   with her and finishes.
+5. **Friend marked down**: she is marked down with reason `"stalled"` (`p.Health` with
+   `State: Down`, `Reason: "stalled"`, and status `down` on her fleet row). She is released to
+   `up` by the tick itself at her first session activity after it.
+
+Every rung emits a happened note (`Kind: Happened`, `Type: "friend stall"`). Any session
+activity or card progress resets her to rung 0.
+
+The TLA+ specification `tla/StallLadder.tla` verifies three core invariants:
+- `NoCardHeldPastBound`: no unstarted card is held by a stalled friend for more than the bound
+  (`friend_stall_after + 4 * friend_stall_step`).
+- `NoStartedRedealt`: no started card is taken back or redealt; started cards stay and finish.
+- `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by session
+  activity, never by card progress alone.
