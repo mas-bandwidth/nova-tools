@@ -28,12 +28,22 @@ type Planned struct {
 	Data []byte
 }
 
-// BeforeCreate runs between the preflight and each file's creation. It is nil
-// outside tests, which use it to race a file in where one is about to land.
+// BeforeCreate is Write's production default hook: it runs between the
+// preflight and each file's creation, and is nil. A test that races a file in
+// gets its own hook as a parameter of WriteWith instead of swapping this.
 var BeforeCreate func(rel string)
 
-// Write lays the planned files into root, confined strictly to it.
+// Write lays the planned files into root, confined strictly to it, with the
+// BeforeCreate hook.
 func Write(root string, outs []Planned) (written []string, err error) {
+	return WriteWith(root, outs, BeforeCreate)
+}
+
+// WriteWith is Write with the caller's own before-create hook, run between
+// the preflight and each file's creation; a nil hook writes nothing between.
+// The hook is the per-test seam for racing a collision in beside a planned
+// file, so no test assigns the package-level BeforeCreate.
+func WriteWith(root string, outs []Planned, beforeCreate func(rel string)) (written []string, err error) {
 	r, err := os.OpenRoot(root)
 	if err != nil {
 		return nil, err
@@ -67,8 +77,8 @@ func Write(root string, outs []Planned) (written []string, err error) {
 		if err := Mkdirs(r, path.Dir(o.Rel), &made); err != nil {
 			return written, err
 		}
-		if BeforeCreate != nil {
-			BeforeCreate(o.Rel)
+		if beforeCreate != nil {
+			beforeCreate(o.Rel)
 		}
 		f, err := r.OpenFile(filepath.FromSlash(o.Rel), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if errors.Is(err, fs.ErrExist) {

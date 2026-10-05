@@ -514,7 +514,7 @@ func caseInsensitive(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "CaseProbe")
 	require.NoError(t, os.WriteFile(probe, []byte("x"), 0o644))
-	defer os.Remove(probe)
+	defer func() { _ = os.Remove(probe) }() // ignored: the probe's removal is best effort; the test's assertions are the report
 	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
 	return err == nil
 }
@@ -532,7 +532,7 @@ func TestAnUnlistableDirectoryIsAFindingNotAPass(t *testing.T) {
 	writeTree(t, root, map[string]string{"locked/standing.md": "you are not a tool\n"})
 	locked := filepath.Join(root, "locked")
 	require.NoError(t, os.Chmod(locked, 0o111))
-	defer os.Chmod(locked, 0o755)
+	defer func() { _ = os.Chmod(locked, 0o755) }() // ignored: the permission restore is best effort; the test's assertions are the report
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | locked/standing.md | 2026 | me |\n")
 	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"could not be verified"})
 }
@@ -562,13 +562,18 @@ func TestTheFloorFindingCountsInEnglish(t *testing.T) {
 // A RELATIVE --root IS AN ORDINARY INVOCATION and must not report every
 // anchor as reached through a symlink. Introduced while repairing the symlink
 // finding — every existing test used an absolute temp dir, so nothing saw it.
+// The directory the relative root resolves against arrives as a parameter
+// (the parallel rule's per-test seam), so the test changes no process state.
 func TestARelativeRootIsNotReadAsASymlinkEscape(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	root := filepath.Join(base, "repo")
 	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
-	t.Chdir(base)
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
-	wantFailures(t, corpusOK(t, "repo", tmpLedger(t), 1, as), nil)
+	f, err := corpusFromBase("repo", tmpLedger(t), 1, as, base)
+	require.NoError(t, err, "Corpus: %v", err)
+	wantFailures(t, f, nil)
 }
 
 // ---------------------------------------------------------------------------

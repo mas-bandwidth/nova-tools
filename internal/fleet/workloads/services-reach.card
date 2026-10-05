@@ -10,7 +10,7 @@ expect: ^SERVICES OK
 #   refused                -- nothing is listening on that address (redis bound 127.0.0.1)
 #   denied (protected mode) -- the path and the name work and the password gate remains;
 #                              Redis 8 enforces protected mode even with an explicit bind,
-#                              so this is the state space is in until requirepass lands
+#                              so this is the state the machine is in until requirepass lands
 #                              through nova-secrets
 #   PONG                   -- and only PONG is OK
 #
@@ -19,7 +19,7 @@ expect: ^SERVICES OK
 # is required -- the coordinator's machine has none (tailscaled is not running there) and
 # is not a bench.
 set -eu
-HOST="${NOVA_SERVICES_HOST:-space}"
+HOST="${NOVA_SERVICES_HOST:-example}"
 ADDR=$(getent hosts "$HOST" 2>/dev/null | awk 'NR==1{print $1}' || true)
 if [ -z "$ADDR" ]; then
   echo "SERVICES FAIL the name '$HOST' does not resolve on this bench (getent hosts '$HOST' is empty; ~/.ssh/config is not name resolution)"

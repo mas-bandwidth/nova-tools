@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Shape names the grammatical family a finding belongs to. It is reported beside every finding
@@ -136,12 +137,15 @@ func classify(s string) (Shape, string) {
 	return "", ""
 }
 
-// unquote replaces every quoted span in a segment with a single space, so a shape can only ever
+// unquote replaces every quoted span in a segment with a single blank, so a shape can only ever
 // fire on words the writer wrote rather than words the writer reported.
 //
 // An unclosed quote takes the rest of the segment with it, which is deliberate: an unclosed quote
 // means the quotation continues, and continuing text is somebody else's until proven otherwise.
 func unquote(s string) string {
+	if !strings.ContainsAny(s, "\"“”") {
+		return s // nothing to strip; building a copy is the cost this fast path exists to avoid
+	}
 	var b strings.Builder
 	open := false
 	for _, c := range s {
@@ -174,19 +178,20 @@ func unquote(s string) string {
 // Anything subtler -- a quotation spanning paragraphs, an unmarked paraphrase -- stays in the
 // declared residual, because guessing at it would suppress real findings.
 func quoted(s string) bool {
-	r := []rune(s)
-	if len(r) == 0 {
+	if s == "" {
 		return false
 	}
 	isQuote := func(c rune) bool { return c == '"' || c == '“' || c == '”' }
-	if !isQuote(r[len(r)-1]) {
+	last, _ := utf8.DecodeLastRuneInString(s)
+	if !isQuote(last) {
 		return false
 	}
-	if isQuote(r[0]) {
+	first, _ := utf8.DecodeRuneInString(s)
+	if isQuote(first) {
 		return true
 	}
 	n := 0
-	for _, c := range r {
+	for _, c := range s {
 		if isQuote(c) {
 			n++
 		}
@@ -219,18 +224,32 @@ type segment struct {
 // author.
 func segments(text string) []segment {
 	var out []segment
-	var buf []byte
-	var lines []int // lines[i] is the source line of buf[i]
+	buf := make([]byte, 0, len(text))
+	var base int
+	var starts []int // starts[i] is the offset where source line base+i begins
 
 	flush := func() {
-		out = append(out, sentences(buf, lines)...)
-		buf, lines = buf[:0], lines[:0]
+		out = append(out, sentences(buf, base, starts)...)
+		buf, starts = buf[:0], starts[:0]
+		base = 0
 	}
-	add := func(s string, n int) {
-		for i := 0; i < len(s); i++ {
-			lines = append(lines, n)
+	// begin records source line n at the current buffer length. A line that
+	// emits no byte keeps the same offset as the next line, so the byte
+	// belongs to the later line.
+	begin := func(n int) {
+		if len(starts) == 0 {
+			base = n
+			starts = append(starts, len(buf))
+			return
 		}
-		buf = append(buf, s...)
+		last := base + len(starts) - 1
+		if n <= last {
+			return
+		}
+		for last < n {
+			starts = append(starts, len(buf))
+			last++
+		}
 	}
 
 	for i, raw := range strings.Split(text, "\n") {
@@ -244,7 +263,7 @@ func segments(text string) []segment {
 			flush()
 			for _, cell := range strings.Split(trimmed, "|") {
 				if c := flattenLine(cell); c != "" {
-					out = append(out, sentences([]byte(c), repeat(n, len(c)))...)
+					out = append(out, sentences([]byte(c), n, []int{0})...)
 				}
 			}
 			continue
@@ -259,18 +278,22 @@ func segments(text string) []segment {
 		if strings.HasPrefix(trimmed, "#") {
 			flush()
 			if c := flattenLine(trimmed); c != "" {
-				out = append(out, sentences([]byte(c), repeat(n, len(c)))...)
+				out = append(out, sentences([]byte(c), n, []int{0})...)
 			}
 			continue
 		}
 		f := flattenLine(trimmed)
 		if f == "" {
+			begin(n)
 			continue
 		}
 		if len(buf) > 0 {
-			add(" ", n)
+			begin(n)
+			buf = append(buf, ' ')
+		} else {
+			begin(n)
 		}
-		add(f, n)
+		buf = append(buf, f...)
 	}
 	flush()
 	return out
@@ -282,23 +305,46 @@ var listItem = regexp.MustCompile(`^(?:[-*+] |\d+\. )`)
 // flattenLine flattens a single line: markdown stripped, internal whitespace collapsed, so
 // segmentation can build its line map as it goes.
 func flattenLine(s string) string {
+	if flatAsIs(s) {
+		return s
+	}
 	return strings.TrimSpace(whitespace.ReplaceAllString(markup.ReplaceAllString(s, ""), " "))
 }
 
-func repeat(n, count int) []int {
-	out := make([]int, count)
-	for i := range out {
-		out[i] = n
+// flatAsIs reports that s is already what flattenLine returns. ReplaceAllString
+// copies its input even when nothing matches, so a line with nothing to strip
+// must not go through it.
+func flatAsIs(s string) bool {
+	if s == "" {
+		return false
 	}
-	return out
+	prevBlank := false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '*', '_', '`', '>', '#', '|':
+			return false
+		case ' ':
+			if prevBlank || i == 0 {
+				return false
+			}
+			prevBlank = true
+		default:
+			if c < ' ' || c >= 0x80 {
+				return false
+			}
+			prevBlank = false
+		}
+	}
+	return !prevBlank
 }
 
 // sentences cuts a flattened paragraph at terminators, keeping each piece's starting line.
+// base is the source line of starts[0]. starts[i] is the offset where source line base+i begins.
 //
-// A TERMINATOR ONLY COUNTS WHEN A SPACE OR THE END FOLLOWS IT. Without that, "RULES.md" splits
+// A TERMINATOR ONLY COUNTS WHEN A BLANK OR THE END FOLLOWS IT. Without that, "RULES.md" splits
 // into "RULES." and "md", and a claim that spans the filename is lost -- which is the same
 // blindness flattening exists to prevent, arriving through a different door.
-func sentences(buf []byte, lines []int) []segment {
+func sentences(buf []byte, base int, starts []int) []segment {
 	var out []segment
 	start, open := 0, false
 	emit := func(end int, openedAtStart bool) {
@@ -308,7 +354,7 @@ func sentences(buf []byte, lines []int) []segment {
 			for at < end && buf[at] == ' ' {
 				at++
 			}
-			out = append(out, segment{text: s, line: lines[at], inQuote: openedAtStart})
+			out = append(out, segment{text: s, line: lineAt(base, starts, at), inQuote: openedAtStart})
 		}
 		start = end
 	}

@@ -55,6 +55,6 @@ func TestTheDollarBudgetStopsTheCardAtItsCost(t *testing.T) {
 // The line a dollar budget's stop prints names it as the brief's own words: "$0.51 of $0.50".
 func TestTheDollarBudgetLineNamesTheCostAndTheBudget(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "$0.51 of $0.50, tokens 9,000,000", nativeBudgetWords(stoppedUSD, 0, 9000000, false, "0.5003", "0.5"))
-	assert.Equal(t, "$0.50 of $0.50, tokens 9,000,000 of 10,000,000", nativeBudgetWords(stoppedUSD, 10000000, 9000000, false, "0.5", "0.5"))
+	assert.Equal(t, "$0.51 of $0.50, tokens 9,000,000", nativeBudgetWords(stoppedUSD, 0, 9000000, false, "0.5003", "0.5", ""))
+	assert.Equal(t, "$0.50 of $0.50, tokens 9,000,000 of 10,000,000", nativeBudgetWords(stoppedUSD, 10000000, 9000000, false, "0.5", "0.5", ""))
 }

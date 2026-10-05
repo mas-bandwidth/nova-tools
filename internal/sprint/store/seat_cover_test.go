@@ -113,7 +113,7 @@ func TestSeatCoverSeatStepPlansTheMove(t *testing.T) {
 	}{
 		{"the holder gives the seat",
 			&sprint.Snapshot{Coordinator: "coord", Now: aFixedTime},
-			&sprint.SeatChange{Holder: "someone", From: "coord", At: aFixedTime, By: "coord", Reason: "handover at the hour"},
+			&sprint.SeatChange{Holder: "someone", Generation: 2, From: "coord", At: aFixedTime, By: "coord", Reason: "handover at the hour"},
 			[]sprint.Note{{Kind: sprint.Happened, Type: sprint.NSeat, At: aFixedTime, Who: "coord", To: "someone",
 				What: "coord -> someone: handover at the hour, by coord"}},
 			nil},
@@ -143,12 +143,12 @@ func TestSeatCoverSeatRecordIsTheKeysBytes(t *testing.T) {
 		wantErr string
 	}{
 		{"a given seat is the change's json",
-			&sprint.SeatChange{Holder: "someone", From: "coord", At: aFixedTime, By: "coord", Reason: "handover at the hour"},
-			`{"holder":"someone","from":"coord","at":"2026-10-04T09:00:00Z","by":"coord","reason":"handover at the hour"}`,
+			&sprint.SeatChange{Holder: "someone", Generation: 2, From: "coord", At: aFixedTime, By: "coord", Reason: "handover at the hour"},
+			`{"holder":"someone","generation":2,"from":"coord","at":"2026-10-04T09:00:00Z","by":"coord","reason":"handover at the hour"}`,
 			""},
 		{"a taken seat carries the take",
-			&sprint.SeatChange{Holder: "someone", From: "coord", At: aFixedTime, By: "someone", Taken: true, ApprovedBy: "owner", Reason: "out of credits"},
-			`{"holder":"someone","from":"coord","at":"2026-10-04T09:00:00Z","by":"someone","taken":true,"approved_by":"owner","reason":"out of credits"}`,
+			&sprint.SeatChange{Holder: "someone", Generation: 2, From: "coord", At: aFixedTime, By: "someone", Taken: true, ApprovedBy: "owner", Reason: "out of credits"},
+			`{"holder":"someone","generation":2,"from":"coord","at":"2026-10-04T09:00:00Z","by":"someone","taken":true,"approved_by":"owner","reason":"out of credits"}`,
 			""},
 		{"a year no record can hold is refused",
 			&sprint.SeatChange{At: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)},

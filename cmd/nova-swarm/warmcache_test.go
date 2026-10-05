@@ -40,7 +40,7 @@ func TestEveryCardOfAMachineBuildsInOneWarmCache(t *testing.T) {
 	for _, s := range []string{slot, other} {
 		job := filepath.Join(s, "jobs", "card")
 		shim := filepath.Join(s, "shim")
-		env := nativeChildEnv(filepath.Join(s, "data"), job, filepath.Join(s, "tmp", "card"), cacheDir, "", shim, "", "/bench/go/bin")
+		env := nativeChildEnv(filepath.Join(s, "data"), job, filepath.Join(s, "tmp", "card"), cacheDir, "", shim, "", []string{"/bench/go/bin"})
 		assert.Equal(t, swarm.GoBuildCacheDir(root), envValue(env, "GOCACHE"), "slot %s", s)
 		assert.Equal(t, runner.goBuildCache(), envValue(env, "GOCACHE"), "the trimmed cache is the one the card builds in")
 		assert.Equal(t, swarm.GoModCacheDir(root), envValue(env, "GOMODCACHE"), "slot %s", s)

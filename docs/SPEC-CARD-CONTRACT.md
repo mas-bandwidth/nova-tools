@@ -357,11 +357,14 @@ behind and the child can edit (`git remote remove`).
 data home), `TMPDIR`, `LANG`, `LC_*`, `TERM`, `USER`, `LOGNAME`, the `GO*`, `NOVA_SWARM_*`,
 `NOVA_TEST_*`, `XDG_*` and `OPENCODE_*` families, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`,
 and the secrets `--pass` names (the loop record's nova-secrets keys) with the worker
-description's secret; everything else is dropped. Native puts the bench's Go first on the
-child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
-(`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
-resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
-unit started the member with. Under the darwin wall, which denies `setpriority`, native
+description's secret; everything else is dropped. Native puts the bench's toolchain first on
+the child's `PATH` after its shell wrappers (`swarm.BenchPath`): the `bin` of every home root
+the wall executes, read off the wall's own root list (`~/sdk/bin`, the standard's links to
+every sdk tool), then the directory the bench's `go` really lives in (`swarm.BenchGoBin`: the
+first `go` in those, `~/go/bin`, then the member's own `PATH`, resolved through its links), so
+a card's bare `go`, `gofmt`, `dotnet` or `cargo` resolves to the toolchain the wall grants
+whatever `PATH` the loop unit started the member with, never to a stale copy on the member's
+own. Under the darwin wall, which denies `setpriority`, native
 starts the child's process group at nice 19 and the wrappers' directory carries a `nice` that
 runs its command without asking for a priority the group already has, so a gate's
 `nice -n 19` prints no warning. A name matching
@@ -401,7 +404,11 @@ like, a profile keeps the contract: a push leaves nothing but a line in `<job>/.
 (`branch`, `head`, `top`, tab separated); the child's end has the shape above, recorded by a
 command profile in `<job>/.sprint/finish.md` or written explicitly in `<job>/RESULT.md` as a
 fallback. Nothing reaches a forge from inside the wall. `cardcontract.ContractShim` is the push
-recorder every profile may reuse.
+recorder every profile may reuse. A push whose remote is a local path (an absolute path, a
+`./` or `../` path) or a `file://` URL is handed to the real git unchanged, as typed, and
+records nothing: it lands on the child's own machine and reaches no forge, and a test or tool
+inside a card that pushes to a bare repository it made under its own temp directory needs the
+push to land.
 
 A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
 (the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the
@@ -420,3 +427,55 @@ under one that asks for RESULT.md, the shape above.
 `TestTheScriptedChildEndToEndInsideTheWall` runs the claude and openai children again on
 Darwin or Linux with the wall binary built by TestMain. It skips when that binary reports
 no supported backend; otherwise it asserts the named real backend and the child's job cwd.
+
+## 6. Generated cards
+
+A card is written by a program from the source the work comes from whenever the
+source is structured: a ratchet ledger of `internal/ci`, a reader's findings
+file, a tool's rendered help. `nova-card generate` is that program
+(`cmd/nova-card`; the planner is `internal/cardgen`, pure functions over text
+with no clock and no store). What it holds:
+
+- One card per file the source names, its id `<prefix>-<slug of the file>`,
+  its `RESULT:` line carrying the tier (`tier: flash|pro`), `REPO:` and `BASE:`
+  from the checkout the source was read from, `KIND: fix-red`, `DEPENDS-ON:`,
+  `PATHS:` (at most eight entries, files folded into their directory's glob
+  past that), `NEW:` for a test file the card creates in a package that has
+  none, `TEST:` and the `Deadline:` line; the RULES paragraph of the general
+  child rules (`swarm.ChildRulesParagraph`, the paragraph the card template
+  carries); the task from the source's template with the rows substituted; and
+  the template's steps.
+- The PATHS of a ledger card are the row's file, its package's test files and
+  the ledger. With a checkout, every entry is checked to exist in it.
+- Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
+  depending on their wave 1 neighbours), because adjacent deletions of one file
+  conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
+  and no dependency.
+- Every brief is held to the lint `nova-sprint add` runs (the model lines, the
+  child rules under the default rule set, a tree card's steps), and past the add
+  to the typed header and the template's placeholders, which the add does not
+  read, before the directory is written; one red brief and nothing is written.
+  A sprint initialised with `--rules` holds a brief to that file at the add.
+  The output is the directory, its `manifest.tsv` (id, file, test, wave, deps)
+  and one `CARDS OK dir= cards= waves= tier=` line.
+
+`nova-swarm lint --card` is the fuller contract lint and is run over a
+generated directory by the coordinator before the add; its `no-sandbox` check
+matches the word `nova-sandbox` on any line, so a card whose PATHS name
+`cmd/nova-sandbox/` draws it though the add admits the card.
+
+### lint-allows-quoted-patterns-in-tests: the PATTERNS TO REFUSE paragraph
+
+A class test that refuses a dangerous command must name it, and the step scans refuse a card
+for naming it. One narrow exemption: a card whose `TEST:` or `PATHS:` line names a class test
+under `internal/ci` (`internal/ci/<name>_class_test.go`) may carry one paragraph that begins
+`PATTERNS TO REFUSE.` and runs to the first blank line. A backtick-quoted literal in that
+paragraph is a pattern, not a command, and no `step-` scan fires on it. Everything else is
+scanned as before:
+
+- every other line of the card, and every unquoted command inside the paragraph;
+- the paragraph in a card that names no class test is itself the finding
+  `patterns-block-without-class-test`, at the paragraph's first line.
+
+`nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
+`TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).

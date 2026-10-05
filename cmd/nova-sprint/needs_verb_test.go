@@ -21,14 +21,14 @@ func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	// The scores put the s2 chain in reverse work order: d sorts first, a
 	// last, so only the chain order (a card after every card it needs) can
 	// print the chain from its root down.
-	ta.ok("add --stream s1 --count 1")
-	ta.ok("add --stream s2 a --needs s1-1 --score 9")
-	ta.ok("add --stream s2 b --needs a --score 8")
-	ta.ok("add --stream s2 c --needs b --score 7")
-	ta.ok("add --stream s2 d --needs c --score 6")
-	ta.ok("add --stream s1 x")
-	ta.ok("add --stream s1 y")
-	ta.ok("add --stream s1 m --needs x,y")
+	ta.ok("add --one --stream s1 --count 1")
+	ta.ok("add --one --stream s2 a --needs s1-1 --score 9")
+	ta.ok("add --one --stream s2 b --needs a --score 8")
+	ta.ok("add --one --stream s2 c --needs b --score 7")
+	ta.ok("add --one --stream s2 d --needs c --score 6")
+	ta.ok("add --one --stream s1 x")
+	ta.ok("add --one --stream s1 y")
+	ta.ok("add --one --stream s1 m --needs x,y")
 	ta.ok("drop s1-1 --reason obsolete")
 	ta.ok("drop x --reason obsolete")
 	ta.ok("drop y --reason obsolete")

@@ -28,7 +28,7 @@ func TestServerReviewLandingStoreFailureIsVisible(t *testing.T) {
 func TestServerReviewLandingSetupFailureIsVisible(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	var out bytes.Buffer
 	code := r.a.landRound(context.Background(), "mem:0", []string{"--repo-dir", filepath.Join(t.TempDir(), "missing"), "--base", "main"}, &out)

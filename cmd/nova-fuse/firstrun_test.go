@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,7 +35,7 @@ func freshBox(t *testing.T) string {
 }
 
 var fuseFixed = testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return run(args, stdout, stderr, time.Date(2026, 9, 9, 18, 27, 40, 0, time.UTC))
+	return run(args, stdout, stderr, time.Date(2026, 9, 9, 18, 27, 40, 0, time.UTC), invocation{getenv: getenvNone, wd: "", stamp: version})
 })
 
 // runFuse runs one invocation and returns both streams, because a transcript is
@@ -42,8 +43,16 @@ var fuseFixed = testkit.Main(func(args []string, stdin io.Reader, stdout, stderr
 // answer on stdout, and the reader sees them interleaved.
 func runFuse(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 	t.Helper()
-	r := fuseFixed.Run(args...)
-	return r.Code, r.Stdout, r.Stderr
+	return runFuseIn(t, "", args...)
+}
+
+// runFuseIn opens a relative --box against wd, the test's own directory, not
+// the process working directory (docs/STANDARD.md section 8).
+func runFuseIn(t *testing.T, wd string, args ...string) (exit int, stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code := run(args, &out, &errOut, time.Date(2026, 9, 9, 18, 27, 40, 0, time.UTC), invocation{getenv: getenvNone, wd: wd, stamp: version})
+	return code, out.String(), errOut.String()
 }
 
 // localize points an example or transcript command at a box under t.TempDir().
@@ -224,6 +233,8 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // fixture is copied to that name in a directory of the test's own rather than
 // the path being rewritten.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	fixture, err := os.ReadFile(exampleBox)
@@ -246,19 +257,18 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "fuse-box.json"), fixture, 0o644))
-	t.Chdir(dir)
-	require.Empty(t, onboarding.Execute(steps, documented(t)))
+	require.Empty(t, onboarding.Execute(steps, documented(t, dir)))
 }
 
 // documented runs one line of the transcript with the clock the document was
-// recorded at.
-func documented(t *testing.T) onboarding.Runner {
+// recorded at, opening a relative box against wd.
+func documented(t *testing.T, wd string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, errReadsNothing
 		}
-		code, stdout, stderr := runFuse(t, s.Args...)
+		code, stdout, stderr := runFuseIn(t, wd, s.Args...)
 		return onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}, nil
 	}
 }

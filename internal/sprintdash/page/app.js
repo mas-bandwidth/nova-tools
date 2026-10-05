@@ -107,11 +107,11 @@ function syncRows(box, header, keys, build, update, total) {
   map.forEach(function (r, k) { if (!seen.has(k)) { r.node.remove(); map.delete(k); } });
   if (total && prev.nextSibling !== total) box.insertBefore(total, prev.nextSibling);
 }
-// The header rows of Work, Fleet and Friends are the page's own markup (index.html), the
+// The header rows of Work, Fleet, Friends and Lanes are the page's own markup (index.html), the
 // strings of docs/SPEC-SPRINT-DASHBOARD.md, which a test holds equal: each table's header is
 // a clone of the row the page carries.
 var HEADS = {};
-["streams", "fleet", "friends"].forEach(function (id) {
+["streams", "fleet", "friends", "lanes"].forEach(function (id) {
   var h = document.getElementById(id).querySelector(".row.head");
   if (h) { h.remove(); HEADS[id] = h; }
 });
@@ -353,6 +353,40 @@ function renderFriends(d) {
   setText($("friends-sub"), r.n + " friends");
 }
 
+// Lanes (docs/SPEC-SPRINT-DASHBOARD.md, "Lanes"): each machine's lane of a kind, the
+// friends or machines that hold it, and those that wait, from where --json --cards's
+// lanes array (verb-lane-take-give). One row a machine, by machine then kind.
+function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
+function renderLanes(d) {
+  var box = $("lanes"), lanes = Array.isArray(d.lanes) ? d.lanes.slice() : [];
+  lanes.sort(function (a, b) { return String(a.machine).localeCompare(String(b.machine)) || String(a.kind).localeCompare(String(b.kind)); });
+  if (!lanes.length) {
+    if (!box._empty) {
+      box._map = null; box._head = null; box.textContent = "";
+      var e = el("div", "empty");
+      e.innerHTML = "No lanes in the sprint data. This panel fills itself when <code>where --json --cards</code> carries <code>lanes</code>.";
+      box.appendChild(e); box._empty = true;
+    }
+    setText($("lanes-sub"), "");
+    return;
+  }
+  if (box._empty) { box.textContent = ""; box._empty = false; }
+  if (!box._head) { box._head = pageHead("lanes"); }
+  var byKey = {};
+  lanes.forEach(function (l) { byKey[l.machine + "/" + l.kind] = l; });
+  syncRows(box, box._head, lanes.map(function (l) { return l.machine + "/" + l.kind; }), function () {
+    var r = { node: el("div", "row") };
+    r.machine = el("div", "name"); r.kind = el("div"); r.width = numCell(); r.held = el("div"); r.waiting = el("div");
+    [r.machine, r.kind, r.width, r.held, r.waiting].forEach(function (c) { r.node.appendChild(c); });
+    return r;
+  }, function (r, k) {
+    var l = byKey[k];
+    setText(r.machine, l.machine); setText(r.kind, l.kind); setNum(r.width, int(l.width));
+    setText(r.held, nameList(l.held)); setText(r.waiting, nameList(l.waiting));
+  });
+  setText($("lanes-sub"), lanes.length + (lanes.length === 1 ? " lane" : " lanes"));
+}
+
 function renderReaders(d) {
   var box = $("readers"), table = d.tables.readers || {}, names = Object.keys(table).sort();
   var F = ["asked", "reading", "ok", "broken"];
@@ -456,6 +490,7 @@ function render(d) {
   renderOverall(s.sum, s.all);
   renderFleet(d);
   renderFriends(d);
+  renderLanes(d);
   if (SHOW_ALL) renderReaders(d);
   renderHero(d, s);
   fitTables();
@@ -481,15 +516,8 @@ function apply(j) {
   if (j.build) { if (build == null) build = j.build; else if (build !== j.build) location.reload(); }
 }
 
-// theme: dark by default, light by the toggle only
-function syncThemeButton() { setText($("theme"), document.documentElement.dataset.theme === "light" ? "Dark" : "Light"); }
-$("theme").addEventListener("click", function () {
-  var next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
-  try { localStorage.setItem("sprint-theme", next); } catch (e) {}
-  syncThemeButton();
-});
-syncThemeButton();
+// The dashboard is always dark (docs/SPEC-SPRINT-DASHBOARD.md, Page): there is no theme
+// toggle and no light tokens.
 // the stream reconnects on its own; while it is not open, the timer's poll runs
 if (window.EventSource) {
   stream = new EventSource("/events");

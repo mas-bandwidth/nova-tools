@@ -18,8 +18,6 @@
 # T8 (#1653): the sections no test executes at all.
 
 # T9 (#1654): the set-of-shapes tests, which pass an abridged or reordered block.
-nova-bus      # #1654 -- collects what was printed into a set
-nova-cairn    # #1654 -- collects what was printed into a set
 nova-check    # #1654 -- collects what was printed into a set
 nova-fuse     # #1654 -- collects what was printed into a set
 nova-self-talk # #1654 -- collects what was printed into a set

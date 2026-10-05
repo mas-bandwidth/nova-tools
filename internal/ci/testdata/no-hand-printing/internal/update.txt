@@ -1,0 +1,4 @@
+# no-hand-printing: hand printing in a tool package; each row's count only falls
+# ceiling: 2
+internal/update:flagset 4 four flag sets the version tool's own CLI builds (its watch, adoption and run verbs): the package holds a tool's verbs and its dispatch is by hand, so each verb parses its own flags until the port
+internal/update:verbflag 1 one verb builds its flag set through verbflag.New: the verb parses its own flags until it declares them with tool.Flags

@@ -65,7 +65,7 @@ import (
 // the member's own), a module cache's larger, a log's size and copies, how long a pool
 // must be still, and how long a land clone or a temporary pack must be unused.
 const (
-	guardCacheGiB   = 10
+	guardCacheGiB   = 20
 	guardModGiB     = 50
 	guardLogMiB     = 50
 	guardLogKeep    = 3
@@ -772,7 +772,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	f.fs.Var(stringListValue{&roots}, "root", "a member's or reader's root `dir` (again for more): its pool is <root>/slots, its caches <root>/cache/go-build and go-mod")
 	f.fs.Var(stringListValue{&scans}, "scan", "a `dir` each of whose subdirectories holding slots/ is a root (again for more)")
 	f.fs.Var(stringListValue{&caches}, "cache", "another Go build cache, a `dir` or a glob such as ~/runner-*/_cache/go-build (again for more); the login's own is always held")
-	cacheGB := f.fs.Int("cache-max-gb", guardCacheGiB, "the `GiB` each Go build cache is held under (default 10)")
+	cacheGB := f.fs.Int("cache-max-gb", guardCacheGiB, "the `GiB` each Go build cache is held under (default 20)")
 	modGB := f.fs.Int("modcache-max-gb", guardModGiB, "the `GiB` over which a module cache is emptied, while no go command runs (default 50)")
 	logs := f.fs.String("logs", "~/nova-bench/loops", "the `dir` of the loop logs to rotate (default ~/nova-bench/loops)")
 	logMB := f.fs.Int("log-max-mb", guardLogMiB, "the `MiB` over which a loop log is rotated (default 50)")

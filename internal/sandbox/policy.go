@@ -20,6 +20,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Exit codes. The exec path uses the env(1)/timeout(1) convention rather than SPEC.md's
@@ -29,6 +31,7 @@ const (
 	ExitRefused     = 125 // nova-sandbox itself said NO before the command ran
 	ExitNotExecuted = 126 // the command could not be executed and the tool was still there
 	ExitNotFound    = 127 // the command could not be resolved on the caller's PATH
+	ExitRunaway     = 137 // the tree passed a process or memory cap and was killed by its group
 	ExitProbeFailed = 1   // probe/check grammar: the verb ran and said NO
 	ExitCannotRun   = 2   // probe/check grammar: the verb could not run
 	tmpDirName      = ".nova-sandbox-tmp"
@@ -85,6 +88,8 @@ type Input struct {
 	Home        string   // the HOME value the child receives
 	LookAt      string   // PATH to resolve the command on; empty means the process's own
 	CallerHomes []string // homes to check against; empty uses callerHomes()
+	MaxProcs    int      // the tree's process cap; 0 is DefaultMaxProcs
+	MaxMem      int64    // the tree's resident-memory cap in bytes; 0 is DefaultMaxMem
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
@@ -104,12 +109,18 @@ type Policy struct {
 	NetListen   bool
 	NetAllow    []string // host:port the profile opens back up by name
 	GPUMode     GPUMode
+	MaxProcs    int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
+	MaxMem      int64    // the tree's resident-memory cap in bytes, set by Build; 0 is unbounded
 	Command     string   // the resolved absolute path of the executable
 	Argv        []string // Command followed by its arguments, verbatim
 
 	// Available is an optional seam for tests checking refusal when the backend is absent.
 	// When nil, package Available() is called.
 	Available func() (string, bool)
+
+	// Tick is an optional seam for tests of the caps: the channel a count of the tree
+	// waits on. When nil the tree is counted every second.
+	Tick <-chan time.Time
 
 	// LandlockABI is an optional seam for tests checking Linux Landlock ABI behavior.
 	// When nil, package landlockABI is called.
@@ -398,7 +409,7 @@ func insideAny(path string, dirs []string) bool {
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
 // literals of the darwin profile put a path INTO the profile text (the -D parameters do
 // not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a
-// measured run with a path holding a space and a paren aborted at exit 134 (spec, "to
+// measured run with a path holding a blank and a paren aborted at exit 134 (spec, "to
 // verify at build" item 2). The decision taken here is the first of the two the spec
 // offered: the tool REFUSES such a path, naming the flag, rather than trying to quote it.
 const sbplMetacharacters = "\"\\()"
@@ -536,7 +547,13 @@ func Build(in Input) (*Policy, []Refusal) {
 
 func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	var bad []Refusal
-	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name}
+	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name, MaxProcs: in.MaxProcs, MaxMem: in.MaxMem}
+	if p.MaxProcs <= 0 {
+		p.MaxProcs = DefaultMaxProcs
+	}
+	if p.MaxMem <= 0 {
+		p.MaxMem = DefaultMaxMem
+	}
 
 	// The local GPU capability is explicit and bounded. The default
 	// is none; metal records intent without widening mach-lookup or granting
@@ -966,4 +983,76 @@ func ancestors(dir func(string) string, paths ...string) []string {
 		}
 	}
 	return slices.Sorted(maps.Keys(seen))
+}
+
+// The wall's caps on the tree it runs, docs/SPEC-SANDBOX.md "wall-caps-processes.w1". The
+// tree is the process group the wrapped command leads: past either cap the whole group is
+// killed by its group id and the run ends reporting runaway.
+const (
+	DefaultMaxProcs       = 256
+	DefaultMaxMem   int64 = 8 << 30
+	// watchEvery is how often a running tree is counted.
+	watchEvery = time.Second
+)
+
+// Usage is what one count of the tree found: its live processes and their resident bytes.
+type Usage struct {
+	Procs int
+	RSS   int64
+}
+
+// Over says whether u is past a cap, and the runaway line when it is. A cap of zero is
+// not set: a policy Build made always carries both.
+func (p *Policy) Over(u Usage) (string, bool) {
+	if p.MaxProcs > 0 && u.Procs > p.MaxProcs {
+		return fmt.Sprintf("runaway: %d processes (cap %d)", u.Procs, p.MaxProcs), true
+	}
+	if p.MaxMem > 0 && u.RSS > p.MaxMem {
+		return fmt.Sprintf("runaway: %d bytes of memory (cap %d)", u.RSS, p.MaxMem), true
+	}
+	return "", false
+}
+
+// Watch counts the tree on every tick (every second when tick is nil) and, the first time
+// it is past a cap, calls kill and stops. It returns stop, which ends the watch and
+// answers the runaway line, or "" when the tree never passed a cap. A count that fails is
+// skipped: a watch that cannot look must not kill what it cannot see.
+func (p *Policy) Watch(tick <-chan time.Time, usage func() (Usage, error), kill func()) (stop func() string) {
+	release := func() {}
+	if tick == nil {
+		t := time.NewTicker(watchEvery)
+		tick, release = t.C, t.Stop
+	}
+	return p.watch(tick, usage, kill, release)
+}
+
+func (p *Policy) watch(tick <-chan time.Time, usage func() (Usage, error), kill func(), release func()) func() string {
+	quit := make(chan struct{})
+	var line string
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-tick:
+				u, err := usage()
+				if err != nil {
+					continue
+				}
+				if l, hit := p.Over(u); hit {
+					line = l
+					kill()
+					return
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() string {
+		once.Do(func() { close(quit); wg.Wait(); release() })
+		return line
+	}
 }
