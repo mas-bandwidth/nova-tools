@@ -59,25 +59,26 @@ const OpenRetryMax = 30 * time.Second
 // a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
-	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
-	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
-	finish    func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
-	launchctl friend.Launchctl
-	now       func() time.Time
-	sleep     func(ctx context.Context, d time.Duration)
-	signals   func(ctx context.Context) (context.Context, context.CancelFunc)
-	uid       int
-	home      string
-	binary    func() (string, error)
-	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
-	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
-	random    func() string
-	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
-	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+	getenv     func(string) string
+	open       func(ctx context.Context, addr string) (bus.Store, func(), error)
+	exec       friend.Exec
+	wall       func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat       func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	progress   func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
+	finish     func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	launchctl  friend.Launchctl
+	now        func() time.Time
+	sleep      func(ctx context.Context, d time.Duration)
+	signals    func(ctx context.Context) (context.Context, context.CancelFunc)
+	uid        int
+	home       string
+	binary     func() (string, error)
+	copy       friend.CopyFile              // places a removable-volume binary under home; nil refuses it
+	lookPath   func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
+	random     func() string
+	alive      friend.Aliver                  // the harness check, when set (a test's fake harness); nil watches the adapter
+	settings   friend.SettingsFS              // where a harness's own settings are read and written (install, check --settings)
+	claudeKept func(runs int, costUSD string) // after a headless run is kept; nil in the real world, a test waits on it before cancel
 }
 
 // sprintVerb sends one worker verb (progress, finish) to the sprint server and answers its
@@ -288,15 +289,22 @@ blocker to the seat. Out of funds (402, insufficient balance) holds the lanes un
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
 (row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
 --dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that
-denies nothing is refused), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Prints
-one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
+denies nothing is refused), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Passing --config-dir with
+--harness claude (not the flag's default, which the wall still uses) makes the friend a headless Claude
+Code account (docs/SPEC-FRIEND.md, the headless Claude lane): each card is one claude -p on that account,
+no shell, the trimmed call, the model the card's tier names, stream-json read for the price and the
+rate_limit_event, said as RUN CLAUDE RUN and kept in claude-limits.json, which status reads. There is no
+standing session, so no session check holds the beat, and status is up on a fresh beat and no limit
+(why "fresh beat, no limit"). A run that meets the limit stops the daemon until
+that reset (RUN LIMIT, then RUN RESUME): no beat, no card, and the card under way is handed again.
+Prints one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
 dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
-					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR)")
+					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR); passed with --harness claude, the account whose headless claude -p runs the lanes")
 					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
@@ -537,11 +545,12 @@ session_pong_age is the session's own pong (the pong file), daemon_pong_age the 
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
+harnesses omit route. A headless Claude Code account (run --harness claude --config-dir) adds runs= cost_usd= limits=, from claude-limits.json in
+the state directory, and limited_until= with a NOTE while a limit it met lasts. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
 (known for grok, a tail under the window: running; unknown elsewhere, never down on its own); at a limit (the state directory's
 ` + friend.LimitFile + `) is down until the reset; no session answer (the pong file) under ` + friend.AnswerBound.String() + ` is down; a bus that cannot
-deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes it up. why
-is the rule that decided it, as a person reads it ("no session answer 12m", "limit until Mon 1:00 PM"); evidence is every piece,
+deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes a session friend up. A headless Claude Code account (harness claude with a session on the status file, which the run that passed --config-dir writes; passive claude leaves it empty) has no session check and none is invented: it is up on a fresh beat and no limit, why "fresh beat, no limit", and a limit it kept (claude-limits.json) or ` + friend.LimitFile + ` is down until the reset. why
+is the rule that decided it, as a person reads it ("no session answer 12m", "fresh beat, no limit", "limit until Mon 1:00 PM"); evidence is every piece,
 "; "-separated: the harness, the session answer, the limit, the messages waiting on the stream (counted with --redis), the last
 turn's end and exit from the log. STATUS NONE at
 exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
@@ -673,9 +682,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
 	rowMode, rowWidth := "", 0
+	var recording sync.Mutex // the lanes' runs say their lines from their own goroutines
 	record := func(line string) {
+		recording.Lock()
+		defer recording.Unlock()
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
+	}
+	// a headless Claude Code account (docs/SPEC-FRIEND.md, the headless Claude lane): --config-dir
+	// passed, not the wall's default. Its runs are walled like any lane child and are not watched by
+	// Limits; the account's own rate_limit_event stops the daemon until that reset.
+	var claude *friend.Claude
+	if c.Str("harness") == "claude" && c.Given("config-dir") && c.Str("config-dir") != "" {
+		claude = &friend.Claude{Dir: dir, ConfigDir: c.Str("config-dir"), StateDir: state, Run: walled, Out: lineWriter(record), Now: w.now, AfterKeep: w.claudeKept}
+		deliver = claude
 	}
 	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
@@ -751,9 +771,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
 		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
-		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
+		// beat carries the session's last activity, closed over here (fold of 2026-10-05).
+		// A headless Claude account has no standing session to answer a check, so neither
+		// wrapper holds its beat; a limit stops the daemon instead (below).
 		Beat: func(ctx context.Context, active time.Time) error {
-			return sc.Beat(fl.Beat(func(ctx context.Context) error {
+			step := func(ctx context.Context) error {
 				answer, err := w.beat(ctx, server, name, active)
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
@@ -762,7 +784,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 					rowProfile.Store(&p)
 				}
 				return err
-			}))(ctx)
+			}
+			if claude != nil {
+				return step(ctx)
+			}
+			return sc.Beat(fl.Beat(step))(ctx)
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
@@ -819,11 +845,56 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if w.alive != nil {
 		watch.Alive = w.alive
 	}
-	if err := d.Run(ctx); err != nil {
-		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
-		return tool.Exit(1)
+	if claude == nil {
+		if err := d.Run(ctx); err != nil {
+			fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
+			return tool.Exit(1)
+		}
+		return tool.Exit(0)
+	}
+	// the account's limit stops this daemon (no beat, no card) until the limit's own reset, then starts it again
+	for ctx.Err() == nil {
+		if l, limited := claude.Limited(w.now()); limited {
+			// a stop for the limit is not a run that died: a daemon starting up
+			// finishes every card still marked started, and this card is handed
+			// again after the reset (docs/SPEC-FRIEND.md, the headless Claude lane)
+			if err := releaseStarted(state); err != nil {
+				record("LIMIT the started cards could not be unmarked, so the next start may finish them: " + err.Error())
+			}
+			record(fmt.Sprintf("%s LIMIT %s until %s: the daemon stops, no beat and no card, until then", w.now().UTC().Format(time.RFC3339), l.Type, l.ResetsAt.UTC().Format(time.RFC3339)))
+			wait := l.ResetsAt.Sub(w.now())
+			if wait < 0 {
+				wait = 0
+			}
+			w.sleep(ctx, wait)
+			if ctx.Err() != nil {
+				break
+			}
+			record(fmt.Sprintf("%s RESUME after the %s limit's reset", w.now().UTC().Format(time.RFC3339), l.Type))
+			continue
+		}
+		dctx, dcancel := context.WithCancel(ctx)
+		claude.OnLimit = func(friend.ClaudeLimit) { dcancel() }
+		err := d.Run(dctx)
+		dcancel()
+		if err != nil {
+			fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
+			return tool.Exit(1)
+		}
 	}
 	return tool.Exit(0)
+}
+
+// lineWriter is the record as a writer: each line written is one record line.
+type lineWriter func(string)
+
+func (r lineWriter) Write(p []byte) (int, error) {
+	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+		if line != "" {
+			r(line)
+		}
+	}
+	return len(p), nil
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
@@ -1063,12 +1134,35 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
+	var cl friend.ClaudeLimits
+	var clFound bool
+	if l, found, lerr := friend.ReadClaudeLimits(state); lerr != nil {
+		o.Note("the claude limits file: " + lerr.Error())
+	} else if found {
+		cl, clFound = l, true
+		// a headless Claude Code account (run --config-dir): its runs, their price, its limits
+		o.Fact("runs", l.Runs).Fact("cost_usd", dash(l.CostUSD)).Fact("limits", tool.Text(friend.SaidLimits(l.Limits)))
+		if now.Before(l.Until) {
+			o.Fact("limited_until", stamp(l.Until))
+			o.Note("the account met its " + l.Met + " limit: the daemon takes no card and does not beat until " + stamp(l.Until))
+		}
+	}
 	var route, routeLine string
 	var routeErr error
 	if s.Harness == "grok" {
 		route, routeLine, routeErr = (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
 	}
-	v := friend.FriendStatus(w.evidence(c, s, p, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
+	ev := w.evidence(c, s, p, now, daemon == "up", route, o)
+	// the account's own limit decides like limit.json, and outranks a missing session answer
+	if clFound && now.Before(cl.Until) && !ev.LimitUntil.After(cl.Until) {
+		ev.Limit, ev.LimitUntil = cl.Met, cl.Until
+	}
+	v := friend.FriendStatus(ev, now, friend.AnswerBound, time.Local)
+	if v.Status == "down" && headlessUp(s, now, daemon == "up", ev) {
+		// no session check exists for this account, and none is invented (docs/SPEC-FRIEND.md)
+		v.Status, v.Reason = "up", "fresh beat, no limit"
+		o.Note("a headless Claude account has no session to answer; it is up on a fresh beat and no limit")
+	}
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
@@ -1118,6 +1212,35 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 	}
 	return o
+}
+
+// releaseStarted unmarks cards the lanes had begun. The account's limit
+// stopped the daemon on purpose; the next start hands those cards again
+// instead of finishing them as a run that is gone.
+func releaseStarted(state string) error {
+	st, err := friend.ReadLanes(state)
+	if err != nil || len(st.Started) == 0 {
+		return err
+	}
+	st.Started = nil
+	return friend.WriteLanes(state, st)
+}
+
+// headlessUp is a headless Claude Code account whose beat is fresh, that is
+// not at a limit, and whose bus can deliver. It has no session to answer
+// (docs/SPEC-FRIEND.md, the headless Claude lane). Passive claude leaves
+// Session empty and is not this.
+func headlessUp(s friend.Status, now time.Time, daemonUp bool, e friend.Evidence) bool {
+	if s.Harness != "claude" || s.Session == "" {
+		return false
+	}
+	if !daemonUp || s.BeatError != "" || s.Beats < 1 || s.LastBeat.IsZero() || now.Sub(s.LastBeat) >= friend.DaemonStale {
+		return false
+	}
+	if e.Harness == friend.HarnessNotRunning || e.Harness == "not running" || e.BusBlocked != "" || e.LimitUntil.After(now) {
+		return false
+	}
+	return true
 }
 
 // evidence is what the friend's status is decided from (docs/SPEC-FRIEND.md,
