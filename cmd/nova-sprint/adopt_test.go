@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,4 +124,38 @@ func TestColdReadOfReadsTheReportsLastWord(t *testing.T) {
 	r = coldReadOf("looks fine")
 	assert.False(t, r.OK)
 	assert.True(t, strings.HasPrefix(r.Finding, "the report says neither"))
+}
+
+func TestAdoptionSwitchesFriendDaemonsFromTheNovaFriendArtifact(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	platform := filepath.Join(dir, "linux-amd64")
+	require.NoError(t, os.MkdirAll(platform, 0o755))
+	serverCandidate := filepath.Join(platform, "nova-sprint")
+	daemonCandidate := filepath.Join(platform, "nova-friend")
+	serverTarget := filepath.Join(dir, "server")
+	daemonTarget := filepath.Join(dir, "friend-daemon")
+	for path, body := range map[string]string{
+		serverCandidate: "new sprint", daemonCandidate: "new friend",
+		serverTarget: "old sprint", daemonTarget: "old friend",
+	} {
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o755))
+	}
+	s := &adoptSteps{a: &app{now: time.Now}, platform: "linux-amd64", serverBin: serverTarget, daemons: []string{daemonTarget}}
+	kept, err := s.KeepRollback(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, s.Switch(context.Background(), sprint.AdoptBuild{Dir: dir}))
+	server, err := os.ReadFile(serverTarget)
+	require.NoError(t, err)
+	daemon, err := os.ReadFile(daemonTarget)
+	require.NoError(t, err)
+	assert.Equal(t, "new sprint", string(server))
+	assert.Equal(t, "new friend", string(daemon), "a daemon must receive nova-friend, not nova-sprint")
+	require.NoError(t, s.Rollback(context.Background(), kept))
+	server, err = os.ReadFile(serverTarget)
+	require.NoError(t, err)
+	daemon, err = os.ReadFile(daemonTarget)
+	require.NoError(t, err)
+	assert.Equal(t, "old sprint", string(server))
+	assert.Equal(t, "old friend", string(daemon))
 }

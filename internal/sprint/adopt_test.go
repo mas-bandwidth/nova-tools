@@ -223,6 +223,21 @@ func TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment(t *testing.T) {
 		assert.Contains(t, p.Lines[0], "ADOPT ROLLED-BACK tip=aaaaaaaaaaaa")
 	})
 
+	t.Run("a partial switch rolls the kept copies back before it blocks", func(t *testing.T) {
+		t.Parallel()
+		r := newAdoptRig(t)
+		r.toJudgment()
+		_, err := sprint.AnswerAdoption(r.ctx, r.st, "aaaaaaaaaaaa", "yes", "")
+		require.NoError(t, err)
+		r.f.fail["switch"] = errors.New("friend daemon did not replace")
+		r.f.calls = nil
+		p := r.pass()
+		assert.Equal(t, sprint.AdoptBlocked, p.Stage, p.Lines)
+		assert.Equal(t, []string{"keep", "switch", "rollback"}, r.f.calls)
+		assert.Equal(t, "live", r.f.server, "a failed switch leaves the prior server build live")
+		assert.Contains(t, strings.Join(p.Lines, "\n"), "ADOPT BLOCKED tip=aaaaaaaaaaaa at switch: friend daemon did not replace")
+	})
+
 	t.Run("a no keeps the live build", func(t *testing.T) {
 		t.Parallel()
 		r := newAdoptRig(t)

@@ -141,7 +141,6 @@ func init() {
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
 		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
-		{"adopt", "[--state <file>] (--repo-dir <clone> --base <branch> --server-bin <path> [--daemon <path>...] --bench <host> --bench-src <dir> --bench-out <dir> --out <dir> --release <vX.Y.Z> --machines <file> [--adopt-args <flags>] [--stream <s>] [--judgment-to <file>] [--tick-every <d>] [--missed <n>] [--watch <n>] | --answer yes|no --judgment <tip> --reason <text> | --show)", "adopt --answer yes --judgment 3cac64dbb0a1 --reason 'canary, shadow and cold read green'", (*app).cmdAdopt},
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}

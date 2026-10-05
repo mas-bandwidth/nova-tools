@@ -151,6 +151,13 @@ func (s *adoptSteps) candidate(b sprint.AdoptBuild) string {
 	return filepath.Join(b.Dir, s.platform, "nova-sprint")
 }
 
+// daemonCandidate is the nova-friend artifact from the adopted release. A
+// daemon's target path is installation-specific, but the binary it runs is
+// always nova-friend (docs/SPRINT-COORDINATOR.md, "Adoption is a pipeline").
+func (s *adoptSteps) daemonCandidate(b sprint.AdoptBuild) string {
+	return filepath.Join(b.Dir, s.platform, "nova-friend")
+}
+
 func (s *adoptSteps) Canary(ctx context.Context, b sprint.AdoptBuild) (string, error) {
 	bin := s.candidate(b)
 	arts, err := release.ReadSums(filepath.Dir(bin))
@@ -280,8 +287,11 @@ func (s *adoptSteps) KeepRollback(context.Context) ([]string, error) {
 }
 
 func (s *adoptSteps) Switch(ctx context.Context, b sprint.AdoptBuild) error {
-	for _, p := range s.binaries() {
-		if err := sprint.ServerSwitch(ctx, sprint.ServerSwitchOptions{Binary: s.candidate(b), Target: p, Now: s.a.now}); err != nil {
+	if err := sprint.ServerSwitch(ctx, sprint.ServerSwitchOptions{Binary: s.candidate(b), Target: s.serverBin, Now: s.a.now}); err != nil {
+		return err
+	}
+	for _, daemon := range s.daemons {
+		if err := sprint.ServerSwitch(ctx, sprint.ServerSwitchOptions{Binary: s.daemonCandidate(b), Target: daemon, Now: s.a.now}); err != nil {
 			return err
 		}
 	}
