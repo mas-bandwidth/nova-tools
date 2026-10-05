@@ -76,8 +76,9 @@ func FinishStep(r sprint.FinishReq) Step {
 	// with or without its usage: the second identical failure below its ceiling escalates
 	// the card in the finish, by the tiers its routes serve (sprint.NextTier)
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "" || r.Failed,
-		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
-		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
+		Friends: true,
+		Extras:  sprint.NamedExtras(sprint.Fleet, r.IDs),
+		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
 
 // ProgressStep is a holder stamping progress on the work cards it works (sprint.Progress).
@@ -141,8 +142,8 @@ func DropStep(r sprint.DropReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drop(s, r) }}
 }
 
-// BriefStep is the coordinator replacing the brief of a primary that has not
-// started, on a STOPPED machine (sprint.Brief).
+// BriefStep is the coordinator replacing the briefs of primaries that have not
+// started, on a running machine as on a stopped one (sprint.Brief); all or none.
 func BriefStep(r sprint.BriefReq) Step {
 	return Step{Named: true, Args: ArgsOf(r), Verb: "brief", Load: tables(sprint.Work),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Brief(s, r) }}
@@ -335,4 +336,27 @@ func RecutStep(r sprint.RecutReq) Step {
 			return out
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Recut(s, r) }}
+}
+
+// FriendReturnStep is friend reconcile returning a friend's abandoned cards to ready
+// (sprint.FriendReturn; docs/SPEC-SPRINT.md section 1, friend reconcile): all or none.
+func FriendReturnStep(r sprint.FriendReturnReq) Step {
+	ids := make([]string, len(r.Cards))
+	for i, c := range r.Cards {
+		ids[i] = c.ID
+	}
+	return Step{Named: true, Args: ArgsOf(r), Verb: "friend reconcile", Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
+		Extras: sprint.NamedExtras(sprint.Fleet, ids),
+		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendReturn(s, r) }}
+}
+
+// ServerRestartStep is the server restart plan (sprint.ServerRestart; docs/SPEC-SPRINT.md
+// section 6): on server start, keep every in-flight read whose lease is live,
+// and only take back reads whose lease has lapsed.
+func ServerRestartStep() Step {
+	return Step{
+		Verb: "restart",
+		Load: tables(sprint.Readers, sprint.Work),
+		Plan: sprint.ServerRestart,
+	}
 }

@@ -20,7 +20,7 @@ func TestSchemaCoverFriendsDef(t *testing.T) {
 	for _, c := range def.Columns {
 		names = append(names, c.Name)
 	}
-	assert.Equal(t, []string{"ready", "working", "width", Done, OkPct, Status, DoneOK, DoneFailed}, names)
+	assert.Equal(t, []string{"ready", "working", "width", Done, OkPct, Status, Active, DoneOK, DoneFailed}, names)
 }
 
 func TestSchemaCoverNamesTable(t *testing.T) {

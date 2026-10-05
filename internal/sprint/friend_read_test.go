@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,7 +71,7 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-1", 1, "amy")))
 		require.NotNil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")))
 		require.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")))
-		require.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b")))
+		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b"))) // the second read waits for the first (section 6)
 		require.Equal(t, Asked, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")).Col)
 	})
 
@@ -103,6 +104,20 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		ns := w.notesOf(NFewReaders)
 		require.Len(t, ns, 1)
 		require.Equal(t, fewReaders(w.s), ns[0].What)
+	})
+
+	t.Run("one-shot mode", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, "reader-a", "reader-b")
+		for i, id := range []string{"s1-1", "s1-2", "s1-3"} {
+			putReview(w, id, id+": work (s1) tier: frontier\n", 1, float64(i+1), primHead)
+		}
+		seat := frontierSeat("amy", 2, Up, t.TempDir())
+		seat.Mode = config.FriendModeOneShot
+		askReaders(t, w, []FriendSeat{seat})
+		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")).Col)
+		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")), "one-shot friend holds no ready read cards")
+		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-3", 1, "amy")))
 	})
 
 	t.Run("most free", func(t *testing.T) {

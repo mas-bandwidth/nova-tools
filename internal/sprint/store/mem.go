@@ -1237,6 +1237,9 @@ func (m *Mem) Coordinator(context.Context) (string, error) {
 	return m.kv[keyCoordinator], nil
 }
 
+// SetCoordinator writes the coordinator key: init's alone (Store.InitSeat);
+// the seat's steps write it in Release with the record. Mem keeps no expiring
+// keys: the server's record stays until written again, judged by its time.
 func (m *Mem) SetCoordinator(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,19 +32,24 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 		}
 		ta.ok(line)
 	}
-	ta.ok("ask")
-	for i := range work {
-		id := stream + "-" + strconv.Itoa(i+1)
-		for _, rd := range []struct {
-			who   string
-			usage string
-		}{{"reader-a", readA[i]}, {"reader-b", readB[i]}} {
-			line := "read --as " + rd.who + " --ok " + id + ".r1." + rd.who
-			if rd.usage != "" {
-				line += " --usage '" + rd.usage + "'"
+	// the reads are asked one at a time: each card's first read (whichever reader the
+	// round gave it) with readA's usage, then, asked again, its second with readB's
+	for round, usages := range [][]string{readA, readB} {
+		ta.ok("ask")
+		for i := range work {
+			id := stream + "-" + strconv.Itoa(i+1)
+			for _, who := range []string{"reader-a", "reader-b"} {
+				if !slices.Contains(ta.askedOf(who), id+".r1."+who) {
+					continue
+				}
+				line := "read --as " + who + " --ok " + id + ".r1." + who
+				if usages[i] != "" {
+					line += " --usage '" + usages[i] + "'"
+				}
+				ta.ok(line)
 			}
-			ta.ok(line)
 		}
+		_ = round
 	}
 	ta.ok("accept --stream " + stream)
 	merge := "merge --stream " + stream
@@ -61,17 +67,20 @@ func (ta *testApp) costCells() map[string]string {
 	ta.t.Helper()
 	out := map[string]string{}
 	lines := strings.Split(ta.ok("where"), "\n")
-	in := false
+	in, at := false, -1
 	for _, l := range lines {
 		f := strings.Split(l, "|")
 		switch {
 		case strings.HasPrefix(l, "work "):
 			in = true
-			require.Equal(ta.t, "cost", strings.TrimSpace(f[len(f)-1]), "cost is the work table's last column")
+			// cost, then per landed, are the work table's last columns
+			require.Equal(ta.t, "per landed", strings.TrimSpace(f[len(f)-1]), "per landed is the work table's last column")
+			at = len(f) - 2
+			require.Equal(ta.t, "cost", strings.TrimSpace(f[at]), "cost is the column before it")
 		case in && strings.TrimSpace(l) == "":
 			return out
-		case in && len(f) > 1 && !strings.HasPrefix(l, "-"):
-			out[strings.TrimSpace(f[0])] = strings.TrimSpace(f[len(f)-1])
+		case in && len(f) > at && !strings.HasPrefix(l, "-"):
+			out[strings.TrimSpace(f[0])] = strings.TrimSpace(f[at])
 		}
 	}
 	return out
@@ -138,6 +147,7 @@ func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --usage 'input=1 actual_usd=0.1 actual_by=harness'")
 	ta.ok("ask")
+	ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
 	var asked []string
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 		if code, _, _ := ta.do("read --as " + rd + " --begin s1-1.r1." + rd); code == 0 {

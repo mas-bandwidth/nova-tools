@@ -44,6 +44,7 @@ const (
 	NUnknownMachine = "an unknown machine is beating"
 	NStagingRefused = "a member refused a card at staging"    // dealt to another member
 	NRestWithdrawn  = "a card withdrawn from a resting route" // dealt again on one that serves
+	NFriendReturned = "a friend's card returned to ready"     // by friend reconcile: no report, and her queue says done or does not hold it
 	// The coordinator held a fleet member, a reader, a friend or a stream, or released
 	// its hold (hold, unhold: hold.go), the reason in the note.
 	NHeld   = "held by the coordinator"
@@ -176,6 +177,7 @@ type Note struct {
 	// card from its position there.
 	Card        string `json:"card,omitempty"`
 	Other       string `json:"other,omitempty"`
+	Tier        string `json:"tier,omitempty"` // the tier a judgment proposes (NRaiseReadTier)
 	OtherStream string `json:"other_stream,omitempty"`
 	// StreamLevel says the judgment is about its stream as a whole (a stopped
 	// stream): it stays open until the stream resumes.

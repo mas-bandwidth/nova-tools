@@ -192,6 +192,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "tick", err.Error())
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
+	st.WakeFriend = a.stallWaker(st, stderr)
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
 	err = noSprintYet(err)
@@ -299,6 +300,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
+	st.WakeFriend = a.stallWaker(st, stderr)
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}
@@ -342,6 +344,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	}
 	// the providers' balances, read outside every tick (balance.go)
 	go a.balanceLoop(context.Background(), st, stdout)
+	// the store round trip, timed every 10 s for where (store-latency-row-r.w2)
+	go a.storeRTTLoop(context.Background(), st)
 	if decideDir != "" {
 		var b decide.Backend
 		if key := a.getenv(decide.JevSecret); key != "" {
@@ -352,6 +356,11 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		}
 		go a.decideLoop(context.Background(), c.redis, stdout)
 	}
+	// on server start, keep every in-flight read whose lease is live and only
+	// take back reads whose lease has lapsed (tla/ServerLanes.tla, Restart)
+	// ignored: a best-effort read cleanup on startup; tick takes care of any subsequent lapses
+	_ = a.serverStart(context.Background(), st)
+
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
 		return exitReplaced
@@ -463,7 +472,8 @@ const (
 // read alone. Every tick of a RUNNING machine is printed, naming every table
 // and the rows it changed in each, and every tick that
 // failed; an error is printed always and the loop goes on, waiting longer
-// after each failure in a row, up to TickBackoffCap.
+// after each failure in a row, up to TickBackoffCap. After each tick of a
+// RUNNING machine every friend is reconciled (reconcileFriendsTick).
 //
 // A loop runs the code it was started with for as long as it runs: a binary
 // installed under it (a release, a fix) would leave the store ticked by the
@@ -478,12 +488,18 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 	// every line before the loop is seen: the first tick reads the state whole
 	cursor, _ := st.LogTail(ctx)
 	why := tickStart
+	friends := newFriendTick()
+	// the server's record, the actor this loop runs as, which seat and handover
+	// show beside the seat's holder: written before the first tick and every
+	// store.ServerEvery (seat-key-follows-record.w2)
+	var said time.Time
 	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {
 		if now := a.binaryStamp(); began0 != "" && now != began0 {
 			fmt.Fprintf(stdout, "RUN STOP the binary this loop runs was replaced on disk since it began (%s, now %s): exiting so its supervisor starts the new one; a loop that is not supervised: run nova-sprint run again\n", began0, orDashStr(now, "unreadable"))
 			return true
 		}
 		began := a.now()
+		said = a.sayServer(ctx, st, said, stderr)
 		// one tick, or one worker's batch, at a time (serve.go); the tick takes the line at
 		// its turn, after the batch in flight, not behind every batch waiting
 		// (sprint.ControlLine; docs/SPEC-SPRINT.md section 14, The server, "The tick's turn")
@@ -519,6 +535,12 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 				fmt.Fprintln(stdout, line)
 			}
 		}
+		if err == nil && res.State == store.Running {
+			// every friend reconciled after the tick's deal, with friend reconcile's plan
+			// (friendreconcile_tick.go; docs/SPEC-SPRINT.md section 1,
+			// friend-reconcile-every-tick-r.w1)
+			a.reconcileFriendsTick(ctx, st, friends, stdout)
+		}
 		if n != 0 && i == n-1 {
 			return false
 		}
@@ -532,6 +554,41 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		cursor, why = a.pace(ctx, st, res.Epoch, cursor, began)
 	}
 	return false
+}
+
+// sayServer writes the server's record, the actor the loop runs as, when
+// store.ServerEvery has passed since said, its last write, and returns the
+// time of the last write; a failed write is said and tried again on the next
+// tick. It writes nothing else: never the coordinator key, which init and the
+// seat's steps write from the seat's record.
+func (a *app) sayServer(ctx context.Context, st *store.Store, said time.Time, stderr io.Writer) time.Time {
+	now := a.now()
+	if !said.IsZero() && now.Sub(said) < store.ServerEvery {
+		return said
+	}
+	if err := st.SetServerActor(ctx, st.Actor); err != nil {
+		fmt.Fprintf(stderr, "%s run: the server's record was not written: %s\n", prog, oneline.Escape(err.Error()))
+		return said
+	}
+	return now
+
+}
+
+// storeRTTLoop times one store round trip every store.StoreRTTEvery, waiting on
+// a.after between them, until ctx is done; where shows the p50 and p99 of the last
+// minute (store.MeasureStoreRTT, docs/SPEC-SPRINT.md section 14,
+// store-latency-row-r.w2). A failed round trip is not a sample, and the next is
+// timed as usual.
+func (a *app) storeRTTLoop(ctx context.Context, st *store.Store) {
+	for ctx.Err() == nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.after(store.StoreRTTEvery):
+			// ignored: a failed round trip records nothing; the next one is timed in 10 s
+			_, _ = st.MeasureStoreRTT(ctx)
+		}
+	}
 }
 
 // pace is the wait between two ticks of run: it blocks on the log of the
@@ -602,4 +659,13 @@ func idleAlarmFlag(on *bool, byDefault bool) func(flagSet) {
 	return func(fs flagSet) {
 		fs.BoolVar(on, "idle-alarm", byDefault, "when the fleet works under half its width for "+sprint.IdleWindow.String()+" while cards wait, push the coordinator one note (the inbox, and inbox --push) naming the roots the waiting cards are behind, the most cards first, once an episode, and one more when it recovers (run: on by default; a tick by hand only with --idle-alarm)")
 	}
+}
+
+// serverStart runs the server startup steps before the first tick:
+// on server start, keep every in-flight read whose lease is live and only
+// take back reads whose lease has lapsed (tla/ServerLanes.tla, Restart;
+// docs/SPEC-SPRINT.md section 6).
+func (a *app) serverStart(ctx context.Context, st *store.Store) error {
+	_, err := st.Run(ctx, store.ServerRestartStep())
+	return err
 }

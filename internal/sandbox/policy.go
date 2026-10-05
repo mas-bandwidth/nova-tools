@@ -83,6 +83,15 @@ type Input struct {
 	NetDeny     bool
 	NetListen   bool
 	NetAllow    []string // host:port the profile opens back up by name
+	// NetPorts is the TCP ports a --net-deny wall opens outbound, to any host, with the
+	// name resolver: a lane's wall profile (profile.go) names 443 and 22. Only with
+	// NetDeny; the darwin profile grants them, and on linux they are not granted (Landlock
+	// here handles no port rule), so there the denial is whole: fail closed.
+	NetPorts []int
+	// Deny is the paths no write of this wall may reach (a lane's wall profile: the
+	// coordinator's self). Every --write, the --cwd, the --tmp and HOME is refused when it
+	// is inside one or holds one, so the wall denies them by having no grant there.
+	Deny        []string
 	GPU         string   // --gpu none|metal; empty means none
 	Argv        []string // the command and its arguments, everything after --
 	Home        string   // the HOME value the child receives
@@ -108,6 +117,8 @@ type Policy struct {
 	NetDeny     bool
 	NetListen   bool
 	NetAllow    []string // host:port the profile opens back up by name
+	NetPorts    []int    // TCP ports a --net-deny wall opens outbound (Input.NetPorts)
+	Deny        []string // resolved paths no write reaches (Input.Deny)
 	GPUMode     GPUMode
 	MaxProcs    int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
 	MaxMem      int64    // the tree's resident-memory cap in bytes, set by Build; 0 is unbounded
@@ -406,6 +417,21 @@ func insideAny(path string, dirs []string) bool {
 	return slices.ContainsFunc(dirs, func(d string) bool { return Inside(path, d) })
 }
 
+// DeletesIn reports whether the wall lets the command delete beneath dir: unlink, rmdir
+// and rename-away. The write roots the command owns qualify: the job directory (the first
+// --write), the temp directory, and the working directory (--cwd, always inside the write
+// set: the checkout a step was given to write, whose git commit renames a new index over
+// .git/index). Every other --write, a shared cache or a config dir, may be written and
+// never deleted from, so an rm -rf of a variable path that names one of them is refused by
+// the kernel rather than trusted to the command (docs/SPEC-SANDBOX.md,
+// "deletes-only-in-the-job-dir-p.w1").
+func (p *Policy) DeletesIn(dir string) bool {
+	if p == nil || len(p.Writes) == 0 {
+		return false
+	}
+	return Inside(dir, p.Writes[0]) || (p.Tmp != "" && Inside(dir, p.Tmp)) || (p.Cwd != "" && Inside(dir, p.Cwd))
+}
+
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
 // literals of the darwin profile put a path INTO the profile text (the -D parameters do
 // not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a
@@ -595,6 +621,19 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 		}
 		p.NetAllow = append(p.NetAllow, net.JoinHostPort(host, port))
 	}
+	if len(in.NetPorts) > 0 && !in.NetDeny {
+		bad = append(bad, refuse("bad_net", "TCP ports %v were named without --net-deny: the ports are what a denied network opens, and an open network has nothing to open", in.NetPorts))
+	}
+	for _, port := range in.NetPorts {
+		if port < 1 || port > 65535 {
+			bad = append(bad, refuse("bad_net", "TCP port %d is no port: it wants 1 to 65535", port))
+			continue
+		}
+		p.NetPorts = append(p.NetPorts, port)
+	}
+	for _, raw := range in.Deny {
+		p.Deny = append(p.Deny, denyPath(raw))
+	}
 
 	if len(in.Argv) == 0 {
 		bad = append(bad, refuse("no_command", "nothing after --; usage: nova-sandbox --read <dir>... --write <dir>... -- <command> <args...>"))
@@ -728,6 +767,11 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			}
 		}
 	}
+	// The deny list (buds-in-the-wall-r.w5): no write may reach a denied path, from
+	// above it or from inside it. The wall grants writing only where it is told to, so a
+	// denied path no grant covers is denied on both bodies; this is the refusal that keeps
+	// a grant from covering one.
+	bad = append(bad, deniedWrites(p)...)
 	if len(bad) > 0 {
 		return nil, bad
 	}
@@ -754,6 +798,40 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	}
 	p.PathDirs = PathDirectoriesWith(lookIn, p.Reads, p.Writes, p.OptRoots, homes)
 	return p, nil
+}
+
+// denyPath is a denied path as the checks compare it: resolved through its symlinks
+// when it is there, else made absolute and clean. A denied path that is not on this
+// machine is still compared by its name, so a write cannot be granted above it before it
+// is made.
+func denyPath(raw string) string {
+	if got, err := filepath.EvalSymlinks(raw); err == nil {
+		raw = got
+	}
+	if abs, err := filepath.Abs(raw); err == nil {
+		raw = abs
+	}
+	return filepath.Clean(raw)
+}
+
+// deniedWrites is a refusal for every write of p (each --write, the --cwd, the --tmp and
+// HOME) that is a denied path, lies inside one, or holds one.
+func deniedWrites(p *Policy) []Refusal {
+	var bad []Refusal
+	writes := append([]string{}, p.Writes...)
+	for _, extra := range []string{p.Cwd, p.Tmp, p.Home} {
+		if extra != "" && !slices.Contains(writes, extra) {
+			writes = append(writes, extra)
+		}
+	}
+	for _, d := range p.Deny {
+		for _, w := range writes {
+			if Inside(w, d) || Inside(d, w) {
+				bad = append(bad, refuse("denied_write", "%s is a write of this wall and %s is denied to it (the profile's deny list): no write may be a denied path, lie inside one or hold one", w, d))
+			}
+		}
+	}
+	return bad
 }
 
 // PathDirectoriesWith extracts existing directories from lookIn (PATH) that are not already

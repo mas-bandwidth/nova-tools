@@ -555,6 +555,12 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+d+" --reason '<the payment made>'")
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
+		case d == "raise":
+			// the stream's read tier rises to the tier the judgment proposes, the cause recorded (readtier.go)
+			_, why, _ := strings.Cut(first.What, "? ")
+			add(d, cmd+"stream set "+g.Stream+" --read-tier "+first.Tier+" --reason '"+strings.ReplaceAll(why, "'", "")+"'"+ans)
+		case d == "keep":
+			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'keep the read tier'")
 		case d == "resume" && s != "":
 			add(d, resume(didText))
 		case d == "release":

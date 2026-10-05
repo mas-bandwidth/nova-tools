@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,15 @@ import (
 const (
 	// PropDealtMax is the work table's property: the dealt bound, a duration.
 	PropDealtMax = "dealt_max"
+	// PropFriendIdle is the work table's property: how long a friend holding cards may
+	// show no session activity before it is an alarm, a duration.
+	PropFriendIdle = "friend_idle"
+	// PropFriendStallAfter is the work table's property: how long a friend holding cards
+	// may show neither session activity nor card progress before she is stalled, a duration.
+	PropFriendStallAfter = "friend_stall_after"
+	// PropFriendStallStep is the work table's property: the duration of each rung of
+	// the friend stall ladder.
+	PropFriendStallStep = "friend_stall_step"
 	// PropReadTier is the work table's property: the sprint's read tier.
 	PropReadTier = "read_tier"
 	// FieldReadTier is a stream's control card's field: the stream's read tier,
@@ -50,6 +60,53 @@ func (s *Snapshot) DealtMax() time.Duration {
 	return DealtMaxDefault
 }
 
+// FriendIdleDefault is how long a friend holding cards may show no file write under her
+// working directory and outbox before it is an alarm (nova-sprint set --friend-idle).
+const FriendIdleDefault = 20 * time.Minute
+
+// FriendIdleAfter is that bound: the sprint's setting, else FriendIdleDefault.
+func (s *Snapshot) FriendIdleAfter() time.Duration {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropFriendIdle); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return FriendIdleDefault
+}
+
+// FriendStallAfterDefault is how long a friend holding cards may show neither file write
+// under her working directory nor card progress before the stall ladder begins.
+const FriendStallAfterDefault = 20 * time.Minute
+
+// FriendStallAfter is that bound: the sprint's setting, else FriendStallAfterDefault.
+func (s *Snapshot) FriendStallAfter() time.Duration {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropFriendStallAfter); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return FriendStallAfterDefault
+}
+
+// FriendStallStepDefault is the duration between rungs of the friend stall ladder.
+const FriendStallStepDefault = 5 * time.Minute
+
+// FriendStallStep is that step: the sprint's setting, else FriendStallStepDefault.
+func (s *Snapshot) FriendStallStep() time.Duration {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropFriendStallStep); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return FriendStallStepDefault
+}
+
 // readTierSetting is the read tier set for the stream's reads: the stream's own,
 // else the sprint's, else "" (each card's own tier).
 func (s *Snapshot) readTierSetting(stream string) string {
@@ -80,12 +137,21 @@ func stronger(a, b string) string {
 }
 
 // SetReq is the coordinator's settings: with Streams, each stream's read tier,
-// release, or protected-branch mark; without, the sprint's dealt bound and read tier.
-// An empty value leaves that setting as it is; ReadTierDefault takes one off.
+// attempt cap, release, or protected-branch mark; without, the sprint's dealt
+// bound, read tier and attempt cap (brief_bound.go, AttemptsCap). An empty value
+// leaves that setting as it is; ReadTierDefault takes one off.
 type SetReq struct {
-	Streams  []string `json:",omitempty"`
-	ReadTier string   `json:",omitempty"`
-	DealtMax string   `json:",omitempty"`
+	Streams          []string `json:",omitempty"`
+	ReadTier         string   `json:",omitempty"`
+	DealtMax         string   `json:",omitempty"`
+	Attempts         string   `json:",omitempty"`
+	FriendIdle       string   `json:",omitempty"`
+	FriendStallAfter string   `json:",omitempty"`
+	FriendStallStep  string   `json:",omitempty"`
+	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
+	// stream's control card (FieldReadTierReason); Answers the judgments this answers.
+	Reason  string   `json:",omitempty"`
+	Answers []string `json:",omitempty"`
 	// LandProtected is the streams' mark: the repositories whose protected branches
 	// they land on (FieldLandProtected, docs/SPEC-SPRINT.md section 7).
 	LandProtected string `json:",omitempty"`
@@ -95,6 +161,7 @@ type SetReq struct {
 	AlarmMerging string `json:",omitempty"`
 	AlarmFleet   string `json:",omitempty"`
 	AlarmReady   string `json:",omitempty"`
+	GoLanes      string `json:",omitempty"` // the Go lanes of every machine (PropGoLanes, section 18)
 	Who          string
 }
 
@@ -124,6 +191,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--land-protected is a stream's, not the sprint's: nova-sprint stream set <stream> --land-protected "+r.LandProtected)
 		}
 	}
+	if r.GoLanes != "" && r.GoLanes != ReadTierDefault {
+		if n, err := strconv.Atoi(r.GoLanes); err != nil || n < 1 {
+			why = append(why, "--go-lanes wants a whole number from 1, the Go lanes of every machine, or "+ReadTierDefault+" for "+strconv.Itoa(LaneWidthDefault)+"; found "+r.GoLanes)
+		}
+	}
 	alarms := r.alarms()
 	for _, a := range alarmProps {
 		if v := alarms[a.prop]; v != "" && !alarmValid(a.prop, v) {
@@ -133,8 +205,31 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, a.flag+" is the sprint's, not a stream's: nova-sprint set "+a.flag+" "+v)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 {
-		why = append(why, "nothing to set: --read-tier, --dealt-max or an --alarm-... threshold")
+	if r.Attempts != "" {
+		if _, err := ParseAttempts(r.Attempts); err != nil {
+			why = append(why, err.Error())
+		}
+	}
+	if r.FriendIdle != "" && r.FriendIdle != ReadTierDefault {
+		if d, err := time.ParseDuration(r.FriendIdle); err != nil || d <= 0 {
+			why = append(why, "--friend-idle wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendIdleDefault.String()+"; found "+r.FriendIdle)
+		}
+	}
+	if r.FriendStallAfter != "" && r.FriendStallAfter != ReadTierDefault {
+		if d, err := time.ParseDuration(r.FriendStallAfter); err != nil || d <= 0 {
+			why = append(why, "--friend-stall-after wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendStallAfterDefault.String()+"; found "+r.FriendStallAfter)
+		}
+	}
+	if r.FriendStallStep != "" && r.FriendStallStep != ReadTierDefault {
+		if d, err := time.ParseDuration(r.FriendStallStep); err != nil || d <= 0 {
+			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" {
+		why = append(why, "nothing to set: --read-tier, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step or an --alarm-... threshold")
+	}
+	if len(r.Streams) > 0 && r.GoLanes != "" {
+		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
@@ -142,9 +237,23 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if len(r.Streams) == 0 && r.Release != "" {
 		why = append(why, "--release is a stream's, not the sprint's: nova-sprint stream set <s> --release "+r.Release)
 	}
+	if len(r.Streams) > 0 && r.FriendIdle != "" {
+		why = append(why, "--friend-idle is the sprint's, not a stream's: nova-sprint set --friend-idle "+r.FriendIdle)
+	}
+	if len(r.Streams) > 0 && r.FriendStallAfter != "" {
+		why = append(why, "--friend-stall-after is the sprint's, not a stream's: nova-sprint set --friend-stall-after "+r.FriendStallAfter)
+	}
+	if len(r.Streams) > 0 && r.FriendStallStep != "" {
+		why = append(why, "--friend-stall-step is the sprint's, not a stream's: nova-sprint set --friend-stall-step "+r.FriendStallStep)
+	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
 			why = append(why, "no stream "+st)
+			continue
+		}
+		// the floor: a stream's read tier is never below its work tier (readtier.go)
+		if work := StreamWorkTier(s, st); r.ReadTier != "" && r.ReadTier != ReadTierDefault && slices.Contains(readTiers, r.ReadTier) && stronger(work, r.ReadTier) != r.ReadTier {
+			why = append(why, st+"'s work tier is "+work+": its read tier is never below it; run: nova-sprint stream set "+st+" --read-tier "+work)
 		}
 	}
 	if len(why) > 0 {
@@ -154,10 +263,28 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if len(r.Streams) > 0 {
 		for _, st := range r.Streams {
 			ctl := s.StreamCtl(st)
-			set, moved := map[string]string{}, []string{}
-			var unset []string
+			set, unset := map[string]string{}, []string{}
+			var moved []string
+			var closes []Open
+			if r.ReadTier != "" {
+				if r.ReadTier == ReadTierDefault || r.ReadTier == "none" {
+					unset = append(unset, FieldReadTier, FieldReadTierReason)
+					moved = append(moved, "read-tier the sprint's")
+				} else {
+					set[FieldReadTier] = r.ReadTier
+					moved = append(moved, "read-tier "+r.ReadTier)
+					if r.Reason != "" {
+						set[FieldReadTierReason] = r.Reason
+					}
+					// a raise answers the stream's judgment that it should rise (readtier.go)
+					for _, o := range s.Open {
+						if o.Note.Type == NRaiseReadTier && o.Subject() == StreamSubject(st) {
+							closes = append(closes, o)
+						}
+					}
+				}
+			}
 			for _, f := range []struct{ field, v, word, off string }{
-				{FieldReadTier, r.ReadTier, "read-tier", "the sprint's"},
 				{FieldLandProtected, r.LandProtected, "land-protected", "none"},
 				{FieldRelease, r.Release, "release", "none"},
 			} {
@@ -169,14 +296,32 @@ func Set(s *Snapshot, r SetReq) Plan {
 					set[f.field], moved = f.v, append(moved, f.word+" "+f.v)
 				}
 			}
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", ")})
+			if r.Attempts != "" {
+				if r.Attempts == ReadTierDefault {
+					unset = append(unset, FieldAttempts)
+					moved = append(moved, "attempts the sprint's")
+				} else {
+					set[FieldAttempts] = r.Attempts
+					moved = append(moved, "attempts "+r.Attempts)
+				}
+			}
+			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", "), Closes: closes})
 		}
+		answered(&p, s, r.Answers, r.Who)
 		return p
 	}
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	kvs := [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}}
+	kvs := [][2]string{
+		{PropReadTier, r.ReadTier},
+		{PropDealtMax, r.DealtMax},
+		{PropGoLanes, r.GoLanes},
+		{PropAttempts, r.Attempts},
+		{PropFriendIdle, r.FriendIdle},
+		{PropFriendStallAfter, r.FriendStallAfter},
+		{PropFriendStallStep, r.FriendStallStep},
+	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
 	}
@@ -199,6 +344,16 @@ func orDefault(v, name string) string {
 		return v
 	case name == PropDealtMax:
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
+	case name == PropGoLanes:
+		return fmt.Sprintf("default (%d a machine)", LaneWidthDefault)
+	case name == PropAttempts:
+		return fmt.Sprintf("default (%d attempts on one brief)", AttemptsDefault)
+	case name == PropFriendIdle:
+		return fmt.Sprintf("default (%s)", FriendIdleDefault)
+	case name == PropFriendStallAfter:
+		return fmt.Sprintf("default (%s)", FriendStallAfterDefault)
+	case name == PropFriendStallStep:
+		return fmt.Sprintf("default (%s)", FriendStallStepDefault)
 	}
 	return "default (each card's own tier)"
 }

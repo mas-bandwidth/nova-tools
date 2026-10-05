@@ -86,39 +86,46 @@ func TestFriendTakeRefusesAStartedCardAndAnotherFriendsCard(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
 
+	// Default: take what you can, refuse the rest
 	code, _, errs := ta.do("friend take amy s1-1 s1-2")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 has started: a push on its branch sprint/s1-1.w1.g1.e0 at "+landHead+"; it stays with friend amy and finishes")
-	assert.Contains(t, errs, "REFUSED s1-2.w1: not written: the verb names several and applies all or none", "all or none: s1-2 stays too")
+	assert.Contains(t, errs, "FRIEND-TAKE FAILED moved=1 refused=1", "takes s1-2 and refuses s1-1")
 
 	ta.ok("friend beat amy --running s1-2.w1")
 	code, _, errs = ta.do("friend take amy s1-2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 has started: her beat names it running")
+	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 has started: friend amy finished it")
 
 	code, _, errs = ta.do("friend take bob s1-2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is not dealt to friend bob: it is at friend.amy:working")
+	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is not dealt to friend bob")
 	code, _, errs = ta.do("friend take cat s1-2")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "no friend cat on the friends table")
+	// --all-or-nothing takes none when any is refused
+	code, _, errs = ta.do("friend take amy --all-or-nothing s1-1 s1-2")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "REFUSED s1-1")
+	assert.Contains(t, errs, "REFUSED s1-2")
+	assert.Contains(t, errs, "FRIEND-TAKE FAILED moved=0 refused=2")
 	ta.clean()
 }
 
-func TestFriendDownGivesBackWhatSheHasNotStartedAndKeepsTheRest(t *testing.T) {
+func TestFriendDownGivesBackEveryCardStartedOrNot(t *testing.T) {
 	t.Parallel()
 	ta, root := takeApp(t, 3, map[string]string{"sprint/s1-1.w1.g1.e0": landHead}, "amy")
 	ta.ok("tick") // amy at width 8: all three on her row
 	ta.ok("friend sync --root " + root)
 
 	out := ta.ok("friend down amy")
-	assert.Contains(t, out, "FRIEND-DOWN OK moved=2 refused=0")
+	assert.Contains(t, out, "FRIEND-DOWN OK moved=3 refused=0")
 	assert.Contains(t, out, "NOTE friend amy held")
-	assert.Contains(t, out, "NOTE friend amy keeps s1-1.w1: a push on its branch sprint/s1-1.w1.g1.e0")
+	assert.NotContains(t, out, "keeps", "a held friend keeps no card")
 	ta.ok("tick")
 	var c cardView
 	ta.json("card s1-1", &c)
-	assert.Equal(t, sprint.Working, c.Work[0].Col, "the started one stays with her")
+	assert.Equal(t, sprint.Withdrawn, c.Work[0].Col, "the started one goes back too")
 	ta.json("card s1-2", &c)
 	assert.Equal(t, sprint.Withdrawn, c.Work[0].Col, "held: nothing is dealt to her")
 	assert.Equal(t, sprint.Ready, c.Primary.Col)
@@ -132,10 +139,6 @@ func TestFriendDownGivesBackWhatSheHasNotStartedAndKeepsTheRest(t *testing.T) {
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row)
 	assert.Equal(t, sprint.Working, c.Primary.Col)
 
-	// take --all-unstarted takes every one not started, and names the one she keeps
-	out = ta.ok("friend take amy --all-unstarted --reason 'rebalance'")
-	assert.Contains(t, out, "FRIEND-TAKE OK moved=2")
-	assert.Contains(t, out, "NOTE friend amy keeps s1-1.w1")
 	ta.clean()
 }
 

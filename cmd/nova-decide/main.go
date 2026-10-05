@@ -347,7 +347,7 @@ func (w world) asking(f *tool.Flags) {
 		case b == "jev" && c.Given("answers"):
 			c.Problem("--answers is the fixed backend's; --backend jev asks the model")
 		case b == "jev" && w.getenv(decide.JevSecret) == "" && !c.DryRun():
-			c.Problem(decide.JevSecret + " is absent from this environment; run under `nova-secrets exec --only " + decide.JevSecret + " -- nova-decide ...` (the key is never a flag or a file)")
+			c.ProblemAs("key_absent", decide.JevSecret+" is absent from this environment; run under `nova-secrets exec --only "+decide.JevSecret+" -- nova-decide ...` (the key is never a flag or a file)")
 		case b != "" && b != "jev" && b != "fixed":
 			c.Problem(fmt.Sprintf("--backend %q is no backend; it wants jev or fixed", b))
 		}
@@ -474,7 +474,7 @@ func (w world) scoreGrades(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	defer f.Close()
+	defer f.Close() // ignored: the log is only read; its close can lose nothing the read returned
 	facts, err := decide.ReadLog(f)
 	if err != nil {
 		return tool.Refuse(c.Str("log") + ": " + err.Error())

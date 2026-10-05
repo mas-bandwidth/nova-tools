@@ -14,7 +14,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -132,7 +131,7 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	frame = tableOf(ta.frame(), sprint.Friends)
 	assert.Contains(t, frame, "held (resting her, until "+ta.a.clock12(back, ta.now)+")", frame)
 	ta.json("where", &w)
-	assert.True(t, strings.HasPrefix(w.Tables[sprint.Friends]["amy"]["status"], sprint.Held+" ("), "where --json carries the cell as printed")
+	assert.True(t, strings.HasPrefix(cellText(w.Tables[sprint.Friends]["amy"]["status"]), sprint.Held+" ("), "where --json carries the cell as printed")
 	ta.ok("friend up amy")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "the hold lifted, the observation (down) stands")
 	ta.a.sleep(time.Second)
@@ -192,7 +191,7 @@ func TestFriendSyncSaysTheBusStoresAlarmAndTheNextSendClearsIt(t *testing.T) {
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	env := ta.a.getenv
 	ta.a.getenv = func(k string) string {
-		return map[string]string{busRedisEnv: "bus.test:6379", redisauth.UserEnv: "sprint"}[k] + env(k)
+		return map[string]string{busRedisEnv: "bus.test:6379", busUserEnv: "sprint"}[k] + env(k)
 	}
 	fake := bustest.NewFake(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), "coordinator", "amy")
 	fake.Friends = []string{"amy"}

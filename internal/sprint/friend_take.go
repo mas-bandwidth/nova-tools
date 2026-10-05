@@ -15,7 +15,10 @@ import (
 // friends' deal (FriendDeal) places the same card again at its next generation, on its own
 // branch and job. A card she has started stays with her and finishes: one she pushed to, one
 // her beat names running (the caller reads both: Started), and one she finished (in review
-// or later, so no longer ready or working on her row).
+// or later, so no longer ready or working on her row). With cards named, each one she may
+// give up is taken and each one she keeps is refused, one line each (section 1, the card
+// friend-take-partial.w1); AllOrNothing takes none when any is refused, as the take did
+// before.
 
 const (
 	// FieldTakenBack is why a friend's work card was taken back, on the withdrawn card until
@@ -32,14 +35,16 @@ const (
 // friend, the cards named (each a primary or its work card), every card of hers she has
 // not started (All), why, and Started, the work cards she has started as the caller read
 // them (a push on the card's branch, her beat naming it running), each with its why.
+// AllOrNothing takes none of the cards named when any one is refused.
 type FriendTakeReq struct {
-	Friend  string
-	IDs     []string
-	All     bool
-	Hold    bool
-	Reason  string
-	Started map[string]string
-	Who     string
+	Friend       string
+	IDs          []string
+	All          bool
+	Hold         bool
+	AllOrNothing bool
+	Reason       string
+	Started      map[string]string
+	Who          string
 }
 
 // takenBackWhy is the words a taken card carries (FieldTakenBack).
@@ -55,8 +60,9 @@ func (r FriendTakeReq) takenBackWhy() string {
 
 // FriendTake takes back the friend's cards she has not started: each one withdrawn on her
 // row, its primary ready for the friends' deal. A card named that is not dealt to her, or
-// that she has started, is refused, one refusal each; with All a started card stays (the
-// caller, which read Started, says so). A working card taken frees her lane: her oldest ready card not taken
+// that she has started, is refused, one refusal each, and the rest are taken; with
+// AllOrNothing one refusal takes none, each card that would have been taken refused too;
+// with All a started card stays (the caller, which read Started, says so). A working card taken frees her lane: her oldest ready card not taken
 // is taken into working in the same unit, as her finish takes it (friendNext).
 func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 	var p Plan
@@ -66,8 +72,11 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 	var take []*Card
 	if r.All {
 		for _, c := range mine {
-			if r.Started[c.ID] == "" {
-				take = append(take, c) // a started one stays: the caller says it
+			// a hold takes started cards too: a card sitting on a held friend blocks every card
+			// that needs it (the owner, 2026-10-04: "Held friends cards need to be
+			// redistributed automatically"); the coordinator's own take keeps a started one
+			if r.Started[c.ID] == "" || r.Hold {
+				take = append(take, c)
 			}
 		}
 	}
@@ -90,6 +99,13 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		case !slices.Contains(take, c):
 			take = append(take, c)
 		}
+	}
+	if r.AllOrNothing && len(p.Refused) > 0 {
+		n := len(p.Refused)
+		for _, c := range take {
+			p.refuse(c.ID, fmt.Sprintf("not taken: --all-or-nothing, and %d of the cards named %s refused", n, map[bool]string{true: "was", false: "were"}[n == 1]))
+		}
+		return p
 	}
 	// her ready cards not taken, oldest first: each working card taken frees a lane one fills
 	var next []*Card

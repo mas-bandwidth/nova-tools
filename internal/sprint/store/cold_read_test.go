@@ -290,13 +290,10 @@ func TestAcceptNamedThenSelection(t *testing.T) {
 	// s1-1: eligible (a, b ok at head)
 	p.toReview("h", "s1-1")
 	p.do("ask 1", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	for _, rc := range p.snap().Readers.Of("s1-1") {
-		p.read(rc.F("reader"), rc.ID, "ok")
-	}
+	p.readAllOK("s1-1")
 	// s1-2: the same reader twice: a ok at attempt 1, b broken; rework; a ok at attempt 2, b not yet
 	p.toReview("h1", "s1-2")
-	p.do("ask 2", AskStep(sprint.AskReq{Sel: ids("s1-2")}))
-	rs := p.snap().Readers.Of("s1-2")
+	rs := p.pairAsked("s1-2")
 	p.read(rs[0].F("reader"), rs[0].ID, "ok")
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
 	p.do("rework 2", ReworkStep(sprint.ReworkReq{Sel: ids("s1-2"), Fix: "f"}))
@@ -330,7 +327,7 @@ func TestAcceptRetiresAReadOutstanding(t *testing.T) {
 	p := newProbe(t)
 	p.setup(1)
 	p.toReview("h", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
+	p.pairAsked("s1-1")
 	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))
 	rs := p.snap().Readers.Of("s1-1")
 	t.Logf("read cards: %d", len(rs))
@@ -351,8 +348,7 @@ func TestAcceptAfterAskingAnotherTwice(t *testing.T) {
 	p.beat()
 	p.setup(1)
 	p.toReview("h", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	rs := p.snap().Readers.Of("s1-1")
+	rs := p.pairAsked("s1-1")
 	p.read(rs[0].F("reader"), rs[0].ID, "broken")
 	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))
 	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))
@@ -375,9 +371,9 @@ func TestReworkTwice(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(1)
+	p.must(SetStep(sprint.SetReq{Attempts: "6", Who: p.st.Actor})) // four reworks: over the default attempt cap
 	p.toReview("h1", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	rs := p.snap().Readers.Of("s1-1")
+	rs := p.pairAsked("s1-1")
 	a, b := rs[0].F("reader"), rs[1].F("reader")
 	p.read(a, rs[0].ID, "ok")
 	p.do("b begins", ReadStep(sprint.ReadReq{As: b, Begin: true, Sel: ids(rs[1].ID)}))
@@ -401,8 +397,7 @@ func TestReworkTwice(t *testing.T) {
 		assert.Equal(t, "h2", rc.F("head"), "%s not asked at h2", rc.ID)
 		who = append(who, rc.F("reader"))
 	}
-	require.Len(t, who, 2, "not asked of two at h2")
-	assert.NotEqual(t, who[0], who[1], "asked twice of one reader at h2")
+	require.Len(t, who, 1, "not asked its first read at h2")
 	// a second finding, not the first again: the same finding twice is the brief's bound (brief_bound.go)
 	p.do("read broken f:2", ReadStep(sprint.ReadReq{As: who[0], Verdict: "broken", Finding: "f:2", Sel: ids(sprint.ReadCardID("s1-1", 2, who[0]))}))
 	for _, o := range p.openOn("s1-1") {
@@ -461,11 +456,7 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
 	p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-3")})) // the machine's ask: the finish asks no reader
-	for _, rc := range p.snap().Readers.Of("s1-3") {
-		if rc.Col == sprint.Asked {
-			p.read(rc.F("reader"), rc.ID, "ok")
-		}
-	}
+	p.readAllOK("s1-3")
 	p.do("accept s1-3 again", AcceptStep(sprint.AcceptReq{Sel: ids("s1-3")}))
 	q := p.snap().Merge.Cell("s1", sprint.Queued)
 	var order []string
@@ -718,8 +709,7 @@ func TestReadsExhaustedIsAJudgment(t *testing.T) {
 	p := newProbe(t)
 	p.setup(1)
 	p.toReview("h", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	rs := p.snap().Readers.Of("s1-1")
+	rs := p.pairAsked("s1-1")
 	p.read(rs[0].F("reader"), rs[0].ID, "broken")
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
 	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))

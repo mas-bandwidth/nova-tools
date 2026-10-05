@@ -253,7 +253,7 @@ func TestTheAskGoesRoundTheReaders(t *testing.T) {
 				asked[rd]++
 			}
 		}
-		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, (2*i)%len(readers) == 0)
+		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, i%len(readers) == 0) // one read an ask
 	}
 	last, ok := w.s.Readers.Prop(PropAskIndex)
 	require.True(t, ok, "the readers table's ask_index is %q (%v), want reader-d", last, ok)
@@ -278,7 +278,7 @@ func TestTheTickAskGoesRoundTheReaders(t *testing.T) {
 				asked[rd]++
 			}
 		}
-		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, (2*i)%len(readers) == 0)
+		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, i%len(readers) == 0) // one read an ask
 	}
 }
 
@@ -367,7 +367,7 @@ func TestTheAskGoesRoundTheReadersAcrossStreams(t *testing.T) {
 				asked[rd]++
 			}
 		}
-		evenly(t, fmt.Sprintf("after ask %d", i+1), asked, readers, (2*(i+1))%len(readers) == 0)
+		evenly(t, fmt.Sprintf("after ask %d", i+1), asked, readers, (i+1)%len(readers) == 0) // one read an ask
 	}
 }
 

@@ -1203,6 +1203,7 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 
 // start runs a packet as a child, unless one is already running for it or width is full.
 func (m *Member) start(p Packet) bool {
+	p = Carried(p)
 	if _, ok := m.running[p.Card]; ok {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
 		return false
@@ -1675,7 +1676,95 @@ func finishReport(r Result, pu Push, branch string) (fin Finish, why, report str
 	if fin != FinishOK {
 		report = cut(why + "; " + report)
 	}
-	return fin, why, report
+	return fin, why, CarryProposed(report, r)
+}
+
+// ProposedKey begins the one line a held report proposes the PATHS its card lacked by
+// (docs/SPEC-CARD-CONTRACT.md section 4, "recut-widen-r.w1"): PATHS-PROPOSED: <glob>[,<glob>...].
+const ProposedKey = "PATHS-PROPOSED:"
+
+// PathsProposed is the globs of the first PATHS-PROPOSED line in text, read to the end of its
+// line or a ";", each trimmed, empty ones left out; ok is false when text has no such line.
+func PathsProposed(text string) (globs []string, ok bool) {
+	_, rest, ok := strings.Cut(text, ProposedKey)
+	if !ok {
+		return nil, false
+	}
+	rest, _, _ = strings.Cut(rest, "\n")
+	rest, _, _ = strings.Cut(rest, ";")
+	for _, g := range strings.Split(rest, ",") {
+		if g = strings.Trim(g, " \t`*"); g != "" {
+			globs = append(globs, g)
+		}
+	}
+	return globs, true
+}
+
+// CarryProposed is a finish's report with the child's PATHS-PROPOSED line, read from its
+// report and else its body, kept at the report's end within the 500-byte cut, so recut
+// --widen reads it off the card (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1"); the
+// report as it is when the child proposed nothing or the report holds the line already.
+func CarryProposed(report string, r Result) string {
+	globs, ok := PathsProposed(r.Report)
+	if !ok {
+		globs, ok = PathsProposed(r.Body)
+	}
+	if _, has := PathsProposed(report); !ok || has || len(globs) == 0 {
+		return report
+	}
+	line := cut("; " + ProposedKey + " " + strings.Join(globs, ","))
+	return report[:min(len(report), 500-len(line))] + line
+}
+
+// Carry is where a twin re-cut by recut --widen starts: the held card, its attempt and the
+// head that attempt pushed, written into the twin's brief header as its CARRY: line, since
+// the twin's own attempts start from the first (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1").
+type Carry struct {
+	Card    string
+	Attempt int
+	Head    string
+}
+
+// CarryKey begins a brief's CARRY: line.
+const CarryKey = "CARRY:"
+
+// CarryLine is c as its brief header line: CARRY: <card> attempt <n> head=<sha>.
+func CarryLine(c Carry) string {
+	return fmt.Sprintf("%s %s attempt %d head=%s", CarryKey, c.Card, c.Attempt, c.Head)
+}
+
+// CarryOf is the CARRY: line of a brief's header (line 1 and the lines after it up to the
+// first blank one), ok only with a card, an attempt and a full sha.
+func CarryOf(brief string) (c Carry, ok bool) {
+	for i, l := range strings.Split(brief, "\n") {
+		l = strings.TrimSpace(l)
+		if i > 0 && l == "" {
+			break
+		}
+		rest, found := strings.CutPrefix(l, CarryKey)
+		if !found {
+			continue
+		}
+		if n, err := fmt.Sscanf(strings.TrimSpace(rest), "%s attempt %d head=%s", &c.Card, &c.Attempt, &c.Head); err != nil || n != 3 {
+			return Carry{}, false
+		}
+		return c, c.Attempt > 0 && typedrec.IsFullSha(c.Head)
+	}
+	return Carry{}, false
+}
+
+// Carried is a work packet as the member stages it: one with no pushed head of its own
+// (sprint.BaseOf found none) whose brief carries a CARRY: line starts from that head, as a
+// rework starts from its last pushed head (docs/SPEC-CARD-CONTRACT.md, "Where a rework
+// starts"), so the twin recut --widen makes keeps the held attempt's work; any other as it is.
+func Carried(p Packet) Packet {
+	if p.Kind == "read" || p.BaseHead != "" {
+		return p
+	}
+	if c, ok := CarryOf(p.Brief); ok {
+		p.BaseHead, p.BaseFrom = c.Head, c.Attempt
+	}
+	return p
 }
 
 // attempt is a work take's attempt decision (Config.Attempt), asked in its end's long work

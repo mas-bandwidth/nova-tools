@@ -16,14 +16,16 @@ import (
 // never rework. The decision is one pure function over the primary, AtBriefBound; a changed
 // brief (Brief, FieldBriefAttempt) resets it.
 //
-// The attempt cap's default answer is a friend card (AttemptCapDeal; the tier ladder
-// settled 2026-10-04: escalation is by attempt cap). Past AttemptsCap (the stream
-// control's attempts, else the work table's attempts property, else AttemptsDefault)
-// a ready primary is dealt to a frontier or heavy-class friend up with room
-// (FriendOfClass). The plan counts her free width as it deals, one width one such
-// card, and a card that no longer fits stays ready. With no such friend up with room
-// the default stays the judgment for the coordinator, whose decisions gain
-// FriendDecision beside brief and drop. The tick's own bound stays MaxAttemptsPerBrief.
+// The attempt cap (the owner, 2026-10-04, after a night in which only a repeated finding
+// bounded a card and one that failed differently each time ran for ever): after the cap's
+// attempts on one brief (AttemptsCap: the stream's setting, else the sprint's, else
+// AttemptsDefault) the card is not dealt to a machine again. Its default answer is a friend
+// card (AttemptCapDeal, the tick's part before the deal; the tier ladder settled 2026-10-04:
+// escalation is by attempt cap): a ready primary past the cap is dealt to a frontier or
+// heavy-class friend up with room, the plan counting her free width as it deals, one width
+// one such card, and a card that no longer fits stays ready. With no such friend up with
+// room it goes to the coordinator as one judgment, "brief defect after N attempts, $X
+// spent", with the findings of every attempt listed, and the decisions brief and drop.
 
 // FieldFindingAttempt is the attempt whose broken reads' finding the primary's `finding`
 // carries (Rework writes both: the attempt it sends back and what its readers found). A
@@ -35,19 +37,16 @@ const FieldFindingAttempt = "finding_attempt"
 // the brief is the one add gave it, at attempt 0.
 const FieldBriefAttempt = "brief_attempt"
 
-// MaxAttemptsPerBrief is how many attempts one brief may run: past it the brief is wrong,
-// not the worker, whatever each attempt found. The tick's bound (AtBriefBound with no
-// cap) uses it. The attempt cap's default answer uses AttemptsCap instead.
-const MaxAttemptsPerBrief = 5
-
 // FieldFindings is the primary's list of what each attempt sent back found, one line an
-// attempt ("attempt <n>: <the finding's first sentence>"), kept by the card the cap deals.
+// attempt ("attempt <n>: <the finding's first sentence>"), appended by Rework and cut to
+// MaxCardTextBytes from the front (the latest kept): what the cap's judgment lists, and
+// kept by the card the cap's default answer deals to a friend.
 const FieldFindings = "findings"
 
-// PropAttempts is the work table's property holding the sprint's attempt cap,
-// FieldAttempts a stream's control card field holding the stream's, over the sprint's.
-// AttemptsDefault is the cap when neither is set, and AttemptsMax the most a cap may be.
-// Nothing in this tree writes them yet: AttemptsCap reads them when they are present.
+// PropAttempts is the work table's property holding the sprint's attempt cap (set
+// --attempts, init --attempts), FieldAttempts a stream's control card field holding the
+// stream's (stream set --attempts), over the sprint's; AttemptsDefault is the cap when
+// neither is set, and AttemptsMax the most a cap may be.
 const (
 	PropAttempts    = "attempts"
 	FieldAttempts   = "attempts"
@@ -55,9 +54,8 @@ const (
 	AttemptsMax     = 100
 )
 
-// AttemptsCap is how many attempts one brief may run in the stream before the cap's
-// default answer deals a friend card: the stream's setting, else the sprint's, else
-// AttemptsDefault.
+// AttemptsCap is how many attempts one brief may run in the stream: the stream's
+// setting, else the sprint's, else AttemptsDefault.
 func (s *Snapshot) AttemptsCap(stream string) int {
 	if s.Merge != nil {
 		if n := s.StreamCtl(stream).Int(FieldAttempts); n > 0 {
@@ -74,7 +72,7 @@ func (s *Snapshot) AttemptsCap(stream string) int {
 	return AttemptsDefault
 }
 
-// ParseAttempts is an attempt cap as a setting would take it: a whole number from 1 to
+// ParseAttempts is an attempt cap as the verbs take it: a whole number from 1 to
 // AttemptsMax, or ReadTierDefault (0: the default).
 func ParseAttempts(text string) (int, error) {
 	if text == ReadTierDefault {
@@ -88,41 +86,35 @@ func ParseAttempts(text string) (int, error) {
 }
 
 // BriefBound is why a primary's brief is wrong: two attempts since the brief last changed
-// whose readers found the same thing (Attempts and Finding), or more than MaxAttemptsPerBrief
-// attempts since it changed (Since, with Finding ""), or the cap's attempts when AtBriefBound
-// is asked with a cap (Since and Cap, with Finding ""). Then Spent is what the card has cost
-// (MoneyText, "" when nothing of it was priced) and Findings what each attempt found.
+// whose readers found the same thing (Attempts and Finding), or the cap's attempts since it
+// changed (Since and Cap, with Finding ""): then Spent is what the card has cost (MoneyText,
+// "" when nothing of it was priced) and Findings what each attempt found, in order.
 type BriefBound struct {
 	ID       string
 	Attempts [2]int // the two attempts that failed the same way, in order
 	Finding  string // the finding's first sentence, as the first of the two said it
 	Since    int    // the attempts since the brief last changed, when that is the bound
-	Cap      int    // the cap those attempts reached, when the caller asked with one
+	Cap      int    // the cap those attempts reached
 	Spent    string
 	Findings []string
 }
 
-// String is the bound said in one line: what repeated and where, or the count, then the
-// verdict. A cap the caller asked with says the brief defect and the spend; the tick's
-// bound, which sets no cap, says the count against MaxAttemptsPerBrief.
+// String is the bound said in one line: what repeated and where, or the cap, the spend and
+// the findings, then the verdict.
 func (b BriefBound) String() string {
 	if b.Finding != "" {
 		return fmt.Sprintf("%s has failed the same way twice (attempts %d and %d: %s); the brief is wrong, not the worker",
 			b.ID, b.Attempts[0], b.Attempts[1], b.Finding)
 	}
-	if b.Cap > 0 {
-		spent := "nothing priced"
-		if b.Spent != "" {
-			spent = b.Spent + " spent"
-		}
-		line := fmt.Sprintf("%s: brief defect after %d attempts, %s; the brief is wrong, not the worker", b.ID, b.Since, spent)
-		if len(b.Findings) > 0 {
-			line += "; findings: " + strings.Join(b.Findings, "; ")
-		}
-		return line
+	spent := "nothing priced"
+	if b.Spent != "" {
+		spent = b.Spent + " spent"
 	}
-	return fmt.Sprintf("%s has made %d attempts since its brief last changed (its bound is %d); the brief is wrong, not the worker",
-		b.ID, b.Since, MaxAttemptsPerBrief)
+	line := fmt.Sprintf("%s: brief defect after %d attempts, %s; the brief is wrong, not the worker", b.ID, b.Since, spent)
+	if len(b.Findings) > 0 {
+		line += "; findings: " + strings.Join(b.Findings, "; ")
+	}
+	return line
 }
 
 // Remedy is what changes the brief: replaced in place while the card waits, else dropped and
@@ -177,15 +169,23 @@ func findingsOf(c *Card, n int, finding string) []string {
 	return out
 }
 
+// findingsLine is the findings list as the primary keeps it, the latest kept under
+// MaxCardTextBytes.
+func findingsLine(findings []string) string {
+	for len(findings) > 0 && len(strings.Join(findings, "\n")) > MaxCardTextBytes {
+		findings = findings[1:]
+	}
+	return strings.Join(findings, "\n")
+}
+
 // AtBriefBound is whether the primary c is at its brief's bound, and why. finding is what
-// its readers found at its current attempt: the broken reads' findings the store holds
-// (brokenFindings), or the one a read step is about to write; "" when none is known. The
+// its readers found at its current attempt, or the report of its failed work: the broken
+// reads' findings the store holds (brokenFindings), or the one a read step is about to
+// write; "" when none is known. cap is the attempts one brief may run (AttemptsCap). The
 // finding before is the primary's own (`finding`, at FieldFindingAttempt), counted only
 // when that attempt ran on the current brief. The count is the attempts since the brief
-// last changed; a card never dealt is at no bound. With no cap, the count bound is
-// MaxAttemptsPerBrief. With a cap (AttemptsCap), the count bound is that many attempts,
-// and the bound carries the spend and the findings the cap's judgment says.
-func AtBriefBound(c *Card, finding string, cap ...int) (BriefBound, bool) {
+// last changed; a card never dealt is at no bound.
+func AtBriefBound(c *Card, finding string, cap int) (BriefBound, bool) {
 	attempt := c.Int("attempt")
 	briefAt := c.Int(FieldBriefAttempt)
 	if attempt == 0 {
@@ -198,48 +198,35 @@ func AtBriefBound(c *Card, finding string, cap ...int) (BriefBound, bool) {
 	if prev != "" && prevAt > briefAt && prevAt < attempt && SameFinding(prev, finding) {
 		return BriefBound{ID: c.ID, Attempts: [2]int{prevAt, attempt}, Finding: firstSentence(prev)}, true
 	}
-	since := attempt - briefAt
-	if len(cap) > 0 {
-		n := cap[0]
-		if n <= 0 {
-			n = AttemptsDefault
-		}
-		if since >= n {
-			spent := MoneyText(CardCostOf(c).Total.Charged)
-			if spent == "-" {
-				spent = ""
-			}
-			return BriefBound{ID: c.ID, Since: since, Cap: n, Spent: spent, Findings: findingsOf(c, attempt, finding)}, true
-		}
-		return BriefBound{}, false
+	if cap <= 0 {
+		cap = AttemptsDefault
 	}
-	if since > MaxAttemptsPerBrief {
-		return BriefBound{ID: c.ID, Since: since}, true
+	if since := attempt - briefAt; since >= cap {
+		spent := MoneyText(CardCostOf(c).Total.Charged)
+		if spent == "-" {
+			spent = ""
+		}
+		return BriefBound{ID: c.ID, Since: since, Cap: cap, Spent: spent, Findings: findingsOf(c, attempt, finding)}, true
 	}
 	return BriefBound{}, false
 }
 
-// FriendDecision is the attempt cap's default answer as one decision of its
-// judgment: deal the card past the cap to a friend (AttemptCapDeal). The
-// judgment the cap raises for the coordinator lists it beside brief and drop.
-const FriendDecision = "friend"
-
-// AttemptCapDeal is the attempt cap's default answer, the step (the tier ladder
-// settled 2026-10-04: escalation is by attempt cap): every primary ready and
-// past its stream's cap on the brief it carries (AtBriefBound with no finding,
-// asked with AttemptsCap) is dealt as a friend card (friend_deal.go) to the
-// frontier or heavy-class friend up with room. Room is her free width, width
-// less the cards she already holds, counted across this plan the way FriendDeal
-// counts free: each deal decrements it and the next card is picked again, so
-// two capped cards cannot both land on one friend whose width is 1. A card
-// that no longer fits is left ready. The card keeps its work and findings; its
-// brief gains the WHO line of the friend chosen by the fields the brief edit
-// writes (FieldWho from WhoOfBrief, the brief's text, and FieldBriefAttempt at
-// the attempt it is dealt, so the cap count resets as a replaced brief does);
-// and its next attempt's work card is created on her row in working, closing
-// the judgment the cap raised. With no such friend up with room the card is
-// left ready and the cap's judgment is raised for the coordinator — the default
-// stays the judgment — with FriendDecision, brief and drop as its decisions.
+// AttemptCapDeal is the attempt cap's default answer, the tick's part before the deal
+// (TickCapDeal; the tier ladder settled 2026-10-04: escalation is by attempt cap): every machine's
+// primary ready and past its stream's cap on the brief it carries (AtBriefBound with no
+// finding, asked with AttemptsCap), in a stream not held, is dealt as a friend card
+// (friend_deal.go) to the frontier or heavy-class friend up with room. Room is her free
+// width, width less the cards she already holds, counted across this plan the way
+// FriendDeal counts free: each deal decrements it and the next card is picked again, the
+// most free first and the first by name among equals, so two capped cards cannot both
+// land on one friend whose width is 1. The card keeps its work and findings; its brief
+// gains the WHO line of the friend chosen by the fields the brief edit writes (FieldWho
+// from WhoOfBrief, the brief's text, and FieldBriefAttempt at the attempt it is dealt, so
+// the cap count resets as a replaced brief does); and its next attempt's work card is
+// created on her row in working, closing a brief-defect judgment open on it. A card it
+// does not deal (no such
+// friend up with room) is the deal's as before: at its redeal bound the tick raises the
+// cap's judgment, the findings of every attempt and the spend, decisions brief and drop.
 func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 	var p Plan
 	p.on(s)
@@ -252,22 +239,15 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 		}
 	}
 	for _, c := range s.Work.Column(Ready) {
-		if _, friend := FriendCard(c); friend || IsSentinel(c) {
-			continue // a friend's card is FriendDeal's, and a sentinel never moves
+		if _, friend := FriendCard(c); friend || IsSentinel(c) || StreamHeld(s, c.Row) {
+			continue // a friend's card is FriendDeal's, a sentinel never moves, a held stream is dealt nothing
 		}
-		bb, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row))
-		if !ok {
+		if _, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row)); !ok {
 			continue
 		}
 		name := friendWithFree(r.Friends, free, classes...)
 		if name == "" {
-			if len(capJudgments(s, c.ID)) == 0 {
-				n := judgment(NBriefWrong, c.Row, s.Now, 0, c.ID)
-				n.Who, n.Attempt, n.What = r.who(), c.Int("attempt"), bb.String()
-				n.Decisions = []string{FriendDecision, "brief", "drop"}
-				p.Notes = append(p.Notes, n)
-			}
-			continue
+			continue // no frontier or heavy friend up with room: the deal's, and its judgment
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
 		if s.Fleet.Card(card) != nil {
@@ -298,9 +278,8 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 	return Lawful(p)
 }
 
-// capJudgments is the attempt cap's judgments open on the primary (the
-// brief-defect judgment, NBriefWrong): raised by the cap's fallback, closed
-// by its default answer.
+// capJudgments is the brief-defect judgments open on the primary (NBriefWrong):
+// closed by the attempt cap's default answer, which changes the brief.
 func capJudgments(s *Snapshot, id string) []Open {
 	var out []Open
 	for _, o := range s.Open {

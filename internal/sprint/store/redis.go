@@ -929,8 +929,17 @@ func (r *Redis) Coordinator(ctx context.Context) (string, error) {
 	return v, err
 }
 
+// SetCoordinator writes the coordinator key: init's alone (Store.InitSeat, from
+// the seat record when there is one); the seat's steps write it in their commit
+// with the record, and the run loop never does (seat-key-follows-record.w2).
 func (r *Redis) SetCoordinator(ctx context.Context, name string) error {
 	return r.C.Set(ctx, r.Names.Key(keyCoordinator), name, 0).Err()
+}
+
+// SetKeyFor writes a machine record that expires after ttl: the server's
+// record (keyServer), so a sprint torn down keeps none past it.
+func (r *Redis) SetKeyFor(ctx context.Context, name, value string, ttl time.Duration) error {
+	return r.C.Set(ctx, r.Names.Key(name), value, ttl).Err()
 }
 
 // changeEvent is the part of a table change stream's event the twin reads

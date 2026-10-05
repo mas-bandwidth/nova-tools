@@ -50,10 +50,11 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 // ready and working count her job cards in those states; width is her width
 // as text, summed; ok and failed (hidden) count her jobs done ok and done
 // failed, and done and ok% are the table's formulas over them, the footer
-// pooling ok% over the friends; status is text with no fold. The rows are the
+// pooling ok% over the friends; status is text with no fold, and so is active, how long ago
+// her session last wrote a file (her beat's Active; "-" when none was reported). The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
@@ -104,6 +105,7 @@ const (
 	DoneOK     = "ok"
 	DoneFailed = "failed"
 	Status     = "status"
+	Active     = "active" // friends.active: how long ago her session last wrote a file
 	Load       = "load"
 	Withdrawn  = "withdrawn"
 )

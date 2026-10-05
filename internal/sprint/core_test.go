@@ -79,8 +79,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	require.Len(t, ask.Units, 3, "ask dealt %d primaries, want the 3 that came back ok (failed work is not read)", len(ask.Units))
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
 		reads := readsAt(w.s, w.s.Work.Card(id), 1)
-		require.Len(t, reads, 2, "%s asked of %d readers: %v", id, len(reads), reads)
-		require.NotEqual(t, reads[0].F("reader"), reads[1].F("reader"), "%s asked of %d readers: %v", id, len(reads), reads)
+		require.Len(t, reads, 1, "%s asked of %d readers: %v (reads are asked one at a time)", id, len(reads), reads)
 	}
 	w.clean("ask")
 
@@ -91,6 +90,11 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	require.Empty(t, acc.Units, "accept with one ok: %+v", acc)
 	require.Len(t, acc.Refused, 1, "accept with one ok: %+v", acc)
 	require.Contains(t, acc.Refused[0].Why, "two different readers", "accept with one ok: %+v", acc)
+	// the second read is asked once the first came back ok, of a different reader
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	first = readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	require.Len(t, first, 2)
+	require.NotEqual(t, first[0].F("reader"), first[1].F("reader"))
 	w.must(Read(w.s, ReadReq{As: first[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[1].ID}}}))
 	require.Len(t, w.notesOf(NReadyToAccept), 1, "ready-to-accept notes: %d", len(w.notesOf(NReadyToAccept)))
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
@@ -118,8 +122,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
 	w.must(Ask(w.s, AskReq{})) // the machine's ask: round the readers
 	again := readsAt(w.s, w.s.Work.Card("s1-2"), 2)
-	require.Len(t, again, 2, "fixed work not asked of two different readers: %v", again)
-	require.NotEqual(t, again[0].F("reader"), again[1].F("reader"), "fixed work not asked of two different readers: %v", again)
+	require.Len(t, again, 1, "fixed work not asked its first read: %v", again)
 	w.clean("fixed work returned")
 
 	// Merge the one accepted primary; the stream is not landed until all are.
@@ -248,9 +251,7 @@ func accepted(w *world, ids ...string) {
 	}
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: ids}}))
 	for _, id := range ids {
-		for _, rc := range readsAt(w.s, w.s.Work.Card(id), w.s.Work.Card(id).Int("attempt")) {
-			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-		}
+		readOK(w, id) // every read it needs, one at a time
 	}
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: ids}}))
 }

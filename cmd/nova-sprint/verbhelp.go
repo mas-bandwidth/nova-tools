@@ -80,6 +80,11 @@ var verbEffect = map[string]string{
 	"selftest land":     "inspection: lands a canned card on a scratch clone with this binary, writes nothing to the sprint",
 	"server switch":     "local write: runs <binary> tick --shadow against the store first (read-only, under --tick-deadline) and refuses the swap, nothing changed, when it exits non-zero, panics or misses the deadline; then switches the server binary on disk, keeping the previous binary, the shadow's plan size and time at <target>.shadow.json, and rolling back on land failure in the window; --dry-run runs the shadow tick only and switches and writes nothing",
 	"merge-window open": "local write: the merge window, the merge table's properties in the sprint's store; land pauses while it is open; --dry-run checks --for and --reason and writes nothing",
+	// a store write, the collect's tip read and its directory reads said
+	"friend reconcile": "store write: finishes each card she reported on and returns each she abandoned, in the sprint's store; reads her inbox/QUEUE.json and outbox, writes nothing in her directory, and reads origin's tip (one git ls-remote) for each LAND it collects; --dry-run writes nothing and reads no tip",
+	"lane list":        "inspection: lists every machine's lanes and holders, writes nothing",
+	"lane take":        "store write: takes one lane on the machine for the worker, or joins the queue; --dry-run checks availability and writes nothing",
+	"lane give":        "store write: gives the worker's lane or queue position back; --dry-run checks whether a lane is held and writes nothing",
 }
 
 // commonExit is the codes of every other verb.
@@ -184,7 +189,7 @@ const briefExampleCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
-	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
+	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.\n" +
 	"STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against <base>, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
 	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
 

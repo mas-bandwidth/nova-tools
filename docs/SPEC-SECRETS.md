@@ -421,7 +421,11 @@ The registry is read **first and whole**, before any judgement leans on it — a
 malformed one is a refusal, exactly as `internal/fleet` demands, because the half of a
 registry that parses is the half that lets a recipient through. **Without `--machines` the
 rule is dormant, not satisfied**, and the approval line says `machines=-` so that no APPROVE
-is ever read as the fleet having vouched.
+is ever read as the fleet having vouched. **The dormancy stands, and is acceptable now that
+`seat add` refuses a `--pub` any creation rule already names (see `seat add`): the seat-add
+wall is in the tool, before any write; the gate measures the diff; and a hand-edited rule
+that reuses a key is the gate's business and the registry's when the fleet gives
+`--machines`, and the review's where it does not.**
 
 ### `keygen`
 
@@ -635,8 +639,15 @@ rewrite of a seat file drops every value it holds. A `.sops.yaml` that already c
 matching that file, because the rule is the grant and a grant is changed in a reviewed pull
 request and nowhere else. An `--only` name the source does not carry, naming the key and never
 a value. A `--from` equal to `--as`, a `--pub` that is not an age public key, a `--pub` that is
-the store's own recovery key. **A failure after the rule is written puts `.sops.yaml` back
-exactly as it was**: a refused run leaves the store byte-for-byte unchanged.
+the store's own recovery key. A `--pub` that any creation rule in `.sops.yaml` already names
+as a recipient, as `SECRETS SEAT ADD REFUSED: --pub is already the key of seat <name>
+(rule <n> of .sops.yaml); a seat is one seat key, and a new seat's key comes from its own
+keygen receipt` — naming the seat that owns the key and never the key's value beyond what the
+rule file already shows, because a seat added under a key another seat's rule carries is a
+seat whose credentials that other seat reads, and the gate's registry check is dormant
+without `--machines`, so this wall stands in the verb. **A failure after the rule is written
+puts `.sops.yaml` back exactly as it was**: a refused run leaves the store byte-for-byte
+unchanged.
 
 **What it deliberately does not do.** Commit, push, or open a pull request. It leaves two
 changed files in the working copy and names them, and the store's own gate (`nova-secrets
@@ -707,6 +718,7 @@ One line, on stderr, naming the door — exit 2, or 125 from `exec`:
 | `delete` a key, or a file | `sops unset`, or `git rm`, and a rotation of whatever the deleted value was. |
 | a file-shaped secret (an SSH key, an age key) handed to a program that wants a path | **Not in this store.** Generate it on the seat that uses it, authorize its public half on the box that accepts it by that box's own recipe, and never move the private half. |
 | `recipients`, `grant`, `revoke access` | A pull request against `.sops.yaml` editing one rule, approved by the other collaborator and merged under the ruleset, then `sops updatekeys` in a second one. |
+| `seat add --pub <key>` where `<key>` is already a seat's key | **Refused at exit 2**, naming the seat that owns the key and the rule that names it — `--pub is already the key of seat <name> (rule <n> of .sops.yaml)`; a seat is one seat key, and a new seat's key comes from its own `keygen` receipt. |
 | reading or writing the macOS Keychain | Not this tool, on any bench, ever. See **The migration from the Keychain** and the tripwire that pins it. |
 | a daemon, an agent, a cache, a session | Not this tool. Every call opens the file again; a cached plaintext is a plaintext with a lifetime nobody is watching. |
 

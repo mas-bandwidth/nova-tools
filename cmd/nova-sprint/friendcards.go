@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -20,7 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -68,7 +69,11 @@ func friendBrief(name string, p sprint.Packet) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
-	if p.Attempt > 1 {
+	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
+		// a twin recut --widen made starts from the held attempt's head (member.Carried)
+		p.BaseHead, p.BaseAttempt = c.Head, c.Attempt
+	}
+	if p.Attempt > 1 || p.BaseHead != "" {
 		b.WriteString(friendStart(p))
 	}
 	for _, l := range [][2]string{{"This attempt exists because: ", p.Why}, {"A reader found: ", p.Finding}, {"The coordinator asks: ", p.Fix}} {
@@ -211,8 +216,20 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 		r.Failed, r.Report = true, "friend "+name+" LAND with no Head: <full sha>; "+para
 	case verdict == VerdictHold || verdict == VerdictFail || verdict == "FAILED" || verdict == "BROKEN":
 		r.Failed, r.Report = true, "friend "+name+" "+verdict+": "+para
+		// a HOLD's Head, when it is origin's tip, is kept as the attempt's pushed head, so
+		// recut --widen starts its twin from it; a tip not read keeps none, never refuses
+		if repo := swarm.ReadCardBase([]byte(p.Brief)).Repo; verdict == VerdictHold && typedrec.IsFullSha(head) && repo != "" {
+			if at, err := tip(ctx, repo, p.Branch); err == nil && strings.EqualFold(at, head) {
+				r.Head = at
+			}
+		}
 	default:
 		r.Failed, r.Report = true, "friend "+name+" verdict "+cmp.Or(verdict, "none")+" is not LAND, HOLD or FAIL; "+para
+	}
+	// the report's PATHS-PROPOSED line, wherever it stands, rides on the card for recut --widen
+	// (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1")
+	if globs, ok := member.PathsProposed(report); ok && len(globs) > 0 {
+		r.Report += "; " + member.ProposedKey + " " + strings.Join(globs, ",")
 	}
 	return r, nil
 }
@@ -381,28 +398,13 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			}
 			continue
 		}
-		r, err := friendFinish(ctx, name, p, report, a.tip)
-		if err != nil {
-			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
-			continue
-		}
-		r.Reported = at
-		step := store.FinishStep(r)
-		step.Actor, step.Epoch = r.Who, &p.Epoch
-		res, err := st.Run(ctx, step)
+		done, err := a.friendCollect(ctx, st, name, p, report, "", at, say)
 		if err != nil {
 			return delivered, finished, err
 		}
-		if len(res.Refused) > 0 {
-			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
-			continue
+		if done {
+			finished++
 		}
-		finished++
-		result := "ok"
-		if r.Failed {
-			result = "failed"
-		}
-		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
 	}
 	return delivered, finished, nil
 }
@@ -410,6 +412,12 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 // busRedisEnv names the friends' bus store (nova-bus's), where friend sync
 // wakes a friend's daemon when it delivers her a card.
 const busRedisEnv = "NOVA_BUS_REDIS"
+
+// busUserEnv and busPasswordEnvEnv are the bus's own login, apart from the sprint store's.
+const (
+	busUserEnv        = "NOVA_BUS_REDIS_USER"
+	busPasswordEnvEnv = "NOVA_BUS_REDIS_PASSWORD_ENV"
+)
 
 // busSendFn sends one message on the friends' bus; say is handed each line the send has
 // for the verb's output (a bus store's alarm raised or cleared).
@@ -442,12 +450,12 @@ func (a *app) busWatch(addr, user string) *bus.Watch {
 // openBus is the real busOpen: the bus store dialed as nova-bus dials it
 // (internal/redisconn, the fleet's login from the environment).
 func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	// the bus has its own login (NOVA_BUS_REDIS_USER, NOVA_BUS_REDIS_PASSWORD_ENV), never the
+	// sprint store's: a coordinator's store login sent to a bus with no users is refused
+	// (WRONGPASS), and every note to a friend failed that way on 2026-10-04
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: busUserEnv}}
 	if user != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if a.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
+		o.Env.PasswordEnv = busPasswordEnvEnv
 	}
 	conn, err := redisconn.Open(ctx, o, a.getenv)
 	if err != nil {
@@ -468,7 +476,7 @@ func (a *app) sendBus(ctx context.Context, m bus.Message, say func(string)) erro
 	if addr == "" {
 		return errors.New(busRedisEnv + " is not set: no bus to send on")
 	}
-	user := a.getenv(redisauth.UserEnv)
+	user := a.getenv(busUserEnv)
 	c := &friend.Courier{
 		Now:   func() time.Time { return a.now() },
 		Open:  func(ctx context.Context) (*bus.Bus, func(), error) { return a.busOpen(ctx, addr, user) },
@@ -509,6 +517,35 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 	res, err := st.Run(ctx, store.NoteStep("friend sync", n))
 	if err == nil && len(res.Refused) > 0 {
 		err = errors.New(res.Refused[0].Why)
+	}
+	return err
+}
+
+// stallWaker is the store's WakeFriend for the machine (tick and run): the friend stall
+// part's wake turn sent on the bus (wakeFriendStall), a message not sent said on out.
+func (a *app) stallWaker(st *store.Store, out io.Writer) func(string, int, time.Duration) error {
+	return func(name string, rung int, d time.Duration) error {
+		return a.wakeFriendStall(context.Background(), st, name, rung, d, func(l string) { fmt.Fprintln(out, l) })
+	}
+}
+
+// wakeFriendStall wakes a friend whose stall ladder has climbed to a wake rung (1 or 2;
+// docs/SPEC-SPRINT.md section friend-stall-ladder-r.w1; the model is tla/StallLadder.tla):
+// a bus message pushed to her daemon as a turn, waking her to resume or report progress.
+func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string, rung int, d time.Duration, say func(string)) error {
+	m := bus.Message{
+		From:    st.Actor,
+		To:      []string{name},
+		Subject: fmt.Sprintf("stall wake: friend %s turn %d (%s)", name, rung, d.Round(time.Minute)),
+		Body:    fmt.Sprintf("Your session has shown no activity for %s while holding dealt sprint cards (wake turn %d); please resume work or report progress.", d.Round(time.Minute), rung),
+	}
+	err := a.bus(ctx, m, say)
+	if err == nil {
+		return nil
+	}
+	why := oneline.Escape(err.Error())
+	if say != nil {
+		say(fmt.Sprintf("FRIEND-STALL NOTE friend=%s rung=%d: the bus message to her was not sent (%s); tell her by hand", name, rung, why))
 	}
 	return err
 }
@@ -664,4 +701,40 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 		return err
 	}
 	return atomicfile.WriteFile(path, after, 0o644)
+}
+
+// friendCollect finishes one card working on a friend's row from her report (friendFinish,
+// then the finish step as her row), the one collect of friend sync and friend reconcile
+// (docs/SPEC-SPRINT.md section 1, friend sync and friend reconcile). It says what it did in
+// a line: FINISHED, or REFUSED when the tip or the sprint refused the finish, the card left
+// working for the next sync to read the report again; done says the card was finished. op,
+// when not empty, is the caller's --op: the finish runs under op.collect.<its args> (one
+// operation id per card, as land.go gives each merge its own), so a retry of the verb with
+// the same --op returns the recorded result.
+func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p sprint.Packet, report, op string, at time.Time, say func(string)) (done bool, err error) {
+	r, err := friendFinish(ctx, name, p, report, a.tip)
+	if err != nil {
+		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
+		return false, nil
+	}
+	r.Reported = at
+	step := store.FinishStep(r)
+	step.Actor, step.Epoch = r.Who, &p.Epoch
+	if op != "" {
+		step.CallerOp = op + ".collect." + step.Args
+	}
+	res, err := st.Run(ctx, step)
+	if err != nil {
+		return false, err
+	}
+	if len(res.Refused) > 0 {
+		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
+		return false, nil
+	}
+	result := "ok"
+	if r.Failed {
+		result = "failed"
+	}
+	say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
+	return true, nil
 }

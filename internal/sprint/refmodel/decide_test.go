@@ -297,7 +297,7 @@ func TestLevelMovesTheNewestFromTheLongestRoundTheFleet(t *testing.T) {
 	assert.Contains(t, got[1].Set, "member=m2", "a card dealt again is the next generation, of its new member: %v", got[1].Set)
 }
 
-func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
+func TestAskAsksTheFirstReaderOfAPrimaryInReview(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 2)
@@ -308,11 +308,11 @@ func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
 	w.take(t, "s1-2")
 	w.finish(t, "s1-2", true) // failed work is not read
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
+	// the first read alone: the second is asked once it comes back ok
 	expect(t, got,
-		"set work s1-1 asked=reader-a,reader-b",
-		"prop readers ask_index=2",
+		"set work s1-1 asked=reader-a",
+		"prop readers ask_index=1",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
-		"create readers s1-1.r1.reader-b >reader-b:asked",
 		"prop readers stream_index_ask=1")
 }
 
@@ -422,6 +422,7 @@ func TestDeadlinesJudgeAReadCardNotBegun(t *testing.T) {
 	w.add(t, "s1", 1)
 	w.drive(t, "s1-1", sprint.Review)
 	w.ask(t, "s1-1")
+	w.must(t, sprint.Ask(w.s, sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true, Who: coordinator})) // two reads outstanding: the first and one more
 	snap := w.snapshot(nil)
 	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
 	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))
@@ -582,8 +583,8 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 	for _, p := range sprint.TickParts {
 		assert.True(t, names[p.Name], "the tick's part %s is no duty: Decide would leave it out", p.Name)
 	}
-	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
-		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
+	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyCapDeal, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
+		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyFriendStall, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
 	var got []string
 	for _, d := range refmodel.Duties {
 		got = append(got, d.Name)

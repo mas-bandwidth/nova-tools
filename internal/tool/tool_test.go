@@ -1132,3 +1132,46 @@ func TestACancelledContextEndsTheVerb(t *testing.T) {
 		})
 	}
 }
+
+// TestProblemAsCarriesTheReason pins Call.ProblemAs (skeleton contract 2.10,
+// STANDARD §2): the refusal line carries reason=<r> before the colon, and the
+// JSON result adds "reasons" beside "why", for one reason and for two, so a
+// program reads the code and a person reads the sentence.
+func TestProblemAsCarriesTheReason(t *testing.T) {
+	t.Parallel()
+	const one = "WALK REFUSED reason=home_outside: the path is outside the home; run: nova-walk help\n"
+	const two = one + "WALK REFUSED reason=bad_flag: --n wants a number; run: nova-walk help\n"
+	const oneJSON = "{\"result\":{\"verb\":\"walk\",\"status\":\"refused\",\"exit\":2,\"remedy\":\"nova-walk help\",\"why\":[\"the path is outside the home\"],\"reasons\":[\"home_outside\"]},\"facts\":{}}\n"
+	const twoJSON = "{\"result\":{\"verb\":\"walk\",\"status\":\"refused\",\"exit\":2,\"remedy\":\"nova-walk help\",\"why\":[\"the path is outside the home\",\"--n wants a number\"],\"reasons\":[\"home_outside\",\"bad_flag\"]},\"facts\":{}}\n"
+	for _, tc := range []struct {
+		name   string
+		n      int
+		json   bool
+		stdout string
+		stderr string
+	}{
+		{"one reason, text", 1, false, "", one},
+		{"one reason, json", 1, true, oneJSON, ""},
+		{"two reasons, text", 2, false, "", two},
+		{"two reasons, json", 2, true, twoJSON, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tool := walkTool(func(c *Call) *Out {
+				c.ProblemAs("home_outside", "the path is outside the home")
+				if tc.n == 2 {
+					c.ProblemAs("bad_flag", "--n wants a number")
+				}
+				return c.Refused()
+			})
+			args := []string{"walk"}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			r := testkit.Main(tool.Run).Run(args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Equal(t, tc.stdout, r.Stdout)
+			assert.Equal(t, tc.stderr, r.Stderr)
+		})
+	}
+}

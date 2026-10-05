@@ -82,6 +82,10 @@ type Store struct {
 	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
 	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
 	IdleAlarm bool
+	// WakeFriend, when set (run and tick), sends a stalled friend her wake turn as the
+	// friend stall part of the tick climbs her ladder to rung 1 or 2 (sprint.TickFriendStall,
+	// a bus message pushed to her daemon); nil sends nothing and the rung climbs the same.
+	WakeFriend func(friend string, rung int, d time.Duration) error
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats
@@ -176,6 +180,9 @@ type Step struct {
 	// within a tick).
 	Readers      bool
 	ReaderStates map[string]string
+	// Friends says the step consults the friends roster (finish, for friendNext
+	// delivery mode): it plans with the friend seats (sprint.Snapshot.Friends).
+	Friends bool
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -565,6 +572,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			if err := st.readerStatesInto(ctx, snap); err != nil {
 				return res, err
 			}
+		}
+		if step.Friends {
+			seats, err := st.FriendSeats(ctx, snap.Now)
+			if err != nil {
+				return res, err
+			}
+			snap.Friends = seats
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))

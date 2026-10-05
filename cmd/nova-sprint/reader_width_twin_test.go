@@ -13,11 +13,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
-// readRig is a sprint whose two readers, reader-m1 (named for the member m1,
-// width 2) and reader-x (named for no row), each hold two asked reads: the
-// first two pro cards' pairs fill reader-m1 to its width, and the third pro
-// card, which needs two different readers, waits for reader-m1's room (the
-// ask gives a reader at width nothing; reader-x, unbounded, has room).
+// readRig is a sprint whose two readers are reader-m1 (named for the member m1,
+// width 2) and reader-x (named for no row): three pro cards' first reads are
+// asked one at a time by room, and once reader-x finds its two ok their second
+// reads fill reader-m1 to its width, two asked, while the third card's second
+// read waits for reader-m1's room (the ask gives a reader at width nothing).
 func readRig(t *testing.T) *serverRig {
 	t.Helper()
 	r := newServerRig(t,
@@ -42,8 +42,20 @@ func readRig(t *testing.T) *serverRig {
 	r.queue("reader-x")
 	r.boss("nova-sprint tick")
 	r.boss("nova-sprint tick")
+	// each card's first read alone (reads are asked one at a time), to the reader
+	// with the greatest share of room: reader-x, unbounded, takes two and reader-m1 one
+	require.Len(t, r.queue("reader-m1")["asked"], 1)
+	okx := r.queue("reader-x")["asked"]
+	require.Len(t, okx, 2)
+	// reader-x finds its two ok: their second reads go to reader-m1, the one
+	// reader with no card at their attempt, until it is at its width
+	for _, verdict := range []string{"--begin", "--ok"} {
+		res := r.one(append(append([]string{"read", "--as", "reader-x", verdict}, okx...), "--epoch", "0")...)
+		require.Equal(t, 0, res.Code, res.Stderr)
+	}
+	r.boss("nova-sprint tick")
 	require.Len(t, r.queue("reader-m1")["asked"], 2, "reader-m1 is at its width, 2")
-	require.Len(t, r.queue("reader-x")["asked"], 2, "the third pro card waits for a second reader with room")
+	require.Empty(t, r.queue("reader-x")["asked"], "the third pro card's second read waits for reader-m1's room")
 	return r
 }
 

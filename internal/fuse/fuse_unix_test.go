@@ -112,7 +112,7 @@ func TestWriteBoxRefusesASymlinkAncestorOwnedByAnotherThanRoot(t *testing.T) {
 	existing := filepath.Join(target, "realdir", "box.json")
 	require.NoError(t, os.WriteFile(existing, []byte("original\n"), 0o600))
 	redirectedExisting := filepath.Join(link, "realdir", "box.json")
-	require.Error(t, PlanWriteBox(redirectedExisting), "the write plan must refuse the same user-owned symlink ancestor")
+	require.Error(t, planBox(redirectedExisting), "the write plan must refuse the same user-owned symlink ancestor")
 	err := WriteBox(redirectedExisting, Box{})
 	require.Error(t, err, "a user-owned symlink ancestor must be refused before replacing the box")
 	got, readErr := os.ReadFile(existing)

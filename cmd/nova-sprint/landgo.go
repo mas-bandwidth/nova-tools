@@ -225,19 +225,27 @@ func (l *lander) offRules(ctx context.Context) []string {
 	return off
 }
 
+// treePackages are the treeTests the clone at dir holds as Go packages: a directory with
+// no .go file in it (the nova-sprint repo's internal/ci holds only data, 2026-10-05) is no
+// package, and `go test` of it fails every batch on that base, so it is not run.
+func treePackages(dir string) []string {
+	var have []string
+	for _, p := range treeTests {
+		matches, _ := filepath.Glob(filepath.Join(dir, filepath.FromSlash(p), "*.go"))
+		if len(matches) > 0 {
+			have = append(have, p)
+		}
+	}
+	return have
+}
+
 // treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
 // is green or the clone has no module, else the finding (gateWhy).
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
-	var have []string
-	for _, p := range treeTests {
-		if fi, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil && fi.IsDir() {
-			have = append(have, p)
-		}
-	}
-	for _, run := range gateRuns(tests, have) {
+	for _, run := range gateRuns(tests, treePackages(dir)) {
 		if out, err := l.goRun(ctx, dir, run); err != nil {
 			return gateWhy(run, err, out)
 		}

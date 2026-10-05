@@ -69,6 +69,22 @@ var verbDocs = map[string]verbDoc{
 	"egress drop":  {flags: [][2]string{{"run", "the run `id` whose table is taken away"}}, exits: egressExits},
 }
 
+// verbExample is one worked invocation per verb, printed on the verb's -h as an `example:` line
+// (docs/STANDARD.md section 3: a stranger can use the verb from its help alone). A verb whose
+// own help text carries its example (run, reap) is not here.
+var verbExample = map[string]string{
+	"check":        "nova-sandbox check --json",
+	"version":      "nova-sandbox version",
+	"policy":       "nova-sandbox policy --write /pool/jobs/j1 --read /usr/local/go --net-deny",
+	"probe":        "nova-sandbox probe --write /pool/jobs/j1 --net-deny --json",
+	"worktree":     "nova-sandbox worktree --repo /srv/nova-tools --scratch /srv/scratch --pr 5327",
+	"egress":       "nova-sandbox egress plan --run r1 --policy infra/image/egress.txt --model-host api.example.com --uid 1001 --out /tmp/r1.nft",
+	"egress plan":  "nova-sandbox egress plan --run r1 --policy infra/image/egress.txt --model-host api.example.com --uid 1001 --out /tmp/r1.nft",
+	"egress apply": "nova-sandbox egress apply --plan /tmp/r1.nft --run r1",
+	"egress check": "nova-sandbox egress check --plan /tmp/r1.nft",
+	"egress drop":  "nova-sandbox egress drop --run r1",
+}
+
 // helpIfAsked is verbflag.HelpIfAsked with the verb's flags described: when args ask for
 // help (before any --), it raises Help with a flag set built from verbDocs.
 func helpIfAsked(args []string, verb string) {
@@ -102,6 +118,13 @@ func recoverVerbHelp(stdout io.Writer, code *int) {
 	if doc, ok := verbDocs[verb]; ok && doc.exits != "" {
 		banner = usageHead + usageExamples + "\n" + exitsLabel + "\n  " + verb + ": " + doc.exits + "\n"
 	}
-	verbflag.Print(stdout, "nova-sandbox", banner, h.FS)
+	var b strings.Builder
+	verbflag.Print(&b, "nova-sandbox", banner, h.FS)
+	help := b.String()
+	if e, ok := verbExample[verb]; ok {
+		help = verbflag.Insert(help, "example: "+e+"\n")
+	}
+	// ignored: help written to stdout; a closed stdout has no reader to tell
+	_, _ = io.WriteString(stdout, help)
 	*code = 0
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
@@ -77,8 +78,18 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		}
 		return argv[2], 2, ""
 	}
+	if len(argv) >= 2 && argv[0] == "lane" && (argv[1] == "take" || argv[1] == "give") {
+		// a lane's take or give (lane.go; docs/SPEC-SPRINT.md section 18): its kind, the
+		// machine and the worker, and nothing more; the server never waits (--wait asks again
+		// from the worker's side)
+		rest := argv[2:]
+		if len(rest) != 5 || !slices.Contains(sprint.LaneKinds, rest[0]) || rest[1] != "--machine" || !sprint.ValidID(rest[2]) || rest[3] != "--as" || !sprint.ValidID(rest[4]) {
+			return "", 0, "a lane's verb sent to the server is `lane " + argv[1] + " <kind> --machine <m> --as <worker>` and nothing more, the kind one of " + strings.Join(sprint.LaneKinds, ", ")
+		}
+		return rest[4], 2, ""
+	}
 	if len(argv) == 0 || !slices.Contains([]string{"take", "finish", "progress", "read", "queue"}, argv[0]) {
-		return "", 0, "the server runs the workers' verbs only: take, finish, progress, read, queue, fleet beat, friend beat"
+		return "", 0, "the server runs the workers' verbs only: take, finish, progress, read, queue, fleet beat, friend beat, lane take, lane give"
 	}
 	verb, rest := argv[0], argv[1:]
 	if len(rest) < 2 || rest[0] != "--as" {
@@ -143,11 +154,11 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // notServed are the verbs the server runs for nobody: itself (run, tick), the ones that
 // work for seconds or minutes outside the store (land's git, the driver), fleet sync and
 // friend sync, which read the config store with their caller's own credentials, friend
-// clean, which works on the directories of the machine it runs on, and dashboard, which
+// clean and friend reconcile, which work on the directories of the machine they run on, and dashboard, which
 // serves a page until it is interrupted and reads through the server, and seat install
 // and seat uninstall, which install the push loop as a service of the machine they are
 // typed on.
-var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend clean", "dashboard", "answer", "seat install", "seat uninstall", "selftest land", "server switch"}
+var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend reconcile", "friend clean", "dashboard", "answer", "seat install", "seat uninstall", "selftest land", "server switch"}
 
 // serveCtx is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
@@ -238,6 +249,18 @@ func (a *app) serveCtx(ctx context.Context, req sprintwire.Request, local bool) 
 		var stdout, stderr bytes.Buffer
 		code := a.run(args, &stdout, &stderr)
 		out.Results[i] = sprintwire.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
+		if code == 0 && len(argv) > 0 && argv[0] == "queue" && as != "" {
+			if st, err := a.store(common{redis: a.serveAddr, actor: as}); err == nil && st != nil {
+				// ignored: a best-effort lease renewal on reader beat; next beat will renew
+				_, _ = st.Run(ctx, store.Step{
+					Verb: "lease",
+					Load: []string{sprint.Readers},
+					Plan: func(s *sprint.Snapshot) sprint.Plan {
+						return sprint.RenewReaderLeases(s, as)
+					},
+				})
+			}
+		}
 	}
 	return out
 }
@@ -328,7 +351,7 @@ func listenRefused(host string) string {
 // (docs/SPEC-SPRINT.md section 14, The server). The refusal is returned before
 // a socket is opened. The coordinator's verbs stay on loopback; a private or
 // tailnet address is the workers' listener beside that loopback listener.
-func (a *app) listen(addr, store string, stdout io.Writer) error {
+func (a *app) listen(addr, redis string, stdout io.Writer) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("--listen wants host:port, found %s", addr)
@@ -345,10 +368,14 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		lns[addr] = a
 	}
-	a.serveAddr, a.serveLog = store, stdout
+	a.serveAddr, a.serveLog = redis, stdout
 	// the lanes are made before the first batch, while the line is free: a batch never
 	// waits for the line to make them (servelanes.go)
 	a.lanesFor(context.Background())
+	if st, err := a.store(common{redis: redis}); err == nil && st != nil {
+		// ignored: a best-effort read cleanup on server listen; tick takes care of any subsequent lapses
+		_ = a.serverStart(context.Background(), st)
+	}
 	for at, h := range lns {
 		ln, err := net.Listen("tcp", at)
 		if err != nil {
@@ -379,6 +406,14 @@ var friendBeatFlags = map[string]func(string) bool{
 		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
 		return err == nil && f >= 0
 	},
+	"--active": rfc3339,
+	"--pong":   rfc3339,
+}
+
+// rfc3339 is the shape of a time.
+func rfc3339(v string) bool {
+	_, err := time.Parse(time.RFC3339, v)
+	return err == nil
 }
 
 // wholeAtLeast is the shape of a count of at least min.

@@ -51,6 +51,7 @@ var noteCarry = map[string]carried{
 	"Suspects":    {"attr", ""},
 	"Card":        {"card", ""},
 	"Other":       {"attr", ""},
+	"Tier":        {"attr", ""},
 	"OtherStream": {"attr", ""},
 	"StreamLevel": {"attr", ""},
 	"SprintLevel": {"attr", ""},
@@ -325,7 +326,7 @@ func tickPlans(s sample) (map[string]sprint.Plan, *sprint.Snapshot) {
 	if !c.Running {
 		return plans, tabs
 	}
-	req := sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats,
+	req := sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats, Friends: c.Friends,
 		Stopped: func(from, to time.Time) time.Duration { return sprint.StoppedBetween(c.Stopped, from, to) }}
 	if len(c.Untold) > 0 {
 		plans[refmodel.DutyStrangers] = sprint.Applied(tabs, sprint.StrangerNotes(tabs, c.Untold))

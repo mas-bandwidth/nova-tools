@@ -208,7 +208,7 @@ func (a *app) seatCheck(ctx context.Context, st *store.Store, redisAddr string) 
 		}
 		for _, name := range members {
 			b := beats[name]
-			m.Fleet = append(m.Fleet, sprint.MemberM{Name: name, Status: v.Tables[sprint.Fleet][name][sprint.Status], Beaten: b.Beaten(), Age: now.Sub(b.At)})
+			m.Fleet = append(m.Fleet, sprint.MemberM{Name: name, Status: cellText(v.Tables[sprint.Fleet][name][sprint.Status]), Beaten: b.Beaten(), Age: now.Sub(b.At)})
 		}
 		readers := sortedKeys(v.Tables[sprint.Readers])
 		states, err := st.ReaderStates(ctx, readers, now)
@@ -220,7 +220,7 @@ func (a *app) seatCheck(ctx context.Context, st *store.Store, redisAddr string) 
 			if states[r] == sprint.ReaderUp {
 				m.Readers.Up++
 			}
-			n, _ := strconv.Atoi(v.Tables[sprint.Readers][r][sprint.Reading]) // ignored: a cell that is no number counts 0
+			n, _ := strconv.Atoi(cellText(v.Tables[sprint.Readers][r][sprint.Reading])) // ignored: a cell that is no number counts 0
 			m.Readers.Reading += n
 		}
 	}

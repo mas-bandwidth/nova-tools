@@ -128,6 +128,7 @@ type handoverView struct {
 	At        time.Time       `json:"at"`
 	Seat      seatView        `json:"seat"`
 	Owner     string          `json:"owner,omitempty"`
+	Server    *serverView     `json:"server,omitempty"`
 	Machine   string          `json:"machine"`
 	Summary   string          `json:"summary"`
 	Streams   []streamCounts  `json:"streams"`
@@ -148,6 +149,13 @@ type seatView struct {
 	Generation uint64             `json:"generation"`
 	Since      *time.Time         `json:"since,omitempty"`
 	Last       *sprint.SeatChange `json:"last,omitempty"`
+}
+
+// serverView is the actor the server runs as, by its record, and when it is
+// not the seat's holder, the line of its unit to change (sprint.SeatDrift).
+type serverView struct {
+	Actor  string `json:"actor"`
+	Change string `json:"change,omitempty"`
 }
 
 type streamCounts struct {
@@ -210,11 +218,22 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	if h.Owner, err = a.owner(ctx, st); err != nil {
 		return h, "", err
 	}
+	server, err := st.ServerActor(ctx)
+	if err != nil {
+		return h, "", err
+	}
+	if server != "" {
+		holder := h.Seat.Holder
+		if v.Seat != nil {
+			holder = v.Seat.Holder // the record's: the key follows it
+		}
+		h.Server = &serverView{Actor: server, Change: sprint.SeatDrift(holder, holder, server)}
+	}
 	for _, s := range sortedKeys(v.Tables[sprint.Work]) {
 		sc := streamCounts{Stream: s, Counts: map[string]int{}}
 		for _, col := range sprint.States {
 			var n int
-			_, _ = fmt.Sscan(v.Tables[sprint.Work][s][string(col)], &n) // ignored: a cell that is no number counts 0
+			_, _ = fmt.Sscan(cellText(v.Tables[sprint.Work][s][string(col)]), &n) // ignored: a cell that is no number counts 0
 			sc.Counts[string(col)] = n
 		}
 		h.Streams = append(h.Streams, sc)
@@ -275,7 +294,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	}
 	h.Decisions = h.Decisions[max(0, len(h.Decisions)-handoverDecisions):]
 	for _, m := range sortedKeys(v.Tables[sprint.Fleet]) {
-		status := v.Tables[sprint.Fleet][m][sprint.Status]
+		status := cellText(v.Tables[sprint.Fleet][m][sprint.Status])
 		switch status {
 		case sprint.Held:
 			h.Members = append(h.Members, memberView{Member: m, Status: status, By: heldBy[m]})
@@ -343,6 +362,9 @@ func (a *app) handoverText(h handoverView) string {
 		}
 	}
 	line("%s", head)
+	if h.Server != nil && h.Server.Change != "" {
+		line("SERVER %s", h.Server.Change)
+	}
 	line("%s", strings.TrimSpace(h.Machine+"  progress "+h.Summary))
 	for _, s := range h.Streams {
 		var cs []string
@@ -528,21 +550,100 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 }
 
 // cmdSeat is the seat as the friends' daemons read it every second: the
-// holder, the epoch and the seat's generation, from three keys and no table
-// (store.SeatState), so the keepalive loop never serializes the board.
+// holder, the epoch and the seat's generation, from the seat's keys and no
+// table (store.SeatState), so the keepalive loop never serializes the board.
+// The line goes on to name the seat record's holder (record=, once the seat has
+// moved since init) and the actor the server runs as (server=, while its
+// record is fresh), and exits 1 naming the drift when the key, the record and
+// the server's actor disagree; --repair (the record's holder or the owner,
+// --reason) writes the key from the record, logged with who and why
+// (seat-key-follows-record.w2).
 func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("seat")
+	repair := fs.Bool("repair", false, "write the coordinator key from the seat's record when they differ: the record's holder or the owner, with --reason; logged with who and why")
+	reason := fs.String("reason", "", "with --repair, why the key is repaired, recorded in the log (required)")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, "seat", argErr("takes no words ", err, pos...))
+	}
+	if *reason != "" && !*repair {
+		return refuse(stderr, "seat", "--reason goes with --repair")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "seat", err.Error())
 	}
-	s, err := st.SeatState(context.Background())
+	ctx := context.Background()
+	if *repair {
+		return a.seatRepair(ctx, st, *c, *reason, stdout, stderr)
+	}
+	s, err := st.SeatCheck(ctx)
 	if err != nil {
 		return a.readFailed("seat", err, stderr)
 	}
-	sayOK(stdout, c.json, "seat", fmt.Sprintf("SEAT holder=%s epoch=%d generation=%d", orDashStr(s.Holder, "-"), s.Epoch, s.Generation), map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation})
+	line := fmt.Sprintf("SEAT holder=%s epoch=%d generation=%d", orDashStr(s.Holder, "-"), s.Epoch, s.Generation)
+	if s.Record != "" || s.Server != "" {
+		line += fmt.Sprintf(" record=%s server=%s", oneline.Field(orDashStr(s.Record, s.Holder)), oneline.Field(orDashStr(s.Server, "-")))
+	}
+	facts := map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation, "record": s.Record, "server": s.Server}
+	if s.Drift == "" {
+		sayOK(stdout, c.json, "seat", line, facts)
+		return 0
+	}
+	if c.json {
+		facts["drift"], facts["status"], facts["exit"] = s.Drift, "drift", 1
+		b, _ := json.Marshal(facts) // ignored: strings and numbers always encode
+		fmt.Fprintln(stdout, string(b))
+		return 1
+	}
+	fmt.Fprintln(stdout, line+" DRIFT "+oneline.Escape(s.Drift))
+	return 1
+}
+
+// seatRepair is seat --repair: the coordinator key written from the seat's
+// record by its holder or the owner, the log's line saying who and why.
+func (a *app) seatRepair(ctx context.Context, st *store.Store, c common, reason string, stdout, stderr io.Writer) int {
+	if c.actor == "" {
+		return refuse(stderr, "seat", "--repair wants --actor <name> (or NOVA_SPRINT_ACTOR): the record's holder or the owner; nothing was changed")
+	}
+	owner, err := a.owner(ctx, st)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	was, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	step, why, err := st.SeatRepairStep(ctx, sprint.SeatRepairReq{Who: c.actor, Reason: reason, Owner: owner})
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	if why != "" {
+		return refuse(stderr, "seat", why)
+	}
+	step.CallerOp = c.op
+	res, err := st.Run(ctx, step)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s seat: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	if len(res.Refused) > 0 {
+		return refuse(stderr, "seat", res.Refused[0].Why)
+	}
+	s, err := st.SeatCheck(ctx)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	sayOK(stdout, c.json, "seat", fmt.Sprintf("SEAT REPAIRED key=%s was=%s by=%s", oneline.Field(s.Holder), oneline.Field(orDashStr(was, "-")), oneline.Field(c.actor)),
+		map[string]any{"holder": s.Holder, "was": was, "by": c.actor, "op": res.Op, "drift": s.Drift})
+	if s.Drift != "" {
+		fmt.Fprintln(stdout, "DRIFT "+oneline.Escape(s.Drift))
+	}
 	return 0
+}
+
+// cellText is a where view's cell as the text it was printed as; "" for a row field that
+// is no string.
+func cellText(cell any) string {
+	s, _ := cell.(string)
+	return s
 }

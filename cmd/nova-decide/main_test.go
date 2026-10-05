@@ -82,6 +82,8 @@ func TestRefusalsNameEveryProblemAtOnce(t *testing.T) {
 		{Args: []string{"read"}, Code: 2, Says: "--record is required"},
 		{Args: []string{"read", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec}, Code: 2,
 			Says: "JEV_API_KEY is absent from this environment; run under `nova-secrets exec --only JEV_API_KEY"},
+		{Args: []string{"read", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec}, Code: 2,
+			Says: "REFUSED reason=key_absent: JEV_API_KEY is absent"},
 		{Args: []string{"read", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "fixed", "--record", rec}, Code: 2,
 			Says: "--backend fixed answers from --answers <file>"},
 		{Args: []string{"read", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "oracle", "--record", rec, "--timeout", "0s"}, Code: 2,

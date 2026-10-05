@@ -1,5 +1,5 @@
 /*
-Tests for the plan verbs: PlanCreateBox, PlanWriteBox and the planBox they share.
+Tests for the plan verbs: PlanCreateBox and the planBox it shares with the write plan.
 A plan is WriteBox or CreateBox with nothing written, so every test here pins two
 things at once: the answer (nil or the refusal) and that nothing appeared at the
 path. The refusals are the ones a --dry-run of nova-fuse must print before any
@@ -124,12 +124,12 @@ func TestFuseCoverPlanWriteBoxPlansReplacementAndRefusesSymlink(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			path := tt.path(t)
-			err := PlanWriteBox(path)
+			err := planBox(path)
 			if tt.errSubstr != "" {
-				assert.ErrorContains(t, err, tt.errSubstr, "PlanWriteBox(%q) = %v, want a refusal naming %q", path, err, tt.errSubstr)
+				assert.ErrorContains(t, err, tt.errSubstr, "planBox(%q) = %v, want a refusal naming %q", path, err, tt.errSubstr)
 				return
 			}
-			assert.NoError(t, err, "PlanWriteBox(%q) refused a write it should plan", path)
+			assert.NoError(t, err, "planBox(%q) refused a write it should plan", path)
 			if tt.heldAs != "" {
 				kept, rerr := os.ReadFile(path)
 				require.NoError(t, rerr)

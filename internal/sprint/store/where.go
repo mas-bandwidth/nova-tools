@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -35,6 +37,11 @@ type WhereRecord struct {
 	Held     int                   `json:"held"`
 	Landings []int64               `json:"landings,omitempty"`
 	Critical []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
+	// Tiers counts every card by its brief's tier, and Streams carries each stream's
+	// tiers, dollars per landed card and spend by tier (sprint.TierCosts, cost_view.go):
+	// counted here from the cards the tick reads, never by where from per-card reads.
+	Tiers   map[string]int              `json:"tiers,omitempty"`
+	Streams map[string]sprint.TierCosts `json:"streams,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -46,7 +53,8 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 			landed = append(landed, at)
 		}
 	}
-	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5)}
+	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
+		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s)}
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -103,9 +111,114 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	return kv.SetKey(ctx, keyWhere, string(b))
 }
 
+// The store round trip (store-latency-row-r.w2, docs/SPEC-SPRINT.md section
+// 14): the server times one round trip to the store every StoreRTTEvery by the
+// injected clock and keeps the samples of the last StoreRTTWindow, with their
+// p50 and p99, in one key, so where, another process, reads them in the
+// exchange it makes anyway.
+
+// StoreRTTEvery is how often the server times a store round trip, and
+// StoreRTTWindow how long a sample is kept; a record whose last sample is older
+// than the window is a server that stopped measuring, and where shows none.
+const (
+	StoreRTTEvery  = 10 * time.Second
+	StoreRTTWindow = time.Minute
+)
+
+// keyStoreRTT is the store round trip record's key, under the deployment's prefix.
+const keyStoreRTT = "store_rtt" // STRING, the store round trip record (JSON)
+
+// StoreRTTRecord is the store round trip record: the samples of the last
+// StoreRTTWindow (when each round trip began, Unix milliseconds, and how long it
+// took, microseconds, so a round trip under a millisecond is not zero) and their
+// p50 and p99 in milliseconds.
+type StoreRTTRecord struct {
+	At      int64      `json:"at"` // the last sample's start, Unix milliseconds
+	Samples [][2]int64 `json:"samples"`
+	P50MS   float64    `json:"store_rtt_p50_ms"`
+	P99MS   float64    `json:"store_rtt_p99_ms"`
+}
+
+// MeasureStoreRTT times one round trip to the store by the injected clock (the
+// read of the record itself) and records it from the time it began
+// (RecordStoreRTT); it returns the round trip. A store without the KV records
+// measures nothing.
+func (st *Store) MeasureStoreRTT(ctx context.Context) (time.Duration, error) {
+	kv, err := st.kv()
+	if err != nil {
+		return 0, err
+	}
+	t0 := st.now()
+	v, ok, err := kv.GetKey(ctx, keyStoreRTT)
+	d := st.now().Sub(t0)
+	if err != nil {
+		return d, err
+	}
+	return d, st.keepStoreRTT(ctx, kv, readStoreRTT(v, ok), t0, d)
+}
+
+// RecordStoreRTT records one store round trip d that began at the store's now.
+func (st *Store) RecordStoreRTT(ctx context.Context, d time.Duration) error {
+	kv, err := st.kv()
+	if err != nil {
+		return err
+	}
+	v, ok, err := kv.GetKey(ctx, keyStoreRTT)
+	if err != nil {
+		return err
+	}
+	return st.keepStoreRTT(ctx, kv, readStoreRTT(v, ok), st.now(), d)
+}
+
+// keepStoreRTT adds the sample (at, d) to r, drops the samples older than
+// StoreRTTWindow before at, and writes r with its p50 and p99. The server is
+// the one writer of the record.
+func (st *Store) keepStoreRTT(ctx context.Context, kv KV, r StoreRTTRecord, at time.Time, d time.Duration) error {
+	cut := at.Add(-StoreRTTWindow).UnixMilli()
+	kept := [][2]int64{}
+	for _, s := range r.Samples {
+		if s[0] >= cut {
+			kept = append(kept, s)
+		}
+	}
+	kept = append(kept, [2]int64{at.UnixMilli(), d.Microseconds()})
+	r = StoreRTTRecord{At: at.UnixMilli(), Samples: kept}
+	r.P50MS, r.P99MS = rttQuantile(kept, 0.50), rttQuantile(kept, 0.99)
+	b, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, keyStoreRTT, string(b))
+}
+
+// readStoreRTT is the record a read returned; none, or one that does not
+// parse, is an empty record.
+func readStoreRTT(v string, ok bool) StoreRTTRecord {
+	var r StoreRTTRecord
+	if ok && json.Unmarshal([]byte(v), &r) != nil {
+		return StoreRTTRecord{}
+	}
+	return r
+}
+
+// rttQuantile is the nearest-rank q quantile of the samples' round trips, in
+// milliseconds to the microsecond: the sorted sample at index floor(q*n), the
+// last at most.
+func rttQuantile(samples [][2]int64, q float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	us := make([]int64, len(samples))
+	for i, s := range samples {
+		us[i] = s[1]
+	}
+	slices.Sort(us)
+	return float64(us[min(len(us)-1, int(q*float64(len(us))))]) / 1000
+}
+
 // WhereFacts is what where shows beside the tables' counts: the machine's
-// records (Records: the store keeps them), the held cards and the landing
-// stamps for the rate.
+// records (Records: the store keeps them), the held cards, the landing
+// stamps for the rate, and the store round trip the server measured.
 type WhereFacts struct {
 	Records   bool
 	Machine   Machine
@@ -113,6 +226,24 @@ type WhereFacts struct {
 	Held      int
 	Landed    []time.Time
 	Critical  []sprint.CriticalCard // the five heaviest, from the record (weight.go)
+	// Tiers and Streams are the record's counts and costs by tier (cost_view.go); nil
+	// without the record.
+	Tiers   map[string]int
+	Streams map[string]sprint.TierCosts
+	// HasStoreRTT is set when the server's store round trip record has a sample
+	// within StoreRTTWindow; StoreRTTP50MS and StoreRTTP99MS are its p50 and p99.
+	HasStoreRTT   bool
+	StoreRTTP50MS float64
+	StoreRTTP99MS float64
+}
+
+// StoreLine is where's store line, "store: rtt p50=<ms>ms p99=<ms>ms", or
+// empty when the server has measured no round trip within the window.
+func (f WhereFacts) StoreLine() string {
+	if !f.HasStoreRTT {
+		return ""
+	}
+	return fmt.Sprintf("store: rtt p50=%gms p99=%gms", f.StoreRTTP50MS, f.StoreRTTP99MS)
 }
 
 // WhereFacts reads the machine's records and the where record in one exchange.
@@ -131,7 +262,7 @@ type WhereFacts struct {
 func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, error) {
 	var f WhereFacts
 	if kv, err := st.kv(); err == nil {
-		vals, oks, err := getKeys(ctx, kv, []string{keyMachine, keyHeartbeat, keyWhere})
+		vals, oks, err := getKeys(ctx, kv, []string{keyMachine, keyHeartbeat, keyWhere, keyStoreRTT})
 		if err != nil {
 			return f, err
 		}
@@ -143,8 +274,11 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 				}
 			}
 		}
+		if r := readStoreRTT(vals[3], oks[3]); len(r.Samples) > 0 && st.now().Sub(time.UnixMilli(r.At)) <= StoreRTTWindow {
+			f.HasStoreRTT, f.StoreRTTP50MS, f.StoreRTTP99MS = true, r.P50MS, r.P99MS
+		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
-			f.Held, f.Critical = r.Held, r.Critical
+			f.Held, f.Critical, f.Tiers, f.Streams = r.Held, r.Critical, r.Tiers, r.Streams
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

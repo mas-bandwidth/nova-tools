@@ -63,6 +63,29 @@ below): the daemon answering is never the session.
   never from the body: a pong is forgeable only by the friend's login.
 - Width is the nova-config friend row's, given to the daemon at install.
 
+### session-pong.w1: a wake check is answered by the session
+
+A wake check is a PING whose body carries a `wake=1` line (`nova-friend ping
+--wake`; `WakePingText`, `IsWake`). The daemon answers it at once with
+`daemon-pong` as any ping, and when the session is free (no turn running, no
+message waiting) pushes in the exact pong line for the current nonce as its own
+short turn (`WakeTurnText`, `startWake`), with no message and no word about the
+coordinator, once per wake ping; while the session is mid-turn, or messages
+wait, the line rides at the head of the next turn that carries messages as
+above, and that pays the wake check. A plain ping is still never a turn, and a
+passive harness, or a one-shot daemon, pushes no wake turn. The two answers are
+kept apart: status.json carries `last_daemon_pong` beside the session's
+`last_pong`, and `nova-friend status` prints `daemon_pong_age` and
+`session_pong_age` as two facts; `wait-pong` accepts only the session's pong.
+The machine stays the one owner of `quiet`, `challenged` and `deaf`: a daemon
+pong ends nothing, so a wake check the session does not answer within the
+window is `deaf` while the daemon pongs (tla/Friend.tla: `WakeTurn`,
+`OnlySessionPongEnds`, `OwedOnlyWhileAsked`; the reversed witness
+`MCFriendBrokenDaemonPongEnds` lets the daemon's pong end a wake challenge and
+TLC catches it). The finding of 2026-10-04: every daemon ponged while a
+friend's session sat idle from 2:40 to 4:34 PM, and an idle session with no
+message waiting was never asked at all.
+
 ## The machine (tla/Friend.tla)
 
 The connection: `connected` while a ping arrived within the window (three
@@ -171,6 +194,50 @@ the hold takes back only the cards not yet started
 a card the hold took back may be dealt to the same friend again (only
 `friend take` keeps it off them, `taken_from`). The provider's limit only
 stops answers in the model; limit.go's `Down` until the reset is not in it.
+## A friend's status, from evidence (internal/friend/status.go)
+
+The owner, 2026-10-04: "Once again I look at friends and I wonder, are
+friends actually doing work?" The daemon's beat says only that its loop runs.
+A friend's status is decided by one function, `FriendStatus`, from what the
+friend did, in order, the first rule that holds deciding it:
+
+1. the harness not running is down (`harness not running`);
+2. at a limit is down until the reset (`limit until Mon 1:00 PM`, or
+   `weekly limit until ...` when the limit has a name);
+3. no session answer within the bound, `AnswerBound`, two windows (six
+   minutes: a ping each window and a challenge open for less than one), is
+   down (`no session answer 12m`, `no session answer ever`);
+4. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n>
+   undelivered)`);
+5. otherwise up (`session answer 40s`).
+
+Messages waiting on her stream are work waiting, never down on their own.
+Unknown harness evidence is no evidence and decides nothing; the session
+answer is the proof the harness ran. The beat decides nothing.
+
+The evidence, each piece shown beside the status whatever decided it: the
+harness (`harness running`, `harness not running`, `harness unknown`); the
+age of the session's last answer (the pong file); the limit and its reset
+(`limit.json` in the state directory, `{"reason":..,"until":<RFC3339>}`, the
+daemon its one writer, no file no limit); the messages waiting on her stream,
+pending and new (`bus.Peek`, counted when `--redis` names the store, else
+`undelivered not counted`); and the age and exit of her last result (the
+newest turn line of `deliver.log`, `<RFC3339> subject=... exit=<n>`). A bus
+that cannot deliver is the daemon down (its status file over thirty seconds
+old), the session broken, or the store failing.
+
+`nova-friend status` prints it after the daemon's facts: `status=<up|down>
+why="<the rule that decided it>" evidence="<each piece, ; between>"`.
+
+What is owed, outside this tool: the harness is known running only for Grok (a
+tail under the open window); other harnesses are `unknown` until each has a
+probe. No writer of `limit.json` yet: the daemon reads no limit from a turn.
+The coordinator's `friend health` carries `--reason` and `--until`, but not
+the five pieces of evidence, and the friends table (`nova-sprint where
+--json`, the dashboard) shows the observation's word, not this verdict; the
+coordinator's daemon sending this verdict through `friend health`, and the
+table showing `why` and the evidence beside the status, are the next change,
+in `internal/sprint` and `cmd/nova-sprint`.
 
 ## The loop (internal/friend/daemon.go)
 
@@ -197,6 +264,22 @@ answered at once by the daemon; never a second turn. Then the worker's result;
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
 challenge is open; the status file.
+
+**Last session activity** (2026-10-04: the table said up with 8 working while a friend's
+session sat idle from 2:40 to 4:34 PM, and another read working=0 while she was busy; a pong
+shows the daemon answers, not that her session moves). The beat carries the newest file
+write under her working directory (`NewestWrite`, `Daemon.Activity`): her `outbox`, `inbox`
+and `jobs` first, then the rest of the directory, each root once, never descending into
+`.git`, `.cache` or `node_modules`. The walk is one stat pass bounded in files (2000) and in
+time (50 ms, on the daemon's clock), answers with the newest write it read when it reaches
+either, and runs at most once every `ActivityEvery` (10 s); the beats between carry its last
+answer, and a daemon with no `Activity` carries none. The beat is `friend beat <friend>
+--active <RFC3339>`; the sprint keeps it on her beat record, shows it as the friends
+table's `active` column, and raises a `friend idle` alarm when she holds cards and it is
+older than the `friend_idle` setting (docs/SPEC-SPRINT.md, last session activity). Where the
+harness exposes the session's own turn events, they would be a second source; none is read
+yet, so a session that works without writing a file (a long read, a long think) looks idle
+after the setting, and the alarm says "written nothing", not "stuck".
 
 No clock bounds a turn: a turn that prints keeps running however long it
 takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
@@ -254,6 +337,45 @@ usage is on the beat as `--five-hour <pct> --seven-day <pct>`
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
+### The harness check (internal/friend/alive.go)
+
+A session that cannot answer is caught by the challenge only after a window;
+a harness that has closed is caught at once. Every adapter answers `Alive`,
+from the cheapest true signal it has, the process table (`ps -axww -o
+user=,pid=,args=`, through the adapter's own runner, no shell): Codex, the
+ChatGPT app (`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`);
+Antigravity, its app; DSH, the DeepSeek Harness app; each its main
+executable, matched whole, of the daemon's user, never a helper. Grok, a
+window (the TUI process) open in the friend's directory: a pid of
+`active_sessions.json` with that cwd, alive in `ps -axww -o pid=,ppid=,args=`.
+OpenCode, batch and lanes, and Gemini run no standing process (every turn
+starts the runner afresh), so a runner that cannot be found is not running
+and a runner that is found cannot tell. An adapter that cannot tell says so
+(a stub; a desktop app off macOS; a listing that cannot be read), the record
+says it once, and its friend relies on the session check alone.
+
+`Alive` is its own interface, `Aliver`, beside the deliver adapter's, so it is
+optional by assertion: every adapter implements it
+(`TestEveryAdapterAnswersTheHarnessCheck`), and a Deliverer that does not
+cannot tell. `WatchHarness(d, adapter)` takes the bare adapter, the one
+`NewDeliverer` returned, never the daemon's `Deliver`: the gates in front of
+it (`SessionCheck.Gate`, `Limits.Gate`) answer no `Alive`
+(`TestTheWatchReadsTheBareAdapterNotTheGateInFrontOfIt`). `cmd/nova-friend/main.go`
+wires it just before `d.Run`: `friend.WatchHarness(d, deliver)`
+(`TestRunPutsTheHarnessWatchInFrontOfTheBeat`).
+
+`WatchHarness` puts the check in front of the daemon's beat. Every thirty
+seconds (`AliveEvery`) it asks; a harness not running makes the friend down
+at once, independent of the challenge: no beat goes to the sprint server
+(down after fifteen seconds without one, so within three quarters of a
+minute of the close), the beat's error, so the status, says `harness not
+running`, and the record says `down:` with what was read. It is up again only
+when the harness runs (or cannot be told) and the session has answered the
+daemon's current nonce, one the pong file did not hold when the harness
+closed; a harness that comes back is not yet a session that answers. Tested
+over a fake process table and a fake clock,
+`TestAClosedHarnessMakesItsFriendDownWithinAMinute`.
+
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
@@ -270,6 +392,27 @@ stream (the session's own blocking read does), peeking so a ping is still
 answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
+
+### friend-idle-wake-r.w2: idle wake
+
+A friend holding cards whose session writes nothing gets one wake, then the coordinator one
+note (`Machine.IdleStep`, `loop.idle`). The cards she holds are the queue file's queued and
+working tasks, oldest first (`Daemon.Cards` stands in for it), read with her newest write
+(`Daemon.Activity`) at most once a minute (`IdleWalkEvery`); with no `Activity` the watch is off;
+the setting is her row's idle setting (`Daemon.IdleAfter`), ten minutes when it says none
+(`DefaultIdleAfter`). The watch is `awake`, `woken` or `noted`: awake with no write for the
+setting (measured from her newest write, the daemon's start, or the step she first held a
+card, whichever is latest) gives one wake turn through the harness's resume, `you hold <n>
+cards (<ids>) and your session has written nothing for <setting>; continue the oldest, <id>`,
+headed by the pong line while a challenge is open and never carrying the word about the
+coordinator; woken for the setting again with no write newer than the one the wake was given
+on sends one `blocker` to the coordinator (the seat the last ping named, else
+`--coordinator`), `friend <name>: idle <2 x setting> holding <n> cards: <ids>`; noted says
+nothing more. A newer write, or holding no card, is awake again, and the next idle stretch
+gets its own wake and note. The watch steps only while the session is free in batch mode: in
+one-shot mode the lanes hand each card themselves, and a passive harness's wake is said on the
+record while its note goes as any other. Tests: `TestAnIdleFriendWithCardsGetsAWakeTurnThenANote`
+(a fake clock and harness: ten idle minutes give one wake, twenty one note, a write resets both).
 
 ### Codex
 
@@ -437,6 +580,20 @@ where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
 
+## The beat comes from the daemon
+
+A friend's beat is the daemon's alone: the loop above beats once a second
+while it runs, and nothing else beats for her (the owner, 2026-10-04: "Golang
+nova-tools and nova-sprint verbs only"; "Make the ping loop mechanical!!!!").
+The per-friend shell loops that beat for a friend every second whether or not
+her session was there, part of why a closed app read up, are retired
+(docs/FRIENDS.md, "A friend's beat comes only from her daemon"). The beat
+proves the daemon; whether her session answers is the coordinator's
+observation (`friend health`). The roster and her cards are moved by the
+friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
+row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
+loop"; cmd/nova-sprint/friend_loop.go).
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
@@ -507,6 +664,101 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
+
+A lane's child (the harness run that opens its session and each card's turn)
+runs inside the wall of a profile (`internal/sandbox/profile.go`,
+`LaneProfile`; docs/SPEC-SANDBOX.md, the subsection of the same name). The
+profile is the friend row's, read off the beat as `row_profile=<name>` beside
+`row_mode=` and `row_width=`, else `run --profile`, whose default is `friend`,
+the one profile there is; a name that is not a profile is refused. The lane
+marks its context (`LaneContext`) and the daemon's harness `Exec` (`Wall.Exec`)
+runs a lane's command as `nova-friend wall --profile <p> --dir <dir>
+--deny <self>... [--config-dir <c>] [--job <j>]... [--read <r>]... -- <harness> <args>`, in the
+same directory with the same stdin; a batch turn and anything else not a
+lane's runs as it did. The `wall` verb (`RunWall`) is dispatched before the
+verb table, which carries no argv after `--`: it builds the profile's wall
+for the command, prints nothing on stdout but the command's own (a harness's
+answer, a session listing, is read through it unchanged), says each refusal
+as one `WALL REFUSED reason=<r> <text>` line on stderr at exit 125, and
+answers the command's exit. Inside, `HOME` is the config directory (else the
+working directory) and `CLAUDE_CONFIG_DIR` is set when given; the SSH and GPG
+agent variables are dropped (`sandbox.ChildEnv`). A daemon that cannot name
+its own binary walls nothing: a lane's command is refused, never run outside
+the wall. `run` flags: `--profile`, `--config-dir` (default
+`CLAUDE_CONFIG_DIR`), `--deny-self` (default `NOVA_FRIEND_DENY_SELF`: the
+coordinator's self, which no write inside the wall reaches; a wall that
+denies nothing is refused, so a one-shot daemon with none runs no lane),
+`--wall-jobs` and `--wall-reads` (comma-separated).
+
+Not yet: nova-sprint's beat does not print `row_profile=` and the friend row
+has no `profile` column (internal/sprint and internal/config are outside this
+card), so today the profile is `run --profile`. A cancelled turn signals the
+wall's group, and the wall passes SIGTERM to the harness's own group; the
+SIGKILL after `KillDelay` reaches the wall only.
+
+### delivery-conformance-r.w1 — one delivery check every adapter passes
+
+Every harness adapter makes one promise, and `friend.Conformance`
+(internal/friend/conformance.go) checks it end to end: a session check
+carrying a fresh nonce (`SessionCheckText`, the daemon's own) goes in through
+the adapter's `Deliver`, the session runs the exact `nova-friend pong` line it
+carries, and a pong with that nonce, from the friend (the message's from,
+never its body) and newer than the check, is on the bus within the window
+(`DefaultCheckWithin`, the session bound, five minutes). It is the presence
+model's Ask then Answer within the bound (tla/FriendPresence.tla), run once on
+demand. A failure names its stage: `deliver` (an error, a `Deferred` or a
+nonzero exit from the adapter; a `Stub` says its surveyed reason), `act` (the
+pong file never held the nonce: the session did not run the line) or `reply`
+(the pong file holds it and no pong reached the bus). The unit tier
+(`TestEveryAdapterPassesDeliveryConformance`) runs the same function for every
+name in `Harnesses`: the six with a deliver command (opencode, codex, gemini,
+dsh, grok, antigravity) over a fake `Exec` (and a temporary home or an
+in-memory mailbox where the harness reads files) with bus's Fake for the
+store and a clock moved by the check's own waits, and every Stub, claude
+among them, failing at `deliver` with its reason; an adapter with a deliver
+command and no rig fails the test. `nova-friend check` runs it against the live
+session (docs/CLI.md), `install` runs it once after loading the agent and
+says the line in a NOTE, and a nova-config loop record runs it nightly on
+each friend's machine (docs/TESTING.md). Not covered: a lane's
+`OpenSession`/`DeliverTo` path, and a check delivered while the daemon's own
+turn is under way goes in beside it, not after it (the check runs in its own
+process and does not hold the daemon's turn).
+
+## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
+
+The server side of the connection, as the owner designed it: the coordinator
+is the server, both sides ping each second, and a friend is down after ten
+seconds without a pong. `nova-friend serve --as <coordinator>` is the loop,
+installed as a nova-config loop row kept alive, never a hand loop or a hand
+plist. Each second (`PingEvery`) it reads the coordinator's own stream from
+where it left off, in one range: a `daemon-pong <nonce>` or a session
+`pong <nonce>` from a friend counts when the nonce is one the loop sent that
+friend in the last ten seconds (`DownAfter`), once; the sender is the
+message's `from`, never its body, and a stale, replayed or other friend's
+nonce changes nothing. Then each friend whose state changed is said, and every
+friend row but the coordinator's own is sent a `PING` with a fresh nonce and
+the seat line (`since` the loop's start). The friends are nova-config's friend
+rows as the bus store holds them (the set `friends`, written by `nova-config
+apply`, the roster a send is checked against), read at the start in the trip
+that fixes where the stream is read from, and again each minute
+(`RowsEvery`), so a friend or a bud added as a row is pinged with no list kept
+anywhere else, and a row removed is forgotten. A friend is up on a counted pong and down once ten
+seconds pass without one, counted from the last pong, or from when its row was
+first read; a ping that could not be sent is named in the down line's reason.
+The state is one process's, in memory (a last pong and the nonces of the last
+ten seconds per friend), so a restart starts every friend undecided. It prints
+`SERVE OK friends= every= down_after=` once, then one line per state change and
+never one per ping, `SERVE UP friend= at=` and `SERVE DOWN friend= at=
+last_pong=<RFC3339|never> reason=`; a store or rows read that fails is one
+`SERVE NOTE` until what it says changes, and one when it clears.
+
+This is the connection, not presence: a daemon-pong proves the friend's daemon
+and transport, the way `wait-pong`'s `daemon=` does, and the session's own
+answer is still the session check's (Presence, above). Each `PING` reopens the
+daemon's challenge, so the challenge's `deaf` is not reached while this loop
+runs (Chaos, below); presence is what says a silent session.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the
@@ -536,9 +788,19 @@ until then. A one-shot friend with no session in its directory at all has
 nowhere for the check to go until a lane opens one, and its lanes wait on the
 row, which comes with a beat; it stays down until a session exists.
 
-The server side of the ping (the coordinator pinging every friend each window
-from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
-here; `ping` and `wait-pong` run the canary by hand. The beat carries no
+The harness check (internal/friend/alive.go) is wired in `cmd/nova-friend/main.go`
+before `d.Run` (`TestRunPutsTheHarnessWatchInFrontOfTheBeat`). The watch's down
+and up is not in `tla/FriendPresence.tla` yet.
+
+The server side of the ping is `serve` (The coordinator's ping, above); the
+daemon's side still waits a window of three minutes for a ping, not ten
+seconds, and pings nobody, so "both sides ping each second" holds on the
+coordinator's side only; the table's `awake` and `deaf` columns are not
+written from `serve`'s states; the keepalive's TLA+ module beside
+`tla/Friend.tla` is owed. The bus trims nothing (SPEC-BUS.md), so each friend
+`serve` pings adds two entries a second to the streams and the log (a ping and
+its daemon-pong), about 170,000 a day per friend, kept until trimming is decided. The beat carries the
+last session activity (above) and no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
 
@@ -554,6 +816,45 @@ records them for pacing. Claude has no deliver command, so its
 `Watch`. The state machine (up, down until a reset, waking on a nonce) wants
 its TLA+ module beside `tla/Friend.tla`.
 
+## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
+
+The owner, 2026-10-04: "If your detection that they are down doesn't work
+WHEN THEY ARE DOWN, that seems like a bad design." One functional test,
+`TestEveryFriendFailureShowsWithinItsBound` (`go test -tags functional ./internal/friend`),
+breaks a friend each way he can fail and asserts the
+bound on the friends table and where his cards go. The friend runs the real
+daemon over a scratch bus (bus's Fake behind a store that blocks on an empty
+read and can have the friend's credential revoked) into a fake harness that
+can be closed, silenced or limited, and beats to a twin sprint store
+(`store.Mem`) whose tick deals four cards for any friend, two to him and two
+to a second friend who never fails. Each case runs in a `testing/synctest`
+bubble, so the long bounds are fake time.
+
+| case | bound | cards | landed today | owed by |
+|---|---|---|---|---|
+| harness closed (every delivery Deferred) | down within 1 minute | new cards to the other friend; none left on him | nothing: his daemon beats, so the table says up | fr-harness-alive |
+| session silent (turns taken, nothing said) | down within 15 minutes of his last bus message, pinged once a window | as above | his daemon calls the session `deaf` within the bound; the table says up | fr-session-proof-of-life, fr-status-from-evidence |
+| usage limit (every turn fails with the reset time) | down within 1 minute, until the reset, then up once the session answers a nonce | as above | nothing: the table says up throughout | fr-limits-and-credits |
+| bus credential revoked (every command WRONGPASS) | one alarm to the coordinator on the first failed send | as above | the status names WRONGPASS at the first failed command; the beat stops, so the table says down within 15 seconds and new cards go to the other friend | fr-delivery-receipts (the alarm) |
+| hold (`hold --return`) | held at once | none left on him; his cards dealt to the other friend at the next tick; no new card | all of it | none |
+
+"None left on him" for the down cases is the presence model's invariant (a
+held or down friend holds no card, fr-presence-model); today a down friend
+keeps the cards dealt to him and the deadline judges them (`FriendDownAfter`,
+internal/sprint/presence.go), and no card yet names that withdrawal.
+
+A part the landed code cannot meet is owed: it is checked like the rest, and
+when it fails the case fails, each line
+`OWED <card>: <what was measured>`, the suite
+red until the presence cards land. A landed part that fails always fails. The
+fake harness speaks for a limit only in its own words (exit 1 and the reset
+time in the error); when fr-limits-and-credits gives the adapters a typed
+limit, the fake answers with it.
+
+One finding of the suite: the challenge is reopened by every ping, so a
+coordinator that pings more often than once a window never sees a silent
+session go `deaf`; the case pings once a window, as the contract has it.
+
 ## The harness survey (2026-10-04)
 
 The survey covers all major harnesses. The rule of the
@@ -566,7 +867,7 @@ children's; OpenCode is above.
 
 | harness | installed here | push route | command or frame | proven | needs from the owner |
 |---|---|---|---|---|---|
-| dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | the headless profile adopts a persisted session (`~/.dsh/sessions/<key>/<id>`), shared with the desktop app | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | yes, 2026-10-04 on a throwaway session: adopted (turn 2 in the same record, 9 KB to 16 KB); unknown id exit 1; another directory exit 1 ("recorded in"); the turn itself stopped at the provider: `MISSING_CREDENTIAL`, 0 tokens spent | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
+| dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | none into an open desktop session: a session under an agent preset makes `dsh headless` exit 1 before any write, and the adapter returns Deferred (route defer); the session reads the bus itself (`nova-bus recv` or `nova-bus wait`) | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | no live push (route defer). Probed 2026-10-05 on the macOS survey machine against the real friend session `session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b` in `/Volumes/nova/ai/zhi`: `echo "test" \| dsh headless --session-id session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b -` exits 1 with preset `minimal` refusal before any write, transcript `session.v4.jsonl.zstd` hash and timestamp unchanged, `deliver.log` records 1339+ consecutive deferred attempts, desktop app exposes no local listener or IPC socket. 2026-10-04, isolated DSH home, no credentials: under preset `minimal` headless exits 1, transcript SHA-256 unchanged; with no preset the runner appended a turn (turn 2 in the same record, 9 KB to 16 KB), unknown id exit 1, another directory exit 1, the turn stopped at `MISSING_CREDENTIAL` | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
 | gemini (Gemini CLI) | yes: `/opt/homebrew/bin/gemini` 0.46.0 (brew gemini-cli) | `--resume <uuid>` keeps the session id and chat file (`ChatRecordingService.initialize`, read in the bundle); `latest` is the project's newest | `gemini --skip-trust --resume <id\|latest> --prompt=<text>` in the friend's dir | mechanics only, 2026-10-04: a session file was written under `~/.gemini/tmp/<project>/chats/`, `--resume <bad uuid>` exits 42; the turn itself never ran: the account answered 429 `rateLimitExceeded`, then `IneligibleTierError: this client is no longer supported for Gemini Code Assist for individuals`; no token spent | a GEMINI_API_KEY in the daemon's environment, or a Code Assist tier that still serves the CLI (the individual tier no longer does, 8:58 AM ET) |
 | copilot (GitHub Copilot CLI) | no | programmatic mode resumes a session: `-p` with `--resume`; session state under `~/.copilot/session-state/`; an SDK talks JSON-RPC to `copilot --headless` | `copilot -p <text> --resume <id> --allow-all-tools -s` | no | `curl -fsSL https://gh.io/copilot-install \| bash` and `copilot login` |
 | cursor (cursor-agent, the app) | no (no `agent`, no Cursor.app) | the CLI resumes a chat by id; the app has no documented IPC into an open chat | `agent -p --resume <chatId> --output-format text <text>` | no | `curl https://cursor.com/install -fsS \| bash` and `agent login` (or CURSOR_API_KEY) |
@@ -583,9 +884,24 @@ children's; OpenCode is above.
 The two installed harnesses have adapters (`adapter_dsh.go`, `adapter_gemini.go`);
 the rest are `Stub` with a surveyed reason (`adapter_refused.go`): known to
 `install --harness`, passive, refusing every delivery with the one-line reason above.
-Not measured: whether `dsh headless` adopts a session the desktop app holds
-open (a `session.lock` sits in every session directory), and whether the
-desktop app shows the pushed turn live or on its next load.
+Measured 2026-10-04 on a disposable session in an isolated DSH home (no
+credentials, preset `minimal`): `dsh headless --session-id <id> -` exits 1 with
+`runs under agent preset "minimal", which the one-shot runner does not compose`
+before any write, and the transcript's SHA-256 is unchanged. For a session with
+no preset the runner appended the turn to that session's own record as a
+separate process. Probed 2026-10-05 on the macOS survey machine against the
+real friend session (`session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b` in
+`/Volumes/nova/ai/zhi`): `echo "test" | dsh headless --session-id session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b -`
+exits 1 immediately with `dsh: session "session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b" runs under agent preset "minimal", which the one-shot runner does not compose`
+before any write; transcript `session.v4.jsonl.zstd` hash and timestamp are
+unchanged, `deliver.log` records 1339+ consecutive deferred attempts with this
+exact refusal, and DeepSeek Harness exposes no local listening socket or IPC
+into the open session. No push route into the open desktop session exists, so the
+route is defer: `DSH.Route` answers `defer` with the line the session runs
+(`nova-bus wait --as <friend>`), and each refused delivery is a deliver-log
+`deferred=` line. `nova-friend status` prints route only for grok, so presence
+carries no route for dsh until that wiring (cmd/nova-friend, outside this card's
+paths) lands.
 A session that has selected an agent preset is refused by the one-shot runner
 whatever the text (exit 1, "runs under agent preset ..., which the one-shot
 runner does not compose"; measured 2026-10-04 on a "minimal" session), so the

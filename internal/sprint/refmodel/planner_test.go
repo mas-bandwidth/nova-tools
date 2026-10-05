@@ -38,7 +38,7 @@ func todaysDecision(s sample) map[string][]refmodel.Move {
 		return out
 	}
 	stopped := func(from, to time.Time) time.Duration { return sprint.StoppedBetween(c.Stopped, from, to) }
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: stopped, Beats: c.Beats}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: stopped, Beats: c.Beats, Friends: c.Friends}
 	held := func(duty string, p sprint.Plan, due int) []refmodel.Move {
 		ms := refmodel.PlanMoves(duty, t, sprint.Applied(t, p))
 		if due > 0 {
@@ -197,7 +197,7 @@ func TestTheMovesOfAPlanReproduceItsChangesToTheCards(t *testing.T) {
 		c := s.snap.Clone()
 		t0 := c.Tables
 		t0.Now = s.now
-		req := sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats,
+		req := sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats, Friends: c.Friends,
 			Stopped: func(from, to time.Time) time.Duration { return sprint.StoppedBetween(c.Stopped, from, to) }}
 		for _, part := range sprint.TickParts {
 			plan, _ := part.Fn(t0, req)

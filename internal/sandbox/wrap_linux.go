@@ -439,10 +439,10 @@ func awaitGroupGone(pgid int) {
 }
 
 // addRules is steps 2 and 3 of the spec's linux body: the roots and every --read get the
-// read subset, and every --write gets the whole handled set.
+// read subset, and every --write gets the whole handled set, less the remove rights
+// outside the job dir, its tmp and the cwd (writeRuleMask, "deletes-only-in-the-job-dir-p.w1").
 func addRules(rulesetFd int, p *Policy, abi int) error {
 	read := uint64(fsReadSubset)
-	write := writeSubset(abi)
 
 	// The roots, read-only, skipped if absent. linuxRoots is the static table plus the
 	// directory the system resolver's config resolves to.
@@ -481,7 +481,7 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 		}
 	}
 	for _, dir := range writePaths(p) {
-		if err := addPathRule(rulesetFd, dir, write); err != nil {
+		if err := addPathRule(rulesetFd, dir, writeRuleMask(p, dir, abi)); err != nil {
 			return refuse("sandbox_failed", "--write %s could not be added to the landlock ruleset: %v", dir, err)
 		}
 	}

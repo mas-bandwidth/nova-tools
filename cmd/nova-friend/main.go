@@ -3,8 +3,10 @@
 // friend's nova-bus stream and pushes each message into the running session
 // as a turn, beats to the sprint server while it does, answers the
 // coordinator's pings at once and pushes them in so the session answers as
-// its own turn, and tells the session when the coordinator goes silent. The
-// verbs are run, install, uninstall, status, pong, ping and wait-pong; the
+// its own turn, and tells the session when the coordinator goes silent; and,
+// on the coordinator's side, the ping loop that pings every friend each
+// second. The verbs are run, install, uninstall, check, status, pong, ping,
+// wait-pong and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -22,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,6 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -58,8 +62,9 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
-	beat      func(ctx context.Context, server, friend string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	progress  func(ctx context.Context, server string, argv []string) error               // one progress verb to the sprint server (friend.ProgressArgv)
+	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -69,10 +74,11 @@ type world struct {
 	binary    func() (string, error)
 	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
+	alive     friend.Aliver // the harness check, when set (a test's fake harness); nil watches the adapter
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, exec: friend.RealExec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+	w := world{getenv: os.Getenv, exec: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -88,10 +94,14 @@ func realWorld() world {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
-		beat: func(ctx context.Context, server, name string) (string, error) {
+		beat: func(ctx context.Context, server, name string, active time.Time) (string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"friend", "beat", name})
+			args := []string{"friend", "beat", name}
+			if !active.IsZero() {
+				args = append(args, "--active", active.UTC().Format(time.RFC3339))
+			}
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
 			if err != nil {
 				return "", err
 			}
@@ -145,6 +155,11 @@ func realWorld() world {
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
+	if len(args) > 0 && args[0] == friend.WallVerb {
+		// the lane's wall around one command: its argv follows "--", which the verb table
+		// does not carry, so it is dispatched here (internal/friend RunWall)
+		return friend.RunWall(args[1:], os.Environ(), stdin, stdout, stderr)
+	}
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
 
@@ -215,12 +230,12 @@ nova-bus stream and, when the session is free, pushes every waiting message in a
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong, never presence); presence is the session's answer to a nonce.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
-		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon), 2 could not run (a flag, an input, a store or a server that did not answer).",
-		Words:     []string{"NONE"},
+		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
+		Words:     []string{"NONE", "FAIL"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -240,17 +255,32 @@ answer brings it up; it starts down until the first answer. A turn runs as long 
 silent past --silent-stop is stopped with its process group, the reason on the record. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
-bus; a restart clears it. The friend row's mode and width come with each beat's answer (row_mode=,
-row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
+bus; a restart clears it. A turn whose harness says it is out of credits or at a usage limit (a Claude
+Code rate_limit_event rejected, "Insufficient AI Credits ... will refresh 6:52 PM", "usage limit ...
+try again at") makes the friend down until the reset: the presence file says down with the limit,
+no beat goes to the sprint server (her row reads down), nothing is delivered, and the seat (else
+--coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
+--reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
+nonce from inside the session before she beats again, and the seat is told she is back. The friend
+row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Prints
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Every
+lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
+(row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
+--dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that
+denies nothing is refused), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Prints
 one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
 dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
+					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR)")
+					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
+					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
+					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
@@ -277,13 +307,16 @@ and sops are found on PATH at install and written by absolute path. --dry-run pr
 writes nothing. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
 (--session names the wake file in place of <file>.wake): one command in the session, not a flag, an
 environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
-(the message stays pending and is tried again), never failed and never dropped.`,
+(the message stays pending and is tried again), never failed and never dropped. Once the agent is
+loaded, install runs the delivery check once (nova-friend check, --within) and says its line in a
+NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("secrets", "", "the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec")
 					f.String("seat", "", "the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets")
 					f.String("launchd-log", "", "launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)")
+					f.Duration("within", friend.DefaultCheckWithin, "how long the delivery check after loading waits for the session's pong")
 					f.Check(func(c *tool.Call) {
 						if c.Str("secrets") != "" && c.Str("seat") == "" {
 							c.Problem("--secrets wants --seat <seat>: the seat the secrets are opened as")
@@ -309,20 +342,60 @@ environment variable or a wrapper at app start. While no such monitor runs, a de
 				Run: w.uninstall,
 			},
 			{
+				Name:    "check",
+				Usage:   "check --as <me> --harness <h> --dir <d> [--session <id>] [--within <d>] [--to <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Example: "", // a live delivery: the banner's example block runs nothing that needs a session; -h carries the example
+				Effect:  tool.Delivery + ": one session check into the live session through the harness's deliver command",
+				DryRun:  true,
+				Detail: `The one promise every harness adapter makes, checked end to end (docs/SPEC-FRIEND.md,
+delivery-conformance-r.w1): a SESSION CHECK <nonce> goes in through the harness's deliver command,
+the session runs the exact nova-friend pong line it carries, and a pong with that nonce from --as is
+on the bus within --within. Prints one line: CHECK OK harness= took=, or CHECK FAIL harness=
+stage=<deliver|act|reply> why= at exit 1: deliver, the adapter did not take it (a harness with no
+deliver command says its reason); act, the session never ran the line (its pong file never held the
+nonce); reply, the line ran and no pong reached the bus. The pong goes to --to, else the seat the
+daemon's status names, else --as itself. Run it once a night as a nova-config loop record
+(docs/TESTING.md). --dry-run checks the flags and the harness and prints the line the session
+would run: nothing is delivered and no store is opened.
+example: nova-friend check --as bob --harness opencode --dir ./bob --within 2m`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, a nova-config friend row")
+					f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
+					f.Required("dir", "the friend's working directory, the session's")
+					f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir)")
+					f.Duration("within", friend.DefaultCheckWithin, "how long to wait for the session's pong")
+					f.String("to", "", "who the pong goes to (default: the seat the daemon's status names, else --as)")
+					stateDir(f)
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						if h := c.Str("harness"); h != "" && !friend.Known(h) {
+							c.Problem(fmt.Sprintf("--harness %q is no harness; it wants one of %s", h, strings.Join(friend.Harnesses, ", ")))
+						}
+						if c.Dur("within") <= 0 {
+							c.Problem("--within wants a positive duration, such as 5m")
+						}
+					})
+				},
+				Run: w.check,
+			},
+			{
 				Name:    "ping",
-				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]",
+				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--wake] [--redis <addr>] [--dry-run]",
 				Example: "ping --as ada --to bob --nonce abc123",
 				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator",
 				DryRun:  true,
 				Detail: `Sends "PING <nonce>" with the seat line (seat=<me> since=<RFC3339>) and the pong command the
 session runs; the nonce is six random characters unless --nonce names one. Prints PING OK
 nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.
+--wake makes it a wake check (a wake=1 line in the body): the daemon still answers at once, and, the session being free,
+pushes the pong line in as its own turn, so an idle session is asked too; only the session's pong ends it (wait-pong).
 --dry-run checks the PING as send checks it and sends nothing.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the coordinator")
 					f.Required("to", "the friend to ping")
 					f.String("nonce", "", "the nonce to carry (default: six random characters)")
 					f.String("since", "", "since when you hold the seat, RFC3339 (default: now)")
+					f.Bool("wake", false, "a wake check: the session is pushed the pong line as its own turn when it is free")
 					redis(f)
 				},
 				Run: w.ping,
@@ -376,19 +449,52 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
-(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
-from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
+last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
+status=<up|down> why= evidence=, and for harness grok route=<push|defer>,
+from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
+session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
+last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. STATUS NONE at
+harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
+(known for grok, a tail under the window: running; unknown elsewhere, never down on its own); at a limit (the state directory's
+` + friend.LimitFile + `) is down until the reset; no session answer (the pong file) under ` + friend.AnswerBound.String() + ` is down; a bus that cannot
+deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes it up. why
+is the rule that decided it, as a person reads it ("no session answer 12m", "limit until Mon 1:00 PM"); evidence is every piece,
+"; "-separated: the harness, the session answer, the limit, the messages waiting on the stream (counted with --redis), the last
+turn's end and exit from the log. STATUS NONE at
 exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
 					f.Required("dir", "the friend's working directory, where the queue file lives")
 					stateDir(f)
+					redis(f)
 				},
 				Run: w.status,
+			},
+			{
+				Name:    "serve",
+				Usage:   "serve --as <coordinator> [--redis <addr>] [--dry-run]",
+				Example: "", // a loop: the example block has no line that runs for ever
+				Effect:  tool.Delivery + ": the coordinator's ping loop; a PING to every friend each second, until a signal",
+				DryRun:  true,
+				Detail: `The coordinator's side of the connection, run as a nova-config loop row. Each ` + friend.PingEvery.String() + `: the pongs on
+the coordinator's own stream are read (a daemon-pong or a session pong, the sender the message's from,
+never its body; only a nonce sent to that friend in the last ` + friend.DownAfter.String() + ` answers, once), each friend whose
+state changed is said, and every friend row but --as gets a PING with a fresh nonce. A friend is up on
+a pong and down after ` + friend.DownAfter.String() + ` without one (from the start for a friend never answered). The friend rows
+are nova-config's as the bus store holds them (the set friends), read at the start and again each
+` + friend.RowsEvery.String() + `: a row added is pinged, a row removed is forgotten. Prints SERVE OK friends= every= down_after= once, then one line per state change, never one
+per ping: SERVE UP friend= at=, SERVE DOWN friend= at= last_pong=<RFC3339|never> reason=; a store or rows
+read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or SIGTERM: SERVE STOP.
+--dry-run reads the friend rows and prints SERVE OK friends= every= down_after=: nothing is sent.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator: the pings come from it and the pongs come to it")
+					redis(f)
+					f.Prints()
+				},
+				Run: w.serve,
 			},
 		},
 	}
@@ -446,10 +552,28 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
+	// every lane child runs inside the wall of the profile her row names, else --profile
+	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
+	var rowProfile atomic.Pointer[string]
+	wall := friend.Wall{Dir: dir, ConfigDir: c.Str("config-dir"), Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
+	if bin, err := w.binary(); err == nil {
+		wall.Self = []string{bin}
+	} // else no Self: a lane's child is refused, never run outside the wall
+	walled := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+		if w.wall == nil {
+			return w.exec(ctx, d, prog, args, stdin)
+		}
+		wl := wall
+		wl.Profile = c.Str("profile")
+		if p := rowProfile.Load(); p != nil {
+			wl.Profile = *p
+		}
+		return w.wall(wl, w.exec)(ctx, d, prog, args, stdin)
+	}
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
 	fl := &friend.Limits{Now: w.now, Nonce: w.random}
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(w.exec), c.Stdout)
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(walled), c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
@@ -473,21 +597,30 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
+	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
 	writePresence := func(p friend.PresenceStatus) error {
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
+		} else if watch != nil {
+			if down, why := watch.Down(); down {
+				p.Presence, p.Reason = friend.PresenceDown, friend.HarnessNotRunning+": "+why
+			}
 		}
 		return friend.WritePresence(state, p)
 	}
+	// the seat (else --coordinator) is told of each limit and each wake; set once the store is open
+	tellSeat := func(subject, body string) {}
 	fl.Down = func(until time.Time, reason string) {
-		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns held until then, then a wake")
+		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns and beats held until then, then a wake")
 		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
 		}
+		tellSeat(friend.LimitDownText(name, until, reason))
 	}
 	fl.Up = func(nonce string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
+		tellSeat(friend.LimitUpText(name))
 	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
@@ -520,17 +653,37 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	sc.Deliver = sc.Gate(fl.Gate(deliver))
+	tellSeat = func(subject, body string) {
+		to := answerTo()
+		if to == "" {
+			record(w.now().UTC().Format(time.RFC3339) + " limit: no seat or coordinator to tell: " + subject)
+			return
+		}
+		if _, err := (&bus.Bus{Store: sc.DaemonStore()}).Send(ctx, bus.Message{From: name, To: []string{to}, Subject: subject, Body: body}); err != nil {
+			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
+		}
+	}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
-		Beat: sc.Beat(func(ctx context.Context) error {
-			answer, err := w.beat(ctx, server, name)
-			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
-				rowMode, rowWidth = m, wd
-			}
-			return err
-		}),
+		Activity: func() time.Time {
+			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
+		},
+		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
+		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
+		Beat: func(ctx context.Context, active time.Time) error {
+			return sc.Beat(fl.Beat(func(ctx context.Context) error {
+				answer, err := w.beat(ctx, server, name, active)
+				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
+					rowMode, rowWidth = m, wd
+				}
+				if p, ok := friend.ParseProfile(answer); err == nil && ok {
+					rowProfile.Store(&p)
+				}
+				return err
+			}))(ctx)
+		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
 				return m, rowWidth // the override, for a test
@@ -575,6 +728,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
+	}
+	watch = friend.WatchHarness(d, deliver)
+	if w.alive != nil {
+		watch.Alive = w.alive
 	}
 	if err := d.Run(ctx); err != nil {
 		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
@@ -645,7 +802,89 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
 	}
+	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
+	res, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.stateDir(c), "", c.Dur("within"))
+	if refusal != "" {
+		o.Note("check: not run: " + refusal)
+	} else {
+		o.Note("check: " + res.Line())
+	}
 	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+}
+
+// check is the delivery check against the live session (friend.Conformance).
+func (w world) check(c *tool.Call) *tool.Out {
+	name, harness, dir, state := c.Str("as"), c.Str("harness"), c.Str("dir"), w.stateDir(c)
+	if c.DryRun() {
+		if _, err := friend.NewDeliverer(harness, dir, c.Str("session"), w.exec, nil); err != nil {
+			return tool.Refuse(err.Error())
+		}
+		nonce := w.random()
+		return tool.Done().Fact("harness", harness).Fact("dir", dir).Fact("within", c.Dur("within").String()).
+			Item("plan", "command", tool.Text(w.pongCommand(name, nonce, state, c.Str("redis"))+" --to "+w.checkTo(c.Str("to"), name, state))).
+			Note("nothing was delivered; the session would run the plan line and its pong would end the check")
+	}
+	c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+"), where the pong is read")
+	if o := c.Refused(); o != nil {
+		return o
+	}
+	res, refusal := w.deliveryCheck(c, name, harness, dir, c.Str("session"), state, c.Str("to"), c.Dur("within"))
+	if refusal != "" {
+		return tool.Refuse(refusal)
+	}
+	if res.Stage != "" {
+		return tool.Fail().As("FAIL").Fact("harness", harness).Fact("stage", res.Stage).Fact("why", tool.Text(res.Why))
+	}
+	return tool.Done().Fact("harness", harness).Fact("took", res.Took.String())
+}
+
+// checkTo is whom the check's pong goes to: to, else the seat the daemon's
+// status names, else the friend itself.
+func (w world) checkTo(to, name, state string) string {
+	if to != "" {
+		return to
+	}
+	if s, found, err := friend.ReadStatus(state); err == nil && found && s.Seat != "" {
+		return s.Seat
+	}
+	return name
+}
+
+// pongCommand is the pong line a session check carries, as the daemon's
+// own check carries it: this binary's pong verb, the friend's state
+// directory and store.
+func (w world) pongCommand(name, nonce, state, redis string) string {
+	bin, err := w.binary()
+	if err != nil {
+		bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
+	}
+	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, redis)
+}
+
+// deliveryCheck runs friend.Conformance once against the live session; the
+// refusal is set when it could not run (no harness, no store).
+func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, to string, within time.Duration) (friend.CheckResult, string) {
+	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
+	if err != nil {
+		return friend.CheckResult{}, err.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+	st, closeStore, err := w.open(ctx, c.Str("redis"))
+	cancel()
+	if err != nil {
+		return friend.CheckResult{}, "the store did not answer: " + err.Error()
+	}
+	defer closeStore()
+	to = w.checkTo(to, name, state)
+	check := &friend.Conformance{
+		Friend: name, Harness: harness, Deliver: deliver, Store: st, Within: within, Now: w.now, Nonce: w.random,
+		Wait: func(ctx context.Context) bool { w.sleep(ctx, friend.CheckPoll); return ctx.Err() == nil },
+		Text: func(nonce string) string {
+			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis")), to)
+		},
+		Pong: func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
+	}
+	return check.Run(context.Background()), ""
 }
 
 // noteGrokMonitor appends the one line a grok session runs, when harness is grok.
@@ -711,11 +950,17 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
-		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("pong_age", age(now, p.At)).Fact("pongs", s.Pongs).
+		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
 		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
+	var route, routeLine string
+	var routeErr error
+	if s.Harness == "grok" {
+		route, routeLine, routeErr = (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
+	}
+	v := friend.FriendStatus(w.evidence(c, s, p, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
@@ -735,6 +980,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if prErr != nil {
 		o.Note("the presence file: " + prErr.Error())
 	}
+	o.Fact("status", v.Status).Fact("why", tool.Text(v.Reason)).Fact("evidence", tool.Text(strings.Join(v.Evidence, "; ")))
 	if s.BeatError != "" {
 		o.Note("the last beat failed: " + s.BeatError)
 	}
@@ -748,7 +994,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Note("the queue file: " + qerr.Error())
 	}
 	if s.Harness == "grok" {
-		route, line, rerr := (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
+		line, rerr := routeLine, routeErr
 		if route == "" {
 			route = "defer"
 		}
@@ -764,6 +1010,52 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 	}
 	return o
+}
+
+// evidence is what the friend's status is decided from (docs/SPEC-FRIEND.md,
+// "A friend's status, from evidence"): the harness, the session's last
+// answer, the limit file, the messages waiting on her stream (counted when
+// --redis names the store), and the last turn's line of the log. A daemon
+// that is down, a broken session and a store that does not answer are a bus
+// that cannot deliver to her. What cannot be read is a NOTE on o.
+func (w world) evidence(c *tool.Call, s friend.Status, p friend.Pong, now time.Time, daemonUp bool, route string, o *tool.Out) friend.Evidence {
+	state := w.stateDir(c)
+	e := friend.Evidence{DaemonUp: daemonUp, LastAnswer: p.At, Undelivered: -1}
+	if route == "push" {
+		e.Harness = friend.HarnessRunning // a tail runs under the open window's pid
+	}
+	l, _, err := friend.ReadLimitFile(state)
+	if err != nil {
+		o.Note("the limit file: " + err.Error())
+	}
+	e.Limit, e.LimitUntil = l.Reason, l.Until
+	if e.LastResult, e.LastExit, err = friend.LastResult(state); err != nil {
+		o.Note("the log: " + err.Error())
+	}
+	switch {
+	case !daemonUp:
+		e.BusBlocked = "daemon down " + friend.Ago(now.Sub(s.At))
+	case s.Session == friend.SessionBroken:
+		e.BusBlocked = "session broken"
+	case s.StoreError != "":
+		e.BusBlocked = "the store: " + s.StoreError
+	}
+	if addr := c.Str("redis"); addr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+		defer cancel()
+		st, closeStore, err := w.open(ctx, addr)
+		if err == nil {
+			defer closeStore()
+			var pending, fresh []bus.Entry
+			if pending, fresh, err = (&bus.Bus{Store: st}).Peek(ctx, c.Str("as")); err == nil {
+				e.Undelivered = len(pending) + len(fresh)
+			}
+		}
+		if err != nil && e.BusBlocked == "" {
+			e.BusBlocked = "the store: " + err.Error()
+		}
+	}
+	return e
 }
 
 func dash(s string) string {
@@ -834,6 +1126,9 @@ func (w world) ping(c *tool.Call) *tool.Out {
 	defer closeStore()
 	me, to := c.Str("as"), c.Str("to")
 	body := friend.PingText(me, since, nonce)
+	if c.Bool("wake") { // a wake check: answered by the session, never by the daemon (docs/SPEC-FRIEND.md, session-pong.w1)
+		body = friend.WakePingText(me, since, nonce)
+	}
 	ping := bus.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"}
 	if c.DryRun() {
 		// the PING checked as send checks it; nothing sent
@@ -903,6 +1198,17 @@ func secretNames(csv string) []string {
 	for _, w := range strings.Split(csv, ",") {
 		if w = strings.TrimSpace(w); w != "" {
 			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// commaList is a comma-separated flag's values, blanks dropped.
+func commaList(csv string) []string {
+	var out []string
+	for _, v := range strings.Split(csv, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
 		}
 	}
 	return out

@@ -581,6 +581,45 @@ answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
 
+### The delivery check
+
+`nova-friend check --as <me> --harness <h> --dir <d> [--session <id>]
+[--within <d>] [--to <seat>]` proves the live session takes a delivery: a
+`SESSION CHECK <nonce>` goes in through the harness's deliver command, the
+session runs the `nova-friend pong` line it carries, and the pong with that
+nonce is on the bus within `--within` (default 5m). It prints one line, `CHECK
+OK harness= took=`, or `CHECK FAIL harness= stage=<deliver|act|reply> why=` at
+exit 1: deliver, the adapter did not take it (a harness with no deliver command
+says its surveyed reason); act, the session never ran the line; reply, the line
+ran and no pong reached the bus. The pong goes to `--to`, else the seat the
+daemon's status names, else `--as`. `--dry-run` prints the pong line the
+session would run (`CHECK PLAN command=`) and delivers nothing. `install` runs
+the check once after loading the agent (its `--within`) and says the line in a
+NOTE; a fail never undoes the install. It runs once a night on each friend's
+machine as a nova-config loop record ([TESTING.md](TESTING.md)).
+
+### The coordinator's ping loop
+
+```sh
+nova-friend serve --as <coordinator> --dry-run
+nova-config loop add friend-serve --machine <m> --argv '["/usr/bin/env","NOVA_BUS_REDIS=127.0.0.1:6381","nova-friend","serve","--as","<coordinator>"]' --keepalive true --as <coordinator>
+```
+
+`serve` is the coordinator's side of the connection: each second it reads the
+pongs on its own stream, says each friend whose state changed, and pings every
+nova-config friend row but its own, read from the bus store's `friends` set
+(what `nova-config apply` writes), so the loop needs the bus store and nothing
+else; a friend is down after ten seconds without a pong to a ping of the last
+ten seconds. `--dry-run` reads the rows and prints
+`SERVE OK friends= every=1s down_after=10s dry_run=true`, sending nothing. The
+loop prints that line once, then one line per state change, never one per
+ping: `SERVE UP friend= at=` and `SERVE DOWN friend= at= last_pong= reason=`;
+`SERVE STOP interrupted` at a signal. It is installed as the loop row above,
+kept alive, its log the loop's; it replaces a hand ping loop, which is retired
+once the row's unit runs. What it gets wrong first: no `--redis` and no
+`NOVA_BUS_REDIS` (refused); no friend row but its own (refused, with
+`nova-config friend add`).
+
 ### Commands
 
 | Command | What it does |
@@ -592,6 +631,7 @@ pong are real for it all the same.
 | `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
+| `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
@@ -2311,7 +2351,7 @@ score decisions since `--since` give a p at or above `--bar`, most cards first;
 `unnamed` is p(defect) at the bar with no class there. What a first run gets
 wrong:
 
-- `--backend jev` with no key: `JEV_API_KEY is absent from this environment`.
+- `--backend jev` with no key: `JEV_API_KEY is absent from this environment`, with the stable code `reason=key_absent` on the refusal line (and `"reasons"` in the JSON result).
   The key reaches the tool only through `nova-secrets exec --only JEV_API_KEY --
   nova-decide ...`; it is never a flag or a file.
 - `--backend fixed` with no `--answers`: the fixed backend answers from a file.

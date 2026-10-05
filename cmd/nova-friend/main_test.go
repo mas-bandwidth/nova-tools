@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,11 +34,25 @@ type rig struct {
 	now       time.Time
 	home      string
 	answered  map[string]bool // the session checks bob's fake session has answered
+	alive     friend.Aliver
+	deaf      bool // bob's opencode session takes a turn and never runs the pong line
+}
+
+type fakeAlive struct {
+	running bool
+	why     string
+}
+
+func (f fakeAlive) Alive(context.Context) friend.Liveness {
+	if f.running {
+		return friend.Liveness{Known: true, Running: true, Why: f.why}
+	}
+	return friend.Liveness{Known: true, Running: false, Why: f.why}
 }
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}}
 }
 
 func (r *rig) world() world {
@@ -65,7 +81,23 @@ func (r *rig) world() world {
 			return "", errors.New("executable file not found in ")
 		},
 		random: func() string { return "r4nd0m" },
+		alive:  r.alive,
+		exec:   r.opencode,
 	}
+}
+
+// opencode is bob's opencode session behind the Exec seam: its newest
+// session is the directory's, and a turn carrying a session check is
+// answered with the check's nonce unless the session is deaf.
+func (r *rig) opencode(_ context.Context, dir, _ string, args []string, _ string) (string, int, error) {
+	if args[0] == "session" {
+		return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
+	}
+	text := args[len(args)-1]
+	if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok && !r.deaf {
+		r.answer(nonce)
+	}
+	return "", 0, nil
 }
 
 // answerChecks is bob's session, alive: each session check the daemon put
@@ -127,6 +159,8 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
 		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
+		{"check nothing given", []string{"check"}, []string{"--as is required", "--harness is required", "--dir is required"}},
+		{"check bad harness and window", []string{"check", "--as", "bob", "--harness", "vim", "--dir", "d", "--within", "0s"}, []string{`--harness "vim" is no harness`, "--within wants a positive duration"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -160,6 +194,16 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	assert.Contains(t, m.Body, "seat=ada since=2026-10-04T03:00:")
 	assert.Contains(t, m.Body, "nova-friend pong --as <you> --nonce abc123")
 	cli.Do(t, "ping", "--as", "ada", "--to", "bob").Exit(0).Out("PING OK nonce=r4nd0m")
+	assert.False(t, friend.IsWake(m.Body), "a plain ping asks no wake turn")
+	cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "wake01", "--wake").Exit(0).Out("PING OK nonce=wake01")
+	entries, err = r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 10)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	assert.True(t, friend.IsWake(entries[2].Message().Body), "--wake carries the wake line")
+	// the daemon's answer alone never satisfies wait-pong: only the session's pong does
+	_, err = (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.DaemonPongSubject, Body: "daemon-pong wake01\n"})
+	require.NoError(t, err)
+	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "wake01", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE daemon=true", "the daemon answered and the session did not: deaf")
 
 	// the session answers, naming the coordinator since no daemon has recorded a seat; the pong file goes under the home directory
 	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
@@ -198,12 +242,12 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
-	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
@@ -222,7 +266,8 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	assert.Empty(t, r.launchctl)
 
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
-		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`, "NOTE check it: nova-friend status --as bob --dir /w/bob")
+		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`,
+			"INSTALL NOTE check: CHECK OK harness=opencode took=", "NOTE check it: nova-friend status --as bob --dir /w/bob")
 	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
@@ -248,7 +293,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -295,7 +340,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -386,7 +431,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z reason="invalid_request_error: bad input"`,
+		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
@@ -463,7 +508,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()
@@ -505,7 +550,7 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 		return ctx, cancel
 	}
 	beats, sleeps := 0, 0
-	w.beat = func(context.Context, string, string) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
 	w.sleep = func(context.Context, time.Duration) {
 		r.now = r.now.Add(time.Minute)
 		if sleeps++; sleeps == 8 {
@@ -560,7 +605,11 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 			cancel() // a bound on the test, never reached when it passes
 		}
 	}
-	w.beat = func(context.Context, string, string) (string, error) {
+	var beats []time.Time
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
+		mu.Lock()
+		beats = append(beats, clock)
+		mu.Unlock()
 		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 	}
 	type turn struct {
@@ -611,6 +660,26 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	assert.Equal(t, friend.PresenceDown, turns[1].presence.Presence, "down on the presence file until woken")
 	assert.Contains(t, turns[1].presence.Reason, "harness limit until ")
 	assert.Contains(t, out.String(), "limit: woken: the session answered r4nd0m after the reset")
+	// down from the record of it (a beat while the limited turn still ran was before anyone knew), to the wake
+	_, rest, ok := strings.Cut(out.String(), "RUN ")
+	for ok && !strings.Contains(strings.SplitN(rest, "\n", 2)[0], " limit: down until ") {
+		_, rest, ok = strings.Cut(rest, "RUN ")
+	}
+	require.True(t, ok, "the limit is on the record")
+	downAt, err := time.Parse(time.RFC3339, strings.Fields(rest)[0])
+	require.NoError(t, err)
+	assert.False(t, slices.ContainsFunc(beats, func(b time.Time) bool { return b.After(downAt) && b.Before(turns[1].at) }),
+		"no beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
+	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
+	require.NoError(t, err)
+	var told []string
+	for _, e := range got {
+		told = append(told, e.Fields["subject"]+"\n"+e.Fields["body"])
+	}
+	all := strings.Join(told, "\n")
+	assert.Contains(t, all, "friend bob down: her harness is at its limit until ", "the coordinator is told she is down")
+	assert.Contains(t, all, "nova-sprint friend down bob --reason 'harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.' --until ")
+	assert.Contains(t, all, "friend bob back", "and that she is back")
 }
 
 // lockedBuilder is a strings.Builder under the test's lock: the daemon writes
@@ -628,3 +697,118 @@ func (l *lockedBuilder) Write(p []byte) (int, error) {
 
 // String is read with the lock held by the caller.
 func (l *lockedBuilder) String() string { return l.b.String() }
+
+// A friend whose harness is not running is down at once: run wires
+// HarnessWatch in front of the daemon's beat, beats fail with harness not
+// running, status says so on the beat's error, and no beat reaches the
+// sprint server while the harness is down (docs/SPEC-FRIEND.md, the harness check).
+func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	r.alive = fakeAlive{running: false, why: "the harness app is closed"}
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	beats, sleeps := 0, 0
+	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
+	w.sleep = func(context.Context, time.Duration) {
+		r.now = r.now.Add(time.Minute)
+		if sleeps++; sleeps == 5 {
+			cancel()
+		}
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, errb.String())
+	assert.Zero(t, beats, "no beat reaches the sprint server while harness is not running")
+	assert.Contains(t, out.String(), "down: harness not running: the harness app is closed")
+
+	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	require.NoError(t, err)
+	assert.Equal(t, friend.HarnessNotRunning, st.BeatError)
+
+	r.now = st.At
+	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out("NOTE the last beat failed: harness not running")
+}
+
+// check runs the delivery check against the live session: one line, OK with
+// how long the pong took, or FAIL with the stage at exit 1. A harness with no
+// deliver command fails at deliver with its reason; install says the check's
+// line in a NOTE and stays installed whatever it says.
+func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	state := t.TempDir()
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(0).Out("CHECK OK harness=opencode took=")
+	got := r.store.Len(bus.LogKey)
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--json").Exit(0).Out(`"status":"ok"`, `"harness":"opencode"`)
+	assert.Equal(t, got+1, r.store.Len(bus.LogKey), "one pong a check")
+
+	r.deaf = true
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
+		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
+	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
+		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude yet`)
+	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
+		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor: not installed here`)
+
+	// the plan, from the same pong line, with nothing delivered and no store opened
+	r.store.Fail = errors.New("store down")
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--to", "ada", "--dry-run").Exit(0).
+		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --to ada\"", "NOTE nothing was delivered")
+	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(2).Err("CHECK REFUSED: the store did not answer: store down")
+
+	// install: the check's fail is a NOTE, the agent stays loaded
+	r.store.Fail = nil
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--within", "5s").Exit(0).
+		Out("INSTALL OK label=com.nova.friend-bob", "INSTALL NOTE check: CHECK FAIL harness=opencode stage=act")
+	assert.FileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
+}
+
+// status decides the friend's status from evidence and shows it beside the
+// status (docs/SPEC-FRIEND.md, "A friend's status, from evidence"): a fresh
+// beat with no session answer is down; a session answer inside the bound is
+// up; the messages waiting on her stream are counted; the last turn's line
+// of the log is shown; a limit is down until its reset; a daemon gone is a
+// bus that cannot deliver.
+func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet, Beats: 40, LastBeat: start}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out(`daemon=up`, `status=down why="no session answer ever" evidence="harness unknown; no session answer ever; no limit; 0 undelivered; no result yet"`)
+
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-time.Minute)}))
+	b := &bus.Bus{Store: r.store}
+	for range 2 {
+		_, err := b.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "work", Body: "x"})
+		require.NoError(t, err)
+	}
+	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 took=3s exit=0 acked=true"))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out(`status=up why="session answer 1m" evidence="harness unknown; session answer 1m; no limit; 2 undelivered; last result 10m exit=0"`)
+
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-12 * time.Minute)}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="no session answer 12m"`)
+
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
+	limit, err := json.Marshal(friend.Limit{Reason: "weekly", Until: start.Add(34 * time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(state, friend.LimitFile), limit, 0o644))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="weekly limit until ` + start.Add(34*time.Hour).Local().Format("Mon 3:04 PM") + `"`)
+	require.NoError(t, os.Remove(filepath.Join(state, friend.LimitFile)))
+
+	r.now = start.Add(friend.DaemonStale)
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`daemon=down`, `status=down why="bus cannot deliver: daemon down 31s (2 undelivered)"`)
+
+	cli.Do(t, "status", "--as", "bob", "--dir", dir, "--redis", "").Exit(0).Out(`undelivered not counted`)
+}

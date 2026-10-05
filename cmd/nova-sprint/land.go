@@ -79,7 +79,9 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     in the generated ledgers lands: the tip's side, then their tests' update run
     (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
     the stream, and after resume land merges the head again. The clone is --repo-dir,
-    else the dir= each line names; git uses the caller's environment. After
+    else the dir= each line names; git uses the caller's environment. A kept
+    clone a pass cut short left not clean is restored to the fetched base before
+    the batch (LAND CLEANED names the files); a --repo-dir one is refused. After
     the whole pass each landed merge diff is scored (nova-decide's score
     decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
     decide/score.jsonl under the land root): a batch whose cards' top class meets
@@ -134,7 +136,10 @@ type landBatch struct {
 	Reason      string `json:"reason,omitempty"`
 	// Also is every cause of the refusal after the first, each with its one next command,
 	// and on a twin the verb that stands in for land: one NOTE line each.
-	Also   []string `json:"also,omitempty"`
+	Also []string `json:"also,omitempty"`
+	// Scope is each merged card's scope amendments, card:file: the files outside its PATHS
+	// the rule allows as the test, fixture or doc of the same change (sprint.ScopeAmended).
+	Scope  []string `json:"scope,omitempty"`
 	DryRun bool     `json:"dry_run,omitempty"`
 	// Times is how long each of the batch's steps took; nil for a batch refused before
 	// its git ran, and for a dry run.
@@ -146,6 +151,9 @@ type landBatch struct {
 	// Score is the landed batch's scores (landscore.go): nil for a batch that did not
 	// land, and for a dry run.
 	Score *landScore `json:"score,omitempty"`
+	// Cleaned is every file the lander's restore of its own clone discarded before the
+	// batch (restore), one LAND CLEANED line; nil when the clone was clean.
+	Cleaned []string `json:"cleaned,omitempty"`
 }
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
@@ -196,6 +204,9 @@ func (b landBatch) line() string {
 		if s.Judged {
 			l += " judged=yes"
 		}
+	}
+	if len(b.Scope) > 0 {
+		l += " scope=" + oneline.Field(strings.Join(b.Scope, ","))
 	}
 	if b.Fact != "" {
 		l += " fact=" + b.Fact
@@ -256,9 +267,10 @@ type lander struct {
 	conflictKind  string
 	conflictPaths []string
 	out           []landBatch
-	epoch         uint64            // the epoch land read: every report is fenced to it
-	diffs         map[string]string // each card's merge diff, as checkCard read it, for its score
-	toScore       []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	epoch         uint64              // the epoch land read: every report is fenced to it
+	diffs         map[string]string   // each card's merge diff, as checkCard read it, for its score
+	scope         map[string][]string // each card's scope amendments, as checkCard allowed them (sprint.ScopeAmended)
+	toScore       []scoreJob          // the landed batches, scored after the whole pass (landscore.go)
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
@@ -273,8 +285,13 @@ type lander struct {
 	// rules turned off (nil: the app's clock, nova-config's sprint row).
 	baseGateFails map[string]*baseGateFail
 	baseStop      bool
-	now           func() time.Time
-	rulesOff      []string
+	// baseCount says the last build ran the base's gate under the rule and it was red, baseWhy
+	// its finding: the refusal is counted in the store (baseRefused), never only in this
+	// process, which a hand land starts empty every run and the server every start
+	baseCount bool
+	baseWhy   string
+	now       func() time.Time
+	rulesOff  []string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -326,7 +343,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if a.baseGateFails == nil {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -417,6 +434,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		return code
 	}
 	for _, b := range l.out {
+		if b.Cleaned != nil {
+			fmt.Fprintf(stdout, "LAND CLEANED stream=%s dir=%s files=%d paths=%s\n", oneline.Field(b.Stream), oneline.Field(b.Dir), len(b.Cleaned), oneline.Field(strings.Join(b.Cleaned, ",")))
+		}
 		w := stdout
 		if b.Status != "ok" {
 			w = stderr
@@ -561,20 +581,28 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	if l.dry {
 		return l.dryBatch(b, cards)
 	}
-	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
-		return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
+	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" || l.repoDir == "" && l.merging(ctx, dir) {
+		if err != nil || l.repoDir != "" {
+			return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
+		}
+		files, why := l.restoreClone(ctx, dir, b.Base)
+		if why != "" {
+			return refuse(why)
+		}
+		b.Cleaned = files
 	}
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
-	if why != "" && l.baseStop {
-		// the base-gate rule's third failure: the stream stops with the error, the
-		// coordinator's judgment (treeGateBase)
-		return l.fact(b, sprint.MergeReq{Stream: stream, BaseRed: why}, nil, "base", why)
+	if why != "" && l.baseCount {
+		// the base-gate rule: the refusal counted per stream and base in the store, its third
+		// (or this process's third failure) stopping the stream with the coordinator's judgment
+		return l.baseRefused(b, stream, why)
 	}
 	if why != "" {
 		return refuse(why)
 	}
+	b.Scope = l.scopeOf(merged)
 	for attempt := 1; len(merged) > 0; attempt++ {
 		// the batch as built: this commit is what is pushed and reported, whatever the
 		// clone's checkout becomes after (another landing sharing the clone cuts its own
@@ -629,6 +657,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		if why != "" {
 			return refuse(why)
 		}
+		b.Scope = l.scopeOf(merged)
 	}
 	l.conflict(stream, failed)
 	return false, true
@@ -745,6 +774,26 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 	if code := stepExit(res, err); code != 0 {
 		b.Fact = ""
 		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(r.Stream)
+	}
+	l.out = append(l.out, b)
+	return false, true
+}
+
+// baseRefused counts a refusal on the base's gate through the merge step
+// (sprint.MergeReq.BaseRefused) and refuses the batch with it: the fact is base when the
+// count stopped the stream.
+func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
+	r := sprint.MergeReq{Stream: stream, Base: b.Base, BaseRefused: l.baseWhy, Who: l.c.actor}
+	if l.baseStop {
+		r.BaseRed = l.baseWhy
+	}
+	b.Status, b.Reason = "refused", why
+	res, err := l.step(r, nil)
+	switch {
+	case stepExit(res, err) != 0:
+		b.Reason = why + "; the merge step did not count it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+	case slices.ContainsFunc(res.Moved, func(m string) bool { return strings.Contains(m, " stopped: ") }):
+		b.Fact = "base"
 	}
 	l.out = append(l.out, b)
 	return false, true
@@ -970,9 +1019,16 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if err != nil {
 		return nil, failed, "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
 	}
-	l.baseStop = false
+	l.baseStop, l.baseCount, l.baseWhy = false, false, ""
+	was := 0
+	if f := l.baseGateFails[baseSha]; f != nil {
+		was = f.n
+	}
 	if why, stop := l.treeGateBase(ctx, dir, baseSha); why != "" {
-		l.baseStop = stop
+		// counted when the gate ran red here (or this process's record stops the stream); a
+		// refusal inside a retry's wait, or with the rule off, is not
+		f := l.baseGateFails[baseSha]
+		l.baseStop, l.baseCount, l.baseWhy = stop, stop || f != nil && f.n != was, why
 		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
 	}
 	for i := range cards {
@@ -1155,7 +1211,14 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 		beforePaths = strings.Split(tracked, "\n")
 	}
 	var why []string
-	if out := diffcheck.Outside(c.paths, diff, beforePaths); len(out) > 0 {
+	// a test, fixture or doc of the same change outside PATHS is a scope amendment, allowed
+	// by rule and recorded on the batch's line (sprint.ScopeAmended; section 7)
+	var changed []string
+	for _, f := range diffcheck.Parse(diff) {
+		changed = append(changed, f.New)
+	}
+	amended, out := sprint.ScopeAmended(changed, diffcheck.Outside(c.paths, diff, beforePaths))
+	if len(out) > 0 {
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}
 	for _, f := range diffcheck.Fragments(diff) {
@@ -1163,6 +1226,7 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 	}
 	if len(why) == 0 {
 		l.diffs[c.id] = diff
+		l.scope[c.id] = amended
 		return "", ""
 	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
@@ -1238,6 +1302,64 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 		return "", "the clone of " + repo + " into " + dir + " failed: " + firstLine("", err)
 	}
 	return dir, ""
+}
+
+// merging says a merge is in progress in the clone: a pass cut short between a merge and
+// its commit or abort.
+func (l *lander) merging(ctx context.Context, dir string) bool {
+	_, err := l.git(ctx, dir, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+	return err == nil
+}
+
+// restoreClone puts the clone the lander keeps under its root back to the fetched base
+// before a batch, when a pass cut short (a hand land beside the server's, a crash) left it
+// not clean: any merge in progress aborted, the checkout reset to origin's base, untracked
+// files removed, inside that clone only. files is every path it discarded, for the LAND CLEANED
+// line; why is a refusal when the clone could not be restored. A clone given with
+// --repo-dir is the caller's and never comes here (docs/SPEC-SPRINT.md, section 7,
+// land-clone-self-heals-r.w1).
+func (l *lander) restoreClone(ctx context.Context, dir, base string) (files []string, why string) {
+	out, err := l.git(ctx, dir, "status", "--porcelain", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, "the clone " + dir + " is not clean and its status could not be read: " + firstLine("", err)
+	}
+	entries := strings.Split(out, "\x00")
+	for i := 0; i < len(entries); i++ {
+		e := entries[i]
+		if len(e) < 4 {
+			continue
+		}
+		files = append(files, e[3:])
+		if e[0] == 'R' || e[0] == 'C' {
+			i++ // a rename's or copy's source follows it
+		}
+	}
+	slices.Sort(files)
+	files = slices.Compact(files)
+	if files == nil {
+		files = []string{}
+	}
+	fail := func(step string, err error) ([]string, string) {
+		return nil, "the clone " + dir + " is not clean and could not be restored (" + step + ": " + firstLine("", err) + "); commit or discard its changes, then run land again"
+	}
+	if l.merging(ctx, dir) {
+		if _, err := l.git(ctx, dir, "merge", "--abort"); err != nil {
+			return fail("the merge in progress could not be aborted", err)
+		}
+	}
+	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base); err != nil {
+		return fail("the fetch of the base "+base, err)
+	}
+	if _, err := l.git(ctx, dir, "reset", "--hard", "-q", "refs/remotes/origin/"+base); err != nil {
+		return fail("the reset to the base "+base, err)
+	}
+	if _, err := l.git(ctx, dir, "clean", "-f", "-d", "-q"); err != nil {
+		return fail("the removal of untracked files", err)
+	}
+	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
+		return nil, "the clone " + dir + " is not clean after its restore (" + firstLine(out, err) + "); commit or discard its changes, then run land again"
+	}
+	return files, ""
 }
 
 // originIs is why the clone's origin is not where the batch belongs, ""
@@ -1368,4 +1490,16 @@ func allLedgers(paths []string, ledgers []landLedger) bool {
 	_, rest := unionPaths(paths, ledgers)
 	_, outside := ledgerOwners(rest, ledgers)
 	return len(outside) == 0
+}
+
+// scopeOf is the merged cards' scope amendments as the batch's line names them,
+// card:file, in merge order.
+func (l *lander) scopeOf(merged []string) []string {
+	var out []string
+	for _, id := range merged {
+		for _, f := range l.scope[id] {
+			out = append(out, id+":"+f)
+		}
+	}
+	return out
 }

@@ -288,9 +288,7 @@ func recordedVersion(installed []string) (string, bool) {
 		return "", false
 	}
 	v := tok
-	if strings.HasPrefix(v, "v") {
-		v = v[1:]
-	}
+	v = strings.TrimPrefix(v, "v")
 	if v == "" || !digit.MatchString(v[:1]) || !dotted.MatchString(v) {
 		return "", false
 	}

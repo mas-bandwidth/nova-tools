@@ -47,6 +47,8 @@ func dump(s refmodel.Snapshot) string {
 	}
 	j, _ := json.Marshal(s.Goals)
 	fmt.Fprintf(&b, "goals %s\n", j)
+	j, _ = json.Marshal(s.Friends)
+	fmt.Fprintf(&b, "friends %s\n", j)
 	t := s.Tables
 	fmt.Fprintf(&b, "tables now=%s epoch=%d cleared=%s coordinator=%q actor=%q\n", t.Now.Format(time.RFC3339Nano), t.Epoch, t.Cleared.Format(time.RFC3339Nano), t.Coordinator, t.Actor)
 	for _, tb := range []*sprint.Table{t.Work, t.Readers, t.Merge, t.Fleet} {
@@ -212,7 +214,7 @@ func TestThePlannersDoNotModifyWhatTheyRead(t *testing.T) {
 		c.Tables.Now = s.now
 		before := dump(c)
 		for _, p := range sprint.TickParts {
-			plan, _ := p.Fn(c.Tables, sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats})
+			plan, _ := p.Fn(c.Tables, sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats, Friends: c.Friends})
 			sprint.Applied(c.Tables, plan)
 			if after := dump(c); after != before {
 				require.Failf(t, "assertion failed", "snapshot %d: the tick's part %s changed what it read:\n%s", i, p.Name, firstDifference(before, after))

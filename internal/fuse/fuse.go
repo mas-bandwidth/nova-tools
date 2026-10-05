@@ -22,12 +22,19 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     CreateBox, which never replaces one, or by a write verb on a box that was read.
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
-    lockdown whose value is not an object -- every one fails the unmarshal and comes
+    lockdown whose value is not an object -- every one fails the decode and comes
     back as CANNOT TELL, which every caller must treat as BLOWN. A bare JSON null
-    fails no unmarshal -- a struct ignores it with no error -- so the read
-    unmarshals through a pointer and refuses the nil it leaves behind: a
-    wrong-shaped value is CANNOT TELL, never the VERIFIED CLEAR a normalised
-    empty map would make of it. Reaching the
+    fails no decode -- a struct ignores it with no error -- so the read requires a
+    JSON OBJECT at the top level before it decodes anything, and names the kind it
+    found instead: a null, an array, a string, a number or a boolean is refused,
+    because a wrong-shaped value is CANNOT TELL, never the VERIFIED CLEAR a
+    normalised empty map would make of it. Its remedy is a hand restoration, not
+    init: init is the remedy for a path with no box and never replaces one. An
+    UNKNOWN top-level member is refused too, which is the policy for a gate: a key
+    the reader does not know is a key it cannot account for, and answering CLEAR
+    over a box someone meant to block with it is the fail-open this package exists
+    to prevent. `"quarantine": null` stays deliberately supported -- a box a person
+    hand-edits into that shape is a readable empty box. Reaching the
     fail-closed answer by a crash deep inside a caller is not a design; this is.
 
  3. THE WRITE IS TEMP-FILE + RENAME. The file whose corruption means PERMANENT
@@ -71,6 +78,7 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
 package fuse
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -238,20 +246,66 @@ func ReadBox(path string) (Box, error) {
 	if err != nil {
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
-	var b *Box
-	if err := json.Unmarshal(data, &b); err != nil {
+	var b Box
+	// The top level is required to be the object a box is, before any decoding: a
+	// null, an array, a string, a number or a boolean decodes into a Box with no
+	// error -- a null leaves it zero -- and a zero box reads as VERIFIED CLEAR, a
+	// fail-open in a safety control reached by one hand-edited byte (note 2).
+	if kind, object, found := topLevelKind(data); found && !object {
+		return Box{}, fmt.Errorf("%s is not a box: top level is %s; %s", path, kind, restoreBoxRemedy)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	// A box is an object with the two members SPEC.md names, and an unknown member
+	// is refused: a gate that quietly ignored a key it does not know would answer
+	// CLEAR over a box a hand or another tool meant to block with it. The safe
+	// reading for a gate is to refuse, and the refusal is CANNOT TELL like every
+	// other shape (note 2).
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&b); err != nil {
 		return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
 	}
-	if b == nil {
-		// A bare JSON null unmarshals into the pointer with no error, but note 2
-		// says a shape that is not an object is unreadable; answered as the zero
-		// box it would read as VERIFIED CLEAR once the map below is normalised.
-		return Box{}, fmt.Errorf("%s is a JSON null, not a fuse box object", path)
+	if _, err := dec.Token(); err != io.EOF {
+		// A decode stops at the end of the first value, so without this a box with
+		// anything after it would read as the value before the trailing bytes.
+		return Box{}, fmt.Errorf("%s is not readable JSON: data follows the box object", path)
 	}
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}
 	}
-	return *b, nil
+	return b, nil
+}
+
+// restoreBoxRemedy is the remedy for a box whose top level is not an object. It
+// is a hand restoration, not `nova-fuse init --box <path>`: init is the remedy for
+// a path where no box is, and it never replaces a box, so naming it here would
+// send the reader to a verb that refuses and leave the bytes that need restoring
+// where they are. A lockdown is replaced only in a live conversation with the
+// person you work with.
+const restoreBoxRemedy = "restore the box file by hand with the person you work with (nova-fuse init makes a box only where none is, so it will not replace this one)"
+
+// topLevelKind names the JSON value at the top of data and answers whether it is
+// the object a box is. found is false when data holds no JSON value at all, which
+// the decode answers with its own error (a truncated file, an empty file).
+func topLevelKind(data []byte) (kind string, object, found bool) {
+	tok, err := json.NewDecoder(bytes.NewReader(data)).Token()
+	if err != nil {
+		return "", false, false
+	}
+	switch v := tok.(type) {
+	case json.Delim:
+		if v == '{' {
+			return "an object", true, true
+		}
+		return "an array", false, true
+	case nil:
+		return "null", false, true
+	case bool:
+		return "a boolean", false, true
+	case string:
+		return "a string", false, true
+	default:
+		return "a number", false, true
+	}
 }
 
 // CreateBox makes an empty box at path, only where nothing is: it NEVER replaces a
@@ -273,9 +327,6 @@ func WriteBox(path string, b Box) error {
 // makes (the parent as MkdirAll would make it, no symlink parent, a directory
 // this process can create in, nothing at the path), and the same error.
 func PlanCreateBox(path string) error { return planBox(path, atomicfile.NoReplace()) }
-
-// PlanWriteBox is WriteBox with nothing written, refusing where WriteBox would.
-func PlanWriteBox(path string) error { return planBox(path) }
 
 func planBox(path string, opts ...atomicfile.Option) error {
 	target := path

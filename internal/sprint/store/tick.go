@@ -587,7 +587,7 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 
 // mirrors says the part's step brings the display cells up to date after it.
 func mirrors(name string) bool {
-	return name == "presence" || name == "deal" || name == "level" || name == "resume"
+	return name == "presence" || name == "deal" || name == "level" || name == "resume" || name == sprint.PartCapDeal || name == sprint.PartFriendStall
 }
 
 // unchangedNotWritten is the plan of a part with the writes that change no
@@ -968,7 +968,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	at := snap.Epoch
 	res.Tables = newTables()
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm, WakeFriend: st.WakeFriend}
 	// the first read as it was: the twin it came from moves on with every
 	// part's writes, and with any other writer in this process
 	first := *snap
@@ -980,6 +980,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// the friends the deal may give a friend's card to, read only when one is ready
 	// (sprint.FriendDeal): a sprint with none reads nothing more
 	if req.Friends, err = pinned.friendSeats(ctx, &first, now); err != nil {
+		return last, err
+	}
+	// each friend's session for the coordinator's pass (sprint.TickCoordinatorPass): every
+	// friend of the roster, whether or not she holds a card; a sprint with no friend reads
+	// the roster alone
+	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
 	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
@@ -1810,8 +1816,12 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 	if err != nil {
 		return out, fmt.Errorf("fleet: %w", err)
 	}
+	// a shadow tick wakes no friend: it writes nothing and sends nothing
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(first.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
 	if req.Friends, err = ro.friendSeats(ctx, &first, now); err != nil {
+		return out, err
+	}
+	if req.Sessions, err = ro.FriendSessions(ctx); err != nil {
 		return out, err
 	}
 	var routes RouteCache

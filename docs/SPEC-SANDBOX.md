@@ -405,6 +405,41 @@ The test requirements are listed under **Tests this spec demands**.
     cache environment variables; `nova-sandbox` derives no cache path from task
     text, creates no default cache, and supplies no cache environment variable.
 
+### deletes-only-in-the-job-dir-p.w1 — deletes only in the job's own write roots
+
+Two children ran `rm -rf` on a variable path, and the wall let it through: every
+`--write` carried the remove rights. The wall refuses unlink, rmdir and rename-away
+of any path outside the job's own write roots, even where writing is allowed: the
+**job dir** (the first `--write`), its **tmp** (`--tmp`, or the default under the job
+dir) and the **working directory** (`--cwd`, which is always inside the write set: the
+checkout a step was given to write, where `git commit` renames a new index over
+`.git/index`). A shared cache (rule 17) or a config dir may be written, never deleted
+from, unless it is under one of those three. `Policy.DeletesIn` is the one test of
+"the job's own".
+
+- **Linux.** A write-set directory outside all three gets the write mask minus
+  `REMOVE_FILE` and `REMOVE_DIR` (`writeRuleMask`). Landlock checks a remove right
+  on the parent of the entry removed or renamed away, so this refuses all three,
+  and replacing an existing file by rename is refused there for the same reason.
+  Rules are a union, and the cwd is always its own rule, so a job dir or a cwd nested
+  under such a write keeps its rights. The `policy` verb prints such a directory as
+  `write-nodelete=` instead of `write=`.
+- **macOS.** After every write grant in the profile (HOME's included) comes one
+  `(deny file-write-unlink (subpath (param "WRITEn")))` for each such `--write`,
+  then `(allow file-write-unlink ...)` for `WRITE0`, for `JOBTMP` when the tmp is
+  outside it, and for `JOBCWD` when the cwd is outside both, because the last
+  matching rule wins. Whether macOS's `file-write-unlink` also covers rename-away has
+  not been measured.
+- **Checked by.** `TestTheWallRefusesDeletesOutsideTheJob`, linux: under the wall,
+  with an outside directory as a second `--write`, `rm -rf` of it, `rm` of a file in
+  it and `mv` of a file out of it are each refused and the files are still there; a
+  write there and a delete in the job dir succeed. `TestAStepsGitCommitInsideItsWallSucceeds`,
+  linux: a step's wall (its tmp the first `--write`, its checkout the second and the
+  cwd, a shared directory a third) lets `git commit` in the checkout succeed and still
+  refuses an `rm` in the shared directory. `TestWritesOutsideTheJobCarryNoRemoveRights`
+  checks the masks, the printed ruleset and the profile's order
+  (`internal/sandbox/delete_outside_test.go`).
+
 ## The verbs
 
 ```
@@ -1368,6 +1403,45 @@ runs. Two exemptions, both of them "a caller that adds one back has
 done so in its own argv": a directory the caller named in its own `--read` or
 `--write`, and a home that lies inside the caller's own lists, which is what the
 job's data home always is.
+
+### buds-in-the-wall-r.w5 — the lane profile, and the deny list
+
+A nova-friend lane's children run inside a **wall profile** (`LaneProfile`,
+`internal/sandbox/profile.go`; docs/SPEC-FRIEND.md has the lane side). The
+one profile is `friend` (`LaneProfiles`; any other name is refused):
+
+| | |
+|---|---|
+| writes | the friend's working directory, her job directories outside it, her config directory (`CLAUDE_CONFIG_DIR`), and nothing else |
+| `HOME` | the config directory, else the working directory |
+| reads | the roots, the harness's own directory, and what the caller names |
+| denied | `LaneProfile.Deny`: the coordinator's self as configuration names it (`nova-friend run --deny-self`, e.g. `~/<coordinator>-working/<self>` and its copy on a shared volume), with their `memory/`, `identity/` and `MEMORY-*.md`; `~/` is the profile's HOME; a profile that denies nothing is refused |
+| network | `--net-deny`, with `LaneNetPorts` (TCP 443 and 22) opened outbound |
+
+**The deny list is a field of the input** (`Input.Deny`). Both bodies grant
+writing only where they are told to, so a denied path no grant covers is
+denied by having no grant; `Build` refuses, `reason=denied_write`, every
+`--write`, `--cwd`, `--tmp` and `HOME` that is a denied path, lies inside one
+or holds one, so no grant can cover one. A denied path is resolved through
+its symlinks when it is there and compared by name when it is not, with the
+same `Inside` as every other question here. It is a deny of named paths: a
+clone of the self under a granted directory is not one of them. The paths are
+configuration, never names in the code (the `generality` rule,
+docs/SPEC-CI.md), and the profile fails closed: `LaneProfile.Input` refuses
+one whose deny list is empty.
+
+**The network is ports, not hosts.** `Input.NetPorts` is allowed only with
+`--net-deny`, and each port is 1 to 65535 (`reason=bad_net`). On darwin the
+profile grants, under `--net-deny`, the name resolver and `(allow
+network-outbound (remote tcp "*:<port>"))` per port: SBPL filters a remote
+host only as `localhost` or `*`, so 443 is open to every host, github.com and
+the harness's provider among them (measured on darwin 27.2 with
+`sandbox-exec -p`: github.com:443 answered 200, example.com:80 did not
+connect, rc=7). On linux Landlock is handled here with no port rule, so the
+ports are not granted and the denial is whole: fail closed, and a lane on a
+linux machine reaches no TCP host. Holding a lane to github.com and the
+benches by host is the egress verbs' kind of wall (nftables, by address),
+not this one's.
 
 ## macOS — `sandbox-exec` with a generated profile
 

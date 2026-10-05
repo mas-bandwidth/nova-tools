@@ -45,9 +45,7 @@ func TestModelAckCannotSilenceACard(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	h.toReview()
-	for _, rc := range h.snap().Readers.Of("s1-1") {
-		h.must(ReadStep(sprint.ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
-	}
+	h.readAllOK("s1-1")
 	open := h.openOn("s1-1")
 	require.Len(t, open, 1, "after two ok reads: %+v", open)
 	require.Equal(t, string(sprint.NReadyToAccept), open[0].Note.Type, "after two ok reads: %+v", open)

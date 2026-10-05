@@ -569,8 +569,9 @@ func TestTheWriteLeavesNoLitter(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	require.Len(t, entries, 1, "temp files must not survive the rename, dir holds %v", names)
-	assert.Equal(t, "fuses.json", entries[0].Name(), "temp files must not survive the rename, dir holds %v", names)
+	require.Len(t, entries, 2, "temp files must not survive the rename, dir holds %v", names)
+	assert.Equal(t, []string{"fuses.json", "fuses.json" + fuse.LockSuffix}, names,
+		"the box and the lock its mutations hold are all that stays; dir holds %v", names)
 }
 
 func TestPathEchoesTheBoxFlag(t *testing.T) {
@@ -667,7 +668,7 @@ func TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne(t *testing.T) {
 		assert.Equal(t, before, got, "init replaced %q with %q", before, got)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(box))
-	assert.Len(t, entries, 1, "init left litter beside the box: %v", entries)
+	assert.Len(t, entries, 2, "init left litter beside the box (the box and the lock the mutations before it hold are all that stays): %v", entries)
 
 	for _, args := range [][]string{{"init"}, {"init", "--box", box, "extra"}} {
 		code, _, _ := capture(t, args, nowish())
