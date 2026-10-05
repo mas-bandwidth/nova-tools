@@ -30,6 +30,7 @@ type rig struct {
 	onPath    map[string]string // what lookPath finds, by name
 	now       time.Time
 	home      string
+	answered  map[string]bool // the session checks bob's fake session has answered
 }
 
 func newRig(t *testing.T, names ...string) *rig {
@@ -50,7 +51,7 @@ func (r *rig) world() world {
 			r.launchctl = append(r.launchctl, strings.Join(args, " "))
 			return "", nil
 		},
-		now:     func() time.Time { r.now = r.now.Add(time.Second); return r.now },
+		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
 		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
@@ -64,6 +65,31 @@ func (r *rig) world() world {
 		},
 		random: func() string { return "r4nd0m" },
 	}
+}
+
+// answerChecks is bob's session, alive: each session check the daemon put
+// on his own stream (a passive harness reads it there) is answered once, from
+// bob, with its nonce, as the pong verb sends it.
+func (r *rig) answerChecks() {
+	es, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
+	if err != nil {
+		return // ignored: a store that is down answers nothing; the test that wants it down says so
+	}
+	for _, e := range es {
+		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok && !r.answered[nonce] {
+			r.answer(nonce)
+		}
+	}
+}
+
+// answer is bob's session sending its pong for nonce.
+func (r *rig) answer(nonce string) {
+	if r.answered == nil {
+		r.answered = map[string]bool{}
+	}
+	r.answered[nonce] = true
+	b := &bus.Bus{Store: r.store}
+	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
 }
 
 func (r *rig) cli() testkit.Main {
@@ -410,9 +436,21 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		var mu sync.Mutex
 		var runs []string
 		lists := 0
+		checked := false
 		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
+			if !checked { // the session check goes into her newest session first; her answer brings her up, and the beat with the row
+				if args[0] == "session" {
+					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
+				}
+				text := args[len(args)-1]
+				if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
+					checked = true
+					r.answer(nonce)
+					return "answered\n", 0, nil
+				}
+			}
 			if args[0] == "session" {
 				lists++
 				if lists == 1 {
@@ -450,4 +488,44 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.Equal(t, "one-shot", s.Mode)
 		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
 	})
+}
+
+// A closed app is a friend down, however well its daemon runs: the verb wires
+// the session check, holds the beat back while no session answers, and
+// status says so (docs/SPEC-FRIEND.md, presence).
+func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	r.answered = map[string]bool{"r4nd0m": true} // bob's session never answers the check
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	beats, sleeps := 0, 0
+	w.beat = func(context.Context, string, string) (string, error) { beats++; return "", nil }
+	w.sleep = func(context.Context, time.Duration) {
+		r.now = r.now.Add(time.Minute)
+		if sleeps++; sleeps == 8 {
+			cancel()
+		}
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, errb.String())
+	assert.Zero(t, beats, "no beat reaches the sprint server while no session answers")
+	assert.Contains(t, out.String(), "presence: session check r4nd0m on the stream")
+	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
+	got, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, got)
+	assert.Contains(t, got[0].Fields["body"], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
+	assert.Contains(t, got[0].Fields["body"], "--to ada")
+	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	require.NoError(t, err)
+	r.now = st.At // read as the daemon last wrote it: up
+	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out("presence=down", `presence_reason="no session answer"`, "NOTE the daemon is up and the session is not (no session answer)")
 }

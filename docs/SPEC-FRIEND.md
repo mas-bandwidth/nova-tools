@@ -12,10 +12,10 @@ is the server; both sides need to know they are connected, continually".
 One daemon per friend, started by launchd and never by the model, parks on the
 friend's nova-bus stream and, whenever the session is free, pushes every
 message waiting into the running session as one turn; it beats to the sprint
-server while that loop runs and only then; it answers the coordinator's ping
-at once and never makes a turn of it, and the session's own answer, the pong
-line that rides at the head of its next turn, is the only thing that makes the
-friend up.
+server while that loop runs and its session answers, and only then; it answers
+the coordinator's ping at once and never makes a turn of it, and the session's
+own answer to a nonce is the only thing that makes the friend up (Presence,
+below): the daemon answering is never the session.
 
 ## The data
 
@@ -51,7 +51,10 @@ friend up.
   or seen by a peek while a turn is running. It proves transport. The ping is
   then acked by the daemon and never pushed in as a turn (the finding of
   2026-10-04: pings every few seconds were turns of their own and buried the
-  work).
+  work). It is the daemon's, named so, and never counts as presence.
+- `SESSION CHECK <nonce>`: the daemon's own question to its session (Presence,
+  below), delivered into the session as a turn; answered by the same `pong`
+  line with that nonce.
 - `pong <nonce> queue=<n> working=<n> width=<n>`: the session's answer, sent by
   `nova-friend pong`, recorded in the pong file. While a challenge is open, the
   exact pong line for the current nonce rides at the head of the next turn
@@ -72,12 +75,55 @@ never heard `silent`) is dropped. The challenge: `quiet`; `challenged` from a
 ping until the session's pong with that nonce; `deaf` after a window challenged
 with no pong, until a pong. Only the current nonce answers: a stale or replayed
 pong changes nothing. Up is `quiet` with at least one pong; the daemon's beat
-never makes a friend up.
+never makes a friend up. The friend's presence, the daemon's own check of its
+session, is beside this machine (Presence, below), not part of it.
 
 The invariants, each with a reversed witness that TLC catches: a friend is up
 only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
+
+## Presence (internal/friend/presence.go)
+
+The finding of 2026-10-04: three friends read up with eight cards each while
+their harness apps were not running at all. The daemon answered every ping
+itself, so a closed app looked alive (the owner: "If your detection that they
+are down doesn't work WHEN THEY ARE DOWN, that seems like a bad design").
+Presence is therefore the session's, never the daemon's:
+
+- The daemon reads the bus log for messages from the friend. A message the
+  daemon itself sent (every send goes through the daemon's store, which
+  remembers its ids; a `daemon-pong` or `SESSION CHECK` by name, from a run
+  before this one) is the daemon's and proves nothing. Any other message from
+  the friend is the session's.
+- After ten minutes (`SessionQuiet`) with no bus message from the session, the
+  daemon delivers a session check carrying a fresh nonce through the friend's
+  adapter, into the session, the way a card is delivered: a turn of its own,
+  only once no turn is under way (the session's turns hold the adapter shared,
+  the check holds it alone, so it is never a second turn in one session; the
+  lanes of one-shot mode hold it the same way). A harness with no deliver
+  command has the check put on its own stream, which its session reads. The
+  check is one line to run with nothing to fill in: `nova-friend pong` with
+  the nonce, to the seat (else `--coordinator`), and then end the turn.
+- Only a reply carrying that nonce, written by the session, counts: a
+  `daemon-pong`, a pong the daemon wrote, another friend's pong, a stale or
+  wrong nonce all answer nothing. The bound runs from when the check went in.
+- No answer within five minutes (`SessionBound`) and the friend is down, with
+  the reason `no session answer`; a check turn still running then is stopped.
+  While down, an ordinary message is no proof the check reached the session:
+  only the nonce answers, and a fresh check goes in ten minutes after the last.
+  The next answer, to the latest nonce, late or not, brings the friend back up.
+- A daemon that starts is down, `no session answer yet`, with a check owed at
+  once: coming up proves nothing about the session.
+- While down, no beat goes to the sprint server: a friend the coordinator has
+  never observed is up there on her beat alone, so the beat is held back (the
+  status says `not beating: the session is down (<reason>)`). The friend row's
+  mode and width arrive with the beat's answer, so while down the daemon
+  delivers by the row it last read (batch at `--width` before any).
+- The state is in `presence.json` in the state directory, one writer, the
+  daemon; `status` prints `presence=up|down`, `last_session=`, and, when down,
+  `presence_reason=` (`no session answer`, `no session answer yet`, or
+  `no daemon` when the status file is stale).
 
 ## The loop (internal/friend/daemon.go)
 
@@ -434,6 +480,14 @@ privacy settings, by the person, never by the tool, and a rebuilt binary is a
 new one to it. The state files are out of its way, under the home directory;
 until it is granted the daemon beats and answers the daemon pong but cannot
 run the harness on the volume, and the record says so.
+
+Presence has no TLA+ module yet: `tla/` is outside what the card that built
+it could change, and `tla/Presence.tla` is owed. A session check waits for the
+turn under way, so a session in a turn longer than ten minutes that sends
+nothing on the bus is checked only once that turn ends, and keeps its word
+until then. A one-shot friend with no session in its directory at all has
+nowhere for the check to go until a lane opens one, and its lanes wait on the
+row, which comes with a beat; it stays down until a session exists.
 
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
