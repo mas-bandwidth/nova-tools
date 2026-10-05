@@ -2249,7 +2249,7 @@ id (`--op`) returns the original result, with no second counter or notification.
 
 A read taken back with no verdict does not count as asked. That take-back is
 the reader marked away, a server restart, or a read deadline (`retired_by`
-`away`, `restart`, or `deadline`). The reader may be asked the same attempt
+`away`, `restart`, `lapsed`, or `deadline`). The reader may be asked the same attempt
 again, after every reader who has never been asked it. The first ask keeps
 the id `<primary>.r<attempt>.<reader>`. A re-ask appends `.t<n>` with n = 2,
 3, … so the second ask of that reader at that attempt is

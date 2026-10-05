@@ -226,11 +226,12 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // noVerdictTakeback says the read card was taken back with no verdict: the
-// reader marked away, a server restart, or a read deadline. A level, a
+// reader marked away, a server restart (restart, or lapsed: its lease had
+// lapsed), or a read deadline. A level, a
 // coordinator's instead, a return, an accept or a verdict is not one of these.
 func noVerdictTakeback(c *Card) bool {
 	switch c.F("retired_by") {
-	case "away", "deadline", "restart":
+	case "away", "deadline", "restart", RetiredByLapsed:
 		return !c.Placed()
 	}
 	return false

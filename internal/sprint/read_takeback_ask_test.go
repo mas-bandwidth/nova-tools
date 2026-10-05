@@ -125,3 +125,17 @@ func retireTakeback(w *world, primary, reader string, take int) {
 		"asked": stamp(t0), "retired": stamp(t0), "retired_by": "away",
 	}})
 }
+
+// TestNoVerdictTakebackReasons: every take-back with no verdict counts as one,
+// a restart that retired a read whose lease had lapsed included; a level or an
+// instead does not.
+func TestNoVerdictTakebackReasons(t *testing.T) {
+	for _, by := range []string{"away", "deadline", "restart", RetiredByLapsed} {
+		c := &Card{Fields: map[string]string{"retired": stamp(t0), "retired_by": by}}
+		assert.True(t, noVerdictTakeback(c), by)
+	}
+	for _, by := range []string{RetiredByLevel, "instead", ""} {
+		c := &Card{Fields: map[string]string{"retired": stamp(t0), "retired_by": by}}
+		assert.False(t, noVerdictTakeback(c), by)
+	}
+}
