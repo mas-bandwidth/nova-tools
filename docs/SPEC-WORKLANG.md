@@ -19,13 +19,13 @@ kinds of form and nothing else:
 | list | `( ... )`, possibly empty | `List`, its members in order |
 | keyword | `:name` | `Keyword`, the name without the colon |
 | string | `"..."` | `String`, decoded; a backslash takes the next byte literally |
-| integer | decimal digits, optionally signed with `+` or `-` | `Integer` |
+| integer | decimal digits fitting in int64, optionally signed with `+` or `-` | `Integer` |
 | symbol | any other bare token, such as `go-fix` or `false` | `Symbol`, verbatim |
 
 A `;` starts a comment that runs to the end of its line. Comments and whitespace are text,
 never syntax. A keyword that is empty or holds a second `:` is refused as a forbidden token
 at its byte. **Every token that starts with a digit, `+` or `-` goes to the integer reader**, so
-it must be an integer: a sign with no digits after it (`-x`, a bare `+`) or digits followed
+it must be an integer: an integer must fit in int64 (a value that overflows int64 bounds is refused as a forbidden token at its byte); a sign with no digits after it (`-x`, a bare `+`) or digits followed
 directly by a non-boundary byte (`12abc`) is refused as a forbidden token at its byte, never read
 as a symbol.
 
