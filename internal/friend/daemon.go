@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
@@ -142,6 +144,7 @@ type Daemon struct {
 	active      time.Time // the last walk's answer
 	cards       []string  // the cards she held at it
 	walked      time.Time // when it was
+	routeSaid   string    // the last presence route line, so a change is said once
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
@@ -284,6 +287,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
+		d.noteRoute(now)
 		for _, p := range d.m.Tick(now) {
 			l.say(p)
 		}
@@ -861,6 +865,99 @@ func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, n
 		return
 	}
 	d.status.LastDaemonPong = now
+}
+
+// deliveryRouter is the adapter's route. Gates in front of the adapter do
+// not forward it, so noteRoute walks out to the adapter that has it.
+type deliveryRouter interface {
+	Route(context.Context) (route, line string, err error)
+}
+
+// noteRoute writes the delivery route onto the daemon record when it
+// changes. passive: the harness has no deliver command. Otherwise the
+// adapter's Route (defer, attach or run). A deliverer with neither is
+// unsaid. The presence file's schema is not this record; this is the line
+// the daemon itself writes (docs/SPEC-FRIEND.md, OpenCode).
+func (d *Daemon) noteRoute(now time.Time) {
+	if d.Record == nil {
+		return
+	}
+	route, line, err, ok := routeUnder(d.Deliver)
+	if !ok {
+		return
+	}
+	said := "presence route=" + route
+	if line != "" {
+		said += " " + line
+	}
+	if err != nil {
+		said += " error=" + oneLine(err.Error(), 200)
+	}
+	if said == d.routeSaid {
+		return
+	}
+	d.routeSaid = said
+	d.Record(now.UTC().Format(time.RFC3339) + " " + said)
+}
+
+func routeUnder(d Deliverer) (route, line string, err error, ok bool) {
+	if d == nil {
+		return "", "", nil, false
+	}
+	if _, passive := d.(interface{ Passive() }); passive {
+		return "passive", "nova-bus recv --as <friend>", nil, true
+	}
+	r, found := findRouter(reflect.ValueOf(d), map[uintptr]bool{})
+	if !found {
+		return "", "", nil, false
+	}
+	route, line, err = r.Route(context.Background())
+	if route == "" {
+		route = "defer"
+	}
+	return route, line, err, true
+}
+
+func findRouter(v reflect.Value, seen map[uintptr]bool) (deliveryRouter, bool) {
+	if !v.IsValid() {
+		return nil, false
+	}
+	v = visible(v)
+	switch v.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if v.IsNil() {
+			return nil, false
+		}
+		if v.Kind() == reflect.Pointer {
+			p := v.Pointer()
+			if p == 0 || seen[p] {
+				return nil, false
+			}
+			seen[p] = true
+		}
+		if v.CanInterface() {
+			if r, ok := v.Interface().(deliveryRouter); ok {
+				return r, true
+			}
+		}
+		return findRouter(v.Elem(), seen)
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if r, ok := findRouter(v.Field(i), seen); ok {
+				return r, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// visible lets a walk read an unexported field of this package. reflect
+// refuses Interface on a field it reached through an unexported name.
+func visible(v reflect.Value) reflect.Value {
+	if !v.IsValid() || v.CanInterface() || !v.CanAddr() {
+		return v
+	}
+	return reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
 }
 
 // flush writes the status when it changed, and every StatusEvery anyway,

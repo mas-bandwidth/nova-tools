@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -170,7 +172,7 @@ const KillDelay = 5 * time.Second
 func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Deliverer, error) {
 	switch harness {
 	case "opencode":
-		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
+		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out, Look: realOpenCodeLook}, nil
 	case "codex":
 		return &Codex{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "grok":
@@ -190,15 +192,31 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	return nil, fmt.Errorf("%q is no harness; the harnesses are %s", harness, strings.Join(Harnesses, ", "))
 }
 
-// OpenCode delivers through `opencode run --session <id> --dir <dir> <text>`,
-// which blocks for the whole turn; without a session named, the newest
-// session whose directory is Dir, from `opencode session list --format json`,
-// so a friend who starts a fresh session is still reached.
+// OpenCodeBusLine is the blocking read the open session runs while a normal
+// TUI holds the directory. It is a command inside the session, not a flag
+// at app start (docs/SPEC-FRIEND.md, OpenCode).
+const OpenCodeBusLine = "nova-bus wait --as <friend>"
+
+// OpenCode delivers into the open TUI when that TUI has a server, and
+// otherwise defers while a TUI holds Dir. A normal TUI (no --port, no
+// --hostname, no mDNS) does not listen: its client URL is the in-process
+// http://opencode.internal, so `opencode run --attach` has nowhere to go
+// (measured opencode 1.18.30, packages/opencode/src/cli/cmd/tui.ts). Look
+// reports that, from the process table. A listened address, an `attach <url>`
+// argv or a `--port <n>` argv is `opencode run --attach <url> --session <id>`.
+// No TUI is the headless `opencode run --session <id> --dir <dir> <text>`,
+// the newest session of Dir when none is named, and the record says that run
+// is not the open chat. Nil Look skips the probe, so a test that only scripts
+// Run keeps the headless command.
 type OpenCode struct {
 	Dir, Session string
 	Run          Exec
 	Program      string    // "opencode" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+	// Look reports whether a TUI holds dir and the HTTP URL it is listening
+	// on (empty when it holds the directory and listens on nothing). Nil
+	// skips the probe. NewDeliverer sets the process-table probe.
+	Look func(ctx context.Context, dir string) (hold bool, url string, err error)
 	// Allow is every other path the friend's directory is reached by (a
 	// symlink in the home directory): with Dir and its real path, allowed in
 	// the project config before a turn (AllowDirs), so a headless run never
@@ -240,6 +258,13 @@ func NewestSession(listing, dir string) (string, error) {
 }
 
 func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
+	hold, url, err := o.hold(ctx)
+	if err != nil {
+		return 0, Deferred{Reason: o.deferReason("the process table could not be read: " + err.Error())}
+	}
+	if hold && url == "" {
+		return 0, Deferred{Reason: o.deferReason("")}
+	}
 	if o.Allow != nil {
 		o.allow()
 	}
@@ -256,11 +281,310 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
-	if o.Out != nil && out != "" {
-		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	args := []string{"run"}
+	if url != "" {
+		args = append(args, "--attach", url)
+	}
+	args = append(args, "--session", id, "--dir", o.Dir, text)
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), args, "")
+	if o.Out != nil {
+		switch {
+		case url != "":
+			fmt.Fprintln(o.Out, "turned: opencode run --attach "+url+" session "+id)
+		case o.Look != nil:
+			fmt.Fprintln(o.Out, "answered by run, not by the open chat")
+		}
+		if out != "" {
+			fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+		}
 	}
 	return refused(id, out, exit, err)
+}
+
+// Route is what the daemon records. attach: a TUI holding Dir has an HTTP
+// URL. defer: a TUI holds Dir and listens on nothing (or the table could
+// not be read); line is the bus read the session runs. run: no TUI holds
+// Dir, so delivery is the headless run. Nil Look is run, never a guessed
+// server.
+func (o *OpenCode) Route(ctx context.Context) (route, line string, err error) {
+	hold, url, err := o.hold(ctx)
+	switch {
+	case err != nil:
+		return "defer", OpenCodeBusLine, err
+	case hold && url != "":
+		return "attach", url, nil
+	case hold:
+		return "defer", OpenCodeBusLine, nil
+	default:
+		return "run", "opencode run --session <id> --dir <dir> <text>", nil
+	}
+}
+
+func (o *OpenCode) hold(ctx context.Context) (bool, string, error) {
+	if o.Look == nil {
+		return false, "", nil
+	}
+	return o.Look(ctx, o.Dir)
+}
+
+func (o *OpenCode) deferReason(extra string) string {
+	s := "the opencode TUI in " + o.Dir + " listens on nothing, so there is no server for opencode run --attach " +
+		"(a normal TUI talks over in-process http://opencode.internal; it listens only when started with " +
+		"--port, --hostname or --mdns, which this route does not require); the message stays pending; " +
+		"in that session run: " + OpenCodeBusLine
+	if extra != "" {
+		return extra + "; " + s
+	}
+	return s
+}
+
+// openCodeNotTUI is the first argv word of an opencode process that is not
+// the TUI. attach is a TUI connected to a server, so it is absent here.
+var openCodeNotTUI = map[string]bool{
+	"acp": true, "agent": true, "auth": true, "completion": true, "db": true,
+	"debug": true, "export": true, "github": true, "import": true, "mcp": true,
+	"models": true, "plug": true, "plugin": true, "pr": true, "providers": true,
+	"run": true, "serve": true, "session": true, "stats": true, "uninstall": true,
+	"upgrade": true, "web": true,
+}
+
+// openCodeHold is one process against dir. hold is an OpenCode TUI whose
+// cwd is dir. url is the HTTP server that process is listening on, else the
+// URL in its argv (`attach <url>` or `--port <n>`). A normal TUI holds the
+// directory with an empty url.
+func openCodeHold(command, cwd, dir string, listen []string) (hold bool, url string) {
+	tui, argURL := openCodeTUI(command)
+	if !tui || !sameDir(cwd, dir) {
+		return false, ""
+	}
+	if u := urlFromListen(listen); u != "" {
+		return true, u
+	}
+	return true, argURL
+}
+
+func openCodeTUI(command string) (tui bool, url string) {
+	f := strings.Fields(command)
+	if len(f) == 0 || filepath.Base(f[0]) != "opencode" {
+		return false, ""
+	}
+	if len(f) == 1 {
+		return true, ""
+	}
+	if f[1] == "attach" {
+		if len(f) >= 3 && strings.Contains(f[2], "://") {
+			return true, f[2]
+		}
+		return true, ""
+	}
+	if openCodeNotTUI[f[1]] {
+		return false, ""
+	}
+	return true, portURL(f[1:])
+}
+
+func portURL(args []string) string {
+	port, host := "", "127.0.0.1"
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--port" && i+1 < len(args):
+			i++
+			port = args[i]
+		case strings.HasPrefix(a, "--port="):
+			port = strings.TrimPrefix(a, "--port=")
+		case a == "--hostname" && i+1 < len(args):
+			i++
+			host = args[i]
+		case strings.HasPrefix(a, "--hostname="):
+			host = strings.TrimPrefix(a, "--hostname=")
+		}
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]", "*":
+		host = "127.0.0.1"
+	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	return "http://" + host + ":" + strconv.Itoa(n)
+}
+
+func urlFromListen(listen []string) string {
+	var fallback string
+	for _, raw := range listen {
+		host, port, ok := splitHostPort(raw)
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(port)
+		if err != nil || n <= 0 {
+			continue
+		}
+		switch host {
+		case "127.0.0.1", "localhost":
+			return "http://127.0.0.1:" + port
+		case "*", "0.0.0.0", "", "::", "[::]":
+			fallback = "http://127.0.0.1:" + port
+		case "::1", "[::1]":
+			if fallback == "" {
+				fallback = "http://[::1]:" + port
+			}
+		default:
+			if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+				host = "[" + host + "]"
+			}
+			if fallback == "" {
+				fallback = "http://" + host + ":" + port
+			}
+		}
+	}
+	return fallback
+}
+
+func splitHostPort(raw string) (host, port string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(raw, "[") {
+		host, port, ok = strings.Cut(raw, "]:")
+		if !ok {
+			return "", "", false
+		}
+		return host + "]", port, port != ""
+	}
+	i := strings.LastIndex(raw, ":")
+	if i < 0 {
+		return "", "", false
+	}
+	return raw[:i], raw[i+1:], raw[i+1:] != ""
+}
+
+func sameDir(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	ar, ea := filepath.EvalSymlinks(a)
+	br, eb := filepath.EvalSymlinks(b)
+	return ea == nil && eb == nil && filepath.Clean(ar) == filepath.Clean(br)
+}
+
+func realOpenCodeLook(ctx context.Context, dir string) (bool, string, error) {
+	listing, exit, err := commandResult(ctx, "ps", "-axww", "-o", "pid=,command=")
+	if err != nil {
+		return false, "", err
+	}
+	if exit != 0 {
+		return false, "", fmt.Errorf("ps exited %d", exit)
+	}
+	held, url := false, ""
+	for _, p := range parsePS(listing) {
+		tui, _ := openCodeTUI(p.command)
+		if !tui {
+			continue
+		}
+		cwd, err := lsofCwd(ctx, p.pid)
+		if err != nil {
+			return false, "", err
+		}
+		listen, err := lsofListen(ctx, p.pid)
+		if err != nil {
+			return false, "", err
+		}
+		h, u := openCodeHold(p.command, cwd, dir, listen)
+		if !h {
+			continue
+		}
+		held = true
+		if u != "" && url == "" {
+			url = u
+		}
+	}
+	return held, url, nil
+}
+
+type psProc struct {
+	pid     int
+	command string
+}
+
+func parsePS(listing string) []psProc {
+	var out []psProc
+	for _, line := range strings.Split(listing, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		pidS, cmd, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		pid, err := strconv.Atoi(pidS)
+		if err != nil {
+			continue
+		}
+		out = append(out, psProc{pid: pid, command: strings.TrimSpace(cmd)})
+	}
+	return out
+}
+
+func lsofCwd(ctx context.Context, pid int) (string, error) {
+	out, exit, err := commandResult(ctx, "lsof", "-nP", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-F", "n")
+	if err != nil {
+		return "", err
+	}
+	if exit != 0 {
+		return "", fmt.Errorf("lsof cwd for %d exited %d", pid, exit)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "n") && len(line) > 1 {
+			return line[1:], nil
+		}
+	}
+	return "", fmt.Errorf("lsof cwd for %d named no directory", pid)
+}
+
+func lsofListen(ctx context.Context, pid int) ([]string, error) {
+	out, exit, err := commandResult(ctx, "lsof", "-nP", "-a", "-p", strconv.Itoa(pid), "-iTCP", "-sTCP:LISTEN", "-F", "n")
+	if err != nil {
+		return nil, err
+	}
+	if exit != 0 {
+		if strings.TrimSpace(out) == "" {
+			return nil, nil // nothing is listening
+		}
+		return nil, fmt.Errorf("lsof listen for %d exited %d", pid, exit)
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "n") && strings.Contains(line, ":") {
+			names = append(names, line[1:])
+		}
+	}
+	return names, nil
+}
+
+func commandResult(ctx context.Context, name string, args ...string) (string, int, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = KillDelay
+	var buf strings.Builder
+	cmd.Stdout = &buf
+	cmd.Stderr = io.Discard
+	err := cmd.Run()
+	if err == nil {
+		return buf.String(), 0, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return buf.String(), ee.ExitCode(), nil
+	}
+	return "", 0, fmt.Errorf("%s: %w", name, err)
 }
 
 // Head is the first n bytes of s, with a note when it was cut.

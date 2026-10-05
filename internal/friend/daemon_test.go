@@ -228,7 +228,9 @@ func TestAPassiveHarnessRecordsAPushItCannotDeliver(t *testing.T) {
 	r.run(t, int(Window/BeatEvery)+3)
 	assert.Empty(t, r.delivered)
 	require.NotEmpty(t, r.records)
-	assert.Contains(t, r.records[0], "not delivered: codex has no deliver command: coordinator silent")
+	got := strings.Join(r.records, "\n")
+	assert.Contains(t, got, "not delivered: codex has no deliver command: coordinator silent")
+	assert.Contains(t, got, "presence route=passive nova-bus recv --as <friend>")
 	assert.Equal(t, Silent, r.last().Connection)
 }
 
@@ -393,7 +395,9 @@ func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
 			assert.NotContains(t, line, "acked")
 		}
 		require.NotEmpty(t, r.records)
-		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
+		got := strings.Join(r.records, "\n")
+		assert.Contains(t, got, `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
+		assert.Contains(t, got, "presence route=defer nova-bus wait --as <friend>")
 	})
 }
 
@@ -510,4 +514,20 @@ func TestStatusSaysTheChallengeIsAnsweredTheSecondAfterAPongIsWritten(t *testing
 	s := r.last()
 	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce should end the challenge")
 	assert.Equal(t, 1, s.Pongs, "the pongs count should be incremented")
+}
+
+func TestTheDaemonReportsTheOpenCodeRouteInPresence(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	oc := &OpenCode{Dir: r.d.Dir, Look: func(context.Context, string) (bool, string, error) {
+		return true, "", nil
+	}}
+	limits := &Limits{Now: func() time.Time { return t0 }}
+	sc := &SessionCheck{}
+	r.d.Deliver = sc.Gate(limits.Gate(oc))
+	r.passive = true
+	r.run(t, 3)
+	got := strings.Join(r.records, "\n")
+	assert.Contains(t, got, "presence route=defer "+OpenCodeBusLine)
+	assert.Equal(t, 1, strings.Count(got, "presence route="), "a route that does not change is said once")
 }

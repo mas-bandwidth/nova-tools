@@ -355,9 +355,11 @@ Antigravity, its app; DSH, the DeepSeek Harness app; each its main
 executable, matched whole, of the daemon's user, never a helper. Grok, a
 window (the TUI process) open in the friend's directory: a pid of
 `active_sessions.json` with that cwd, alive in `ps -axww -o pid=,ppid=,args=`.
-OpenCode, batch and lanes, and Gemini run no standing process (every turn
-starts the runner afresh), so a runner that cannot be found is not running
-and a runner that is found cannot tell. An adapter that cannot tell says so
+OpenCode's batch and lane turns, and Gemini, run no standing process of
+their own (every turn starts the runner afresh), so a runner that cannot be
+found is not running and a runner that is found cannot tell. A TUI the
+person already has open is a separate process; delivery treats it in the
+OpenCode section below, and `Alive` does not. An adapter that cannot tell says so
 (a stub; a desktop app off macOS; a listing that cannot be read), the record
 says it once, and its friend relies on the session check alone.
 
@@ -388,12 +390,13 @@ own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
 2026-10-04); a stopped turn's whole process group is signalled, SIGTERM then
 SIGKILL, so a harness that forks leaves no orphan.
-Six adapters are real: OpenCode, `opencode run --session <id> --dir <dir>
-<text>`, the newest session of the directory when none is named; Codex,
-Antigravity and Grok, each below; and DSH and Gemini, from the harness survey
-at the end. A turn while a challenge is open carries, at its head, the exact `pong` line for
-this friend (the binary by path, the name, the directory, the store, the
-nonce), so a small model has one line to run and nothing to fill in. Claude
+Six adapters are real: OpenCode, below (attach when the open TUI listens,
+defer while a normal TUI holds the directory, and a headless run only when
+no TUI does); Codex, Antigravity and Grok, each below; and DSH and Gemini,
+from the harness survey at the end. A turn while a challenge is open carries,
+at its head, the exact `pong` line for this friend (the binary by path, the
+name, the directory, the store, the nonce), so a small model has one line to
+run and nothing to fill in. Claude
 has no deliver command yet: its daemon is passive, taking nothing off the
 stream (the session's own blocking read does), peeking so a ping is still
 answered by the daemon at once, beating, and recording a push it cannot
@@ -420,6 +423,42 @@ gets its own wake and note. The watch steps only while the session is free in ba
 one-shot mode the lanes hand each card themselves, and a passive harness's wake is said on the
 record while its note goes as any other. Tests: `TestAnIdleFriendWithCardsGetsAWakeTurnThenANote`
 (a fake clock and harness: ten idle minutes give one wake, twenty one note, a write resets both).
+
+### OpenCode
+
+The open route is whatever the process table shows for a TUI whose cwd is
+the friend's directory, read again on each delivery. It is not a socket path
+and not an environment variable.
+
+Measured opencode 1.18.30 (`opencode debug info`, `opencode --help`,
+`opencode run --help`). The TUI is the default command. `opencode run
+--attach <url>` posts into a server that is already listening.
+`packages/opencode/src/cli/cmd/tui.ts` at that version sets the external
+server only when argv carries `--port` or `--hostname`, or mDNS is on.
+Otherwise the client URL is `http://opencode.internal` and the fetch is
+in-process, so nothing listens and `--attach` has no peer. A process listing
+on the survey machine showed headless `opencode run` children and no TUI,
+and none of those children had a LISTEN socket. `opencode debug paths`
+names data, config, state, log and cache; the state locks record a pid and
+a hostname, not a URL. Requiring `--port`, `--hostname` or mDNS would be a
+special launch, which this route does not.
+
+So `Look` reads `ps -axww -o pid=,command=` and, only for a TUI, `lsof` for
+that pid's cwd and its LISTEN sockets. A TUI in the directory that listens,
+or whose argv is `attach <url>` or `--port <n>`, is delivered with
+`opencode run --attach <url> --session <id> --dir <dir> <text>`, and the
+record says `turned: opencode run --attach`. A TUI that does not listen is
+Deferred: the message stays pending, nothing is written, and the reason
+tells the session to run `nova-bus wait --as <friend>`. No TUI is the
+headless `opencode run --session <id> --dir <dir> <text>` (the newest
+session of the directory when none is named), and the record says
+`answered by run, not by the open chat`. A process table that cannot be
+read is Deferred too, never a run that might miss the open chat.
+`OpenCode.Route` answers `attach`, `defer` or `run` in those three cases.
+The daemon writes `presence route=<attach|defer|run|passive>` on its record
+when the answer changes, including `passive` for a harness with no deliver
+command. The ten live turns into an open chat are not met: a normal TUI has
+no server to post into, and no such TUI was listening.
 
 ### Codex
 
