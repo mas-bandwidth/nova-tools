@@ -1233,6 +1233,14 @@ A running sprint needs nine units on its coordinator's machine: the store and th
 
 `nova-sprint demo load sprint-store-2026-10-04-2336.redis.txt.xz.part-*` loads a store backup (the RESTORE text dump, xz, split into parts) into a throwaway Redis on a free 127.0.0.1 port, with the function library of this nova-sprint binary (never the installed nova-redis's), and prints `where` against it and the line `DEMO UP --addr 127.0.0.1:<port>`: point any read verb at the demo with `--redis 127.0.0.1:<port>`. The parts are joined in name order and checked against the sum beside them when there is one: `<file>.sha256` (the hand backup's), else the line of `SHA256SUMS` naming the joined file (`backup --out`'s), or `--sha256 <hex>`. It takes no `--redis`: the only store it opens is the one it starts. The server's directory and the state file (`demo.json`: address, port, pid, directory) are under `--dir`, by default the user cache directory's `nova-sprint/demo`; a second load while one is up is refused. `nova-sprint demo stop` stops that Redis by the pid it recorded, only when the Redis at the recorded address is that pid, and removes the recorded directory and nothing else. The live store is never opened. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#demo-load-verb).
 
+### merge-tree-node
+
+```
+nova-sprint land-node --stream <s> --as <member> --repo-dir <clone> [--base <branch>] [--check <command>]
+```
+
+A worker verb. The member `--as` names is the actor. On that member's clone it merges the stream's queued cards onto the current base in rank order, runs `--check`, and bisects a red result to the longest green prefix. That prefix is pushed, never forced, to `land/<stream>`. The store records one verdict a card (`landed-in-node`, `red` with the failing gate line, `conflict` with the path, or `ready`) and the `land/<stream>` head. It writes no landed record and it does not push the base. It refuses a clone under the land root, so the lander's own clone is never touched. `nova-sprint help land-node` prints the usage, the flags and the exit codes.
+
 ### A card re-cut as its twin
 
 A card re-cut under a new id is its old card's twin: `add --stream s1 lint-pkg-cairn-tb
