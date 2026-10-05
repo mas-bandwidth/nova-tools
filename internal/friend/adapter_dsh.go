@@ -22,12 +22,14 @@ const DSHProgram = "/Applications/DeepSeek Harness.app/Contents/Resources/runtim
 // unknown id, a session recorded in another directory, and a missing
 // provider key each exit 1. Without a session named, the newest session of
 // Dir from the store (DSH_HOME, else ~/.dsh). The desktop app the friend
-// sits in shares the store; whether it refuses a session it holds open is
-// not measured. A session that has selected an agent preset is refused by
-// the one-shot runner whatever the text (measured 2026-10-04 on Zhi's
-// session, preset "minimal"; the runner adopts only a session with no preset,
-// and a session never returns to none): that delivery is Deferred, so the
-// message stays pending instead of being given up after three refusals.
+// sits in shares the store. Measured 2026-10-04 (docs/SPEC-FRIEND.md, the
+// dsh row): a session under an agent preset is refused by the one-shot
+// runner whatever the text, exit 1 before any write, its transcript hash
+// unchanged (the runner adopts only a session with no preset, and a session
+// never returns to none): that delivery is Deferred, so the message stays
+// pending instead of being given up after three refusals. No route into a
+// session the desktop app holds open was found, so Route answers defer; what
+// the app does with a turn appended by the runner is not measured.
 type DSH struct {
 	Dir, Session string
 	Run          Exec
@@ -102,6 +104,14 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	return refused(id, out, exit, err)
+}
+
+// Route is what status says: always defer. No live push into the open
+// desktop session was found (docs/SPEC-FRIEND.md, the dsh row), and a
+// headless turn is a separate process, not the friend's open chat. line is
+// what the session runs itself: a blocking read of the bus.
+func (d *DSH) Route(ctx context.Context) (route, line string, err error) {
+	return "defer", "nova-bus wait --as <friend>", nil
 }
 
 // dshPresetRefusal is the one-shot runner's refusal of a session under an

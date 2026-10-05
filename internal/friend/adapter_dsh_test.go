@@ -111,3 +111,12 @@ func TestDSHDefersASessionUnderAPresetTheOneShotRunnerDoesNotCompose(t *testing.
 	require.NoError(t, err, "any other refusal is a failed delivery, as before")
 	assert.Equal(t, 1, exit)
 }
+
+func TestDSHRouteIsDeferWithTheBusReadTheSessionRuns(t *testing.T) {
+	t.Parallel()
+	d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Program: "dsh"}
+	route, line, err := d.Route(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "defer", route, "no push into the open desktop session was found")
+	assert.Contains(t, line, "nova-bus wait", "the session reads the bus itself")
+}
