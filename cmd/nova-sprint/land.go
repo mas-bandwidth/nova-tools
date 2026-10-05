@@ -290,6 +290,8 @@ type lander struct {
 	// process, which a hand land starts empty every run and the server every start
 	baseCount bool
 	baseWhy   string
+	// baseNotes is what the pass's re-check of the bases that stopped streams did (landbase.go)
+	baseNotes []string
 	now       func() time.Time
 	rulesOff  []string
 }
@@ -375,6 +377,8 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			order = append(order, name)
 		}
 	}
+	// the bases that stopped streams, re-checked once each before the streams land
+	l.baseRecheck(ctx, s)
 	failed := false
 	for _, name := range order {
 		if !l.stream(ctx, s, name) {
@@ -428,8 +432,12 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			pruned = []pruneResult{}
 		}
 		// ignored: a map of strings, numbers and plain structs of strings always encodes
+		notes := l.baseNotes
+		if notes == nil {
+			notes = []string{}
+		}
 		b, _ := json.Marshal(map[string]any{"verb": "land", "status": status, "exit": code, "batches": batches, "cards": cards,
-			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned})
+			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned, "base_checks": notes})
 		fmt.Fprintln(stdout, string(b))
 		return code
 	}
@@ -468,6 +476,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 	}
 	for _, p := range pruned {
 		fmt.Fprintln(stdout, p.line(true))
+	}
+	for _, n := range l.baseNotes {
+		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(n))
 	}
 	dry := ""
 	if l.dry {
