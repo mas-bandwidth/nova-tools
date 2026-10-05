@@ -453,12 +453,18 @@ func sortedKeys[V any](m map[string]V) []string {
 // seatInbox is a name's inbox for pushed judgments,
 // ~/<name>-working/inbox/sprint-judgments, and the inbox it is under; ok false
 // when that inbox is not there.
-func (a *app) seatInbox(name string) (dir, parent string, ok bool) {
+func (a *app) seatInbox(name string, say ...func(string)) (dir, parent string, ok bool) {
 	home, err := a.home()
 	if err != nil || name == "" {
 		return "", "", false
 	}
-	parent = filepath.Join(home, name+"-working", "inbox")
+	var s func(string)
+	if len(say) > 0 && say[0] != nil {
+		s = say[0]
+	}
+	rowDir := a.friendDirOf(context.Background(), nil, name)
+	baseDir := a.resolveFriendDir(name, rowDir, home, s)
+	parent = filepath.Join(baseDir, "inbox")
 	info, err := os.Stat(parent)
 	return filepath.Join(parent, "sprint-judgments"), parent, err == nil && info.IsDir()
 }
@@ -537,7 +543,7 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 		return 0
 	}
 	p.holder = holder
-	dir, parent, ok := p.a.seatInbox(holder)
+	dir, parent, ok := p.a.seatInbox(holder, func(l string) { fmt.Fprintln(stdout, l) })
 	switch {
 	case first && !ok:
 		return refuse(stderr, "inbox", fmt.Sprintf("--push seat writes to the holder's inbox, %s, and %s is not there: make it, or give --push <dir>", dir, parent))

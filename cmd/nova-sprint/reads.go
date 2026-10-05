@@ -1106,8 +1106,17 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[string(sprint.Working)]].Count = int64(f.Working)
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
+		dir := f.Dir
+		if dir == "" {
+			dir = "-"
+		}
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+			Texts: map[string]string{
+				sprint.FieldWidth: strconv.Itoa(f.Width),
+				sprint.Status:     a.statusCell(f, now),
+				sprint.Active:     activeCell(f, now),
+				sprint.Dir:        dir,
+			}})
 	}
 	return t
 }

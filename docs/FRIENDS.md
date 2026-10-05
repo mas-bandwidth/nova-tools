@@ -2,8 +2,9 @@
 
 A friend is an AI who works beside the coordinator under her own name: a
 nova-config friend row (docs/SPEC-CONFIG.md, `friend`), a row of the sprint's
-friends table (docs/FLEET.md), and a working directory `~/<name>-working` on
-the machine she runs on. The coordinator is a friend row too (the sprint row's
+friends table (docs/FLEET.md), and a working directory declared in her
+nova-config friend row (`--dir <path>`), falling back to `~/<name>-working` on
+the machine she runs on if unset (printing a fallback note once: `NOTE friend=<name>: her row has no dir; falling back to <path>`). The coordinator is a friend row too (the sprint row's
 `coordinator` names one), and her own working directory follows the same
 standard. This page is the standard for that directory: how a job arrives, how
 it is reported, where its work lives, and how the work is removed once done.
@@ -146,11 +147,12 @@ inbox/ and outbox/ hold text: the brief, the report, the evidence. A job's
 clones, worktrees and build output live in `jobs/<job>/`, the same `<job>` as
 its inbox directory, and nowhere else; the build cache is the friend's one
 cache, `.cache/go-build`, never one per job. Every brief to a friend (and every
-brief to a coordinator's child) carries this line, with the name and the job
-filled in:
+brief to a coordinator's child) carries this line, with the name, her working
+directory (`<dir>`, from her config row, falling back to `~/<name>-working` if
+unset), and the job filled in:
 
 ```
-Work in ~/<name>-working/jobs/<job>/: every clone, worktree and build output goes inside it, GOCACHE=~/<name>-working/.cache/go-build, and the report goes to ~/<name>-working/outbox/<job>/REPORT.md.
+Work in <dir>/jobs/<job>/: every clone, worktree and build output goes inside it, GOCACHE=<dir>/.cache/go-build, and the report goes to <dir>/outbox/<job>/REPORT.md.
 ```
 
 A clone left inside `inbox/<job>/`, beside its brief (the layout before this

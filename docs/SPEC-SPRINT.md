@@ -76,8 +76,8 @@ working, width, done, ok%, status that we have for machines, but no load, since
 they don't correspond to a machine (at the moment...)"; "you can even use the
 inbox/outbox standard in friend's working dirs") has one row per friend and the
 fleet table's columns but `load`: `ready`, `working`, `width`, `done`, `ok%`,
-`status`, with `ok` and `failed` hidden under `done` and `ok%` as the fleet's
-are. Its rows are nova-config's friend rows and nothing else: `friend sync`
+`status`, `active`, and `dir`, with `ok` and `failed` hidden under `done` and
+`ok%` as the fleet's are. Its rows are nova-config's friend rows and nothing else: `friend sync`
 (`--pg`, else NOVA_PG_DSN, as nova-config takes it) copies their names into the
 store's `friends` record, adding a friend the record lacks, taking off one
 nova-config no longer has with her beat, and keeping the hold of a
@@ -193,6 +193,14 @@ table's property, taking effect at the next tick as `dealt_max` does). A friend 
 reported activity raises none of this kind: her silence is the report rule's (15 minutes
 without a beat). The column is a field of a table locked on 2026-10-01 and is added by the card
 friend-session-liveness.w1 (internal/sprint/TABLES.lock, the 2026-10-04 entry).
+
+**A friend's working directory** (the owner, 2026-10-05: "read friend working directory from nova-config row"; the card `friend-dir-from-the-row.w1`). The friends table has one more column after `active`, `dir`, text with no fold (`dir:text`): her working directory as declared in her `nova-config` row, or `-` when undeclared.
+
+`friend sync`, `reconcile` (verb and tick), `clean`, and seat inbox read the row's `dir`, falling back to `<root>/<name>-working` (or `~/<name>-working` when root is unset) only when missing, printing the fallback once as a note:
+```
+NOTE friend=<name>: her row has no dir; falling back to <path>
+```
+The note is never repeated during a process's run.
 
 **A friend's health** (2026-10-04, with the author of the coordinator's
 daemon, nova-friend: "the coordinate daemon is the keepalive SERVER. The
@@ -471,7 +479,7 @@ under `<op>.collect.<its args>` and the return under `<op>.return.<its args>`, s
 with the same `--op` replays; `--root` as friend sync takes
 it, else HOME; `--dry-run`) compares her own account of her cards with the store's and
 settles each card working on her row (`sprint.FriendReconcileOf`). Her account is
-`<friend>-working/inbox/QUEUE.json`, `{"tasks":[{"id":<id>,"state":<state>}]}`, an id
+`<dir>/inbox/QUEUE.json` (resolving the row's `dir`, falling back to `<friend>-working` when unset), `{"tasks":[{"id":<id>,"state":<state>}]}`, an id
 being the work card's or its job's (`sprint.StoredID`) and a state `queued`, `working`
 or `done`, with the time the file was last written; it is read only as a regular file of
 at most 1 MiB, and a file that is not there, is not that shape, has a task with no id or

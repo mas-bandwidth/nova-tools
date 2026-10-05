@@ -54,7 +54,7 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 // her session last wrote a file (her beat's Active; "-" when none was reported). The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,dir:text,ok,failed")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
@@ -106,6 +106,7 @@ const (
 	DoneFailed = "failed"
 	Status     = "status"
 	Active     = "active" // friends.active: how long ago her session last wrote a file
+	Dir        = "dir"    // friends.dir: her working directory from config.friends
 	Load       = "load"
 	Withdrawn  = "withdrawn"
 )

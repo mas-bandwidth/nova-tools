@@ -84,13 +84,23 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: no friend %s on the friends table (friends: %s): its row is nova-config's friend row; run: nova-sprint friend sync; nothing was changed\n", prog, name, friend, orDashStr(strings.Join(names, ","), "none"))
 		return 1
 	}
-	if *root == "" {
-		*root = a.getenv("HOME")
+	var said []string
+	say := func(l string) {
+		said = append(said, l)
+		if !c.json {
+			fmt.Fprintln(stdout, l)
+		}
 	}
-	if *root == "" {
-		return refuse(stderr, name, "wants --root <dir>, the directory the friends' working directories are under (HOME is not set)")
+	rowDir := a.friendDirOf(ctx, st, friend)
+	if rowDir == "" {
+		if *root == "" {
+			*root = a.getenv("HOME")
+		}
+		if *root == "" {
+			return refuse(stderr, name, "wants --root <dir>, the directory the friends' working directories are under (HOME is not set)")
+		}
 	}
-	dir := filepath.Join(*root, friend+"-working")
+	dir := a.resolveFriendDir(friend, rowDir, *root, say)
 	account, why, err := friendQueueRead(dir)
 	switch {
 	case err != nil:
@@ -99,13 +109,6 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 	case why != "":
 		fmt.Fprintf(stderr, "%s %s: %s; run: ls -la %s; nothing was changed\n", prog, name, oneline.Escape(why), filepath.Join(dir, "inbox"))
 		return 1
-	}
-	var said []string
-	say := func(l string) {
-		said = append(said, l)
-		if !c.json {
-			fmt.Fprintln(stdout, l)
-		}
 	}
 	dryWord := ""
 	if *dry {

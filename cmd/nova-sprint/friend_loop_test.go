@@ -129,7 +129,13 @@ func TestFriendSyncRunsAsAnInstalledLoopWithNoShell(t *testing.T) {
 	assert.Equal(t, 0, code, "an interrupt ends the loop: %s", errs.String())
 	assert.Equal(t, []time.Duration{period, period, period, period, period}, waits, "it waits --every between passes")
 
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	allLines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	var lines []string
+	for _, l := range allLines {
+		if !strings.HasPrefix(l, "NOTE ") {
+			lines = append(lines, l)
+		}
+	}
 	require.Len(t, lines, 4, "pass 1 and 2 changed something, pass 5 recovered, then the stop: %q", out.String())
 	assert.Contains(t, lines[0], "FRIEND-SYNC OK added=amy removed=- updated=- friends=1")
 	assert.Contains(t, lines[1], "FRIEND-SYNC OK added=bob removed=- updated=- friends=2")

@@ -144,6 +144,13 @@
 # cell with no fold, how long ago her session last wrote a file under her working directory
 # and outbox ("4m ago", "-" when her beat reported none), after status. Held by
 # TestSprintTablesAreLocked; the rule is docs/SPEC-SPRINT.md, last session activity.
+# Change, 2026-10-05, asked for by the card friend-dir-from-the-row.w1 (the friends
+# table reads the working directory from the nova-config friend row instead of
+# requiring symlinks on the host machine). friends.dir is the new column: a text
+# cell with no fold, her working directory as declared in her row ("-" when
+# undeclared), after active. Held by TestSprintTablesAreLocked; the rule is
+# docs/SPEC-SPRINT.md section 1.
+
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -181,6 +188,7 @@ friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
 friends.active text none shown
+friends.dir text none shown
 friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet

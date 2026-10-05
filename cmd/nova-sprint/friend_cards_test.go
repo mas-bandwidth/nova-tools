@@ -367,7 +367,7 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	t.Parallel()
 	p := sprint.Packet{Card: "s1-1.w3", Epoch: 0, Attempt: 3, Branch: "sprint/s1-1.w3.g1.e0", BaseHead: landHead, BaseAttempt: 2,
 		Brief: "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nWHO: friend amy\n\nThe task.", Fix: "assert the bound"}
-	text := friendBrief("amy", p)
+	text := friendBrief("amy", "", p)
 	assert.Contains(t, text, "This attempt starts from the current tip of sprint/s1 on origin, never from an older base: fetch it and start your branch there. "+
 		"Carry the work of attempt 2 onto it yourself: its head, "+landHead+", is the last pushed by any attempt before this one (`git diff origin/sprint/s1..."+landHead+"` shows that work); where it does not apply cleanly, redo it. "+
 		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\nThe coordinator asks: assert the bound\n")
@@ -375,10 +375,10 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 
 	p.BaseHead, p.BaseAttempt = "", 0
 	p.Brief = "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\nThe task."
-	assert.Contains(t, friendBrief("amy", p), "the current tip of the repository's default branch on origin, never from an older base: fetch it and start your branch there. No attempt before this one pushed work to carry. The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
+	assert.Contains(t, friendBrief("amy", "", p), "the current tip of the repository's default branch on origin, never from an older base: fetch it and start your branch there. No attempt before this one pushed work to carry. The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
 
 	p.Attempt = 1
-	assert.NotContains(t, friendBrief("amy", p), "This attempt starts")
+	assert.NotContains(t, friendBrief("amy", "", p), "This attempt starts")
 }
 
 // The brief a friend receives for a later attempt says what friendFinish actually checks,
@@ -390,7 +390,7 @@ func TestTheFriendBriefSaysWhatSyncChecks(t *testing.T) {
 	t.Parallel()
 	p := sprint.Packet{Card: "s1-1.w3", Epoch: 0, Attempt: 3, Branch: "sprint/s1-1.w3.g1.e0", BaseHead: landHead, BaseAttempt: 2,
 		Brief: "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nWHO: friend amy\n\nThe task."}
-	text := friendBrief("amy", p)
+	text := friendBrief("amy", "", p)
 	assert.Contains(t, text, "The Head you report must be origin's tip of your branch when sync reads it", "the brief names the tip-equality rule friendFinish checks")
 	assert.Contains(t, text, "the attempt is expected to start from the tip named above", "the brief says where the attempt starts")
 	assert.NotContains(t, text, "descend", "the brief claims no descent check, for friendFinish makes none")

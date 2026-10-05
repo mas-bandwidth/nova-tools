@@ -146,6 +146,7 @@ func TestEveryVerbHelpShowsAnExampleItsFlagsTake(t *testing.T) {
 		assert.LessOrEqual(t, strings.Index(out.String(), "example:"), strings.Index(out.String(), "flags:"), "%s -h shows the example after the flags", v.name)
 	}
 	ta := newTestApp(t)
+	t.Cleanup(func() { _ = os.Remove("wake.json") })
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
 	ta.ok("add --stream s1 --count 9")
 	for _, v := range verbs {

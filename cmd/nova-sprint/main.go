@@ -54,17 +54,19 @@ func main() {
 // shared by every verb it runs (the driver runs many), its clock, and how it
 // sleeps. Tests give it a backend of their own.
 type app struct {
-	getenv  func(string) string
-	now     func() time.Time
-	sleep   func(time.Duration)
-	backend func(ctx context.Context, addr string, names sprint.Names) (store.Backend, error)
-	conns   map[string]*redisconn.Conn
-	cached  map[string]store.Backend
-	twins   map[string]*twin // the open `--redis mem:<file>` twins (twin.go)
-	meter   hostload.Source  // how fleet beat measures this machine
-	etaMu   sync.Mutex
-	etas    []etaSample // the view's estimates of the last etaHold (heldETA)
-	etaKey  etaKey      // the cards to land the held estimates were made over
+	getenv     func(string) string
+	now        func() time.Time
+	sleep      func(time.Duration)
+	backend    func(ctx context.Context, addr string, names sprint.Names) (store.Backend, error)
+	conns      map[string]*redisconn.Conn
+	cached     map[string]store.Backend
+	twins      map[string]*twin // the open `--redis mem:<file>` twins (twin.go)
+	meter      hostload.Source  // how fleet beat measures this machine
+	etaMu      sync.Mutex
+	etas       []etaSample // the view's estimates of the last etaHold (heldETA)
+	etaKey     etaKey      // the cards to land the held estimates were made over
+	dirNotesMu sync.Mutex
+	dirNotes   map[string]bool
 
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.
@@ -290,6 +292,7 @@ func newApp(getenv func(string) string) *app {
 	a.briefBar = a.readBriefBar
 	a.mergeQueue = &keptQueue{ask: ghMergeQueue{host: githubHost}, now: func() time.Time { return a.now() }, kept: map[string]keptAnswer{}}
 	a.busWatches = map[string]*bus.Watch{}
+	a.dirNotes = map[string]bool{}
 	return a
 }
 

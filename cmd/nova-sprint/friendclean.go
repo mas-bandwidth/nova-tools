@@ -140,8 +140,11 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	}
 	cl := &friendClean{root: *root, days: *days, dry: *dry, now: a.now(),
 		cache: gocache.Bounds{Limit: gocache.Limit, Slack: gocache.Slack, Remove: math.MaxInt}}
-	for _, n := range names {
-		cl.friend(n)
+	for _, r := range rows {
+		dir := a.resolveFriendDir(r.Name, config.FriendDir(r), *root, func(l string) {
+			cl.lines = append(cl.lines, l)
+		})
+		cl.friend(r.Name, dir)
 	}
 	return cl.report(stdout, c.json)
 }
@@ -192,8 +195,11 @@ func (cl *friendClean) say(format string, args ...any) {
 }
 
 // friend applies the rule to one friend's directory, and says what it found on one line.
-func (cl *friendClean) friend(name string) {
-	w := filepath.Join(cl.root, name+"-working")
+func (cl *friendClean) friend(name, dir string) {
+	w := dir
+	if w == "" {
+		w = filepath.Join(cl.root, name+"-working")
+	}
 	if fi, err := os.Lstat(w); err != nil || !fi.IsDir() {
 		cl.say("FRIENDS-CLEAN FRIEND %s dir=%s absent: no working directory on this machine", oneline.Escape(name), oneline.Escape(w))
 		return

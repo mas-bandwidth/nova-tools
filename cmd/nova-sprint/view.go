@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"io"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -176,6 +177,7 @@ type workerView struct {
 	Epoch  uint64       `json:"epoch"`
 	As     string       `json:"as"`
 	Kind   string       `json:"kind"` // member or friend
+	Dir    string       `json:"dir,omitempty"`
 	Cursor string       `json:"cursor"`
 	Next   string       `json:"next,omitempty"`
 	Cards  []workerCard `json:"cards"`
@@ -711,6 +713,11 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 	row := as
 	if slices.Contains(friends, as) {
 		v.Kind, row = "friend", sprint.FriendRow(as)
+		friendDir := "~/" + as + "-working"
+		if spec, err := st.FriendSpecOf(ctx, as); err == nil && spec.Dir != "" {
+			friendDir = spec.Dir
+		}
+		v.Dir = friendDir
 	}
 	d, err := st.Dealt(ctx)
 	if err != nil {
@@ -758,7 +765,7 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 		wc := workerCard{ID: c.ID, P: p.Primary, St: c.Col, Att: p.Attempt, Gen: p.Gen, DL: deadline[c.ID], Br: p.Branch, J: open[p.Primary],
 			Base: cmp.Or(p.Base, swarm.ReadCardBase([]byte(p.Brief)).Ref), Paths: swarm.CardPaths([]byte(p.Brief))}
 		if v.Kind == "friend" {
-			wc.Brief = "~/" + as + "-working/inbox/" + friendJobOf(p) + "/BRIEF.md"
+			wc.Brief = filepath.Join(v.Dir, "inbox", friendJobOf(p), "BRIEF.md")
 		} else {
 			wc.Brief = "nova-sprint card " + p.Primary + " --brief"
 		}
@@ -827,7 +834,11 @@ func workerNext(v workerView, c *sprint.Card, p sprint.Packet) string {
 	at := c.ID + "@" + strconv.Itoa(p.Gen) + " --epoch " + strconv.FormatUint(v.Epoch, 10)
 	switch {
 	case v.Kind == "friend" && c.Col == sprint.Working:
-		return "finish " + c.ID + ": push to " + p.Branch + ", then write ~/" + v.As + "-working/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
+		dir := v.Dir
+		if dir == "" {
+			dir = "~/" + v.As + "-working"
+		}
+		return "finish " + c.ID + ": push to " + p.Branch + ", then write " + filepath.Join(dir, "outbox", friendJobOf(p), "REPORT.md") + " with Verdict: LAND|HOLD|FAIL and Head: <sha>"
 	case v.Kind == "friend":
 		return "start " + c.ID + ": its brief is " + v.Cards[0].Brief
 	case c.Col == sprint.Working:

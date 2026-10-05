@@ -18,6 +18,7 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -223,12 +224,51 @@ func FriendMode(r Row) string {
 	return DefaultFriendMode
 }
 
+// FriendDir is a friend row's working directory: its dir field, or "" when
+// the row has none.
+func FriendDir(r Row) string {
+	return r.Fields["dir"]
+}
+
+// checkFriendDir validates a friend's dir: it must be an absolute path to an
+// existing directory, not a symlink.
+func checkFriendDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("--dir wants an absolute path, got %q", dir)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("--dir %s: %w", dir, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("--dir %s is a symlink: friends want real directories", dir)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("--dir %s is not a directory", dir)
+	}
+	return nil
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
 // instead). A width that failed its own validation is absent and skipped.
+// If dir is set, it must be an absolute path to an existing directory that is
+// not a symlink.
 func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
+	}
+	if d, ok := r.Fields["dir"]; ok && d != "" {
+		if err := checkFriendDir(d); err != nil {
+			return fmt.Errorf("friend %s: %w", r.Name, err)
+		}
+	}
+	return nil
+}
+
+func checkFriendChanges(changes map[string]string) error {
+	if d, ok := changes["dir"]; ok && d != "" {
+		return checkFriendDir(d)
 	}
 	return nil
 }
@@ -409,8 +449,10 @@ var Kinds = []*Kind{
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: "dir", Type: TypeText, Nullable: true, Help: "her working directory: an absolute path to an existing directory, not a symlink; unset until declared"},
 		},
-		Check: checkFriend,
+		Check:        checkFriend,
+		CheckChanges: checkFriendChanges,
 		ApplyOrder: func(r Row) int {
 			if hasWord(r.Fields["roles"], CoordinatorRole) {
 				return 0

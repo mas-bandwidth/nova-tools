@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `dir` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -221,6 +221,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
 | `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
+| `dir` | text, nullable | | her working directory: an absolute path to an existing directory, not a symlink; unset until declared | `friend:<f>:desired` dir (`HDEL` when unset) |
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -415,7 +416,8 @@ config.fleet             (name PK = 'fleet', store -> machines.name,
                           the one row inserted by the migration)
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
-                          CHECK (width >= 1))
+                          CHECK (width >= 1); mode added by 0030, text NOT NULL DEFAULT 'batch'
+                          CHECK (mode in ('batch', 'one-shot')); dir added by 0033, text NULL)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration; reader_tier added by 0010, dropped
@@ -541,8 +543,9 @@ The machine is the one her slots are charged to: the `host` her own beat
 else the fleet's coordinator machine (`fleet:coordinator`, written a moment
 before) as the default charge; neither is a refusal naming `nova-config
 fleet set --coordinator <machine>`. Her width, when it differs, is a plain
-`HSET friend:<f>:desired width <n>`, a field no function reads or writes, and
-her mode the same way, `HSET friend:<f>:desired mode <m>`.
+`HSET friend:<f>:desired width <n>`, a field no function reads or writes,
+her mode the same way, `HSET friend:<f>:desired mode <m>`, and her dir
+the same way, `HSET friend:<f>:desired dir <path>` (`HDEL` when unset).
 `ns_friend_roles(f, roles)` when the
 roles differ (the actor must hold the coordinator role in Redis, or nobody
 does yet and this row makes the first): the roles written are the row's
