@@ -22,6 +22,12 @@ const (
 	// PropFriendIdle is the work table's property: how long a friend holding cards may
 	// show no session activity before it is an alarm, a duration.
 	PropFriendIdle = "friend_idle"
+	// PropFriendStallAfter is the work table's property: how long a friend holding cards
+	// may show neither session activity nor card progress before she is stalled, a duration.
+	PropFriendStallAfter = "friend_stall_after"
+	// PropFriendStallStep is the work table's property: the duration of each rung of
+	// the friend stall ladder.
+	PropFriendStallStep = "friend_stall_step"
 	// PropReadTier is the work table's property: the sprint's read tier.
 	PropReadTier = "read_tier"
 	// FieldReadTier is a stream's control card's field: the stream's read tier,
@@ -70,6 +76,37 @@ func (s *Snapshot) FriendIdleAfter() time.Duration {
 	return FriendIdleDefault
 }
 
+// FriendStallAfterDefault is how long a friend holding cards may show neither file write
+// under her working directory nor card progress before the stall ladder begins.
+const FriendStallAfterDefault = 20 * time.Minute
+
+// FriendStallAfter is that bound: the sprint's setting, else FriendStallAfterDefault.
+func (s *Snapshot) FriendStallAfter() time.Duration {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropFriendStallAfter); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return FriendStallAfterDefault
+}
+
+// FriendStallStepDefault is the duration between rungs of the friend stall ladder.
+const FriendStallStepDefault = 5 * time.Minute
+
+// FriendStallStep is that step: the sprint's setting, else FriendStallStepDefault.
+func (s *Snapshot) FriendStallStep() time.Duration {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropFriendStallStep); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return FriendStallStepDefault
+}
+
 // readTierSetting is the read tier set for the stream's reads: the stream's own,
 // else the sprint's, else "" (each card's own tier).
 func (s *Snapshot) readTierSetting(stream string) string {
@@ -104,11 +141,13 @@ func stronger(a, b string) string {
 // bound, read tier and attempt cap (brief_bound.go, AttemptsCap). An empty value
 // leaves that setting as it is; ReadTierDefault takes one off.
 type SetReq struct {
-	Streams    []string `json:",omitempty"`
-	ReadTier   string   `json:",omitempty"`
-	DealtMax   string   `json:",omitempty"`
-	Attempts   string   `json:",omitempty"`
-	FriendIdle string   `json:",omitempty"`
+	Streams          []string `json:",omitempty"`
+	ReadTier         string   `json:",omitempty"`
+	DealtMax         string   `json:",omitempty"`
+	Attempts         string   `json:",omitempty"`
+	FriendIdle       string   `json:",omitempty"`
+	FriendStallAfter string   `json:",omitempty"`
+	FriendStallStep  string   `json:",omitempty"`
 	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
 	// stream's control card (FieldReadTierReason); Answers the judgments this answers.
 	Reason  string   `json:",omitempty"`
@@ -176,8 +215,18 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-idle wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendIdleDefault.String()+"; found "+r.FriendIdle)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" {
-		why = append(why, "nothing to set: --read-tier, --dealt-max, --go-lanes, --attempts, --friend-idle or an --alarm-... threshold")
+	if r.FriendStallAfter != "" && r.FriendStallAfter != ReadTierDefault {
+		if d, err := time.ParseDuration(r.FriendStallAfter); err != nil || d <= 0 {
+			why = append(why, "--friend-stall-after wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendStallAfterDefault.String()+"; found "+r.FriendStallAfter)
+		}
+	}
+	if r.FriendStallStep != "" && r.FriendStallStep != ReadTierDefault {
+		if d, err := time.ParseDuration(r.FriendStallStep); err != nil || d <= 0 {
+			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" {
+		why = append(why, "nothing to set: --read-tier, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -190,6 +239,12 @@ func Set(s *Snapshot, r SetReq) Plan {
 	}
 	if len(r.Streams) > 0 && r.FriendIdle != "" {
 		why = append(why, "--friend-idle is the sprint's, not a stream's: nova-sprint set --friend-idle "+r.FriendIdle)
+	}
+	if len(r.Streams) > 0 && r.FriendStallAfter != "" {
+		why = append(why, "--friend-stall-after is the sprint's, not a stream's: nova-sprint set --friend-stall-after "+r.FriendStallAfter)
+	}
+	if len(r.Streams) > 0 && r.FriendStallStep != "" {
+		why = append(why, "--friend-stall-step is the sprint's, not a stream's: nova-sprint set --friend-stall-step "+r.FriendStallStep)
 	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
@@ -258,7 +313,15 @@ func Set(s *Snapshot, r SetReq) Plan {
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	kvs := [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}, {PropGoLanes, r.GoLanes}, {PropAttempts, r.Attempts}, {PropFriendIdle, r.FriendIdle}}
+	kvs := [][2]string{
+		{PropReadTier, r.ReadTier},
+		{PropDealtMax, r.DealtMax},
+		{PropGoLanes, r.GoLanes},
+		{PropAttempts, r.Attempts},
+		{PropFriendIdle, r.FriendIdle},
+		{PropFriendStallAfter, r.FriendStallAfter},
+		{PropFriendStallStep, r.FriendStallStep},
+	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
 	}
@@ -287,6 +350,10 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%d attempts on one brief)", AttemptsDefault)
 	case name == PropFriendIdle:
 		return fmt.Sprintf("default (%s)", FriendIdleDefault)
+	case name == PropFriendStallAfter:
+		return fmt.Sprintf("default (%s)", FriendStallAfterDefault)
+	case name == PropFriendStallStep:
+		return fmt.Sprintf("default (%s)", FriendStallStepDefault)
 	}
 	return "default (each card's own tier)"
 }

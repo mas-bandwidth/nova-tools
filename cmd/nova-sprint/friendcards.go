@@ -515,6 +515,27 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 	return err
 }
 
+// wakeFriendStall wakes a friend whose stall ladder has climbed to a wake rung (1 or 2;
+// docs/SPEC-SPRINT.md section friend-stall-ladder-r.w1; the model is tla/StallLadder.tla):
+// a bus message pushed to her daemon as a turn, waking her to resume or report progress.
+func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string, rung int, d time.Duration, say func(string)) error {
+	m := bus.Message{
+		From:    st.Actor,
+		To:      []string{name},
+		Subject: fmt.Sprintf("stall wake: friend %s turn %d (%s)", name, rung, d.Round(time.Minute)),
+		Body:    fmt.Sprintf("Your session has shown no activity for %s while holding dealt sprint cards (wake turn %d); please resume work or report progress.", d.Round(time.Minute), rung),
+	}
+	err := a.bus(ctx, m, say)
+	if err == nil {
+		return nil
+	}
+	why := oneline.Escape(err.Error())
+	if say != nil {
+		say(fmt.Sprintf("FRIEND-STALL NOTE friend=%s rung=%d: the bus message to her was not sent (%s); tell her by hand", name, rung, why))
+	}
+	return err
+}
+
 // friendReadOf delivers one frontier read and closes it from the friend's
 // report. The brief is the read's (sprint.FriendReadBrief: the AS A READ
 // section, the attempt's branch, start commit and head, deadline two hours
