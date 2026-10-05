@@ -420,7 +420,8 @@ func stageArtifact(bin, name, src string) (string, error) {
 }
 
 // copyAside keeps target's bytes so a later rename failure can put them back.
-// A missing target is nothing to keep.
+// A missing target is nothing to keep. A non-regular file is refused before
+// any rename or aside (security#72 finding 5).
 func copyAside(target string) (string, bool, error) {
 	info, err := os.Lstat(target)
 	if err != nil {
