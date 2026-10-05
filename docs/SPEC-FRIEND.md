@@ -40,7 +40,14 @@ below): the daemon answering is never the session.
 - The launchd agent `com.nova.friend-<friend>`: RunAtLoad, KeepAlive, a five
   second throttle. launchd opens its own log before the daemon runs and cannot
   open one on a network volume (EX_CONFIG, measured 2026-10-03), so that log
-  is under the home directory, beside the state directory.
+  is under the home directory, beside the state directory. The binary is the
+  same wall, one step earlier: a binary under `/Volumes` starts and then does
+  nothing. `install` copies it to `~/.nova-friend/bin/nova-friend` before
+  writing the plist, and the plist names the copy. A copy that cannot be made
+  (no home directory off `/Volumes`, or the copy fails) is refused: no plist
+  is written and the agent is not loaded. A binary already off `/Volumes` is
+  named as it is. The log path is a separate rule and stays under the home
+  directory.
 
 ## The protocol
 
@@ -778,7 +785,10 @@ the access request). The permission is granted to the binary in the system's
 privacy settings, by the person, never by the tool, and a rebuilt binary is a
 new one to it. The state files are out of its way, under the home directory;
 until it is granted the daemon beats and answers the daemon pong but cannot
-run the harness on the volume, and the record says so.
+run the harness on the volume, and the record says so. `install` does not
+point the agent at a binary on that volume: it copies the binary under the
+home directory, or it refuses. The harness and the friend's directory can
+still sit on the volume, and that still needs the person's permission.
 
 Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
 code is not yet held to it where the two differ. A session check waits for the

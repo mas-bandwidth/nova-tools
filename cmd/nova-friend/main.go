@@ -72,6 +72,7 @@ type world struct {
 	uid       int
 	home      string
 	binary    func() (string, error)
+	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
 	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
 	alive     friend.Aliver // the harness check, when set (a test's fake harness); nil watches the adapter
@@ -129,6 +130,7 @@ func realWorld() world {
 			return nil
 		},
 		lookPath: exec.LookPath,
+		copy:     friend.CopyExecutable,
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -300,7 +302,9 @@ restarted when it dies, pending messages redelivered first), boots out whatever 
 and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
 ~/Library/Logs (launchd cannot open one on a network volume), and the daemon's state files and
 record under ~/.nova-friend/<me> (a background process may not touch a removable volume without
-the person's permission); --state-dir moves them. --secrets NAME[,NAME] wraps the daemon in nova-secrets
+the person's permission); --state-dir moves them. A binary on a removable volume (/Volumes) is copied to
+~/.nova-friend/bin/nova-friend before the plist is written, and the plist names the copy; a copy that
+cannot be made is refused and the agent is not loaded. --secrets NAME[,NAME] wraps the daemon in nova-secrets
 exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
 opening exactly those names to the harness and refusing to start without every one; nova-secrets
 and sops are found on PATH at install and written by absolute path. --dry-run prints the plan and
@@ -752,7 +756,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	}
 	a := friend.Agent{
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
-		Binary: bin, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
+		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
 	}
@@ -781,9 +785,18 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
+	src := a.Binary
+	placed, copy, err := friend.PlanBinary(src, a.Home)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
 	if dry {
-		o := tool.Done().Fact("label", a.Label()).Fact("plist", a.PlistPath()).Fact("launchd_log", a.LaunchdLog).
-			Item("plan", "command", tool.Text("write "+a.PlistPath())).
+		a.Binary = placed
+		o := tool.Done().Fact("label", a.Label()).Fact("plist", a.PlistPath()).Fact("launchd_log", a.LaunchdLog)
+		if copy {
+			o.Item("plan", "command", tool.Text("copy "+src+" "+placed))
+		}
+		o.Item("plan", "command", tool.Text("write "+a.PlistPath())).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + a.Said())
@@ -795,6 +808,9 @@ func (w world) install(c *tool.Call) *tool.Out {
 		}
 		return os.WriteFile(p, data, 0o644)
 	}, func() { w.sleep(context.Background(), time.Second) })
+	if err != nil && errors.Is(err, friend.ErrBinaryOnRemovableVolume) {
+		return tool.Refuse(err.Error())
+	}
 	o := tool.Done().Fact("label", a.Label()).Fact("plist", path).Fact("launchd_log", a.LaunchdLog)
 	for _, r := range ran {
 		o.Item("ran", "command", tool.Text(r))
