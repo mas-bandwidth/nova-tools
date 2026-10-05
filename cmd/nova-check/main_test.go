@@ -952,6 +952,13 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// The transcript test runs the documented commands in a child of this test
+	// binary with its own working directory, so each documented relative path
+	// resolves as written without a process-wide Chdir. The child re-enters the
+	// verb here, before the testing package parses any flag.
+	if os.Getenv("NOVA_CHECK_CHILD_MAIN") != "" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	code := m.Run()
 	if largeSelf500Dir != "" {
 		_ = os.RemoveAll(largeSelf500Dir)
