@@ -1,7 +1,9 @@
 # Zhi's DSH push-route experiment (missed-07)
 
-Status: no push route proven; the existing `route=defer` fallback is not verified
-in this checkout, so no adapter change is made on that basis.
+Status: no push route proven; existing `route=defer` behaviour is documented in
+cmd/nova-friend/main.go:375 and docs/SPEC-FRIEND.md:279, but whether the daemon
+actually takes that branch for Zhi remains unverified, so no adapter change is
+made on that basis.
 
 Measured on 2026-10-04 with DeepSeek Harness 0.2.0-rc.2 (`dsh` from the
 installed app's `runtime/cli/bin/dsh`), in an isolated DSH home with no
@@ -42,6 +44,8 @@ session with credentials, which this card forbids in the throwaway home. No
 production session was targeted.
 
 Conclusion: the one-shot runner refuses a `minimal`-preset desktop session
-before any write. `grep -rn "route=defer"` over this checkout finds the phrase
-only in this doc, so the daemon's `route=defer` fallback is not verified from
-this repository; no adapter change is made on that unverified basis.
+before any write. Existing `route=defer` behaviour is documented in
+cmd/nova-friend/main.go:375 ("route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE...")
+and docs/SPEC-FRIEND.md:279 ("`route=defer` with that line when none does");
+what remains unverified is whether the daemon actually takes that branch for
+Zhi. No adapter change is made on that unverified basis.
