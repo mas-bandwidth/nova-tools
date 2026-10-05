@@ -138,7 +138,7 @@ func (st *Store) timers(ctx context.Context, m Machine, res *TickResult) error {
 	if err != nil {
 		return err
 	}
-	if len(r.Notes) == 0 {
+	if r.Notes == 0 {
 		return nil
 	}
 	part := PartResult{Name: "timers", Result: Result{Verb: "tick timers"}}
