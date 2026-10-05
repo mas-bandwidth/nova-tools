@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"io/fs"
 	"maps"
@@ -402,6 +401,12 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 // wakes a friend's daemon when it delivers her a card.
 const busRedisEnv = "NOVA_BUS_REDIS"
 
+// busUserEnv and busPasswordEnvEnv are the bus's own login, apart from the sprint store's.
+const (
+	busUserEnv        = "NOVA_BUS_REDIS_USER"
+	busPasswordEnvEnv = "NOVA_BUS_REDIS_PASSWORD_ENV"
+)
+
 // busSendFn sends one message on the friends' bus.
 type busSendFn func(ctx context.Context, m bus.Message) error
 
@@ -413,12 +418,12 @@ func (a *app) sendBus(ctx context.Context, m bus.Message) error {
 	if addr == "" {
 		return errors.New(busRedisEnv + " is not set: no bus to send on")
 	}
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-	if a.getenv(redisauth.UserEnv) != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if a.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
+	// the bus has its own login (NOVA_BUS_REDIS_USER, NOVA_BUS_REDIS_PASSWORD_ENV), never the
+	// sprint store's: a coordinator's store login sent to a bus with no users is refused
+	// (WRONGPASS), and every note to a friend failed that way on 2026-10-04
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: busUserEnv}}
+	if a.getenv(busUserEnv) != "" {
+		o.Env.PasswordEnv = busPasswordEnvEnv
 	}
 	conn, err := redisconn.Open(ctx, o, a.getenv)
 	if err != nil {
