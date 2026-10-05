@@ -238,5 +238,5 @@ func TestPolishLinksBannerExampleMatchesOutput(t *testing.T) {
 	assert.Empty(t, stderr)
 	step := onboarding.Step{Line: "$ " + command, Args: args, Want: []string{"LINKS OK files=1 links=0 excluded=0"}, StderrWhole: true}
 	result := onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}
-	assert.Empty(t, onboarding.Compare(step, result, nil))
+	compareOne(t, step, result)
 }
