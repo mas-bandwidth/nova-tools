@@ -145,6 +145,9 @@ type app struct {
 	// landFailed is what the land loop's last round printed when it failed, "" after a
 	// round that did not (landloop.go): the same failure again prints nothing.
 	landFailed string
+	// landRetries is the retries the land loop has run for each stream stopped by a
+	// rejected push (retryRejected), forgotten when the stream is no longer stopped by one
+	landRetries map[string]int
 	// prune is the landed cards' branches waiting for the cleanup (landprune.go), and
 	// landLazy says the land running is the land loop's, which cleans up between its
 	// rounds: land itself then leaves the queue as it is.

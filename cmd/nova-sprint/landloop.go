@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -64,8 +65,11 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 // read and held nothing.
 func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
 	a.serial.Lock()
-	queued, coordinator, err := a.queuedToMerge(ctx, addr)
+	queued, coordinator, retry, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
+	if err == nil && coordinator != "" {
+		a.retryRejected(coordinator, addr, retry, stdout)
+	}
 	idle := err == nil && !queued
 	var lines []string
 	code := 0
@@ -108,23 +112,53 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 
 // queuedToMerge says a stream has a card queued to merge, and names the sprint's
 // coordinator, whose the landing is ("" when the sprint has none); err when the sprint
-// could not be read, which says nothing of what is queued.
-func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coordinator string, err error) {
+// could not be read, which says nothing of what is queued. retry is the streams
+// stopped by a rejected push that are due a resume (sprint.RejectedRetryDue); a
+// stream no longer stopped by one forgets its retries (a.landRetries).
+func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coordinator string, retry []string, err error) {
 	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
 	if err != nil {
-		return false, "", err
+		return false, "", nil, err
 	}
 	if coordinator, err = st.B.Coordinator(ctx); err != nil {
-		return false, "", err
+		return false, "", nil, err
 	}
 	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
 	if err != nil {
-		return false, "", err
+		return false, "", nil, err
 	}
 	for _, row := range s.Merge.Rows() {
+		ctl := s.StreamCtl(row)
+		if ctl == nil || ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "rejected" {
+			delete(a.landRetries, row)
+		} else if sprint.RejectedRetryDue(ctl, a.landRetries[row], a.now()) {
+			retry = append(retry, row)
+		}
 		if s.Merge.Count(row, sprint.Queued) > 0 {
-			return true, coordinator, nil
+			queued = true
 		}
 	}
-	return false, coordinator, nil
+	return queued, coordinator, retry, nil
+}
+
+// retryRejected resumes each stream of retry as the coordinator does with `resume`
+// and says so; the landing that follows in the same round pushes it again, and a
+// refusal again stops it again with a judgment of its own (sprint.LandRetries bounds
+// the tries). A resume that fails says so and counts as a try.
+func (a *app) retryRejected(coordinator, addr string, retry []string, stdout io.Writer) {
+	at := oneline.Field(a.now().Format("15:04:05"))
+	for _, stream := range retry {
+		if a.landRetries == nil {
+			a.landRetries = map[string]int{}
+		}
+		a.landRetries[stream]++
+		var out, errb bytes.Buffer
+		code := a.cmdResume([]string{"--redis", addr, "--actor", coordinator, "--stream", stream,
+			"--did", fmt.Sprintf("the land loop retries the push refused earlier (try %d of %d)", a.landRetries[stream], sprint.LandRetries)}, &out, &errb)
+		line := fmt.Sprintf("LAND RETRY stream=%s try=%d of %d: the push was refused; the stream resumes and lands again", oneline.Field(stream), a.landRetries[stream], sprint.LandRetries)
+		if code != 0 {
+			line = fmt.Sprintf("LAND RETRY FAILED stream=%s: the resume was refused: %s", oneline.Field(stream), oneline.Err(errors.New(strings.TrimSpace(errb.String()))))
+		}
+		fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(line))
+	}
 }
