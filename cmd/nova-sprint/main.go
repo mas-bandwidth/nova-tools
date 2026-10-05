@@ -143,6 +143,9 @@ type app struct {
 	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
 	// server's own step.
 	forward func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error)
+	// outside is the seat check's reaches past the store (machinery.go): zero
+	// is the machine's own; a test gives fakes.
+	outside outside
 	// landFailed is what the land loop's last round printed when it failed, "" after a
 	// round that did not (landloop.go): the same failure again prints nothing.
 	landFailed string
