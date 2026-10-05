@@ -69,7 +69,7 @@ func TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute(t *testing.
 			}}}})
 			rest := RouteRest{At: w.s.Now, Until: OpenUntil, Cause: RestCredit, Why: "out of credit: provider p refused card s1-1"}
 			w.s.Fleet.SetProps(map[string]string{PropProviderRest("p"): rest.value()})
-			require.True(t, redealBound(w.s.Fleet.Card("s1-1.w1")), "at its redeal bound")
+			require.True(t, redealBound(w.s, w.s.Fleet.Card("s1-1.w1")), "at its redeal bound")
 			require.Nil(t, AtRedealBound(w.s, w.s.Primary("s1-1")), "below its ceiling: escalated, not judged")
 
 			dealWith(w,

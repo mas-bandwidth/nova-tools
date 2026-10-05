@@ -98,13 +98,15 @@ func TestObserveFriendPlansTheRecordOrRefuses(t *testing.T) {
 func TestObservedStatusIsUpOrDown(t *testing.T) {
 	t.Parallel()
 	up := obs(Up, h0, 2)
-	assert.Equal(t, Up, ObservedStatus(up, 2, h0), "the first proof is up at once")
-	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter-time.Second)))
-	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter)), "exactly ten seconds is down")
-	assert.Equal(t, Down, ObservedStatus(up, 3, h0), "an old seat's proof never looks up under a new seat")
-	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second)), "a proof dated after now is no proof: a negative age is not under ten seconds")
-	assert.Equal(t, Down, ObservedStatus(obs(Asleep, h0, 2), 2, h0), "asleep shows as down")
-	assert.Equal(t, Down, ObservedStatus(obs(Down, h0, 2), 2, h0))
+	assert.Equal(t, Up, ObservedStatus(up, 2, h0, 0), "the first proof is up at once")
+	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter-time.Second), 0))
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter), 0), "exactly ten seconds is down")
+	assert.Equal(t, Down, ObservedStatus(up, 3, h0, 0), "an old seat's proof never looks up under a new seat")
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second), 0), "a proof dated after now is no proof: a negative age is not under ten seconds")
+	assert.Equal(t, Down, ObservedStatus(obs(Asleep, h0, 2), 2, h0, 0), "asleep shows as down")
+	assert.Equal(t, Down, ObservedStatus(obs(Down, h0, 2), 2, h0, 0))
+	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(30*time.Second), time.Minute), "friend_observed_down_after set to a minute: thirty seconds is up")
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(time.Minute), time.Minute), "and a minute is down")
 }
 
 // The friends' rule over everything: the coordinator's hold wins; an observed

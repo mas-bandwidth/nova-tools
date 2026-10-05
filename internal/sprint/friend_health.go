@@ -28,8 +28,9 @@ const FirstSeatGeneration uint64 = 1
 const Asleep = "asleep"
 
 // FriendObservedDownAfter is how long a coordinator's observation of a friend
-// stands before she is down without a newer proof: the keepalive's ten
-// seconds. A friend observed is never up on her own beat again.
+// stands before she is down without a newer proof by default: the keepalive's
+// ten seconds, the friend_observed_down_after setting's default (policy.go). A
+// friend observed is never up on her own beat again.
 const FriendObservedDownAfter = 10 * time.Second
 
 // HealthStates are the words an observation carries; up alone shows as up.
@@ -145,11 +146,15 @@ type FriendHealthWrite struct {
 // ObservedStatus is the friends' rule over the coordinator's observation at
 // now, for a friend observed at least once: up only when the observation's
 // word is up, under the current seat generation (an old seat's proof never
-// looks up under a new seat), with its proof under FriendObservedDownAfter
+// looks up under a new seat), with its proof under after (friend_observed_down_after;
+// zero is FriendObservedDownAfter)
 // old and not dated after now (a negative age is no proof); down otherwise,
 // whatever finer word the row keeps.
-func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
-	if age := now.Sub(h.Seen); h.State == Up && h.Generation == generation && age >= 0 && age < FriendObservedDownAfter {
+func ObservedStatus(h FriendHealth, generation uint64, now time.Time, after time.Duration) string {
+	if after <= 0 {
+		after = FriendObservedDownAfter
+	}
+	if age := now.Sub(h.Seen); h.State == Up && h.Generation == generation && age >= 0 && age < after {
 		return Up
 	}
 	return Down
@@ -163,4 +168,7 @@ type FriendPresence struct {
 	Beat       Beat
 	Health     FriendHealth
 	Generation uint64
+	// ObservedDownAfter is friend_observed_down_after as the reader took it (policy.go);
+	// zero is its default.
+	ObservedDownAfter time.Duration
 }

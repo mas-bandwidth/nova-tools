@@ -562,7 +562,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	case Review:
 		switch {
 		case acceptable(s, pr):
-			return "acceptable (" + readersWord(ReadsNeeded(pr)) + " said ok at its head), and no judgment is open on it", "", false
+			return "acceptable (" + readersWord(ReadsNeeded(c.s, pr)) + " said ok at its head), and no judgment is open on it", "", false
 		case pr.F("result") == "failed":
 			return "its work came back failed, and no judgment is open on it", "", false
 		}

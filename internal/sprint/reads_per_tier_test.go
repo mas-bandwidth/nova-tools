@@ -81,7 +81,7 @@ func TestAFlashCardIsAcceptedOnOneReadAndAProCardOnTwo(t *testing.T) {
 			w := tierWorld(t)
 			w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{tc.id}}}))
 			pr := w.s.Work.Card(tc.id)
-			assert.Equal(t, tc.reads, ReadsNeeded(pr))
+			assert.Equal(t, tc.reads, ReadsNeeded(w.s, pr))
 			// the reads are asked one at a time: the first alone, the next once it came back ok
 			for i := 0; i < tc.reads; i++ {
 				if i > 0 {

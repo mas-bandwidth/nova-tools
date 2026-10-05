@@ -197,6 +197,12 @@ func (st *Store) remind(ctx context.Context, m Machine, res *TickResult) error {
 	if len(g.People) == 0 && len(g.Noted) == 0 {
 		return nil
 	}
+	// remind_every, nova-config's, as the tick's parts read it (policy.go)
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return err
+	}
+	g.Every = (&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyRemindEvery)
 	now := st.now()
 	type outcome struct {
 		goal sprint.Goal

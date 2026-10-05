@@ -130,7 +130,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
 		if !another && ReadsWanted(s, c) == 0 {
-			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
+			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(s, c) {
 				return "asked already: its reads are asked one at a time, and the next is asked when the one outstanding comes back ok"
 			}
 			return "asked already"
@@ -188,13 +188,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		// first alone, then the rest once it came back ok; a read handed back, or taken
 		// back from a reader away, is not a read and is asked again whatever stands: it
 		// was wanted when it was placed (ReadsWanted)
-		want := max(readsWantedOf(c, kept), len(returned)+len(away))
+		want := max(readsWantedOf(s, c, kept), len(returned)+len(away))
 		if another {
 			want = 1
 		}
-		if !another && len(all)+len(free)+len(returned) < ReadsNeeded(c) {
+		if !another && len(all)+len(free)+len(returned) < ReadsNeeded(s, c) {
 			// not even its first read is asked when no reader could ever read the rest
-			want = ReadsNeeded(c) - len(all)
+			want = ReadsNeeded(s, c) - len(all)
 		}
 		// each read to a free reader with room, the finder's first (askPicks)
 		finder := finders[c.ID]
@@ -501,8 +501,8 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			rec := costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 			set := map[string]string{FieldReadTake + itoa(run): rec, FieldReasked: itoa(returns)}
 			record(pr, readConsumer(s, c, run, "returned", rec))
-			if returns > MaxReadReasks {
-				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, MaxReadReasks)
+			if reasks := s.PolicyCount(PolicyMaxReadReasks); returns > reasks {
+				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, reasks)
 				set["retired"], set["retired_by"] = stamp(s.Now), "returned"
 				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
 					Changes: []Change{change(Readers, removeEntry(c, set))},
@@ -700,7 +700,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	}
 	var typ, why string
 	switch {
-	case len(oks) >= ReadsNeeded(pr):
+	case len(oks) >= ReadsNeeded(s, pr):
 		if offers || s.Running && AcceptHeld(pr) == "" {
 			// a RUNNING machine's pump accepts it: "accept is mechanical"
 			return Note{}, false
@@ -714,12 +714,12 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		return Note{}, false
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
-	case !broken && reads < ReadsNeeded(pr):
+	case !broken && reads < ReadsNeeded(s, pr):
 		// its reads are asked one at a time: the ones that stand came back ok and the
 		// next is the ask's (ReadsWanted), nothing to judge
 		return Note{}, false
 	default:
-		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(pr)), orDash(pr.F("head")))
+		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(s, pr)), orDash(pr.F("head")))
 	}
 	if contains(st.acked, typ) {
 		return Note{}, false
@@ -745,7 +745,7 @@ type AcceptReq struct {
 func okReaders(s *Snapshot, pr *Card) []*Card {
 	var out []*Card
 	seen := map[string]bool{}
-	need := ReadsNeeded(pr)
+	need := ReadsNeeded(s, pr)
 	for _, c := range readsAt(s, pr, pr.Int("attempt")) {
 		r := c.F("reader")
 		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && !seen[r] && len(out) < need {
@@ -792,12 +792,12 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		if why := inState(c, Review); why != "" {
 			return why
 		}
-		if oks := okReaders(s, c); len(oks) < ReadsNeeded(c) {
+		if oks := okReaders(s, c); len(oks) < ReadsNeeded(s, c) {
 			var names []string
 			for _, o := range oks {
 				names = append(names, o.F("reader"))
 			}
-			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeeded(c)), orDash(c.F("head")), len(oks), orDash(strings.Join(names, ",")))
+			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeeded(s, c)), orDash(c.F("head")), len(oks), orDash(strings.Join(names, ",")))
 		}
 		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
 			return "its merge record is " + placeWord(m)
@@ -1087,11 +1087,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if bound != nil {
 			// the attempt ended at its bound: its end is the primary's record of its failed
 			// work, as a failed finish writes it (failureSet), read by the next rework at a bound
-			set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = BoundClass(bound), c.F("attempt"), cardTierOf(c), "yes"
+			set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = BoundClass(bound), c.F("attempt"), cardTierOf(s, c), "yes"
 		}
 		if lift {
 			// the provider's return lifted the held bound: spent on this tier for good
-			set[FieldFailureBack] = strings.Join(append(Split(c.F(FieldFailureBack)), cardTierOf(c)), ",")
+			set[FieldFailureBack] = strings.Join(append(Split(c.F(FieldFailureBack)), cardTierOf(s, c)), ",")
 		}
 		if tier != "" {
 			// the card records its tier and this attempt's deal draws from it already

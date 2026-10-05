@@ -597,9 +597,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			if held != "" {
 				// the attempt before ended at its bound on its tier: its own judgment, which
 				// closes and opens again as plain when the provider is back, once (failure.go)
-				cd.what += "; a second bound on tier " + cardTierOf(c) + ": not reworked on it again"
+				cd.what += "; a second bound on tier " + cardTierOf(s, c) + ": not reworked on it again"
 			}
-			cd.decisions = boundDecisions(c, wc, held != "")
+			cd.decisions = boundDecisions(s, c, wc, held != "")
 			if bb, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row)); ok {
 				// too many attempts on one brief: the brief is wrong, not the worker, and the
 				// judgment offers brief and drop, never rework (brief_bound.go)
@@ -783,7 +783,7 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc == nil || wc.Col != Withdrawn || !redealBound(wc) {
+	if wc == nil || wc.Col != Withdrawn || !redealBound(s, wc) {
 		return nil
 	}
 	if _, atCap := AtBriefBound(pr, "", s.AttemptsCap(pr.Row)); s.NextTier(pr) == "" || atCap {
@@ -848,7 +848,7 @@ func providerWhy(wc *Card) string {
 // below its ceiling, on the tier it escalates to (NextTier, escalate); else c.
 func escalating(s *Snapshot, c *Card) *Card {
 	wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt")))
-	if wc == nil || wc.Col != Withdrawn || !redealBound(wc) {
+	if wc == nil || wc.Col != Withdrawn || !redealBound(s, wc) {
 		return c
 	}
 	if t := s.NextTier(c); t != "" {
@@ -858,10 +858,10 @@ func escalating(s *Snapshot, c *Card) *Card {
 }
 
 // redealBound says the withdrawn work card's next deal would count a take
-// past MaxRedeals, or would be its third try after two takes that ended the same
+// past max_redeals (policy.go), or would be its third try after two takes that ended the same
 // way (rule 2, identicalEnds).
-func redealBound(wc *Card) bool {
-	return wc.F(FieldTakeEnded) != "" && (wc.Int("redeals") >= MaxRedeals || identicalEnds(wc) != "")
+func redealBound(s *Snapshot, wc *Card) bool {
+	return wc.F(FieldTakeEnded) != "" && (wc.Int("redeals") >= s.PolicyCount(PolicyMaxRedeals) || identicalEnds(wc) != "")
 }
 
 // T4. TickLevel is the fleet's rebalance, once at the start of every tick
@@ -918,7 +918,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range cards {
 		attempt := c.Int("attempt")
 		if len(askNow) < TickMaxMoves && enoughReadersUp(s, c) &&
-			len(s.freeReaders(c, attempt))+len(returnedInTier(s, c, attempt)) >= ReadsNeeded(c)-len(liveReadsAt(s, c, attempt)) {
+			len(s.freeReaders(c, attempt))+len(returnedInTier(s, c, attempt)) >= ReadsNeeded(s, c)-len(liveReadsAt(s, c, attempt)) {
 			askNow = append(askNow, c)
 		}
 	}
@@ -927,7 +927,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		attempt := c.Int("attempt")
 		// the readers it still needs, whatever their room, and the reads asked now:
 		// one at a time (ReadsWanted)
-		need := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
+		need := ReadsNeeded(s, c) - len(liveReadsAt(s, c, attempt))
 		want := ReadsWanted(s, c)
 		free := s.freeReaders(c, attempt)
 		returned := len(returnedInTier(s, c, attempt))

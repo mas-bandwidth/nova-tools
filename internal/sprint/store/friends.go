@@ -273,6 +273,15 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 // friend's beat and health in one exchange. A store that keeps no records has
 // no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return st.friendRows(ctx, now, (&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyFriendObservedDown))
+}
+
+// friendRows is FriendRows with friend_observed_down_after as the caller took it.
+func (st *Store) friendRows(ctx context.Context, now time.Time, observedDownAfter time.Duration) ([]FriendRow, error) {
 	r, kv, err := st.roster(ctx)
 	if kv == nil {
 		return nil, nil // a store that keeps no records: no friend
@@ -308,7 +317,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
 			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, ObservedDownAfter: observedDownAfter}, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
 		}
@@ -346,7 +355,16 @@ func (st *Store) friendNames(ctx context.Context) []string {
 // FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status,
 // Class, Mode, and Running: the cards her last beat names running).
 func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
-	rows, err := st.FriendRows(ctx, now)
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return st.seatsOf(ctx, &sprint.Snapshot{Policy: policy}, now)
+}
+
+// seatsOf is FriendSeats with the policy numbers the snapshot holds.
+func (st *Store) seatsOf(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	rows, err := st.friendRows(ctx, now, s.PolicyDuration(sprint.PolicyFriendObservedDown))
 	if err != nil {
 		return nil, err
 	}
@@ -367,9 +385,10 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 // a dependency resolution can make work ready later in the same tick, and a friend coming
 // up is levelled on the same tick (docs/SPEC-SPRINT.md, WHO preference, and section 1,
 // friend-deal-idle-lanes-first.w1); nil when it has none.
-// The snapshot no longer gates the read; it stays in the signature for its callers.
-func (st *Store) friendSeats(ctx context.Context, _ *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
-	return st.FriendSeats(ctx, now)
+// The snapshot no longer gates the read; its policy numbers say how long an observation
+// stands (friend_observed_down_after).
+func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	return st.seatsOf(ctx, s, now)
 }
 
 // FriendNames is every friend of the roster in name order (the friends table's rows), for
@@ -436,8 +455,14 @@ func (st *Store) FriendHealth(ctx context.Context, friend, who string, obs sprin
 	if err != nil {
 		return sprint.FriendHealth{}, "", false, err
 	}
+	// her status as the friends' rule says it under friend_observed_down_after (policy.go)
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	after := (&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyFriendObservedDown)
 	if req.Replays() && req.Obs.Generation == generation {
-		return req.Prev, sprint.FriendStatus(sprint.FriendPresence{Held: e.Held, Health: req.Prev, Generation: generation}, st.now()), true, nil
+		return req.Prev, sprint.FriendStatus(sprint.FriendPresence{Held: e.Held, Health: req.Prev, Generation: generation, ObservedDownAfter: after}, st.now()), true, nil
 	}
 	step := HealthStep(req)
 	step.CallerOp = callerOp
@@ -448,7 +473,7 @@ func (st *Store) FriendHealth(ctx context.Context, friend, who string, obs sprin
 	if len(res.Refused) > 0 {
 		return sprint.FriendHealth{}, "", false, errors.New(res.Refused[0].Why)
 	}
-	return obs, sprint.FriendStatus(sprint.FriendPresence{Held: e.Held, Health: obs, Generation: obs.Generation}, st.now()), false, nil
+	return obs, sprint.FriendStatus(sprint.FriendPresence{Held: e.Held, Health: obs, Generation: obs.Generation, ObservedDownAfter: after}, st.now()), false, nil
 }
 
 // HealthClearStep is the coordinator's removal of a friend's observation

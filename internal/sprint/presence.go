@@ -182,7 +182,7 @@ func FriendStatus(f FriendPresence, now time.Time) string {
 	case f.Held:
 		return Held
 	case f.Health.Observed():
-		return ObservedStatus(f.Health, f.Generation, now)
+		return ObservedStatus(f.Health, f.Generation, now, f.ObservedDownAfter)
 	case FriendBeating(f.Beat, now):
 		return Up
 	}

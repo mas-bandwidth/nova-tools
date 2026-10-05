@@ -180,9 +180,9 @@ const FieldLeveled = "leveled"
 // machine"). The tier is the card's own, the tier it is on (cardTier: flash first,
 // then the tier it escalated to, or the tier a rework recorded), never a setting, so
 // a card in merging or landed is held to the count it was accepted on.
-func ReadsNeeded(pr *Card) int {
+func ReadsNeeded(s *Snapshot, pr *Card) int {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
-	if cardTier(pr, m) == cardhdr.RouteFlash {
+	if cardTier(s, pr, m) == cardhdr.RouteFlash {
 		return 1
 	}
 	return 2
@@ -197,12 +197,12 @@ func enoughReadersUp(s *Snapshot, pr *Card) bool {
 	if s.ReaderStates == nil && !s.readersCarryTiers() {
 		return true
 	}
-	return len(s.upReadersOf(pr)) >= ReadsNeeded(pr)
+	return len(s.upReadersOf(pr)) >= ReadsNeeded(s, pr)
 }
 
 // acceptable says the primary has ok reads from ReadsNeeded different readers
 // at its current attempt and head (okReaders).
-func acceptable(s *Snapshot, pr *Card) bool { return len(okReaders(s, pr)) >= ReadsNeeded(pr) }
+func acceptable(s *Snapshot, pr *Card) bool { return len(okReaders(s, pr)) >= ReadsNeeded(s, pr) }
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.
@@ -264,11 +264,11 @@ func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 func ReadsWanted(s *Snapshot, pr *Card) int {
 	placed := readsAt(s, pr, pr.Int("attempt"))
 	live := liveReadsAt(s, pr, pr.Int("attempt"))
-	return max(readsWantedOf(pr, live), len(placed)-len(live))
+	return max(readsWantedOf(s, pr, live), len(placed)-len(live))
 }
 
 // readsWantedOf is ReadsWanted over the reads that stand, live.
-func readsWantedOf(pr *Card, live []*Card) int {
+func readsWantedOf(s *Snapshot, pr *Card, live []*Card) int {
 	for _, rc := range live {
 		if rc.Col != OK {
 			return 0
@@ -277,7 +277,7 @@ func readsWantedOf(pr *Card, live []*Card) int {
 	if len(live) == 0 {
 		return 1
 	}
-	return max(0, ReadsNeeded(pr)-len(live))
+	return max(0, ReadsNeeded(s, pr)-len(live))
 }
 
 // FieldFindingReader is the primary's field naming the reader whose finding its
@@ -598,7 +598,11 @@ const RetiredByLapsed = "lapsed"
 
 // ReadLeaseExpires returns when an in-flight read's lease expires.
 // Started by read --begin (begun + DefaultReadLease) and renewed by reader beat (FieldLease).
-func ReadLeaseExpires(c *Card) time.Time {
+func ReadLeaseExpires(c *Card) time.Time { return readLeaseExpires(c, DefaultReadLease) }
+
+// readLeaseExpires is ReadLeaseExpires with the lease a read begun and never renewed has
+// (read_lease, policy.go).
+func readLeaseExpires(c *Card, lease time.Duration) time.Time {
 	if c == nil {
 		return time.Time{}
 	}
@@ -609,15 +613,18 @@ func ReadLeaseExpires(c *Card) time.Time {
 	}
 	if s := c.F("begun"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			return t.Add(DefaultReadLease)
+			return t.Add(lease)
 		}
 	}
 	return time.Time{}
 }
 
 // ReadLeaseLive reports whether the in-flight read's lease is live at now.
-func ReadLeaseLive(c *Card, now time.Time) bool {
-	exp := ReadLeaseExpires(c)
+func ReadLeaseLive(c *Card, now time.Time) bool { return readLeaseLive(c, now, DefaultReadLease) }
+
+// readLeaseLive is ReadLeaseLive with the lease of a read begun and never renewed.
+func readLeaseLive(c *Card, now time.Time, lease time.Duration) bool {
+	exp := readLeaseExpires(c, lease)
 	if exp.IsZero() {
 		return false
 	}
@@ -637,7 +644,7 @@ func RestartReads(s *Snapshot) Plan {
 		cards := s.Readers.Cell(rd, Reading)
 		SortCards(cards)
 		for _, c := range cards {
-			if ReadLeaseLive(c, s.Now) {
+			if readLeaseLive(c, s.Now, s.PolicyDuration(PolicyReadLease)) {
 				continue
 			}
 			p.Units = append(p.Units, Unit{
@@ -670,7 +677,7 @@ func RenewReaderLeases(s *Snapshot, reader string) Plan {
 	cards := s.Readers.Cell(reader, Reading)
 	SortCards(cards)
 	for _, c := range cards {
-		exp := s.Now.Add(DefaultReadLease)
+		exp := s.Now.Add(s.PolicyDuration(PolicyReadLease))
 		p.Units = append(p.Units, Unit{
 			Key:    c.ID,
 			Stream: c.F("stream"),

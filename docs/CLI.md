@@ -2173,6 +2173,7 @@ nova-config login --check                                                # print
 nova-config logout                                                       # remove the recorded login
 nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --bus <host:port> --as <name>  # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
+nova-config sprint set --deal_ahead 3 --as <name>                       # a policy number of the sprint (deal_ahead ... critical_behind, 21 in all; empty for its default); apply --kind sprint and the next tick reads it; nova-sprint set --list shows each with its source
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
 nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-swarm member argv spells no --width, its width is its machine row's
 nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; the argv is the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)

@@ -588,7 +588,9 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		}
 		var deadline time.Time
 		if st.Now != nil {
-			deadline = st.Now().Add(sprint.FriendReadDeadline)
+			// friend_read_deadline, nova-config's (policy.go)
+			policy, _ := st.Policy(ctx)
+			deadline = st.Now().Add((&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyFriendReadDeadline))
 		}
 		text := sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {

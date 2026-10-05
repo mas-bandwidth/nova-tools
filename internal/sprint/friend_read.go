@@ -138,7 +138,7 @@ func ParseFriendReadReport(report string) (verdict, finding, why string) {
 // readTierOf's own return is left as it is.
 func friendReadTier(s *Snapshot, pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
-	t := cardTier(pr, m)
+	t := cardTier(s, pr, m)
 	set := s.readTierSetting(pr.Row)
 	if set == "" {
 		return t
@@ -211,7 +211,7 @@ func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
 		if f.Status != Up || !slices.Contains(f.Tiers, cardhdr.RouteFrontier) {
 			continue
 		}
-		room, width := DealAhead*f.Width, f.Width
+		room, width := s.PolicyCount(PolicyDealAhead)*f.Width, f.Width
 		if f.Mode == config.FriendModeOneShot {
 			room, width = 1, 1
 		}
@@ -272,7 +272,7 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 	}
 	branch, start, head := attemptEnds(s, pr.ID, attempt)
 	if d := seatDir(seats, name, dir); d != "" {
-		text := FriendReadBrief(name, pr.ID, pr.F("brief"), branch, start, head, attempt, s.Now.Add(FriendReadDeadline))
+		text := FriendReadBrief(name, pr.ID, pr.F("brief"), branch, start, head, attempt, s.Now.Add(s.PolicyDuration(PolicyFriendReadDeadline)))
 		in := filepath.Join(d, "inbox", id)
 		if err := os.MkdirAll(in, 0o755); err != nil {
 			return err
