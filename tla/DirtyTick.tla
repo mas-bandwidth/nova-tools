@@ -91,10 +91,14 @@
 \*   "raway": the reader is not up, the reads it holds are taken back and
 \*   asked again in the same update, at the card's attempt (askw, as a lapse's
 \*   unread), each with its readoff to the fleet; "raback": the reader is up.
-\*   A take-back with no verdict (raway, unread) does not put the reader in
-\*   seen. tb counts them. At MaxTakebacks the reader joins seen and is not
-\*   asked again (TakebackBoundHolds). PlaceReads prefers a reader never
-\*   taken back (tb = 0) over one already taken back.
+\*   A take-back with no verdict (raway, or a lapse's unread of a read the
+\*   machine held) does not by itself put the reader in seen. tb counts them.
+\*   At MaxTakebacks the reader joins seen and is not asked again
+\*   (TakebackBoundHolds). PlaceReads prefers a reader never taken back
+\*   (tb = 0) over one already taken back. A readon the fleet cannot take
+\*   (the machine is down: readers placed without seeing the fleet) is a
+\*   "bounce", asked again and not counted: that loop is the one TickBounded
+\*   catches when the seefleet fix is off.
 \*   THE ASK GUARD: with "readerup" in Fixes a read is placed only on a reader
 \*   up (AbleReaders); the witness without it places a read on a reader away
 \*   (ReadsStandOnReadersUp), and the witness "keepaway" leaves the reads of a
@@ -491,12 +495,15 @@ ApplyR(S, e) ==
                                !.hb[c] = IF counted THEN NoR ELSE e.x,
                                !.seen[c] = IF counted THEN @ \cup {e.x} ELSE @],
                      "fleet", E("readoff", c, Host[e.x]))
-    [] e.k = "unread" ->
+    [] e.k = "unread" ->    \* a lapse took the read back: counted, and asked again
          IF S.rd[c] = NoR THEN S
          ELSE LET r == S.rd[c]
               IN [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE,
                            !.tb[c][r] = Min(S.tb[c][r] + 1, MaxTakebacks),
                            !.seen[c] = IF S.tb[c][r] + 1 >= MaxTakebacks THEN @ \cup {r} ELSE @]
+    [] e.k = "bounce" ->    \* the fleet refused the placement: asked again, not a take-back
+         IF S.rd[c] = NoR THEN S
+         ELSE [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE]
     [] e.k = "raway" ->     \* the reader is not up: its reads are taken back and asked again
          IF S.stat[e.x] = "down" THEN S
          ELSE IF Broken = "keepaway" THEN [S EXCEPT !.stat[e.x] = "down"]    \* the witness keeps them
@@ -508,7 +515,7 @@ ApplyR(S, e) ==
                                    THEN [S.tb[d] EXCEPT ![e.x] = Min(S.tb[d][e.x] + 1, MaxTakebacks)]
                                    ELSE S.tb[d]],
                            !.seen = [d \in Cards |-> IF d \in H /\ S.tb[d][e.x] + 1 >= MaxTakebacks
-                                     THEN @ \cup {e.x} ELSE @],
+                                     THEN @[d] \cup {e.x} ELSE @[d]],
                            !.q["fleet"] = @ \o [i \in 1..Cardinality(H) |-> E("readoff", Nth(H, i), Host[e.x])]]
     [] e.k = "raback" -> [S EXCEPT !.stat[e.x] = "up"]
     [] OTHER -> S    \* room, echo
@@ -631,7 +638,7 @@ ApplyF(S, e) ==
          ELSE RoomNews(Put([S EXCEPT !.mc[m] = @ \ {c}, !.tk[c] = FALSE], "work", E("finished", c, "-")), m)
     [] e.k = "readon" ->
          IF S.stat[m] = "up" THEN [S EXCEPT !.mr[m] = @ \cup {c}]
-         ELSE Put(S, "readers", E("unread", c, "-"))
+         ELSE Put(S, "readers", E("bounce", c, "-"))
     [] e.k = "readoff" ->
          IF c \in S.mr[m] THEN RoomNews([S EXCEPT !.mr[m] = @ \ {c}], m) ELSE S
     [] e.k = "tierok" ->    \* a take on tier m, of another card, finished ok
@@ -938,7 +945,7 @@ MergeTok(c) == Pend("merge", "queue", c) + (IF c \in mq THEN 1 ELSE 0) + Pend("w
 \* only until its readoff (a reader that went away: its read is on another).
 ReadHome(c) ==
   /\ rd[c] # NoR => (IF c \in mr[Host[rd[c]]] THEN 1 ELSE 0) + Pend("fleet", "readon", c)
-                    + Pend("readers", "unread", c) = 1
+                    + Pend("readers", "unread", c) + Pend("readers", "bounce", c) = 1
   /\ \A m \in Machines : c \in mr[m] =>
        (rd[c] # NoR /\ Host[rd[c]] = m) \/ Pend("fleet", "readoff", c) = 1
 NothingLost ==
