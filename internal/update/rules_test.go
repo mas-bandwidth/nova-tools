@@ -356,11 +356,11 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	want := []struct{ name, kind, owner string }{
-		{"gh", "tool", "rowan"},
-		{"sops", "tool", "rowan"},
-		{"opencode", "harness", "freddy"},
-		{"qwen3-coder:30b", "model", "stella"},
-		{"nova-wake-pin-nova-bus", "pin", "rowan"},
+		{"gh", "tool", "ada"},
+		{"sops", "tool", "ada"},
+		{"opencode", "harness", "lin"},
+		{"qwen3-coder:30b", "model", "kit"},
+		{"nova-wake-pin-nova-bus", "pin", "ada"},
 	}
 	if len(entries) != len(want) {
 		require.Lenf(t, entries, len(want), "the fixture should carry %d entries, it carries %d", len(want), len(entries))

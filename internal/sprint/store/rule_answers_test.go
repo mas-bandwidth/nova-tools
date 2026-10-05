@@ -129,9 +129,26 @@ func TestRuleLateWaitsOnceWithProgressElseReturnsAndRedeals(t *testing.T) {
 		h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: g}))
 		return h, wc
 	}
-	t.Run("no progress: returned and redealt", func(t *testing.T) {
+	t.Run("no stamp: held, never returned", func(t *testing.T) {
 		t.Parallel()
 		h, wc := setup(t)
+		h.tick(sprint.DeadlineUnfinished + time.Minute)
+		h.machine()
+		after := h.snap().Fleet.Card(wc.ID)
+		require.NotNil(t, after)
+		assert.Equal(t, wc.Int("gen"), after.Int("gen"), "not withdrawn: its holder never stamped, so the rule waits")
+		assert.Equal(t, sprint.Working, after.Col)
+		assert.Empty(t, h.judgmentsOf(sprint.NWorkLate), "the lateness is answered and held")
+		require.NotEmpty(t, h.answeredBy(sprint.RuleLate))
+		assert.Contains(t, h.answeredBy(sprint.RuleLate)[0].What, "never returned by this rule")
+		h.clean("held unstamped")
+	})
+	t.Run("stamped, then silent: returned and redealt", func(t *testing.T) {
+		t.Parallel()
+		h, wc := setup(t)
+		h.tick(time.Minute)
+		h.must(ProgressStep(sprint.ProgressReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, As: wc.Row, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: wc.Row}))
+		require.NotEmpty(t, h.snap().Fleet.Card(wc.ID).F(sprint.FieldProgress))
 		h.tick(sprint.DeadlineUnfinished + time.Minute)
 		h.machine()
 		after := h.snap().Fleet.Card(wc.ID)

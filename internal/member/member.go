@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -36,10 +35,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -77,6 +74,19 @@ type Child interface {
 	// "" when unknown), and the report (one paragraph, the child's own words).
 	Result() Result
 }
+
+// Printer is a Child that says when it last printed output (zero: never). The member stamps
+// progress on its card while it prints (stampProgress); a child that is not a Printer is
+// never stamped, and the late rule never returns its card for want of a stamp.
+type Printer interface {
+	Printed() time.Time
+}
+
+// ProgressEvery is how often the member stamps progress on a card whose child prints: the
+// sprint's own number (internal/sprint ProgressEvery, inside its RuleProgressWindow of ten
+// minutes with room for a stamp that is late or lost; docs/SPEC-SPRINT.md section 8, the
+// rules table's row late).
+const ProgressEvery = 3 * time.Minute
 
 // Pusher puts a work card's commit on origin, outside the wall: the commit
 // the child's result names (Result.Head) pushed to the branch the packet
@@ -374,12 +384,6 @@ type Config struct {
 	// finish. It is long (a backend's answer), so it runs in the end's long work, beside the
 	// push, never in the pass. nil asks none.
 	Attempt func(p Packet, result, reason string) (decided string, decision []byte, err error)
-	// ScriptVerify makes this reader a script reader (docs/SPEC-SPRINT.md, the script read):
-	// a read of a script card (CLASS: script) is first asked of it, with the card's program
-	// and deadline; ok is an ok read, whose finding is the one line why, counted as all the
-	// reads the card needs. Not ok is no verdict: the read goes on to a model child as any
-	// read does. nil asks none.
-	ScriptVerify func(p Packet, class cardhdr.Class) (ok bool, why string)
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -405,6 +409,7 @@ type launch struct {
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
 	retried bool      // a read run again after a stage failure: a second one is returned
+	stamped time.Time // when the member last stamped progress on the card (stampProgress); zero: never
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -468,7 +473,6 @@ type Member struct {
 // post is what a launch's long work found: its start (the child, or why there is none),
 // or its end (how the child ended and, for a work card, its push).
 type post struct {
-	note     string // a line for the log: a script read that gave no verdict, its model read begun
 	child    Child
 	startErr error
 	res      *Result
@@ -956,6 +960,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
+	if out := m.stampProgress(now); out != nil {
+		noAnswer("progress", out)
+	}
 	m.spent.Report = since()
 	if m.drain {
 		return acted, nil
@@ -1149,9 +1156,9 @@ func (m *Member) start(p Packet) bool {
 	m.long(func() {
 		m.startMu.Lock()
 		m.staggerStart()
-		ch, note, err := m.scriptOrStart(p)
+		ch, err := m.runner.Start(p)
 		m.startMu.Unlock()
-		m.post(p.Card, post{child: ch, note: note, startErr: err})
+		m.post(p.Card, post{child: ch, startErr: err})
 	})
 	m.longWork()
 	if m.cfg.Background {
@@ -1213,9 +1220,6 @@ func (m *Member) collect() (acted int) {
 			continue // unreachable while a busy launch is left alone; nothing to give it to
 		}
 		l.busy = false
-		if po.note != "" {
-			fmt.Fprintf(m.out, "read %s: %s\n", card, po.note)
-		}
 		switch {
 		case po.startErr != nil:
 			p := l.packet
@@ -1242,6 +1246,51 @@ func (m *Member) collect() (acted int) {
 	}
 	m.longWork()
 	return acted
+}
+
+// stampProgress stamps progress on the work cards whose child printed since the card's last
+// stamp, each at most every ProgressEvery: `progress --as <member> <card>@<gen>... --epoch
+// <n>`, one verb for the cards of each epoch (docs/SPEC-SPRINT.md section 8, the rules
+// table's row late; tla/SprintRules.tla, Stamp). A child that prints nothing stamps nothing:
+// the silence is what the late rule reads. A refused stamp waits ProgressEvery like any
+// other; it returns what the verb printed when the store did not answer, nil otherwise.
+func (m *Member) stampProgress(now time.Time) (unanswered []byte) {
+	if m.cfg.Reader {
+		return nil
+	}
+	byEpoch := map[uint64][]string{}
+	for id, l := range m.running {
+		p, ok := l.child.(Printer)
+		if !ok || l.busy || l.spent || l.res != nil || l.child.Done() {
+			continue
+		}
+		if at := p.Printed(); at.IsZero() || !at.After(l.stamped) || now.Sub(l.stamped) < ProgressEvery {
+			continue
+		}
+		byEpoch[l.epoch] = append(byEpoch[l.epoch], id)
+	}
+	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
+		ids := slices.Sorted(slices.Values(byEpoch[epoch]))
+		args := []string{"progress", "--as", m.cfg.As}
+		for _, id := range ids {
+			args = append(args, id+"@"+strconv.Itoa(m.running[id].gen))
+		}
+		args = append(args, "--epoch", strconv.FormatUint(epoch, 10))
+		code, out := m.run(args...)
+		if code == 2 {
+			unanswered = out
+			continue
+		}
+		if code != 0 {
+			fmt.Fprintf(m.out, "NOTE progress refused (exit %d): %s\n", code, oneLine(strings.TrimSpace(string(out))))
+		}
+		for _, id := range ids {
+			l := m.running[id]
+			l.stamped = now
+			m.running[id] = l
+		}
+	}
+	return unanswered
 }
 
 // forget drops a launch and what is remembered of its card, and tells a runner that is an
@@ -1719,136 +1768,4 @@ func (m *Member) staggerStart() {
 		}
 	}
 	m.lastStart = now()
-}
-
-// scriptReadPrefix begins the finding of a script read that found the head the program's own
-// output; it is sprint.ScriptReadPrefix, which the sprint counts (the member does not import
-// the sprint, and the test holds the two equal).
-const scriptReadPrefix = "script read: "
-
-// scriptChild is a read already ended: the script reader's own verdict, with no process.
-type scriptChild struct{ res Result }
-
-func (c scriptChild) Done() bool     { return true }
-func (c scriptChild) Result() Result { return c.res }
-
-// scriptOrStart is a launch's start: a read of a script card is asked of this reader's
-// ScriptVerify first, and an ok answer is the read, ended with no child and no model
-// (docs/SPEC-SPRINT.md, the script read); any other answer is no verdict and the read is
-// started as a model child, the note saying why. Every other card is started as it is.
-func (m *Member) scriptOrStart(p Packet) (ch Child, note string, err error) {
-	if m.cfg.Reader && p.Kind == "read" && m.cfg.ScriptVerify != nil {
-		if c, why := cardhdr.ReadClass(p.Brief); why == "" && c.IsScript() {
-			ok, why := m.cfg.ScriptVerify(p, c)
-			if ok {
-				return scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: scriptReadPrefix + oneLine(why)}}, "", nil
-			}
-			note = "script read gave no verdict (" + oneLine(why) + "); asked of a model"
-		}
-	}
-	ch, err = m.runner.Start(p)
-	return ch, note, err
-}
-
-// DefaultScriptDeadline bounds a script run whose card names no deadline.
-const DefaultScriptDeadline = 30 * time.Minute
-
-// ScriptVerifier is a script reader's means (docs/SPEC-SPRINT.md, the script read). Mirror
-// is a repository that holds the attempt's start commit and the head; Temp is a directory
-// the checkout is made in (removed after); Run runs the program's argv in a directory
-// under the wall, with the card's deadline in ctx, and is the one place a program runs:
-// the caller wires the wall, a test a fake. Git is the git program, "" for git on PATH.
-type ScriptVerifier struct {
-	Mirror string
-	Temp   string
-	Git    string
-	Run    func(ctx context.Context, dir string, argv []string) error
-}
-
-// Verify is Config.ScriptVerify: it checks out the attempt's start commit (the packet's
-// base head, else the merge base of the head and the work's base branch), runs the
-// card's program from the repository root under the card's deadline, and compares the
-// resulting diff with the head's diff byte for byte. Identical is ok, with the one line
-// that says what was compared; a difference, an empty diff, a missing commit or a failed
-// run is not ok, with the reason. The head is never taken on the worker's word.
-func (v ScriptVerifier) Verify(p Packet, class cardhdr.Class) (ok bool, why string) {
-	argv := strings.Fields(class.Script)
-	switch {
-	case len(argv) == 0:
-		return false, "the card names no program"
-	case p.Head == "":
-		return false, "the read names no head"
-	}
-	deadline := cmp.Or(class.Deadline, DefaultScriptDeadline)
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
-	g := func(dir string, args ...string) (string, error) {
-		res, err := gitrun.Run(ctx, gitrun.Options{Bin: v.Git, C: dir, OwnRepo: true, Timeout: deadline}, args...)
-		if err != nil {
-			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(res.Stderr)))
-		}
-		return string(res.Stdout), nil
-	}
-	start := p.BaseHead
-	if start == "" {
-		for _, base := range []string{p.WorkBase, "origin/" + p.WorkBase} {
-			if base == "" || base == "origin/" {
-				continue
-			}
-			if out, err := g(v.Mirror, "merge-base", p.Head, base); err == nil {
-				start = strings.TrimSpace(out)
-				break
-			}
-		}
-	}
-	if start == "" {
-		return false, "no start commit: the packet has no base head and no base branch to take the merge base with"
-	}
-	want, err := g(v.Mirror, "diff", "--binary", "--full-index", start, p.Head)
-	if err != nil {
-		return false, err.Error()
-	}
-	if want == "" {
-		return false, "the head's diff against the start commit is empty"
-	}
-	dir, err := os.MkdirTemp(v.Temp, "script-read-")
-	if err != nil {
-		return false, err.Error()
-	}
-	defer func() {
-		// a checkout left behind is the bench's disk: the read gives no verdict for it
-		if err := safepath.RemoveUnder(cmp.Or(v.Temp, os.TempDir()), dir); err != nil {
-			ok, why = false, "the checkout was not removed: "+err.Error()
-		}
-	}()
-	for _, args := range [][]string{{"clone", "-q", "--no-checkout", v.Mirror, dir}} {
-		if _, err := g("", args...); err != nil {
-			return false, err.Error()
-		}
-	}
-	if _, err := g(dir, "checkout", "-q", "--detach", start); err != nil {
-		return false, err.Error()
-	}
-	if err := v.Run(ctx, dir, argv); err != nil {
-		return false, "the program failed: " + err.Error()
-	}
-	if _, err := g(dir, "add", "-A"); err != nil {
-		return false, err.Error()
-	}
-	got, err := g(dir, "diff", "--cached", "--binary", "--full-index", start)
-	if err != nil {
-		return false, err.Error()
-	}
-	if got != want {
-		return false, fmt.Sprintf("the program's diff (%d bytes) is not the head's (%d bytes)", len(got), len(want))
-	}
-	return true, fmt.Sprintf("ran %q at %s: its diff is %s's, %d bytes, identical", class.Script, short(start), short(p.Head), len(got))
-}
-
-// short is the first twelve characters of a sha.
-func short(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
 }

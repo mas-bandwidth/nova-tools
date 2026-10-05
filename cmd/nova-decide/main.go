@@ -243,8 +243,9 @@ caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags 
 			},
 			{
 				Name:   "import",
-				Usage:  "import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>]",
-				Effect: tool.LocalWrite + "; it appends to --record one labelled decision per item read, and leaves an item recorded before",
+				Usage:  "import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>] [--dry-run]",
+				Effect: tool.LocalWrite + "; it appends to --record one labelled decision per item read, and leaves an item recorded before; --dry-run writes nothing",
+				DryRun: true,
 				Detail: `Loads finished decisions as labelled records, so they can be read, calibrated and trained on:
 --verdicts: heavy-read VERDICT.md files, the first word of the first line is the label (ACCEPT, REWORK, ...);
 --judgments with --log: a directory of judgment files (<judgment id>.md) labelled by the verb of the line a
@@ -747,7 +748,28 @@ func (w world) outcome(c *tool.Call) *tool.Out {
 
 // importRecords is import: decide.Import over the sources named, counted per kind.
 func (w world) importRecords(c *tool.Call) *tool.Out {
-	res, err := decide.Import(c.Str("record"), decide.ImportSources{Verdicts: c.Str("verdicts"), Judgments: c.Str("judgments"),
+	record := c.Str("record")
+	if c.DryRun() {
+		// the plan from the same code path: import into a copy of the record, report, discard it
+		b, err := os.ReadFile(record)
+		if err != nil && !os.IsNotExist(err) {
+			return tool.Refuse(err.Error())
+		}
+		f, err := os.CreateTemp("", "nova-decide-import-*.record")
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		defer func() { _ = os.Remove(f.Name()) }() // ignored: a temp copy that nothing reads after
+		_, werr := f.Write(b)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			return tool.Refuse(werr.Error())
+		}
+		record = f.Name()
+	}
+	res, err := decide.Import(record, decide.ImportSources{Verdicts: c.Str("verdicts"), Judgments: c.Str("judgments"),
 		Log: c.Str("log"), Reports: c.Str("reports")}, w.now())
 	if err != nil {
 		return tool.Refuse(err.Error())

@@ -48,7 +48,7 @@ func netLineAt(t *testing.T, root, rel string, line int) string {
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 	require.NoError(t, err)
 	lines := strings.Split(string(raw), "\n")
-	require.False(t, line < 1, "%s:%d is outside the file (%d lines)", rel, line, len(lines))
+	require.GreaterOrEqual(t, line, 1, "%s:%d is outside the file (%d lines)", rel, line, len(lines))
 	require.False(t, line > len(lines), "%s:%d is outside the file (%d lines)", rel, line, len(lines))
 	return strings.TrimSpace(lines[line-1])
 }
@@ -61,8 +61,8 @@ func TestNetRefusesRealURLHost(t *testing.T) {
 	root := netFixtureTree(t, "realurl.go.txt")
 	res, err := CheckNet(root, "")
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 1, "a real URL host is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	require.True(t, len(res.Findings) == 1, "a real URL host is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 1, res.Refused(), "a real URL host is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Len(t, res.Findings, 1, "a real URL host is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "url", f.Kind, "kind = %q, want url", f.Kind)
 	assert.Equal(t, "api.acme.com", f.Host, "host = %q, want api.acme.com", f.Host)
@@ -79,8 +79,8 @@ func TestNetAllowsLocalAndReservedHosts(t *testing.T) {
 	root := netFixtureTree(t, "allowed.go.txt")
 	res, err := CheckNet(root, "")
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 0, "local and reserved hosts are the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
-	require.True(t, len(res.Findings) == 0, "local and reserved hosts are the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 0, res.Refused(), "local and reserved hosts are the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Empty(t, res.Findings, "local and reserved hosts are the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 	assert.Equal(t, 1, res.Tests, "tests = %d, want 1", res.Tests)
 }
 
@@ -92,8 +92,8 @@ func TestNetAllowsNightlyBuildTag(t *testing.T) {
 	root := netFixtureTree(t, "nightly.go.txt")
 	res, err := CheckNet(root, "")
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 0, "a nightly-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
-	require.True(t, len(res.Findings) == 0, "a nightly-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 0, res.Refused(), "a nightly-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Empty(t, res.Findings, "a nightly-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
 }
 
 // 4. A file carrying //go:build soak is exempt, the same way.
@@ -103,8 +103,8 @@ func TestNetAllowsSoakBuildTag(t *testing.T) {
 	root := netFixtureTree(t, "soak.go.txt")
 	res, err := CheckNet(root, "")
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 0, "a soak-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
-	require.True(t, len(res.Findings) == 0, "a soak-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 0, res.Refused(), "a soak-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Empty(t, res.Findings, "a soak-tagged file is exempt, got %d refusals: %+v", res.Refused(), res.Findings)
 }
 
 // 5. A bare host:port literal with a real host is refused.
@@ -114,8 +114,8 @@ func TestNetRefusesBareHostPort(t *testing.T) {
 	root := netFixtureTree(t, "hostport.go.txt")
 	res, err := CheckNet(root, "")
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 1, "a real host:port is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	require.True(t, len(res.Findings) == 1, "a real host:port is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 1, res.Refused(), "a real host:port is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Len(t, res.Findings, 1, "a real host:port is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "hostport", f.Kind, "kind = %q, want hostport", f.Kind)
 	assert.Equal(t, "metrics.acme.com", f.Host, "host = %q, want metrics.acme.com", f.Host)
@@ -128,8 +128,8 @@ func TestNetAllowsLocalHostPort(t *testing.T) {
 	root := netFixtureTree(t, "allowedhostport.go.txt")
 	res, err := CheckNet(root, "")
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 0, "a local host:port is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
-	require.True(t, len(res.Findings) == 0, "a local host:port is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 0, res.Refused(), "a local host:port is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.Empty(t, res.Findings, "a local host:port is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 }
 
 // 7. Adding an entry to the allowlist is refused; removing one is allowed. An
@@ -149,8 +149,8 @@ func TestNetAllowlistGrowsRefused(t *testing.T) {
 	require.NoError(t, os.WriteFile(allow, []byte("internal/x/x_test.go:1 url 2026-09-17 parked here\n"), 0o644))
 	res, err = CheckNet(root, allow)
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
-	require.True(t, len(res.Stale) == 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
+	require.Equal(t, 1, res.Refused(), "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
+	require.Len(t, res.Stale, 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
 	assert.Equal(t, NetRemedyAllow, res.Stale[0].Remedy, "allowlist remedy = %q, want %q", res.Stale[0].Remedy, NetRemedyAllow)
 
 	require.NoError(t, os.WriteFile(allow, []byte(""), 0o644))
@@ -167,16 +167,16 @@ func TestNetAllowlistSurvivesShiftedLines(t *testing.T) {
 
 	root := netFixtureTree(t, "realurl.go.txt")
 	first, err := CheckNet(root, "")
-	require.True(t, err == nil, "fixture must hold one real URL: %v %+v", err, first.Findings)
-	require.True(t, len(first.Findings) == 1, "fixture must hold one real URL: %v %+v", err, first.Findings)
+	require.NoError(t, err, "fixture must hold one real URL: %v %+v", err, first.Findings)
+	require.Len(t, first.Findings, 1, "fixture must hold one real URL: %v %+v", err, first.Findings)
 	f := first.Findings[0]
 	allow := filepath.Join(t.TempDir(), "net-allowlist.txt")
 	row := fmt.Sprintf("%s:%d url 2026-09-17 written when the offender stood elsewhere\n", f.File, f.Line+40)
 	require.NoError(t, os.WriteFile(allow, []byte(row), 0o644))
 	res, err := CheckNet(root, allow)
 	require.NoError(t, err)
-	require.True(t, res.Refused() == 0, "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
-	require.True(t, res.Allowlisted == 1, "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
+	require.Equal(t, 0, res.Refused(), "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
+	require.Equal(t, 1, res.Allowlisted, "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
 
 	// A second real URL in the same file has no row: the budget is one.
 	path := filepath.Join(root, filepath.FromSlash(f.File))
@@ -187,8 +187,8 @@ func TestNetAllowlistSurvivesShiftedLines(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(more), 0o644))
 	res, err = CheckNet(root, allow)
 	require.NoError(t, err)
-	require.True(t, len(res.Findings) == 1, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
-	require.True(t, res.Allowlisted == 1, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
+	require.Len(t, res.Findings, 1, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
+	require.Equal(t, 1, res.Allowlisted, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
 }
 
 // TestNetOutputMatchesTheSpec pins the one-line grammar of the section: the OK

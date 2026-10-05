@@ -548,3 +548,29 @@ func TestBriefWithRulesThroughTheServer(t *testing.T) {
 	assert.Equal(t, 0, res[0].Code, "%s%s", res[0].Stdout, res[0].Stderr)
 	assert.Contains(t, res[0].Stdout, "a-1 brief replaced")
 }
+
+// A progress stamp sent to the server is taken from the card's holder alone
+// (docs/SPEC-SPRINT.md section 8, the rules table's row late): another member's
+// is refused and writes nothing, the holder's stamps the server's time, and one
+// with no epoch is refused as every worker's write is.
+func TestTheServerTakesAProgressStampFromTheHolderAlone(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2,m2:2", "nova-sprint add --stream s1 --count 6", "nova-sprint start", "nova-sprint tick", "nova-sprint tick")
+	cards := taken(t, r.one("take", "--as", "m1", "--limit", "1", "--epoch", "0", "--json"))
+	require.Len(t, cards, 1)
+	primary, _, _ := strings.Cut(cards[0], ".w")
+	fields := func() string { return r.boss("nova-sprint card " + primary + " --fields") }
+
+	other := r.one("progress", "--as", "m2", cards[0], "--epoch", "0")
+	assert.Equal(t, 1, other.Code, other.Stdout+other.Stderr)
+	assert.Contains(t, other.Stdout+other.Stderr, "only its holder stamps its progress")
+	assert.NotContains(t, fields(), " progress=")
+
+	none := r.one("progress", "--as", "m1", cards[0])
+	assert.Equal(t, 2, none.Code, none.Stderr)
+	assert.NotContains(t, fields(), " progress=")
+
+	mine := r.one("progress", "--as", "m1", cards[0], "--epoch", "0")
+	require.Equal(t, 0, mine.Code, mine.Stdout+mine.Stderr)
+	assert.Contains(t, fields(), " progress=")
+}

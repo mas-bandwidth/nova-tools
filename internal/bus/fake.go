@@ -248,16 +248,15 @@ func (f *Fake) Get(_ context.Context, stream string, entries []string) ([]Entry,
 
 // after reports whether entry id a is greater than b (<ms>-<seq>, numerically).
 func after(a, b string) bool {
-	am, as := split(a)
-	bm, bs := split(b)
+	num := func(id string) (int64, int64) {
+		ms, seq, _ := strings.Cut(id, "-")
+		m, _ := strconv.ParseInt(ms, 10, 64)  // ignored: a fake id is one this file made, and a range end that is no id reads as 0
+		s, _ := strconv.ParseInt(seq, 10, 64) // ignored: as above
+		return m, s
+	}
+	am, as := num(a)
+	bm, bs := num(b)
 	return am > bm || (am == bm && as > bs)
-}
-
-func split(id string) (int64, int64) {
-	ms, seq, _ := strings.Cut(id, "-")
-	m, _ := strconv.ParseInt(ms, 10, 64)  // ignored: a fake id is always one this file made, or "-"/"+"
-	s, _ := strconv.ParseInt(seq, 10, 64) // ignored: as above
-	return m, s
 }
 
 // inRange is XRANGE's test: "-" and "+" are the ends, "(<id>" is exclusive,

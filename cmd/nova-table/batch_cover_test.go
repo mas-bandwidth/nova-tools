@@ -2,6 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -106,6 +110,68 @@ func TestBatchCoverScoreOrDash(t *testing.T) {
 			assert.Equal(t, tc.want, scoreOrDash(tc.in))
 		})
 	}
+}
+
+// countingReader serves left bytes and counts what it served: the bookkeeping
+// a test reads to say how far the command got into a stream, with no clock.
+type countingReader struct {
+	left, served int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	if r.left <= 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > r.left {
+		n = r.left
+	}
+	for i := 0; i < n; i++ {
+		p[i] = 'a'
+	}
+	r.left -= n
+	r.served += n
+	return n, nil
+}
+
+// TestBatchRefusesAManifestPathThatIsNotARegularFileAndReadsAtMostTheCap pins
+// the manifest reader's two bounds before any check or dial: the path form
+// Lstat's the path and refuses a symlink or any other non-regular file, and
+// both the stdin and the file form read through a limit of one byte past
+// ntable.LimitManifestBytes, so a stream larger than the cap is refused by the
+// validator's own manifest-bytes limit instead of growing memory without bound
+// or waiting on a reader that never ends.
+func TestBatchRefusesAManifestPathThatIsNotARegularFileAndReadsAtMostTheCap(t *testing.T) {
+	t.Parallel()
+	nowhere := filepath.Join(t.TempDir(), "no-store.sock")
+	t.Run("a symlink to a valid manifest is not a manifest path", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		target := filepath.Join(dir, "manifest.json")
+		require.NoError(t, os.WriteFile(target, []byte(batchManifest), 0o600))
+		link := filepath.Join(dir, "link.json")
+		require.NoError(t, os.Symlink(target, link))
+		app := &application{getenv: func(string) string { return "" }}
+		var stdout, stderr strings.Builder
+		code := app.dispatch([]string{"batch", link, "--redis", nowhere}, &stdout, &stderr)
+		assert.EqualValues(t, 2, code, "exit %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+		assert.Empty(t, stdout.String(), "exit %d stderr %q", code, stderr.String())
+		assert.Contains(t, stderr.String(), "not a regular file", "the refusal does not name the path's kind: %s", stderr.String())
+		assert.Contains(t, stderr.String(), "changed=no", "the refusal does not say nothing changed: %s", stderr.String())
+		assert.NotContains(t, stderr.String(), "unreachable", "the refusal comes after a dial: %s", stderr.String())
+	})
+	t.Run("a stream one byte past the cap is stopped there", func(t *testing.T) {
+		t.Parallel()
+		in := &countingReader{left: ntable.LimitManifestBytes + 2}
+		app := &application{in: in, getenv: func(string) string { return "" }}
+		var stdout, stderr strings.Builder
+		code := app.dispatch([]string{"batch", "-", "--redis", nowhere}, &stdout, &stderr)
+		assert.EqualValues(t, 1, code, "exit %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+		assert.Empty(t, stdout.String(), "exit %d stderr %q", code, stderr.String())
+		assert.Contains(t, stderr.String(), "manifest bytes", "the refusal is not the manifest limit: %s", stderr.String())
+		assert.Contains(t, stderr.String(), "changed=no", "the refusal does not say nothing changed: %s", stderr.String())
+		assert.LessOrEqual(t, in.served, ntable.LimitManifestBytes+1, "the reader served %d bytes, over the cap plus one", in.served)
+	})
 }
 
 // fieldChanges is changedFields as one JSON object on one line: a set field is a

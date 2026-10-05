@@ -85,6 +85,7 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that
@@ -167,6 +168,9 @@ func verbHelpLines(verb string) string {
 	}
 	if verb == "step" {
 		add += "effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing\n"
+	}
+	if verb == "verify" {
+		add += "effect: inspection: reads the job's RESULT.md and checks its line 1, writes nothing\n"
 	}
 	if verb == "disk-guard" {
 		add += "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
@@ -365,6 +369,16 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 			refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 			return false
 		}
+	}
+	return true
+}
+
+// parseArgs parses flags without refusing positional arguments, for verbs that wrap a command
+// (docs/SPEC-SWARM.md, "Bench slot leases").
+func (f *flags) parseArgs(args []string, stderr io.Writer) bool {
+	if err := verbflag.Parse(f.fs, args); err != nil {
+		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
+		return false
 	}
 	return true
 }

@@ -1088,7 +1088,9 @@ range. This departure from the conventions preserves the child's exit status.
 
 The reservation is ambiguous, as it is in `env(1)`: a wrapped command that
 itself exits 125, 126 or 127 — **and on darwin 71** — is indistinguishable from
-the tool's own refusal by exit status alone. The tool's refusals always print a
+the tool's own refusal by exit status alone. A wrapped command that itself
+exits 128+N (for example 143) is likewise indistinguishable from one killed by
+signal N. The tool's refusals always print a
 `SANDBOX REFUSED` line to stderr and the command's do not, and a status the
 command returned is announced after it ends by `SANDBOX DONE exit=<n>`, the last
 line the tool writes; so a caller that needs to tell them apart reads the line,

@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,6 +42,34 @@ type LaneState struct {
 // the outbox directory its REPORT.md and RESULT.md go to.
 type Card struct {
 	ID, Brief, Outbox string
+}
+
+// Epoch is the sprint epoch the card was delivered at, its directory's <id>~<epoch>.
+func (c Card) Epoch() string {
+	_, epoch, _ := strings.Cut(filepath.Base(c.Outbox), "~")
+	return epoch
+}
+
+// ProgressEvery is how often the daemon stamps progress on a card whose lane turn prints:
+// the sprint's own number (internal/sprint ProgressEvery, inside the late rule's ten-minute
+// window; docs/SPEC-SPRINT.md section 8, the rules table's row late).
+const ProgressEvery = 3 * time.Minute
+
+// ProgressArgv is the sprint server's verbs that stamp progress on the cards, one for the
+// cards of each epoch, in the order of the epochs: `progress --as <friend> <card>... --epoch
+// <n>`. Only the holder's stamp is taken: the server refuses one for a card she does not
+// work.
+func ProgressArgv(friend string, cards []Card) [][]string {
+	byEpoch := map[string][]string{}
+	for _, c := range cards {
+		byEpoch[c.Epoch()] = append(byEpoch[c.Epoch()], c.ID)
+	}
+	var out [][]string
+	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
+		argv := append([]string{"progress", "--as", friend}, slices.Sorted(slices.Values(byEpoch[epoch]))...)
+		out = append(out, append(argv, "--epoch", epoch))
+	}
+	return out
 }
 
 // Result is the card's RESULT.md, whose presence after a turn is the card done.

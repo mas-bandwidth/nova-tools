@@ -30,7 +30,7 @@ const (
 	RuleBriefDefect = "brief-defect" // the same finding twice: the card marked a brief defect, held
 	RuleConflict    = "conflict"     // a conflict in a file no ledger owns: returned, redone on the tip, resumed
 	RuleFailed      = "failed"       // work came back failed or with no result: redealt, then a tier up
-	RuleLate        = "late"         // a work card past its deadline: a wait once with progress, else returned and redealt
+	RuleLate        = "late"         // a work card past its deadline: a wait once with progress; returned and redealt only once its holder stamped and went silent
 )
 
 // RuleNames is every rule, in name order.
@@ -50,9 +50,10 @@ const (
 	FieldRuleWaited = "rule_waited"
 	// FieldBriefDefect is the stamp the brief-defect rule marked the primary with.
 	FieldBriefDefect = "brief_defect"
-	// FieldProgress is a work card's last progress, a stamp its worker reports: the late
-	// rule's sign that a late card is moving. No member writes it yet: a late card with none
-	// has no progress.
+	// FieldProgress is a work card's last progress: the server's time of its holder's last
+	// `progress` verb (Progress), which the member and the friend daemon send every
+	// ProgressEvery while the child or the turn prints. The late rule's sign that a late card
+	// is moving; a stamp from before the card's take is another holder's and counts as none.
 	FieldProgress = "progress"
 	// FieldConflictKind and FieldConflictPaths are a conflict stop's facts on the stream's
 	// control card, as the lander reported them (MergeReq).
@@ -68,6 +69,9 @@ const (
 	RuleAttemptCap = 2
 	// RuleProgressWindow is how recent a late card's progress is to count.
 	RuleProgressWindow = 10 * time.Minute
+	// ProgressEvery is how often a holder whose child or turn prints stamps progress on its
+	// card: inside RuleProgressWindow with room for a stamp that is late or lost.
+	ProgressEvery = 3 * time.Minute
 	// RuleLateWait is the late rule's one wait.
 	RuleLateWait = 30 * time.Minute
 	// RuleSameFailureCards is how many cards failing the same way (their failure's class)
@@ -90,7 +94,7 @@ const (
 	ActUp     = "rework on a tier up"       // the next attempt, pinned a tier up
 	ActFriend = "rework as a friend's card" // the next attempt, a friend's (above heavy)
 	ActWait   = "wait 30m"                  // the late card made progress: held once
-	ActHold   = "hold"                      // the late card's holder has not had its own deadline yet
+	ActHold   = "hold"                      // the late card's holder has not had its own deadline yet, or never stamped progress
 	ActRedeal = "return and redeal"         // the late card withdrawn, dealt again
 	ActReturn = "return"                    // the conflict card back to review
 	ActResume = "resume"                    // the stream again, its conflict card out
@@ -296,10 +300,15 @@ func ruleBound(s *Snapshot, a *RuleAnswer) {
 	up(s, a, pr, why)
 }
 
-// ruleLate: a work card past its deadline. With progress in the last RuleProgressWindow it
-// is waited on RuleLateWait, once a generation; without, or after its wait, it is returned
-// and dealt again, once its holder has had its own whole deadline (a card just dealt again
-// is held until then). A friend's card stays the coordinator's: a friend keeps her cards.
+// ruleLate: a work card past its deadline (docs/SPEC-SPRINT.md section 8, the rules table's
+// row late; tla/SprintRules.tla, Part "late": WaitOnce, NeverStampedNeverReturned). With
+// progress in the last RuleProgressWindow it is waited on RuleLateWait, once a generation;
+// without, or after its wait, it is returned and dealt again, once its holder has had its
+// own whole deadline (a card just dealt again is held until then). The default is wait
+// only: a working card whose holder has stamped no progress since its take is held
+// RuleLateWait, again and again, and never returned by this rule, so a member that does
+// not stamp never loses an honest long child to it. A friend's card stays the
+// coordinator's: a friend keeps her cards.
 func ruleLate(s *Snapshot, r TickReq, a *RuleAnswer) {
 	a.Rule = RuleLate
 	wc := s.Fleet.Placed(a.open.Note.Card)
@@ -321,12 +330,17 @@ func ruleLate(s *Snapshot, r TickReq, a *RuleAnswer) {
 	ownFor, ok := r.running(s.Now, wc.F(own))
 	mine := own != "" && ok && ownFor > limit
 	progressAt := stampAt(wc, FieldProgress)
-	progress := !progressAt.IsZero() && s.Now.Sub(progressAt) <= RuleProgressWindow
+	// a stamp before the take is another holder's: this holder has stamped none
+	stamped := !progressAt.IsZero() && !progressAt.Before(stampAt(wc, "taken"))
+	progress := stamped && s.Now.Sub(progressAt) <= RuleProgressWindow
 	waited := wc.F(FieldRuleWaited) != "" && wc.F(FieldRuleWaited) == wc.F("gen")
 	switch {
 	case wc.Col == Working && progress && !waited:
 		a.Act, a.until = ActWait, s.Now.Add(RuleLateWait)
 		a.Why = "progress at " + stamp(progressAt) + ": waited " + RuleLateWait.String() + ", once"
+	case wc.Col == Working && mine && !stamped:
+		a.Act, a.until = ActHold, s.Now.Add(RuleLateWait)
+		a.Why = fmt.Sprintf("%s has stamped no progress since its take: waited, never returned by this rule; held until %s", wc.Row, stamp(a.until))
 	case mine || waited:
 		a.Act = ActRedeal
 		a.Why = fmt.Sprintf("%s held it past its own deadline %s with no progress since %s: returned and dealt again", wc.Row, limit, orDash(stampOrEmpty(progressAt)))
@@ -593,4 +607,49 @@ func sameFailure(s *Snapshot, class string) string {
 		return ""
 	}
 	return fmt.Sprintf("the same failure on %d cards (%s): the fleet's, not the card's; a mind's", n, cutText(class, 120))
+}
+
+// ProgressReq is a holder stamping progress on the work cards it works (the `progress`
+// verb, sent by the member and the friend daemon every ProgressEvery while the child or
+// the turn prints): As is the fleet row that holds them, Gens the generation held, where
+// the card is named at one.
+type ProgressReq struct {
+	Sel
+	As   string
+	Gens map[string]int
+	Who  string
+}
+
+// Progress stamps FieldProgress, at the server's time, on each named work card its holder
+// works (docs/SPEC-SPRINT.md section 8, the rules table's row late; tla/SprintRules.tla,
+// Stamp): the late rule's sign that the card moves. Only the holder stamps: a card that is
+// not working, one held by another row than As, and one named at a generation that is not
+// its live one are refused, and nothing else of the card changes.
+func Progress(s *Snapshot, r ProgressReq) Plan {
+	var p Plan
+	if r.As == "" || len(r.Sel.IDs) == 0 {
+		p.refuse("progress", "a progress stamp names its holder and its cards: progress --as <worker> <card>[@<gen>]...")
+		return p
+	}
+	for _, id := range r.Sel.IDs {
+		c := s.Fleet.Card(id)
+		_, atGen := r.Gens[id]
+		why := ""
+		switch {
+		case !c.Placed() || c.Col != Working:
+			why = "not working (it is " + placeWord(c) + ")"
+		case c.Row != r.As:
+			why = "held by " + c.Row + ", not " + r.As + ": only its holder stamps its progress"
+		case atGen:
+			why = liveGen("progress", c, r.Gens)
+		}
+		if why != "" {
+			p.refuse(id, why)
+			continue
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+			Changes: []Change{change(Fleet, setEntry(c, map[string]string{FieldProgress: stamp(s.Now)}))},
+			Moved:   c.ID + " progress at " + stamp(s.Now) + " by " + r.As})
+	}
+	return p
 }

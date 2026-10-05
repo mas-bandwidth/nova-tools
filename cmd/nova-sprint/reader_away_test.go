@@ -97,7 +97,7 @@ func TestReaderAwayAndUp(t *testing.T) {
 	out := ta.ok("reader away reader-c")
 	assert.Contains(t, out, "READER-AWAY OK readers=reader-c")
 	ta.ok("queue --as reader-c") // it still beats
-	assert.Equal(t, "away", ta.readerState("reader-c"))
+	assert.Equal(t, "held", ta.readerState("reader-c"), "reader away is hold --return in the old words: its state reads held")
 	assert.Equal(t, "up", ta.readerState("reader-a"))
 	out = ta.ok("reader up reader-c")
 	assert.Contains(t, out, "READER-UP OK readers=reader-c")
@@ -156,7 +156,7 @@ func TestFewerThanTwoReadersUpIsOneJudgmentPerTick(t *testing.T) {
 		}
 	}
 	require.Len(t, judgments, 1, "one judgment for the sprint, whatever the primaries waiting: %+v", ta.inboxGroups())
-	assert.Contains(t, judgments[0].What, "fewer than two readers up: reader-a away, reader-b away, reader-c up")
+	assert.Contains(t, judgments[0].What, "fewer than two readers up: reader-a held, reader-b held, reader-c up")
 	ta.ok("reader up reader-a")
 	ta.ok("tick")
 	assert.Len(t, ta.askedOf("reader-a"), 3)
@@ -187,7 +187,7 @@ func TestAReadAskedOfAReaderThatGoesAwayIsAskedAgain(t *testing.T) {
 	out := ta.ok("card s1-1")
 	assert.NotContains(t, out, "attempt 2")
 	for _, g := range ta.inboxGroups() {
-		assert.False(t, g.Kind == sprint.Judgment, "no judgment is owed: %+v", g)
+		assert.NotEqual(t, sprint.Judgment, g.Kind, "no judgment is owed: %+v", g)
 	}
 }
 

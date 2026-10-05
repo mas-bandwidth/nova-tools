@@ -406,7 +406,7 @@ func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
 	require.NoError(t, err)
 	{
 		pid := HolderPID(filepath.Join(dir, LockName))
-		assert.False(t, pid == Dash, "the lock file holds no pid, so a waiter could not name the holder")
+		assert.NotEqual(t, Dash, pid, "the lock file holds no pid, so a waiter could not name the holder")
 	}
 	_, err = TakeFoldLock(dir, 50*time.Millisecond)
 	require.Error(t, err, "a second fold took the lock")
@@ -453,7 +453,7 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	}
 	{
 		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000002,emma-000000000001")
-		assert.False(t, p.badSet == "", "an unsorted predecessor set was accepted")
+		assert.NotEmpty(t, p.badSet, "an unsorted predecessor set was accepted")
 	}
 }
 
@@ -512,7 +512,7 @@ func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 	f, err := os.Create(path)
 	require.NoError(t, err)
 	if err := f.Truncate(capInTest + 1); err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the Truncate error is the one this test reports
 		require.NoError(t, err)
 	}
 	require.NoError(t, f.Close())
@@ -677,7 +677,7 @@ func TestALegacyTwelveColumnDayFileReadsWithTheUnitsColumnIgnored(t *testing.T) 
 		"2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n"
 	{
 		_, f := ParseDayFile("2026-09-21", dup)
-		assert.False(t, len(f) == 0, "a second (model, repo) row in an eleven-column file was accepted")
+		assert.NotEmpty(t, f, "a second (model, repo) row in an eleven-column file was accepted")
 	}
 }
 
