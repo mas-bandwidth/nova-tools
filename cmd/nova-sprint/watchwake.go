@@ -401,11 +401,11 @@ func (w *storeWake) look(ctx context.Context, after string) (wakeLook, error) {
 		l.Waiting += cell(r, string(sprint.Waiting))
 	}
 	for _, r := range v.Tables[sprint.Fleet] {
-		if r[sprint.Status] != sprint.Up {
+		if cellText(r[sprint.Status]) != sprint.Up {
 			continue
 		}
 		l.Working += cell(r, string(sprint.Working))
-		if n, err := sprint.ParseWidth(r[sprint.FieldWidth]); err == nil {
+		if n, err := sprint.ParseWidth(cellText(r[sprint.FieldWidth])); err == nil {
 			l.Width += n
 		} else {
 			l.Width += sprint.DefaultWidth
@@ -456,8 +456,8 @@ func (w *storeWake) look(ctx context.Context, after string) (wakeLook, error) {
 }
 
 // cell is a table cell as a count; one that is no number counts none.
-func cell(row map[string]string, col string) int {
-	n, err := strconv.Atoi(strings.TrimSpace(row[col]))
+func cell(row map[string]any, col string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(cellText(row[col])))
 	if err != nil {
 		return 0
 	}

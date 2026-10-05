@@ -31,6 +31,7 @@ func TestReleaseOfAnUnreachedSentinelWhoseWaitsAreInFlight(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	ta.ok("ask --actor lead")
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
+	ta.ok("ask --actor lead") // the reads one at a time: the second once the first came back ok
 	ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 	ta.ok("accept s1-1 --actor lead")
 	require.Equal(t, sprint.Merging, ta.primary("s1-1").Col)

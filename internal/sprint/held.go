@@ -389,7 +389,7 @@ func (c *held) actor(pr *Card) string {
 // attempt than it needs (ReadsNeeded) and work that did not fail: the ask is
 // owed it.
 func (c *held) waitsToBeAsked(pr *Card) bool {
-	return pr.Col == Review && pr.F("result") != "failed" && len(liveReadsAt(c.s, pr, pr.Int("attempt"))) < ReadsNeeded(pr)
+	return pr.Col == Review && pr.F("result") != "failed" && ReadsWanted(c.s, pr) > 0
 }
 
 // tickOn is what the next tick does to the primary, "" when nothing.
@@ -625,7 +625,7 @@ func (c *held) decisions(pr *Card) []string {
 		out = []string{"accept", "rework", "drop"}
 	case pr.Col == Review && pr.F("result") == "failed":
 		out = []string{"rework", "drop"}
-	case pr.Col == Review && len(liveReadsAt(c.s, pr, pr.Int("attempt"))) >= ReadsNeeded(pr):
+	case pr.Col == Review && ReadsWanted(c.s, pr) == 0:
 		out = []string{"ask --another", "rework", "drop"} // ask alone is refused: asked already
 	case pr.Col == Review:
 		out = []string{"ask", "rework", "drop"}

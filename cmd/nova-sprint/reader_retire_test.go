@@ -20,9 +20,10 @@ func TestReaderRetireKeepsTheHistoryAndTakesTheRowOff(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
 	ta.inReview(1)
 	ta.ok("ask s1-1")
-	asked := append(ta.askedOf("reader-a"), ta.askedOf("reader-b")...)
-	require.Len(t, asked, 2, "a pro card is asked of two readers: %v", asked)
+	require.Equal(t, []string{"s1-1.r1.reader-a"}, ta.askedOf("reader-a"), "a pro card's first read is asked alone")
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a --finding 'fine'")
+	ta.ok("ask s1-1") // its second read, once the first came back ok
+	require.Equal(t, []string{"s1-1.r1.reader-b"}, ta.askedOf("reader-b"), "the second read, of another reader")
 
 	code, _, errs := ta.do("reader remove reader-a")
 	assert.Equal(t, 1, code)
@@ -104,5 +105,7 @@ func TestReaderRetireHelpSaysWhatHappensToAReadInReading(t *testing.T) {
 	ta.ok("start")
 	ta.ok("tick")
 	assert.Empty(t, ta.askedOf(reading), "the read in reading was taken back")
-	assert.Equal(t, []string{"s1-1.r1.reader-c"}, ta.askedOf("reader-c"), "asked of a reader up with no card at that attempt")
+	again := append(ta.askedOf("reader-b"), ta.askedOf("reader-c")...)
+	require.Len(t, again, 1, "asked of one reader up with no card at that attempt")
+	assert.NotContains(t, again[0], reading)
 }

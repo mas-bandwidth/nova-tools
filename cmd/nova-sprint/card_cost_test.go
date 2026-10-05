@@ -198,6 +198,7 @@ func TestAReturnedReadKeepsItsRunInTheTotal(t *testing.T) {
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")
 	ta.ok("ask")
+	ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
 	ta.ok("read --as reader-a --begin --limit 1")
 	ta.a.sleep(9 * time.Second)
 	ta.ok("read --as reader-a --return s1-1.r1.reader-a --reason 'no verdict' --usage '" + usageReadA + "'")

@@ -82,15 +82,18 @@ func TestAFlashCardIsAcceptedOnOneReadAndAProCardOnTwo(t *testing.T) {
 			w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{tc.id}}}))
 			pr := w.s.Work.Card(tc.id)
 			assert.Equal(t, tc.reads, ReadsNeeded(pr))
-			reads := liveReadsAt(w.s, pr, 1)
-			require.Len(t, reads, tc.reads, "%s, a %s card, asked of %d readers", tc.id, tc.tier, tc.reads)
-			for _, rc := range reads {
+			// the reads are asked one at a time: the first alone, the next once it came back ok
+			for i := 0; i < tc.reads; i++ {
+				if i > 0 {
+					w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{tc.id}}}))
+				}
+				reads := liveReadsAt(w.s, pr, 1)
+				require.Len(t, reads, i+1, "%s, a %s card, asked of %d readers so far", tc.id, tc.tier, i+1)
+				rc := askedRead(w, tc.id)
 				assert.Equal(t, tc.tier, rc.F(FieldTier), "%s is drawn from its card's tier", rc.ID)
 				assert.Equal(t, tc.tier, routeTier(w.s, rc.F(FieldRoute)), "%s runs on a %s route, not %q", rc.ID, tc.tier, rc.F(FieldRoute))
-			}
-			for i, rc := range reads {
 				w.must(Read(w.s, ReadReq{As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-				last := i == len(reads)-1
+				last := i == tc.reads-1
 				assert.Equal(t, last, acceptable(w.s, w.s.Work.Card(tc.id)), "after %d of %d oks", i+1, tc.reads)
 				if !last {
 					p := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{tc.id}}})
@@ -153,7 +156,11 @@ func TestAFlashCardReworkedToProIsReadTwiceOnPro(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID), Head: "h2"}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	again := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 2)
-	require.Len(t, again, 2, "a pro card's two reads")
+	require.Len(t, again, 1, "a pro card's first read")
+	w.must(Read(w.s, ReadReq{As: again[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{again[0].ID}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	again = liveReadsAt(w.s, w.s.Work.Card("s1-1"), 2)
+	require.Len(t, again, 2, "a pro card's two reads, one at a time")
 	for _, rc := range again {
 		assert.Equal(t, "pro", routeTier(w.s, rc.F(FieldRoute)), rc.ID)
 	}
@@ -202,6 +209,7 @@ func begunReads(t *testing.T) *world {
 	t.Helper()
 	w := tierWorld(t)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}, Another: true})) // reads are asked one at a time: the pro card's second by --another
 	for id, readers := range map[string][]string{"s1-1": {"reader-a"}, "s1-2": {"reader-b", "reader-c"}} {
 		got := readerNames(liveReadsAt(w.s, w.s.Work.Card(id), 1))
 		require.ElementsMatch(t, readers, got, "%s asked of %v", id, got)

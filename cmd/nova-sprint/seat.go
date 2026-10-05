@@ -214,7 +214,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 		sc := streamCounts{Stream: s, Counts: map[string]int{}}
 		for _, col := range sprint.States {
 			var n int
-			_, _ = fmt.Sscan(v.Tables[sprint.Work][s][string(col)], &n) // ignored: a cell that is no number counts 0
+			_, _ = fmt.Sscan(cellText(v.Tables[sprint.Work][s][string(col)]), &n) // ignored: a cell that is no number counts 0
 			sc.Counts[string(col)] = n
 		}
 		h.Streams = append(h.Streams, sc)
@@ -275,7 +275,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	}
 	h.Decisions = h.Decisions[max(0, len(h.Decisions)-handoverDecisions):]
 	for _, m := range sortedKeys(v.Tables[sprint.Fleet]) {
-		status := v.Tables[sprint.Fleet][m][sprint.Status]
+		status := cellText(v.Tables[sprint.Fleet][m][sprint.Status])
 		switch status {
 		case sprint.Held:
 			h.Members = append(h.Members, memberView{Member: m, Status: status, By: heldBy[m]})
@@ -539,4 +539,11 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 	}
 	sayOK(stdout, c.json, "seat", fmt.Sprintf("SEAT holder=%s epoch=%d generation=%d", orDashStr(s.Holder, "-"), s.Epoch, s.Generation), map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation})
 	return 0
+}
+
+// cellText is a where view's cell as the text it was printed as; "" for a row field that
+// is no string.
+func cellText(cell any) string {
+	s, _ := cell.(string)
+	return s
 }

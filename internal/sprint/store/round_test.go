@@ -59,6 +59,6 @@ func TestTheRollingIndexesSurviveAStopAndAStart(t *testing.T) {
 	first := ask("s1-1")
 	restart()
 	second := ask("s1-2")
-	require.True(t, slices.Equal(first, []string{"reader-a", "reader-b"}), "asked %v then %v, want [reader-a reader-b] then [reader-c reader-a]: past reader-b after the restart", first, second)
-	require.True(t, slices.Equal(second, []string{"reader-c", "reader-a"}), "asked %v then %v, want [reader-a reader-b] then [reader-c reader-a]: past reader-b after the restart", first, second)
+	require.True(t, slices.Equal(first, []string{"reader-a"}), "asked %v then %v, want [reader-a] then [reader-b]: past reader-a after the restart", first, second)
+	require.True(t, slices.Equal(second, []string{"reader-b"}), "asked %v then %v, want [reader-a] then [reader-b]: past reader-a after the restart", first, second)
 }

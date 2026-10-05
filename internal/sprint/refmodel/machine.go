@@ -203,25 +203,34 @@ func (n *State) tickDeal(choice map[string]string) error {
 	return nil
 }
 
-// tickAsk is T2: two different readers for each primary in review with no
-// read card, whose work did not fail, in stream turns from the ask's stream
-// index.
+// tickAsk is T2: the reads wanted now (ReadsWanted: one at a time) for each
+// primary in review whose work did not fail, in stream turns from the ask's
+// stream index.
 func (n *State) tickAsk(choice map[string][]string) error {
 	var review []string
 	for id, p := range n.Primaries {
-		if p.State == Review && !n.Failed(id) && len(n.LiveReadsOf(id)) == 0 {
+		if p.State == Review && !n.Failed(id) && n.ReadsWanted(id) > 0 {
 			review = append(review, id)
 		}
 	}
 	// in stream turns from the ask's stream index;
 	// Ask moves it past each primary's stream
 	review = n.streamTurns(review, n.AskStreamLast)
+	// the finders' reads first (sprint.askFinders): each counted in its reader's
+	// load before the primary's own Ask places it (Reserved)
+	n.Reserved = map[string]int{}
 	for _, p := range review {
-		two := choice[p]
-		if two == nil {
-			two = n.NextReaders(p, 2)
+		if readers, finder := n.AskChoice(p); finder {
+			n.Reserved[readers[0]]++
 		}
-		next, err := Ask(*n, p, two)
+	}
+	defer func() { n.Reserved = nil }()
+	for _, p := range review {
+		readers := choice[p]
+		if readers == nil {
+			readers, _ = n.AskChoice(p)
+		}
+		next, err := Ask(*n, p, readers)
 		if err != nil {
 			return err
 		}
