@@ -70,11 +70,20 @@ func (s *Snapshot) decideFields(pr *Card, first bool) map[string]string {
 	return map[string]string{FieldDecideBounce: s.DecideBounce, FieldDecideReview: s.DecideReview}
 }
 
-// readsAt is the primary's placed read cards at an attempt, in reader row order.
+// readsAt is the primary's placed read cards at an attempt, in reader row
+// order, one per reader: the latest placed ask, including a re-ask .tN.
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
+	if s.Readers == nil || pr == nil {
+		return nil
+	}
 	for _, r := range s.Readers.Rows() {
-		c := s.Readers.Placed(ReadCardID(pr.ID, attempt, r))
+		var c *Card
+		for take := 1; take <= MaxReadTakebacks; take++ {
+			if p := s.Readers.Placed(ReadCardIDTake(pr.ID, attempt, r, take)); p != nil {
+				c = p
+			}
+		}
 		if c != nil {
 			out = append(out, c)
 		}
@@ -171,12 +180,14 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
-		free := s.freeReaders(c, attempt)
+		fresh, reask := s.readAskPools(c, attempt)
 		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
 		if another {
 			want = 1
 		}
-		chosenReaders := rr.pickByRoom(want, free, room)
+		// never-asked readers first; a reader taken back with no verdict only
+		// fills what is left (read-asked-again-after-takebackc)
+		chosenReaders := pickAsks(rr, want, fresh, reask, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -200,8 +211,18 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			retiredFrom = append(retiredFrom, rc.F("reader"))
 		}
 		if len(chosenReaders)+len(again) < want {
+			if len(fresh)+len(reask) == 0 {
+				if len(closesFor(s.Open, []string{NReadsExhausted}, c.ID)) > 0 {
+					continue
+				}
+				if j, ok := reviewJudgment(s, c, reviewStep{who: r.Who}); ok && j.Type == NReadsExhausted {
+					p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Notes: []Note{j}})
+					continue
+				}
+			}
 			full := 0
-			for _, rd := range free {
+			pool := append(append([]string{}, fresh...), reaskNames(reask)...)
+			for _, rd := range pool {
 				if room[rd].free <= 0 {
 					full++
 				}
@@ -225,11 +246,19 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
+		reaskID := map[string]string{}
+		for _, a := range reask {
+			reaskID[a.reader] = a.id
+		}
 		for i, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
-			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
+			id := ReadCardID(c.ID, attempt, rd)
+			if alt, ok := reaskID[rd]; ok {
+				id = alt
+			}
+			u.Changes = append(u.Changes, change(Readers, createEntry(id, rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)
 		if pair := strings.Join(all, ","); !another && pair != c.F("asked") {
@@ -237,7 +266,14 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			// --another's reader is one more, not one of the two
 			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
 		}
-		named := append([]string{}, chosenReaders...)
+		var named []string
+		for _, rd := range chosenReaders {
+			if _, ok := reaskID[rd]; ok {
+				named = append(named, rd+" (again, its read taken back)")
+				continue
+			}
+			named = append(named, rd)
+		}
 		for _, rd := range again {
 			named = append(named, rd+" (again, its read returned)")
 		}
@@ -251,14 +287,23 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if instead != "" {
 			u.Moved += "; its read taken back from " + instead + " (instead)"
 		}
-		if another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken, NBriefWrong, NReadsExhausted, NStranded, NStalled}, c.ID)
-		} else {
-			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
+		closeTypes := []string{NStranded, NStalled}
+		if len(chosenReaders) > 0 {
+			// a read placed closes reads exhausted: a reader came back, or one
+			// was added, after the take-back bound
+			closeTypes = append(closeTypes, NReadsExhausted)
 		}
+		if another {
+			closeTypes = append(closeTypes, NReadBroken, NBriefWrong)
+		}
+		u.Closes = closesFor(s.Open, closeTypes, c.ID)
 		asked := map[string]string{}
 		for _, rd := range append(append([]string{}, chosenReaders...), again...) {
-			asked[ReadCardID(c.ID, attempt, rd)] = Asked
+			id := ReadCardID(c.ID, attempt, rd)
+			if alt, ok := reaskID[rd]; ok {
+				id = alt
+			}
+			asked[id] = Asked
 		}
 		if j, ok := reviewJudgment(s, c, reviewStep{moved: asked, closing: noteIDs(u.Closes), who: r.Who}); ok {
 			u.Notes = append(u.Notes, j)
@@ -282,9 +327,37 @@ func Ask(s *Snapshot, r AskReq) Plan {
 
 // insteadHeld says why the reader's read of the primary at its attempt cannot be
 // taken back by ask --instead ("" when it is live: asked or reading).
+func reaskNames(again []readCandidate) []string {
+	out := make([]string, len(again))
+	for i, a := range again {
+		out[i] = a.reader
+	}
+	return out
+}
+
+// placedOrLatestRead is the reader's placed read of the attempt, or the
+// latest record when none is placed (a retired ask, including .tN).
+func placedOrLatestRead(s *Snapshot, primary string, attempt int, reader string) *Card {
+	if s.Readers == nil {
+		return nil
+	}
+	var latest *Card
+	for take := 1; take <= MaxReadTakebacks; take++ {
+		c := s.Readers.Card(ReadCardIDTake(primary, attempt, reader, take))
+		if c == nil {
+			continue
+		}
+		latest = c
+		if c.Placed() {
+			return c
+		}
+	}
+	return latest
+}
+
 func insteadHeld(s *Snapshot, pr *Card, rd string) string {
 	attempt := pr.Int("attempt")
-	rc := s.Readers.Card(ReadCardID(pr.ID, attempt, rd))
+	rc := placedOrLatestRead(s, pr.ID, attempt, rd)
 	at := " of " + pr.ID + " at attempt " + itoa(attempt)
 	switch {
 	case rc == nil:
@@ -618,11 +691,27 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	oks := map[string]bool{}
 	outstanding, reads := false, 0
 	for _, r := range s.Readers.Rows() {
-		id := ReadCardID(pr.ID, attempt, r)
-		c := s.Readers.Placed(id)
-		col, moved := st.moved[id]
+		var c *Card
+		col, moved := "", false
+		for take := 1; take <= MaxReadTakebacks; take++ {
+			id := ReadCardIDTake(pr.ID, attempt, r, take)
+			if coln, ok := st.moved[id]; ok {
+				moved, col = true, coln
+			}
+			if pc := s.Readers.Placed(id); pc != nil {
+				c = pc
+				if !moved {
+					col = pc.Col
+				}
+			}
+		}
+		bound := s.readTakebacks(pr.ID, attempt, r) >= MaxReadTakebacks
 		switch {
-		case c == nil && !moved:
+		case c == nil && !moved && !bound:
+			continue
+		case c == nil && !moved && bound:
+			// three take-backs with no verdict: a completed read, not an ok
+			reads++
 			continue
 		case c == nil:
 			col = Asked
@@ -633,7 +722,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		switch {
 		case col == Asked || col == Reading:
 			outstanding = true
-		case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
+		case c != nil && col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
 			oks[r] = true
 		}
 	}

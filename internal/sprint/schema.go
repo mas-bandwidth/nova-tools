@@ -274,9 +274,23 @@ func ValidID(s string) bool { return len(s) <= MaxIDLen && idRE.MatchString(s) }
 const MaxIDLen = 128
 
 // ValidCardID says a card's id is its parts joined by dots, each a ValidID word: a
-// primary (p), a work card (p.w1), a read card (p.r1.reader).
+// primary (p), a work card (p.w1), a read card (p.r1.reader). A re-ask of a
+// read taken back with no verdict is the same id plus .tN, n >= 2
+// (ReadCardIDTake): four parts, and only that shape.
 func ValidCardID(s string) bool {
 	parts := strings.Split(s, ".")
+	if len(parts) == 4 {
+		_, _, _, take, ok := parseReadID(s)
+		if !ok || take < 2 {
+			return false
+		}
+		for _, p := range parts {
+			if !ValidID(p) {
+				return false
+			}
+		}
+		return true
+	}
 	if len(parts) > 3 {
 		return false
 	}
@@ -293,9 +307,26 @@ func WorkCardID(primary string, attempt int) string {
 	return primary + ".w" + strconv.Itoa(attempt)
 }
 
-// ReadCardID is the identity of one reader's read of a primary at one attempt.
+// ReadCardID is the identity of one reader's first read of a primary at one
+// attempt. A later ask of the same reader at that attempt, after a take-back
+// with no verdict, is ReadCardIDTake.
 func ReadCardID(primary string, attempt int, reader string) string {
 	return primary + ".r" + strconv.Itoa(attempt) + "." + reader
+}
+
+// MaxReadTakebacks is how many times a read of one attempt may be taken back
+// from one reader with no verdict before that reader is not asked it again.
+const MaxReadTakebacks = 3
+
+// ReadCardIDTake is the identity of one reader's nth ask of a primary at one
+// attempt. The first ask is ReadCardID, with no suffix. A re-ask appends
+// .tN, n = 2, 3, …, so an id already stored still parses.
+func ReadCardIDTake(primary string, attempt int, reader string, take int) string {
+	id := ReadCardID(primary, attempt, reader)
+	if take >= 2 {
+		return id + ".t" + strconv.Itoa(take)
+	}
+	return id
 }
 
 // CtlID is the identity of a stream's or a member's control card.
@@ -314,15 +345,52 @@ func ParseWorkCard(id string) (primary string, attempt int, ok bool) {
 	return id[:i], n, true
 }
 
-// ParseReadCard splits a read card identity into its primary, attempt and reader.
+// ParseReadCard splits a read card identity into its primary, attempt and
+// reader. A re-ask suffix .tN (n >= 2) is accepted and is not part of the
+// reader; an id with no suffix parses as it always has.
 func ParseReadCard(id string) (primary string, attempt int, reader string, ok bool) {
+	primary, attempt, reader, _, ok = parseReadID(id)
+	return primary, attempt, reader, ok
+}
+
+// parseReadID splits a read card id. take is 1 when the id has no .tN suffix.
+func parseReadID(id string) (primary string, attempt int, reader string, take int, ok bool) {
 	parts := strings.Split(id, ".")
-	if len(parts) != 3 || !strings.HasPrefix(parts[1], "r") {
-		return "", 0, "", false
+	if (len(parts) != 3 && len(parts) != 4) || !strings.HasPrefix(parts[1], "r") {
+		return "", 0, "", 0, false
 	}
 	n, err := strconv.Atoi(parts[1][1:])
 	if err != nil || n < 1 {
-		return "", 0, "", false
+		return "", 0, "", 0, false
 	}
-	return parts[0], n, parts[2], true
+	take = 1
+	if len(parts) == 4 {
+		take, ok = parseTakeSuffix(parts[3])
+		if !ok {
+			return "", 0, "", 0, false
+		}
+	}
+	return parts[0], n, parts[2], take, true
+}
+
+// parseTakeSuffix reads a re-ask suffix tN, N >= 2, canonical decimal with
+// no sign and no leading zero. t1 is the first ask, which carries no suffix.
+func parseTakeSuffix(s string) (int, bool) {
+	if len(s) < 2 || s[0] != 't' {
+		return 0, false
+	}
+	rest := s[1:]
+	if rest[0] < '1' || rest[0] > '9' {
+		return 0, false
+	}
+	for _, c := range rest[1:] {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 2 {
+		return 0, false
+	}
+	return n, true
 }

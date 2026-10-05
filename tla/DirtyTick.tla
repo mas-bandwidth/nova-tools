@@ -91,6 +91,10 @@
 \*   "raway": the reader is not up, the reads it holds are taken back and
 \*   asked again in the same update, at the card's attempt (askw, as a lapse's
 \*   unread), each with its readoff to the fleet; "raback": the reader is up.
+\*   A take-back with no verdict (raway, unread) does not put the reader in
+\*   seen. tb counts them. At MaxTakebacks the reader joins seen and is not
+\*   asked again (TakebackBoundHolds). PlaceReads prefers a reader never
+\*   taken back (tb = 0) over one already taken back.
 \*   THE ASK GUARD: with "readerup" in Fixes a read is placed only on a reader
 \*   up (AbleReaders); the witness without it places a read on a reader away
 \*   (ReadsStandOnReadersUp), and the witness "keepaway" leaves the reads of a
@@ -232,12 +236,15 @@ ReworkOn == "rework" \in DOMAIN Scn /\ Scn.rework
 \* The in-place re-asks of a returned read at its attempt (internal/sprint
 \* MaxReadReasks).
 MaxReasks == 2
+\* No-verdict take-backs of one reader at one attempt (internal/sprint
+\* MaxReadTakebacks). The third joins the reader to seen.
+MaxTakebacks == 3
 
 VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna, tb,
           fat, ftr, tier, back, fbk, rwk, rb
 
 \* fat, ftr       the work table: the primary's record, written by a rework at
@@ -255,6 +262,7 @@ VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
 \*                attempt; the reader that returned c's read while it waits
 \* rea, cna       the readers table: c's in-place re-asks at its attempt (the
 \*                read card's reasked); the judgment "cannot ask" open on c
+\* tb             no-verdict take-backs of c per reader (0..MaxTakebacks)
 \* okd, ci, ret   the work table: a card's read said ok and stands; its CI
 \*                ("none" or "red" at its head); returned at its attempt
 \* tk             the fleet table: the card dealt to a machine is taken
@@ -269,9 +277,9 @@ vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna, tb,
           fat, ftr, tier, back, fbk, rwk, rb>>
-CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna, tb,
               fat, ftr, tier, back, fbk, rwk, rb>>
 
 -----------------------------------------------------------------------------
@@ -303,7 +311,7 @@ Cur == [col |-> col, att |-> att, bnd |-> bnd, rd |-> rd, askw |-> askw,
         brk |-> brk, dealt |-> dealt, plc |-> <<>>, notes |-> notes,
         f0 |-> Len(Q["fleet"]),
         okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends,
-        hred |-> hred, seen |-> seen, hb |-> hb, rea |-> rea, cna |-> cna,
+        hred |-> hred, seen |-> seen, hb |-> hb, rea |-> rea, cna |-> cna, tb |-> tb,
         fat |-> fat, ftr |-> ftr, tier |-> tier, back |-> back, fbk |-> fbk, rwk |-> rwk, rb |-> rb]
 
 Put(S, t, e) == [S EXCEPT !.q[t] = Append(@, e)]
@@ -348,7 +356,8 @@ AtRB(S, c) == Broken # "redealpast" /\ S.ended[c] /\ S.rdl[c] >= MaxRedeals
 NewAttempt(S, c) ==
   [S EXCEPT !.okd[c] = FALSE, !.ci[c] = "none", !.ret[c] = FALSE,
             !.rdl[c] = 0, !.ended[c] = FALSE, !.ends[c] = 0, !.hred[c] = FALSE,
-            !.seen[c] = {}, !.hb[c] = NoR, !.rea[c] = 0, !.cna[c] = FALSE]
+            !.seen[c] = {}, !.hb[c] = NoR, !.rea[c] = 0, !.cna[c] = FALSE,
+            !.tb[c] = [r \in Readers |-> 0]]
 
 -----------------------------------------------------------------------------
 \* THE WORK PUMP (1.). Applies its whole queue, lands sentinels, releases,
@@ -483,7 +492,11 @@ ApplyR(S, e) ==
                                !.seen[c] = IF counted THEN @ \cup {e.x} ELSE @],
                      "fleet", E("readoff", c, Host[e.x]))
     [] e.k = "unread" ->
-         IF S.rd[c] # NoR THEN [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE] ELSE S
+         IF S.rd[c] = NoR THEN S
+         ELSE LET r == S.rd[c]
+              IN [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE,
+                           !.tb[c][r] = Min(S.tb[c][r] + 1, MaxTakebacks),
+                           !.seen[c] = IF S.tb[c][r] + 1 >= MaxTakebacks THEN @ \cup {r} ELSE @]
     [] e.k = "raway" ->     \* the reader is not up: its reads are taken back and asked again
          IF S.stat[e.x] = "down" THEN S
          ELSE IF Broken = "keepaway" THEN [S EXCEPT !.stat[e.x] = "down"]    \* the witness keeps them
@@ -491,6 +504,11 @@ ApplyR(S, e) ==
               IN [S EXCEPT !.stat[e.x] = "down",
                            !.rd = [d \in Cards |-> IF d \in H THEN NoR ELSE @[d]],
                            !.askw = [d \in Cards |-> IF d \in H THEN TRUE ELSE @[d]],
+                           !.tb = [d \in Cards |-> IF d \in H
+                                   THEN [S.tb[d] EXCEPT ![e.x] = Min(S.tb[d][e.x] + 1, MaxTakebacks)]
+                                   ELSE S.tb[d]],
+                           !.seen = [d \in Cards |-> IF d \in H /\ S.tb[d][e.x] + 1 >= MaxTakebacks
+                                     THEN @ \cup {e.x} ELSE @],
                            !.q["fleet"] = @ \o [i \in 1..Cardinality(H) |-> E("readoff", Nth(H, i), Host[e.x])]]
     [] e.k = "raback" -> [S EXCEPT !.stat[e.x] = "up"]
     [] OTHER -> S    \* room, echo
@@ -514,7 +532,8 @@ PlaceReads(S) ==
                PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = h, !.hb[c] = NoR,
                                         !.rea[c] = Min(@ + 1, MaxReasks + 1), !.cna[c] = FALSE],
                               "fleet", E("readon", c, Host[h])))
-          ELSE LET rs == Others(S, c)
+          ELSE LET fresh == {r \in Others(S, c) : S.tb[c][r] = 0}
+                   rs == IF fresh # {} THEN fresh ELSE Others(S, c)
                    r == Pick(ROrder, rs, S.rctr)
                IN PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = r, !.hb[c] = NoR,
                                            \* the returned read taken by another
@@ -655,7 +674,7 @@ Update(t) ==
 Commit(S) ==
   /\ okd' = S.okd /\ ci' = S.ci /\ ret' = S.ret /\ tk' = S.tk /\ rdl' = S.rdl
   /\ ended' = S.ended /\ ends' = S.ends /\ hred' = S.hred /\ seen' = S.seen /\ hb' = S.hb
-  /\ rea' = S.rea /\ cna' = S.cna
+  /\ rea' = S.rea /\ cna' = S.cna /\ tb' = S.tb
   /\ fat' = S.fat /\ ftr' = S.ftr /\ tier' = S.tier /\ back' = S.back /\ fbk' = S.fbk /\ rwk' = S.rwk /\ rb' = S.rb
   /\ col' = S.col /\ att' = S.att /\ bnd' = S.bnd /\ rd' = S.rd /\ askw' = S.askw
   /\ mq' = S.mq /\ stat' = S.stat /\ mc' = S.mc /\ mr' = S.mr /\ noUp' = S.noUp
@@ -848,6 +867,7 @@ Init ==
   /\ ends = [c \in Cards |-> 0] /\ hred = [c \in Cards |-> FALSE]
   /\ seen = [c \in Cards |-> {}] /\ hb = [c \in Cards |-> NoR]
   /\ rea = [c \in Cards |-> 0] /\ cna = [c \in Cards |-> FALSE]
+  /\ tb = [c \in Cards |-> [r \in Readers |-> 0]]
   /\ fat = [c \in Cards |-> 0] /\ ftr = [c \in Cards |-> "none"] /\ tier = [c \in Cards |-> Ladder[1]]
   /\ back = [t \in Tiers |-> FALSE] /\ fbk = [c \in Cards |-> {}]
   /\ rwk = [c \in Cards |-> 0] /\ rb = [c \in Cards |-> 0]
@@ -880,6 +900,7 @@ TypeOK ==
   /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)] /\ hred \in [Cards -> BOOLEAN]
   /\ seen \in [Cards -> SUBSET Readers] /\ hb \in [Cards -> Readers \cup {NoR}]
   /\ rea \in [Cards -> 0..(MaxReasks + 1)] /\ cna \in [Cards -> BOOLEAN]
+  /\ tb \in [Cards -> [Readers -> 0..MaxTakebacks]]
   /\ fat \in [Cards -> 0..MaxAttempts] /\ ftr \in [Cards -> Tiers \cup {"none"}]
   /\ tier \in [Cards -> Tiers] /\ back \in [Tiers -> BOOLEAN] /\ fbk \in [Cards -> SUBSET Tiers]
   /\ rwk \in [Cards -> 0..MaxAttempts] /\ rb \in [Cards -> 0..(MaxBoundReworks + 1)]
@@ -964,7 +985,18 @@ StrandingIsJudged ==
 \* A RETURN IS NOT A READ: no card is stranded by its readers' reads before
 \* its reader was asked it again MaxReasks times (the code before counted the
 \* first return as a read: W25).
-JudgedOnlyAfterTheBound == \A c \in Cards : (cna[c] /\ Readers \subseteq seen[c]) => rea[c] >= MaxReasks
+\* Three no-verdict take-backs and the reader is not asked again, and holds
+\* no read (read-asked-again-after-takebackc).
+TakebackBoundHolds == \A c \in Cards : \A r \in Readers :
+  tb[c][r] >= MaxTakebacks => r \in seen[c] /\ rd[c] # r
+\* A reader in seen because the take-back bound put them there (tb at
+\* MaxTakebacks) is not an in-place re-ask, so the antecedent leaves them out.
+\* The bound itself is conjoined, so a config that checks this checks it too.
+JudgedOnlyAfterTheBound ==
+  /\ TakebackBoundHolds
+  /\ \A c \in Cards :
+       (cna[c] /\ Readers \subseteq seen[c] /\ \A r \in Readers : tb[c][r] < MaxTakebacks)
+         => rea[c] >= MaxReasks
 \* A read waiting for a reader in review is placed on one, or judged.
 ReturnSettles ==
   \A c \in Cards : (askw[c] /\ col[c] = "review") ~> (~askw[c] \/ cna[c] \/ col[c] # "review")
