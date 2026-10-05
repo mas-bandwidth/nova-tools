@@ -90,6 +90,10 @@ takes `--json`; `log` takes `--max`.
   group.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
 - `names` lists the known names.
+- `receipts [--as <me>] [--id <id>]` prints `RECEIPTS OK count=<n>` followed by one
+  `RECEIPTS RECEIPT id=<id> state=<state> age=<duration>` line per receipt.
+- `overdue [--older <duration>]` prints `OVERDUE OK overdue=0 older=<d>` at exit 0,
+  or `OVERDUE FAILED overdue=<n> older=<d>` at exit 1 with `OVERDUE MESSAGE ...` lines.
 - `version`, `help`, `help <verb>`.
 
 Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
@@ -148,6 +152,34 @@ The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
 store with users: a sender marks the recipients' hashes, as it writes their
 streams.
 
+### message-receipts.w1: delivered, read and acted receipts, and overdue
+
+Every message has a forward-only receipt recorded in the store beside each
+recipient's stream in the hash `bus2:receipts:<recipient>` (one field per message
+id, value `<state> <RFC3339-time>` from the store's `TIME`). The receipt progresses
+through three states:
+- `delivered`: the recipient's reader took it off its stream (`b.Recv` / `b.RecvKinds`).
+- `read`: the session's turn carrying it started (the daemon marks it when the adapter
+  accepts the turn).
+- `acted`: the turn ended at exit 0, or the recipient sent a message whose `re` is its id.
+
+A receipt moves only forward (`delivered` -> `read` -> `acted`): attempting to set an
+earlier state on an id that has already advanced is a no-op.
+
+The tool provides two inspection verbs:
+- `nova-bus receipts --as <name> [--id <id>]` prints `RECEIPTS OK count=<n>`, followed
+  by one line `RECEIPTS RECEIPT id=<id> state=<state> age=<duration>` per message receipt.
+- `nova-bus overdue --older <d>` (default 10m) inspects every stream for messages short
+  of delivered whose age exceeds `<d>`, printing `OVERDUE OK overdue=0 older=<d>` at exit 0,
+  or `OVERDUE FAILED overdue=<n> older=<d>` at exit 1 with one `OVERDUE MESSAGE ...` line
+  per overdue message.
+
+Delivery stays at-least-once: a claimed message after `ClaimAfter` is handed in again.
+The take is idempotent: the daemon (`internal/friend/daemon.go`) remembers the message ids
+it pushed into a turn that ended acted (exit 0) and drops any second delivery of the same
+message id with one record line, `duplicate dropped id=<id>`, acking it and never pushing
+it into a turn twice.
+
 ## The identity
 
 Who a verb acts as is the user the connection logged in as, never a word on
@@ -176,6 +208,8 @@ INFO` on Redis 8 answers):
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
 | names | `SMEMBERS`, `TIME` | `friends`, `machines` |
+| receipts | `HGETALL`, `TIME` | `bus2:receipts:<f>` |
+| overdue | `SMEMBERS`, `XRANGE`, `HGETALL`, `TIME` | `friends`, `machines`, `bus2:to:*`, `bus2:receipts:*` |
 
 The wrinkle, said plainly: a sender writes other friends' streams. `send` fans
 the message out from the client, one `XADD` per recipient stream inside the
@@ -190,7 +224,7 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipts:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
   +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall
 ```

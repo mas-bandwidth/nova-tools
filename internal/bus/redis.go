@@ -73,6 +73,21 @@ func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, 
 	return out, nil
 }
 
+func (r Redis) SetMarks(ctx context.Context, key string, fields map[string]string) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	vals := make([]any, 0, len(fields)*2)
+	for k, v := range fields {
+		vals = append(vals, k, v)
+	}
+	return r.C.HSet(ctx, key, vals...).Err()
+}
+
+func (r Redis) Time(ctx context.Context) (time.Time, error) {
+	return r.C.Time(ctx).Result()
+}
+
 func (r Redis) EnsureGroup(ctx context.Context, stream, group string) error {
 	err := r.C.XGroupCreateMkStream(ctx, stream, group, "0").Err()
 	if err != nil && strings.HasPrefix(err.Error(), "BUSYGROUP") {
