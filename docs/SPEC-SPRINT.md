@@ -67,6 +67,22 @@ of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
 cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
 `TestWhereCarriesTiersAndPerLandedCost`).
 
+`where --json` carries `landedSeries` for the Landings panel (cards landed per 10-minute
+bucket over 24 hours, split between friends and fleet; `where-landed-series.w1`):
+`generated` (RFC 3339), `generatedEpoch`, `bucketSeconds` (600), `start` (Unix epoch seconds of
+the first bucket), `buckets` (144), `friends` (144 counts), `fleet` (144 counts), `totals`
+(`friends`, `fleet`, `unknown`), `lastHour` (`friends`, `fleet`), and `workers` (each worker's
+landed count with `friend.` stripped). A landing is a work-table move to `<stream>:landed`
+from any state but waiting (a sentinel's release is not work), counted once per card at that
+move's time; the worker is the last `<who>:ok` move of the card's work attempt (`<card>.wN`),
+where `friend.<name>` is friends, any fleet member is fleet, and none found is unknown.
+The series is read from the store `--redis` names and the epoch `--at-epoch` names, in any
+order with where's other flags (`where --json --cards --redis <addr>` is the dashboard's
+call), at the frame's `at`; a frame the sprint's server drew already carries it. An unknown
+flag with `--json` is refused, never read as a series of another store
+(`TestWhereLandedSeriesReadsTheNamedStoreAndEpoch`, `TestWhereSeriesFlagsAreWheresFlags`,
+`where-landed-series.w3`).
+
 The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
 below merge. friends | status for now. up/down/held"; "friends should be
 configured in nova-config"; "you should use heartbeats from each friend to track
