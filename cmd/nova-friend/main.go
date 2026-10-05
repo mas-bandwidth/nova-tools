@@ -4,7 +4,7 @@
 // as a turn, beats to the sprint server while it does, answers the
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent. The
-// verbs are run, install, uninstall, status, pong, ping and wait-pong; the
+// verbs are run, install, uninstall, status, sleep, wake, pong, ping and wait-pong; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -57,8 +57,8 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
-	beat      func(ctx context.Context, server, friend string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	progress  func(ctx context.Context, server string, argv []string) error               // one progress verb to the sprint server (friend.ProgressArgv)
+	beat      func(ctx context.Context, server, friend string, asleep bool) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	progress  func(ctx context.Context, server string, argv []string) error                            // one progress verb to the sprint server (friend.ProgressArgv)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -87,10 +87,15 @@ func realWorld() world {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
-		beat: func(ctx context.Context, server, name string) (string, error) {
+		beat: func(ctx context.Context, server, name string, asleep bool) (string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"friend", "beat", name})
+			argv := []string{"friend", "beat"}
+			if asleep {
+				argv = append(argv, "--asleep")
+			}
+			argv = append(argv, name)
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
 			if err != nil {
 				return "", err
 			}
@@ -196,12 +201,18 @@ func friendTool(w world) *tool.Tool {
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
-		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
+		f.String("coordinator", "", "the coordinator's bus name: told of a broken session when no ping has named the seat, and the one sender whose message wakes a sleeping session (default: the saved session state)")
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
 			if h := c.Str("harness"); h != "" && !friend.Known(h) {
 				c.Problem(fmt.Sprintf("--harness %q is no harness; it wants one of %s", h, strings.Join(friend.Harnesses, ", ")))
+			}
+			if name := c.Str("as"); name != "" && bus.CheckName(name) != "" {
+				c.Problem("--as " + bus.CheckName(name))
+			}
+			if coordinator := c.Str("coordinator"); coordinator != "" && bus.CheckName(coordinator) != "" {
+				c.Problem("--coordinator " + bus.CheckName(coordinator))
 			}
 		})
 	}
@@ -292,6 +303,50 @@ environment variable or a wrapper at app start. While no such monitor runs, a de
 				Run: w.install,
 			},
 			{
+				Name:    "sleep",
+				Usage:   "sleep --as <me> [--coordinator <name>] [--state-dir <d>]",
+				Example: "sleep --as bob --coordinator ada",
+				Effect:  tool.LocalWrite + ": records a contactable sleeping session for the daemon's next beat",
+				Detail: `Stores asleep=true in the session state. The running daemon reports it on its next beat;
+this command does not wake or suspend the harness, send a network message, or prove that the session
+can be woken. A coordinator is required, either here or already saved in this state directory.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the friend this state directory belongs to")
+					f.String("coordinator", "", "the coordinator's name (default: the saved session state)")
+					stateDir(f)
+					f.Check(func(c *tool.Call) {
+						if name := c.Str("as"); name != "" && bus.CheckName(name) != "" {
+							c.Problem("--as " + bus.CheckName(name))
+						}
+						if coordinator := c.Str("coordinator"); coordinator != "" && bus.CheckName(coordinator) != "" {
+							c.Problem("--coordinator " + bus.CheckName(coordinator))
+						}
+					})
+				},
+				Run: w.sleepFriend,
+			},
+			{
+				Name:    "wake",
+				Usage:   "wake --as <me> [--state-dir <d>]",
+				Example: "wake --as bob",
+				Effect:  tool.LocalWrite + ": clears the saved sleeping-session marker",
+				Detail: `Clears asleep in the local session state. This is an explicit operator override and needs no
+coordinator, so it can recover a saved sleep state whose coordinator is missing. It does not send a
+network message or wake a harness; a running daemon reports the cleared state on its next beat.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the friend this state directory belongs to")
+					stateDir(f)
+					f.Check(func(c *tool.Call) {
+						if name := c.Str("as"); name != "" && bus.CheckName(name) != "" {
+							c.Problem("--as " + bus.CheckName(name))
+						}
+					})
+				},
+				Run: w.wakeFriend,
+			},
+			{
 				Name:    "uninstall",
 				Usage:   "uninstall --as <me> [--dry-run]",
 				Example: "uninstall --as bob --dry-run",
@@ -299,6 +354,11 @@ environment variable or a wrapper at app start. While no such monitor runs, a de
 				DryRun:  true,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the friend the agent was installed for")
+					f.Check(func(c *tool.Call) {
+						if name := c.Str("as"); name != "" && bus.CheckName(name) != "" {
+							c.Problem("--as " + bus.CheckName(name))
+						}
+					})
 				},
 				Run: w.uninstall,
 			},
@@ -341,6 +401,11 @@ the line it would send; nothing is sent and no pong file is written.`,
 					f.Int("working", 0, "tasks working, from your own task list")
 					f.Int("width", 0, "your width, from the nova-config friend row")
 					stateDir(f)
+					f.Check(func(c *tool.Call) {
+						if name := c.Str("as"); name != "" && bus.CheckName(name) != "" {
+							c.Problem("--as " + bus.CheckName(name))
+						}
+					})
 					redis(f)
 				},
 				Run: w.pong,
@@ -370,7 +435,7 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
+last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> (one-shot: lanes=; broken: session_id= broken_at= reason=) reported_asleep=<true|false> sleep_requested=<true|false> coordinator= (sleep_requested is saved locally by nova-friend sleep; reported_asleep is the daemon's, and lags until its next beat), and for harness grok route=<push|defer>,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
@@ -380,6 +445,11 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 					f.Required("as", "your name")
 					f.Required("dir", "the friend's working directory, where the queue file lives")
 					stateDir(f)
+					f.Check(func(c *tool.Call) {
+						if name := c.Str("as"); name != "" && bus.CheckName(name) != "" {
+							c.Problem("--as " + bus.CheckName(name))
+						}
+					})
 				},
 				Run: w.status,
 			},
@@ -434,11 +504,20 @@ func (w world) openUntil(ctx context.Context, addr string, record func(string)) 
 }
 
 func (w world) run(c *tool.Call) *tool.Out {
-	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
 		return o
 	}
 	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
+	if err := w.verifyStateOwner(state, name); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if _, err := w.readSessionConfig(state, name, c.Str("coordinator")); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec, c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
@@ -472,10 +551,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	defer closeStore()
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		StateDir: state, Coordinator: c.Str("coordinator"),
 		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
-		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
-		Beat: func(ctx context.Context) error {
-			answer, err := w.beat(ctx, server, name)
+		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		Beat: func(ctx context.Context, asleep bool) error {
+			answer, err := w.beat(ctx, server, name, asleep)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 				rowMode, rowWidth = m, wd
 			}
@@ -526,6 +606,104 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
+}
+
+func (w world) readSessionConfig(stateDir, name, coordinator string) (friend.SessionState, error) {
+	s, err := friend.ReadSessionState(stateDir)
+	if err != nil {
+		return friend.SessionState{}, fmt.Errorf("the session state cannot be read: %w", err)
+	}
+	effective := coordinator
+	if effective == "" {
+		effective = s.Coordinator
+	}
+	if effective != "" && !validCoordinator(effective) {
+		return friend.SessionState{}, fmt.Errorf("coordinator %q is not a valid bus name: %s", effective, bus.CheckName(effective))
+	}
+	if s.Asleep && effective == "" {
+		return friend.SessionState{}, fmt.Errorf("the session is asleep but has no coordinator; run: nova-friend wake --as %s --state-dir %s, or set --coordinator and start again", name, stateDir)
+	}
+	s.Coordinator = effective
+	return s, nil
+}
+
+func validCoordinator(name string) bool { return bus.CheckName(name) == "" }
+
+func (w world) verifyStateOwner(stateDir, name string) error {
+	status, found, err := friend.ReadStatus(stateDir)
+	if err != nil {
+		return fmt.Errorf("the status file cannot be read: %w", err)
+	}
+	if found && status.Friend != name {
+		return fmt.Errorf("the daemon whose state is in %s runs as %s, not %s", stateDir, status.Friend, name)
+	}
+	return nil
+}
+
+func (w world) sleepFriend(c *tool.Call) *tool.Out {
+	name, stateDir, coordinator := c.Str("as"), w.stateDir(c), c.Str("coordinator")
+	if err := w.verifyStateOwner(stateDir, name); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	state, err := friend.ReadSessionState(stateDir)
+	if err != nil {
+		return tool.Refuse("the session state cannot be read: " + err.Error())
+	}
+	if coordinator != "" {
+		state.Coordinator = coordinator
+	}
+	if state.Coordinator == "" {
+		return tool.Refuse("sleep needs a coordinator; pass --coordinator <name> or save one with nova-friend run")
+	}
+	if !validCoordinator(state.Coordinator) {
+		return tool.Refuse("coordinator " + fmt.Sprintf("%q", state.Coordinator) + " is not a valid name; pass a valid --coordinator")
+	}
+	if c.DryRun() {
+		return tool.Done().Fact("asleep", true).Fact("coordinator", state.Coordinator).
+			Note("plan only; the session state was not changed")
+	}
+	state, err = friend.UpdateSessionState(stateDir, func(s *friend.SessionState) error {
+		if coordinator != "" {
+			s.Coordinator = coordinator
+		}
+		if s.Coordinator == "" {
+			return fmt.Errorf("sleep needs a coordinator; pass --coordinator <name> or save one with nova-friend run")
+		}
+		if !validCoordinator(s.Coordinator) {
+			return fmt.Errorf("saved coordinator %q is not a valid name; pass a valid --coordinator", s.Coordinator)
+		}
+		s.Asleep = true
+		return nil
+	})
+	if err != nil {
+		return tool.Refuse("the session state update failed: " + err.Error())
+	}
+	return tool.Done().Fact("asleep", true).Fact("coordinator", state.Coordinator).
+		Note("the daemon's next beat reports asleep; this command does not wake or suspend the harness")
+}
+
+func (w world) wakeFriend(c *tool.Call) *tool.Out {
+	name, stateDir := c.Str("as"), w.stateDir(c)
+	if err := w.verifyStateOwner(stateDir, name); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if c.DryRun() {
+		state, err := friend.ReadSessionState(stateDir)
+		if err != nil {
+			return tool.Refuse("the session state cannot be read: " + err.Error())
+		}
+		return tool.Done().Fact("asleep", false).Fact("was_asleep", state.Asleep).
+			Note("plan only; the session state was not changed")
+	}
+	_, err := friend.UpdateSessionState(stateDir, func(s *friend.SessionState) error {
+		s.Asleep = false
+		return nil
+	})
+	if err != nil {
+		return tool.Refuse("the session state update failed: " + err.Error())
+	}
+	return tool.Done().Fact("asleep", false).
+		Note("the daemon's next beat reports awake; this command does not wake the harness")
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
@@ -637,8 +815,16 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse("the status file cannot be read: " + err.Error())
 	}
+	session, sessionErr := friend.ReadSessionState(state)
 	if !found {
-		return tool.Fail("no daemon has run as " + name + " (no status file in " + state + "); run: nova-friend install --as " + name + " --harness <h> --dir " + dir).As("NONE")
+		o := tool.Fail("no daemon has run as "+name+" (no status file in "+state+"); run: nova-friend install --as "+name+" --harness <h> --dir "+dir).
+			As("NONE").Fact("reported_asleep", "unknown")
+		if sessionErr != nil {
+			o.Note("the session state: " + sessionErr.Error())
+		} else {
+			o.Fact("sleep_requested", session.Asleep).Fact("coordinator", dash(session.Coordinator))
+		}
+		return o
 	}
 	if s.Friend != name {
 		return tool.Refuse(fmt.Sprintf("the daemon whose state is in %s runs as %s, not %s", state, s.Friend, name))
@@ -664,6 +850,12 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+	}
+	o.Fact("reported_asleep", s.Asleep)
+	if sessionErr != nil {
+		o.Note("the session state: " + sessionErr.Error())
+	} else {
+		o.Fact("sleep_requested", session.Asleep).Fact("coordinator", dash(session.Coordinator))
 	}
 	if s.BeatError != "" {
 		o.Note("the last beat failed: " + s.BeatError)

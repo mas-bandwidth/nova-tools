@@ -200,6 +200,7 @@ type Store interface {
 	Ack(ctx context.Context, stream, group string, entries ...string) (int64, error)
 	// Pending is the entry ids pending for the group, up to count (XPENDING).
 	Pending(ctx context.Context, stream, group string, count int) ([]string, error)
+	PendingPage(ctx context.Context, stream, group, consumer, after string, count int) ([]string, error)
 	// Group is the group's last delivered entry id, and whether the group is
 	// there at all (XINFO GROUPS).
 	Group(ctx context.Context, stream, group string) (lastDelivered string, exists bool, err error)

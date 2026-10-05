@@ -182,7 +182,7 @@ func TestRecvExecAcksOnZeroAndKeepsThePendingMessageOnFailure(t *testing.T) {
 	r.exec = func(string) int { return 3 }
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV FAILED id=" + mid + " exec_exit=3: --exec exited 3, so the message stays pending")
 	require.Len(t, r.execIn, 1)
-	assert.Equal(t, "RECV OK id="+mid+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z login=none subject=\"s\"\n\nthe body\n", r.execIn[0], "the command reads what recv prints, the body ending in a newline")
+	assert.Equal(t, "RECV OK id="+mid+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z login=none subject=s\n\nthe body\n", r.execIn[0], "the command reads what recv prints, the body ending in a newline")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0")
 
 	r.exec = func(string) int { return 0 }
@@ -207,8 +207,8 @@ func TestRecvForeverWantsExecAndStopsOnASignal(t *testing.T) {
 		return 0
 	}
 	got := cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver").Exit(0)
-	got.Out(`subject="one"`).NotOut(`subject="two"`, `subject="three"`, "stopped")
-	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=1", "state=pending", `subject="two"`)
+	got.Out(`subject=one`).NotOut(`subject=two`, `subject=three`, "stopped")
+	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=1", "state=pending", `subject=two`)
 
 	r.cancel = nil
 	r.exec = func(string) int { return 1 }
@@ -331,7 +331,7 @@ func TestTheBodysTrailingNewlineIsKeptBySendLogAndRecv(t *testing.T) {
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "with", "--body", "x\n")
 	cli.OKIn(t, "y\n", "send", "--as", "ada", "--to", "bob", "--subject", "stdin", "--stdin")
 	cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "without", "--body", "z")
-	cli.Do(t, "log", "--bodies").Exit(0).Out(`subject="with" body="x\n"`, `subject="stdin" body="y\n"`, `subject="without" body="z"`)
+	cli.Do(t, "log", "--bodies").Exit(0).Out(`subject=with body="x\n"`, `subject=stdin body="y\n"`, `subject=without body=z`)
 	cli.Do(t, "log", "--bodies", "--json").Exit(0).Out(`"body":"x\n"`, `"body":"y\n"`, `"body":"z"`)
 	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob", "--json").Stdout, `"payload":"\nx\n"}`+"\n"))
 	assert.True(t, strings.HasSuffix(cli.OK(t, "recv", "--as", "bob").Stdout, "\n\ny\n"))
@@ -378,18 +378,18 @@ func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
 		ids = append(ids, id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", s, "--body", s).Stdout))
 	}
 	got := cli.Do(t, "recv", "--as", "bob", "--max", "2").Exit(0).Out("RECV OK id="+ids[0], "RECV OK id="+ids[1]).NotOut("RECV OK id=" + ids[2])
-	assert.Equal(t, "RECV OK id="+ids[0]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z login=none subject=\"one\"\n\none\nRECV OK id="+ids[1]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:02Z login=none subject=\"two\"\n\ntwo\n", got.Stdout, "each message is its own result, in order")
+	assert.Equal(t, "RECV OK id="+ids[0]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z login=none subject=one\n\none\nRECV OK id="+ids[1]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:02Z login=none subject=two\n\ntwo\n", got.Stdout, "each message is its own result, in order")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=2 new=3")
 
 	// a plain recv with --ack: printed, then acked; a held message is not
 	// handed out again, so the next batch is the new ones
-	cli.Do(t, "recv", "--as", "bob", "--max", "2", "--ack").Exit(0).Out("RECV OK id="+ids[2]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:03Z login=none acked=true subject=\"three\"", "RECV OK id="+ids[3]+" from=ada", "acked=true")
+	cli.Do(t, "recv", "--as", "bob", "--max", "2", "--ack").Exit(0).Out("RECV OK id="+ids[2]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:03Z login=none acked=true subject=three", "RECV OK id="+ids[3]+" from=ada", "acked=true")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=2 new=1")
 
 	// --all with --exec: every message waiting, acked on exit 0; the batch
 	// stops at the first command that fails, that message still pending
 	r.exec = func(stdin string) int {
-		if strings.Contains(stdin, `subject="five"`) {
+		if strings.Contains(stdin, `subject=five`) {
 			return 7
 		}
 		return 0

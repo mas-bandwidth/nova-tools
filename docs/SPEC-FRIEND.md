@@ -33,7 +33,9 @@ friend up.
   (the daemon: its state, rewritten whole every five seconds and when it
   changes; a reader calls the daemon up while the file is under thirty seconds
   old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
-  (the daemon: one line per delivery). The queue file is under the friend's
+  (the daemon: one line per delivery), and `session.json` (the local
+  `sleep`/`wake` commands and daemon: the selected coordinator name and the
+  persistent asleep marker). The queue file is under the friend's
   working directory: `inbox/QUEUE.json` (the coordinator and the session: one
   record per task with `id`, `state` of queued, working or done, and
   `deliverable`).
@@ -57,7 +59,8 @@ friend up.
   exact pong line for the current nonce rides at the head of the next turn
   that carries messages, and the session runs it first. It proves the AI. The
   coordinator reads it from the friend's own stream (the message's `from`),
-  never from the body: a pong is forgeable only by the friend's login.
+  never from the body. The `from` field is routing metadata, not
+  authentication; the bus store currently has no authentication.
 - Width is the nova-config friend row's, given to the daemon at install.
 
 ## The machine (tla/Friend.tla)
@@ -70,7 +73,9 @@ the word collapses to the latest state and rides at the head of the next turn
 that carries messages, and a `coordinator back` the session never needed (it
 never heard `silent`) is dropped. The challenge: `quiet`; `challenged` from a
 ping until the session's pong with that nonce; `deaf` after a window challenged
-with no pong, until a pong. Only the current nonce answers: a stale or replayed
+with no pong, until a pong. A repeated current nonce refreshes the connection
+but neither restarts the challenge deadline nor reopens an answered challenge.
+Only the current nonce answers: a stale or replayed
 pong changes nothing. Up is `quiet` with at least one pong; the daemon's beat
 never makes a friend up.
 
@@ -78,6 +83,84 @@ The invariants, each with a reversed witness that TLC catches: a friend is up
 only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
+
+`run` and `install` accept `--coordinator <name>` separately from the sprint
+server's `--server <addr>`. A run saves an explicit coordinator in
+`session.json`; install carries the option into the launch agent, and its run
+saves it when the agent starts. The coordinator must be a valid nova-bus name
+(lowercase ASCII letters, digits and hyphens, up to 64 characters), because
+automatic wake compares it with a nova-bus message's `From` value.
+`nova-friend sleep --as <me>` records a local asleep marker; it requires a
+coordinator name, supplied with `--coordinator` or already saved in
+`session.json`. The daemon reports that marker with
+`nova-sprint friend beat --asleep <me>` on its next beat. `nova-friend wake
+--as <me>` explicitly clears the marker and needs no coordinator, so it can
+recover a saved asleep state with missing coordinator configuration. Neither
+command sends a wake message or proves the harness can wake. Startup itself
+does not clear an asleep marker; a matching coordinator message can wake the
+session while the daemon recovers pending work. If the saved coordinator is
+absent, startup refuses and says to run `wake` or supply `--coordinator`.
+
+## Asleep behavior (A3 implementation checkpoint)
+
+The durable session record contains one asleep bit, one configured coordinator,
+and at most one `WakeBarrier` stream-entry ID. A message whose `From` equals
+the configured coordinator can wake the session, regardless of its subject or
+body. `From` is routing metadata, not authentication, and there is no freshness
+check: a stale or failed redelivery from that coordinator can wake the session
+again. While its ID remains the saved active `WakeBarrier`, an entry already
+used to wake the session is not reused as a second wake after local sleep or
+daemon restart. Once a non-`Deferred` completion clears that barrier, a later
+redelivery can wake again; this does not guarantee exactly-once or fresh wake
+signals.
+
+While asleep, the daemon continues its beat with `asleep=true`; a ping still
+gets a `daemon-pong` marked `asleep=true` if it does not itself wake the
+session. A matching coordinator message first commits awake state; if that
+message is a ping, its `daemon-pong` reports awake. The active daemon may read
+ordinary messages into its own pending-entry list, but does not deliver them,
+charge a failure, or acknowledge them. It keeps entry IDs in memory and fetches
+a body when a delivery starts. The bus's ordinary 15-minute claim behavior is
+unchanged. The daemon reads as its own consumer (`nova-friend-daemon`), apart
+from an interactive receiver's (`nova-bus`'s). Active-daemon startup first
+recovers every page of the daemon's own pending-entry list, in batches of 128,
+before dispatching work; a recovery error is retried without dispatch. It does
+not recover another consumer's entries.
+
+After a matching coordinator message wakes the session, that message's entry
+is the single durable barrier: it gets the first non-`Deferred` delivery
+attempt: it leads the first turn, then held entries follow in numeric
+stream-ID order (a turn carries up to `MaxBatch` of them, and the daemon's own
+words ride at its head). A ping that wakes the session answers at once and is
+acked, so it is no barrier. A
+`Deferred` result does not clear the barrier, count as a delivery failure, or
+acknowledge the entry. Local sleep/wake and daemon restart preserve the barrier
+until its delivery completes non-`Deferred`. If local sleep arrives while that
+retry is deferred, the daemon parks it; a later wake retries the barrier first.
+Any non-`Deferred` completion clears the barrier, including a failed turn; that
+failure uses the normal retry count, and a third non-`Deferred` failure
+requests the usual give-up acknowledgement. Reserving a delivery under the
+session-state lock is its start boundary; harness I/O begins after unlock, so a
+later sleep does not cancel an already reserved turn. One daemon owns a state
+directory at a time. If persisting a completed barrier clear returns an error,
+the daemon stops before dispatching later held entries.
+
+Sleep pauses the friend machine's unanswered-challenge clock, while its
+transport-connection timer can still advance, and keeps `Up` false. A daemon
+beat or ping response while asleep does not make the session up. Passive
+harnesses only peek: they do not claim, acknowledge, or deliver a native turn.
+For a matching `From`, they persist the resulting awake state but remember the
+observed entry ID only in process memory. They suppress repeats for that entry
+during one process lifetime; because the message remains unconsumed, it may be
+observed again after restart.
+
+The separate `tla/MCFriendSleep.tla` model is a finite safety projection. Its
+new cases are drafts awaiting Zhi's parse/TLC review; no run record is claimed
+here. It abstracts store/file failures, locking and cross-layer refinement,
+and does not cover pagination beyond 1,000 entries, authorization, native
+delivery, or liveness. Selected Go tests cover ACK-failure and state-error
+cases, but this projection does not prove those paths executed or establish
+cross-layer behavior.
 
 ## The loop (internal/friend/daemon.go)
 
@@ -101,9 +184,10 @@ an ack: the turn stays in the daemon's hand, tried again every ten seconds,
 message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
 answered at once by the daemon; never a second turn. Then the worker's result;
-one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
-working and width flags are owed on the server's side); the pong file, while a
-challenge is open; the status file.
+one beat to the sprint server (`friend beat [--asleep] <friend>`, a plain beat,
+`--asleep` when the session sleeps; the queue, working and width flags are owed
+on the server's side); the pong file, while a challenge is open; the status
+file.
 
 No clock bounds a turn: a turn that prints keeps running however long it
 takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
@@ -195,7 +279,7 @@ server writes the text into the conversation's mailbox,
 a high-priority message, its watcher starts a turn on it, and the session
 marks it read in `read.json` there as it takes it. Measured 2026-10-04 08:52
 ET: sent at :28, the turn's first step at :32, the friend's "got it" on
-nova-bus2 at :35.
+nova-bus at :35.
 
 Ten consecutive open-session runs measured on 2026-10-04 (Antigravity 2.19.1,
 session `fa76bcf6-e79d-42c2-be38-aa95ded5247c`, transcript
@@ -352,9 +436,11 @@ friend no card above her tier.
 The friend's name comes from one place, `install --as`, written into the
 agent's command line; the daemon never takes a name from a message. The `pong`
 verb refuses a name that is not the one the daemon in that directory runs as.
-Binding the name to the store's login is owed: the bus store runs with no
-authentication tonight (SPEC-BUS.md), and `nova-sprint friend beat <name>`
-beats whatever name it is sent.
+The optional coordinator name is local configuration for asleep-state
+reporting, not a credential or authorization fence. Binding friend names to the
+store's login is owed: the bus store runs with no authentication tonight
+(SPEC-BUS.md), and `nova-sprint friend beat <name>` beats whatever name it is
+sent.
 
 ## What is weak, and known
 

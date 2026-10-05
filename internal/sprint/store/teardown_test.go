@@ -39,7 +39,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 		require.NoError(t, m.SetCursor(h.ctx, "1-0"))
 		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "friend-a", Width: 1}, {Name: "friend-b", Width: 1}})
 		require.NoError(t, err)
-		_, err = h.st.FriendBeat(h.ctx, "friend-a")
+		_, err = h.st.FriendBeat(h.ctx, "friend-a", false)
 		require.NoError(t, err)
 		require.NoError(t, h.st.SetFriendHeld(h.ctx, "friend-b", true, "c", "", time.Time{}, 0))
 	}
