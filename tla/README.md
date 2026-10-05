@@ -1,5 +1,9 @@
 # tla: the models of nova-tools' state machines, and their runners
 
+> **2026-10-04: the models of nova-sprint and nova-work (`DirtyTick`, `DirtyTickRead`, `RouteIndex`, `Land`, `Level`,
+> `SprintEvents`, `WorkImport`) moved with those tools to the nova-sprint repository; `CardContract` and `CardMachine` stay
+> here beside the packages they model.** The note below is kept as written.
+>
 > **The nova-sprint models are stale as of 2026-10-01 and are not the design.** The owner's ruling that day: nova-tables is
 > the modelled layer and stays so; nova-sprint is in its get-it-done stage and is changed, tested on the twin store, read,
 > landed and run on the real fleet without a model change each time ("we aren't going to model the whole thing in TLA+

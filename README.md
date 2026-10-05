@@ -13,6 +13,14 @@ Choose the tool for the problem you have. Use your own repositories, identities,
 models, and workflow; adopt one tool or combine several. Humans are welcome to
 use and contribute too!
 
+Nova Tools are unopinionated building blocks for any AI workflow: run an AI
+task in a sandbox with a budget, decide cheaply, talk over a bus, keep tables,
+secrets and configuration. If you want to build your own workflow, build it
+from these. nova-sprint, in its own repository beside this one, is one
+opinionated system built from them (cards, streams, tiers, readers, the lander
+and its dashboard); it moved to its own repository on 2026-10-04, and nova-work
+with it.
+
 Ready to try one? Start with [installing one tool](docs/USAGE.md#installing), then
 come back to the table below for the problem you want it to solve.
 
@@ -24,12 +32,9 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Send a friend a message that arrives, and know it did.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>messages between AIs over Redis streams: sent once, delivered until acked</td><td>Use a separate running Redis instance whose nova-config rows name the sender and the recipient. The command writes one message to the recipient's stream and the log.<br><code>nova-bus send --redis 127.0.0.1:6379 --as ada --to bob --subject hello --body "are you there?"</code></td></tr>
 <tr><td>Be reachable as a friend: woken by a message, counted present, proven alive.</td><td nowrap><a href="docs/CLI.md#nova-friend">nova-friend</a></td><td>what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon</td><td>Install one launchd agent per friend; it parks on the friend's nova-bus stream, pushes each message into the running session, beats to the sprint server and answers the coordinator's pings.<br><code>nova-friend install --as bob --harness opencode --dir ./bob --dry-run</code></td></tr>
 <tr><td>Track work in tables and live views.</td><td nowrap><a href="docs/CLI.md#nova-table">nova-table</a></td><td>tables whose cells are ordered sets, kept in Redis and drawn as text</td><td>Use a separate running Redis instance. The command writes a table; nova-table loads the functions it needs.<br><code>nova-table create --redis 127.0.0.1:6379 --columns ready,done trial</code></td></tr>
-<tr><td>Keep every GitHub issue of an organization in one file you can check. <strong>nova-work is pre-alpha: not ready for production use.</strong></td><td nowrap><a href="docs/CLI.md#nova-work">nova-work</a></td><td>every issue of an organization's repositories in one tree file, verified field for field</td><td>Prints the tree grammar and a minimal tree; <code>verify --against</code> compares two tree files with no network. Importing needs gh logged in and the network; <code>import --dry-run</code> reads GitHub the same way and writes nothing.<br><code>nova-work verify -h</code></td></tr>
-<tr><td>Coordinate work cards, readers and landing.</td><td nowrap><a href="docs/SPEC-SPRINT.md">nova-sprint</a></td><td>a sprint of work cards, dealt to a fleet of workers and read before they land</td><td>Prints help without a store. Follow its local twin walkthrough to try card flow without Redis. A real fleet needs one Redis-backed server; coordinator and nova-swarm member clients send verbs to it.<br><code>nova-sprint help</code></td></tr>
 <tr><td>Keep short-lived scratch data between commands.</td><td nowrap><a href="docs/SPEC-REDIS.md">nova-redis</a></td><td>run a local Redis store, and keep short-lived named values in it</td><td>Use a separate running Redis instance. This writes an expiring value; serve also needs redis-server.<br><code>nova-redis spill --addr 127.0.0.1:6379 --owner trial --name note --ttl 1m --value hello</code></td></tr>
 <tr><td>Keep fleet configuration durable.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td>a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis</td><td>Prints the schema without a connection. Storing configuration needs PostgreSQL; apply also needs Redis. This is the Nova fleet configuration model.<br><code>nova-config migrate --print</code></td></tr>
 <tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>one-task AI workers, each run in the sandbox with a deadline and a token budget</td><td>Prints the read-pr card template; no worker or key is needed. Running cards needs a card directory, a worker description, a harness and nova-sandbox.<br><code>nova-swarm template --name read-pr</code></td></tr>
-<tr><td>Turn a ledger, a findings file or a tool's help into briefs the sprint admits. <strong>nova-card is pre-alpha: not ready for production use.</strong></td><td nowrap><a href="docs/CLI.md#nova-card">nova-card</a></td><td>writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help</td><td>Reads the included findings file and writes two briefs; no checkout, store or key. Generating from a ledger needs a checkout of the repository at the base.<br><code>nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards</code></td></tr>
 <tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td>encrypted secrets in a git repository, handed to one command at a time</td><td>Make a private directory for the key first (<code>mkdir -m 700 -p ./trial-keys</code>). This creates a key file (mode 0600) and prints the store rule for a trial seat; needs age-keygen on PATH. Listing and decrypting need a sealed store and sops.<br><code>nova-secrets keygen --as trial --key ./trial-keys/trial-secrets.key --age-keygen &quot;$(command -v age-keygen)&quot;</code></td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>token spend per day, model and repository, read from AI session logs</td><td>Reads the included Claude transcript fixture. Claude and OpenCode logs need explicit paths; OpenCode also needs sqlite3.<br><code>nova-tokens sources --repos ./cmd/nova-tokens/testdata/example-bench/repos.tsv --all --claude trial=./cmd/nova-tokens/testdata/example-bench/transcripts</code></td></tr>
 <tr><td>Find a note without rereading everything.</td><td nowrap><a href="docs/CLI.md#nova-memory">nova-memory</a></td><td>search your own markdown notes, and check a draft against what they already say</td><td>Reads the included Markdown corpus and prints the chosen query, matching sources and checks.<br><code>nova-memory quickstart --root ./cmd/nova-memory/testdata/corpus</code></td></tr>
@@ -64,10 +69,6 @@ listens on `127.0.0.1:6379`. Supply its address and login when they differ.
 
 Choose the row that matches your work, then read that tool’s section in the
 [command reference](docs/CLI.md). It names the inputs, effects and limits.
-For `nova-sprint`, start with `nova-sprint help` and the
-[sprint contract](docs/SPEC-SPRINT.md); its command help names the current
-verbs and prerequisites. Whoever holds the coordinator seat reads the
-[coordinator's runbook](docs/SPRINT-COORDINATOR.md).
 Start with its example data or a directory you made for the trial. For the
 Redis tools, use a separate local instance so the first edit has an obvious home.
 

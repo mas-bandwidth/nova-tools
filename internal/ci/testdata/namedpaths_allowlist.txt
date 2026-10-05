@@ -22,6 +22,37 @@ internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS e
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
+
+# nova-sprint and nova-work moved to their own repository, nova-sprint, on 2026-10-04 (ideas#850); the building blocks that serve them cite the sprint's files there.
+cmd/nova-sprint in the nova-sprint repository since 2026-10-04 (ideas#850)
+docs/SPEC-SPRINT.md in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/route.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/store in the nova-sprint repository since 2026-10-04 (ideas#850); the onewriter rule still names it among the packages that open a store
+internal/sprint/width.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-card in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/firstrun_test.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/friends.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/helpwords.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/ledgerunion.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/main.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/reads.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/twin.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/verbs.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+docs/SPRINT-COORDINATOR.md in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/cardgen in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/held.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/friend_take.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/friend_deal.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/seatinstall.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/seatinstall.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/lifecycle.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/round.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/steps_merge.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/steps_sentinel.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/steps_tick.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/store/twin.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+
 # internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, the owner: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
