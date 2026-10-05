@@ -50,6 +50,9 @@ func printPacket(w io.Writer, p sprint.Packet) {
 	for _, n := range p.Notes {
 		para("note", n)
 	}
+	if p.Kind != "work" {
+		fmt.Fprintln(w, "  attribution: the By: line, the Co-Authored-By trailer and the model or harness named are never a finding and never decide a verdict")
+	}
 	if p.Kind == "work" {
 		fmt.Fprintf(w, "  report it: nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <commit> --report '<what you did>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	} else {
