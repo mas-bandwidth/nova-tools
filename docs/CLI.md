@@ -1032,6 +1032,18 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
 
+A fleet member back from down adopts the latest before it is dealt when the
+coordinator's machine sets `NOVA_SPRINT_ADOPT_FLAGS` to `nova-update release adopt`'s
+flags less `--machines`, `--version` and `--dry-run` (blank-separated: `--ssh`, `--from`,
+`--bin`, `--dest`, the stage's digest, `--no-certify` or the certification's three) and
+`nova-sprint` was built with a release stamp: the tick holds a member whose beat
+returns after it was down (status `held`, reason `adopting <release>: back from
+down`), adopts the release this `nova-sprint` runs onto that machine alone, reads its
+installed version back, and brings it up at its width with one note `<m> is back:
+<old> -> <new>`; a failed adoption keeps it held with the failure as its reason and
+one judgment (`fleet up <m>` brings it up as it is). Unset, a member back is up at
+once (docs/SPEC-SPRINT.md section 5, "Back from down: adopt the latest").
+
 ### The sprint backup
 
 `nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store, and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=<document+counts|counts> secrets=none`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).

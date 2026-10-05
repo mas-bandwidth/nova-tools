@@ -1894,6 +1894,40 @@ by selection without `--as` is refused. A finish that arrives first moves the ca
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
+### Back from down: adopt the latest
+
+The owner, 2026-10-05 ~10:00 AM ET: "when fleet machines come back after a long time
+down, we need to remember to bring them back up and have them adopt latest. Just like
+friends." A member that was down (not held) and beats again is not brought up by the
+presence part at once: with an adopter installed (`sprint.InstallFleetBack`; the
+binary installs the release adopt path for one machine when `NOVA_SPRINT_ADOPT_FLAGS`
+names adopt's flags and it was built with a release stamp), the tick holds it in the
+same plan that sees the beat: its control card's status is `adopting`, it is held by
+the tick (`held`, `held_by=adopt`, reason `adopting <release>: back from down`), and
+`adopt_since` (the episode) and `adopt_to` (the release the coordinator's own machine
+runs) are written. A member held is dealt nothing, and the fleet table shows it
+`held` with that reason. While it is held so, each tick asks the adopter for the
+episode's adoption:
+
+- none: it is started for that machine alone (`nova-update release adopt` with a
+  machine list of the one machine: a dry run reads the version installed, the adopt,
+  a dry run reads it back), beside the tick. One machine has at most one adoption in
+  flight; a start while one runs, or of an episode that ran, starts nothing.
+- running: nothing.
+- done, and the version read back is `adopt_to`: the hold comes off, the member is
+  up at its row's width, and one happened note goes to the coordinator, `fleet member
+  back`: `<m> is back: <old> -> <new>`. The next level and deal reach it.
+- failed, or the version read back is another: `adopt_failed` is written and the
+  failure is the hold's reason; the deal holds one judgment open (`a member's
+  adoption failed`, subject `member:<m>`, decisions `fleet up <m>`, `wait`) while it
+  stays so, and the tick starts no second adoption. `fleet up <m>` releases it as it
+  is; `hold <m>` makes the hold the coordinator's.
+
+With no adopter, or one that knows no release, presence is as above: a member back
+is up at once. The part is `sprint.FleetBackPresence` (internal/sprint/fleet_back.go),
+the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
+`TestAMachineBackFromDownAdoptsTheLatestBeforeItIsDealt`.
+
 ## 6. The readers
 
 - A reader row has a state, as a fleet member has: up, away or down. The rows
