@@ -43,6 +43,8 @@ var verbEffect = map[string]string{
 	"stats":            "inspection: reads the sprint's counts and rates, writes nothing",
 	"queue":            "inspection: reads a worker's or a stream's cards, writes nothing",
 	"handover":         "inspection: reads the store, writes nothing",
+	"seat install":     "local write: writes the push loop's unit (inbox --wait --push seat) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing",
+	"seat uninstall":   "local write: unloads the push loop's unit and removes its file from --dir",
 	"needs":            "inspection: reads the waiting cards, writes nothing",
 	"held":             "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":        "inspection: reads the sentinels and what each waits on, writes nothing",

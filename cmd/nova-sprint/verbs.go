@@ -116,6 +116,8 @@ func init() {
 		{"handover", "", "handover", (*app).cmdHandover},
 		{"view coordinator", "[--all] [--since <cursor>] [--json]", "view coordinator --json", (*app).cmdViewCoordinator},
 		{"view worker", "--as <member|friend> [--since <cursor>] [--json]", "view worker --as m1 --json", (*app).cmdViewWorker},
+		{"seat install", "[--dir <dir>] [--log <file>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
+		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
 		{"seat", "", "seat", (*app).cmdSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
@@ -370,6 +372,17 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	name := strings.Join(path, " ")
+	// a verb named whole is the exact one even when the word also opens a group
+	// (seat is the seat's read, seat install and seat uninstall are its verbs)
+	for _, v := range verbs {
+		if v.name == name {
+			code := func() (code int) {
+				defer recoverHelp(stdout, &code)
+				return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
+			}()
+			return code
+		}
+	}
 	if len(groupVerbs(name)) > 0 {
 		fmt.Fprintln(stdout, "usage:")
 		for _, v := range verbs {
@@ -394,15 +407,6 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "\nnova-sprint help %s <verb> (or nova-sprint %s <verb> -h) prints a verb's flags, examples and exit codes.\n", name, name)
 		return 0
-	}
-	for _, v := range verbs {
-		if v.name == name {
-			code := func() (code int) {
-				defer recoverHelp(stdout, &code)
-				return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
-			}()
-			return code
-		}
 	}
 	return refuse(stderr, "help", "unknown verb "+oneline.Escape(name)+"; run: nova-sprint help")
 }
