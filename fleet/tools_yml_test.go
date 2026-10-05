@@ -99,8 +99,12 @@ func playNamed(t *testing.T, plays []map[string]any, name string) map[string]any
 func playTasks(t *testing.T, play map[string]any) []map[string]any {
 	t.Helper()
 	var tasks []map[string]any
-	for _, e := range play["tasks"].([]any) {
-		tasks = append(tasks, e.(map[string]any))
+	entries, ok := play["tasks"].([]any)
+	require.True(t, ok, "play has no task list")
+	for _, e := range entries {
+		task, ok := e.(map[string]any)
+		require.True(t, ok, "play task is not a mapping")
+		tasks = append(tasks, task)
 	}
 	return tasks
 }
