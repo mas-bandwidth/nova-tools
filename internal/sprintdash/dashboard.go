@@ -6,10 +6,11 @@
 //
 // The server is a function of its requests and its clock: Read is how it reads the
 // sprint and Now is its clock, so a test drives it with no socket and no real time.
-// The server reads the sprint at most once per Every, and only while a page or a puller
-// asks or an event stream is open (Run, on a ticker the caller hands it). A read that
+// The server reads the sprint once per Every whoever is looking (Run, on a ticker the
+// caller hands it), and a request between two ticks answers from the copy. A read that
 // fails holds the last good copy: the page changes nothing and says nothing, and the
-// failure is a line on Log.
+// failure is a line on Log. One freshness check (fresh.go) raises an alarm when the
+// served data stays old; a puller (From) reads another dashboard's copy instead.
 package sprintdash
 
 import (
@@ -65,6 +66,12 @@ type Server struct {
 	// Keepalive is the time between two keepalive comments on an idle /events stream;
 	// zero is KeepaliveDefault.
 	Keepalive time.Duration
+	// From is the dashboard a puller reads its copy from in place of Read; nil reads the
+	// sprint.
+	From *Upstream
+	// StaleAfter and StaleFor are the freshness check's: the served data older than
+	// StaleAfter for StaleFor raises the alarm; zero is StaleAfterDefault, StaleForDefault.
+	StaleAfter, StaleFor time.Duration
 	// keepaliveTick is a test's keepalive ticker in place of the clock's; nil is the clock.
 	keepaliveTick func(time.Duration) (<-chan time.Time, func())
 
@@ -75,9 +82,9 @@ type Server struct {
 	copy    *sprintCopy   // the last good read as the pull routes read it; nil before one
 	gen     uint64        // the good reads so far: an /events client sends each new one
 	changed chan struct{} // closed, and replaced, at each good read
-	streams int           // the /events clients connected
 	samples []sample
 	stats   readStats
+	fresh   freshness
 }
 
 // snapshot is /api/sprint's body: the page reads data, throughput,
@@ -90,6 +97,7 @@ type snapshot struct {
 	Throughput        *float64        `json:"throughput"`
 	ThroughputMinutes float64         `json:"throughputMinutes"`
 	Build             string          `json:"build"`
+	Stale             bool            `json:"stale"`
 }
 
 // sample is one good read's landed count and when it began.
@@ -130,7 +138,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/events":
 		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.Snapshot(), true })
 	case "/healthz":
-		s.send(w, "text/plain; charset=utf-8", []byte("ok\n"))
+		s.healthz(w)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -167,7 +175,7 @@ func (s *Server) refresh(gap time.Duration) {
 	s.reading, s.began = true, start
 	s.mu.Unlock()
 
-	body, err := s.Read()
+	body, up, err := s.read()
 	if err == nil {
 		err = sprintJSON(body)
 	}
@@ -175,7 +183,16 @@ func (s *Server) refresh(gap time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reading = false
-	s.record(start, s.Now(), body, err)
+	s.record(start, s.Now(), body, up, err)
+}
+
+// read is one read: the sprint, or a puller's upstream with the snapshot it came in.
+func (s *Server) read() ([]byte, *snapshot, error) {
+	if s.From != nil {
+		return s.From.read()
+	}
+	body, err := s.Read()
+	return body, nil, err
 }
 
 // sprintJSON is why body is not the sprint's JSON, nil when it is.
@@ -193,8 +210,9 @@ func sprintJSON(body []byte) error {
 }
 
 // record keeps a read's outcome, under mu: a good read replaces the copy and adds a
-// throughput sample; a failed one keeps the copy, and a new failure is logged once.
-func (s *Server) record(start, end time.Time, body []byte, err error) {
+// throughput sample (a puller's takes the upstream's time and throughput, up); a failed
+// one keeps the copy, and a new failure is logged once.
+func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err error) {
 	took := end.Sub(start)
 	if err != nil {
 		why := oneline.Escape(err.Error())
@@ -208,7 +226,13 @@ func (s *Server) record(start, end time.Time, body []byte, err error) {
 		}
 		// ignored: sprintJSON has read body as JSON; a landed that is no number is 0
 		_ = json.Unmarshal(body, &v)
-		rate, minutes := s.sampleLanded(start, v.Landed)
+		at, rate, minutes := end, (*float64)(nil), 0.0
+		if up != nil {
+			at, rate, minutes = *up.FetchedAt, up.Throughput, up.ThroughputMinutes
+		} else {
+			rate, minutes = s.sampleLanded(start, v.Landed)
+		}
+		s.fresh.at = at
 		var c sprintCopy
 		// ignored: sprintJSON has read body as JSON; a field of another shape is left zero
 		_ = json.Unmarshal(body, &c)
@@ -220,7 +244,7 @@ func (s *Server) record(start, end time.Time, body []byte, err error) {
 		s.changed = make(chan struct{})
 		s.snap.OK, s.snap.Error = true, nil
 		s.snap.Data = append(json.RawMessage(nil), bytes.TrimSpace(body)...)
-		s.snap.FetchedAt, s.snap.Throughput, s.snap.ThroughputMinutes = &end, rate, minutes
+		s.snap.FetchedAt, s.snap.Throughput, s.snap.ThroughputMinutes = &at, rate, minutes
 	}
 	s.summarize(end, took, err != nil)
 }
@@ -286,7 +310,7 @@ func (s *Server) Snapshot() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snap := s.snap
-	snap.Build = build
+	snap.Build, snap.Stale = build, s.fresh.alarmed
 	b, err := json.Marshal(snap)
 	if err != nil {
 		panic("dashboard: the snapshot does not marshal: " + err.Error())
