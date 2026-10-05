@@ -67,6 +67,7 @@ func (a *app) cmdLaneTake(args []string, stdout, stderr io.Writer) int {
 	machine := fs.String("machine", "", "the machine the run is on: its lanes are its own")
 	as := fs.String("as", "", "the worker asking, the holder or waiter the lane records")
 	wait := fs.Duration("wait", 0, fmt.Sprintf("how long to wait for the grant, asking again every %s (30m); 0, the default, asks once", sprint.LaneAskEvery))
+	dry := fs.Bool("dry-run", false, "check the machine's lanes and say whether the take would be granted or queued; write nothing")
 	kind, code := laneArgs(name, fs, args, stderr, machine, as)
 	if code != 0 {
 		return code
@@ -74,13 +75,49 @@ func (a *app) cmdLaneTake(args []string, stdout, stderr io.Writer) int {
 	if *wait < 0 {
 		return refuse(stderr, name, "--wait wants a duration from 0, found "+wait.String())
 	}
-	if *wait > 0 {
+	if *wait > 0 && !*dry {
 		return a.laneWait(args, *wait, stdout, stderr)
 	}
 	c.orActor(*as)
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if *dry {
+		rows, err := st.LaneRows(context.Background())
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		width, err := st.LaneWidth(context.Background())
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		var held, waiting []string
+		for _, r := range rows {
+			if r.Kind == kind && r.Machine == *machine {
+				held, waiting, width = r.Held, r.Waiting, r.Width
+				break
+			}
+		}
+		granted := false
+		place := 0
+		if slices.Contains(held, *as) {
+			granted = true
+		} else if i := slices.Index(waiting, *as); i >= 0 {
+			place = i + 1
+		} else if len(held) < width && len(waiting) == 0 {
+			granted = true
+		} else {
+			place = len(waiting) + 1
+		}
+		facts := map[string]any{"kind": kind, "machine": *machine, "as": *as, "would_grant": granted, "held": len(held), "width": width, "dry_run": true}
+		line := fmt.Sprintf("LANE-TAKE DRY-RUN %s machine=%s as=%s would_grant=%s held=%d/%d; nothing was written", kind, *machine, *as, yesNo(granted), len(held), width)
+		if !granted {
+			facts["place"] = place
+			line = fmt.Sprintf("LANE-TAKE DRY-RUN %s machine=%s as=%s would_grant=%s place=%d held=%d/%d; nothing was written", kind, *machine, *as, yesNo(granted), place, len(held), width)
+		}
+		sayOK(stdout, c.json, name, line, facts)
+		return 0
 	}
 	ans, err := st.LaneStep(context.Background(), kind, *machine, *as, false)
 	if err != nil {
@@ -140,6 +177,7 @@ func (a *app) cmdLaneGive(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	machine := fs.String("machine", "", "the machine the run was on")
 	as := fs.String("as", "", "the worker giving its lane, or its place in the queue, back")
+	dry := fs.Bool("dry-run", false, "check whether the worker holds a lane or waits in the queue, and write nothing")
 	kind, code := laneArgs(name, fs, args, stderr, machine, as)
 	if code != 0 {
 		return code
@@ -148,6 +186,33 @@ func (a *app) cmdLaneGive(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if *dry {
+		rows, err := st.LaneRows(context.Background())
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		width, err := st.LaneWidth(context.Background())
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		var held, waiting []string
+		for _, r := range rows {
+			if r.Kind == kind && r.Machine == *machine {
+				held, waiting, width = r.Held, r.Waiting, r.Width
+				break
+			}
+		}
+		holds := slices.Contains(held, *as)
+		waits := slices.Contains(waiting, *as)
+		wouldGive := holds || waits
+		line := fmt.Sprintf("LANE-GIVE DRY-RUN %s machine=%s as=%s would_give=%s held=%d/%d; nothing was written", kind, *machine, *as, yesNo(wouldGive), len(held), width)
+		if !wouldGive {
+			line += ": it holds no lane and waits in no queue there"
+		}
+		facts := map[string]any{"kind": kind, "machine": *machine, "as": *as, "would_give": wouldGive, "held": len(held), "width": width, "dry_run": true}
+		sayOK(stdout, c.json, name, line, facts)
+		return 0
 	}
 	ans, err := st.LaneStep(context.Background(), kind, *machine, *as, true)
 	if err != nil {
