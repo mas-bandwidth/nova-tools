@@ -9,9 +9,20 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// writeSnapshotStub writes a shebang stub the snapshot verb will exec.
+// WriteExecutable holds ForkLock across the write. os.WriteFile does not, and
+// on Linux another test's fork can inherit that descriptor: exec of the file,
+// which is the symlink's target in the note test, then fails ETXTBSY
+// ("text file busy", ubuntu-latest run 37344601638). macOS does not.
+func writeSnapshotStub(t *testing.T, path, body string) {
+	t.Helper()
+	require.NoError(t, testbin.WriteExecutable(path, []byte(body), 0o755))
+}
 
 // snapshot lists the rows it records, and --dry-run takes the same reads and
 // writes no --out (STANDARD §2, "a verb that writes has a dry run"; ledger X12).
@@ -19,7 +30,7 @@ func TestSnapshotListsItsRowsAndDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
 	stub := filepath.Join(bin, "nova-stub")
-	require.NoError(t, os.WriteFile(stub, []byte("#!/bin/sh\nprintf 'nova-stub v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	writeSnapshotStub(t, stub, "#!/bin/sh\nprintf 'nova-stub v1.0.0 linux/amd64 go1.0\\n'\n")
 	out := filepath.Join(t.TempDir(), "s.tsv")
 
 	code, stdout, stderr := runTool(t, "nova-version", "snapshot", "--bin", bin, "--out", out, "--dry-run")
@@ -44,11 +55,11 @@ func TestSnapshotRefusesABinEntryWhoseNameIsNotOneTSVField(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
 	good := filepath.Join(bin, "nova-good")
-	require.NoError(t, os.WriteFile(good, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	writeSnapshotStub(t, good, "#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n")
 
 	badName := "nova-b\tv9.9.9\tdeadbeefcafe\tlinux-amd64\nnova-c"
 	bad := filepath.Join(bin, badName)
-	require.NoError(t, os.WriteFile(bad, []byte("#!/bin/sh\nprintf 'nova-b v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	writeSnapshotStub(t, bad, "#!/bin/sh\nprintf 'nova-b v1.0.0 linux/amd64 go1.0\\n'\n")
 
 	out := filepath.Join(t.TempDir(), "s.tsv")
 	code, stdout, stderr := runTool(t, "nova-version", "snapshot", "--bin", bin, "--out", out)
@@ -59,7 +70,7 @@ func TestSnapshotRefusesABinEntryWhoseNameIsNotOneTSVField(t *testing.T) {
 	// An ordinary bin still snapshots.
 	binOrdinary := t.TempDir()
 	ordinary := filepath.Join(binOrdinary, "nova-good")
-	require.NoError(t, os.WriteFile(ordinary, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	writeSnapshotStub(t, ordinary, "#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n")
 	outOrdinary := filepath.Join(t.TempDir(), "ordinary.tsv")
 	code, _, stderr = runTool(t, "nova-version", "snapshot", "--bin", binOrdinary, "--out", outOrdinary)
 	assert.Equal(t, 0, code, stderr)
@@ -74,7 +85,7 @@ func TestSnapshotNotesASymlinkedNovaEntryItSkips(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
 	good := filepath.Join(bin, "nova-good")
-	require.NoError(t, os.WriteFile(good, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	writeSnapshotStub(t, good, "#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n")
 
 	linked := filepath.Join(bin, "nova-linked")
 	require.NoError(t, os.Symlink(good, linked))
@@ -91,7 +102,7 @@ func TestSnapshotNotesASymlinkedNovaEntryItSkips(t *testing.T) {
 	// A bin without symlinks has no such note.
 	binClean := t.TempDir()
 	cleanGood := filepath.Join(binClean, "nova-good")
-	require.NoError(t, os.WriteFile(cleanGood, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
+	writeSnapshotStub(t, cleanGood, "#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n")
 	cleanOut := filepath.Join(t.TempDir(), "clean.tsv")
 	code, stdout, stderr = runTool(t, "nova-version", "snapshot", "--bin", binClean, "--out", cleanOut)
 	assert.Equal(t, 0, code, stderr)
@@ -117,7 +128,7 @@ func TestSnapshotNotesARowWhoseSourceMetadataIsPartial(t *testing.T) {
 	}
 	for name, extras := range stubs {
 		line := name + " v1.0.0 linux/amd64 go1.0 " + extras
-		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '"+line+"\\n'\n"), 0o755))
+		writeSnapshotStub(t, filepath.Join(bin, name), "#!/bin/sh\nprintf '"+line+"\\n'\n")
 	}
 	out := filepath.Join(t.TempDir(), "s.tsv")
 
