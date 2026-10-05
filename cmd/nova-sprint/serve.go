@@ -475,7 +475,7 @@ const viewPath = "/api/view/"
 // verb's line.
 func (a *app) serveView(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "the views are read with GET "+viewPath+"coordinator or "+viewPath+"worker?as=<name>", http.StatusMethodNotAllowed)
+		http.Error(w, "the views are read with GET "+viewPath+"coordinator, "+viewPath+"worker?as=<name> or "+viewPath+"cards", http.StatusMethodNotAllowed)
 		return
 	}
 	q := r.URL.Query()
@@ -496,16 +496,31 @@ func (a *app) serveView(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		argv = append(argv, "--as", as)
+	case "cards":
+		if col := q.Get("col"); col != "" {
+			argv = append(argv, "--col", col)
+		}
+		if stream := q.Get("stream"); stream != "" {
+			argv = append(argv, "--stream", stream)
+		}
+		if holder := q.Get("holder"); holder != "" {
+			argv = append(argv, "--holder", holder)
+		}
+		if by := q.Get("by"); by != "" {
+			argv = append(argv, "--by", by)
+		}
 	default:
-		http.Error(w, "the views are "+viewPath+"coordinator and "+viewPath+"worker?as=<name>", http.StatusNotFound)
+		http.Error(w, "the views are "+viewPath+"coordinator, "+viewPath+"worker?as=<name> and "+viewPath+"cards", http.StatusNotFound)
 		return
 	}
-	if since := q.Get("since"); since != "" {
-		if _, err := parseCursor(since); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+	if role != "cards" {
+		if since := q.Get("since"); since != "" {
+			if _, err := parseCursor(since); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			argv = append(argv, "--since", since)
 		}
-		argv = append(argv, "--since", since)
 	}
 	var stdout, stderr bytes.Buffer
 	a.serial.Lock()

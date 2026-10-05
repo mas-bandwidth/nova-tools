@@ -1006,6 +1006,7 @@ nova-sprint repair
 nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
+nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
 nova-sprint routes
@@ -1056,7 +1057,11 @@ machine stopped, the fleet idle, nothing ready, a review or merge backlog, a str
 sentinels reached, and friends and machines that need a look, each with `next`, the exact
 command that acts on it. `nova-sprint view worker --as <member|friend>` is one worker's cards
 in order (brief, BASE, PATHS, deadline, attempt), its next step and its results not landed.
-Both are reads, `--json` (schema 1), compact for the tokens a model pays: only what needs
+`nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]`
+counts (with `--by`) or lists primary cards matching optional filters: `--col` (waiting, ready,
+working, review, merging, landed), `--stream`, and `--holder`. `--by tier` counts cards by tier,
+read as the dealer reads it (primary's `tier.now`, else `tier.default`, else dealer's default `flash`).
+All are reads, `--json` (schema 1), compact for the tokens a model pays: only what needs
 action (`--all` adds every machine's and friend's row), a summary line first, and a `cursor`
 that `--since <cursor>` takes to leave out what the last read showed unchanged:
 
@@ -1064,8 +1069,11 @@ that `--since <cursor>` takes to leave out what the last read showed unchanged:
 nova-sprint view coordinator                 # the summary and up to 19 items, then cursor=
 nova-sprint view coordinator --json --since <the cursor the last read printed>
 nova-sprint view worker --as m1 --json
+nova-sprint view cards --col review --by tier
+nova-sprint view cards --col review --by tier --json
 curl -s --compressed http://<tailnet address>:<port>/api/view/coordinator
 curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
+curl -s --compressed 'http://<tailnet address>:<port>/api/view/cards?col=review&by=tier'
 ```
 
 The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
