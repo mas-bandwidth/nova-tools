@@ -87,11 +87,11 @@ func TestFragmentsReadOnlyProse(t *testing.T) {
 func TestOutsideNamesFilesBeyondPaths(t *testing.T) {
 	t.Parallel()
 	negd42 := []string{"internal/bus/symlink_discipline_test.go", "internal/bus/timeout_test.go", "internal/bus/unaddressed_test.go"}
-	assert.Equal(t, []string{"internal/bus/prepared_delivery_refuses_unrelated_content_test.go"}, Outside(negd42, fixture(t, "negd-42")))
-	assert.Empty(t, Outside([]string{"docs/SPEC-CAIRN.md"}, fixture(t, "docsd-07")))
-	assert.Empty(t, Outside([]string{"cmd/nova-fuse/*.go"}, fixture(t, "diaryd-08")), "a glob")
-	assert.Equal(t, []string{"docs/SPEC-CAIRN.md"}, Outside([]string{"docs/SPEC-CHECK.md"}, fixture(t, "docsd-07")))
-	assert.Nil(t, Outside(nil, fixture(t, "negd-42")))
+	assert.Equal(t, []string{"internal/bus/prepared_delivery_refuses_unrelated_content_test.go"}, Outside(negd42, fixture(t, "negd-42"), nil))
+	assert.Empty(t, Outside([]string{"docs/SPEC-CAIRN.md"}, fixture(t, "docsd-07"), nil))
+	assert.Empty(t, Outside([]string{"cmd/nova-fuse/*.go"}, fixture(t, "diaryd-08"), nil), "a glob")
+	assert.Equal(t, []string{"docs/SPEC-CAIRN.md"}, Outside([]string{"docs/SPEC-CHECK.md"}, fixture(t, "docsd-07"), nil))
+	assert.Nil(t, Outside(nil, fixture(t, "negd-42"), nil))
 }
 
 // A rename holds both sides: a PATHS file renamed in its own directory is the card's (a
@@ -124,7 +124,7 @@ func TestOutsideHoldsRenamesAndTheLedgersNarrowly(t *testing.T) {
 			if tc.name == "a rename in place" {
 				paths = []string{"cmd/nova-self-talk/issue1468_test.go"}
 			}
-			assert.Equal(t, tc.outside, len(Outside(paths, tc.diff)) > 0, "%v", Outside(paths, tc.diff))
+			assert.Equal(t, tc.outside, len(Outside(paths, tc.diff, nil)) > 0, "%v", Outside(paths, tc.diff, nil))
 		})
 	}
 }
@@ -150,4 +150,35 @@ func TestGeneralityLedgerIsALedgerUnderTheGeneralityRoots(t *testing.T) {
 	} {
 		assert.Equal(t, want, GeneralityLedger(p), p)
 	}
+}
+
+// A card that adds a directory (a file under a directory that holds no tracked file
+// before the merge) that its PATHS name owns the catalog row and the AGENTS.md maps:
+// catalog.go when the change is added lines only, each a row naming one of those
+// directories, and every map tools/agentsmap writes. An edit of an existing row, a row
+// that names some other directory, a comment, or a map change with no new directory,
+// stays outside (E12). Outside, which is not given the tree, exempts nothing.
+func TestOutsideExemptsTheCatalogRowAndMapOfANewDirectory(t *testing.T) {
+	t.Parallel()
+	const (
+		pkg  = "internal/newpkg/newpkg.go"
+		row  = "\tE(\"internal/newpkg\", \"a package\", \"go test ./internal/newpkg\", \"go test ./internal/newpkg\"),"
+		edit = "diff --git a/internal/docs/catalog.go b/internal/docs/catalog.go\n@@ -3,3 +3,4 @@\n var DefaultCatalog = []Entry{\n-\tE(\"internal/docs\", \"docs\", \"g\", \"c\"),\n+\tE(\"internal/docs\", \"edited\", \"g\", \"c\"),\n }\n"
+	)
+	add := "diff --git a/" + pkg + " b/" + pkg + "\n@@ -0,0 +1 @@\n+package newpkg\n"
+	catalog := "diff --git a/internal/docs/catalog.go b/internal/docs/catalog.go\n@@ -3,2 +3,3 @@\n var DefaultCatalog = []Entry{\n+" + row + "\n }\n"
+	other := "diff --git a/internal/docs/catalog.go b/internal/docs/catalog.go\n@@ -3,2 +3,3 @@\n var DefaultCatalog = []Entry{\n+\tE(\"internal/other\", \"a package\", \"g\", \"c\"),\n }\n"
+	comment := "diff --git a/internal/docs/catalog.go b/internal/docs/catalog.go\n@@ -3,2 +3,3 @@\n var DefaultCatalog = []Entry{\n+// internal/newpkg\n }\n"
+	agents := "diff --git a/AGENTS.md b/AGENTS.md\n@@ -1,2 +1,3 @@\n map\n internal/docs\n+internal/newpkg\n"
+	nested := "diff --git a/internal/AGENTS.md b/internal/AGENTS.md\n@@ -1 +1,2 @@\n map\n+| `newpkg/` | a package | g | c |\n"
+	tracked := []string{"internal/docs/catalog.go", "internal/docs/docs.go", "AGENTS.md", "internal/AGENTS.md", "README"}
+	paths := []string{"internal/newpkg/newpkg.go"}
+	both := add + catalog + agents + nested
+	assert.Empty(t, Outside(paths, both, tracked))
+	assert.Equal(t, []string{"internal/docs/catalog.go", "AGENTS.md", "internal/AGENTS.md"}, Outside(paths, both, nil), "no tree, no exemption")
+	assert.Equal(t, []string{"internal/docs/catalog.go"}, Outside(paths, add+edit+agents, tracked))
+	assert.Equal(t, []string{"internal/docs/catalog.go"}, Outside(paths, add+other+agents, tracked))
+	assert.Equal(t, []string{"internal/docs/catalog.go"}, Outside(paths, add+comment+agents, tracked))
+	assert.Equal(t, []string{"AGENTS.md"}, Outside([]string{"internal/docs/docs.go"}, agents+"diff --git a/internal/docs/docs.go b/internal/docs/docs.go\n@@ -1 +1 @@\n-package docs\n+package docs // touched\n", tracked))
+	assert.Equal(t, []string{"internal/docs/catalog.go"}, Outside([]string{"internal/bus/new.go"}, "diff --git a/internal/bus/new.go b/internal/bus/new.go\n@@ -0,0 +1 @@\n+package bus\n"+catalog, append(tracked, "internal/bus/old.go")))
 }

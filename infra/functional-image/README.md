@@ -80,6 +80,13 @@ build cache is written by the code under test, so it is kept per trust domain
       -v "$PWD":/src:ro -v nova-gomod:/gomodcache \
       -e GOPROXY=https://proxy.golang.org -w /src nova-functional go mod download
 
+`go mod download` with no arguments fetches every module `go.mod` requires,
+the modules behind its `tool` lines among them (staticcheck, errcheck,
+deadcode), so the class tests that build those tools (`TestStaticcheckFindings`,
+`TestUncheckedErrors`, `TestDeadCode` in `internal/ci`) build them under
+`GOPROXY=off`. `tools/functionalrun` stamps the volume with the hash of
+`go.mod` and `go.sum`, so a new `tool` line fills it again.
+
 The run:
 
     podman run --rm --name nova-functional-run --init --timeout 600 \

@@ -12,11 +12,17 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
@@ -109,14 +115,15 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	// place, so what is fd 3 here is fd 3 in the command: the probe's nonce pipe survives
 	// the backend without the backend knowing about it.
 	cmd.ExtraFiles = p.Extra
-	// NO Setpgid: the wrapped tree stays in the CALLER's process group, and the caller
-	// owns pgid and reaping. A group of the tool's own looked tidier and was wrong: a
-	// swarm supervisor puts each job in a group of its making and reaps that group at the
-	// deadline, and a command that forked a background child left
-	// that child in the tool's group, outside the one the supervisor kills -- measured by
-	// the seam read, survivors=0 reported while a process was still alive, which is the
-	// silent failure that rule exists to prevent. Signals are forwarded to the CHILD
-	// (below), not to a group, for the same reason: the group is not the tool's to signal.
+	// THE CAPS (docs/SPEC-SANDBOX.md "wall-caps-processes.w1"): macOS has no limit that
+	// binds a tree, so a command whose stdin is not a terminal leads a process group of
+	// its own, which the tool counts every second and kills by its group id, never by a
+	// pattern. A terminal keeps the caller's group: a child in a background group is
+	// stopped by SIGTTIN the moment it reads the keyboard.
+	capped := !isTerminal(stdin)
+	if capped {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 
 	// SANDBOX OK is printed and FLUSHED before the command starts, so a log that ends in
 	// a crash still says what the wall was.
@@ -127,6 +134,21 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 		return ExitNotExecuted, refuse("sandbox_failed", "%s could not be started: %v", backend, err)
 	}
 
+	pgid := cmd.Process.Pid
+	killGroup := func(sig syscall.Signal) {
+		if capped {
+			// ignored: the group may already be gone; the wait on the child is the check
+			_ = syscall.Kill(-pgid, sig)
+		} else {
+			// ignored: a signal passed on to a child that may already have exited; the child's exit is the report
+			_ = cmd.Process.Signal(sig)
+		}
+	}
+	stopWatch := func() string { return "" }
+	if capped {
+		stopWatch = p.Watch(p.Tick, func() (Usage, error) { return GroupUsage(pgid) }, func() { killGroup(syscall.SIGKILL) })
+	}
+
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
@@ -135,10 +157,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 			select {
 			case s := <-sigs:
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
-					// The CHILD, not -pid: with no group of its own, -pid would name a
-					// process group this tool never created and does not own.
-					// ignored: a signal passed on to a child that may already have exited; the child's exit is the report
-					_ = cmd.Process.Signal(sig)
+					killGroup(sig)
 				}
 			case <-done:
 				return
@@ -148,5 +167,55 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	waitErr := cmd.Wait()
 	close(done)
 	signal.Stop(sigs)
+	if line := stopWatch(); line != "" {
+		killGroup(syscall.SIGKILL)
+		awaitGroupGone(pgid)
+		fmt.Fprintf(stderr, "SANDBOX RUNAWAY %s; the process group was killed\n", line)
+		return ExitRunaway, nil
+	}
 	return statusOf(waitErr, cmd.ProcessState), nil
+}
+
+// isTerminal reports whether r is a terminal.
+func isTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TIOCGETA)
+	return err == nil
+}
+
+// GroupUsage counts the live processes of group pgid and their resident bytes from one
+// ps(1). A zombie is dead and is not counted.
+func GroupUsage(pgid int) (Usage, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := subproc.Context(ctx, "/bin/ps", "-A", "-o", "pgid=,rss=,stat=").Output()
+	if err != nil {
+		return Usage{}, fmt.Errorf("ps: %w", err)
+	}
+	var u Usage
+	want := strconv.Itoa(pgid)
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != want || strings.HasPrefix(f[2], "Z") {
+			continue
+		}
+		u.Procs++
+		kib, _ := strconv.ParseInt(f[1], 10, 64)
+		u.RSS += kib << 10
+	}
+	return u, nil
+}
+
+// awaitGroupGone waits, bounded, for every live process of the group to be gone after a
+// SIGKILL: delivery is asynchronous and a caller told "killed" must find nothing running.
+func awaitGroupGone(pgid int) {
+	for i := 0; i < 100; i++ {
+		if u, err := GroupUsage(pgid); err == nil && u.Procs == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

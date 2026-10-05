@@ -254,7 +254,7 @@ func stagedResolved(dir string) (string, error) {
 // is gated like every later one, because skipping the check where there is no
 // HEAD makes the first commit the one place machinery enters unexamined.
 func stagedBase(root string) (string, error) {
-	if _, err := gitrun.Run(context.Background(), gitrun.Options{C: root}, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
+	if _, err := gitrun.Run(context.Background(), gitrun.Options{C: root}, stagedGitArgs("rev-parse", "-q", "--verify", "HEAD")...); err != nil {
 		// Run INSIDE the repository: outside one this command answers the
 		// sha1 spelling regardless of what the repository is, and the sha1
 		// constant 4b825dc6... names no object a sha256 repository knows.
@@ -271,6 +271,14 @@ func stagedBase(root string) (string, error) {
 	return "HEAD", nil
 }
 
+// stagedGitArgs prepends git configuration overrides to argv so local repository
+// configuration (e.g. core.fsmonitor, core.hooksPath) cannot execute external
+// programs during the advisory check (security#77 finding 1).
+func stagedGitArgs(args ...string) []string {
+	prefix := []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}
+	return append(prefix, args...)
+}
+
 // stagedGit runs one git plumbing call with -C root and the caller's
 // environment INTACT -- the hook is handed GIT_INDEX_FILE, and a tool that
 // scrubbed or re-anchored the environment would read a different index than
@@ -279,7 +287,7 @@ func stagedBase(root string) (string, error) {
 // implementer who read a FAILED diff-index's empty stdout as "nothing is
 // staged" would ship a gate that goes green with the commit unexamined.
 func stagedGit(root string, args ...string) (string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: root}, args...)
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: root}, stagedGitArgs(args...)...)
 	if err != nil {
 		msg := strings.TrimSpace(string(res.Stderr))
 		if i := strings.IndexByte(msg, '\n'); i >= 0 {
@@ -342,7 +350,7 @@ func parseDiffIndex(raw string) ([]stagedRecord, error) {
 // need no substrate: the name floor, the location floor and the extension
 // floor. The reason strings are the audit's own, so a finding reads the same
 // whichever mode produced it. Names and locations are lowercased on both
-// sides, matching the audit, and a trailing space in an extension is trimmed
+// sides, matching the audit, and a trailing blank in an extension is trimmed
 // for matching only.
 func stagedPathReasons(rel string, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
 	// Every dynamic piece is escaped where it is built, the same shape
@@ -422,7 +430,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 	if len(order) == 0 {
 		return heads, nil
 	}
-	cmd, cancel := gitrun.Command(context.Background(), gitrun.Options{C: root}, "cat-file", "--batch")
+	cmd, cancel := gitrun.Command(context.Background(), gitrun.Options{C: root}, stagedGitArgs("cat-file", "--batch")...)
 	defer cancel()
 	// stderr does NOT share the stdout pipe: the batch's diagnostics print
 	// there, and a reader that shares the pipe desynchronises on exactly the
@@ -495,7 +503,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 		}
 		return nil
 	}()
-	stdin.Close()
+	_ = stdin.Close() // ignored: the read loop above reports a failed write, and Wait below reports the child's exit
 	// Wait always runs, so the batch is never left writing into a closed
 	// reader. An early read error leaves it with unread requests; its
 	// complaint is reported only when nothing louder already happened.

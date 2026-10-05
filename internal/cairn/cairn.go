@@ -44,6 +44,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 // Publish policies name who publishes a checkpoint and when. This package
@@ -278,6 +279,17 @@ func conflict(store, session, id string) error {
 	}
 }
 
+// flatLockTimeout is how long a flat append waits for an exclusive lock on
+// the sibling lock file.
+const flatLockTimeout = 10 * time.Second
+
+// flatLockFile is the sibling lock file for a flat record: .<session>.md.lock
+// under the store. It does not end in .md, so Coverage and flatIndexRows skip it
+// (docs/SPEC-CAIRN.md; security#73 finding 1).
+func flatLockFile(store, session string) string {
+	return filepath.Join(store, "."+session+".md.lock")
+}
+
 // appendFlat files one entry into a flat record: a dated section at the end of
 // the file, in the file's own shape (one blank line between sections), the
 // words under it. A retry with the same id and the same words adds nothing;
@@ -285,10 +297,50 @@ func conflict(store, session, id string) error {
 // store. No index is written and no directory appears beside the file. The
 // flat format stores no policy, so publish "" reports PublishUnknown. With
 // write false nothing is written: the result is the plan.
+//
+// An actual write holds an exclusive lock on the sibling lock file around the
+// read-decide-append using internal/filelock (docs/SPEC-CAIRN.md, tla/FileLock.tla;
+// security#73 finding 1). The file is replaced atomically using internal/atomicfile,
+// keeping the existing file permissions (docs/SPEC-CAIRN.md; security#73 finding 3).
+// A dry run (write false) neither takes the lock nor creates the file; the
+// duplicate and conflict rules run on the re-read inside the lock.
 func appendFlat(store, session, path, id, text string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
 	if publish == "" {
 		publish = PublishUnknown
+	}
+	if !write {
+		fi, err := os.Lstat(path)
+		if err != nil {
+			return res, err
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return res, err
+		}
+		if prev, found := findFlat(raw, id); found {
+			if prev.body != strings.TrimSpace(text) {
+				return res, conflict(store, session, id)
+			}
+			stamp, err := time.Parse(time.RFC3339Nano, prev.stamp)
+			if err != nil {
+				return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
+			}
+			return AppendResult{Stamp: stamp, Persisted: true, Policy: publish, Duplicate: true}, nil
+		}
+		stamp := now.UTC().Truncate(time.Second)
+		return AppendResult{Stamp: stamp, Policy: publish}, atomicfile.Check(path, fi.Mode().Perm(), atomicfile.ExactMode())
+	}
+
+	lock, err := filelock.Lock(flatLockFile(store, session), "nova-cairn append", flatLockTimeout)
+	if err != nil {
+		return res, err
+	}
+	defer lock.Unlock() // ignored: the entry is on disk by then; the OS drops the flock when the file closes and the next take finds it free
+
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return res, err
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -305,36 +357,16 @@ func appendFlat(store, session, path, id, text string, now time.Time, publish st
 		return AppendResult{Stamp: stamp, Persisted: true, Policy: publish, Duplicate: true}, nil
 	}
 	stamp := now.UTC().Truncate(time.Second)
-	if !write {
-		return AppendResult{Stamp: stamp, Policy: publish}, atomicfile.CheckAppend(path)
-	}
 	var b strings.Builder
+	b.Write(raw)
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n" + flatHeading(id, now) + "\n\n" + strings.TrimRight(text, "\n") + "\n")
-	if err := appendBytes(path, b.String()); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(b.String()), fi.Mode().Perm(), atomicfile.ExactMode()); err != nil {
 		return res, err
 	}
 	return AppendResult{Stamp: stamp, Persisted: true, Policy: publish}, nil
-}
-
-// appendBytes adds content to an existing file and fsyncs before return, so a
-// flat append is as durable as a nested one before success is reported.
-func appendBytes(name, content string) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 func entryPath(store, session, id string) string {
@@ -474,12 +506,21 @@ func open(store, session, source string, now time.Time, publish string, write bo
 	if err != nil {
 		return OpenRecord{}, err
 	}
-	// A re-open writes nothing: the record already stands, in whichever shape
-	// the store keeps it. A flat file counts, or open would write a second
-	// record beside one already being appended to.
+	// A re-open of a nested record whose initial open was interrupted before
+	// logging (sessions/<id>.md exists, but log.jsonl has no open record) heals
+	// the open by logging it now with the caller's source and publish policy
+	// (docs/SPEC-CAIRN.md; security#73 finding 2). A flat file stays a no-op.
 	if _, flat, ok := locateRecord(store, session); ok {
-		if flat || !rec.Found {
+		if flat {
 			return rec, nil
+		}
+		if !rec.Found {
+			planned := OpenRecord{Source: source, Publish: publish, Found: true}
+			if !write {
+				return planned, atomicfile.CheckAppend(filepath.Join(store, "log.jsonl"))
+			}
+			stamp := now.UTC().Format(time.RFC3339Nano)
+			return planned, appendLog(store, "open", session, "", stamp, publish, source)
 		}
 		if rec.Publish != publish || (source != "" && source != rec.Source) {
 			again := []string{"--store", store, "--session", session}
@@ -871,29 +912,4 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		rows = rows[:max]
 	}
 	return rows, total, nil
-}
-
-// Coverage derives the ledger from the store: session records and stored
-// entries counted, never remembered, so the number cannot drift from the
-// tree it reports on.
-func Coverage(store string) Ledger {
-	var led Ledger
-	names := map[string]bool{}
-	for _, dir := range []string{filepath.Join(store, "sessions"), store} {
-		if files, err := os.ReadDir(dir); err == nil {
-			for _, f := range files {
-				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-					id := strings.TrimSuffix(f.Name(), ".md")
-					if ValidID(id) {
-						names[id] = true
-					}
-				}
-			}
-		}
-	}
-	led.Sessions = len(names)
-	if _, total, err := Index(store, "", 0); err == nil {
-		led.Entries = total
-	}
-	return led
 }

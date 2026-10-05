@@ -84,11 +84,6 @@ func fnCheckVerb(d deps) tool.Verb {
 	}
 }
 
-// opener opens the store for a login check accepted. The production opener is
-// connect; the unit tests hand a store of their own that answers FUNCTION,
-// which miniredis does not.
-type opener func(ctx context.Context, store login) (redis.UniversalClient, func() error, error)
-
 // fnRun is fn load and fn check over the store d.fnOpen (or connect) opens.
 func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 	store := loginFrom(c)

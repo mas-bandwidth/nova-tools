@@ -72,7 +72,7 @@ func TestMainCoverUnconfirmedNamesTheLostTransaction(t *testing.T) {
 			owner:      "a b",
 			keyName:    "it's",
 			key:        "a b:it's",
-			wantRecall: "nova-redis recall --addr 127.0.0.1:6379 --user ada --password-env STORE_PW --owner 'a b' --name 'it'\\''s'",
+			wantRecall: "nova-redis recall --addr 127.0.0.1:6379 --user ada --password-env STORE_PW --owner 'a b' --name 'it'\"'\"'s'",
 		},
 	}
 	for _, tc := range cases {

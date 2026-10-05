@@ -68,7 +68,7 @@ func fairStreams(t *testing.T, count, width int) {
 	}
 	ta.ok("init --readers reader-a,reader-b,reader-c,reader-d --members " + strings.Join(ms, ","))
 	for _, s := range streams {
-		ta.ok(fmt.Sprintf("add --stream %s --count %d", s, count))
+		ta.ok(fmt.Sprintf("add --stream %s --count %d --one", s, count))
 	}
 	ta.ok("start")
 	ta.live = nil

@@ -5,7 +5,7 @@ package textbody
 import "strings"
 
 // StripQuotedAndCode retains the original lines outside quotes and backtick
-// code blocks. CRLF is normalized to LF. A line whose first non-space text is
+// code blocks. CRLF is normalized to LF. A line whose first non-whitespace text is
 // > is omitted; a line starting with three backticks toggles the code block,
 // and an unclosed block consumes the rest. This is the existing line-filter
 // protocol, not a complete Markdown parser (tilde fences and inline spans

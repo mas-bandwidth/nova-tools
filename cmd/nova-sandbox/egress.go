@@ -4,7 +4,7 @@
 // themselves live in internal/sandbox (egress.go); this file is the verb, the flags and the
 // three seams that touch the machine.
 //
-// The wall is on the BENCH, not in the card: Johnny, 2026-09-18, "Not an env list the worker
+// The wall is on the BENCH, not in the card: a friend, 2026-09-18, "Not an env list the worker
 // applies (the worker is the adversary)". A card cannot see this ruleset, cannot name a host
 // for it and cannot take it down; it can only find out that a destination is denied.
 //
@@ -39,7 +39,7 @@ const egressRemedy = "run: nova-sandbox egress plan --run <id> --policy infra/im
 const nftRemedy = "install it and let this user run it without a password: sudo apt-get install -y nftables, then one sudoers line: nova ALL=(root) NOPASSWD: /usr/sbin/nft"
 
 // egressDeniedLine is the whole of what a card is told when it reaches for a destination the
-// wall denies, and it is Johnny's line word for word: `EGRESS DENIED host=<name>` on the
+// wall denies, and it is the friend's line word for word: `EGRESS DENIED host=<name>` on the
 // card's stdout, and the run exits non-zero. Fail closed, no retry to a different host.
 const egressDeniedLine = "EGRESS DENIED host="
 

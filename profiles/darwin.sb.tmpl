@@ -76,13 +76,22 @@
 
 (allow sysctl-read)
 
-;; mach-lookup is NARROWED to the three services the harnesses actually need, measured
-;; 2026-09-11 on this Mac by growing the set until `/bin/sh -c true`, `git status`,
-;; `curl https://example.com`, `opencode --version` and `node -e 1` all passed:
+;; mach-lookup is NARROWED to the four services the harnesses and the Go toolchain need,
+;; measured 2026-09-11 on this Mac by growing the set until `/bin/sh -c true`, `git status`,
+;; `curl https://example.com`, `opencode --version` and `node -e 1` all passed, and on
+;; 2026-10-04 on an Intel Mac bench by growing it again until `go mod download` passed:
 ;;   opendirectoryd.libinfo  getpwuid(3)/getaddrinfo(3) -- without it HOME lookup and
 ;;                           name resolution fail;
 ;;   SecurityServer          TLS trust evaluation -- without it curl to an https name fails;
-;;   system.logger           os_log(3), which libsystem calls on many paths.
+;;   system.logger           os_log(3), which libsystem calls on many paths;
+;;   trustd.agent            SecTrustEvaluateWithError, the call Go's crypto/x509 makes on darwin
+;;                           for every TLS handshake. curl verifies through SecurityServer
+;;                           and passed without it; `go mod download` inside the wall failed
+;;                           every fetch with `tls: failed to verify certificate: x509:
+;;                           OSStatus -26276` under the three-name set, and the same fetch
+;;                           passed with this one name added (measured 2026-10-04 on a
+;;                           darwin/amd64 bench, sandbox-exec -f on the generated profile;
+;;                           `com.apple.trustd` alone did not help). pbpaste stays rc=1.
 ;; Unqualified (allow mach-lookup) was measured to leave `pbpaste` READING THE CLIPBOARD
 ;; inside the wall; with this set pbpaste is rc=1 (tools/sandboxcheck, clipboard_denied).
 ;; ACCEPTED WIDTH, named rather than removed: `launchctl print system` still answers and
@@ -92,7 +101,8 @@
 (allow mach-lookup
   (global-name "com.apple.system.opendirectoryd.libinfo")
   (global-name "com.apple.SecurityServer")
-  (global-name "com.apple.system.logger"))
+  (global-name "com.apple.system.logger")
+  (global-name "com.apple.trustd.agent"))
 
 ;; The symlinks macOS puts in / are granted as literals on the LINK. (literal "/")
 ;; grants the root directory only; a subpath grant on /var or /tmp is not wanted.

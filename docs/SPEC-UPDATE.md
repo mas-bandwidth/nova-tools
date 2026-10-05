@@ -47,7 +47,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
    is a refusal naming the line number, exit 2, never a skip. A manifest with several problems is refused ONCE, naming every one of them with its line (the header, each line's bad fields, each bad line; at most fifty, the rest counted as `and <n> more`), so a file is fixed in one pass. No graph, no lockfile.
 3. **A command is argv, never a shell.** `installed`, `apply` and `local:<argv>`
    — this tool's three exec sites — are split on single spaces and executed directly: no
-   shell, no pipe, no glob, no `&&`, no environment expansion. An argument needing a space
+   shell, no pipe, no glob, no `&&`, no environment expansion. An argument needing whitespace
    is refused at load time with the remedy *put it in a script and name the script* — as
    is a field carrying two adjacent spaces or a leading or trailing one, so the split
    never makes an empty argument. This makes the argument boundary provable.
@@ -305,17 +305,14 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     before the first blank one as a header, then the same lines the report printed, `--max`
     included: past `--max` tools the body carries the `MORE` line, a partial inventory that
     says so (rule 22), never a bug; `--max 0` sends them all. `--send` takes the draft's
-    flags plus `--bus <path> --remote <r> --branch <b>`. Delivery uses the prepared
-    artifact protocol in [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md): `nova-bus prepare`
-    validates and assigns identity without sending, then `nova-bus send --prepared-stdin`
-    publishes or confirms the same artifact. The reporter does no Git of its own.
-    Missing `--as`, `--to`, `--bus`, `--remote` or `--branch` is exit 2 naming the flag.
-    No recipients come from the inventory's owner column. Only a confirmed `SEND OK`
-    with `pushed=true` records delivery; failures and interrupted attempts never do.
-    The whole successful SEND line is preserved as `line=`. With `--snapshot`, the
-    pending artifact is saved before the sending child starts; without it, each
-    explicit send is a new intention with in-process retry only. Help states that
-    cross-process recovery needs the caller-named snapshot.
+    flags and runs one child, `nova-bus send --as <friend> --to <who,who> --subject <the
+    Subject> --stdin`, the body on stdin: one transaction on the Redis bus, nova-bus reading
+    its store from `NOVA_BUS_REDIS` (else the fleet row's bus). The reporter does no network
+    of its own. Missing `--as` or `--to` is exit 2 naming the flag. No recipients come from
+    the inventory's owner column. Only a `SEND OK id=<id>` line records delivery, the id
+    what the snapshot keeps; a refusal, a failure or a child the budget cut off never does,
+    and says `sent=uncertain`. The whole successful SEND line is preserved as `line=`. (The
+    git bus's two-phase prepare and its pending recovery went with that bus, 2026-10-04.)
 25. **Unchanged state is the caller's to suppress, through a snapshot file the caller
     names.** Absent `--snapshot <path>`, no file is read or written (rule 9: nothing under
     `$HOME`, no state file of this tool's own). Present, the run reads the previous
@@ -326,35 +323,25 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     A caller-named snapshot uses a sibling `<snapshot>.lock` kernel lock to serialize
     writers across atomic renames; process death releases ownership. The stable empty
     lock file is not evidence of a running process and is not automatically deleted.
-    The file is JSON with `observed`, `delivered` and `pending`. `observed` is keyed
+    The file is JSON with `observed` and `delivered`. `observed` is keyed
     by `name`, each value
     `raw`, `status` (`known` or `unknown`) and `at` — the machine-readable snapshot —
     and `delivered`, below. **`at=` is never compared**: two snapshots differing
     only in their stamps are `changed=no` — a timestamp refresh is not a changed version.
     **Observed state and delivered state are two records**: every run
-    with `--snapshot` writes `observed`; only a `SEND OK … pushed=true` writes `delivered`,
-    keyed by the send's scope — `as`, `to` sorted, absolute `bus`, `remote`, `branch`, and explicit `host`, joined — and
+    with `--snapshot` writes `observed`; only a `SEND OK id=` writes `delivered`,
+    keyed by the send's scope — `as`, `to` sorted and explicit `host`, joined — and
     holding the `observed` map the body carried, nova-bus's `id` and the `at`. A local-only
     run, a `--draft`, a refused or a failed send write no `delivered`. With `--snapshot`,
     `--send` composes and sends when the scope has no `delivered` record, when that record's
-    `observed` differs from tonight's, or when a `pending` stands (below); otherwise it
+    `observed` differs from tonight's; otherwise it
     prints `REPORT NOTE unchanged since <id> to <to>; nothing sent`, `sent=no`. The
     suppression compares against what that recipient was confirmed to have, never the last
     observation, so a report before a send, a failed send before its retry, and a snapshot
     made for another recipient never quiet a send. Without `--snapshot` every `--send`
-    sends. **Preparation and pending precede mutation.** Save the delivery scope,
-    exact prepared artifact and observed map atomically before starting send. A failed
-    preparation cannot have delivered; an interrupted send retains the prepared ID.
-    On the next explicit `--send`, resolve pending first through the same prepared-send
-    protocol even when the observation is unchanged. Confirmed publication, including
-    already-published, advances `delivered` and clears pending atomically. If the current
-    observation differs, resolve the older pending report before preparing another.
-    If unresolved within budget, print its ID and an explicit pending gate, exit 1,
-    and do not send a newer report. No report is silently discarded or recreated under
-    another ID. Unrelated local commits are never published as a side effect of retry.
+    sends.
     Exit combines inventory completeness and delivery outcome; `changed=` alone never
-    makes a complete invocation fail. A stateless invocation has no retained recovery
-    promise across process death; the caller chooses that by omitting `--snapshot`.
+    makes a complete invocation fail.
 26. **No hidden timer, install or automatic send.** `report` has no `--watch`, no loop, no
     daemon; it runs when a person or a unit a person wrote starts it, and ends inside its
     budget. It installs nothing, pulls nothing, and no report line is a name for `apply`
@@ -367,9 +354,9 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     REFUSED` line per check plus one `ADOPT DONE sha= ok= refused=` line. The pass covers
     the standing adoption checks — versions agree, a bus inbox round trip with the bus
     defaults, a known-answer run per route, snapshot then report, tokens sum from jobs —
-    each as a row of the checks file. With `--bus --remote --branch --as --to` the
-    pass posts the receipt to the bus as the coordinator's own through the prepared
-    artifact protocol (rule 24) and prints `ADOPT SENT`; without them it prints and sends
+    each as a row of the checks file. With `--as` and `--to` the
+    pass posts the receipt to the bus as the coordinator's own, by the same one send
+    (rule 24) and prints `ADOPT SENT`; without them it prints and sends
     nothing (rule 26). Every REFUSED check is handed to the duty tier on an `ADOPT
     ESCALATE` line naming its owner, and the duty tier files an issue in the dogfood shape. Exit is 0 when every check passes, 1 when any check refuses or the
     receipt is unconfirmed, 2 on a refusal.
@@ -393,10 +380,10 @@ One header line, then one entry per line, tabs between fields; `#` opens a comme
 
 ```
 name	kind	installed	latest	apply	owner
-gh	tool	gh --version	github:cli/cli	brew upgrade gh	rowan
-sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	rowan
-opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	freddy
-qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	stella
+gh	tool	gh --version	github:cli/cli	brew upgrade gh	the repository owner
+sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	the repository owner
+opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	the repository owner
+qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	the repository owner
 ```
 
 `owner` is the line who answers when that entry is not current, on every STALE, NEWER or
@@ -406,16 +393,20 @@ DIFFERENT line, so the morning names a person, not only a number.
 
 ```
 usage:
-nova-update example [--out <path>]
-nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update report --store <host:port> [--timeout <d>]
-nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
-nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
-nova-update help
+  nova-update example [--out <path>]
+  nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
+  nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
+    <who,who> | --send --as <friend> --to <who,who>]
+    [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update report --store <host:port> [--timeout <d>]
+  nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
+    [--timeout <d>] [--budget <d>]
+  nova-update adoption --file <path> [--as <friend>] [--max <n>]
+  nova-update release <cut|build|install|adopt|pull> ...
+    nova-tools' own release pipeline: nova-update help release prints its usage lines
+  nova-update help
 ```
 
 Those ten usage lines are the string `nova-update help` prints, byte for byte, under the
@@ -456,7 +447,7 @@ carries, and what `pull` deletes.
   green either. It then reads the highest existing version tag, compares it to the head,
   **classifies the range against the sensitive path list** (SPEC-RELEASE §1: a range that
   touches one of those prefixes, or that is too big for the forge to list, refuses until
-  `--security-read` names Johnny's read, and then says so on a
+  `--security-read` names the security reader's read, and then says so on a
   `RELEASE CUT SENSITIVE paths=… read=…` line), writes a new `--changelog` section from the
   pull requests merged since (their numbers, their titles, and for an integration batch the
   members named in its own body, so a batch does not hide ten pieces of work behind one
@@ -854,33 +845,26 @@ install` or `npm install`.
     other Subject is the mutation that matters here — then the report's lines, a 30-tool
     file under `--max 20` carrying its `REPORT MORE` line in the body, and starts no
     `nova-bus` (a fake on `PATH` counts zero runs); `--send`
-    missing any one of its five flags is exit 2 naming that flag; `--send` complete runs the
-    fake `nova-bus prepare` with the draft on stdin, then `nova-bus send` with
-    `--prepared-stdin`, `--bus`, `--remote`, `--branch`, `--as` and the prepared artifact
-    on stdin. Preparation refusal is `REPORT FAIL`, `sent=no`; interrupted or unconfirmed
-    dispatch is `REPORT FAIL`, `sent=uncertain` with its prepared ID. No absent result
+    missing `--as` or `--to` is exit 2 naming the flag; `--send` complete runs the fake
+    `nova-bus send --as --to --subject --stdin` once, the draft on stdin; a refused or
+    unconfirmed send is `REPORT FAIL`, `sent=uncertain`. No absent result
     line establishes that nothing was sent. A file whose owner names a recipient and no
     `--to` never sends to her.
 25. `TestUnchangedStateIsTheCallersToSuppress`: without `--snapshot`, `HOME` and the cwd are
     fresh temp dirs and empty after the run; `--snapshot s.json` first writes it — JSON,
     `observed` keyed by `name`, each value exactly `raw`, `status`, `at`, and `delivered`
-    and `pending` empty — and prints `changed=yes`; a second run with identical raw lines and an injected
+    empty — and prints `changed=yes`; a second run with identical raw lines and an injected
     clock one hour on prints `changed=no` and no `REPORT CHANGED` line — the mutation that
     matters; a third with one raw differing prints one `REPORT CHANGED name= was= now=` and
     `changed=yes`; a tool turning UNKNOWN is a change, and back is another. Delivery, with a
-    fake `nova-bus` on `PATH`: a `--send --snapshot s.json` the fake confirms (`SEND OK …
-    pushed=true`) writes `delivered` for its scope, and the same send on the unchanged run
+    fake `nova-bus` on `PATH`: a `--send --snapshot s.json` the fake confirms (`SEND OK
+    id=`) writes `delivered` for its scope, and the same send on the unchanged run
     starts no `nova-bus`, prints `REPORT NOTE unchanged since <id> to <name>; nothing sent`
     and `sent=no` — the quiet repeat; a local-only `--snapshot` run, then the first `--send`
     for that scope, sends — a send quieted by an observation nobody was sent is the mutation
     that matters; the fake refusing (`SEND REFUSED`), then the same send unchanged, sends
     again; a send confirmed `--to <name>`, then the same observation `--to <other>`, sends; the
-    real bare-Git cases from SPEC-BUS-DELIVERY.md prove recovery: refused push followed
-    by an unchanged retry lands one original note; lost acknowledgment finds the same
-    published note; child death before output reuses saved pending identity. Exercise
-    death before/after note, INDEX and commit writes; changed observation behind pending;
-    unrelated local work refusal and a racing remote writer. Assert remote note bytes,
-    ID and INDEX count, not just a fake success line. A run killed mid-snapshot-write
+    send runs one child and no other. A run killed mid-snapshot-write
     leaves the previous snapshot whole. A confirmed unchanged run invokes no bus process.
 26. `TestTheReportHasNoClockNoInstallNoAutomaticSend`: `--watch`, `--every` and `--loop` are
     unknown flags costing one line; over a file whose every entry is UNKNOWN or changed, no
@@ -892,7 +876,7 @@ Beside those: the first-run block runs against the fixture, compared by shape pe
 ONBOARDING.md 5(c); `nova-update help` prints the verbs block on stdout, exit 0; a
 bare invocation or a flag typo costs one line, never a banner.
 
-## Open questions — each with a default, and the default stands unless Glenn says otherwise
+## Open questions — each with a default, and the default stands unless the coordinator says otherwise
 
 1. **Ollama publishes no JSON API, but its registry speaks registry-v2.** Default: rule 4a's
 one manifest GET, digest as text; the rejected alternative, scraping
@@ -904,8 +888,7 @@ A registry that stops answering registry-v2 JSON is UNKNOWN, never OK.
 arrive either way and the two disagree by days. Default: the file names the source
 that installed the copy on this box; a mismatch is a one-line fix to the file, not a
 second source per entry.
-4. **Prepared delivery is a required implementation dependency.** The bounded protocol
-in SPEC-BUS-DELIVERY.md replaces waiting for an unrelated future push. Until that bus
-mode is implemented and its real-Git recovery witnesses pass, the reporter's sending
-path is not ready for adoption. Local inventory, draft and update-choice implementation
-can proceed independently. No timer or reporter-owned Git is added.
+4. **Delivery is one send on the Redis bus.** The git bus and its prepared, two-phase
+delivery were retired 2026-10-04; the reporter and watch hand one note to `nova-bus send`,
+one transaction that answers with the message id (rule 24). No timer or reporter-owned
+network is added.
