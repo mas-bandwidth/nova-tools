@@ -1002,6 +1002,17 @@ on something dropped" judgment, in one step. Where the drop and the add were mad
 judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
 card replaced by its twin".
 
+### Backing up the store
+
+`nova-sprint backup --file <path>` writes the store to `<path>` (mode 0600; a file that is there is refused, never overwritten), restores the file into a twin and compares it with the store, and scans it for secret-shaped text, in one run on the store's host. It changes nothing in the store. A good run prints one line:
+
+```sh
+nova-sprint backup --redis mem:sprint.twin --file backup-2026-10-04.json
+BACKUP OK file=backup-2026-10-04.json sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=document secrets=none
+```
+
+A finding exits 1 and names the lines of the file, never the values; the file stays private and is not a clean backup, so remove the text from the store and run again to a new path. `--dry-run` proves and scans the snapshot and writes no file. `snapshot --restore-drill <file>` restores a file later. The contract is `sprint-backup-verb` in [SPEC-SPRINT.md](SPEC-SPRINT.md).
+
 ### Role views: what a model reads instead of the dashboard
 
 The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human
