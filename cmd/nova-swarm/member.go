@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -232,7 +233,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, os.Getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
+	m := member.New(memberConfig(*as, *width, *reader, meter, room, *root, *noWall), sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -270,6 +271,19 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
 	return 0
+}
+
+// memberConfig is the member.Config nova-swarm runs a member or a reader with. A reader's
+// ScriptVerify reads a script card's head out of the bench mirror and runs its program in
+// the member's wall, so a script card whose head is its program's output needs no model
+// read (docs/SPEC-SPRINT.md, the script read); a worker's is nil. Sleep is time.Sleep:
+// harness starts are StartGap apart.
+func memberConfig(as string, width int, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
+	cfg := member.Config{As: as, Width: width, Reader: reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(reader, os.Getenv)}
+	if reader {
+		cfg.ScriptVerify = scriptVerify(root, "", noWall)
+	}
+	return cfg
 }
 
 // exitReplaced is member's exit when its binary was replaced under it: not 0, so
@@ -1293,5 +1307,65 @@ func mirrorKeeping(urls, root, gocache string, stdout, stderr io.Writer) (keep f
 				}
 			}
 		}()
+	}
+}
+
+// scriptVerify is a reader's member.Config.ScriptVerify (docs/SPEC-SPRINT.md, the script
+// read): a read of a script card is asked first of a ScriptVerifier that checks the head
+// out of the bench mirror of the card's repository, runs the card's program in the same
+// wall the member runs its script steps in, and compares the program's diff with the
+// head's. The verifier is built per packet because the mirror is the card's repository's;
+// the checkouts sit under root, the reader's own work dir. sandbox names the wall binary
+// ("" resolves nova-sandbox on PATH) and noWall runs the program unconfined, as the
+// member's own --no-wall does for its children.
+func scriptVerify(root, sandbox string, noWall bool) func(member.Packet, cardhdr.Class) (bool, string) {
+	base := filepath.Join(root, "script-read")
+	return func(p member.Packet, class cardhdr.Class) (ok bool, why string) {
+		repo := swarm.ReadCardBase([]byte(p.Brief)).Repo
+		home, _ := os.UserHomeDir()
+		mirror := swarm.FindBenchMirror(home, repo)
+		if mirror == "" {
+			return false, "no bench mirror for " + repo
+		}
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			return false, "the script read's work dir " + base + ": " + err.Error()
+		}
+		v := member.ScriptVerifier{Mirror: mirror, Temp: base, Run: scriptRun(base, sandbox, noWall)}
+		return v.Verify(p, class)
+	}
+}
+
+// scriptRun runs a script card's program in the member's wall (step.go's cardtree.Wall):
+// the checkout and a private temp its only writes, the network denied, the toolchain and
+// the checkout's borrowed objects readable, all under ctx (the card's deadline). It is the
+// one place the script read starts a process, so a test can hand Verify a fake instead.
+func scriptRun(base, sandbox string, noWall bool) func(context.Context, string, []string) error {
+	return func(ctx context.Context, dir string, argv []string) error {
+		wall, why := stepWall(sandbox, noWall)
+		if why != "" {
+			return errors.New(why)
+		}
+		work, err := os.MkdirTemp(base, "wall-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = safepath.RemoveUnder(base, work) }() // ignored: the work dir is this read's own, under the reader's work dir the pool sweeps
+		bin, tmp := filepath.Join(work, "bin"), filepath.Join(work, "tmp")
+		for _, d := range []string{bin, tmp} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				return err
+			}
+		}
+		wall.Tmp = tmp
+		if wall.Bin != "" {
+			wall.Read = stepReads(dir, bin, benchPasswdHome())
+		}
+		run := argv
+		if wall.Bin != "" {
+			run = append([]string{wall.Bin}, wall.Argv(dir, argv)...)
+		}
+		cmd := subproc.Context(ctx, run[0], run[1:]...)
+		cmd.Dir, cmd.Env = dir, wall.Env(os.Environ())
+		return cmd.Run()
 	}
 }
