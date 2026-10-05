@@ -29,6 +29,7 @@ type rig struct {
 	env       map[string]string
 	launchctl []string
 	onPath    map[string]string // what lookPath finds, by name
+	mu        sync.Mutex        // the clock below: the daemon and its keepalive child both read it
 	now       time.Time
 	home      string
 }
@@ -51,8 +52,17 @@ func (r *rig) world() world {
 			r.launchctl = append(r.launchctl, strings.Join(args, " "))
 			return "", nil
 		},
-		now:     func() time.Time { r.now = r.now.Add(time.Second); return r.now },
-		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
+		now: func() time.Time {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.now = r.now.Add(time.Second)
+			return r.now
+		},
+		sleep: func(context.Context, time.Duration) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.now = r.now.Add(time.Second)
+		},
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
 		home:    r.home,

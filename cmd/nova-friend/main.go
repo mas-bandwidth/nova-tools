@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -609,7 +610,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
 	rowMode, rowWidth := "", 0
+	var recordMu sync.Mutex // the daemon and its keepalive child both say lines
 	record := func(line string) {
+		recordMu.Lock()
+		defer recordMu.Unlock()
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
