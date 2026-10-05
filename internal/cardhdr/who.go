@@ -5,15 +5,13 @@ import (
 	"strings"
 )
 
-// Who is what a card's WHO line says of the worker it is dealt to (the owner,
-// 2026-10-03: "Could we try expressing the work left for nova-tools-1.1.0 into
-// cards, and doing it via the sprint, but doing parts on friends where we would
-// normally do friend work."): `WHO: friend` is any friend, `WHO: friend <name>` the
-// friend of that name, and a card with no WHO line (or `WHO: -`, which says the same) is
-// a machine's, dealt to the fleet as every card before it was (docs/SPEC-SPRINT.md, the
-// friends).
+// Who is a preference or a hard pin from the brief header (docs/SPEC-SPRINT.md,
+// WHO preference). `WHO: friend` is any friend, `WHO: friend <name>` prefers that
+// friend, and `WHO: only friend <name>` waits for her alone. A card with no WHO
+// line, or `WHO: -`, is unpinned: friends whose class covers its tier, then the fleet.
 type Who struct {
-	Friend bool   // a friend's card: WHO: friend [<name>]
+	Only   bool   // only friend is a hard pin
+	Friend bool   // a friend's card: WHO: friend [<name>] or WHO: only friend <name>
 	Name   string // the friend it names, "" for any friend
 }
 
@@ -40,12 +38,14 @@ func ReadWho(brief string) (w Who, why string) {
 		switch {
 		case len(f) == 1 && f[0] == "-":
 			return Who{}, ""
+		case len(f) == 3 && strings.EqualFold(f[0], "only") && strings.EqualFold(f[1], "friend") && friendNameRE.MatchString(f[2]):
+			return Who{Friend: true, Only: true, Name: f[2]}, ""
 		case len(f) == 1 && strings.EqualFold(f[0], "friend"):
 			return Who{Friend: true}, ""
 		case len(f) == 2 && strings.EqualFold(f[0], "friend") && friendNameRE.MatchString(f[1]):
 			return Who{Friend: true, Name: f[1]}, ""
 		}
-		return Who{}, "WHO: " + v + " is not `friend` or `friend <name>` (a friend row's name: letters, digits, _ and -); a card with no WHO line, or WHO: -, is dealt to the fleet"
+		return Who{}, "WHO: " + v + " is not `friend` or `friend <name>` or `only friend <name>` (a friend row's name: letters, digits, _ and -); a card with no WHO line, or WHO: -, is dealt to the fleet"
 	}
 	return Who{}, ""
 }

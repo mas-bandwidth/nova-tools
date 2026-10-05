@@ -54,13 +54,13 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
 	}
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{
-		{ID: "s1-1", Brief: brief("friend amy")},
-		{ID: "s1-2", Brief: brief("friend amy")},
-		{ID: "s1-3", Brief: brief("friend amy")},
-		{ID: "s1-4", Brief: brief("friend amy")},
-		{ID: "s1-5", Brief: brief("friend bob")},
-		{ID: "s1-6", Brief: brief("friend bob")},
-		{ID: "s1-7", Brief: brief("friend bob")},
+		{ID: "s1-1", Brief: brief("only friend amy")},
+		{ID: "s1-2", Brief: brief("only friend amy")},
+		{ID: "s1-3", Brief: brief("only friend amy")},
+		{ID: "s1-4", Brief: brief("only friend amy")},
+		{ID: "s1-5", Brief: brief("only friend bob")},
+		{ID: "s1-6", Brief: brief("only friend bob")},
+		{ID: "s1-7", Brief: brief("only friend bob")},
 	}}))
 
 	h.startMachine()
@@ -124,10 +124,10 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
 	}
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{
-		{ID: "s1-1", Brief: brief("friend amy")},
-		{ID: "s1-2", Brief: brief("friend amy")},
-		{ID: "s1-3", Brief: brief("friend amy")},
-		{ID: "s1-4", Brief: brief("friend amy")},
+		{ID: "s1-1", Brief: brief("only friend amy")},
+		{ID: "s1-2", Brief: brief("only friend amy")},
+		{ID: "s1-3", Brief: brief("only friend amy")},
+		{ID: "s1-4", Brief: brief("only friend amy")},
 	}}))
 
 	h.startMachine()
