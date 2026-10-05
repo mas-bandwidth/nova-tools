@@ -73,7 +73,7 @@ func init() {
 		{"recut", "<id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>]", "recut lint-pkg-cairn-t --tier heavy", (*app).cmdRecut},
 		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
-		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
+		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error> | --dead-base <id>=<branch>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
 		{"backup", "--file <path>", "backup --file /tmp/nova-sprint-backup.rdb", (*app).cmdBackup},
@@ -114,6 +114,7 @@ func init() {
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
+		{"card base", "<id> <branch>", "card base s1-4 main", (*app).cmdCardBase},
 		{"card", "<id> [--brief | --fields] [--at-epoch <n>]", "card s1-4", (*app).cmdCard},
 		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
 		{"held", "[--stream <s>]", "held", (*app).cmdHeld},
@@ -142,6 +143,7 @@ func init() {
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
+	verbClasses["card base"] = classReport
 }
 
 func verbNames() []string {
@@ -2423,6 +2425,52 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("rank", *c, st, store.RankStep(r), stdout, stderr)
 }
 
+func (a *app) cmdCardBase(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("card base")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) != 2 {
+		return refuse(stderr, "card base", argErr("wants <id> <branch>", err, pos...))
+	}
+	id := pos[0]
+	branch := pos[1]
+	if strings.TrimSpace(branch) == "" || strings.HasPrefix(branch, "-") {
+		return refuse(stderr, "card base", "not a branch name "+branch)
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "card base", err.Error())
+	}
+	ctx := context.Background()
+	v, err := st.CardOf(ctx, id)
+	if err != nil {
+		return a.readFailed("card base", err, stderr)
+	}
+	if v.Primary != nil && v.Primary.Col == sprint.Merging {
+		cb := swarm.ReadCardBase([]byte(v.Primary.F("brief")))
+		repo := cb.Repo
+		if repo != "" {
+			tip, err := a.branchTip(ctx, repo, branch)
+			if err != nil {
+				fmt.Fprintf(stderr, "%s card base REFUSED: reading origin's tip of %s: %s\n", prog, oneline.Escape(branch), oneline.Escape(err.Error()))
+				return 1
+			}
+			if tip == "" {
+				fmt.Fprintf(stderr, "%s card base REFUSED: the branch %s is not on origin\n", prog, oneline.Escape(branch))
+				return 1
+			}
+		}
+	}
+	step := store.Step{
+		Named: true,
+		Verb:  "card base",
+		Load:  []string{sprint.Work, sprint.Merge},
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.CardBase(s, sprint.CardBaseReq{ID: id, Branch: branch, Who: c.actor})
+		},
+	}
+	return a.runStep("card base", *c, st, step, stdout, stderr)
+}
+
 func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("merge")
 	stream := fs.String("stream", "", "the stream whose queued batches are selected to merge and land")
@@ -2436,6 +2484,7 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
 	rejected := fs.Bool("rejected", false, "fact: the merge queue rejected the batch")
 	baseRed := fs.String("base-red", "", "fact: the base fails its tree gate, this the error (land's base-gate rule, after its third failure): the stream stops, no card moves")
+	deadBase := fs.String("dead-base", "", "fact: <card>=<base>: the card's base branch is not on origin")
 	conflictKind := fs.String("conflict-kind", "", "with --conflict: file (a path no generated ledger owns did not merge) or ledger; the conflict rule redoes a file conflict on the tip")
 	var conflictPaths listFlag
 	fs.Var(&conflictPaths, "conflict-path", "with --conflict: a path that did not merge; again, or comma separated, for more")
@@ -2453,13 +2502,13 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	facts := 0
-	for _, f := range []bool{*conflict != "", *cross != "", *red, *rejected, *baseRed != ""} {
+	for _, f := range []bool{*conflict != "", *cross != "", *red, *rejected, *baseRed != "", *deadBase != ""} {
 		if f {
 			facts++
 		}
 	}
 	if *stream == "" || len(pos) > 0 || facts > 1 {
-		return refuse(stderr, "merge", "wants --stream <s> and at most one fact of --conflict, --cross, --red, --rejected, --base-red")
+		return refuse(stderr, "merge", "wants --stream <s> and at most one fact of --conflict, --cross, --red, --rejected, --base-red, --dead-base")
 	}
 	var pins []sprint.LandedPin
 	if len(landed) > 0 || *repo != "" || *baseRef != "" {
@@ -2475,8 +2524,9 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())
 	}
+	deadCard, deadBaseBranch, _ := strings.Cut(*deadBase, "=")
 	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Landed: pins, Conflict: *conflict, Cross: *cross,
-		Red: *red, Suspects: suspects, Rejected: *rejected, BaseRed: *baseRed, ConflictKind: *conflictKind, ConflictPaths: conflictPaths, Note: *note, Who: c.actor}), stdout, stderr)
+		Red: *red, Suspects: suspects, Rejected: *rejected, BaseRed: *baseRed, DeadCard: deadCard, DeadBase: deadBaseBranch, ConflictKind: *conflictKind, ConflictPaths: conflictPaths, Note: *note, Who: c.actor}), stdout, stderr)
 }
 
 // landedPins reads the --landed pairs and runs, once per card, the one git merge-base

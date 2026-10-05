@@ -48,6 +48,8 @@ type MergeReq struct {
 	// naming the base, the gate and the first refusal. No card moves.
 	BaseRefused string `json:",omitempty"`
 	Base        string `json:",omitempty"`
+	DeadCard    string `json:",omitempty"`
+	DeadBase    string `json:",omitempty"`
 	Note        string
 	Who         string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
@@ -99,6 +101,8 @@ func landedRefusals(s *Snapshot, stream string, pins []LandedPin) []Refusal {
 // land-base-gate-stops-stream): how many landings in a row were refused on the base's tree
 // gate, the base they were refused on, and when the first was. A pass that merges, any other
 // stop, a stop on the base and a resume clear it.
+const FieldDeadBase = "dead_base"
+
 const (
 	FieldBaseGateRefused = "base_gate_refused"
 	FieldBaseGateBase    = "base_gate_base"
@@ -292,6 +296,57 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, append(unset, baseGateCount...)...))}, Notes: append(notes, j)}
 	}
 	switch {
+	case r.DeadCard != "" || r.DeadBase != "":
+		cardID := r.DeadCard
+		base := r.DeadBase
+		if cardID == "" {
+			cardID, base, _ = strings.Cut(r.DeadBase, "=")
+		} else if strings.Contains(r.DeadCard, "=") {
+			cardID, base, _ = strings.Cut(r.DeadCard, "=")
+		}
+		m := s.Merge.Placed(cardID)
+		if m == nil || m.Row != r.Stream || m.Col != Queued {
+			p.refuse(cardID, "not queued in stream "+r.Stream)
+			return p
+		}
+		if notInBatch(cardID) {
+			return p
+		}
+		pr := s.Work.Placed(cardID)
+		u := Unit{Key: cardID, Stream: r.Stream}
+		u.Changes = append(u.Changes,
+			change(Merge, setEntry(m, map[string]string{FieldDeadBase: base})),
+		)
+		if pr != nil {
+			u.Changes = append(u.Changes,
+				change(Work, setEntry(pr, map[string]string{FieldDeadBase: base})),
+			)
+		}
+		hasDeadBaseJudgment := false
+		for _, o := range s.Open {
+			if o.Subject() == cardID && strings.Contains(o.Note.Type, "which is not on origin") {
+				hasDeadBaseJudgment = true
+				break
+			}
+		}
+		if !hasDeadBaseJudgment {
+			what := fmt.Sprintf("card %s names BASE %s, which is not on origin", cardID, base)
+			j := Note{
+				Kind:      Judgment,
+				Type:      what,
+				What:      what,
+				Stream:    r.Stream,
+				Primaries: []string{cardID},
+				Count:     1,
+				Card:      cardID,
+				At:        s.Now,
+				Who:       r.Who,
+				Decisions: []string{"ack", "return", "drop"},
+			}
+			u.Notes = append(u.Notes, j)
+		}
+		u.Moved = fmt.Sprintf("stream %s: %s marked dead base %s", r.Stream, cardID, base)
+		p.Units = append(p.Units, u)
 	case r.Conflict != "":
 		m := s.Merge.Placed(r.Conflict)
 		if m == nil || m.Row != r.Stream || m.Col != Queued {
@@ -535,5 +590,82 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	}
 	p.Units = append(p.Units, u)
 	answered(&p, s, r.Answers, r.Who)
+	return p
+}
+
+func replaceCardBase(brief, newBase string) string {
+	lines := strings.Split(brief, "\n")
+	found := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "BASE:") {
+			lines[i] = "BASE: " + newBase
+			found = true
+			break
+		}
+	}
+	if !found {
+		inserted := false
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "REPO:") {
+				lines = append(lines[:i+1], append([]string{"BASE: " + newBase}, lines[i+1:]...)...)
+				inserted = true
+				break
+			}
+		}
+		if !inserted {
+			lines = append([]string{"BASE: " + newBase}, lines...)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// CardBaseReq changes the base branch of a merging card.
+type CardBaseReq struct {
+	ID     string
+	Branch string
+	Who    string
+}
+
+// CardBase records the new BASE for a merging card, keeps the work and its
+// reads, writes one log line, and clears any dead-base mark so the next land
+// pass tries it once against the new base.
+func CardBase(s *Snapshot, r CardBaseReq) Plan { return Lawful(cardBase(s, r)) }
+
+func cardBase(s *Snapshot, r CardBaseReq) Plan {
+	var p Plan
+	p.on(s)
+	pr := s.Work.Placed(r.ID)
+	if pr == nil {
+		p.refuse(r.ID, "no primary "+r.ID)
+		return p
+	}
+	m := s.Merge.Placed(r.ID)
+	if pr.Col != Merging || m == nil || m.Col != Queued {
+		p.refuse(r.ID, "card "+r.ID+" is not merging (it is "+placeWord(pr)+")")
+		return p
+	}
+	if strings.TrimSpace(r.Branch) == "" || strings.HasPrefix(r.Branch, "-") {
+		p.refuse(r.ID, "not a branch name "+r.Branch)
+		return p
+	}
+	newBrief := replaceCardBase(pr.F("brief"), r.Branch)
+	u := Unit{Key: r.ID, Stream: pr.Row}
+	workSet := map[string]string{"brief": newBrief}
+	u.Changes = append(u.Changes,
+		change(Work, setEntry(pr, workSet, FieldDeadBase)),
+		change(Merge, setEntry(m, nil, FieldDeadBase)),
+	)
+	for _, o := range s.Open {
+		if o.Subject() == r.ID && strings.Contains(o.Note.Type, "which is not on origin") {
+			u.Closes = append(u.Closes, o)
+		}
+	}
+	n := happened(fmt.Sprintf("card %s base -> %s", r.ID, r.Branch), pr.Row, s.Now, r.ID)
+	n.Card = r.ID
+	n.Who = r.Who
+	u.Notes = append(u.Notes, n)
+	u.Moved = fmt.Sprintf("card %s base -> %s", r.ID, r.Branch)
+	p.Units = append(p.Units, u)
 	return p
 }

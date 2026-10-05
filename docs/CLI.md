@@ -999,6 +999,7 @@ nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
 nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
+nova-sprint card base <id> <branch>
 nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
@@ -1031,6 +1032,10 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### Re-pointing a card's base branch
+
+`nova-sprint card base <id> <branch>` records the new BASE for a merging card, keeps work and reads, writes one log line, and clears any dead-base mark so the next land pass tries it once against the new base. It verifies that `<branch>` exists on origin (refusing if not found) and that `<id>` is currently merging.
 
 ### The sprint backup
 

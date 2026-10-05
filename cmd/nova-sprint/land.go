@@ -288,10 +288,14 @@ type lander struct {
 	// baseCount says the last build ran the base's gate under the rule and it was red, baseWhy
 	// its finding: the refusal is counted in the store (baseRefused), never only in this
 	// process, which a hand land starts empty every run and the server every start
-	baseCount bool
-	baseWhy   string
-	now       func() time.Time
-	rulesOff  []string
+	baseCount       bool
+	baseWhy         string
+	now             func() time.Time
+	rulesOff        []string
+	deadBaseRefused bool
+	deadBaseCard    string
+	deadBaseBranch  string
+	wasDeadBase     bool
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -498,6 +502,23 @@ func landQueue(s *sprint.Snapshot, stream string) []*sprint.Card {
 	return before
 }
 
+func isDeadBaseSkipped(s *sprint.Snapshot, lc landCard) bool {
+	m := s.Merge.Placed(lc.id)
+	if m == nil {
+		return false
+	}
+	deadBase := m.F(sprint.FieldDeadBase)
+	if deadBase == "" || lc.base != deadBase {
+		return false
+	}
+	for _, o := range s.Open {
+		if o.Subject() == lc.id && strings.Contains(o.Note.Type, "which is not on origin") {
+			return true
+		}
+	}
+	return false
+}
+
 // stream lands one stream's batches in queue order and stops at the first
 // that does not land whole; false when a push landed and its report did not.
 func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) bool {
@@ -527,8 +548,14 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 				lc.base = cb.Ref
 			}
 		}
+		if isDeadBaseSkipped(s, lc) {
+			continue
+		}
 		lc.protected = sprint.ProtectedLandWhy(s, stream, lc.repo, lc.base, c.ID)
 		cards = append(cards, lc)
+	}
+	if len(cards) == 0 {
+		return true
 	}
 	for len(cards) > 0 {
 		n := 1
@@ -540,6 +567,11 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 			return false
 		}
 		if !landed {
+			if l.wasDeadBase {
+				l.wasDeadBase = false
+				cards = cards[n:]
+				continue
+			}
 			return true
 		}
 		cards = cards[n:]
@@ -598,6 +630,9 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		// the base-gate rule: the refusal counted per stream and base in the store, its third
 		// (or this process's third failure) stopping the stream with the coordinator's judgment
 		return l.baseRefused(b, stream, why)
+	}
+	if why != "" && l.deadBaseRefused {
+		return l.deadBase(b, stream, l.deadBaseCard, l.deadBaseBranch, why, cards)
 	}
 	if why != "" {
 		return refuse(why)
@@ -776,6 +811,22 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(r.Stream)
 	}
 	l.out = append(l.out, b)
+	return false, true
+}
+
+// deadBase reports a dead base fact through the merge step and refuses the batch
+// with it. It does not stop the stream.
+func (l *lander) deadBase(b landBatch, stream, cardID, base, why string, pins []landCard) (bool, bool) {
+	b.Cards = 1
+	b.IDs = []string{cardID}
+	b.Status, b.Reason = "refused", why
+	r := sprint.MergeReq{Stream: stream, Batch: 1, DeadCard: cardID, DeadBase: base, Who: l.c.actor}
+	res, err := l.step(r, pins[:1])
+	if code := stepExit(res, err); code != 0 {
+		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+	}
+	l.out = append(l.out, b)
+	l.wasDeadBase = true
 	return false, true
 }
 
@@ -985,6 +1036,7 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // identity, a hook, the disk), nothing to report. The fetch's seconds and the
 // merges' are added to t.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes) (merged []string, failed conflictCard, why string) {
+	l.deadBaseRefused, l.deadBaseCard, l.deadBaseBranch = false, "", ""
 	base := cards[0].base
 	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
 	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
@@ -1008,6 +1060,12 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	}
 	since(&t.Fetch, start)
 	if err != nil {
+		if containsAny(err.Error(), notOnOrigin) {
+			l.deadBaseRefused = true
+			l.deadBaseCard = cards[0].id
+			l.deadBaseBranch = base
+			return nil, failed, fmt.Sprintf("card %s names BASE %s, which is not on origin", cards[0].id, base)
+		}
 		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
 	start = time.Now()
