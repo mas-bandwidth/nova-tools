@@ -161,3 +161,66 @@ func assertBound(t testing.TB, err error, bound string) {
 	assert.Contains(t, msg, bound, "refusal does not name --%s: %s", bound, msg)
 	assert.Contains(t, msg, "work.work", "refusal does not name the file: %s", msg)
 }
+
+func TestTheReaderRefusesAnIntegerThatOverflowsInt64(t *testing.T) {
+	t.Parallel()
+
+	// 9223372036854775807 (math.MaxInt64) succeeds.
+	f, err := worklang.Read("tree.lisp", []byte("9223372036854775807"), testLimits())
+	require.NoError(t, err)
+	assert.Equal(t, worklang.Integer, f.Kind)
+	assert.Equal(t, int64(9223372036854775807), f.Int)
+
+	// -9223372036854775808 (math.MinInt64) succeeds.
+	fMin, err := worklang.Read("tree.lisp", []byte("-9223372036854775808"), testLimits())
+	require.NoError(t, err)
+	assert.Equal(t, worklang.Integer, fMin.Kind)
+	assert.Equal(t, int64(-9223372036854775808), fMin.Int)
+
+	// Small numbers unchanged.
+	for _, small := range []struct {
+		raw string
+		val int64
+	}{
+		{"0", 0},
+		{"42", 42},
+		{"-42", -42},
+		{"+42", 42},
+		{"123456789", 123456789},
+		{"-123456789", -123456789},
+	} {
+		fSmall, err := worklang.Read("tree.lisp", []byte(small.raw), testLimits())
+		require.NoError(t, err, "reading %s failed: %v", small.raw, err)
+		assert.Equal(t, worklang.Integer, fSmall.Kind)
+		assert.Equal(t, small.val, fSmall.Int)
+	}
+
+	// 9223372036854775808, 18446744073709551623, and a 40-digit number are refused naming the byte.
+	const fortyDigits = "1234567890123456789012345678901234567890"
+	overflowCases := []string{
+		"9223372036854775808",
+		"18446744073709551623",
+		fortyDigits,
+		"-9223372036854775809",
+		"-18446744073709551623",
+		"-" + fortyDigits,
+	}
+	for _, raw := range overflowCases {
+		t.Run("standalone/"+raw, func(t *testing.T) {
+			t.Parallel()
+			_, err := worklang.Read("tree.lisp", []byte(raw), testLimits())
+			require.Error(t, err, "%s was read instead of refused", raw)
+			ref := assertRefusal(t, err)
+			assert.Contains(t, ref.Error(), "forbidden token at byte=0", "refusal for %s: %s", raw, ref.Error())
+		})
+
+		t.Run("in-list/"+raw, func(t *testing.T) {
+			t.Parallel()
+			src := "(num " + raw + ")"
+			_, err := worklang.Read("tree.lisp", []byte(src), testLimits())
+			require.Error(t, err, "%s in list was read instead of refused", raw)
+			ref := assertRefusal(t, err)
+			assert.Contains(t, ref.Error(), "forbidden token at byte=5", "refusal for %s: %s", src, ref.Error())
+		})
+	}
+}
