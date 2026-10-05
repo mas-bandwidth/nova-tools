@@ -21,6 +21,8 @@ import (
 // interrupted writer's bytes and a different writer's temporary. The later
 // reporter is the built CLI, with the ordinary production rename operation.
 func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "s.json")
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
@@ -127,11 +129,15 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	t.Log("terminated one reporter at the held pre-rename boundary; old snapshot and both temporaries preserved; later reporter succeeded")
 }
 
-// The hook and its environment protocol exist only in this test executable.
+// The hook and its environment protocol exist only in this test executable, and
+// the rename swap below is made only in the child that the parent starts with
+// -test.run for this test alone, where no other test shares the package var.
 // Main runs the same report path as the CLI. On arrival at the rename operation,
 // the writer has synced and closed its actual temporary but cannot rename it
 // until stdin is released. The parent instead kills this process at that point.
 func TestSnapshotRenameBarrierHelper(t *testing.T) {
+	t.Parallel()
+
 	ready := os.Getenv("NOVA_SNAPSHOT_BARRIER")
 	if ready == "" {
 		return

@@ -27,21 +27,28 @@ var helperTiming func([]string) bool
 func TestHelperProcess(t *testing.T) {
 	t.Parallel()
 
-	if os.Getenv("NOVA_UPDATE_HELPER") != "1" {
-		return
-	}
+	// The child names itself on argv as `-- helper <action>`; a test run that
+	// carries no such words is the ordinary run of this test, which does nothing.
 	a := os.Args
 	for len(a) > 0 && a[0] != "--" {
 		a = a[1:]
 	}
-	if len(a) < 2 {
+	if len(a) < 2 || a[1] != "helper" {
+		return
+	}
+	a = a[2:]
+	if len(a) < 1 {
 		os.Exit(22)
 	}
-	a = a[1:]
-	if p := os.Getenv("NOVA_UPDATE_CALLS"); p != "" {
-		f, _ := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		fmt.Fprintln(f, strings.Join(a, " "))
+	// `--calls <file>` before the action is the per-command call log.
+	if a[0] == "--calls" {
+		if len(a) < 3 {
+			os.Exit(22)
+		}
+		f, _ := os.OpenFile(a[1], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		fmt.Fprintln(f, strings.Join(a[2:], " "))
 		f.Close()
+		a = a[2:]
 	}
 	switch a[0] {
 	case "print":
@@ -77,8 +84,8 @@ func TestHelperProcess(t *testing.T) {
 		// a caller named is gone.
 		b, _ := base64.StdEncoding.DecodeString(a[1])
 		fmt.Print(string(b))
-		c := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "hold", a[2])
-		c.Env = append(os.Environ(), "NOVA_UPDATE_HELPER=1")
+		c := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "helper", "hold", a[2])
+		c.Env = append(os.Environ(), "GORACE=atexit_sleep_ms=0")
 		c.Stdout = os.Stdout
 		if c.Start() != nil {
 			os.Exit(5)
@@ -104,9 +111,17 @@ func TestHelperProcess(t *testing.T) {
 }
 func command(t *testing.T, action string, a ...string) string {
 	t.Helper()
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
-	t.Setenv("GORACE", "atexit_sleep_ms=0")
-	return strings.Join(append([]string{os.Args[0], "-test.run=TestHelperProcess", "--", action}, a...), " ")
+	return strings.Join(append([]string{os.Args[0], "-test.run=TestHelperProcess", "--", "helper", action}, a...), " ")
+}
+
+// loggedCommand is command with the call log: the child appends the words it was
+// run with to calls, the per-command seam a test reads to learn what ran.
+func loggedCommand(t *testing.T, calls, action string, a ...string) string {
+	t.Helper()
+	return strings.Join(append([]string{os.Args[0], "-test.run=TestHelperProcess", "--", "helper", "--calls", calls, action}, a...), " ")
+}
+func loggedPrinter(t *testing.T, calls, s string) string {
+	return loggedCommand(t, calls, "print", base64.StdEncoding.EncodeToString([]byte(s)))
 }
 func printer(t *testing.T, s string) string {
 	return command(t, "print", base64.StdEncoding.EncodeToString([]byte(s)))
@@ -302,6 +317,8 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	}
 }
 func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
+	t.Parallel()
+
 	p := manifest(t, row("good", "tool", printer(t, "tool v1.2.3-rc1+dirty\n"), "github:o/r", "none"), row("bad", "tool", "nova-version-no-such-binary", "npm:unused", "none"))
 	env := Environment{Client: &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
 		assert.Fail(t, fmt.Sprintln("report used HTTP"))
@@ -319,6 +336,8 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	}
 }
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
 	os.WriteFile(state, []byte("1.0.0\n"), 0600)
@@ -342,8 +361,9 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 		require.EqualValues(t, 1, c, c)
 	}
 	need(t, err, "installed 1.1.1, asked 1.3.0")
+	// The same entry, its commands now logging, so a refusal that ran any of them shows.
 	calls := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_CALLS", calls)
+	p = manifest(t, row("x", "tool", loggedCommand(t, calls, "read", state), "local:"+loggedPrinter(t, calls, "1.3.0"), loggedCommand(t, calls, "write", state, "1.1.1")))
 	c, _, _ = run(t, Environment{}, "apply", "--file", p, "--version", "9.0.0", "x")
 	if c != 2 {
 		require.EqualValues(t, 2, c, c)
@@ -468,6 +488,8 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 	}
 }
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
+	t.Parallel()
+
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
@@ -559,6 +581,8 @@ func TestReportStateFlagBytesAndSendVerb(t *testing.T) {
 }
 
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
+	t.Parallel()
+
 	rows := []string{}
 	for i := 0; i < 26; i++ {
 		rows = append(rows, row(fmt.Sprint(i), "tool", "1.0.0", "npm:pkg", "none"))
@@ -589,6 +613,8 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 // The three process failures a person acts on differently must stay
 // distinguishable in the reason, which one collapsed "execution failed" did not.
 func TestProcessFailuresAreDistinguishable(t *testing.T) {
+	t.Parallel()
+
 	if r := process(context.Background(), nil, nil, ChildCap); r.Reason != "empty argv" {
 		require.EqualValues(t, "empty argv", r.Reason, r.Reason)
 	}
@@ -612,6 +638,8 @@ func mustArgv(t *testing.T, s string) []string {
 // not REPORT UNKNOWN not_found. The installed column is a version string (v1.2.3) and
 // latest is local:/path/to/binary that prints that same version.
 func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
+	t.Parallel()
+
 	// The fake binary prints "tool v1.2.3", which versionKey extracts as "1.2.3".
 	binCmd := printer(t, "tool v1.2.3\n")
 	// installed is a version string, not a command; latest points to the real binary.
