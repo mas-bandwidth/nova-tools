@@ -319,6 +319,9 @@ func ChildRemedy(rules []ChildRule, check string) string {
 	if r, ok := cardtree.Remedies[check]; ok {
 		return r
 	}
+	if check == HonestAttributionCheck {
+		return HonestAttributionRemedy
+	}
 	if r, ok := CardChildRemedies[check]; ok && strings.HasPrefix(check, "step-") {
 		return r
 	}
@@ -501,6 +504,9 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 			out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: 1, Excerpt: "missing: Libraries considered: <what was found, why used or not>"})
 		}
 	}
+	for _, hf := range LintCardAttribution(raw) {
+		out = append(out, hf)
+	}
 	return out
 }
 
@@ -544,4 +550,78 @@ func childNegationInClause(clause string) bool {
 		words = words[len(words)-3:]
 	}
 	return childNegation.MatchString(strings.Join(words, " "))
+}
+
+// HonestAttributionCheck is the finding check for a brief that tells a worker to hide or misstate its model.
+const HonestAttributionCheck = "rule-honest-attribution"
+
+// HonestAttributionRemedy is what rule-honest-attribution wants.
+const HonestAttributionRemedy = "a brief must never tell a worker to hide or misstate its model or harness; say to name the actual model and never claim one the worker is not running"
+
+// AttributionPattern is one documented pattern that detects a brief telling a worker to
+// deny, hide, omit or misstate its model or harness.
+type AttributionPattern struct {
+	Name string
+	Desc string
+	RE   *regexp.Regexp
+}
+
+var (
+	honestAttributionExempt = regexp.MustCompile(`(?i)\bnever\s+claim\s+(?:one\s+)?(?:you\s+are\s+not|what\s+you\s+are\s+not|the\s+worker\s+is\s+not)\b`)
+	attributionSpecProse    = regexp.MustCompile(`(?i)(?:must\s+never\s+tell\s+a\s+worker\s+to|refuses?\s+a\s+brief|for\s+example\s+never\s+claim)`)
+	attributionNegation     = regexp.MustCompile(`(?i)(?:never|not|no|don't|do\s+not|must\s+not|refus\w*|forbid\w*)\s+(?:hide|deny|omit|misstate|misrepresent)\b`)
+)
+
+// HonestAttributionPatterns is the documented list of patterns that refuse a brief telling a worker
+// to hide, deny, omit or misstate its model or harness.
+var HonestAttributionPatterns = []AttributionPattern{
+	{
+		Name: "never-claim-model",
+		Desc: "tells the worker to never claim a specific model (for example 'never claim Claude')",
+		RE:   regexp.MustCompile(`(?i)\bnever\s+claim\s+(?:claude|opus|sonnet|haiku|gpt|gemini|grok|mercury|codex|the\s+model)\b`),
+	},
+	{
+		Name: "hide-or-deny-model",
+		Desc: "tells the worker to hide, deny, omit or not mention its model or harness",
+		RE:   regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_./-])(?:hide|deny|omitting|omit|don't\s+mention|do\s+not\s+mention)\b.{0,50}\b(?:model|harness)\b`),
+	},
+	{
+		Name: "misstate-model",
+		Desc: "tells the worker to misstate or misrepresent its model or harness",
+		RE:   regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_./-])(?:misstate|misstating|misrepresent)\b.{0,50}\b(?:model|harness)\b`),
+	},
+	{
+		Name: "sign-as-model",
+		Desc: "tells the worker to sign as another model or a specific model",
+		RE:   regexp.MustCompile(`(?i)\bsign\s+as\b.{0,50}\b(?:claude|opus|sonnet|haiku|gpt|gemini|grok|mercury|codex|another\s+model|different\s+model)\b`),
+	},
+	{
+		Name: "fixed-trailer-model",
+		Desc: "tells the worker to use a fixed model trailer regardless of what it runs on",
+		RE:   regexp.MustCompile(`(?i)\b(?:use\s+this\s+whatever\s+model|whatever\s+model\s+you\s+run|fixed\s+model\s+(?:the\s+worker\s+is\s+told\s+to\s+use|whatever)|naming\s+a\s+fixed\s+model)\b`),
+	},
+}
+
+// LintCardAttribution checks that a brief never tells a worker to hide or misstate its model or harness.
+func LintCardAttribution(raw []byte) []CardHeaderFinding {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	var out []CardHeaderFinding
+	childLines(raw, func(n int, line string) {
+		if honestAttributionExempt.MatchString(line) || attributionSpecProse.MatchString(line) || attributionNegation.MatchString(line) {
+			return
+		}
+		for _, p := range HonestAttributionPatterns {
+			if p.RE.MatchString(line) {
+				out = append(out, CardHeaderFinding{
+					Check:   HonestAttributionCheck,
+					Line:    n,
+					Excerpt: line,
+				})
+				break
+			}
+		}
+	})
+	return out
 }

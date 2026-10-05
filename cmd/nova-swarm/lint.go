@@ -84,7 +84,8 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 //
 // And the three rules of a tree card (internal/cardtree): steps-nested, tree-step and
 // script-step, which fire only on a card with a dotted step or a work step.
-var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
+// And rule-honest-attribution: a brief must never tell a worker to hide or misstate its model.
+var cardLintChecks = 26 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
 
 // Every drift names its remedy, and the binary can print the whole table.
 //
@@ -128,8 +129,9 @@ var cardLintRemedies = map[string]string{
 	// The brief grammar's two reading lines carry their remedies from internal/swarm,
 	// beside the tokens themselves; they are not in CardHeaderRemedies because that map
 	// is the four tokens of §5 rule 1 that CardHeaderChecks publishes.
-	swarm.StartNamedCheck: swarm.StartNamedRemedy,
-	swarm.StopNamedCheck:  swarm.StopNamedRemedy,
+	swarm.StartNamedCheck:        swarm.StartNamedRemedy,
+	swarm.StopNamedCheck:         swarm.StopNamedRemedy,
+	swarm.HonestAttributionCheck: swarm.HonestAttributionRemedy,
 }
 
 // cardPlaceholders is every line of a card that is a line of the card template still
@@ -972,6 +974,11 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	// rules file the flag names (internal/swarm/lintchild.go). A rule of a file has its own
 	// token, so its remedy is built here and read back where the drift prints.
 	var ruleRemedies map[string]string
+	if !*childRules && *childRulesFile == "" && !*memberInjects {
+		for _, hf := range swarm.LintCardAttribution(raw) {
+			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+		}
+	}
 	if *childRulesFile != "" || *memberInjects {
 		*childRules = true // a rules file, or the member's, is the ask for the child rules
 	}

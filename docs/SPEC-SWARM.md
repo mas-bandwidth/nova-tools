@@ -761,6 +761,10 @@ scanned as before:
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
 
+### brief-lint-attribution.w3
+
+The `rule-honest-attribution` rule prevents a brief from telling a worker to hide, deny, omit or misstate the model or harness it runs on. A brief that says to name the actual model and never claim one the worker is not running passes. The documented hiding patterns include: "never claim Claude" or another specific model name, "hide the model", "deny the model", "don't mention the model", "omit the model", "misstate the model", "sign as another model", and a Co-Authored-By trailer naming a fixed model the worker is told to use whatever it is. A line that genuinely forbids the worker to misstate or hide (e.g., "never claim you are not") is allowed. The standard attribution requirement is that every commit carries the worker's actual model in its Co-Authored-By trailer, never a fixed model regardless of what the worker is actually running.
+
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
