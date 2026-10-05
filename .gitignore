@@ -8,6 +8,8 @@ tending/
 # The smoke job builds the binary into the workspace root, so anyone
 # reproducing those steps locally leaves an untracked executable behind — and
 # it would become a nocode finding the day this repo gates itself.
+/nova-bus
+/nova-bus.exe
 /nova-check
 /nova-check.exe
 /nova-play
@@ -43,7 +45,7 @@ tending/
 # A worker's scratch notes, never committed (eleven PRs were held in one night for one).
 /notes.txt
 
-# Test scratch: internal/bus's TestMain writes throwaway hermetic gitconfigs under TMPDIR.
+# Test scratch: a TestMain's throwaway files under the tree.
 /.tmp/
 
 # a card's TMPDIR lives beside the clone, never in it (79 junk files reached dev on 2026-09-18)

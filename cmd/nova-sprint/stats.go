@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -17,12 +18,33 @@ import (
 // too, read with them in read sets, never a card at a time).
 func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stats")
+	routes := fs.Bool("routes", false, "the route table from the log over --since, instead of the live tables")
+	since := fs.String("since", "", "with --routes, the window start: a duration back from now (10m) or an RFC 3339 time")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, "stats", argErr("takes no words ", err, pos...))
+	}
+	if *routes != (*since != "") {
+		return refuse(stderr, "stats", "--routes and --since are one window: the route table from the log")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stats", err.Error())
+	}
+	if *routes {
+		var from time.Time
+		if d, err := time.ParseDuration(*since); err == nil {
+			from = a.now().Add(-d)
+		} else if t, err := time.Parse(time.RFC3339, *since); err == nil {
+			from = t
+		} else {
+			return refuse(stderr, "stats", "--since wants a duration back from now (10m) or an RFC 3339 time, found "+*since)
+		}
+		lines, err := st.Log(context.Background())
+		if err != nil {
+			return a.readFailed("stats", err, stderr)
+		}
+		fmt.Fprint(stdout, sprint.RouteTable(lines, from))
+		return 0
 	}
 	s, err := st.Load(context.Background(), []string{sprint.Work, sprint.Fleet, sprint.Readers}, sprint.StatsRecords)
 	if err != nil {
@@ -86,7 +108,7 @@ func statsText(ps sprint.PassStats) string {
 // count (sprint.Stats): a reader meets the tables cold.
 var statsLegend = map[string]string{
 	"stages": "stages: per primary, admitted to first dealt (deal wait), its last ok finish to accepted (finish to two reads), accepted to landed, admitted to landed (total); seconds as median, max, n primaries\n",
-	"work":   "work: per member, cards is its work cards (one per attempt, counted to the member it was last dealt to), failed those finished failed; take wait is dealt to taken, run wall the child's wall from its usage, report lag taken to finished less the run wall\n",
+	"work":   "work: per member, cards is its work cards (one per attempt, counted to the member it was last dealt to), failed those finished failed; take wait is dealt to taken, run wall the child's wall from its usage (a friend's card, which reports none: her take to her REPORT.md's time), report lag taken to finished less the run wall\n",
 	"reads":  "reads: per reader, cards is the read cards asked of it (retired ones too); begin wait is asked to begun, run wall the usage's wall, report lag begun to read less the run wall\n",
 	"routes": "routes: per route, takes is every take on it, work and read alike, each take of a card again counted (the cards' cost records); ok came back with its answer, provider ended by the provider or with no result, failed every other end; run wall the takes' usage walls\n",
 }

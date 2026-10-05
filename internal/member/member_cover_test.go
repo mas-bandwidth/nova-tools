@@ -33,9 +33,9 @@ func TestMemberCoverDrainBound(t *testing.T) {
 		longest time.Duration
 		want    time.Duration
 	}{
-		// main path: longest+LongStall stays under the cap and is returned
-		// unchanged, LongStall (a minute here) folded in.
-		{"longest plus stall, under the cap", 1 * time.Minute, 1*time.Minute + LongStall},
+		// main path: a real deadline plus LongStall runs past DrainMost, so the
+		// cap holds every drain a member is asked to wait.
+		{"longest plus stall, past the cap", 1 * time.Minute, DrainMost},
 		// refusal: longest+LongStall runs past DrainMost and is capped at it.
 		{"capped at DrainMost", 3 * time.Hour, DrainMost},
 		// the boundary: longest+LongStall lands exactly on DrainMost.

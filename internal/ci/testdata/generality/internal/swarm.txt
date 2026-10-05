@@ -11,7 +11,7 @@ internal/swarm/lintheader.go:emma 2
 internal/swarm/lintheader.go:rowan 2
 
 internal/swarm/pathcase.go:stella 1
-internal/swarm/providererr.go:space 2
+internal/swarm/providererr.go:space 1
 internal/swarm/providerproxy.go:stella 1
 internal/swarm/providerread.go:stella 1
 internal/swarm/reap.go:hulk 1

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -31,10 +32,10 @@ func TestEveryKindKillsASlowChildAtItsDeadline(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "slow-child")
 	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 30 &\nsleep 30\n"), 0o755))
 	for _, k := range []subproc.Kind{subproc.Git, subproc.GH, subproc.SSH, subproc.Go, subproc.Tool} {
-		t.Run(k.String(), func(t *testing.T) {
+		t.Run(strconv.Itoa(int(k)), func(t *testing.T) {
 			t.Parallel()
 
-			require.Greater(t, k.Budget(), soon, "%s: the named budget %s is not longer than the injected %s", k, k.Budget(), soon)
+			require.Greater(t, k.Budget(), soon, "%v: the named budget %s is not longer than the injected %s", k, k.Budget(), soon)
 			ctx := t.Context()
 			cmd, cancel := subproc.CommandFor(ctx, soon, script)
 			defer cancel()

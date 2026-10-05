@@ -23,7 +23,7 @@ func TestRetryRefusesAHeadOnlyOnARetainedLaunchRef(t *testing.T) {
 	b := newPushBench(t)
 	oldHead := b.commit(t, "first child's work\n")
 	g := b.pusher()
-	repo, err := g.repo(b.origin)
+	repo, err := g.repo()
 	require.NoError(t, err)
 	runGit(t, repo, "config", "fetch.prune", "false") // the production fetch does not request pruning
 	ns := "refs/member/" + launchName(b.p)

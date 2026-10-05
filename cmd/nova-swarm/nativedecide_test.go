@@ -262,9 +262,9 @@ func TestAReadWithNoBarsAsksNoDecision(t *testing.T) {
 func TestTheDecideKeyIsNeverTheChilds(t *testing.T) {
 	t.Parallel()
 	environ := []string{"PATH=/bin", decide.JevSecret + "=jev-test-key", "PROVIDER_API_KEY=p"}
-	env := nativeChildEnvFrom(environ, "data", "job", "tmp", "", "PROVIDER_API_KEY", "", "", "")
+	env := nativeChildEnvFrom(environ, "data", "job", "tmp", "", "PROVIDER_API_KEY", "", "", nil)
 	assert.NotContains(t, env, decide.JevSecret+"=jev-test-key")
 	assert.Contains(t, env, "PROVIDER_API_KEY=p")
-	env = nativeChildEnvFrom(environ, "data", "job", "tmp", "", decide.JevSecret, "", "", "")
+	env = nativeChildEnvFrom(environ, "data", "job", "tmp", "", decide.JevSecret, "", "", nil)
 	assert.NotContains(t, env, decide.JevSecret+"=jev-test-key", "not when a worker description names it as its secret either")
 }

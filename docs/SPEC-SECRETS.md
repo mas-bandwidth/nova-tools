@@ -89,13 +89,13 @@ undecidable, so it is a **refusal by name**, never a pass, naming the remedy: ru
 age-keygen's file format, and says so here rather than letting it be discovered.
 
 **Naming.** A key inside the file is **the environment variable its reader already reads**,
-unprefixed: `GH_TOKEN`, not `ROWAN_GH_TOKEN` — the AI's name is the filename, and the first
-tool to read `ROWAN_GH_TOKEN` while every other tool on earth reads `GH_TOKEN` is a tool
+unprefixed: `GH_TOKEN`, not `<SEAT>_GH_TOKEN` — the AI's name is the filename, and the first
+tool to read `<SEAT>_GH_TOKEN` while every other tool on earth reads `GH_TOKEN` is a tool
 nobody can use. A key name must match `[A-Z][A-Z0-9_]*`; anything else is a refusal naming the
 key, because a name that is not a legal environment variable would silently not arrive.
 
 **Not everything in the file is sealed.** `.sops.yaml` carries an `unencrypted_regex` for
-fields that are facts rather than secrets — today `^(SPACE_USER|SPACE_HOST)$` — and this
+fields that are facts rather than secrets — the two fact-key names a machine's file carries — and this
 tool treats an unencrypted field exactly as a sealed one. What may be in the clear is the
 store's decision, reviewed in a pull request; this tool neither extends nor audits it.
 
@@ -192,7 +192,7 @@ contradicted itself.
 ### `exec`
 
 ```
-nova-secrets exec --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key \
+nova-secrets exec --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key \
   --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
 ```
 
@@ -255,7 +255,7 @@ decrypting it**. sops encrypts values and leaves field names in the clear (`GH_T
 ENC[AES256_GCM,...]`), so a key is not needed for the question and is not asked for: `names`
 takes no `--key` and no `--sops`, starts no sops process, and never has a plaintext in its
 memory to lose. `sealed=` and `clear=` decompose `keys=`, so a key in the clear under
-`unencrypted_regex` is visible as such (`SECRETS NAME key=SPACE_USER clear=true`). Zero keys is
+`unencrypted_regex` is visible as such (`SECRETS NAME key=<fact-key> clear=true`). Zero keys is
 `keys=0` at exit 0, an answer and not a failure. It says nothing about whether the file *opens*
 (invariant 4).
 
@@ -361,8 +361,8 @@ GATE APPROVE files=<n> machines=<registry|->
 GATE REFUSE rule=<n> file=<f>: <why>
 ```
 
-**The store's own gate, as a verb.** What the store repo runs as
-`.github/seat-rule-gate.sh` is here in the tool, so the workflow calls this tool and the rule
+**The store's own gate, as a verb.** What the store repo ran as a shell gate lives here in
+the tool instead, so the workflow calls this tool and the rule
 text lives beside the rules it measures. It diffs `--base..--head` with **git, and asks GitHub
 nothing**: a store already cloned, two refs already present, no network socket. `--base` and
 `--head` are required; a missing one is a refusal at exit 2.
@@ -426,13 +426,13 @@ is ever read as the fleet having vouched.
 ### `keygen`
 
 ```
-nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
+nova-secrets keygen --as <seat> --key ~/.config/nova-secrets/<seat>.key --age-keygen /opt/homebrew/bin/age-keygen
 SECRETS RULE   creation_rules:
-SECRETS RULE     - path_regex: ^rowan\.yaml$
+SECRETS RULE     - path_regex: ^<seat>\.yaml$
 SECRETS RULE       age: age1…,<recovery key>
 SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`
 SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
-SECRETS KEYGEN OK as=rowan key=<path> mode=0600 pub=age1…
+SECRETS KEYGEN OK as=<seat> key=<path> mode=0600 pub=age1…
 Done. Your new key is at <path>. Nothing failed.
 Next: send this public key to whoever seals your seat: age1…
 ```
@@ -715,7 +715,7 @@ nova-fuse's `lift` established. The multi-line refusal is written out, its remed
 command in this repo:
 
 ```
-SECRETS EXEC REFUSED: key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable.
+SECRETS EXEC REFUSED: key=<file-key>: value is multi-line; a file-shaped secret is not an environment variable.
   generate it where it is used: this store holds no file-shaped secrets.
 ```
 
@@ -729,21 +729,21 @@ the variable the tool that acts already reads.
 |---|---|---|---|
 | a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | pool workers and the gemini CLI — one key per pool file |
 | DeepSeek | `DEEPSEEK_API_KEY` | `<seat>` | OpenCode workers, dispatched by the scheduler |
-| GitHub, **org roles** | `GH_TOKEN` | `<seat>` | `gh`, nova-bus, scheduled pushes |
+| GitHub, **org roles** | `GH_TOKEN` | `<seat>` | `gh`, scheduled pushes |
 | GitHub, **the store's own repositories** | `GH_TOKEN` | `<keeper-seat>` | the keeper's own pushes and pull requests against the store, without an org role |
-| space, who and where | `SPACE_USER`, `SPACE_HOST` | `<seat>` | the profiling launcher; the key itself lives on the seat, per **The model** |
+| a machine, who and where | `<fact-user>`, `<fact-host>` | `<seat>` | the profiling launcher; the key itself lives on the seat, per **The model** |
 | email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `<keeper-seat>` | email producer |
 | email, read | `IMAP_PASSWORD` | `<keeper-seat>` | email consumer |
 | Bluesky | `BSKY_APP_PASSWORD` | `<keeper-seat>` | Bluesky producer and consumer |
 | Discord | `DISCORD_BOT_TOKEN` | `<keeper-seat>` | Discord producer and consumer |
 | Ghost | `GHOST_ADMIN_KEY` | `<keeper-seat>` | Ghost producer and consumer |
 
-**Rowan's two files, and which key opens each.** `rowan.yaml` is sealed to the
+**A seat's two files, and which key opens each.** `<seat>.yaml` is sealed to the
 **admin bench key alone**, plus the recovery key, and holds the **admin** `GH_TOKEN` — the
 one carrying org roles — with the coordinator's working needs beside it;
-`rowan-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
+`<seat>-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
 holds the keeper's **own** `GH_TOKEN` with the life's surfaces beside it — a **second
-fine-grained token on the same `rowan-claude` account**, scoped to his own repositories **plus
+fine-grained token on the same `<seat>-claude` account**, scoped to his own repositories **plus
 `contents` and `pull_requests` write on `mas-bandwidth/secrets` and nothing else org-wide**,
 both halves because every re-seal of his own file is a branch pushed **and** a pull request
 opened against the org's store, and `contents` alone pushes the branch without opening the
@@ -753,23 +753,23 @@ that: no org role, no admin anywhere, no second org repository.
 Neither bench opens the other's file, and that is the point of the split rather
 than a consequence of it: the admin bench is the unwalled coordinator running many children,
 and a child that gets loose there must not be able to send mail, post to Bluesky, speak in
-Discord or publish as Rowan; the keeper manages himself and holds no org role. The same key
+Discord or publish as a friend; the keeper manages himself and holds no org role. The same key
 name in both files is two different tokens on purpose: the name is the variable its reader
 already reads, and the **scope** is the split. **A secret both seats would use is decided per
 secret, by who acts with it**, and sealed once in that seat's file — `DEEPSEEK_API_KEY` is
-dispatched by the coordinator, so it is in `rowan.yaml` and nowhere else. Two copies of one
+dispatched by the coordinator, so it is in `<seat>.yaml` and nowhere else. Two copies of one
 value is two rotations, one forgotten.
 
 **API keys, never OAuth tokens, and never an auth file.** Each AI holds its own API keys. An
 OAuth token has a refresh dance, a device flow, an expiry
 and a file the harness rewrites behind your back. So **no harness auth file** is held here or
 handed over; a harness that can only authenticate that way is one we start by hand. **The one
-exception is Glenn's: Rowan's own Claude Code seat authenticates through Glenn's manual login on the admin
-bench: not in the store, no `ANTHROPIC_API_KEY` in `rowan.yaml` for it, and nobody should put
+exception is the repository owner's: a friend's own Claude Code seat authenticates through the repository owner's manual login on the admin
+bench: not in the store, no `ANTHROPIC_API_KEY` in `<seat>.yaml` for it, and nobody should put
 one there.** That row is for *workers*, and whether they move off the plan seat is billing.
 
-**Per seat, so per file.** Stella, Emma, Johnny and Freddy have one seat each and one file
-each, and an AI with no Bluesky simply has no `BSKY_APP_PASSWORD`. A swarm pool's file holds
+**Per seat, so per file.** Each of four friends has one seat and one file,
+and an AI with no Bluesky simply has no `BSKY_APP_PASSWORD`. A swarm pool's file holds
 exactly one provider key plus a **read-only** `GH_TOKEN` and nothing else: a worker
 holding a line's send credential is a worker that can post as that line.
 
@@ -782,7 +782,7 @@ git -C <home>/secrets pull --ff-only && \
 nova-secrets exec --store <home>/secrets --as <seat> \
   --key <home>/.config/nova-secrets/<seat>.key \
   --sops /opt/homebrew/bin/sops \
-  --only GH_TOKEN,DEEPSEEK_API_KEY,SPACE_USER,SPACE_HOST --require GH_TOKEN -- \
+  --only GH_TOKEN,DEEPSEEK_API_KEY,<fact-user>,<fact-host> --require GH_TOKEN -- \
   nova-sandbox --read /opt/homebrew --write <home> --net-deny -- <harness> <args…>
 ```
 
@@ -802,12 +802,12 @@ secrets inside — needs the wall to permit the read a wall exists to refuse: **
 
 ## The migration from the Keychain
 
-A surface held as a macOS Keychain item, read by a rowan-tool calling
-`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **rowan-tools**; the order belongs here,
+A surface held as a macOS Keychain item, read by a workshop tool calling
+`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **the workshop repository**; the order belongs here,
 because at no step may there be a live consumer with a dead credential. **Issue** alongside the
 old (where issuing *revokes* the old, as a Ghost admin key does, the job is unloaded first and
 the migration is one sitting); **seal** in an approved pull request and pull on every bench,
-Glenn's hand when the value came from his console; **switch the reader**, two edits and not one
+the repository owner's hand when the value came from his console; **switch the reader**, two edits and not one
 — the tool learns one environment variable, the `security` call is **deleted** rather than kept
 as a fallback, and the launchd plist's program becomes the **whole launcher line, pull
 included** (invariant 8); **probe**; **delete** the Keychain item only after green; **revoke**
@@ -821,11 +821,11 @@ refusal, no value at all. So `launchctl bootout` **before** the binary changes a
 letting the reader fall back to the old Keychain value until the plist reload, is refused: a
 fallback to the Keychain is a bench where the migration silently did not happen. On a
 LaunchDaemon under a per-AI user, that plist's `--store` and `--key` are paths in **that**
-user's home, so that user has done the first run, and the edit is Glenn's sudo.
+user's home, so that user has done the first run, and the edit is the repository owner's sudo.
 
 ## Dependencies, pinned
 
-| binary | pinned minimum | measured on the Studio bench | probe |
+| binary | pinned minimum | measured on the coordinator's bench | probe |
 |---|---|---|---|
 | `sops` | **3.13.3** | `sops 3.13.3` | `<--sops> --version --disable-version-check` |
 | `age-keygen` | **1.3.2** | `v1.3.2` | `<--age-keygen> --version` |
@@ -842,7 +842,7 @@ absent or too-old binary is a refusal naming `brew install sops` or `brew upgrad
 
 ## Rotation, said plainly
 
-Four acts in one order, and the tool is only in the last. **Glenn revokes the old value at the
+Four acts in one order, and the tool is only in the last. **The repository owner revokes the old value at the
 provider** — that is what makes it dead, a person's hand at a console. **The file is
 re-sealed**, a pull request the other collaborator approves and merges under the ruleset, so a
 rotation waits on a second account and the window between revoke and merge holds no working
@@ -1067,7 +1067,7 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
     **fail**. It skips with a stated reason when `nova-sandbox` is not built, never vacuously.
 16. `TestNoKeychainAndNoCryptoDependency` — a source tripwire: no `security` invocation, no
     Keychain import, no `filippo.io/age`, no `getsops`, and an aliased import or a helper in a
-    second file cannot defeat it (nova-bus's blind-spot list applies unchanged).
+    second file cannot defeat it (the blind-spot list of every source tripwire applies unchanged).
 17. `TestREADMEFirstRunMatchesWhatTheToolPrints` — the six lines below run against a throwaway
     store, the transcript compared to the README's **by prefix and field name, never by
     value**, so it stays a document. The `check` line on a seat with no file of its own is
@@ -1104,28 +1104,28 @@ bench holds the one credential the clone needs — an SSH key generated on that 
 half authorized **on the GitHub account that bench acts as**, not as a deploy key on the store:
 a deploy key is per-repository and read-only, and a bench that must re-seal its own file pushes
 a branch. Outside the store by design is **every file-shaped secret** (**The model**), of which
-this bench today holds three: that SSH key, its age key, and Glenn's recovery key, which is on
+this bench today holds three: that SSH key, its age key, and the repository owner's recovery key, which is on
 no bench at all and whose public half is the store's `recovery.pub`. `nova-secrets` carries
 none of them. Nothing below is a default: every path is typed, once.
 
 ```
 mkdir -m 700 -p ~/.config/nova-secrets
-nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen $(brew --prefix)/bin/age-keygen
-# paste the printed SECRETS RULE lines into .sops.yaml in a PR touching only your own rule; the other collaborator approves and merges it, and then a holder of an existing key seals the file in a second PR — `sops rowan.yaml` if it is new, `sops updatekeys rowan.yaml` if it exists — because the merge alone grants you nothing
-nova-secrets check --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops $(brew --prefix)/bin/sops
-nova-secrets names --store ~/secrets --as rowan
-nova-secrets exec  --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+nova-secrets keygen --as <seat> --key ~/.config/nova-secrets/<seat>.key --age-keygen $(brew --prefix)/bin/age-keygen
+# paste the printed SECRETS RULE lines into .sops.yaml in a PR touching only your own rule; the other collaborator approves and merges it, and then a holder of an existing key seals the file in a second PR — `sops <seat>.yaml` if it is new, `sops updatekeys <seat>.yaml` if it exists — because the merge alone grants you nothing
+nova-secrets check --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops
+nova-secrets names --store ~/secrets --as <seat>
+nova-secrets exec  --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
 ```
 
 Six lines: one directory, one keygen, one comment that is the step other people do for you,
 then check, names and a run that prints a name from GitHub. The third is a comment on purpose —
 **a stranger cannot finish this alone, and the page must say so where the wait happens** rather
 than leave them to find it in a refusal. That pull request needs a GitHub identity the stranger
-does not have yet (its token is inside the store), so Glenn opens it, and the approver is the
+does not have yet (its token is inside the store), so the repository owner opens it, and the approver is the
 other collaborator, under **"Reviewed" is a control** above. `check` runs before `names`
 because the first command to touch the store should be the one that says whether the store is
 what this spec says. What it prints before the grant, exactly, in three states and not two:
-while `rowan.yaml` does not exist, **exit 2 listing the names that are in the store**; once it
+while `<seat>.yaml` does not exist, **exit 2 listing the names that are in the store**; once it
 exists sealed to somebody else's key, **green with `mine=0`**, invariant 4 passing over no file
 of yours; and for a seat whose file already exists, **between the two pull requests the comment
 above names** — your rule merged, the file not yet `updatekeys`-ed — **exit 1 on invariant 2**

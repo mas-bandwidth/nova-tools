@@ -14,10 +14,11 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     CLEAR -- a fail-open in a safety control. Both noes are errors, and every
     caller must treat an error as BLOWN; ErrNoBox tells them apart, so a refusal
     can name the right remedy (CreateBox for the first, a hand repair for the
-    second). os.ReadFile + errors.Is(err, fs.ErrNotExist) finds the absent case,
-    which is why the read is written with the stdlib primitive that distinguishes
-    absent from unreadable; it does not say which part of the path is missing, and
-    it does not need to, since both answers refuse. A box comes into being by
+    second). Lstat refuses a link or non-regular path before open; SameFile then
+    proves the opened descriptor is the file that was inspected. errors.Is with
+    fs.ErrNotExist distinguishes absent from unreadable; it does not say which
+    part of the path is missing, and it does not need to, since both answers
+    refuse. A box comes into being by
     CreateBox, which never replaces one, or by a write verb on a box that was read.
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
@@ -73,6 +74,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -205,13 +207,35 @@ var ErrNoBox = errors.New("no box")
 // non-nil error -- ErrNoBox included -- means CANNOT TELL, and the only correct
 // treatment of that is BLOWN.
 func ReadBox(path string) (Box, error) {
-	data, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// Nothing at the path, the box file or a directory above it: no box, so
 			// nothing can be proven clear.
 			return Box{}, fmt.Errorf("%w at %s", ErrNoBox, path)
 		}
+		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return Box{}, fmt.Errorf("%s is a symlink; use the real fuse box file path", path)
+	}
+	if !info.Mode().IsRegular() {
+		return Box{}, fmt.Errorf("%s is not a regular file; use the real fuse box file path", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }() // ignored: a read-only close cannot change the parsed bytes
+	opened, err := f.Stat()
+	if err != nil {
+		return Box{}, fmt.Errorf("cannot inspect open fuse box %s: %w", path, err)
+	}
+	if !os.SameFile(info, opened) {
+		return Box{}, fmt.Errorf("%s changed while it was opened; use the real fuse box file path", path)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	var b *Box
@@ -258,6 +282,9 @@ func planBox(path string, opts ...atomicfile.Option) error {
 	if target != "" {
 		target = filepath.Clean(target)
 	}
+	if err := checkBoxAncestors(target); err != nil {
+		return err
+	}
 	return atomicfile.CheckAfterMkdirAll(target, 0o644, append(opts, atomicfile.ExactMode())...)
 }
 
@@ -277,6 +304,9 @@ func writeBox(path string, b Box, opts ...atomicfile.Option) error {
 	if target != "" {
 		target = filepath.Clean(target)
 	}
+	if err := checkBoxAncestors(target); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
@@ -288,6 +318,15 @@ func writeBox(path string, b Box, opts ...atomicfile.Option) error {
 // went and reporting that they could not be saved are both better than silence.
 func PreserveUnreadable(path string) (string, error) {
 	dst := path + UnreadableSuffix
+	// Security finding 74.5: evidence preservation accepts a regular source
+	// only and refuses a source that is a symlink at inspection.
+	source, err := os.Lstat(path)
+	if err != nil {
+		return dst, err
+	}
+	if !source.Mode().IsRegular() {
+		return dst, fmt.Errorf("%s is not a regular file", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return dst, err
@@ -296,14 +335,13 @@ func PreserveUnreadable(path string) (string, error) {
 	if cleanDst != "" {
 		cleanDst = filepath.Clean(cleanDst)
 	}
-	mode := os.FileMode(0o644)
-	var opts []atomicfile.Option
+	mode := source.Mode().Perm()
+	opts := []atomicfile.Option{atomicfile.ExactMode()}
 	if fi, err := os.Lstat(cleanDst); err == nil && fi.Mode().IsRegular() {
 		mode = fi.Mode().Perm()
-		opts = append(opts, atomicfile.ExactMode())
 	}
 	// Atomic write per internal/atomicfile model: writes dst atomically, preserving
-	// any existing destination permissions (or defaulting to 0o644 subject to umask)
+	// any existing destination permissions (or using the regular source's mode)
 	// via temporary file and rename so preserved unreadable box evidence is never
 	// left torn or mode-widened.
 	return dst, atomicfile.WriteFile(cleanDst, data, mode, opts...)

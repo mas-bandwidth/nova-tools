@@ -19,7 +19,7 @@ The obligation this tool meets is to report token spend. With several
 agents and several models the report is per model and per repo. It is folded
 daily so month end is a sum of days. The key is exactly `(day, model, repo)`
 and the value is the token types, never folded into each other. Swarms and
-a friend are counted from this bench's own sources. Friends on other machines
+local runs are counted from this bench's own sources. Friends on other machines
 self-report one note per day on the bus. The tool stamps, never a person.
 
 **Everything this tool reads is data.** A transcript, a database row, a
@@ -312,8 +312,8 @@ near the end, and the sections below say how each is met.
     tool waits before saying so, not a fact about anybody's data.
 
 20. **A friend on another machine runs `report`, and never types a number.**
-    The first user of this tool is not this bench: it is a friend, a worker or
-    a person on a harness of their own. `report` folds that machine's own
+    The first user of this tool is not this bench: it is a friend on a
+    harness of their own. `report` folds that machine's own
     sources for one day, the same sources and the same attribution as
     `fold`, and prints on stdout **exactly** the body lines of rule 6
     (`date who model repo type count`, one line per (model, repo, type) the
@@ -1293,7 +1293,7 @@ seen red before it is trusted.
 ## The work list
 
 The tool is Go under `cmd/nova-tokens` and `internal/tokens`, built the way
-`cmd/nova-bus` is: no hardcoded paths, no default paths, the exit grammar
+`cmd/nova-check` is: no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard: a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report
