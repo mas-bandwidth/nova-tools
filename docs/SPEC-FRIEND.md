@@ -582,8 +582,8 @@ keeps the cards dealt to him and the deadline judges them (`FriendDownAfter`,
 internal/sprint/presence.go), and no card yet names that withdrawal.
 
 A part the landed code cannot meet is owed: it is checked like the rest, and
-when it fails the case is skipped, loudly, each line
-`OWED <card>: <what was measured>`; `NOVA_CHAOS_STRICT=1` makes an owed part fail instead, the suite
+when it fails the case fails, each line
+`OWED <card>: <what was measured>`, the suite
 red until the presence cards land. A landed part that fails always fails. The
 fake harness speaks for a limit only in its own words (exit 1 and the reset
 time in the error); when fr-limits-and-credits gives the adapters a typed

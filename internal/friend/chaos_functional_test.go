@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -36,13 +35,9 @@ import (
 // bound is fake time and the suite takes seconds.
 //
 // A part of a case the landed code cannot yet meet is owed: it is checked like
-// every other part, and when it fails the case is skipped, loudly, naming the
-// card that turns it green and what was measured; NOVA_CHAOS_STRICT=1 makes an
-// owed part fail instead, which is the suite red until the presence cards land.
-// A landed part that fails always fails.
-
-// chaosStrict turns an owed part's skip into a failure.
-const chaosStrict = "NOVA_CHAOS_STRICT"
+// every other part, and when it fails the case fails, naming the card that turns
+// it green and what was measured, which is the suite red until the presence
+// cards land. A landed part that fails always fails.
 
 // wrongPass is what a revoked bus credential answers, as Redis words it.
 var wrongPass = errors.New("WRONGPASS invalid username-password pair or user is disabled.")
@@ -460,17 +455,13 @@ func (o *owed) check(ok bool, card, format string, args ...any) {
 }
 
 // settle ends the case, outside its bubble (a skip inside one is reported as
-// a pass): nothing owed passes; anything owed fails under NOVA_CHAOS_STRICT
-// and is a loud skip otherwise.
+// a pass): nothing owed passes; anything owed fails.
 func (o *owed) settle(t *testing.T) {
 	t.Helper()
 	if len(o.parts) == 0 {
 		return
 	}
 	said := strings.Join(o.parts, "\n")
-	if os.Getenv(chaosStrict) == "" {
-		t.Skip(said + "\n(" + chaosStrict + "=1 fails these)")
-	}
 	assert.Fail(t, said)
 }
 
