@@ -697,6 +697,24 @@ daemon `--server <host:port>` (else `NOVA_SPRINT_SERVER`, else
 `127.0.0.1:6390`). Exit codes: 0 done; 1 the verb ran and said no; 2 could
 not run.
 
+## nova-loop
+
+Runs one loop's command as the only copy of that loop on the machine, in front of the command in the
+loop's launchd or systemd unit; it replaces a bash wrapper one coordinator installed from its own tool
+repository (docs/COORDINATOR-TOOLS.md).
+
+```
+nova-loop run --name <loop> [--run-dir <dir>] [--metrics <dir>] -- <command> [args...]
+```
+
+It takes the lock `<run-dir>/<loop>.lock` (default `~/nova-bench/run`), writing its own pid: a lock whose
+pid is alive refuses the start with `RUN HELD loop=<loop> pid=<holder>` at exit 3, and a lock whose pid is
+dead, or holds none, is taken, under an flock on `<loop>.lock.guard` so two starts cannot both take it.
+With `--metrics <dir>` it counts the start in `<dir>/nova_loop_<loop>.prom` (`nova_loop_starts_total`,
+`nova_loop_last_start_seconds`) for node_exporter's textfile collector. It says `RUN OK loop=<loop>
+pid=<pid> lock=<file>` and execs the command, which keeps the pid the lock holds. A Windows machine runs
+no loop and is refused.
+
 ## Build
 
 Go 1.26 or newer. The standard library, plus the Redis client (`github.com/redis/go-redis/v9`),
@@ -1068,6 +1086,7 @@ nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
+                        (the page's listeners also serve /table: the live table as where prints it, text, read at most once per --every)
 nova-sprint seat
 nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
 nova-sprint seat login --check

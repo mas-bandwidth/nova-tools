@@ -265,6 +265,7 @@ func readNovaTools(t *testing.T) map[string]novaTool {
 		"nova-swarm":   usageTool(t, "nova-swarm"),
 		"nova-friend":  verbTableTool(t, "nova-friend"),
 		"nova-bus":     verbTableTool(t, "nova-bus"),
+		"nova-loop":    verbTableTool(t, "nova-loop"),
 	}
 }
 
@@ -292,7 +293,7 @@ func checkCommand(tools map[string]novaTool, words []string) (checked bool, prob
 	}
 	tool, ok := tools[name]
 	if !ok {
-		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-swarm, nova-friend or nova-bus, or teach the test the tool"}
+		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-swarm, nova-friend, nova-bus or nova-loop, or teach the test the tool"}
 	}
 	words = words[1:]
 	var verbName string
@@ -331,14 +332,15 @@ func checkCommand(tools map[string]novaTool, words []string) (checked bool, prob
 	return true, problems
 }
 
-// coordinatorToolRow is one row of the page's table.
+// coordinatorToolRow is one row of the page's table; status is the register's
+// fourth cell (coordtools_test.go), "" in a table without one.
 type coordinatorToolRow struct {
-	line              int
-	tool, what, verbs string
+	line                      int
+	tool, what, verbs, status string
 }
 
 // coordinatorToolRows reads the rows of every table whose header is
-// `| Tool | What it does | Replaced by |`.
+// `| Tool | What it does | Replaced by |`, with or without a fourth `| Status |`.
 func coordinatorToolRows(text string) []coordinatorToolRow {
 	var rows []coordinatorToolRow
 	in := false
@@ -351,7 +353,7 @@ func coordinatorToolRows(text string) []coordinatorToolRow {
 		for j := range cells {
 			cells[j] = strings.TrimSpace(cells[j])
 		}
-		if len(cells) == 3 && cells[0] == "Tool" && cells[1] == "What it does" && cells[2] == "Replaced by" {
+		if (len(cells) == 3 || (len(cells) == 4 && cells[3] == "Status")) && cells[0] == "Tool" && cells[1] == "What it does" && cells[2] == "Replaced by" {
 			in = true
 			continue
 		}
@@ -359,8 +361,11 @@ func coordinatorToolRows(text string) []coordinatorToolRow {
 			continue
 		}
 		row := coordinatorToolRow{line: i + 1, tool: cells[0]}
-		if len(cells) == 3 {
+		if len(cells) == 3 || len(cells) == 4 {
 			row.what, row.verbs = cells[1], cells[2]
+		}
+		if len(cells) == 4 {
+			row.status = cells[3]
 		}
 		rows = append(rows, row)
 	}

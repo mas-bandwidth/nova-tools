@@ -56,7 +56,8 @@ import (
 //   - removes a mirror's leftover temporary packs (an aborted fetch's tmp_pack_*, .tmp-*)
 //     older than an hour when nothing may be fetching into it or working in it; never git
 //     prune, which can delete objects a clone borrowing the mirror is reading;
-//   - warns, under --disk-floor, on its own output, which is its loop log.
+//   - warns, under --disk-floor, on its own output, which is its loop log;
+//   - under --stop-floor, stops every loop unit of the login but its own (diskguard_stop.go).
 //
 // One line per action, with the bytes it freed; one line at the end. Nothing is removed
 // through a link, and nothing under /tmp: the guard looks only where it is told and where
@@ -88,6 +89,10 @@ type guard struct {
 	logDir, landDir, mirrorDir string
 	cacheMax, modMax, logMax   int64
 	floor                      int64
+	stopFloor                  int64                    // --stop-floor: under it every loop unit but the guard's stops
+	loopUnits                  func() ([]string, error) // this login's loop units
+	stopUnit                   func(unit string) error  // stops one
+	stopped                    bool                     // the stop floor acted this run
 	logKeep                    int
 	poolIdle, cloneAge         time.Duration
 	now                        time.Time
@@ -122,7 +127,7 @@ func (g *guard) say(line string) {
 }
 
 // dryWords is what an action's line says under --dry-run, which does none of them.
-var dryWords = map[string]string{"REMOVED": "WOULD-REMOVE", "TRIMMED": "WOULD-TRIM", "CLEANED": "WOULD-CLEAN", "ROTATED": "WOULD-ROTATE"}
+var dryWords = map[string]string{"REMOVED": "WOULD-REMOVE", "TRIMMED": "WOULD-TRIM", "CLEANED": "WOULD-CLEAN", "ROTATED": "WOULD-ROTATE", "DISK-GUARD STOPPED": "DISK-GUARD WOULD-STOP"}
 
 // fail is one thing the run could not do: said, counted, and the run ends INCOMPLETE.
 func (g *guard) fail(line string) {
@@ -244,6 +249,7 @@ func (g *guard) run() int {
 		if g.floor > 0 && n < uint64(g.floor) {
 			g.say(fmt.Sprintf("DISK-GUARD WARN free=%d floor=%d on the volume of %s: members there start no card; run: df -h %s, and read what this log removed and kept", n, g.floor, oneline.Field(p), oneline.Field(p)))
 		}
+		g.stopUnder(n, p)
 	}
 	// the closing line is written here, beside the exit it explains (law #2573): numbers
 	// only, so it needs neither say's escape nor its dry-run wording
@@ -788,6 +794,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	mirror := f.fs.String("mirrors", "~/nova-bench/mirror", "the `dir` of the bench's mirrors, whose temporary packs older than an hour are removed (default ~/nova-bench/mirror)")
 	dry := f.fs.Bool("dry-run", false, "judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing")
 	floor := f.fs.Int("disk-floor", guardFloorGiB, "the free `GiB` under which the run warns, the members' own floor (default 10; 0 warns never)")
+	stopFloor := f.fs.Int("stop-floor", 0, "the free `GiB` under which the run stops every loop unit of this login but the disk-guard ones (com.nova.loop.* on a Mac, nova-loop-* elsewhere); below --disk-floor; 0 (the default) stops none")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -801,6 +808,9 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	}
 	if *floor < 0 {
 		f.add(fmt.Sprintf("--disk-floor is 0 or more GiB, got %d", *floor))
+	}
+	if *stopFloor < 0 || (*stopFloor > 0 && *floor > 0 && *stopFloor >= *floor) {
+		f.add(fmt.Sprintf("--stop-floor is 0 (off) or more GiB below --disk-floor %d, got %d: the loops stop after the members have stopped taking cards", *floor, *stopFloor))
 	}
 	if *cloneAge <= 0 {
 		f.add("--clone-age is a positive duration, got " + oneline.Field(cloneAge.String()))
@@ -828,6 +838,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		cacheMax: int64(*cacheGB) * gib, modMax: int64(*modGB) * gib, logMax: int64(*logMB) << 20, logKeep: *logKeep,
 		floor: int64(*floor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
 		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
+		stopFloor: int64(*stopFloor) * gib, loopUnits: loopUnitsHost, stopUnit: stopUnitHost,
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
 	}
 	if runtime.GOOS != "linux" {
