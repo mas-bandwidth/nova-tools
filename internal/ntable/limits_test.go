@@ -1,6 +1,7 @@
 package ntable
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -195,4 +196,115 @@ func TestLimitErrorSaysAtLeastForAStoppedCount(t *testing.T) {
 	assert.Contains(t, exact, "observed 12")
 	assert.NotContains(t, exact, "at least")
 	assert.Contains(t, least, "observed at least 12", "stopped count: %s", least)
+}
+
+// The single-verb writes carry the batch text bounds on the Go client, before
+// the payload is built and before anything is sent (docs/SPEC-NOVA-TABLE.md,
+// the bounds of the batch section): a row set value, a row add label, exclude
+// or owner, and a view set title or summary are at most LimitFieldValueBytes,
+// and a member id named to member create or a cell verb at most
+// LimitMemberIDBytes. The refusal is the batch validator's LimitError, naming
+// the bound and the count found, never the input; a value of exactly the
+// bound is sent, not refused.
+func TestRowSetAndViewSetRefuseOverlongTextBeforeSending(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	overlong := strings.Repeat("v", LimitFieldValueBytes+1)
+	atBound := strings.Repeat("v", LimitFieldValueBytes)
+	overlongID := strings.Repeat("m", LimitMemberIDBytes+1)
+	atBoundID := strings.Repeat("m", LimitMemberIDBytes)
+
+	refusals := []struct {
+		name  string
+		limit string
+		bound int
+		run   func(*coverCmdable) error
+	}{
+		{"row set value", limitNameFieldValue, LimitFieldValueBytes, func(c *coverCmdable) error {
+			_, err := RowSet(ctx, c, "demo", "r", map[string]string{"ready": overlong})
+			return err
+		}},
+		{"row add label", limitNameFieldValue, LimitFieldValueBytes, func(c *coverCmdable) error {
+			_, err := RowAdd(ctx, c, "demo", "r", RowSpec{Label: overlong})
+			return err
+		}},
+		{"row add exclude", limitNameFieldValue, LimitFieldValueBytes, func(c *coverCmdable) error {
+			_, err := RowAdd(ctx, c, "demo", "r", RowSpec{Exclude: overlong})
+			return err
+		}},
+		{"row add owner", limitNameFieldValue, LimitFieldValueBytes, func(c *coverCmdable) error {
+			_, err := RowAdd(ctx, c, "demo", "r", RowSpec{Owner: overlong})
+			return err
+		}},
+		{"view set title", limitNameFieldValue, LimitFieldValueBytes, func(c *coverCmdable) error {
+			return ViewSet(ctx, c, View{Name: "v", Tables: []string{"demo"}, Title: overlong})
+		}},
+		{"view set summary", limitNameFieldValue, LimitFieldValueBytes, func(c *coverCmdable) error {
+			return ViewSet(ctx, c, View{Name: "v", Tables: []string{"demo"}, Summary: overlong})
+		}},
+		{"member create id", limitNameMemberID, LimitMemberIDBytes, func(c *coverCmdable) error {
+			return MemberCreate(ctx, c, "demo", overlongID)
+		}},
+		{"cell add member id", limitNameMemberID, LimitMemberIDBytes, func(c *coverCmdable) error {
+			_, err := CellsAdd(ctx, c, "demo", "r", "ready", 1, []string{overlongID})
+			return err
+		}},
+		{"cell remove member id", limitNameMemberID, LimitMemberIDBytes, func(c *coverCmdable) error {
+			_, err := CellsRemove(ctx, c, "demo", "r", "ready", []string{overlongID})
+			return err
+		}},
+	}
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newCoverCmdable()
+			err := tc.run(c)
+			var le *LimitError
+			require.ErrorAs(t, err, &le, "one byte over the bound refuses before the payload is built")
+			require.ErrorIs(t, err, ErrLimit)
+			assert.Equal(t, tc.limit, le.Name)
+			assert.Equal(t, tc.bound, le.Bound)
+			assert.Equal(t, tc.bound+1, le.Observed)
+			require.Empty(t, c.calls, "the command was sent: the refusal came after the payload was built")
+			assert.NotContains(t, err.Error(), overlong, "a refusal echoes the value")
+			assert.NotContains(t, err.Error(), overlongID, "a refusal echoes the member id")
+		})
+	}
+
+	tb := Table{Name: "demo", Columns: coverColumns(t, "ready")}
+	sent := []struct {
+		name string
+		fn   string
+		run  func(*coverCmdable) error
+	}{
+		{"row set value exactly the bound", FnRowSet, func(c *coverCmdable) error {
+			_, err := RowSet(ctx, c, "demo", "r", map[string]string{"ready": atBound})
+			return err
+		}},
+		{"row add label exactly the bound", FnRowAdd, func(c *coverCmdable) error {
+			c.answer(FnRowAdd, []any{"OK", coverPairs(definitionFields(tb)),
+				coverPairs(rowFields(tb, Row{Key: "r", Label: "L"})), coverReceipt})
+			_, err := RowAdd(ctx, c, "demo", "r", RowSpec{Label: atBound})
+			return err
+		}},
+		{"view set title exactly the bound", "ns_view_set", func(c *coverCmdable) error {
+			return ViewSet(ctx, c, View{Name: "v", Tables: []string{"demo"}, Title: atBound})
+		}},
+		{"member create id exactly the bound", FnMemberCreate, func(c *coverCmdable) error {
+			return MemberCreate(ctx, c, "demo", atBoundID)
+		}},
+		{"cell add member id exactly the bound", FnCellAdd, func(c *coverCmdable) error {
+			_, err := CellsAdd(ctx, c, "demo", "r", "ready", 1, []string{atBoundID})
+			return err
+		}},
+	}
+	for _, tc := range sent {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newCoverCmdable()
+			require.NoError(t, tc.run(c))
+			require.Len(t, c.calls, 1, "a value of exactly the bound is not refused by the client check")
+			assert.Equal(t, tc.fn, c.calls[0])
+		})
+	}
 }
