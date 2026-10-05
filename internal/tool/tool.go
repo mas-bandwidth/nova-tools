@@ -176,10 +176,10 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 			}
 		}
 	}
-	why := fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], didYouMean(args[0], t.names()), verbflag.List(t.names()))
+	why := fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], didYouMean(args[0], t.names()), strings.Join(t.names(), ", "))
 	if t.Default != "" {
 		why = fmt.Sprintf("%q is no verb and no file;%s the verbs are %s, and a file is given by its path (./%s)",
-			args[0], didYouMean(args[0], t.names()), verbflag.List(t.names()), args[0])
+			args[0], didYouMean(args[0], t.names()), strings.Join(t.names(), ", "), args[0])
 	}
 	return t.emit(nil, Refuse(why), asJSON, stdout, stderr)
 }
@@ -226,17 +226,104 @@ func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Wr
 	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		why = fmt.Sprintf("unknown verb %q in %s;%s", g+" "+args[1], g, didYouMean(g+" "+args[1], members))
 	}
-	o := Refuse(why + " the verbs are " + verbflag.List(members))
+	o := Refuse(why + " the verbs are " + strings.Join(members, ", "))
 	o.Remedy = t.verbHelp(g)
 	return t.emit(nil, o, asJSON, stdout, stderr)
 }
 
-// didYouMean is " did you mean <name>?" for the name nearest to got, else "".
+// didYouMean is " did you mean <name>?" for the one name an unknown got was
+// meant as, else "": the refusal names the nearest beside the names there are,
+// and guesses nothing when none is near (STANDARD §2: an unknown verb or flag
+// is answered with the names there are and the nearest).
 func didYouMean(got string, names []string) string {
-	if best := verbflag.Nearest(got, names); best != "" {
+	if best := nearest(got, names); best != "" {
 		return " did you mean " + best + "?"
 	}
 	return ""
+}
+
+// nearest is the one name an unknown got was meant as: the one name within two
+// edits, or, when none is that close, the one name got is a unique prefix of.
+// Two edits holds a typo of a short name; a unique prefix is how a reader
+// shortens a long name ("conf" for "configure", five edits away). "" when
+// neither names one, so the refusal lists the names and guesses nothing
+// (STANDARD §2, the nearest name).
+func nearest(got string, names []string) string {
+	best, bestD, n := "", 3, 0 // within two edits, and only when that nearest is one name
+	for _, name := range names {
+		d := editDistance(got, name)
+		if d > 2 {
+			continue
+		}
+		if n == 0 || d < bestD {
+			best, bestD, n = name, d, 1
+			continue
+		}
+		if d == bestD {
+			n++
+		}
+	}
+	if n == 1 {
+		return best
+	}
+	if n > 1 { // two names equally near: not one name, so no guess
+		return ""
+	}
+	var prefixed []string
+	for _, name := range names {
+		if strings.HasPrefix(name, got) {
+			prefixed = append(prefixed, name)
+		}
+	}
+	if len(prefixed) == 1 {
+		return prefixed[0]
+	}
+	return ""
+}
+
+// editDistance is the Levenshtein distance between a and b, by bytes. The
+// skeleton keeps its own: verbflag's distance is unexported and Nearest bounds
+// it to a third of the typed length, with no unique prefix, while this rule is
+// a fixed two edits (STANDARD §7: kept custom, the shared one does not fit).
+func editDistance(a, b string) int {
+	row := make([]int, len(b)+1)
+	for j := range row {
+		row[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		diag := row[0]
+		row[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			diag, row[j] = row[j], min(row[j]+1, row[j-1]+1, diag+cost)
+		}
+	}
+	return row[len(b)]
+}
+
+// unknownFlagWhy words an unknown flag the way an unknown verb is worded: every
+// flag of the verb, and did you mean when one name is within two edits or a
+// unique prefix, never a list cut to "and <n> more". ok is false for a missing
+// value or a bad value, which stay verbflag.Explain (STANDARD §2).
+func unknownFlagWhy(fs *flag.FlagSet, err error) (string, bool) {
+	rest, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -")
+	if !ok {
+		return "", false
+	}
+	got := "--" + strings.TrimLeft(rest, "-")
+	var names []string
+	fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
+	if len(names) == 0 {
+		return "unknown flag " + got + "; " + fs.Name() + " takes no flags", true
+	}
+	near := didYouMean(got, names)
+	if near != "" {
+		near = ";" + near
+	}
+	return "unknown flag " + got + "; the flags of " + fs.Name() + " are " + strings.Join(names, ", ") + near, true
 }
 
 // Cmd renders the words of a command a reader is told to run, so a POSIX shell
@@ -465,7 +552,11 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	f := v.flags()
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
-		o := Refuse(oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes))
+		why := verbflag.Explain(f.FlagSet, err)
+		if u, ok := unknownFlagWhy(f.FlagSet, err); ok {
+			why = u
+		}
+		o := Refuse(oneline.Cap(why, oneline.TailBytes))
 		o.Remedy = t.verbHelp(v.Name)
 		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
 	}
