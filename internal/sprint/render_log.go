@@ -149,6 +149,8 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 		return s
 	case toCol == DoneFailed:
 		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)
+	case toCol == DoneDefect:
+		return fmt.Sprintf("%s finished attempt %s: HOLD on a brief defect (%s)", fromRow, a, l.Set[FieldBriefDefect])
 	case toCol == string(Ready) && fromCol == Withdrawn:
 		return fmt.Sprintf("attempt %s redealt to %s (generation %d%s)", a, toRow, l.Gen, redealOf(l))
 	case toCol == string(Ready) && fromRow != toRow && strings.Contains(l.Verb, "level"):

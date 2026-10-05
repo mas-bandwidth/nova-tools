@@ -198,8 +198,14 @@ func briefStarted(c *Card) string {
 // in review), with the command that does what was wanted by its state: a card
 // still working is reworked once it finishes, or dropped now; one never dealt
 // has its brief replaced; one dealt and not finished is dropped and added again;
-// one landed is a new card. "" for a primary in review.
+// one landed is a new card; one in review that ended on a brief defect is re-cut, never
+// reworked: a rework deals the brief as cut again (docs/SPEC-SPRINT.md section 1, a brief
+// defect), so it is dropped, then its re-cut brief added. "" for any other primary in review.
 func reworkWhy(c *Card) string {
+	if c.Placed() && c.Col == Review && c.F(FieldBriefDefect) != "" {
+		return "it ended on a brief defect (" + c.F(FieldBriefDefect) + "): a rework deals the same brief again; re-cut the brief: nova-sprint drop " + c.ID +
+			" --reason 'a brief defect: re-cut', then nova-sprint add --stream " + c.Row + " '<new id>' --brief-file '<the re-cut brief>'"
+	}
 	why := inState(c, Review)
 	if why == "" || !c.Placed() {
 		return why

@@ -184,6 +184,8 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 // that is origin's tip of the card's branch (tip, read once) is work ok at that tip, as a
 // member's ok finish; HOLD, FAIL (or FAILED, BROKEN) is work that came back failed, its
 // report the first paragraph, as a member's failed finish raises "work came back failed";
+// one whose first paragraph names a brief defect is the brief's (sprint.BriefDefectOf), which
+// the finish records in her defect cell, never in her ok%;
 // a LAND with no full sha Head, or any other verdict, is failed too, saying what the
 // report lacks. The report begins with the friend's name, so it is never read as a
 // provider failure, no result or a staging refusal. An error refuses the finish: a Head
