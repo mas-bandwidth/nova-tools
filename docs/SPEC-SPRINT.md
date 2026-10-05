@@ -2266,7 +2266,9 @@ the test repository's sprint branch, `sprint/quack`. The promotion stream is the
 stream whose control card carries the mark `land_protected`, written only by the
 coordinator's `nova-sprint stream set <s> --land-protected <owner/name,...|any>`
 and taken off by `--land-protected default` (`sprint.IsPromotionStream`). A card
-naming no `BASE:` lands on the lander's `--base` (`sprint.SprintBranchWhy`). The
+naming no `BASE:` lands on the lander's `--base` (`sprint.SprintBranchWhy`), but a coding
+card (its header names `REPO:` and `PATHS:`) naming none is refused at add, since the brief
+checks have no tree to read (section 11, the brief checks). The
 lander holds the same line from the other side: it refuses, in `placeWhy`, before
 any git, a batch whose effective base (the card's `BASE:`, else `--base`) is dev
 in a stream that is not the promotion stream, naming the sprint branch and the
@@ -3369,6 +3371,69 @@ of the batch, as `hygiene.MatchGlob` matches one glob against a path, so a broad
 <why>` line per defect, `PREFLIGHT <id> OK` for a clean brief, and a last line
 `PREFLIGHT OK briefs=<n>` or `PREFLIGHT FAIL briefs=<n> failed=<m>`, exit 0 when
 every brief is clean and 1 otherwise. `--json` prints one object.
+
+### The brief checks (add-lint-catches-brief-defects.w1)
+
+The owner, 2026-10-05, on cards whose work needed files outside the brief's PATHS: "This
+seems like a common failure mode, can we add a check for this to card lint?" and "What other
+common failure modes can be more efficiently picked up with lint?" Epoch 15's sprint log held
+147 distinct brief defects, each costing two or more attempts and two reads: 26 work outside
+PATHS, 24 docs or SPEC the change must touch left out of PATHS, 13 a dead or wrong base or a
+conflict, 11 a named TEST that does not fit, 9 a class-test ledger outside PATHS.
+
+So `add` (the one-brief form and the many-brief form alike) holds every coding brief, one
+whose typed header names a repository (`REPO:` or `base-repo:`) and a `PATHS:` line that is
+not `none`, to the brief checks, after the card lint passes and before anything is written
+(`holdBriefChecks`, cmd/nova-sprint/addlint.go; `swarm.LintBrief`,
+internal/swarm/lintpaths.go). The tree is the brief's `BASE:` tip in the lander's clone of
+the repository (the directory land keeps its clones in, `landRoot`), fetched to `BASE` with
+`git fetch origin +refs/heads/<BASE>:refs/remotes/origin/<BASE>`; no go command runs. A brief
+with no repository or no `PATHS:` (a reading, a friend's note) is not held to them, and the
+served add's half run where it is typed checks nothing (the server holds the clones). Each
+token has its remedy in `swarm.CardBaseRemedies` beside the base checks', so `nova-swarm lint
+--rules` prints it:
+
+- `paths-at-base`: every PATHS entry names a file, directory or glob at the tip, a new
+  `_test` file, or a glob for new files in a directory the tip holds (`addlint*.go`); a
+  literal file the tip lacks is refused, as `nova-swarm lint --base-check` refuses it.
+- `donewhen-test-name`: the `TEST:` line reads (`cardhdr.ParseTest`) and its test is absent
+  from its package's `_test.go` files at the tip, so it can be red there; `TEST: none <why>`
+  passes; no `TEST:` line is refused.
+- `paths-cover-named`: every repository path the brief names in `START:` (each comma-separated
+  entry's first word; one marked `(read)` is only read) or in THE TASK (a path that names a
+  file at the tip) is covered by PATHS.
+- `paths-cover-test`: PATHS covers a `_test.go` file of the `TEST:` line's package directory.
+- `paths-cover-testdata`: a PATHS entry `<dir>/*.go` of a package with `<dir>/testdata` at the
+  tip also covers `<dir>/testdata/**`.
+- `paths-cover-ledgers`: a card whose PATHS reaches a package's Go files covers, on PATHS and
+  on SHARED, every class-test ledger `internal/ci/testdata/<class>/<package>.txt` whose rows
+  key on that package's functions or error sites (`<package>/<file>.go:<function>:<site>`;
+  a ledger of counts keys on none).
+- `paths-cover-docs`: a card whose PATHS reaches a `cmd/<tool>` Go file covers `docs/CLI.md`
+  and the tool's `docs/SPEC-<TOOL>.md` (nova- cut, upper case), each that the tip holds, on
+  PATHS and on SHARED.
+- `base-is-live`: `BASE:` is a branch origin holds at add (a fetch that finds no such ref is
+  a deleted, never pushed or mistyped base), under `sprint/` or one of main, master and dev
+  (dev only in the promotion stream, section 7), and never a card's attempt branch
+  (`.w<n>[.g<n>].e<n>`, pruned once it lands); any other name is a personal or temporary
+  branch.
+- `tier-set`: line 1 carries the card's tier, or the header pins a model.
+- `tla-is-frontier`: a card whose PATHS covers `tla/` is tier frontier.
+- `who-serves-tier`: the friend a `WHO: friend <name>` line names serves the card's tier (her
+  class lists it; a class that lists none is flash,pro), and for `WHO: friend` some friend of
+  the friends table does.
+
+A failing brief refuses the whole call, exit 2, nothing written, each finding on a line
+`LINT DRIFT brief <file|brief>: <token>: <line>: <excerpt> remedy=<remedy> [fix=<line>]`, at
+most `--max` of them before a `LINT MORE` line; a PATHS or SHARED refusal's `fix=` is the
+corrected line (both, joined by ` | `, when both change), so the coordinator applies it in one
+step. NO EVIDENCE IS NOT NEGATIVE EVIDENCE (internal/swarm/lintbase.go): no `BASE:` line, no
+clone under the land root (land makes it on its first batch), or a fetch that failed is one
+`paths-at-base` refusal with `MISSING:`, naming the seven checks that read the tree; an
+unread friends table is a `who-serves-tier` refusal with `MISSING:`. Tests:
+`TestAddLintRefusesABriefWhosePathsMissTheFilesItNames` (internal/swarm, a twin repository:
+one failing and one passing brief per token) and
+`TestAddLintRunsTheBriefChecksAtTheBaseInTheLandersClone` (cmd/nova-sprint).
 
 ### Handing over the seat
 
