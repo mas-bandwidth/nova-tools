@@ -320,7 +320,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
-	lh := d.Deliver.(LaneHarness)
+	lh, _ := d.Deliver.(LaneHarness)
+	runner, perCard := d.Deliver.(CardRunner)
 	held := func(c Card) bool {
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
@@ -343,7 +344,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if paused {
 			continue
 		}
-		if ln.session == "" {
+		if ln.session == "" && !perCard {
 			if now.Before(ln.openAt) {
 				continue
 			}
@@ -366,6 +367,15 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue // messages wait: they ride only with a card
 			}
 			ln.card, ln.attempts = &c, 0
+		}
+		if perCard { // the brief alone: no message, pong or notice rides with it
+			t, c := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, *ln.card
+			ln.t = t
+			l.startTurn(t, now, func(ctx context.Context) laneResult {
+				lt, err := runner.RunCard(LaneContext(ctx), c)
+				return laneResult{ln: ln, turn: lt, err: err, t: t}
+			})
+			continue
 		}
 		t := &turn{}
 		t.entries, t.msgs = l.take()
@@ -721,4 +731,16 @@ func ParseProfile(answer string) (profile string, ok bool) {
 		}
 	}
 	return profile, ok
+}
+
+// RowConfigDir reads the friend row's config_dir off her beat's answer
+// (row_config_dir=<dir>, the directory her claude lanes run with as
+// CLAUDE_CONFIG_DIR); empty when the answer carries none.
+func RowConfigDir(answer string) string {
+	for _, w := range strings.Fields(answer) {
+		if v, found := strings.CutPrefix(w, "row_config_dir="); found {
+			return v
+		}
+	}
+	return ""
 }

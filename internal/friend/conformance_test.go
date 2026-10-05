@@ -214,11 +214,13 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 			t.Parallel()
 			d, err := NewDeliverer(harness, t.TempDir(), "", nil, nil)
 			require.NoError(t, err)
-			if stub, passive := d.(Stub); passive {
+			// A Stub, and claude (it embeds one: batch has no deliver command,
+			// one-shot lanes run the card instead), fails at deliver.
+			if _, passive := d.(interface{ Passive() }); passive {
 				r := newConformanceRig(t, harness)
 				got := r.check.Run(context.Background())
 				assert.Equal(t, StageDeliver, got.Stage)
-				if stub.Reason != "" {
+				if stub, ok := d.(Stub); ok && stub.Reason != "" {
 					assert.Contains(t, got.Why, stub.Reason)
 				} else {
 					assert.Contains(t, got.Why, "no deliver command for "+harness)

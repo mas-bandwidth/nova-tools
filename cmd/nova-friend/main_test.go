@@ -366,8 +366,50 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
-	assert.Equal(t, "batch", s.Mode, "the row says one-shot; claude opens no session per lane")
-	assert.Contains(t, out.String(), "cannot open a session per lane; delivering in batch")
+	assert.Equal(t, "batch", s.Mode, "the row says one-shot and names no config_dir: claude is refused")
+	assert.Contains(t, out.String(), "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir")
+	assert.Contains(t, out.String(), "run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>")
+}
+
+// The beat's row_config_dir= (or --config-dir over it) is the directory a
+// claude lane runs with: the row one-shot with one, the daemon runs lanes.
+func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, answer string
+		flags        []string
+	}{
+		{"from the beat", " row_config_dir=/accounts/heavy-a", nil},
+		{"the override", "", []string{"--config-dir", "/accounts/heavy-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "ada", "bob")
+			w := r.world()
+			var cancel context.CancelFunc
+			w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel = context.WithCancel(ctx)
+				return ctx, cancel
+			}
+			beats := 0
+			w.beat = func(context.Context, string, string, time.Time) (string, error) {
+				beats++
+				if beats == 3 {
+					cancel()
+				}
+				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2" + tc.answer, nil
+			}
+			var out, errb strings.Builder
+			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+			assert.Equal(t, 0, code, errb.String())
+			assert.NotContains(t, out.String(), "REFUSED")
+			assert.Contains(t, out.String(), "mode: one-shot, from batch (the friend row)")
+		})
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--config-dir", "~/accounts"}, strings.NewReader(""), &out, &errb, newRig(t, "ada", "bob").world())
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errb.String(), `--config-dir "~/accounts" wants an absolute path`)
 }
 
 // A store that is down when the daemon starts is no reason to exit: under launchd's
@@ -588,6 +630,75 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.Equal(t, "one-shot", s.Mode)
 		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
 	})
+}
+
+// A claude one-shot lane runs walled with the row's config_dir when no --config-dir is
+// given (row_config_dir= on the beat): the wall's config directory is the row's, the
+// run's context is a lane's, and CLAUDE_CONFIG_DIR is the row's too. A --config-dir
+// given wins over the row's.
+func TestRunClaudeOneShotLaneIsWalledWithTheRowsConfigDir(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, flag, want string }{
+		{"row", "", "/accounts/heavy-a"},
+		{"flag wins", "/accounts/flag", "/accounts/flag"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				r := newRig(t, "ada", "bob")
+				w := r.world()
+				var cancel context.CancelFunc
+				w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+					ctx, cancel = context.WithCancel(ctx)
+					return ctx, cancel
+				}
+				w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+				dir := t.TempDir()
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+				var mu sync.Mutex
+				var walls []string
+				var envs [][]string
+				w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
+					return func(ctx context.Context, d, prog string, args []string, _ string) (string, int, error) {
+						mu.Lock()
+						defer mu.Unlock()
+						if !friend.InLane(ctx) {
+							return "answered\n", 0, nil // the session check: not a lane's
+						}
+						walls = append(walls, wl.ConfigDir)
+						envs = append(envs, append([]string{prog}, args...))
+						out := filepath.Join(dir, "outbox", "c1~15")
+						require.NoError(t, os.MkdirAll(out, 0o755))
+						require.NoError(t, os.WriteFile(filepath.Join(out, "REPORT.md"), []byte("Verdict: LAND\n"), 0o644))
+						require.NoError(t, os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: c1\n"), 0o644))
+						return "", 0, nil
+					}
+				}
+				beats := 0
+				w.beat = func(context.Context, string, string, time.Time) (string, error) {
+					if beats++; beats == 12 {
+						cancel()
+					}
+					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=/accounts/heavy-a", nil
+				}
+				args := []string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}
+				if tc.flag != "" {
+					args = append(args, "--config-dir", tc.flag)
+				}
+				var out, errb strings.Builder
+				code := run(args, strings.NewReader(""), &out, &errb, w)
+				require.Equal(t, 0, code, errb.String())
+				mu.Lock()
+				defer mu.Unlock()
+				require.Len(t, walls, 1, "%s", out.String())
+				assert.Equal(t, tc.want, walls[0], "the wall's config directory")
+				assert.Contains(t, envs[0], "CLAUDE_CONFIG_DIR="+tc.want)
+				assert.Contains(t, envs[0], "RESULT: c1\n", "the brief is the prompt")
+			})
+		})
+	}
 }
 
 // A closed app is a friend down, however well its daemon runs: the verb wires

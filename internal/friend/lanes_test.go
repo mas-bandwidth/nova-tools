@@ -379,3 +379,123 @@ func TestLanesRetryANewGenerationAfterGivingUpTheOldJob(t *testing.T) {
 		assert.Contains(t, state.GivenUp, "c1~15.g2", "the new set-aside record names the job")
 	})
 }
+
+// claudeRig is the daemon rig over a claude harness in one-shot mode at
+// width 1, its runs answered by run (no process), its lane state in memory.
+func claudeRig(t *testing.T, dir, configDir string, run Exec) (*rig, *LaneState) {
+	r := newRig(t)
+	state := &LaneState{}
+	r.d.Deliver = &Claude{Stub: Stub{Harness: "claude"}, Friend: "bob", Dir: dir, Run: run, ConfigDir: func() string { return configDir }}
+	r.d.Harness, r.passive, r.d.Dir = "claude", true, dir
+	r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+	r.d.Row = func() (string, int) { return ModeOneShot, 1 }
+	r.d.Coordinator = "ada"
+	r.d.LoadLanes = func() (LaneState, error) { return *state, nil }
+	r.d.SaveLanes = func(s LaneState) error { *state = s; return nil }
+	return r, state
+}
+
+// A claude lane is a process per card: no session opened, the brief the
+// prompt, the result read from the outbox. A card whose run wrote REPORT.md
+// and RESULT.md is done; one whose run wrote nothing is a failed attempt,
+// run again once, then set aside and reported, though the run exited 0. A
+// bus message rides with no card: it waits, pending.
+func TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}, {"c2", "queued"}}, []string{"c1", "c2"}, nil)
+		var mu sync.Mutex
+		var prompts []string
+		run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			prompts = append(prompts, args[3])
+			if args[3] == "RESULT: c1\n" {
+				out := filepath.Join(dir, "outbox", "c1~15")
+				if err := os.MkdirAll(out, 0o755); err != nil {
+					return "", 0, err
+				}
+				for f, text := range map[string]string{"REPORT.md": "Verdict: LAND\n", "RESULT.md": "RESULT: c1\n"} {
+					if err := os.WriteFile(filepath.Join(out, f), []byte(text), 0o644); err != nil {
+						return "", 0, err
+					}
+				}
+			}
+			return "the card is done", 0, nil
+		}
+		r, state := claudeRig(t, dir, "/accounts/heavy-a", run)
+		r.send(t, "ada", "hello", "no card carries this")
+		r.run(t, 20)
+
+		mu.Lock()
+		assert.Equal(t, []string{"RESULT: c1\n", "RESULT: c2\n", "RESULT: c2\n"}, prompts, "one run per card turn, the brief its prompt")
+		mu.Unlock()
+		assert.Empty(t, state.Sessions, "no session is opened")
+		assert.Equal(t, []string{"c2"}, state.GivenUp)
+		records := strings.Join(r.records, "\n")
+		assert.Equal(t, 1, strings.Count(records, " card=done"), records)
+		assert.Contains(t, records, `card=again turn=1/2 reason="claude -p exited 0 and `+filepath.Join(dir, "outbox", "c2~15")+` holds no REPORT.md and no RESULT.md"`)
+		assert.Contains(t, records, "card=set_aside turn=2/2")
+		got := r.adaGot(t)
+		require.Len(t, got, 1)
+		assert.True(t, strings.HasPrefix(got[0], "friend bob: card c2 not finished after 2 turns (lane 1): claude -p exited 0"), got[0])
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending)
+		assert.Len(t, fresh, 1, "the message is never taken")
+		assert.Equal(t, ModeOneShot, r.last().Mode)
+	})
+}
+
+// A card run's context is a lane's, so its process runs inside the lane wall
+// (Wall.Exec walls only a context InLane says is one).
+func TestAClaudeLaneCardRunsInALaneContext(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		var mu sync.Mutex
+		var inLane []bool
+		run := func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			inLane = append(inLane, InLane(ctx))
+			return "", 0, nil
+		}
+		r, _ := claudeRig(t, dir, "/accounts/heavy-a", run)
+		r.run(t, 6)
+		mu.Lock()
+		defer mu.Unlock()
+		require.NotEmpty(t, inLane)
+		for _, in := range inLane {
+			assert.True(t, in, "a card run's context is a lane's")
+		}
+	})
+}
+
+// A claude row in one-shot mode with no config_dir is refused: the refusal
+// and its remedy said once on the record, no card run, the daemon in batch
+// (passive: nothing delivered).
+func TestAClaudeRowInOneShotModeWithoutConfigDirIsRefused(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		ran := 0
+		r, _ := claudeRig(t, dir, "", func(context.Context, string, string, []string, string) (string, int, error) {
+			ran++
+			return "", 0, nil
+		})
+		r.run(t, 6)
+		assert.Zero(t, ran, "no card runs")
+		records := strings.Join(r.records, "\n")
+		assert.Equal(t, 1, strings.Count(records, "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir"), records)
+		assert.Contains(t, records, "run: nova-config friend set bob --config_dir <her account's absolute config directory>")
+		assert.Equal(t, ModeBatch, r.last().Mode)
+	})
+}
+
+// RowConfigDir reads row_config_dir= off the beat's answer, empty when absent.
+func TestRowConfigDirIsReadOffTheBeat(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "/accounts/heavy-a", RowConfigDir("FRIEND-BEAT OK bob at=x row_mode=one-shot row_width=8 row_config_dir=/accounts/heavy-a"))
+	assert.Empty(t, RowConfigDir("FRIEND-BEAT OK bob at=x row_mode=one-shot row_width=8"))
+}
