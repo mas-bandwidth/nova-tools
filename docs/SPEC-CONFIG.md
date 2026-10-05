@@ -663,8 +663,54 @@ refusal naming the known seats.
 one `internal/nsprint/store.Open` makes. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
-open no store. `--as` is the flag, else `NOVA_FRIEND`, else the seat name,
-required on every write.
+open no store. `--as` is the flag, else `NOVA_FRIEND`, else the friend recorded by
+`nova-config login`, else the seat name, required on every write.
+
+### The store login
+
+(the owner, 2026-10-05: "We need to get away from these one shot shell scripts";
+card config-login-built-in, which replaces the wrapper that ran every
+nova-config verb under `nova-secrets exec` with `NOVA_PG_DSN` and
+`NOVA_PG_PASSWORD_ENV` set.)
+
+The tool's own login to PostgreSQL is a setting of nova-config, never a wrapper:
+
+```
+nova-config login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --dsn <dsn without password> --friend <actor> [--sops <path>]
+nova-config login --check
+nova-config logout
+```
+
+`login` records the DSN with no password, the actor, and where the password is
+in nova-secrets (store, seat, key, sops, the secret's NAME; never the password)
+in `$XDG_CONFIG_HOME/nova-config/login.json`, else
+`~/.config/nova-config/login.json`, mode 0600, written whole by a rename. The
+paths are recorded absolute and `--sops` left off is the `sops` on `PATH`. A
+login is recorded only when its secret resolves, and a `--dsn` that carries a
+password is refused without recording and without quoting it.
+
+Every verb after it opens PostgreSQL as follows. The DSN is `--pg`, else
+`NOVA_PG_DSN`, else the recorded DSN. The password is the environment's when
+`NOVA_PG_PASSWORD_ENV` is set (the variable it names), which wins, including
+when the address is the recorded DSN; else, when the DSN is `--pg` or
+`NOVA_PG_DSN`, the variable `NOVA_PG_PASSWORD` when that is set, and the
+recorded secret is not read; else the recorded secret, read in the verb's own
+process through `secrets.ReadLogin` (internal/secrets/login.go), the path
+`nova-secrets exec` takes (`OpenSeatFile`), and put into the connection in
+memory. It is never printed, never written, and never in the process's
+environment, so no child of the verb inherits it. `--as`, else `NOVA_FRIEND`,
+else the recorded friend, is the actor. `--file` and `--seat` are unchanged
+and do not read the recorded secret.
+
+A recorded secret that does not resolve, or a login file that is not a whole
+login, is a refusal naming the file and the remedy (`nova-config login
+--check`, then `login` again or `logout`), and the verb opens no store.
+`login --check` prints the recorded login, which environment source would win
+(`dsn-wins=env:…`, `password-wins=env:…`, `friend-wins=env:…`), and
+`resolves=yes|no` (exit 1 on no). The password is never shown. `logout`
+removes the file (`was=recorded|none`). The code is `cmd/nova-config/login.go`;
+`TestABareVerbConnectsWithTheRecordedLogin` measures it on the fake store with
+a fake secrets reader.
 
 ## Deliberately not configuration
 
