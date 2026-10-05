@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -970,4 +971,10 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(stLabGoldenDir)
 	}
 	os.Exit(code)
+}
+
+// run is one invocation in the process's own environment: the entry point of
+// every test that drives the tool as a shell would (main calls runWith).
+func run(args []string, stdout, stderr io.Writer) (code int) {
+	return runWith(newEnv(), args, stdout, stderr)
 }

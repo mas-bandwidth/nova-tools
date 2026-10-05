@@ -39,7 +39,7 @@ const lockTimeout = 10 * time.Second
 //
 // A dry run (write false) neither takes the lock nor creates the lock file: it
 // reads, lets change decide, and makes every check the write would make
-// (PlanWriteBox) without writing.
+// (planBox) without writing.
 //
 // init is not a mutation and does not come through here: CreateBox publishes
 // exclusively (atomicfile.NoReplace), so it refuses a box another writer made

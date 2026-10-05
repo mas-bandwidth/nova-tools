@@ -274,14 +274,6 @@ func runDocumented(s onboarding.Step) (onboarding.Result, error) {
 	return runDocumentedIn(newEnv())(s)
 }
 
-// runInDir calls this binary's own entry point with the documented arguments,
-// in an environment whose working directory is dir.
-func runInDir(dir string) onboarding.Runner {
-	e := newEnv()
-	e.wd = dir
-	return runDocumentedIn(e)
-}
-
 type readsNothing struct{}
 
 func (readsNothing) Error() string {

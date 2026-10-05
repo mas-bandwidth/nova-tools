@@ -341,12 +341,6 @@ func main() {
 	os.Exit(runWith(newEnv(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// run is one invocation in the process's own environment: the entry point of
-// every test that drives the tool as a shell would.
-func run(args []string, stdout, stderr io.Writer) (code int) {
-	return runWith(newEnv(), args, stdout, stderr)
-}
-
 // runWith is the whole tool with the environment it reads handed in, so a test
 // drives one invocation with a directory and a program lookup of its own.
 func runWith(e env, args []string, stdout, stderr io.Writer) (code int) {

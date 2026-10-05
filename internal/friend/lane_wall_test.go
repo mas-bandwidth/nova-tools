@@ -49,7 +49,7 @@ func fakeLaneHarness() int {
 	self := os.Getenv("LANE_WALL_SELF")
 	dial := "refused"
 	if c, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", os.Getenv("LANE_WALL_ADDR")); err == nil {
-		c.Close()
+		c.Close() // ignored: the test listener's accepted connection; the test reads nothing after
 		dial = "connected"
 	}
 	fmt.Printf("HARNESS job=%s memory=%s identity=%s memory_md=%s outside=%s net=%s\n",
@@ -91,7 +91,7 @@ func TestALaneRunsInsideItsWallProfile(t *testing.T) {
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0") // a port of this test's own, outside the allow list
 	require.NoError(t, err)
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { ln.Close() }) // ignored: closing the test listener at cleanup
 	// the child's environment is this test's own (cmd.Env), never the process's
 	run := envExec(laneWallChild+"=1",
 		"HOME="+home, // the deny list's ~ is the wall's HOME

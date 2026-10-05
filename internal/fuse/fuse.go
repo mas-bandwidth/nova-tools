@@ -328,9 +328,6 @@ func WriteBox(path string, b Box) error {
 // this process can create in, nothing at the path), and the same error.
 func PlanCreateBox(path string) error { return planBox(path, atomicfile.NoReplace()) }
 
-// PlanWriteBox is WriteBox with nothing written, refusing where WriteBox would.
-func PlanWriteBox(path string) error { return planBox(path) }
-
 func planBox(path string, opts ...atomicfile.Option) error {
 	target := path
 	if target != "" {
