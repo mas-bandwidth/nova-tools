@@ -211,15 +211,17 @@ func (w *worker) print() {
 	w.seen()
 }
 
-// A turn that prints keeps running past any fixed cap; only a turn silent
-// past SilentStop is stopped, the record says why, and no second turn
-// starts while one runs.
+// A turn that prints keeps running past any fixed cap; only a turn with no
+// output for NoProgressAfter is stopped, the record says why, and no second
+// turn starts while one runs. After the stop, an adapter that cannot tell
+// waits another NoProgressAfter before the message that was waiting goes in.
 func TestATurnThatPrintsRunsOnAndOnlyASilentOneIsStopped(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t)
 		w := &worker{now: func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now }}
 		r.d.Deliver, r.passive = w, true
+		r.d.NoProgressAfter = DefaultNoProgressAfter // zero never stops; this run wants the default window
 		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
 		r.send(t, "ada", "card dealt", "real work")
 		minute := int(time.Minute / BeatEvery)
@@ -227,15 +229,17 @@ func TestATurnThatPrintsRunsOnAndOnlyASilentOneIsStopped(t *testing.T) {
 			r.at[m*minute] = func() { w.print() }
 		}
 		r.at[50*minute] = func() { r.send(t, "ada", "while busy", "wait your turn") }
-		var callsAt60 int
+		var callsAt60, callsAt70 int
 		r.at[60*minute] = func() { w.mu.Lock(); callsAt60 = w.calls; w.mu.Unlock() }
-		r.run(t, 70*minute)
+		r.at[70*minute] = func() { w.mu.Lock(); callsAt70 = w.calls; w.mu.Unlock() }
+		r.run(t, 90*minute)
 		lastOutput := t0.Add(45 * time.Minute)
 		require.False(t, w.stoppedAt.IsZero(), "the silent turn was stopped")
-		assert.False(t, w.stoppedAt.Before(lastOutput.Add(DefaultSilentStop)), "never before %s of silence: stopped at %s", DefaultSilentStop, w.stoppedAt.Sub(t0))
-		assert.True(t, w.stoppedAt.Before(lastOutput.Add(DefaultSilentStop+5*BeatEvery)), "and at once after: stopped at %s", w.stoppedAt.Sub(t0))
+		assert.False(t, w.stoppedAt.Before(lastOutput.Add(DefaultNoProgressAfter)), "never before %s of silence: stopped at %s", DefaultNoProgressAfter, w.stoppedAt.Sub(t0))
+		assert.True(t, w.stoppedAt.Before(lastOutput.Add(DefaultNoProgressAfter+5*BeatEvery)), "and at once after: stopped at %s", w.stoppedAt.Sub(t0))
 		assert.Equal(t, 1, callsAt60, "no second turn while the first ran")
-		assert.Equal(t, 2, w.calls, "the waiting message went in once the stopped turn ended")
+		assert.Equal(t, 1, callsAt70, "after the stop, the waiting message stays out for NoProgressAfter")
+		assert.Equal(t, 2, w.calls, "the waiting message goes in only after that wait")
 		var stopping, ended string
 		for _, line := range r.records {
 			if strings.Contains(line, "stopping: no output for 20m0s") {

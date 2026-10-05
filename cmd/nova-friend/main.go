@@ -224,7 +224,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir)")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
-		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
+		f.Duration("no-progress", friend.DefaultNoProgressAfter, "stop a turn that has printed nothing for this long (0 never stops); a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		stateDir(f)
@@ -250,7 +250,7 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--no-progress <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -266,8 +266,7 @@ the session (the daemon's own sends never count), a SESSION CHECK <nonce> goes i
 as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
 deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `
 and the friend is down, "no session answer", the beat to the sprint server held back until the next
-answer brings it up; it starts down until the first answer. A turn runs as long as it prints; one
-silent past --silent-stop is stopped with its process group, the reason on the record. The same provider refusal (an invalid_request_error)
+answer brings it up; it starts down until the first answer. No output for --no-progress (default 20m0s; 0 never stops) stops the turn once: the record says stopping: no output for <d> and stopped="no output for <d>", and the message stays pending. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
 bus; a restart clears it. A turn whose harness says it is out of credits or at a usage limit (a Claude
@@ -311,7 +310,7 @@ dir= state= redis=): no store is opened and nothing is written.`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--no-progress <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -746,7 +745,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
-		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
+		NoProgressAfter: c.Dur("no-progress"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
@@ -840,7 +839,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
-		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		Coordinator: c.Str("coordinator"), NoProgressAfter: c.Dur("no-progress"), WriteNoProgress: c.Dur("no-progress") != friend.DefaultNoProgressAfter, BrokenAfter: c.Int("broken-after"),
 	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")

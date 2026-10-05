@@ -29,11 +29,16 @@ type Agent struct {
 	// Home/nova-bench/secrets and the key under Home/.config/nova-secrets.
 	Secrets                 []string
 	Seat, SecretsTool, Sops string
-	// Coordinator, SilentStop and BrokenAfter are the daemon's flags of the
-	// same names, written only when set and not the default.
-	Coordinator string
-	SilentStop  time.Duration
-	BrokenAfter int
+	// Coordinator is the daemon's --coordinator, written only when set.
+	// NoProgressAfter is the daemon's --no-progress. WriteNoProgress writes
+	// that flag whenever the chosen value differs from DefaultNoProgressAfter,
+	// and 0 is included: 0 never stops, so it is not the default and is written
+	// (docs/SPEC-FRIEND.md, the loop). An agent that leaves WriteNoProgress
+	// false writes no --no-progress flag, and the daemon uses its default.
+	Coordinator     string
+	NoProgressAfter time.Duration
+	WriteNoProgress bool
+	BrokenAfter     int
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
@@ -73,8 +78,8 @@ func (a Agent) Args() []string {
 	if a.ConfigDir != "" {
 		args = append(args, "--config-dir", a.ConfigDir)
 	}
-	if a.SilentStop > 0 && a.SilentStop != DefaultSilentStop {
-		args = append(args, "--silent-stop", a.SilentStop.String())
+	if a.WriteNoProgress {
+		args = append(args, "--no-progress", a.NoProgressAfter.String())
 	}
 	if a.BrokenAfter > 0 && a.BrokenAfter != DefaultBrokenAfter {
 		args = append(args, "--broken-after", fmt.Sprint(a.BrokenAfter))
