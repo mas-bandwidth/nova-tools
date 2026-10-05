@@ -95,7 +95,7 @@ func readInstructions(friend string, p sprint.Packet) string {
 	fmt.Fprintf(&b, "2. Clone the brief's REPO at the head %s (branch %s, base %s), in a job directory of your own.\n",
 		or(p.Head, "(none recorded)"), or(p.WorkBranch, "(none recorded)"), or(p.WorkBase, "the brief's BASE"))
 	b.WriteString("3. Judge the merge-base diff against the brief (BRIEF.md beside this file): git diff $(git merge-base <base> <head>) <head>. The worker's report is WORKER-REPORT.txt.\n")
-	b.WriteString("4. Run the touched packages' vet and tests on a Linux bench, never on the Studio.\n")
+	b.WriteString("4. Run the touched packages' vet and tests on a Linux bench, never on the machine that runs the sprint.\n")
 	b.WriteString("5. Finish with one of:\n")
 	fmt.Fprintf(&b, "   nova-sprint read --as %s --ok %s --epoch %d\n", reader, p.Card, p.Epoch)
 	fmt.Fprintf(&b, "   nova-sprint read --as %s --broken %s --epoch %d --finding '<file:line, and what to change>'\n", reader, p.Card, p.Epoch)
