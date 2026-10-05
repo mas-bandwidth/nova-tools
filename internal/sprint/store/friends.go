@@ -190,7 +190,13 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 // FriendBeat writes one beat of the friend at the store's clock, to the
 // second, reporting nothing more; a friend the roster lacks is refused and
 // nothing is written.
-func (st *Store) FriendBeat(ctx context.Context, friend string, asleep bool) (sprint.Beat, error) {
+func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, error) {
+	return st.FriendBeatAsleep(ctx, friend, false)
+}
+
+// FriendBeatAsleep is FriendBeat with the asleep flag: true is the beat of a
+// friend whose daemon sleeps (nova-friend sleep) and still answers.
+func (st *Store) FriendBeatAsleep(ctx context.Context, friend string, asleep bool) (sprint.Beat, error) {
 	return st.FriendBeatReport(ctx, friend, sprint.FriendReport{}, nil, asleep)
 }
 

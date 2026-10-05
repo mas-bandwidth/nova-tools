@@ -18,7 +18,7 @@ func TestFriendRowsReturnsNameWidthStatusOnly(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}, {Name: "bob", Width: 1}})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "amy", false)
+	_, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
 	require.NoError(t, h.st.SetFriendHeld(h.ctx, "bob", true, "c", "", time.Time{}, 0))
 	rows, err := h.st.FriendRows(h.ctx, h.now)
@@ -45,9 +45,9 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 		{Name: "bob", Width: 2, Mode: "one-shot"},
 	})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "amy", false)
+	_, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "bob", false)
+	_, err = h.st.FriendBeat(h.ctx, "bob")
 	require.NoError(t, err)
 
 	brief := func(who string) string {
@@ -117,7 +117,7 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 		{Name: "amy", Width: 2, Mode: "batch"},
 	})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "amy", false)
+	_, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
 
 	brief := func(who string) string {
@@ -195,7 +195,7 @@ func TestFriendBeatPersistsSleepAndOrdinaryBeatClearsIt(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}})
 	require.NoError(t, err)
-	b, err := h.st.FriendBeat(h.ctx, "amy", true)
+	b, err := h.st.FriendBeatAsleep(h.ctx, "amy", true)
 	require.NoError(t, err)
 	assert.True(t, b.Asleep)
 	rows, err := h.st.FriendRows(h.ctx, h.now)
@@ -203,7 +203,7 @@ func TestFriendBeatPersistsSleepAndOrdinaryBeatClearsIt(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, sprint.Down, rows[0].Status, "a sleeping session is down")
 	assert.Equal(t, 3, rows[0].Width)
-	b, err = h.st.FriendBeat(h.ctx, "amy", false)
+	b, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
 	assert.False(t, b.Asleep)
 	rows, err = h.st.FriendRows(h.ctx, h.now)
@@ -217,10 +217,10 @@ func TestFriendRowsOrderUpHeldDownByNameAndSleepersAreDown(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}, {Name: "bob", Width: 1}, {Name: "cat", Width: 1}, {Name: "zed", Width: 1}, {Name: "eve", Width: 1}})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "zed", false)
+	_, err = h.st.FriendBeat(h.ctx, "zed")
 	require.NoError(t, err)
 	for _, name := range []string{"cat", "bob"} {
-		_, err = h.st.FriendBeat(h.ctx, name, true)
+		_, err = h.st.FriendBeatAsleep(h.ctx, name, true)
 		require.NoError(t, err)
 	}
 	require.NoError(t, h.st.SetFriendHeld(h.ctx, "eve", true, "c", "", time.Time{}, 0))

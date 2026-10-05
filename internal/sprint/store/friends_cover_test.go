@@ -53,7 +53,7 @@ func TestFriendsCoverUnknownFriendIsRefusedAndWritesNothing(t *testing.T) {
 		do   func(*testing.T, *Store, context.Context) error
 	}{
 		{"friend beat", func(t *testing.T, st *Store, ctx context.Context) error {
-			_, err := st.FriendBeat(ctx, "zed", false)
+			_, err := st.FriendBeat(ctx, "zed")
 			return err
 		}},
 		{"friend down", func(t *testing.T, st *Store, ctx context.Context) error {

@@ -75,7 +75,7 @@ func (r *holdRig) beat() {
 		require.NoError(r.t, err)
 	}
 	for _, f := range []string{"amy", "bob"} {
-		_, err := r.st.FriendBeat(r.ctx, f, false)
+		_, err := r.st.FriendBeat(r.ctx, f)
 		require.NoError(r.t, err)
 	}
 }

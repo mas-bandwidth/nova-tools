@@ -170,7 +170,7 @@ func TestHealthReplayOrderBeatAndHold(t *testing.T) {
 	_, status, _, err = h.health("amy", "tester", sprint.Down, h.now, 1)
 	require.NoError(t, err)
 	assert.Equal(t, sprint.Down, status)
-	_, err = h.st.FriendBeat(h.ctx, "amy", false)
+	_, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
 	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "a fresh raw beat cannot make an observed-down friend up")
 
