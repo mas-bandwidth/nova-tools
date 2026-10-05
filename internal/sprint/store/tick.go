@@ -554,8 +554,11 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 		for _, c := range s.Work.Column(sprint.Review) {
 			attempt := c.Int("attempt")
 			for _, rd := range s.Readers.Rows() {
-				if id := sprint.ReadCardID(c.ID, attempt, rd); s.Readers.Placed(id) == nil {
-					reads = append(reads, id)
+				for take := 1; take <= sprint.MaxReadTakebacks; take++ {
+					id := sprint.ReadCardIDTake(c.ID, attempt, rd, take)
+					if s.Readers.Placed(id) == nil {
+						reads = append(reads, id)
+					}
 				}
 			}
 		}

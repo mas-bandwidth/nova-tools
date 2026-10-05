@@ -868,8 +868,9 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var askNow []*Card
 	for _, c := range cards {
 		attempt := c.Int("attempt")
+		fresh, reask := s.readAskPools(c, attempt)
 		if len(askNow) < TickMaxMoves && enoughReadersUp(s, c) &&
-			len(s.freeReaders(c, attempt))+len(returnedReadsAt(s, c, attempt)) >= ReadsNeeded(c)-len(liveReadsAt(s, c, attempt)) {
+			len(fresh)+len(reask)+len(returnedReadsAt(s, c, attempt)) >= ReadsNeeded(c)-len(liveReadsAt(s, c, attempt)) {
 			askNow = append(askNow, c)
 		}
 	}
@@ -880,7 +881,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		// one at a time (ReadsWanted)
 		need := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
 		want := ReadsWanted(s, c)
-		free := s.freeReaders(c, attempt)
+		fresh, reask := s.readAskPools(c, attempt)
 		returned := len(returnedReadsAt(s, c, attempt))
 		switch {
 		case !enoughReadersUp(s, c):
@@ -888,13 +889,14 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 			few = true
 		case len(ids) >= TickMaxMoves:
 			due++
-		case len(free)+returned < need:
+		case len(fresh)+len(reask)+returned < need:
 			// no readers to ask it of, whatever their room: Ask refuses it,
-			// and the refusal is the judgment
+			// or, when the attempt was taken back until the bound, raises
+			// reads exhausted. Either way the ask runs.
 			ids = append(ids, c.ID)
 		default:
 			finder := finders[c.ID]
-			picked := askPicks(rr, finder, want, free, room)
+			picked := pickAsks(rr, finder, want, fresh, reask, room)
 			if len(picked)+returned < want {
 				for _, rd := range picked {
 					room[rd] = room[rd].after(-1)
