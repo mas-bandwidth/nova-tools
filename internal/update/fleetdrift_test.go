@@ -54,7 +54,7 @@ func TestFleetBuildsReadOneDriftWithoutASocket(t *testing.T) {
 	ctx := context.Background()
 	mr, client := pipeStore(t)
 	trips := redisconn.CountTrips(client)
-	mr.SAdd(fleetRegistry, "fresh", "stale", "quiet")
+	_, _ = mr.SAdd(fleetRegistry, "fresh", "stale", "quiet") // ignored: test fixture setup
 	beat := func(bench, build string) {
 		mr.HSet(fleetBeatKey(bench), "host", bench, "at", "1790186398000", "build", build)
 		mr.SetTTL(fleetBeatKey(bench), 3*time.Second)

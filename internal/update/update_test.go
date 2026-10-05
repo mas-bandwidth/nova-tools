@@ -40,8 +40,8 @@ func TestHelperProcess(t *testing.T) {
 	a = a[1:]
 	if p := os.Getenv("NOVA_UPDATE_CALLS"); p != "" {
 		f, _ := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		fmt.Fprintln(f, strings.Join(a, " "))
-		f.Close()
+		_, _ = fmt.Fprintln(f, strings.Join(a, " ")) // ignored: test helper subprocess log
+		_ = f.Close()                                // ignored: test helper subprocess log
 	}
 	switch a[0] {
 	case "print":
@@ -253,13 +253,13 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
 			w.WriteHeader(404)
 		case strings.HasSuffix(r.URL.Path, "/tags"):
-			fmt.Fprint(w, `[{"name":"v0.11.0"}]`)
+			_, _ = fmt.Fprint(w, `[{"name":"v0.11.0"}]`) // ignored: test fixture response
 		case strings.HasSuffix(r.URL.Path, "/latest"):
-			fmt.Fprint(w, `{"version":"v1.2.3"}`)
+			_, _ = fmt.Fprint(w, `{"version":"v1.2.3"}`) // ignored: test fixture response
 		case strings.Contains(r.URL.Path, "/formula/"):
-			fmt.Fprint(w, `{"versions":{"stable":"v2.3.4"}}`)
+			_, _ = fmt.Fprint(w, `{"versions":{"stable":"v2.3.4"}}`) // ignored: test fixture response
 		default:
-			fmt.Fprint(w, `{"schemaVersion":2,"layers":[]}`)
+			_, _ = fmt.Fprint(w, `{"schemaVersion":2,"layers":[]}`) // ignored: test fixture response
 		}
 	})
 	defer close()
@@ -283,7 +283,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		c, done := testClient(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("x-ratelimit-reset", "123")
 			w.WriteHeader(tc.status)
-			fmt.Fprint(w, tc.body)
+			_, _ = fmt.Fprint(w, tc.body) // ignored: test fixture response
 		})
 		r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, c)
 		done()
@@ -321,7 +321,7 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
-	os.WriteFile(state, []byte("1.0.0\n"), 0600)
+	_ = os.WriteFile(state, []byte("1.0.0\n"), 0600) // ignored: test setup
 	read := command(t, "read", state)
 	write := command(t, "write", state, "{version}")
 	p := manifest(t, row("x", "tool", read, "local:"+printer(t, "v1.2.0\n"), write), row("model:tag", "model", "should-not-run", "ollama:model:tag", write))

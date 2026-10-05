@@ -95,7 +95,7 @@ func adoptionVerb(name string, args []string, out, errs io.Writer) int {
 		return emit(refused("adoption", help, fmt.Sprintf("cannot open %s (supply a readable --file: %s)", o.file, adoptionShape)), o.json, 0, out, errs)
 	}
 	rows, err := loadAdoption(file)
-	file.Close()
+	_ = file.Close() // ignored: file was opened only to be read
 	if err != nil {
 		return emit(refused("adoption", help, fmt.Sprintf("%s: %s", o.file, err)), o.json, 0, out, errs)
 	}
