@@ -2399,6 +2399,20 @@ never by a resolution on the card's branch, so no change a reader has not read
 lands. The conflict judgment's "resolve and resume" decision says so in its
 `--did` text.
 
+#### land-clone-self-heals-r.w1
+
+The clone land keeps under its root is the lander's own: it computed the path and made the
+clone, so a pass cut short there is the lander's to undo (found by hand, 2026-10-04: a hand
+land beside the server's lander in the same kept clone left modified files, and every later
+pass refused all 11 streams, the clone is not clean). Before each batch, when its kept clone
+is not clean (a tracked change, or a merge in progress), land aborts the merge, fetches the
+batch's base, resets the clone to it and removes its untracked files, inside that clone only,
+and says so on one line before the batch's, `LAND CLEANED stream= dir= files=<n>
+paths=<a,b,...>` (`--json`: the batch item's `cleaned`); a clone it cannot restore refuses
+the batch with the step that failed. A clone the caller gives with `--repo-dir` is the
+caller's: it is never cleaned, and a dirty one is refused as before
+(`TestLanderRestoresItsOwnDirtyCacheClone`, cmd/nova-sprint/land_clean_clone_test.go).
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
