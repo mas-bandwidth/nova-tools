@@ -1,61 +1,81 @@
 package main
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
-// recut <id> (--tier <t> | --brief-file <path>) [--new <id>]: a card re-cut for another
-// tier or another scope as its twin (sprint.Recut; docs/SPEC-SPRINT.md section 2, "A card
-// replaced by its twin"): add --replaces of the old card with the tier or the brief
-// changed, so its dependents need the twin, the old card is dropped "replaced by <new>",
-// no blocked judgment is raised, and the twin records the id it replaces. A new brief is
-// held to the card lint as brief holds one. The coordinator's alone.
+// recut <card> (--tier <route> | --brief-file <path>) [--id <new-id>]:
+// re-cuts an existing card for another tier or scope while keeping id lineage
+// via --replaces, instead of drop plus add (docs/SPEC-SPRINT.md section 2,
+// "A card replaced by its twin"; item 21). Recut makes the twin, relinks dependants,
+// drops the old with the lineage recorded, on the twin store.
 func (a *app) cmdRecut(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("recut")
-	tier := fs.String("tier", "", "the tier the twin is pinned to ("+cardhdr.RouteList+"): every deal and read of it draws its route from it (default: the old card's pin)")
-	briefFile := fs.String("brief-file", "", "the twin's brief, read from this file and held to the card lint as brief holds one; its DEPENDS-ON: line's needs are taken with the old card's (default: the old card's brief)")
-	rules := fs.String("rules", "", "with --brief-file: the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)")
-	nw := fs.String("new", "", "the twin's `id` (default: the old id with the next letter, b for a card never re-cut, c for its twin re-cut, and so on)")
-	ids, err := parse(fs, args)
+	tier := fs.String("tier", "", fmt.Sprintf("the tier to re-cut the card for (%s)", cardhdr.RouteList))
+	briefFile := fs.String("brief-file", "", "the new brief, read from this file: its bytes as they are, its one trailing newline cut; the file's base name without .md is the twin's id unless --id is given")
+	id := fs.String("id", "", "the twin's card id (default: derived from the card id and tier, or the brief file's base name)")
+	rules := fs.String("rules", "", "the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "recut", err.Error())
 	}
-	switch {
-	case len(ids) != 1 || (*tier == "" && *briefFile == ""):
-		return refuse(stderr, "recut", "wants one primary and --tier <"+cardhdr.RouteList+">, --brief-file <path>, or both: what its twin changes")
-	case *tier != "" && !cardhdr.IsRoute(*tier):
-		return refuse(stderr, "recut", "--tier wants "+cardhdr.RouteList+", found "+oneline.Escape(*tier))
-	case *rules != "" && *briefFile == "":
-		return refuse(stderr, "recut", "--rules goes with --brief-file: the old brief keeps its rules")
+	if len(pos) != 1 {
+		return refuse(stderr, "recut", "wants one card to re-cut")
 	}
-	r := sprint.RecutReq{ID: ids[0], New: *nw, Tier: *tier, Who: c.actor}
+	if *tier == "" && *briefFile == "" {
+		return refuse(stderr, "recut", "recut wants --tier <t> or --brief-file <f>")
+	}
+	if *tier != "" && !cardhdr.IsRoute(*tier) {
+		return refuse(stderr, "recut", "--tier wants "+cardhdr.RouteList+", found "+*tier)
+	}
+	var briefText string
+	var rs0 ruleSet
 	var st *store.Store
 	if *briefFile != "" {
 		text, err := readBriefFile(*briefFile)
 		if err != nil {
 			return refuse(stderr, "recut", "--brief-file: "+err.Error())
 		}
-		rs, code := a.holdBrief("recut", text, *rules, c, &st, stderr)
-		if code != 0 {
+		briefText = text
+		if *tier != "" {
+			briefText = sprint.SetBriefTier(briefText, *tier)
+		}
+		var code int
+		if rs0, code = a.holdBrief("recut", briefText, *rules, c, &st, stderr); code != 0 {
 			return code
 		}
-		r.Brief, r.Rules, r.Needs = text, cardRules(text, rs).held, uniquify(briefNeeds(text))
+		c.says = append(c.says, unfilledSays("the brief", briefText)...)
 	}
 	if st == nil {
+		var err error
 		if st, err = a.store(*c); err != nil {
 			return refuse(stderr, "recut", err.Error())
 		}
 	}
-	if r.Brief != "" {
-		if code := a.holdWho("recut", st, stderr, r.Brief); code != 0 {
+	if briefText != "" {
+		if code := a.holdWho("recut", st, stderr, briefText); code != 0 {
 			return code
 		}
-		c.says = append(c.says, unfilledSays("the brief of the twin of "+ids[0], r.Brief)...)
+	}
+	var heldRules string
+	if briefText != "" {
+		heldRules = cardRules(briefText, rs0).held
+	}
+	r := sprint.RecutReq{
+		Old:       pos[0],
+		New:       *id,
+		Tier:      *tier,
+		Brief:     briefText,
+		BriefFile: *briefFile,
+		Rules:     heldRules,
+		Who:       c.actor,
+		Answers:   answers(*ans),
 	}
 	return a.runStep("recut", *c, st, store.RecutStep(r), stdout, stderr)
 }

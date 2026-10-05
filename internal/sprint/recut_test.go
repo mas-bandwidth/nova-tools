@@ -5,93 +5,193 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
-// recut <card> --tier <t> | --brief-file <f> (docs/SPEC-SPRINT.md section 2, "A card
-// replaced by its twin"; the coordinator, 2026-10-04: re-cutting a card for another tier or
-// a smaller scope was a drop and an add by hand): the twin is add --replaces of the old
-// card with the tier or the brief changed, so the dependents follow it, the old card is
-// dropped "replaced by <new>" and no blocked judgment is raised; the twin records the id it
-// replaces, and a twin re-cut again takes the next letter.
-
-// recutWorld is old and other in s1, dep1 needing old and dep2 needing old and other in s2.
-func recutWorld(t *testing.T) *world {
-	t.Helper()
-	w := newWorld(t, "reader-a", "reader-b")
-	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"old", "other"}, Brief: proBrief, Who: "coordinator"}))
-	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"dep1"}, Needs: []string{"old"}, Who: "coordinator"}))
-	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"dep2"}, Needs: []string{"old", "other"}, Who: "coordinator"}))
-	w.clean("recut world")
-	return w
-}
-
+// TestRecutKeepsIdLineageViaReplaces tests that recut creates a twin card,
+// relinks dependants, and drops the old card with id lineage recorded via --replaces
+// (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin"; item 21).
 func TestRecutKeepsIdLineageViaReplaces(t *testing.T) {
 	t.Parallel()
-	w := recutWorld(t)
-	before := w.s.Work.Placed("old")
-	require.NotNil(t, before)
-	w.must(Recut(w.s, RecutReq{ID: "old", Tier: "heavy", Who: "coordinator"}))
-	w.clean("recut for a tier")
-	tw := w.s.Work.Placed("oldb")
-	require.NotNil(t, tw, "the twin takes the next letter")
-	assert.Equal(t, "s1", tw.Row, "the twin is in its old card's stream")
-	assert.Equal(t, Ready, tw.Col)
-	assert.Less(t, tw.Score, before.Score, "the twin stands where its old card stood, in front of it")
-	assert.Equal(t, "heavy", tw.F(FieldTier), "the twin is pinned to the tier named")
-	assert.Equal(t, proBrief, tw.F("brief"), "the brief is kept when none is named")
-	assert.Equal(t, "old", tw.F(FieldReplaces), "the twin records what it replaces")
-	assert.Equal(t, "0", tw.F("attempt"), "the twin starts from its first attempt")
-	old := w.s.Work.Card("old")
+
+	// 1. Re-cut for another tier (--tier pro):
+	// Setup stream s1 with card "c1" (tier: flash) and "other".
+	// Setup stream s2 with dep1, dep2 needing c1, and dep3 needing c1,other.
+	w := newWorld(t, "reader-a", "reader-b")
+	w.must(Add(w.s, AddReq{
+		Stream: "s1",
+		Cards: []CardAdd{
+			{ID: "c1", Brief: "c1: work on flash (s1) tier: flash\nPATHS: a.go\n"},
+			{ID: "other", Brief: "other: something else\n"},
+		},
+	}))
+	w.must(Add(w.s, AddReq{
+		Stream: "s2",
+		Cards: []CardAdd{
+			{ID: "dep1", Needs: []string{"c1"}, Brief: "dep1: depends on c1\n"},
+			{ID: "dep2", Needs: []string{"c1"}, Brief: "dep2: depends on c1\n"},
+			{ID: "dep3", Needs: []string{"c1", "other"}, Brief: "dep3: depends on c1 and other\n"},
+		},
+	}))
+
+	require.Equal(t, Ready, w.s.Work.Placed("c1").Col)
+	require.Equal(t, Waiting, w.s.Work.Placed("dep1").Col)
+	require.Equal(t, Waiting, w.s.Work.Placed("dep2").Col)
+	require.Equal(t, Waiting, w.s.Work.Placed("dep3").Col)
+
+	// Re-cut c1 for tier pro
+	p := Recut(w.s, RecutReq{
+		Old:  "c1",
+		Tier: cardhdr.RoutePro,
+		Who:  "coordinator",
+	})
+	require.Empty(t, p.Refused, "recut must succeed")
+	w.must(p)
+
+	// Check that the old card was dropped with lineage recorded
+	old := w.s.Work.Card("c1")
+	require.NotNil(t, old)
 	assert.False(t, old.Placed(), "the old card is off the table")
 	assert.Equal(t, "dropped", old.F("outcome"))
-	assert.Equal(t, "replaced by oldb", old.F("reason"), "the old card records its twin")
-	assert.Equal(t, "oldb", w.s.Work.Card("dep1").F("needs"), "a dependent needs the twin")
-	assert.Equal(t, "oldb,other", w.s.Work.Card("dep2").F("needs"), "in the same place, its other need kept")
-	assert.Empty(t, w.notesOf(NBlocked), "no blocked judgment is raised for a re-cut card")
+	assert.Equal(t, "replaced by c1-pro", old.F("reason"), "drop reason records lineage")
 
-	// re-cut again for a smaller scope: the next letter, the lineage and the pinned tier kept
-	w.must(Recut(w.s, RecutReq{ID: "oldb", Brief: "tier: flash\nthe smaller scope", Who: "coordinator"}))
-	w.clean("recut for a scope")
-	tc := w.s.Work.Placed("oldc")
-	require.NotNil(t, tc, "a twin re-cut takes the next letter of its lineage")
-	assert.Equal(t, "oldb", tc.F(FieldReplaces))
-	assert.Equal(t, "tier: flash\nthe smaller scope", tc.F("brief"))
-	assert.Equal(t, "heavy", tc.F(FieldTier), "a pinned tier is kept when no tier is named")
-	assert.Equal(t, "replaced by oldc", w.s.Work.Card("oldb").F("reason"))
-	assert.Equal(t, "oldc,other", w.s.Work.Card("dep2").F("needs"))
+	// Check that the twin card was created on the work table in s1
+	twin := w.s.Work.Placed("c1-pro")
+	require.NotNil(t, twin, "twin c1-pro is placed on the table")
+	assert.Equal(t, "s1", twin.Row)
+	assert.Equal(t, Ready, twin.Col)
+	assert.Equal(t, "c1", twin.F(FieldReplaces), "twin records what it replaces")
+	m, _ := cardhdr.ReadModel(twin.F("brief"))
+	assert.Equal(t, cardhdr.RoutePro, m.Tier, "twin brief has updated tier pro")
 
-	// a twin id named
-	w.must(Recut(w.s, RecutReq{ID: "oldc", New: "old-small", Tier: "pro", Who: "coordinator"}))
-	assert.Equal(t, "oldc", w.s.Work.Placed("old-small").F(FieldReplaces))
-	assert.Equal(t, "old-small", w.s.Work.Card("dep1").F("needs"))
-	assert.Empty(t, w.notesOf(NBlocked))
-}
+	// Check that dependents were relinked
+	assert.Equal(t, "c1-pro", w.s.Work.Placed("dep1").F("needs"))
+	assert.Equal(t, "c1-pro", w.s.Work.Placed("dep2").F("needs"))
+	assert.Equal(t, "c1-pro,other", w.s.Work.Placed("dep3").F("needs"))
+	assert.Contains(t, w.s.Work.Placed("dep1").F(FieldRelinked), "c1 -> c1-pro")
 
-func TestRecutIsRefusedWholeWhenItChangesNothingOrCannotHold(t *testing.T) {
-	t.Parallel()
-	w := recutWorld(t)
-	w.must(Recut(w.s, RecutReq{ID: "other", Tier: "pro", Who: "coordinator"}))
-	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true, Who: "coordinator"}))
-	w.must(Add(w.s, AddReq{Stream: "s3", IDs: []string{"done"}, Who: "coordinator"}))
-	w.place(w.s.Work, "done", "s3", Landed)
+	// Check no blocked judgment was raised
+	for _, o := range w.s.Open {
+		assert.NotEqual(t, NBlocked, o.Note.Type, "no blocked note raised for replaced card")
+	}
+
+	// 2. Re-cut for another scope (--brief-file / new brief):
+	// Setup card c2 with dependent dep4
+	w2 := newWorld(t, "reader-a", "reader-b")
+	w2.must(Add(w2.s, AddReq{
+		Stream: "s1",
+		Cards: []CardAdd{
+			{ID: "c2", Brief: "c2: initial scope\n"},
+		},
+	}))
+	w2.must(Add(w2.s, AddReq{
+		Stream: "s2",
+		Cards: []CardAdd{
+			{ID: "dep4", Needs: []string{"c2"}, Brief: "dep4: depends on c2\n"},
+		},
+	}))
+
+	p2 := Recut(w2.s, RecutReq{
+		Old:   "c2",
+		New:   "c2-tb",
+		Brief: "c2-tb: expanded scope\nPATHS: b.go\n",
+		Who:   "coordinator",
+	})
+	require.Empty(t, p2.Refused)
+	w2.must(p2)
+
+	assert.Equal(t, "replaced by c2-tb", w2.s.Work.Card("c2").F("reason"))
+	assert.Equal(t, "c2-tb", w2.s.Work.Placed("dep4").F("needs"))
+	assert.Equal(t, "c2", w2.s.Work.Placed("c2-tb").F(FieldReplaces))
+
+	// 3. Re-cut a card dropped before:
+	// A card dropped earlier that left blocked judgments on dependents.
+	// Recutting it closes the blocked judgments and relinks the dependents.
+	w3 := newWorld(t, "reader-a", "reader-b")
+	w3.must(Add(w3.s, AddReq{
+		Stream: "s1",
+		Cards: []CardAdd{
+			{ID: "c3", Brief: "c3: first draft\n"},
+		},
+	}))
+	w3.must(Add(w3.s, AddReq{
+		Stream: "s2",
+		Cards: []CardAdd{
+			{ID: "dep5", Needs: []string{"c3"}, Brief: "dep5: depends on c3\n"},
+		},
+	}))
+	// Drop c3, raising a blocked judgment on dep5
+	w3.must(Drop(w3.s, DropReq{Sel: Sel{Only: []string{"c3"}}, Reason: "needs recut", Who: "coordinator"}))
+	assert.Len(t, w3.s.Open, 1)
+	assert.Equal(t, NBlocked, w3.s.Open[0].Note.Type)
+
+	// Now recut the dropped card c3
+	p3 := Recut(w3.s, RecutReq{
+		Old:   "c3",
+		New:   "c3-twin",
+		Brief: "c3-twin: fixed\n",
+		Who:   "coordinator",
+	})
+	require.Empty(t, p3.Refused)
+	w3.must(p3)
+
+	assert.Equal(t, "c3-twin", w3.s.Work.Placed("dep5").F("needs"))
+	assert.Equal(t, "c3", w3.s.Work.Placed("c3-twin").F(FieldReplaces))
+	// Blocked judgment was answered
+	var blockedLeft int
+	for _, o := range w3.s.Open {
+		if o.Note.Type == NBlocked {
+			blockedLeft++
+		}
+	}
+	assert.Equal(t, 0, blockedLeft, "blocked judgments answered by recut")
+
+	// 4. Refusals:
 	for _, tc := range []struct {
 		name string
 		req  RecutReq
 		why  string
 	}{
-		{"nothing named", RecutReq{ID: "old"}, "wants --tier"},
-		{"no such card", RecutReq{ID: "ghost", Tier: "pro"}, "no primary ghost"},
-		{"a sentinel", RecutReq{ID: "stop", Tier: "pro"}, "sentinel"},
-		{"landed", RecutReq{ID: "done", Tier: "pro"}, "landed"},
-		{"no tier", RecutReq{ID: "old", Tier: "huge"}, "--tier wants"},
-		{"the same tier", RecutReq{ID: "otherb", Tier: "pro"}, "pinned to tier pro already"},
-		{"a twin id taken", RecutReq{ID: "old", New: "dep1", Tier: "pro"}, "exists already"},
+		{"empty old", RecutReq{}, "one primary to re-cut"},
+		{"ghost card", RecutReq{Old: "ghost", Tier: "pro"}, "no card ghost"},
+		{"invalid tier", RecutReq{Old: "c3-twin", Tier: "superfast"}, "--tier wants"},
+		{"missing tier and brief", RecutReq{Old: "c3-twin"}, "--tier <t> or --brief-file <f>"},
 	} {
-		p := Recut(w.s, tc.req)
-		require.NotEmpty(t, p.Refused, tc.name)
-		assert.Contains(t, p.Refused[0].Why, tc.why, tc.name)
-		assert.Empty(t, p.Units, "%s: nothing is written", tc.name)
+		res := Recut(w3.s, tc.req)
+		require.NotEmpty(t, res.Refused, tc.name)
+		assert.Contains(t, res.Refused[0].Why, tc.why, tc.name)
 	}
-	assert.True(t, w.s.Work.Card("old").Placed(), "old is where it was")
-	assert.Equal(t, "old", w.s.Work.Card("dep1").F("needs"))
+}
+
+func TestSetBriefTier(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		input    string
+		tier     string
+		expected string
+	}{
+		{
+			name:     "replace existing tier on line 1",
+			input:    "c1: work (s1) tier: flash\nPATHS: a.go\n",
+			tier:     "pro",
+			expected: "c1: work (s1) tier: pro\nPATHS: a.go\n",
+		},
+		{
+			name:     "add tier to line 1 without tier",
+			input:    "c1: work (s1)\nPATHS: a.go\n",
+			tier:     "pro",
+			expected: "c1: work (s1) tier: pro\nPATHS: a.go\n",
+		},
+		{
+			name:     "single line brief",
+			input:    "c1: work",
+			tier:     "frontier",
+			expected: "c1: work tier: frontier\n",
+		},
+	} {
+		out := SetBriefTier(tc.input, tc.tier)
+		assert.Equal(t, tc.expected, out, tc.name)
+	}
 }

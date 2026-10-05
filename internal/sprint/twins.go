@@ -320,7 +320,7 @@ func Replace(s *Snapshot, r AddReq) Plan {
 		for _, d := range deps {
 			after.Work.Put(withField(d, "needs", strings.Join(relinkedNeeds(Split(d.F("needs")), dependentOlds(d, r.Replaces), nw), ",")))
 		}
-		dp = Drop(&after, DropReq{Sel: Sel{Only: open}, Reason: "replaced by " + nw, Who: r.Who})
+		dp = Drop(&after, DropReq{Sel: Sel{Only: open}, Reason: "replaced by " + nw, Answers: r.Answers, Who: r.Who})
 		if len(dp.Refused) > 0 {
 			return Plan{Refused: dp.Refused}
 		}
@@ -340,11 +340,11 @@ func Replace(s *Snapshot, r AddReq) Plan {
 				for k, v := range ch.Entry.Set {
 					set[k] = v
 				}
-				set[FieldReplaces] = strings.Join(r.Replaces, ",")
 				delete(set, FieldBehind)
 				if twin > 0 {
 					set[FieldBehind] = itoa(twin)
 				}
+				set[FieldReplaces] = strings.Join(r.Replaces, ",")
 				u.Changes[i].Entry.Set = set
 				u.Moved += "; replaces " + strings.Join(r.Replaces, ",")
 			}
@@ -363,6 +363,9 @@ func Replace(s *Snapshot, r AddReq) Plan {
 	}
 	p := Plan{Rows: append(ap.Rows, dp.Rows...), Units: all, Notes: append(ap.Notes, dp.Notes...), Closes: append(ap.Closes, dp.Closes...),
 		Props: append(ap.Props, dp.Props...), inserting: ap.inserting}
+	if len(open) == 0 && len(r.Answers) > 0 {
+		answered(&p, s, r.Answers, r.Who)
+	}
 	p.on(s)
 	return p
 }

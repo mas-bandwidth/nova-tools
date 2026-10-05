@@ -300,26 +300,24 @@ func RelinkStep(r sprint.RelinkReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Relink(s, r) }}
 }
 
-// RecutStep re-cuts a card as its twin (sprint.Recut, add --replaces with the tier or the
-// brief changed): it reads every table, as the replace does, and the records of the old
-// card's needs, the brief's and every id the twin may take, placed or not.
+// RecutStep re-cuts an existing card for another tier or scope while keeping id lineage
+// via --replaces (sprint.Recut): it reads every table as the drop of the old card does,
+// and the old card's record.
 func RecutStep(r sprint.RecutReq) Step {
 	return Step{Named: true, Args: ArgsOf(r), Verb: "recut", Load: All, Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
-			ids := append([]string{r.ID}, r.Needs...)
-			if r.New != "" {
-				ids = append(ids, r.New)
-			}
-			c := s.Work.Placed(r.ID)
-			if c != nil && r.New == "" {
-				ids = append(ids, sprint.TwinIDs(c)...)
-			}
-			out := map[string][]string{sprint.Work: ids}
+			c := s.Work.Card(r.Old)
+			var ctls []string
 			if c != nil {
-				out[sprint.Work] = append(out[sprint.Work], sprint.Split(c.F("needs"))...)
-				out[sprint.Merge] = []string{sprint.CtlID(c.Row)}
+				st := c.Row
+				if st == "" {
+					st = c.F("stream")
+				}
+				if st != "" {
+					ctls = []string{sprint.CtlID(st)}
+				}
 			}
-			return out
+			return map[string][]string{sprint.Work: {r.Old}, sprint.Merge: ctls}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Recut(s, r) }}
 }

@@ -2,120 +2,156 @@ package sprint
 
 import (
 	"cmp"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
-// RecutReq re-cuts a card as its twin (nova-sprint recut): the same card for another tier
-// or another scope, under a new id.
+// tierRE matches the tier on line 1 of a brief.
+// (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin")
+var tierRE = regexp.MustCompile(`\btier:\s*([A-Za-z0-9_-]+)`)
+
+// SetBriefTier replaces or adds the tier on line 1 of a card's brief.
+// (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin")
+func SetBriefTier(brief, tier string) string {
+	first, rest, hasRest := strings.Cut(brief, "\n")
+	if tierRE.MatchString(first) {
+		first = tierRE.ReplaceAllString(first, "tier: "+tier)
+	} else {
+		first = strings.TrimRight(first, " ") + " tier: " + tier
+	}
+	if hasRest {
+		return first + "\n" + rest
+	}
+	return first + "\n"
+}
+
+// recutTierID derives a twin ID from an old ID and a new tier.
+// (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin")
+func recutTierID(old, tier string) string {
+	for _, rt := range cardhdr.Routes {
+		if strings.HasSuffix(old, "-"+rt) {
+			return strings.TrimSuffix(old, "-"+rt) + "-" + tier
+		}
+		if strings.HasSuffix(old, "."+rt) {
+			return strings.TrimSuffix(old, "."+rt) + "." + tier
+		}
+	}
+	return old + "-" + tier
+}
+
+// RecutReq re-cuts an existing card for another tier or scope keeping id lineage
+// via --replaces (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin"; item 21).
 type RecutReq struct {
-	ID    string // the card re-cut
-	New   string // the twin's id; "" names it by TwinID
-	Tier  string // the tier the twin is pinned to (FieldTier); "" keeps the old card's pin
-	Brief string // the twin's brief; "" keeps the old card's brief and its rules
-	Rules string // with Brief: the held rules file the brief is held to (FieldRules)
-	// Needs, with Brief: the needs the new brief names on its DEPENDS-ON: line (briefNeeds),
-	// taken with the old card's.
-	Needs []string `json:",omitempty"`
-	Who   string
+	Old       string   // old card ID
+	New       string   // optional twin ID
+	Tier      string   // optional new tier
+	Brief     string   // optional brief text
+	BriefFile string   // optional brief file path
+	Rules     string   // optional held rules file
+	Needs     []string // optional explicit needs override
+	Who       string   // actor
+	Answers   []string // optional note IDs
 }
 
-// TwinIDs is the ids TwinID chooses among for c's twin, in order: the old id with a letter
-// after it, b to z, or, for a twin that replaced one card under the old id and one letter
-// ("lint-pkg-cairn-tb" for "lint-pkg-cairn-t"), that id with the letters after the twin's.
-func TwinIDs(c *Card) []string {
-	base, from := c.ID, byte('b')
-	if prev := Split(c.F(FieldReplaces)); len(prev) == 1 && len(c.ID) == len(prev[0])+1 && strings.HasPrefix(c.ID, prev[0]) {
-		if l := c.ID[len(c.ID)-1]; l >= 'b' && l < 'z' {
-			base, from = prev[0], l+1
-		}
-	}
-	var out []string
-	for l := from; l <= 'z'; l++ {
-		out = append(out, base+string(rune(l)))
-	}
-	return out
-}
-
-// TwinID is the first of TwinIDs that no card on the table or off it has, "" when every
-// one is taken.
-func TwinID(s *Snapshot, c *Card) string {
-	for _, id := range TwinIDs(c) {
-		if s.Work.Card(id) == nil {
-			return id
-		}
-	}
-	return ""
-}
-
-// Recut is a card re-cut for another tier or another scope (docs/SPEC-SPRINT.md section 2,
-// "A card replaced by its twin"; tla/SprintRules.tla, Replace): add --replaces of the old
-// card (Replace), the twin in the old card's stream in front of it, with its needs (those
-// it waived left out) and the new brief's, held as it was, its brief and rules unless a
-// brief is named, its pinned tier unless a tier is named, and its attempts from the first.
-// Every waiting card that needed the old id needs the twin, the old card is dropped
-// "replaced by <new>", no blocked judgment is raised, and the twin records the id it
-// replaces (FieldReplaces), in one step. Refused whole, writing nothing, for no tier and no
-// brief, a tier that is no class or the one the card is pinned to with no brief, a card
-// not on the table, a sentinel or landed, a brief that pins a model with a tier, and any
-// refusal of the replace.
+// Recut re-cuts a card for another tier or scope keeping id lineage via --replaces,
+// instead of drop plus add (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin"; item 21):
+// it makes the twin, relinks dependants, drops the old with the lineage recorded, on the twin store.
 func Recut(s *Snapshot, r RecutReq) Plan {
 	var p Plan
-	refuse := func(why string) Plan {
-		p.refuse(r.ID, why+"; nothing was changed")
-		return p
+	p.on(s)
+	refuseAll := func(why string) Plan {
+		var q Plan
+		q.on(s)
+		q.refuse(cmp.Or(r.Old, "recut"), why)
+		return q
 	}
-	c := s.Work.Placed(r.ID)
-	switch {
-	case r.Tier == "" && r.Brief == "":
-		return refuse("recut wants --tier <" + cardhdr.RouteList + "> or --brief-file <path>: what the twin changes")
-	case c == nil:
-		return refuse("no primary " + r.ID + " on the work table")
-	case IsSentinel(c):
-		return refuse(r.ID + " is a sentinel, not a primary")
-	case c.Col == Landed:
-		return refuse(r.ID + " is landed: the change is a new card")
-	case r.Tier != "" && !cardhdr.IsRoute(r.Tier):
-		return refuse("--tier wants " + cardhdr.RouteList + ", found " + r.Tier)
-	case r.Brief == "" && c.F(FieldTier) == r.Tier:
-		return refuse(r.ID + " is pinned to tier " + r.Tier + " already, and no brief is named")
+	if r.Old == "" {
+		return refuseAll("recut wants one primary to re-cut")
 	}
-	brief, rules := c.F("brief"), c.F(FieldRules)
-	if r.Brief != "" {
-		brief, rules = r.Brief, r.Rules
+	c := s.Work.Card(r.Old)
+	if c == nil {
+		return refuseAll("no card " + r.Old + " on the table or off it")
 	}
-	tier := cmp.Or(r.Tier, c.F(FieldTier))
-	if m, _ := cardhdr.ReadModel(brief); m.Pin != "" && r.Tier != "" {
-		return refuse("the brief pins model " + m.Pin + ", which it runs on whatever its tier")
+	if IsSentinel(c) {
+		return refuseAll(r.Old + " is a sentinel, which cannot be re-cut")
 	}
+	if c.Placed() && c.Col == Landed {
+		return refuseAll(r.Old + " landed: landed is final")
+	}
+	if r.Tier != "" && !cardhdr.IsRoute(r.Tier) {
+		return refuseAll("--tier wants " + cardhdr.RouteList + ", found " + r.Tier)
+	}
+	if r.Tier == "" && r.BriefFile == "" && r.Brief == "" {
+		return refuseAll("recut wants --tier <t> or --brief-file <f>")
+	}
+
+	briefText := r.Brief
+	if briefText == "" {
+		briefText = c.F("brief")
+	}
+	if r.Tier != "" {
+		briefText = SetBriefTier(briefText, r.Tier)
+	}
+
 	nw := r.New
+	if nw == "" && r.BriefFile != "" {
+		base := strings.TrimSuffix(filepath.Base(r.BriefFile), ".md")
+		if base != r.Old {
+			nw = base
+		}
+	}
 	if nw == "" {
-		if nw = TwinID(s, c); nw == "" {
-			ids := TwinIDs(c)
-			return refuse("every twin id of " + r.ID + " is taken, " + ids[0] + " to " + ids[len(ids)-1] + "; name one: --new <id>")
+		if r.Tier != "" {
+			nw = recutTierID(r.Old, r.Tier)
+		} else {
+			nw = r.Old + "-recut"
 		}
 	}
-	waived := Split(c.F("waived"))
-	var needs []string
-	for _, n := range append(Split(c.F("needs")), r.Needs...) {
-		if !contains(waived, n) && !contains(needs, n) {
-			needs = append(needs, n)
-		}
+	if nw == r.Old {
+		return refuseAll(r.Old + " replaces itself")
 	}
-	p = Add(s, AddReq{Stream: c.Row, IDs: []string{nw}, Needs: needs, Brief: brief, Rules: rules, Before: c.ID, Held: IsHeld(c),
-		Replaces: []string{c.ID}, Who: r.Who})
-	if len(p.Refused) > 0 || tier == "" {
-		return p
+
+	needs := r.Needs
+	if len(needs) == 0 {
+		needs = without(Split(c.F("needs")), Split(c.F("waived")))
 	}
-	for i := range p.Units {
-		u := &p.Units[i]
-		for j, ch := range u.Changes {
-			if ch.Table == Work && ch.Entry.ID == nw && ch.Entry.Create != nil {
-				u.Changes[j].Entry.Set[FieldTier] = tier
-				u.Moved += "; tier " + tier
-			}
-		}
+
+	stream := c.Row
+	if stream == "" {
+		stream = c.F("stream")
 	}
-	return p
+	if stream == "" {
+		stream = "s1"
+	}
+
+	rules := r.Rules
+	if rules == "" {
+		rules = c.F(FieldRules)
+	}
+
+	who := r.Who
+	if who == "" {
+		who = c.F(FieldWho)
+	}
+
+	var before string
+	if c.Placed() {
+		before = c.ID
+	}
+
+	addReq := AddReq{
+		Stream:   stream,
+		IDs:      []string{nw},
+		Brief:    briefText,
+		Needs:    needs,
+		Rules:    rules,
+		Who:      who,
+		Before:   before,
+		Replaces: []string{c.ID},
+		Answers:  r.Answers,
+	}
+	return Replace(s, addReq)
 }

@@ -73,6 +73,7 @@ type AddReq struct {
 	// table is dropped "replaced by <the new id>", in the same step, raising no blocked
 	// judgment.
 	Replaces []string `json:",omitempty"`
+	Answers  []string `json:",omitempty"`
 	Only     []string
 	Who      string
 }
