@@ -263,8 +263,13 @@ type lander struct {
 	// rules turned off (nil: the app's clock, nova-config's sprint row).
 	baseGateFails map[string]*baseGateFail
 	baseStop      bool
-	now           func() time.Time
-	rulesOff      []string
+	// baseCount says the last build ran the base's gate under the rule and it was red, baseWhy
+	// its finding: the refusal is counted in the store (baseRefused), never only in this
+	// process, which a hand land starts empty every run and the server every start
+	baseCount bool
+	baseWhy   string
+	now       func() time.Time
+	rulesOff  []string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -551,10 +556,10 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
-	if why != "" && l.baseStop {
-		// the base-gate rule's third failure: the stream stops with the error, the
-		// coordinator's judgment (treeGateBase)
-		return l.fact(b, sprint.MergeReq{Stream: stream, BaseRed: why}, nil, "base", why)
+	if why != "" && l.baseCount {
+		// the base-gate rule: the refusal counted per stream and base in the store, its third
+		// (or this process's third failure) stopping the stream with the coordinator's judgment
+		return l.baseRefused(b, stream, why)
 	}
 	if why != "" {
 		return refuse(why)
@@ -727,6 +732,26 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 	if code := stepExit(res, err); code != 0 {
 		b.Fact = ""
 		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(r.Stream)
+	}
+	l.out = append(l.out, b)
+	return false, true
+}
+
+// baseRefused counts a refusal on the base's gate through the merge step
+// (sprint.MergeReq.BaseRefused) and refuses the batch with it: the fact is base when the
+// count stopped the stream.
+func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
+	r := sprint.MergeReq{Stream: stream, Base: b.Base, BaseRefused: l.baseWhy, Who: l.c.actor}
+	if l.baseStop {
+		r.BaseRed = l.baseWhy
+	}
+	b.Status, b.Reason = "refused", why
+	res, err := l.step(r, nil)
+	switch {
+	case stepExit(res, err) != 0:
+		b.Reason = why + "; the merge step did not count it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+	case slices.ContainsFunc(res.Moved, func(m string) bool { return strings.Contains(m, " stopped: ") }):
+		b.Fact = "base"
 	}
 	l.out = append(l.out, b)
 	return false, true
@@ -947,9 +972,16 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if err != nil {
 		return nil, failed, "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
 	}
-	l.baseStop = false
+	l.baseStop, l.baseCount, l.baseWhy = false, false, ""
+	was := 0
+	if f := l.baseGateFails[baseSha]; f != nil {
+		was = f.n
+	}
 	if why, stop := l.treeGateBase(ctx, dir, baseSha); why != "" {
-		l.baseStop = stop
+		// counted when the gate ran red here (or this process's record stops the stream); a
+		// refusal inside a retry's wait, or with the rule off, is not
+		f := l.baseGateFails[baseSha]
+		l.baseStop, l.baseCount, l.baseWhy = stop, stop || f != nil && f.n != was, why
 		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
 	}
 	for i := range cards {
