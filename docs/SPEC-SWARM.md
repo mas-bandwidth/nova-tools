@@ -745,6 +745,14 @@ other checks).
 | `step-merge` | no line merges a pull request: the child opens it against the base the card names and stops; the coordinator lands it |
 | `step-go-test-timeout` | every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline (runs with a rule named `go-test-timeout`) |
 
+### honest-attribution: briefs must not tell workers to hide or misstate their model
+
+A card or brief must never tell a worker to deny, hide, omit, or misstate its model or harness.
+The check refuses phrases like "never claim Claude", "do not mention the model", "hide the model",
+"omit the model", "misstate", "deny the model", or "sign as another model". A brief that says to
+"name the actual model and never claim one you are not" passes. This check is on by default and
+part of the card lint that holds briefs to the rules.
+
 ### lint-allows-quoted-patterns-in-tests: the PATTERNS TO REFUSE paragraph
 
 A class test that refuses a dangerous command must name it, and the step scans refuse a card

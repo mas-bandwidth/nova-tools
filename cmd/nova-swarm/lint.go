@@ -84,7 +84,7 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 //
 // And the three rules of a tree card (internal/cardtree): steps-nested, tree-step and
 // script-step, which fire only on a card with a dotted step or a work step.
-var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
+var cardLintChecks = 26 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
 
 // Every drift names its remedy, and the binary can print the whole table.
 //
@@ -111,20 +111,21 @@ var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
 var cardLintRemedies = map[string]string{
 	// A remedy says what the rule wants and cites nothing a binary's user does not have (no
 	// spec section, practice number or issue; tool ledger W5): the rule's token is its name.
-	"result-first":     "line 1 IS the contract: " + swarm.CardContractWanted + ". A title, a heading or a `#` comment on line 1 is this drift, however right the words are",
-	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule",
-	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift; a dotted child step (`STEP 3.1.`) is numbered under its parent instead (steps-nested)",
-	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words",
-	"test-command":     "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>`, `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests",
-	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes`",
-	"files-named":      "name the file or the package the work lives in, so the change has a home to start from",
-	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one",
-	"no-parent-path":   swarm.CardParentPathWanted,
-	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` command line (the name in a sentence, a path or a possessive is not an invocation)",
-	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card",
-	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
-	"depends-on":       swarm.CardDependsRemedy,
-	"placeholder":      "fill it in before the card is handed out: the line is the card template's own, its <...> not filled in; replace each <...> with the card's value (the label, the sha, the repository, the base, the minutes, the task, the worktree, the package)",
+	"result-first":       "line 1 IS the contract: " + swarm.CardContractWanted + ". A title, a heading or a `#` comment on line 1 is this drift, however right the words are",
+	"clone-step":         "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule",
+	"steps-numbered":     "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift; a dotted child step (`STEP 3.1.`) is numbered under its parent instead (steps-nested)",
+	"red-test":           "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words",
+	"test-command":       "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>`, `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests",
+	"deadline":           "give the card its own bound: a `deadline` line, or `finish within <n> minutes`",
+	"files-named":        "name the file or the package the work lives in, so the change has a home to start from",
+	"scratch-absolute":   "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one",
+	"no-parent-path":     swarm.CardParentPathWanted,
+	"no-sandbox":         "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` command line (the name in a sentence, a path or a possessive is not an invocation)",
+	"result-last":        "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card",
+	"size":               "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
+	"depends-on":         swarm.CardDependsRemedy,
+	"placeholder":        "fill it in before the card is handed out: the line is the card template's own, its <...> not filled in; replace each <...> with the card's value (the label, the sha, the repository, the base, the minutes, the task, the worktree, the package)",
+	"honest-attribution": swarm.HidingRemedy,
 	// The brief grammar's two reading lines carry their remedies from internal/swarm,
 	// beside the tokens themselves; they are not in CardHeaderRemedies because that map
 	// is the four tokens of §5 rule 1 that CardHeaderChecks publishes.
@@ -384,6 +385,11 @@ func lintCard(raw []byte) []cardFinding {
 	// none of these findings.
 	for _, f := range cardtree.Lint(text) {
 		add(f.Check, f.Line, f.Excerpt)
+	}
+
+	// 14. honest attribution: a brief must not tell a worker to hide or misstate its model.
+	for _, hf := range swarm.LintBriefHiding(raw) {
+		add("honest-attribution", hf.Line, hf.Excerpt)
 	}
 
 	return out
