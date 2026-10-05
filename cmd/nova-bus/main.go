@@ -177,7 +177,7 @@ ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config frie
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
-		Words:     []string{"NONE", "WAKE", "ARMED"},
+		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "wait",
