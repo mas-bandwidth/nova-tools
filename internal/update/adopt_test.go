@@ -13,7 +13,9 @@ import (
 // #525: watch --adopt runs the coordinator's own adoption pass after every
 // rebuild and escalates refusals.
 func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
-	log := fakeBusPath(t)
+	t.Parallel()
+	rig := fakeBusPath(t)
+	log := rig.log
 	checks := filepath.Join(t.TempDir(), "checks.tsv")
 	rows := []string{
 		"check\tcommand\towner",
@@ -26,7 +28,7 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	if err := os.WriteFile(checks, []byte(strings.Join(rows, "\n")+"\n"), 0600); err != nil {
 		require.NoError(t, err, err)
 	}
-	c, out, errs := run(t, Environment{}, "watch", "--adopt", checks,
+	c, out, errs := run(t, rig.with(Environment{}), "watch", "--adopt", checks,
 		"--as", "coordinator", "--to", "duty")
 	combined := out + "\n" + errs
 	if c != 1 {

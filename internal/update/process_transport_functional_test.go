@@ -14,6 +14,8 @@ import (
 )
 
 func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
+	t.Parallel()
+
 	// Each case carries its own timeout because they measure two different
 	// things. The hang needs a timeout SHORT enough to fire; the others need one
 	// long enough that starting a race-instrumented child on a loaded box is not
@@ -45,13 +47,15 @@ func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
 		require.EqualValues(t, "1.2.3", r.Version, r)
 	}
 	a, _ = argv(command(t, "args", ";", "&&", "|", "$(x)", "`x`", "*"))
-	p := process(context.Background(), a, nil, ChildCap)
+	p := process(context.Background(), nil, a, nil, ChildCap)
 	if p.Stdout != ";|&&|||$(x)|`x`|*" {
 		require.EqualValuesf(t, ";|&&|||$(x)|`x`|*", p.Stdout, "shell interpretation: %+v", p)
 	}
 }
 
 func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
+	t.Parallel()
+
 	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "100ms"))}
 	r := Installed(context.Background(), e, 5*time.Second, false)
 	if !r.Known() || r.Version != "1.2.3" {

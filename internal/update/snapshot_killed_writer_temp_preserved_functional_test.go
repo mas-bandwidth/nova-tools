@@ -18,6 +18,7 @@ import (
 // snapshot's writer (a leftover is preferable to deleting another writer's
 // work), and the killed write retries cleanly on top of the leftover.
 func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGKILL on a process group stages the death; the owed Windows validation is named in the pull request")
 	}
@@ -25,7 +26,6 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	dir := t.TempDir()
 	snapA := filepath.Join(dir, "a.json")
 	snapB := filepath.Join(dir, "b.json")
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	runReport := func(m, snap string) {
 		t.Helper()
 		if out, err := exec.Command(bin, "report", "--file", m, "--snapshot", snap).CombinedOutput(); err != nil {
