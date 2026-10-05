@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,11 +31,9 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 	}
 	var from time.Time
 	if *since != "" {
-		if d, err := time.ParseDuration(*since); err == nil {
-			from = a.now().Add(-d)
-		} else if t, err := time.Parse(time.RFC3339, *since); err == nil {
-			from = t
-		} else {
+		var err error
+		from, err = parseSince(*since, a.now(), a.zone())
+		if err != nil {
 			return refuse(stderr, "log", "--since wants a duration back from now (10m) or an RFC 3339 time, found "+*since)
 		}
 	}
@@ -117,8 +116,44 @@ func (a *app) zone() *time.Location {
 	return time.Local
 }
 
+func parseSinceDuration(s string) (time.Duration, error) {
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+	if strings.HasSuffix(s, "d") {
+		v := strings.TrimSuffix(s, "d")
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n >= 0 {
+			return time.Duration(n * float64(24*time.Hour)), nil
+		}
+	}
+	return 0, fmt.Errorf("unknown duration %q", s)
+}
+
+func parseSince(s string, now time.Time, loc *time.Location) (time.Time, error) {
+	if d, err := parseSinceDuration(s); err == nil {
+		return now.Add(-d), nil
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04Z07:00",
+		time.DateOnly,
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+	} {
+		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid since %q", s)
+}
+
 func keepLine(l sprint.Line, card, stream, member string, from time.Time) bool {
-	if !from.IsZero() && l.At.Before(from) {
+	if !from.IsZero() && l.At.UTC().Before(from.UTC()) {
 		return false
 	}
 	if card != "" && !l.About(card) {

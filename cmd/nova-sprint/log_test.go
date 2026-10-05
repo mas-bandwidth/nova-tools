@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,4 +168,95 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	block := tableOf(out, "merge")
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)
+}
+
+// log --json --since with a window wider than 22 hours returns every entry since
+// that time, in a test over the twin store with an injected clock, no real time.
+func TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.ok("init --readers reader-a --members m1")
+
+	// Add an early card at T0
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "early card"))
+	ta.deal(1)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1 --head h1 --report 'done'")
+
+	// Advance injected clock forward 25 hours (window wider than 22 hours)
+	ta.mu.Lock()
+	t0 := ta.now.Add(-25 * time.Hour) // time when s1-1 was created
+	ta.now = ta.now.Add(25 * time.Hour)
+	ta.mu.Unlock()
+
+	// Add a later card at T0 + 25h
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "later card"))
+	ta.deal(1)
+	ta.ok("take --as m1 s1-2.w1@1")
+	ta.ok("finish --as m1 s1-2.w1@1 --head h2 --report 'done'")
+
+	// Test 1: Query with day duration (e.g. 1d = 24h ago).
+	// Should return s1-2 (added at T0+25h), but not s1-1 (added at T0, which is 25h ago).
+	var j1 struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log --json --since 1d", &j1)
+	require.NotEmpty(t, j1.Lines, "log --json --since 1d should return entries")
+	cards1 := make(map[string]bool)
+	for _, l := range j1.Lines {
+		if l.Card != "" {
+			cards1[l.Card] = true
+		}
+	}
+	assert.True(t, cards1["s1-2"], "s1-2 should be in log --json --since 1d")
+	assert.False(t, cards1["s1-1"], "s1-1 should not be in log --json --since 1d")
+
+	// Test 2: Query with duration wider than 25h (e.g. 26h).
+	// Should return both s1-1 and s1-2.
+	var j2 struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log --json --since 26h", &j2)
+	require.NotEmpty(t, j2.Lines, "log --json --since 26h should return entries")
+	cards2 := make(map[string]bool)
+	for _, l := range j2.Lines {
+		if l.Card != "" {
+			cards2[l.Card] = true
+		}
+	}
+	assert.True(t, cards2["s1-1"], "s1-1 should be in log --json --since 26h")
+	assert.True(t, cards2["s1-2"], "s1-2 should be in log --json --since 26h")
+
+	// Test 3: Query with date-only format (25h ago date: e.g. 2026-10-02).
+	// Window is wider than 22h, should return every entry from that date onwards.
+	var j3 struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	sinceDate := t0.Format(time.DateOnly)
+	ta.json("log --json --since "+sinceDate, &j3)
+	require.NotEmpty(t, j3.Lines, "log --json --since <DateOnly> should return entries")
+	cards3 := make(map[string]bool)
+	for _, l := range j3.Lines {
+		if l.Card != "" {
+			cards3[l.Card] = true
+		}
+	}
+	assert.True(t, cards3["s1-1"], "s1-1 should be in log --json --since "+sinceDate)
+	assert.True(t, cards3["s1-2"], "s1-2 should be in log --json --since "+sinceDate)
+
+	// Test 4: Query with RFC3339 time wider than 22h (e.g. at T0).
+	var j4 struct {
+		Lines []sprint.Line `json:"lines"`
+	}
+	ta.json("log --json --since "+t0.Format(time.RFC3339), &j4)
+	require.NotEmpty(t, j4.Lines, "log --json --since <RFC3339> should return entries")
+	cards4 := make(map[string]bool)
+	for _, l := range j4.Lines {
+		if l.Card != "" {
+			cards4[l.Card] = true
+		}
+	}
+	assert.True(t, cards4["s1-1"], "s1-1 should be in log --json --since <RFC3339>")
+	assert.True(t, cards4["s1-2"], "s1-2 should be in log --json --since <RFC3339>")
 }
