@@ -102,6 +102,7 @@ never an `ADD` or a `REMOVE`.
 | `int` | a non-negative integer | `integer` |
 | `enum` | one word of the field's list | `text` |
 | `list` | a comma list of words from the field's list, deduplicated and sorted | `text` |
+| `mask` | a comma list of words from the field's list, deduplicated and sorted, or the single word `all` (every word); an empty mask is refused | `text` |
 | `names` | a comma list of names (letters, digits, dashes), deduplicated and sorted | `text` |
 | `ref` | the name of a row of another kind; an optional one may be empty | `text` with a foreign key, `NULL` for empty |
 | `bool` | `true` or `false` (any spelling `strconv.ParseBool` reads, stored in that one) | `boolean` |
@@ -299,6 +300,7 @@ class, never a model name". Every value is data in the row: the code names no pr
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal, and needs a `note` | `route:<r>` |
 | `first` | bool | (false) | the deal: true draws this route before the others of its tier; false leaves the walk as it is | `route:<r>` |
+| `applies` | mask: `fleet`, `friends`, `local`, or `all` | (all) | the deal: where the route is applied, a mask over the executor classes (friends: a friend's row `friend.<name>` and a friend's reader `reader-<friend>`; fleet: a fleet machine and its reader `reader-<m>`; local: the coordinator's own machine in a `nova-up --local` single-machine sprint); a comma list of those words, or `all` (the default, every class). A work card is drawn only from the routes of its tier whose mask holds the executor it is dealt to, and a read is placed only on a reader whose class its route's mask holds; a card the mask leaves no route for waits, never falling back to a route outside it. An unknown word or an empty mask is refused | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
 | `price_cache_read` | decimal | (empty) | a card's cost: USD per million cached input tokens read | `route:<r>` |
 | `price_cache_write` | decimal | (empty) | a card's cost: USD per million tokens written to the cache | `route:<r>` |
@@ -456,7 +458,9 @@ config.routes            (name PK, tier flash|pro, provider, model, tokens,
                           text with a CHECK on their shape,
                           reasoning_as_output boolean, long_context,
                           billing metered|plan, price_source, price_as_of;
-                          note added by 0015, text NOT NULL DEFAULT '')
+                          note added by 0015, text NOT NULL DEFAULT '';
+                          first added by 0032, boolean NOT NULL DEFAULT false;
+                          applies added by 0034, text NOT NULL DEFAULT 'all')
 config.tiers             (name PK flash|pro, routes, created_at, updated_at;
                           CHECK routes a comma list of names; the two rows
                           inserted by the migration)
