@@ -62,7 +62,12 @@ func timerAt(text string, now time.Time) (time.Time, error) {
 			if l == "15:04:05" || l == "15:04" {
 				y, m, d = now.Year(), now.Month(), now.Day()
 			}
-			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), 0, now.Location()), nil
+			due := time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), 0, now.Location())
+			if (l == "15:04:05" || l == "15:04") && !due.After(now) {
+				return time.Time{}, fmt.Errorf("the --at time %s today is not after now (%s); give a time in the future or use --in <duration>",
+					oneline.Escape(text), now.Format(time.RFC3339))
+			}
+			return due, nil
 		}
 	}
 	return time.Time{}, fmt.Errorf("the --at time %s is none of RFC3339 (2006-01-02T15:04:05Z07:00), a local date and time (2006-01-02 15:04:05), a local date (2006-01-02) or a local time of day today (15:04)", oneline.Escape(text))

@@ -3520,8 +3520,9 @@ counted, so a timer set before a stop is raised that much later, and a stopped
 machine raises nothing. The test is the tree's one clock comparison,
 `sprint.DueNow(now, due, set, stopped)`: the running time from `set` to `now`
 against the due time's own distance from `set`. The timer's tick
-(`sprint.DueTimers`) and the judgment review time `wait --until` sets
-(`sprint.TickOverdue`, `Note.Review` based at `Note.ReviewSet`) both call it,
+(`sprint.DueTimers`), the judgment review time `wait --until` sets
+(`sprint.TickOverdue`, `Note.Review` based at `Note.ReviewSet`), the inbox
+(`InboxReq.due`) and the unheld checks (`held.overdueUnmarked`) all call it,
 and a later external `wait` operand (`after <time>`) calls the same function:
 there is no second clock comparison in the tree.
 

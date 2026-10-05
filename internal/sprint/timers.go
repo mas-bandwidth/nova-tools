@@ -3,7 +3,9 @@ package sprint
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Timers (docs/SPEC-SPRINT.md, "Timers"; tla/Timer.tla): an actor sets a
@@ -61,9 +63,19 @@ func (t *Timers) Sort() {
 	})
 }
 
-// ValidTimerNote is nil for text a timer can carry: the shape a goal's text is
-// held to (ValidGoalText), at most MaxTimerNote bytes.
-func ValidTimerNote(text string) error { return ValidGoalText(text, MaxTimerNote) }
+// ValidTimerNote is nil for text a timer can carry: not blank, valid UTF-8,
+// no more than MaxTimerNote bytes.
+func ValidTimerNote(text string) error {
+	switch {
+	case strings.TrimSpace(text) == "":
+		return fmt.Errorf("the timer note is empty")
+	case !utf8.ValidString(text) || strings.ContainsRune(text, 0):
+		return fmt.Errorf("the timer note is not text (invalid UTF-8 or a NUL byte)")
+	case len(text) > MaxTimerNote:
+		return fmt.Errorf("the timer note is %d bytes; the bound is %d", len(text), MaxTimerNote)
+	}
+	return nil
+}
 
 // DueTimers is the timers whose due time the clock has reached at now, in the
 // order the record keeps them: the one due test the tree has, DueNow, so a
