@@ -326,13 +326,11 @@ func TestOpenIsBounded(t *testing.T) {
 			defer cancel()
 			start := time.Now()
 			conn, err := open(ctx, Options{Addr: storeAddr}, nothing, dial)
-			took := time.Now().Sub(start)
+			took := time.Since(start)
 			if err == nil || conn != nil {
 				require.FailNowf(t, "", "%s: Open = %v, %v; want an error", c.name, conn, err)
 			}
-			if took != c.after {
-				assert.EqualValues(t, c.after, took, "%s: Open returned after %v; want %v", c.name, took, c.after)
-			}
+			assert.EqualValues(t, c.after, took, "%s: Open returned after %v; want %v", c.name, took, c.after)
 			if got := Classify(err); got != c.class {
 				assert.EqualValues(t, c.class, got, "%s: class %v; want %v (%v)", c.name, got, c.class, err)
 			}
@@ -342,9 +340,8 @@ func TestOpenIsBounded(t *testing.T) {
 			// A dial that was under way when the caller stopped waiting ends
 			// at the dial's own bound, and is the only one.
 			silent.settled()
-			if took := time.Now().Sub(start); took > DialTimeout {
-				assert.LessOrEqual(t, took, DialTimeout, "%s: the dial ended after %v; want it within %v", c.name, took, DialTimeout)
-			}
+			took = time.Since(start)
+			assert.LessOrEqual(t, took, DialTimeout, "%s: the dial ended after %v; want it within %v", c.name, took, DialTimeout)
 			if n := dialed(); n > 1 {
 				assert.LessOrEqual(t, n, 1, "%s: %d dials; want at most one", c.name, n)
 			}
@@ -414,16 +411,14 @@ func TestCommandsAreBounded(t *testing.T) {
 			if err != nil {
 				require.NoError(t, err, err)
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }() // ignored: the test closes its connection at the end; a close error changes nothing
 			store.commands()
 			ctx, cancel := c.ctx()
 			defer cancel()
 			start := time.Now()
 			err = conn.Client().Get(ctx, "key").Err()
-			took := time.Now().Sub(start)
-			if took != c.after {
-				assert.EqualValues(t, c.after, took, "%s: the command returned after %v; want %v", c.name, took, c.after)
-			}
+			took := time.Since(start)
+			assert.EqualValues(t, c.after, took, "%s: the command returned after %v; want %v", c.name, took, c.after)
 			if got := Classify(err); got != Unreachable {
 				assert.EqualValues(t, Unreachable, got, "%s: %v is %v; want %v", c.name, err, got, Unreachable)
 			}
@@ -453,7 +448,7 @@ func TestEveryReadAndWriteHasADeadline(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // ignored: the test closes its connection at the end; a close error changes nothing
 	ctx := context.Background()
 	work := func() {
 		t.Helper()
@@ -483,8 +478,8 @@ func TestEveryReadAndWriteHasADeadline(t *testing.T) {
 	}
 
 	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }() // ignored: the pipe is torn down at the end of the test; a close error changes nothing
+	defer func() { _ = server.Close() }() // ignored: the pipe is torn down at the end of the test; a close error changes nothing
 	spy := &spyConn{Conn: client}
 	go func() { _, _ = io.Copy(io.Discard, server) }()
 	if _, err := spy.Write([]byte("x")); err != nil {
@@ -518,7 +513,7 @@ func TestACommandIsSentOnceAndABrokenConnectionIsDialedOnce(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // ignored: the test closes its connection at the end; a close error changes nothing
 	store.commands()
 	ctx := context.Background()
 	err = conn.Client().Incr(ctx, "n").Err()
@@ -680,7 +675,7 @@ func TestExplain(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // ignored: the test closes its connection at the end; a close error changes nothing
 	if got := conn.Explain(nil); got != nil {
 		assert.NoError(t, got, "Explain(nil) = %v", got)
 	}
@@ -749,7 +744,7 @@ func (s *rawSocket) SyscallConn() (syscall.RawConn, error) {
 func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	t.Parallel()
 	client, server := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }() // ignored: the pipe is torn down at the end of the test; a close error changes nothing
 	socket := &rawSocket{Conn: client}
 	dialer := &firstDial{dial: func(context.Context, string, string) (net.Conn, error) { return socket, nil }}
 	dialer.opening.Store(true)
@@ -757,7 +752,7 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // ignored: the test closes its connection at the end; a close error changes nothing
 	sys, ok := conn.(syscall.Conn)
 	if !ok {
 		require.True(t, ok, "%T is not a socket; the connection it wraps is", conn)
@@ -767,14 +762,14 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	}
 
 	pipe, other := net.Pipe()
-	defer other.Close()
+	defer func() { _ = other.Close() }() // ignored: the pipe is torn down at the end of the test; a close error changes nothing
 	plain := &firstDial{dial: func(context.Context, string, string) (net.Conn, error) { return pipe, nil }}
 	plain.opening.Store(true)
 	conn, err = plain.dialer(context.Background(), "tcp", storeAddr)
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // ignored: the test closes its connection at the end; a close error changes nothing
 	if _, ok := conn.(syscall.Conn); ok {
 		assert.False(t, ok, "%T says it is a socket; the connection it wraps is not", conn)
 	}
@@ -785,7 +780,7 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // ignored: the test closes its connection at the end; a close error changes nothing
 	if _, ok := conn.(syscall.Conn); ok {
 		assert.False(t, ok, "%T says it is a socket; the connection it wraps is not", conn)
 	}
@@ -797,7 +792,7 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer sconn.Close()
+	defer func() { _ = sconn.Close() }() // ignored: the pipe is torn down at the end of the test; a close error changes nothing
 	if sys, ok := sconn.(syscall.Conn); !ok {
 		require.True(t, ok, "%T is not a socket; the connection it wraps is", sconn)
 	} else if _, err := sys.SyscallConn(); err != errRawSocket || socketPlain.asked != 1 {

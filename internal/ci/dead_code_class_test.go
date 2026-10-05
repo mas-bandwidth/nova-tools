@@ -118,10 +118,7 @@ func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[stri
 			return nil, nil, err
 		}
 		for _, pkg := range pkgs {
-			p := pkg.Path
-			if strings.HasPrefix(p, modulePrefix) {
-				p = strings.TrimPrefix(p, modulePrefix)
-			}
+			p := strings.TrimPrefix(pkg.Path, modulePrefix)
 			for _, fn := range pkg.Funcs {
 				if fn.Marker || fn.Generated {
 					continue
@@ -153,7 +150,7 @@ func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[stri
 func TestDeadCode(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 
 	root := repoRoot(t)

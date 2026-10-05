@@ -151,7 +151,7 @@ func ReadSwarm(label, pool string, fsys fs.FS, rules *Rules) *Source {
 			s.Stream = append(s.Stream, m)
 			s.Stat.Messages++
 		}
-		f.Close()
+		_ = f.Close() // ignored: the file is opened only for reading
 		if bad {
 			continue
 		}

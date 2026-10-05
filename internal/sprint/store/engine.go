@@ -1331,7 +1331,7 @@ func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprin
 			return m
 		}
 		flush := func() {
-			if len(cur) == 0 && !(first && props[t] != nil) {
+			if len(cur) == 0 && (!first || props[t] == nil) {
 				return
 			}
 			if cur == nil {

@@ -13,7 +13,10 @@
 // the object stay one value. A tool whose exit 0 already means CLEAR sets
 // HelpRefused, and `<verb> -h` is then a refusal at exit 2 naming `help`, never
 // an answer at exit 0. A tool may name a default verb (`<tool> <file>`) and its
-// own status words (STALE beside FAIL). A command holds only what its verbs do.
+// own status words (STALE beside FAIL). A verb may be hidden (Verb.Hidden): it
+// runs and answers `-h`, and the banner, the usage block and the unknown-verb
+// list do not show it, a probe step verb a user never types. A command holds
+// only what its verbs do.
 package tool
 
 import (
@@ -27,7 +30,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -75,6 +77,21 @@ type Tool struct {
 	// read the usage lines, the shape of a value several of them name (the
 	// manifest of --file), so no usage line carries it. Empty prints none.
 	UsageNote string
+	// Topics are the tool's help topics: `help <topic>` prints the topic's
+	// text at exit 0, and the banner lists the topic names on one line
+	// (skeleton contract 2.7). A tool's reference text lives here, never in
+	// the banner, which a reader takes in at a glance (STANDARD §3 point 6).
+	// A topic's name is none of the tool's verbs, since `help <name>` is one
+	// door (Problems).
+	Topics []Topic
+}
+
+// Topic is one help topic: `<tool> help <name>` prints Text on stdout at exit
+// 0. It is where a tool's reference text lives, so the banner stays short
+// (skeleton contract 2.7, STANDARD §3 point 6).
+type Topic struct {
+	Name string
+	Text string
 }
 
 // MaxWords bounds a tool's own status words: a reader learns them all at once.
@@ -90,12 +107,13 @@ var wordRe = regexp.MustCompile(`^[A-Z][A-Z0-9-]*$`)
 // a group ("fn"): `<tool> fn -h` lists the group's verbs at exit 0.
 type Verb struct {
 	Name      string
-	Usage     string         // forms after the tool's name; indented lines continue the previous form
+	Usage     string         // the usage line(s) after the tool's name, one form per line
 	Example   string         // runnable line(s) after the tool's name, for the banner's example block
 	Effect    Effect         // what running it does to the world, stated in `help <verb>`
 	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
+	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
 }
@@ -135,6 +153,10 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 	switch args[0] {
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			if text, ok := t.topic(args[1]); ok {
+				fmt.Fprint(stdout, strings.TrimSuffix(text, "\n")+"\n")
+				return 0
+			}
 			if t.HelpRefused {
 				// Naming help is still help: only the -h flag is refused.
 				var match *Verb
@@ -177,12 +199,37 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 			}
 		}
 	}
-	why := fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], didYouMean(args[0], t.names()), strings.Join(t.names(), ", "))
+	why := fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], didYouMean(args[0], t.names()), verbflag.List(t.names()))
 	if t.Default != "" {
 		why = fmt.Sprintf("%q is no verb and no file;%s the verbs are %s, and a file is given by its path (./%s)",
-			args[0], didYouMean(args[0], t.names()), strings.Join(t.names(), ", "), args[0])
+			args[0], didYouMean(args[0], t.names()), verbflag.List(t.names()), args[0])
+	}
+	if len(t.Topics) > 0 {
+		// A name that is no verb may be a topic: the refusal names both sets,
+		// so one turn answers it (STANDARD §2, the names there are).
+		why += ", and the help topics are " + verbflag.List(t.topicNames())
 	}
 	return t.emit(nil, Refuse(why), asJSON, stdout, stderr)
+}
+
+// topic is the text of the topic named, and whether the tool has one:
+// `help <topic>` prints it at exit 0 (skeleton contract 2.7).
+func (t *Tool) topic(name string) (string, bool) {
+	for _, tp := range t.Topics {
+		if tp.Name == name {
+			return tp.Text, true
+		}
+	}
+	return "", false
+}
+
+// topicNames are the tool's topic names, in the order the tool declares them.
+func (t *Tool) topicNames() []string {
+	var names []string
+	for _, tp := range t.Topics {
+		names = append(names, tp.Name)
+	}
+	return names
 }
 
 // exists reports whether a word names a file or directory that is there.
@@ -215,7 +262,9 @@ func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Wr
 		fmt.Fprintln(stdout, verbflag.UsageLine(t.Name, g, subs))
 		for _, v := range t.verbs() {
 			if slices.Contains(members, v.Name) {
-				t.printUsage(stdout, v.Usage)
+				for _, l := range lines(v.Usage) {
+					fmt.Fprintf(stdout, "  %s %s\n", t.Name, l)
+				}
 			}
 		}
 		fmt.Fprintf(stdout, "`%s %s <verb> -h` lists a verb's flags.\nexit codes: %s\n", t.Name, g, t.ExitTable)
@@ -225,128 +274,17 @@ func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Wr
 	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		why = fmt.Sprintf("unknown verb %q in %s;%s", g+" "+args[1], g, didYouMean(g+" "+args[1], members))
 	}
-	o := Refuse(why + " the verbs are " + strings.Join(members, ", "))
-	o.Remedy = t.verbHelp(g)
+	o := Refuse(why + " the verbs are " + verbflag.List(members))
+	o.Remedy = t.Name + " " + g + " -h"
 	return t.emit(nil, o, asJSON, stdout, stderr)
 }
 
-// didYouMean is " did you mean <name>?" for the one name an unknown got was
-// meant as, else "": the refusal names the nearest beside the names there are,
-// and guesses nothing when none is near (STANDARD §2: an unknown verb or flag
-// is answered with the names there are and the nearest).
+// didYouMean is " did you mean <name>?" for the name nearest to got, else "".
 func didYouMean(got string, names []string) string {
-	if best := nearest(got, names); best != "" {
+	if best := verbflag.Nearest(got, names); best != "" {
 		return " did you mean " + best + "?"
 	}
 	return ""
-}
-
-// nearest is the one name an unknown got was meant as: the one name within two
-// edits, or, when none is that close, the one name got is a unique prefix of.
-// Two edits holds a typo of a short name; a unique prefix is how a reader
-// shortens a long name ("conf" for "configure", five edits away). "" when
-// neither names one, so the refusal lists the names and guesses nothing
-// (STANDARD §2, the nearest name).
-func nearest(got string, names []string) string {
-	best, bestD, n := "", 3, 0 // within two edits, and only when that nearest is one name
-	for _, name := range names {
-		d := editDistance(got, name)
-		if d > 2 {
-			continue
-		}
-		if n == 0 || d < bestD {
-			best, bestD, n = name, d, 1
-			continue
-		}
-		if d == bestD {
-			n++
-		}
-	}
-	if n == 1 {
-		return best
-	}
-	if n > 1 { // two names equally near: not one name, so no guess
-		return ""
-	}
-	var prefixed []string
-	for _, name := range names {
-		if strings.HasPrefix(name, got) {
-			prefixed = append(prefixed, name)
-		}
-	}
-	if len(prefixed) == 1 {
-		return prefixed[0]
-	}
-	return ""
-}
-
-// editDistance is the Levenshtein distance between a and b, by bytes. The
-// skeleton keeps its own: verbflag's distance is unexported and Nearest bounds
-// it to a third of the typed length, with no unique prefix, while this rule is
-// a fixed two edits (STANDARD §7: kept custom, the shared one does not fit).
-func editDistance(a, b string) int {
-	row := make([]int, len(b)+1)
-	for j := range row {
-		row[j] = j
-	}
-	for i := 1; i <= len(a); i++ {
-		diag := row[0]
-		row[0] = i
-		for j := 1; j <= len(b); j++ {
-			cost := 1
-			if a[i-1] == b[j-1] {
-				cost = 0
-			}
-			diag, row[j] = row[j], min(row[j]+1, row[j-1]+1, diag+cost)
-		}
-	}
-	return row[len(b)]
-}
-
-// unknownFlagWhy words an unknown flag the way an unknown verb is worded: every
-// flag of the verb, and did you mean when one name is within two edits or a
-// unique prefix, never a list cut to "and <n> more". ok is false for a missing
-// value or a bad value, which stay verbflag.Explain (STANDARD §2).
-func unknownFlagWhy(fs *flag.FlagSet, err error) (string, bool) {
-	rest, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -")
-	if !ok {
-		return "", false
-	}
-	got := "--" + strings.TrimLeft(rest, "-")
-	var names []string
-	fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
-	if len(names) == 0 {
-		return "unknown flag " + got + "; " + fs.Name() + " takes no flags", true
-	}
-	near := didYouMean(got, names)
-	if near != "" {
-		near = ";" + near
-	}
-	return "unknown flag " + got + "; the flags of " + fs.Name() + " are " + strings.Join(names, ", ") + near, true
-}
-
-// Cmd renders the words of a command a reader is told to run, so a POSIX shell
-// reads them back as exactly those words: each goes through oneline.ShellWord,
-// which prints a word no shell gives a meaning as it is and single-quotes any
-// other, so a value holding a blank, a quote or a $ stays the one value it is
-// (skeleton contract 1.9: a remedy is one runnable command; STANDARD §2, a
-// result names the next command as one that runs; §3, a refusal carries the
-// remedy in its line).
-func Cmd(words ...string) string {
-	quoted := make([]string, len(words))
-	for i, w := range words {
-		quoted[i] = oneline.ShellWord(w)
-	}
-	return strings.Join(quoted, " ")
-}
-
-// verbHelp is the remedy that points at one verb's own -h: `<tool> <verb> -h`,
-// the verb's name split into its words so a group verb ("fn load") reads as the
-// two words a reader types. A flag mistake's remedy is the verb's -h, never the
-// top banner a hundred lines from the answer (STANDARD §3: help is never a
-// refusal; skeleton contract 1.9).
-func (t *Tool) verbHelp(verb string) string {
-	return Cmd(append(append([]string{t.Name}, strings.Fields(verb)...), "-h")...)
 }
 
 // help is deferred by Run: a verb's -h (verbflag's Help) prints that verb's
@@ -374,7 +312,7 @@ func (t *Tool) help(stdout, stderr io.Writer, code *int) {
 			}
 		}
 		o := Refuse("-h is not an answer this tool gives, its exit 0 means CLEAR")
-		o.Remedy = Cmd(t.Name, "help")
+		o.Remedy = t.Name + " help"
 		*code = t.emit(v, o, false, stdout, stderr)
 		return
 	}
@@ -457,6 +395,11 @@ func (t *Tool) Problems() []string {
 			p = append(p, fmt.Sprintf("%s: the status word %q is not an upper-case word of its own (OK, FAILED, REFUSED, MORE and NOTE are every tool's)", t.Name, w))
 		}
 	}
+	for _, tp := range t.Topics {
+		if slices.Contains(t.names(), tp.Name) {
+			p = append(p, fmt.Sprintf("%s: the help topic %q is one of its verbs; a topic is a name of its own", t.Name, tp.Name))
+		}
+	}
 	for _, v := range t.verbs() {
 		e := string(v.Effect)
 		if !strings.HasPrefix(e, "inspection") && !strings.HasPrefix(e, "local write") && !strings.HasPrefix(e, "delivery") {
@@ -481,9 +424,24 @@ func (t *Tool) verbs() []Verb {
 	})
 }
 
+// shown is the verbs every list the tool prints names: the banner's usage and
+// example blocks, the --json sentence and a refusal's verb list. A hidden verb
+// (Verb.Hidden) is off every one of them, while it runs and answers help like
+// any verb (STANDARD §2: an unknown name is answered with the names there are
+// for the reader, and a probe step verb is not one of them).
+func (t *Tool) shown() []Verb {
+	var vs []Verb
+	for _, v := range t.verbs() {
+		if !v.Hidden {
+			vs = append(vs, v)
+		}
+	}
+	return vs
+}
+
 func (t *Tool) names() []string {
 	var names []string
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		names = append(names, v.Name)
 	}
 	return names
@@ -502,15 +460,23 @@ func (t *Tool) Banner() string {
 		b.WriteString(HowLabel + how + "\n\n")
 	}
 	b.WriteString("usage:\n")
-	for _, v := range t.verbs() {
-		t.printUsage(&b, v.Usage)
+	for _, v := range t.shown() {
+		for _, l := range lines(v.Usage) {
+			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
+		}
 	}
-	fmt.Fprintf(&b, "  %s help [<verb>]\n\n", t.Name)
+	fmt.Fprintf(&b, "  %s help [<verb>]\n", t.Name)
+	if len(t.Topics) > 0 {
+		// One line names the topics and the way to read one: the reference
+		// text itself stays out of the banner (skeleton contract 2.7).
+		fmt.Fprintf(&b, "topics: %s; run: %s help <topic>\n", strings.Join(t.topicNames(), ", "), t.Name)
+	}
+	b.WriteString("\n")
 	if t.UsageNote != "" {
 		b.WriteString(t.UsageNote + "\n\n")
 	}
 	var own []string
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		if v.flags().prints {
 			own = append(own, v.Name)
 		}
@@ -526,31 +492,18 @@ func (t *Tool) Banner() string {
 	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	b.WriteString("example:\n")
-	for _, v := range t.verbs() {
+	for _, v := range t.shown() {
 		for _, l := range lines(v.Example) {
-			fmt.Fprintf(&b, "  %s %s\n", t.Name, strings.TrimSpace(l))
+			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
 		}
 	}
 	return b.String()
 }
 
-// printUsage keeps continuation lines deeper than their synopsis so verbflag
-// includes them in verb help (docs/ONBOARDING.md point 1).
-func (t *Tool) printUsage(w io.Writer, usage string) {
-	for _, l := range lines(usage) {
-		first, _ := utf8.DecodeRuneInString(l)
-		if unicode.IsSpace(first) {
-			fmt.Fprintf(w, "  %s\n", l)
-		} else {
-			fmt.Fprintf(w, "  %s %s\n", t.Name, l)
-		}
-	}
-}
-
 func lines(s string) []string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		if l = strings.TrimRightFunc(l, unicode.IsSpace); l != "" {
+		if l = strings.TrimSpace(l); l != "" {
 			out = append(out, l)
 		}
 	}
@@ -562,12 +515,8 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	f := v.flags()
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
-		why := verbflag.Explain(f.FlagSet, err)
-		if u, ok := unknownFlagWhy(f.FlagSet, err); ok {
-			why = u
-		}
-		o := Refuse(oneline.Cap(why, oneline.TailBytes))
-		o.Remedy = t.verbHelp(v.Name)
+		o := Refuse(oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes))
+		o.Remedy = t.Name + " " + v.Name + " -h"
 		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
@@ -641,7 +590,7 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 		o.token = strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))
 	}
 	if o.Status == Refused && o.Remedy == "" {
-		o.Remedy = Cmd(t.Name, "help")
+		o.Remedy = t.Name + " help"
 	}
 	if o.printed {
 		return o.Exit

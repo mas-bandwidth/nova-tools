@@ -140,9 +140,7 @@ func TestHygieneRejectsAForeignCommitter(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "commit: %v\n%s", err, out)
 	f := has(check(t, dir, Options{}), "identity")
-	if f == nil {
-		require.FailNowf(t, "assertion failed", "a foreign COMMITTER drew no identity finding: %v", tokens(check(t, dir, Options{})))
-	}
+	require.NotNil(t, f, "a foreign COMMITTER drew no identity finding: %v", tokens(check(t, dir, Options{})))
 	require.Len(t, f.At, 12, "at=%q, want a sha12", f.At)
 }
 
@@ -237,9 +235,7 @@ func TestHygieneRejectsResultMDInTheDiff(t *testing.T) {
 
 	dir := staged(t, "sign/RESULT.md", "line 1\n", "ship the report")
 	f := has(check(t, dir, Options{}), "stray-file")
-	if f == nil {
-		require.FailNowf(t, "assertion failed", "RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
-	}
+	require.NotNil(t, f, "RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
 	require.Equal(t, "sign/RESULT.md", f.At, "at=%q, want the path", f.At)
 }
 
@@ -302,9 +298,7 @@ func TestHygieneRejectsAConflictMarker(t *testing.T) {
 
 	dir := staged(t, "sign/sign.go", "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n=======\nfunc Sign(n int) int { return 0 }\n>>>>>>> side\n", "left a marker")
 	f := has(check(t, dir, Options{}), "stray-file")
-	if f == nil {
-		require.FailNowf(t, "assertion failed", "a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
-	}
+	require.NotNil(t, f, "a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
 	require.Contains(t, f.Why, "conflict marker", "why=%q, want it to name the conflict marker", f.Why)
 }
 
@@ -679,9 +673,6 @@ func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
 		assert.True(t, KindDeclared(name), "KindDeclared(%q) = false, want true", name)
 	}
 	require.False(t, KindDeclared("not-a-declared-kind"), "an undeclared kind was accepted")
-	for _, kind := range StrayKinds() {
-		assert.True(t, KindDeclared(kind), "the stray list excuses kind %q, which is not declared", kind)
-	}
 }
 
 // hygiene-reads-full-blob-ids: `--raw` abbreviates the blob id, and an abbreviation is

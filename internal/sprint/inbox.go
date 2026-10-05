@@ -22,8 +22,10 @@ type StreamClock struct {
 	// Empty says nothing of the stream is on the table: never stale.
 	Empty bool `json:",omitempty"`
 	// Held says every card of the stream on the table and not landed waits (on a
-	// sentinel, or a need): it is held by what it waits on, never stale.
-	Held bool `json:",omitempty"`
+	// sentinel, or a need): it is held by what it waits on, never stale; or the
+	// coordinator holds it (hold <stream>, hold.go), the reason in Reason.
+	Held   bool   `json:",omitempty"`
+	Reason string `json:",omitempty"`
 	// Quiet is the time wait set on the stream's stale judgment (FieldStaleReview):
 	// not shown stale before it.
 	Quiet time.Time `json:",omitzero"`

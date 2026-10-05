@@ -49,9 +49,10 @@ func init() {
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
-		{"stop", "", "stop", (*app).cmdMachineStop},
+		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
 		{"tick", "[--answer-rules] [--idle-alarm]", "tick", (*app).cmdTick},
+		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
 		{"selftest", "[--dir <d>] [--keep]", "selftest", (*app).cmdSelftest},
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
@@ -76,9 +77,11 @@ func init() {
 		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
+		{"hold", "<member|reader|friend|stream>... --reason <text> [--return] [--dry-run]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},
+		{"unhold", "<member|reader|friend|stream>... [--reason <text>] [--dry-run]", "unhold m1 --reason 'the cleaner is fixed'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(true, args, o, e) }},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n> | --width 0]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
-		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
+		{"fleet down", "<member>", "fleet down m1", (*app).cmdFleetDown},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"friend sync", "[--pg <dsn>] [--root <dir>]", "friend sync", (*app).cmdFriendSync},
@@ -95,7 +98,7 @@ func init() {
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
-		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
@@ -126,6 +129,7 @@ func init() {
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
+		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
@@ -229,6 +233,7 @@ and prints each one's generation.
 ` + inboxExample + `
 ` + machineWords() + `
 ` + serverWords() + `
+` + holdWords() + `
 ` + fleetWords() + `
 ` + friendWords() + `
 ` + readerWords() + `
@@ -675,7 +680,7 @@ var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true,
 // epochVerbs, except a merge run by the sprint's coordinator, which merges
 // the cards of its own read of the merge queue and names no handed card.
 func needsEpoch(verbName string, coordinator bool) bool {
-	return epochVerbs[verbName] && !(verbName == "merge" && coordinator)
+	return epochVerbs[verbName] && (verbName != "merge" || !coordinator)
 }
 
 // runStep runs a step and reports it: exit 0 when everything named moved, 1
@@ -1159,7 +1164,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
-		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Who: c.actor,
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Base: swarm.ReadCardBase([]byte(*brief)).Ref, Who: c.actor,
 			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held, Replaces: sprint.Split(*replaces)}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
@@ -1244,7 +1249,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		if len(briefText) > store.MaxBriefBytes {
 			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
 		}
-		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path})
+		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path, Base: swarm.ReadCardBase([]byte(briefText)).Ref})
 	}
 	if !allowShared {
 		if why := sharedPaths(cards); why != "" {
@@ -1400,7 +1405,7 @@ func sharedPaths(cards []sprint.CardAdd) string {
 		ids := byPath[p]
 		for i := range ids {
 			for _, b := range ids[i+1:] {
-				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) && !(shared[a][p] && shared[b][p]) {
+				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) && (!shared[a][p] || !shared[b][p]) {
 					clash = append(clash, fmt.Sprintf("%s is named in PATHS by %s and %s, and neither needs the other", p, a, b))
 				}
 			}
@@ -2584,14 +2589,12 @@ func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "%s %s: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, verbName, strings.Join(bad, ","), strings.Join(rows, ","))
 		return 1
 	}
-	for _, n := range names {
-		if err := st.SetReaderAway(ctx, n, away, c.actor); err != nil {
-			fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.Escape(err.Error()))
-			return 1
-		}
-	}
-	sayOK(stdout, c.json, verbName, token(verbName)+" OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
-	return 0
+	// the old words of hold <reader>... --return and unhold <reader>... (one release): the
+	// reads it holds are asked of another, as a reader away's always were
+	// (docs/SPEC-SPRINT.md section 11)
+	return a.runHold(verbName, "", *c, st, sprint.HoldReq{Names: names, Kind: sprint.HoldReader, Release: !away, Return: away, Who: c.actor}, func() (string, map[string]any) {
+		return token(verbName) + " OK readers=" + strings.Join(names, ","), map[string]any{"readers": names}
+	}, stdout, stderr)
 }
 
 // cmdReaderRemove takes the named readers off the readers table (the mirror of
@@ -2736,22 +2739,24 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 }
 
 // cmdStreamSet writes the read tier of the streams named (sprint.Set), over the
-// sprint's.
+// sprint's, and their protected-branch mark: the repositories whose protected
+// branches the lander lands their cards on (docs/SPEC-SPRINT.md section 7).
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
+	mark := fs.String("land-protected", "", "the repositories (owner/name, comma separated; any for every one) on whose protected branches, dev and main, the lander lands the stream's cards; default takes the mark off, and a card based on a protected branch is then refused at land")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	if len(names) == 0 || *tier == "" {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default>")
+	if len(names) == 0 || *tier == "" && *mark == "" {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default> or --land-protected <owner/name,...|any|default>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Who: c.actor}), stdout, stderr)
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:

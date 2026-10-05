@@ -52,7 +52,7 @@ var readLaneVerbs = map[string]bool{
 
 // onReadLane says the verb, as its flags read it, writes nothing and runs on the read lane.
 func onReadLane(v verbArgs) bool {
-	return readLaneVerbs[v.name] && !(v.name == "inbox" && v.on("read"))
+	return readLaneVerbs[v.name] && (v.name != "inbox" || !v.on("read"))
 }
 
 // isFriendBeat says the worker's verb is a friend's beat (workerVerb has held it to

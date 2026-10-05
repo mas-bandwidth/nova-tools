@@ -177,7 +177,7 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 			s.AddMessage(line.Message.ID, m)
 		}
 		scanErr := sc.Err()
-		f.Close()
+		_ = f.Close() // ignored: the file is opened only for reading
 		if scanErr != nil {
 			s.unreadable(path, scanErr.Error())
 			continue

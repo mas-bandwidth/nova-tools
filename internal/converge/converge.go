@@ -13,9 +13,10 @@ package converge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 )
 
 // Trend is which way a stream moved, in the stream's own direction of travel.
@@ -256,8 +258,8 @@ func LoadState(path string) (State, error) {
 	if strings.TrimSpace(path) == "" {
 		return st, nil
 	}
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	raw, err := readregular.Read(path, readregular.DefaultMax)
+	if errors.Is(err, fs.ErrNotExist) {
 		return st, nil
 	}
 	if err != nil {

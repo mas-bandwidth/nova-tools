@@ -1,5 +1,7 @@
 // First-run tests for nova-cairn: the usage banner's `example:` block and the
-// docs/TESTS.md `### First run` transcript are RUN here rather than read. An
+// docs/TESTS.md `## nova-cairn` transcript are RUN here rather than read, and
+// the transcript is compared line for line through the one comparator,
+// onboarding.CompareTranscript (docs/SPEC-TOOLWORK.md documents rule 3). An
 // example that has drifted out of the flag set teaches the wrong invocation
 // to exactly the reader who cannot tell, and a transcript line no run prints
 // is a promise the tool never made.
@@ -27,69 +29,80 @@ func usageExamples(t *testing.T) []string {
 }
 
 // The usage banner ends in one example per verb, in the order a first run
-// types them: the append needs the record the open created. Each runs as
-// printed, in one store, and prints what is written under it here, through
-// the comparator: only the store's directory and the clock's instants belong
-// to the run.
+// types them: the append needs the record the open created. Each runs, in one
+// store, and its whole output is compared through the one comparator. The open
+// and the append fix the clock with `--now` so the stamps they print reproduce;
+// the index and the receipt read the stamp the append wrote. The documented
+// `./cairns` is swapped for a real directory by whole field, so a store path
+// this OS spells with a backslash reaches the tool as one argument instead of
+// becoming escapes the shared splitter refuses.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
 	sitting := []struct {
 		example string
+		now     string
 		want    []string
 	}{
 		{"nova-cairn open --store ./cairns --session s1 --publish manual",
+			"2026-01-01T00:00:00Z",
 			[]string{"OPEN OK session=s1 store=./cairns source=- publish=manual stamp=2026-01-01T00:00:00Z"}},
 		{`nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"`,
+			"2026-01-01T00:00:00Z",
 			[]string{"APPEND OK session=s1 entry=e1 source=- persisted=true published=false publish=manual duplicate=false stamp=2026-01-01T00:00:00Z"}},
 		{"nova-cairn index --store ./cairns",
+			"",
 			[]string{"INDEX OK sessions=1 entries=1", "INDEX SESSION session=s1 entries=1", "INDEX ENTRY session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=-"}},
 		{"nova-cairn receipt --store ./cairns --session s1 --entry e1 --text",
+			"",
 			[]string{`RECEIPT OK session=s1 entry=e1 stamp=2026-01-01T00:00:00Z bytes=17 source=- persisted=true published=false publish=manual text="the words to keep"`}},
 	}
 	examples := usageExamples(t)
 	require.Len(t, examples, len(sitting), "want an open, an append, an index and a receipt example under `example:`, got %q", examples)
 	// One store for the whole first run: the examples are a sitting, not four.
-	// The documented `./cairns` is swapped for a real directory by whole field,
-	// so a store path this OS spells with a backslash reaches the tool as one
-	// argument instead of becoming escapes the shared splitter refuses.
 	store := filepath.Join(t.TempDir(), "cairns")
-	norms := []onboarding.Norm{onboarding.Path("./cairns", store), onboarding.Instant("stamp")}
+	steps := make([]onboarding.Step, 0, len(sitting))
 	for i, s := range sitting {
 		require.Equal(t, s.example, examples[i], "example %d", i)
 		fields, err := onboarding.SplitShell(strings.ReplaceAll(s.example, "./cairns", store))
 		require.NoError(t, err, "cannot split the usage example %q", s.example)
-		step := onboarding.Step{Line: "$ " + s.example, Want: s.want}
-		for _, p := range onboarding.Compare(step, onboarding.Result(cli.Run(fields[1:]...)), norms) {
-			assert.Fail(t, p.Error())
+		args := fields[1:]
+		if s.now != "" {
+			args = append(args, "--now", s.now)
 		}
+		steps = append(steps, onboarding.Step{Line: "$ " + s.example, Args: args, Want: s.want})
+	}
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		got = append(got, onboarding.Result(cli.Run(s.Args...)))
+	}
+	volatile := []onboarding.Field{{Name: "tmpdir", Doc: "./cairns", Run: store}}
+	for _, p := range onboarding.CompareTranscript(steps, got, volatile) {
+		assert.Fail(t, p.Error())
 	}
 }
 
-// The `### First run` block of docs/TESTS.md is EXECUTED: every documented
+// The `## nova-cairn` section of docs/TESTS.md is EXECUTED: every documented
 // command is run, in order, in one directory, and its whole output is compared
 // with the block written under it -- same number of lines, same lines, same
-// order.
+// order -- through the one comparator.
 //
-// WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
-// a `printed map[string]bool` and asked whether each documented line was in it,
-// with the VALUES deliberately not compared. Under that comparison an abridged
-// block passes (a dropped line removes a lookup, not an assertion), a reordered
-// pair is never looked at, and a wrong stamp, a wrong byte count or a wrong
-// `duplicate=` is invisible -- which for a tool whose whole job is a durable
-// receipt is most of what the transcript is for.
+// NOTHING IS NORMALISED but the store path, and that is a property of this
+// transcript rather than a shortcut. The stamps come from `--now`, the ids are
+// named on the command line, and the byte count is of the text typed there, so
+// every other value on every line reproduces. onboarding.CompareTranscript is
+// told so by being handed only the `tmpdir` field of the onboarding.Volatile
+// table, and it says as much under any line that disagrees.
 //
-// NOTHING IS NORMALISED, and that is a property of this transcript rather than
-// a shortcut. The stamps come from `--now`, the ids and the store are named on
-// the command line, and the byte count is of the text typed there, so every
-// value on every line reproduces. onboarding.Execute is told so by being handed
-// no Norm, and it says as much under any line that disagrees.
-//
-// The store is typed as written. The documented `./cairns` is relative and the
-// tool PRINTS IT BACK on every line, so the test runs in a directory of its own
-// rather than rewriting the path: a rewritten one is no longer the line the
-// document promised, which is what the old test's `localize` gave up.
+// The documented `./cairns` is relative and the tool PRINTS IT BACK on every
+// line. It stands for a directory under this test's own t.TempDir(), named to
+// the comparator through `tmpdir`, so the sitting runs in parallel without
+// moving the process working directory: the printed path reduces back to the
+// spelling the document promises (the per-test seam the serial-tests ledger
+// names for a path: t.TempDir).
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-cairn")
@@ -107,20 +120,37 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	assert.Subset(t, verbs, []string{"open", "append", "index", "receipt"}, "the `### First run` block never runs one of the four verbs; the first sitting is all four")
 
 	// ONE store for the whole sitting: the transcript opens a record and then
-	// appends to it, and a fresh directory per line would unmake that.
-	t.Chdir(t.TempDir())
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	// appends to it, and a fresh directory per line would unmake that. It lives
+	// under t.TempDir() so the sitting needs no process working directory.
+	store := filepath.Join(t.TempDir(), "cairns")
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		res, err := runDocumented(store, s)
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		got = append(got, res)
+	}
+	volatile := []onboarding.Field{{Name: "tmpdir", Doc: "./cairns", Run: store}}
+	for _, p := range onboarding.CompareTranscript(steps, got, volatile) {
 		assert.Fail(t, p.Error())
 	}
 }
 
 // runDocumented calls this binary's own entry point with the documented
-// arguments. nova-cairn's first run reads nothing on stdin.
-func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+// arguments, resolving the one relative path the sitting names (./cairns) under
+// store, this test's own directory, so the record is written there instead of in
+// the process working directory. nova-cairn's first run reads nothing on stdin.
+func runDocumented(store string, s onboarding.Step) (onboarding.Result, error) {
 	if s.Stdin != "" {
 		return onboarding.Result{}, errReadsNothing
 	}
-	return onboarding.Result(cli.Run(s.Args...)), nil
+	args := make([]string, len(s.Args))
+	for i, a := range s.Args {
+		if a == "./cairns" {
+			a = store
+		}
+		args[i] = a
+	}
+	return onboarding.Result(cli.Run(args...)), nil
 }
 
 type readsNothing struct{}

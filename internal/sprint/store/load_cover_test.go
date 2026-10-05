@@ -34,8 +34,8 @@ func TestLoadCoverMovedError(t *testing.T) {
 	}
 }
 
-// otherRefusal is a sentinel no movedError is: the refusal side of the pair.
-var otherRefusal = errors.New("another refusal")
+// errOtherRefusal is a sentinel no movedError is: the refusal side of the pair.
+var errOtherRefusal = errors.New("another refusal")
 
 // TestLoadCoverMovedErrorRefusals covers what a movedError refuses to be: not
 // errCleared (epoch.go, another epoch), not any other sentinel, and not a type
@@ -45,7 +45,7 @@ func TestLoadCoverMovedErrorRefusals(t *testing.T) {
 	t.Parallel()
 	e := &movedError{table: "t-work"}
 	assert.False(t, errors.Is(e, errCleared), "a moved read is not a cleared one")
-	assert.False(t, errors.Is(e, otherRefusal), "a moved read is no other sentinel")
+	assert.False(t, errors.Is(e, errOtherRefusal), "a moved read is no other sentinel")
 	var asOther *otherError
 	assert.False(t, errors.As(error(e), &asOther), "a movedError is not an otherError")
 	assert.Nil(t, asOther, "the refused errors.As wrote no target")

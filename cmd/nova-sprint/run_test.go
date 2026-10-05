@@ -21,9 +21,10 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	out := ta.ok("where")
 	require.Contains(t, out, "SPRINT TABLE  coordinator coordinator\n\nSTOPPED\n\n", "where")
 	require.NotContains(t, out, "machine:", "where")
-	out = ta.ok("stop")
+	out = ta.ok("stop --reason r --until 9999h")
 	require.Contains(t, out, "STOP OK before=STOPPED after=STOPPED unchanged: the machine is STOPPED already", "stop when stopped")
-	require.Contains(t, out, "\nSTOPPED  0/3 0.0%", "stop when stopped")
+	require.Contains(t, out, "\nSTOPPED by coordinator: r, back by ", "stop when stopped")
+	require.Contains(t, out, "  0/3 0.0%", "stop when stopped")
 	require.NotContains(t, out, "-> ETA", "stop when stopped")
 	out = ta.ok("start")
 	require.Contains(t, out, "START OK before=STOPPED after=RUNNING changed", "start")
@@ -35,13 +36,13 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	require.Contains(t, out, "TICK OK state=RUNNING idle=no moved=3", "tick")
 	ta.a.sleep(store.MachineSilence + time.Second)
 	out = ta.ok("inbox")
-	require.Contains(t, out, "machine: STOPPED\n", "inbox with no tick")
+	require.Contains(t, out, "machine: running (tick late 16s)\n", "inbox with a late tick: running, never STOPPED")
 	require.NotContains(t, out, "(no tick", "inbox with no tick")
 	out = ta.ok("take --as m1 --limit 1")
-	require.Contains(t, out, "STOPPED  ", "a verb's line with no tick")
+	require.Contains(t, out, "0/3 0.0% -> ETA -  machine: running (tick late 16s)\n", "a verb's line with a late tick")
 	require.NotContains(t, out, "(no tick", "a verb's line with no tick")
-	require.NotContains(t, out, "-> ETA", "a verb's line with no tick")
-	ta.ok("stop")
+	require.NotContains(t, out, "STOPPED", "a verb's line with a late tick")
+	ta.ok("stop --reason r --until 9999h")
 	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "a tick while stopped")
 }
 
@@ -93,10 +94,11 @@ func TestWhereHeaderIsStoppedOrTheProgressLine(t *testing.T) {
 	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA -\n\n"), "running with cards:\n%q", out)
 	require.NotContains(t, out, "machine:", "running with cards:\n%q", out)
 	require.NotContains(t, out, "coordinator:", "running with cards:\n%q", out)
-	// running but silent: never hidden
+	// running but silent: never hidden, and never STOPPED: the progress line
+	// and the late tick (docs/SPEC-SPRINT.md section 1)
 	ta.a.sleep(store.MachineSilence + time.Second)
 	got = whereHead(t, ta.ok("where"))
-	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\nSTOPPED\n\n"), "running but silent:\n%q", got)
+	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA -  running (tick late 16s)\n\n"), "running but silent:\n%q", got)
 	require.NotContains(t, got, "(no tick", "running but silent:\n%q", got)
 }
 

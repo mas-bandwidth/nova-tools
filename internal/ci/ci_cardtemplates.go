@@ -37,14 +37,12 @@ import (
 const CardTemplatesVerbLine = "cardtemplates  read every shipped card template; refuse a command only one of the estate's platforms has"
 
 // CardTemplateDirs are the directories this repository ships card templates in,
-// relative to the repository root. A directory that is not there is not an
-// error: the list names where a template MAY live, and the estate grows its
-// directories before it grows its templates.
-var CardTemplateDirs = []string{
-	"cmd/nova-swarm/testdata/templates",
-	"docs/templates",
-	"tools/templates",
-}
+// relative to the repository root. The templates the estate cuts are the
+// embedded ones read through swarm.Template (docs/SPEC-CI.md, `cardtemplates`),
+// and no directory of loose template files is shipped, so the list is empty until
+// a template is written into one. A directory that is not there is skipped, not
+// an error.
+var CardTemplateDirs = []string{}
 
 // cardTemplateExts are the two suffixes a card template carries. A .tsv beside
 // them (benches.tsv) is a table, not a card, and is not read.
@@ -180,9 +178,10 @@ func attachedOrFallback(rest string) bool {
 			return false
 		case len(stack) > 0:
 			// Inside a nested $(...): its separators are its own.
-			if c == '(' {
+			switch c {
+			case '(':
 				stack = append(stack, '(')
-			} else if c == ')' {
+			case ')':
 				stack = stack[:len(stack)-1]
 			}
 		case c == '|' && at(i+1) == '|':

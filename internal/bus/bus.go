@@ -177,9 +177,19 @@ type Store interface {
 	// Roster is the known names (nova-config's friend and machine rows, the
 	// sets `friends` and `machines`) and the server's time (TIME), in one trip.
 	Roster(ctx context.Context) (names []string, now time.Time, err error)
-	// AddAll appends one entry with fields to every stream in one MULTI/EXEC:
-	// it is on all of them or on none.
-	AddAll(ctx context.Context, streams []string, fields map[string]string) error
+	// Members is the friends and the machines apart (the sets `friends` and
+	// `machines`) and the server's time (TIME), in one trip: Roster split, so
+	// a send knows which recipients are friends, owed a receipt.
+	Members(ctx context.Context) (friends, machines []string, now time.Time, err error)
+	// AddAll appends one entry with fields to every stream, and makes every
+	// mark (HSET, or HDEL when it clears), in one MULTI/EXEC: the entry and its
+	// marks are on all of them or on none.
+	AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error
+	// Unmark clears fields of the hash at key (HDEL) and says how many were there.
+	Unmark(ctx context.Context, key string, fields ...string) (int64, error)
+	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
+	// a key that is not there is an empty map.
+	Marks(ctx context.Context, keys ...string) ([]map[string]string, error)
 	// EnsureGroup makes the group on the stream from its start, making the
 	// stream when it is not there (XGROUP CREATE ... 0 MKSTREAM); a group
 	// already there is fine.
@@ -229,8 +239,13 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // message is named at once in one Refusal: a name that is no name, a
 // recipient the roster does not know (with how to add one), an empty body, a
 // body over MaxBody, a from that is unknown.
+//
+// A message to a friend is owed her session's receipt (receipt.go): the
+// transaction marks it on bus2:owed:<friend> for each friend it names but the
+// sender, and a message from a friend naming another (re) is her receipt of
+// that one, cleared in the same transaction.
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
-	m, now, err := b.check(ctx, m)
+	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
 		return Message{}, err
 	}
@@ -242,7 +257,7 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
-	if err := b.Store.AddAll(ctx, streams, m.Fields()); err != nil {
+	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
 		return Message{}, err
 	}
 	return m, nil
@@ -252,12 +267,13 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 // named at once, as Send names them, and the message as it would be sent, at the store's
 // time with its recipients sorted, and no id: an id is made for a message sent.
 func (b *Bus) Check(ctx context.Context, m Message) (Message, error) {
-	m, _, err := b.check(ctx, m)
+	m, _, _, err := b.check(ctx, m)
 	return m, err
 }
 
-// check is the message as Send would send it, and the store's time it is stamped with.
-func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, error) {
+// check is the message as Send would send it, the store's time it is stamped
+// with, and the friends of the roster.
+func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []string, error) {
 	var problems []string
 	for _, n := range append(append([]string{m.From}, m.To...), m.CC...) {
 		if p := CheckName(n); p != "" {
@@ -283,23 +299,24 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, error) 
 		problems = append(problems, "the subject is empty; it wants one line saying what the message is")
 	}
 	if len(problems) > 0 {
-		return Message{}, time.Time{}, &Refusal{problems}
+		return Message{}, time.Time{}, nil, &Refusal{problems}
 	}
-	names, now, err := b.Store.Roster(ctx)
+	friends, machines, now, err := b.Store.Members(ctx)
 	if err != nil {
-		return Message{}, time.Time{}, err
+		return Message{}, time.Time{}, nil, err
 	}
+	names := slices.Concat(friends, machines)
 	for _, n := range append(append([]string{m.From}, m.To...), m.CC...) {
 		if !slices.Contains(names, n) {
 			problems = append(problems, unknown(n))
 		}
 	}
 	if len(problems) > 0 {
-		return Message{}, time.Time{}, &Refusal{slices.Compact(problems)}
+		return Message{}, time.Time{}, nil, &Refusal{slices.Compact(problems)}
 	}
 	m.At = now.UTC().Truncate(time.Second) // the entry's at is RFC3339, to the second
 	m.To, m.CC = slices.Compact(slices.Sorted(slices.Values(m.To))), slices.Compact(slices.Sorted(slices.Values(m.CC)))
-	return m, now, nil
+	return m, now, friends, nil
 }
 
 // Recv is one message for the recipient: the oldest one delivered and not
@@ -386,13 +403,20 @@ func (b *Bus) AckEntry(ctx context.Context, as, entry string) (acked bool, err e
 // Ack acks messages by their ids: each is looked up among the recipient's
 // pending entries, so an id that is not pending (acked already, never
 // delivered, or not this recipient's) is answered acked=false, never a
-// failure: ack is idempotent.
+// failure: ack is idempotent. Ack by id is the session's verb (nova-bus ack),
+// so it is also the session's receipt of every id it names, pending or not
+// (Receipt): a daemon that acked the stream first takes nothing from it.
 func (b *Bus) Ack(ctx context.Context, as string, ids []string) (map[string]bool, error) {
 	acked, entries, err := b.pendingOf(ctx, as, ids)
-	if err != nil || len(entries) == 0 {
-		return acked, err
+	if err != nil {
+		return nil, err
 	}
-	if _, err := b.Store.Ack(ctx, StreamOf(as), as, entries...); err != nil {
+	if len(entries) > 0 {
+		if _, err := b.Store.Ack(ctx, StreamOf(as), as, entries...); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := b.Receipt(ctx, as, ids); err != nil {
 		return nil, err
 	}
 	return acked, nil

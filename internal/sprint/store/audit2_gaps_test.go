@@ -54,13 +54,6 @@ func (h *harness) a2Named(id string) []string {
 	return out
 }
 
-// a2Silent fails when the inbox names id: the gap is closed.
-func (h *harness) a2Silent(id, when string) {
-	h.t.Helper()
-	got := h.a2Named(id)
-	require.Empty(h.t, got, "%s: the inbox names %s (the gap is closed?): %v", when, id, got)
-}
-
 // a2Stale is the stream-stale lines the inbox shows: the one backstop left,
 // which names no card.
 func (h *harness) a2Stale() []string {

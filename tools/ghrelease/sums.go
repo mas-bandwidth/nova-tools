@@ -152,7 +152,7 @@ func fileSum(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a file opened only for reading
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err
@@ -172,7 +172,7 @@ func verifySums(stdout, stderr io.Writer, dir, sumsPath string) bool {
 		fmt.Fprintf(stderr, "sha256sum: %v\n", err)
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a file opened only for reading
 	ok := true
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

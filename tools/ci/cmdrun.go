@@ -111,7 +111,7 @@ func (osCmdRunner) Run(c cmdSpec) (int, error) {
 func (osCmdRunner) LookPath(name string) (string, error) { return exec.LookPath(name) }
 
 func (osCmdRunner) PrependPath(dir string) {
-	os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH")) // ignored: PATH is a valid name and the prepended entry is a directory found on this host
 }
 
 // cmdLine is the cmdSpec of a command line: argv[0] the program, the rest its
@@ -153,7 +153,7 @@ func appendGitHubFile(getenv func(string) string, name, line string) error {
 		return err
 	}
 	if _, err := io.WriteString(f, line+"\n"); err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the write error is the one returned, and the close cannot add to it
 		return err
 	}
 	return f.Close()

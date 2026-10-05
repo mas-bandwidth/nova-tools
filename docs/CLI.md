@@ -921,6 +921,7 @@ nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
 nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]
 nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
+nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
 nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
 nova-sprint queue --as <reader|member> | --stream <s>
 nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]

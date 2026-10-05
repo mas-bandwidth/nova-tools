@@ -43,12 +43,20 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// stagedSeams carries the process-wide resource the --staged verb reads: the
+// git program its plumbing runs through. The zero value is the production
+// default, "git" on PATH; a test points gitBin at a fake git so it runs beside
+// its neighbours instead of putting a directory on the process PATH.
+type stagedSeams struct {
+	gitBin string
+}
+
 // stagedRun drives one `nova-check nocode --staged --dir <repo>` advisory and
 // returns the exit code: 0 with a count of what was classified when the index
 // stages no machinery, 1 with one `NOCODE FAILED <path>: <reason>` line per
 // finding on stderr, 2 for every refusal. --dir is required at the verb, on
 // the no-guessing law, and this function never sees it empty.
-func stagedRun(dir string, allow []string, deny []string, source string, maxFlag int, stdout, stderr io.Writer) int {
+func stagedRun(seams stagedSeams, dir string, allow []string, deny []string, source string, maxFlag int, stdout, stderr io.Writer) int {
 	denySet := make(map[string]bool, len(deny))
 	for _, e := range deny {
 		denySet[strings.ToLower(e)] = true
@@ -65,15 +73,15 @@ func stagedRun(dir string, allow []string, deny []string, source string, maxFlag
 
 	// The root test, then the base detector, then the one record source: each
 	// refusal below is exit 2, and none of them may be read as a clean tree.
-	root, rerr := stagedRoot(dir)
+	root, rerr := stagedRoot(seams, dir)
 	if rerr != nil {
 		return refuse(stderr, " nocode", rerr.Error())
 	}
-	base, berr := stagedBase(root)
+	base, berr := stagedBase(seams, root)
 	if berr != nil {
 		return refuse(stderr, " nocode", berr.Error())
 	}
-	raw, derr := stagedGit(root, "diff-index", "-r", "--ignore-submodules=none", "--cached", "-z", base, "--")
+	raw, derr := stagedGit(seams, root, "diff-index", "-r", "--ignore-submodules=none", "--cached", "-z", base, "--")
 	if derr != nil {
 		// Every dynamic piece of a refusal reaches the stream through refuse,
 		// which escapes the whole line; oneline.Err escapes git's text here
@@ -150,7 +158,7 @@ func stagedRun(dir string, allow []string, deny []string, source string, maxFlag
 		}
 	}
 
-	heads, herr := stagedBlobHeads(root, blobs)
+	heads, herr := stagedBlobHeads(seams, root, blobs)
 	if herr != nil {
 		return refuse(stderr, " nocode", oneline.Err(herr))
 	}
@@ -206,8 +214,8 @@ func stagedRun(dir string, allow []string, deny []string, source string, maxFlag
 // sides -- never a test for .git being a directory, which is false in a
 // linked worktree and in a submodule, both legitimate places to commit from.
 // The resolved root is what every later git call runs with -C.
-func stagedRoot(dir string) (string, error) {
-	out, err := stagedGit(dir, "rev-parse", "--show-toplevel")
+func stagedRoot(seams stagedSeams, dir string) (string, error) {
+	out, err := stagedGit(seams, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", fmt.Errorf("--dir %s is not the root of a git repository (git rev-parse --show-toplevel: %s)", dir, err)
 	}
@@ -253,12 +261,12 @@ func stagedResolved(dir string) (string, error) {
 // it cannot maintain. The trade is deliberate -- a repository's first commit
 // is gated like every later one, because skipping the check where there is no
 // HEAD makes the first commit the one place machinery enters unexamined.
-func stagedBase(root string) (string, error) {
-	if _, err := gitrun.Run(context.Background(), gitrun.Options{C: root}, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
+func stagedBase(seams stagedSeams, root string) (string, error) {
+	if _, err := gitrun.Run(context.Background(), gitrun.Options{Bin: seams.gitBin, C: root}, stagedGitArgs("rev-parse", "-q", "--verify", "HEAD")...); err != nil {
 		// Run INSIDE the repository: outside one this command answers the
 		// sha1 spelling regardless of what the repository is, and the sha1
 		// constant 4b825dc6... names no object a sha256 repository knows.
-		out, herr := stagedGit(root, "hash-object", "-t", "tree", os.DevNull)
+		out, herr := stagedGit(seams, root, "hash-object", "-t", "tree", os.DevNull)
 		if herr != nil {
 			return "", fmt.Errorf("HEAD is unborn and the empty tree could not be obtained inside %s: %s", root, herr)
 		}
@@ -271,6 +279,14 @@ func stagedBase(root string) (string, error) {
 	return "HEAD", nil
 }
 
+// stagedGitArgs prepends git configuration overrides to argv so local repository
+// configuration (e.g. core.fsmonitor, core.hooksPath) cannot execute external
+// programs during the advisory check (security#77 finding 1).
+func stagedGitArgs(args ...string) []string {
+	prefix := []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}
+	return append(prefix, args...)
+}
+
 // stagedGit runs one git plumbing call with -C root and the caller's
 // environment INTACT -- the hook is handed GIT_INDEX_FILE, and a tool that
 // scrubbed or re-anchored the environment would read a different index than
@@ -278,8 +294,8 @@ func stagedBase(root string) (string, error) {
 // line travels with the error, which is where git puts the fatal; an
 // implementer who read a FAILED diff-index's empty stdout as "nothing is
 // staged" would ship a gate that goes green with the commit unexamined.
-func stagedGit(root string, args ...string) (string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: root}, args...)
+func stagedGit(seams stagedSeams, root string, args ...string) (string, error) {
+	res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: seams.gitBin, C: root}, stagedGitArgs(args...)...)
 	if err != nil {
 		msg := strings.TrimSpace(string(res.Stderr))
 		if i := strings.IndexByte(msg, '\n'); i >= 0 {
@@ -342,7 +358,7 @@ func parseDiffIndex(raw string) ([]stagedRecord, error) {
 // need no substrate: the name floor, the location floor and the extension
 // floor. The reason strings are the audit's own, so a finding reads the same
 // whichever mode produced it. Names and locations are lowercased on both
-// sides, matching the audit, and a trailing space in an extension is trimmed
+// sides, matching the audit, and a trailing blank in an extension is trimmed
 // for matching only.
 func stagedPathReasons(rel string, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
 	// Every dynamic piece is escaped where it is built, the same shape
@@ -406,7 +422,7 @@ type stagedBlobHead struct {
 // buffer a whole object, since a staged blob may be gigabytes while two bytes
 // decide a shebang. `missing` and `ambiguous` replies are one line with no
 // body and desync a reader that assumes one.
-func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHead, error) {
+func stagedBlobHeads(seams stagedSeams, root string, recs []stagedRecord) (map[string]stagedBlobHead, error) {
 	var order []string
 	seen := map[string]bool{}
 	for _, r := range recs {
@@ -422,7 +438,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 	if len(order) == 0 {
 		return heads, nil
 	}
-	cmd, cancel := gitrun.Command(context.Background(), gitrun.Options{C: root}, "cat-file", "--batch")
+	cmd, cancel := gitrun.Command(context.Background(), gitrun.Options{Bin: seams.gitBin, C: root}, stagedGitArgs("cat-file", "--batch")...)
 	defer cancel()
 	// stderr does NOT share the stdout pipe: the batch's diagnostics print
 	// there, and a reader that shares the pipe desynchronises on exactly the

@@ -61,7 +61,8 @@ func (l launch) counter(t testing.TB, listen func(network, address string) (net.
 			}
 			conns = append(conns, c)
 			serving.Go(func() {
-				defer c.Close()
+				// ignored: a test fixture's connection ends when the client hangs up; the test's own assertions are the report
+				defer func() { _ = c.Close() }()
 				serveCounted(c, &n)
 			})
 		}

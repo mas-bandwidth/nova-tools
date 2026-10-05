@@ -333,3 +333,23 @@ func TestOrderVerbsThroughTheCommand(t *testing.T) {
 	require.Contains(t, stdout, "row=alex", "the standing sort places the new row: %q", stdout)
 	require.LessOrEqual(t, strings.Index(stdout, "row=alex"), strings.Index(stdout, "row=hetzner"), "the standing sort places the new row: %q", stdout)
 }
+
+// TestRowSetQuotesARowKeyWithASpaceInItsOKLine: row set prints a row key
+// with a space in its OK line quoted like every other verb does.
+func TestRowSetQuotesARowKeyWithASpaceInItsOKLine(t *testing.T) {
+	t.Parallel()
+
+	addr := throwaway(t)
+	for _, args := range [][]string{
+		{"create", "jobs", "--columns", "note:text:none"},
+		{"row", "add", "jobs", "swarm: cards"},
+		{"row", "set", "jobs", "swarm: cards", "note=in progress"},
+	} {
+		code, _, stderr := runTable(at(addr, args...)...)
+		require.EqualValues(t, 0, code, "%v: exit %d stderr %q", args, code, stderr)
+	}
+	code, stdout, stderr := runTable(at(addr, "row", "set", "jobs", "swarm: cards", "note=completed")...)
+	require.EqualValues(t, 0, code, "row set with space in key: exit %d stderr %q\nstdout:\n%s", code, stderr, stdout)
+	require.Empty(t, stderr, "row set with space in key: exit %d stderr %q\nstdout:\n%s", code, stderr, stdout)
+	require.Equal(t, "TABLE ROW SET table=jobs row=\"swarm: cards\" cols=1 trips=1\n", stdout, "row set with space in key: exit %d stderr %q\nstdout:\n%s", code, stderr, stdout)
+}

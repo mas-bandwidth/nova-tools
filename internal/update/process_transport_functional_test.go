@@ -67,7 +67,7 @@ func TestSnapshotLockWaitsForBudget(t *testing.T) {
 	unlock, err := lockSnapshot(context.Background(), path)
 	require.NoError(t, err)
 	defer unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	release, err := lockSnapshot(ctx, path)
 	if release != nil {

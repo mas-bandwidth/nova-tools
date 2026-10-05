@@ -393,6 +393,24 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	if err != nil {
 		return ntable.Receipt{}, err
 	}
+	body := string(raw)
+	opKey := man.Epoch + ":" + man.OperationID
+	t, err := m.table(man.Table)
+	if err != nil {
+		return ntable.Receipt{}, err
+	}
+	// Twin replay fidelity (security#78 finding 7): an operation already
+	// recorded under this id replays or conflicts on its recorded bytes, before
+	// any newer validator would refuse the re-sent request. This mirrors the real
+	// store's op-record lookup in internal/nsprint/fn/lua/table.lua.
+	if rec, ok := t.ops[opKey]; ok {
+		if rec.body != body {
+			return ntable.Receipt{}, refusal("OPCONFLICT", "operation "+man.OperationID+" already holds a different request")
+		}
+		r := rec.receipt
+		r.Replay = true
+		return r, nil
+	}
 	if _, verr := ntable.ValidateBatchManifestRaw(raw); verr != nil {
 		var re *ntable.RuleError
 		var le *ntable.LimitError
@@ -406,20 +424,6 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	}
 	if err := m.fail("apply " + man.Table + " before"); err != nil {
 		return ntable.Receipt{}, fmt.Errorf("%w: %w", ntable.ErrUnknownOutcome, err)
-	}
-	t, err := m.table(man.Table)
-	if err != nil {
-		return ntable.Receipt{}, err
-	}
-	body := string(raw)
-	opKey := man.Epoch + ":" + man.OperationID
-	if rec, ok := t.ops[opKey]; ok {
-		if rec.body != body {
-			return ntable.Receipt{}, refusal("OPCONFLICT", "operation "+man.OperationID+" already holds a different request")
-		}
-		r := rec.receipt
-		r.Replay = true
-		return r, nil
 	}
 	active := m.active(t)
 	req, perr := strconv.ParseUint(man.Epoch, 10, 64)
@@ -512,7 +516,7 @@ func (t *memTable) judge(active uint64, e ntable.BatchMemberEntry) error {
 		if mm != nil {
 			return refusal("MEMBEREXISTS", "member "+e.ID+": expected absent, observed a record")
 		}
-		if !t.owned(active, e.Create.Row, e.Create.Col) {
+		if e.Create != nil && !t.owned(active, e.Create.Row, e.Create.Col) {
 			return refusal("NOCOL", "member "+e.ID+": no owned cell "+e.Create.Row+":"+e.Create.Col)
 		}
 		return nil

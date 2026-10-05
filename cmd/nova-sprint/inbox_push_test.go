@@ -117,13 +117,13 @@ func TestInboxWaitEndsWhenTheMachineStops(t *testing.T) {
 	ta, _ := heldAndWaiting(t)
 	ta.atSleep(func(n int) {
 		if n == 3 {
-			ta.ok("stop")
+			ta.ok("stop --reason r --until 9999h")
 			ta.ok("tick")
 		}
 	})
 	out := ta.ok("inbox --wait --timeout 1m")
 	assert.Contains(t, out, "inbox --wait: the machine stopped\n", out)
-	assert.Contains(t, out, "machine: STOPPED\n", out)
+	assert.Contains(t, out, "machine: STOPPED by coordinator: r, back by ", out)
 }
 
 // inbox --wait --push <dir> writes every judgment the directory does not hold
@@ -237,7 +237,7 @@ func TestInboxPushThroughTheServerWritesTheGroupWhole(t *testing.T) {
 	c, boss := clientOf(t, r, "boss", &sent)
 	waited := clock
 	c.now = func() time.Time { return waited }
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(t.Context())
 	t.Cleanup(stop)
 	c.notify = func(context.Context) (context.Context, context.CancelFunc) { return ctx, stop }
 	polls := 0

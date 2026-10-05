@@ -45,7 +45,7 @@ func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "the machine is RUNNING")
 	assert.Contains(t, errs, "run: nova-sprint stop")
-	ta.ok("stop")
+	ta.ok("stop --reason maintenance --until 1h")
 
 	applies := ta.applies()
 	code, out, errs := ta.do("brief a-2 --brief 'handle the empty case'")

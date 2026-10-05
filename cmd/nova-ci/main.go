@@ -44,18 +44,18 @@ usage, in any Go module (no state, no store):
                       total elapsed time is over its budget (--budget, whole
                       seconds, default 60; --package-budget replaces it) and
                       per top-level test over --test-budget, then one CI-LOAD
-                      line. The allowlist (pkg<TAB>test<TAB>seconds<TAB>
+                      line. The allowlist (internal/pkg<TAB>test<TAB>seconds<TAB>
                       <measured>s@<where>, where is run<id> or a bench, - in
                       the test column for a package's own row) raises one
                       package's or test's budget. One row, tab-separated:
-                      pkg	TestA	4.5	3s@run1
+                      internal/ci/slowtests	TestA	4.5	3s@run1
                       The host's load average (the
                       larger of its 1- and 5-minute figures, over its CPUs;
                       --load and --cpus give them by hand) is printed and never
                       read by the verdict. The times are a measurement: a
                       CI-SLOW line fails the run only with --enforce (the
                       nightly reference leg). A test skipped with the SLEEPS
-                      marker and not on --sleeps (pkg<TAB>test<TAB>where) is a
+                      marker and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
                       CI-SLEEPS line and fails the run on every leg. A package
                       go test served from its test cache reports a package
                       elapsed near zero, so a cached run never trips a package

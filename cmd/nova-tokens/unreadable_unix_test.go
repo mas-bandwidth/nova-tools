@@ -35,7 +35,7 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 	// PROVE it, here as on windows: a fixture that cannot be observed to work is the bug
 	// this helper exists to catch.
 	if f, err := os.Open(path); err == nil {
-		f.Close()
+		_ = f.Close() // ignored: a close of the file opened only to prove the read; the failure below is the finding
 		release()
 		require.FailNowf(t, "unreadable fixture was not unreadable", "mode 000 did not make %s refuse a read", path)
 	}

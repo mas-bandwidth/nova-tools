@@ -32,10 +32,10 @@ func TestADealBetweenTheQueueReadsStillTakesTheWholeFleet(t *testing.T) {
 	reads := 0
 	var takes []string
 	run := func(args []string, stdout, stderr io.Writer) int {
-		switch {
-		case args[0] == "where":
+		switch args[0] {
+		case "where":
 			fmt.Fprintln(stdout, where)
-		case args[0] == "queue":
+		case "queue":
 			reads++
 			// the deal commits after the first four members' queues are read:
 			// m1..m4 show nothing ready, m5..m8 one card each
@@ -44,7 +44,7 @@ func TestADealBetweenTheQueueReadsStillTakesTheWholeFleet(t *testing.T) {
 			} else {
 				fmt.Fprintf(stdout, `{"cards":[{"id":"%s-1.w1","col":"ready","gen":1}]}`+"\n", args[2])
 			}
-		case args[0] == "take":
+		case "take":
 			takes = append(takes, args[2])
 			fmt.Fprintln(stdout, "TAKE OK moved=8 refused=0")
 		default:

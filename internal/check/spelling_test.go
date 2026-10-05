@@ -264,9 +264,10 @@ func TestSpellingSymlinkWriteRefusal(t *testing.T) {
 
 	opts := check.SpellingOptions{Write: true}
 
-	// 1. CheckSpellingDir refuses symlink
+	// 1. CheckSpellingDir refuses a non-regular markdown entry before any read.
 	_, err = check.CheckSpellingDir(scan, opts)
-	require.ErrorContains(t, err, "is a symlink", "CheckSpellingDir did not refuse symlink: %v", err)
+	require.ErrorContains(t, err, "link.md", "CheckSpellingDir did not refuse symlink: %v", err)
+	require.ErrorContains(t, err, "not a regular file", "CheckSpellingDir did not refuse symlink: %v", err)
 
 	// 2. CheckSpellingFiles refuses symlink
 	_, err = check.CheckSpellingFiles(scan, []string{"link.md"}, opts)
@@ -470,4 +471,36 @@ func TestSpellingRelativeDirGlobAndDirectoryExclusion(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, before, string(after), "excluded directory target rewritten: got %q, want %q", string(after), before)
 	})
+}
+
+// TestSpellingDirRefusesASymlinkedMarkdownFileInsteadOfReadingIt pins security#77
+// finding 3: CheckSpellingDir refuses a markdown symlink before open, so the
+// outside file's misspelling is not a finding. A regular markdown file is
+// still spelled. The walk uses the same refusal for a FIFO and does not open it.
+// Red before the walk check: CheckSpellingDir followed inside.md and returned
+// a colour finding from outside.md, with a nil error.
+func TestSpellingDirRefusesASymlinkedMarkdownFileInsteadOfReadingIt(t *testing.T) {
+	t.Parallel()
+
+	plain := t.TempDir()
+	err := os.WriteFile(filepath.Join(plain, "note.md"), []byte("the colour of it\n"), 0o644)
+	require.NoError(t, err)
+	plainRes, err := check.CheckSpellingDir(plain, check.SpellingOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, plainRes.Findings, "a regular markdown file is still spelled, got %+v", plainRes)
+	assert.Equal(t, "colour", plainRes.Findings[0].Original)
+
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "outside.md")
+	err = os.WriteFile(outsideFile, []byte("the colour of it\n"), 0o644)
+	require.NoError(t, err)
+	tree := t.TempDir()
+	inside := filepath.Join(tree, "inside.md")
+	err = os.Symlink(outsideFile, inside)
+	require.NoError(t, err)
+
+	res, err := check.CheckSpellingDir(tree, check.SpellingOptions{})
+	require.ErrorContains(t, err, "inside.md", "red before: colour finding from the outside file, got %+v err=%v", res, err)
+	require.ErrorContains(t, err, "not a regular file", "red before: colour finding from the outside file, got %+v err=%v", res, err)
+	assert.Empty(t, res.Findings, "symlink was read: %+v", res.Findings)
 }

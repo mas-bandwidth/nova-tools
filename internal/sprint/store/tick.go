@@ -88,6 +88,12 @@ type Machine struct {
 	// A stop by hand, a clear, and a start leave it empty; an add of work
 	// to a done sprint empties it too, as the sprint is no longer done.
 	Cause string `json:"cause,omitempty"`
+	// Reason and Until are a stop by hand's --reason and --until
+	// (docs/SPEC-SPRINT.md section 14): why, and when the tick starts the
+	// machine itself again; a start, and the machine's own stops, leave
+	// them empty.
+	Reason string    `json:"reason,omitempty"`
+	Until  time.Time `json:"until,omitzero"`
 }
 
 // Done says the machine is STOPPED because the sprint is done.
@@ -200,15 +206,23 @@ func (st *Store) putMachine(ctx context.Context, m Machine) error {
 }
 
 // MachineLine is the machine's part of the sprint line: the state word alone,
-// running, STOPPED (also a RUNNING machine that has not ticked for
-// MachineSilence) or DONE, with no suffix of any kind: a silent loop, a failing
-// tick and moves due are the inbox's judgments.
+// running, STOPPED or DONE, with no suffix of any kind but a RUNNING machine's
+// late tick: "running (tick late 16s)", the whole seconds since its last tick,
+// once that is longer ago than MachineSilence (docs/SPEC-SPRINT.md section 14),
+// and a STOPPED machine's why: the cause of its own stop, or a stop by hand's
+// who, reason and back-by time (section 14). STOPPED is a stop's alone, the
+// record's state; a late tick is never one. A silent loop, a failing tick and
+// moves due are the inbox's judgments.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Done() {
 		return "machine: " + DoneState
 	}
 	if !m.Running() && m.Cause == sprint.FundsCause {
 		return "machine: STOPPED (" + sprint.FundsCause + ")"
+	}
+	if !m.Running() && m.Reason != "" && !m.Until.IsZero() {
+		// a stop by hand says who, why and when it is back (section 14)
+		return "machine: " + sprint.StoppedText(m.Who, m.Reason, m.Until, now)
 	}
 	if !m.Running() {
 		return "machine: STOPPED"
@@ -217,8 +231,10 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Since.After(last) {
 		last = m.Since
 	}
-	if now.Sub(last) > MachineSilence {
-		return "machine: STOPPED"
+	if late := now.Sub(last); late > MachineSilence {
+		// running, late: the server ticks 7 to 16 s apart at times, and a gap
+		// is not a stop (section 14)
+		return fmt.Sprintf("machine: running (tick late %ds)", int64(late/time.Second))
 	}
 	return "machine: running"
 }
@@ -294,8 +310,24 @@ func (st *Store) MachineLineOf(m Machine, hb Heartbeat) string {
 // happened notification (who, when); a STOPPED span is opened by stop and
 // closed by start, and its time added to the total time STOPPED. The flag is
 // read by the tick before every part: the part in flight finishes, and no
-// part begins after the flag says STOPPED.
+// part begins after the flag says STOPPED. A stop with no reason (a clear's)
+// of a machine stopped by hand takes the stop's reason and back-by time off,
+// so nothing starts it again (section 14).
 func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Machine, res Result, err error) {
+	return st.setMachine(ctx, running, st.Actor, "", time.Time{})
+}
+
+// StopUntil is a stop by hand (docs/SPEC-SPRINT.md section 14): the machine
+// STOPPED, recorded with who, the reason and the time it is back by, when the
+// tick starts it again (backAt). A stop of a machine STOPPED already is a stop
+// again: the reason and the time are replaced, and the span goes on.
+func (st *Store) StopUntil(ctx context.Context, reason string, until time.Time) (before, after Machine, res Result, err error) {
+	return st.setMachine(ctx, false, st.Actor, reason, until)
+}
+
+// setMachine is start, stop, and a stop by hand with its reason and time, as
+// who (docs/SPEC-SPRINT.md section 14).
+func (st *Store) setMachine(ctx context.Context, running bool, who, reason string, until time.Time) (before, after Machine, res Result, err error) {
 	verb, typ := "stop", sprint.NMachineStopped
 	if running {
 		verb, typ = "start", sprint.NMachineStarted
@@ -304,12 +336,17 @@ func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Ma
 	if before, _, err = st.Machine(ctx); err != nil {
 		return before, before, res, err
 	}
-	if before.Running() == running && before.Cause != "" {
+	if before.Running() == running && (before.Cause != "" || !running && (reason != "" || before.Reason != "")) {
 		// A stop of a machine STOPPED by itself (the sprint done) keeps it
 		// STOPPED and takes the cause off: it is a stop by hand now, and the
-		// view says STOPPED. No span opens and no note is written.
+		// view says STOPPED. A stop again sets the stop's reason and time, or
+		// takes them off (a clear's stop). No span opens and no note is
+		// written.
 		after = before
-		after.Cause = ""
+		after.Cause, after.Reason, after.Until = "", reason, until
+		if reason != "" {
+			after.Who = who
+		}
 		if err := st.putMachine(ctx, after); err != nil {
 			return before, before, res, err
 		}
@@ -342,17 +379,51 @@ func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Ma
 		}
 		after.State = Stopped
 	}
-	after.Since, after.Who, after.Cause = now, st.Actor, ""
+	after.Since, after.Who, after.Cause, after.Reason, after.Until = now, who, "", reason, until
 	if err := st.putMachine(ctx, after); err != nil {
 		return before, before, res, err
 	}
+	what := fmt.Sprintf("%s -> %s by %s", before.StateWord(), after.StateWord(), who)
+	if reason != "" {
+		what = fmt.Sprintf("%s -> %s", before.StateWord(), sprint.StoppedText(who, reason, until, now))
+	}
 	res, err = st.Run(ctx, Step{Verb: verb, Plan: func(s *sprint.Snapshot) sprint.Plan {
-		n := sprint.Note{Kind: sprint.Happened, Type: typ, Who: st.Actor, At: s.Now,
-			What: fmt.Sprintf("%s -> %s by %s", before.StateWord(), after.StateWord(), st.Actor)}
+		n := sprint.Note{Kind: sprint.Happened, Type: typ, Who: who, At: s.Now, What: what}
 		return sprint.Plan{Notes: []sprint.Note{n}}
 	}})
 	res.Moved = []string{fmt.Sprintf("machine %s -> %s", before.StateWord(), after.StateWord())}
 	return before, after, res, err
+}
+
+// backAt is the tick's start of a machine stopped by hand once the stop's
+// --until has come (docs/SPEC-SPRINT.md section 14), as the machine: a stop
+// again before it moved the time, and a clear took it off. While every
+// provider is out of credit the machine stays STOPPED for that cause instead,
+// as a start is refused then. It returns the record after.
+func (st *Store) backAt(ctx context.Context, m Machine, res *TickResult) (Machine, error) {
+	if m.Running() || m.Cause != "" || m.Reason == "" || m.Until.IsZero() || st.now().Before(m.Until) {
+		return m, nil
+	}
+	why, err := st.OutOfCredit(ctx)
+	if err != nil {
+		return m, err
+	}
+	part := PartResult{Name: "back", Result: Result{Verb: "tick back"}}
+	if why != "" {
+		after := m
+		after.Cause, after.Reason, after.Until = sprint.FundsCause, "", time.Time{}
+		part.Refused = append(part.Refused, sprint.Refusal{Key: "machine", Why: "back by " + m.Until.UTC().Format(time.RFC3339) + " and not started: " + why})
+		res.Parts = append(res.Parts, part)
+		return after, st.putMachine(ctx, after)
+	}
+	_, after, r, err := st.setMachine(ctx, true, sprint.MachineActor, "", time.Time{})
+	if err != nil {
+		return m, err
+	}
+	part.Result = r
+	part.Moved = []string{fmt.Sprintf("machine STOPPED -> RUNNING at the back-by time of the stop by %s: %s", m.Who, m.Reason)}
+	res.Parts = append(res.Parts, part)
+	return after, nil
 }
 
 // PartResult is what one part of a tick did.
@@ -609,7 +680,13 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	if err != nil {
 		return TickResult{}, err
 	}
-	res = TickResult{State: m.StateWord(), Epoch: st.epoch}
+	res = TickResult{Epoch: st.epoch}
+	// a stop by hand whose --until has come: the machine starts itself
+	// (section 14) and this tick runs it
+	if m, err = st.backAt(ctx, m, &res); err != nil {
+		return res, fmt.Errorf("back: %w", err)
+	}
+	res.State = m.StateWord()
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick shows the fleet as its
 		// beats say and says it looked, so start can tell a run loop is
@@ -676,7 +753,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	failingSame := hb.Error != "" && !hb.At.Before(m.Since)
 	prevError := hb.Error
 	hb.At, hb.Ticks = now, hb.Ticks+1
-	if err != nil && res.Stale == "" && !(failingSame && prevError == err.Error()) {
+	if err != nil && res.Stale == "" && (!failingSame || prevError != err.Error()) {
 		// a failure with an error text the tick was not already failing with
 		// in this run: one note, and the wake (best effort: the store that
 		// failed the tick may refuse it)

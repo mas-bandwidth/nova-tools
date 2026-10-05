@@ -226,7 +226,7 @@ func TestDashReadsStandardInput(t *testing.T) {
 	t.Parallel()
 
 	var out, errb bytes.Buffer
-	exit := runStdin([]string{"-"}, strings.NewReader("# Journal\nI am bad at estimating time.\n"), &out, &errb)
+	exit := runStdin("", []string{"-"}, strings.NewReader("# Journal\nI am bad at estimating time.\n"), &out, &errb)
 	assert.Equal(t, 1, exit)
 	assert.Contains(t, errb.String(), `SELFTALK FAIL -:2: STANDING match="bad at": I am bad at estimating time.`)
 }

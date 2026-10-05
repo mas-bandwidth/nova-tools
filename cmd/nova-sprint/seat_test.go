@@ -203,7 +203,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 		"MEMBER m2 held by coordinator\n",
 		"DECISION ",
 		" drop s2-1 by coordinator: obsolete: the tool went away\n",
-		" fleet down m2 by coordinator\n",
+		" hold member m2 by coordinator: --return: its work begun is handed back now\n",
 		"RULE Cards are admitted and released in waves of at least the fleet's width: add takes a directory, release names a wave, rework and drop answer a group; a single-card verb outside a judgment is the sign of doing it wrong.\n",
 		"FIRST nova-sprint where\n",
 		"FIRST nova-sprint inbox --wait --push seat\n",

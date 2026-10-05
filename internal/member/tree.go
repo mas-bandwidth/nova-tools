@@ -13,7 +13,13 @@ import (
 // pushes the commit of the last ok step before it and finishes ok there, so steps 1..n-1 are
 // read and land on the unchanged path, and the report names the remainder card `<id>-r<n>`
 // (cardtree.Remainder: the brief from step n, staged at that commit, needing this card).
+// A call with no resolver accepts a 40-hex sha as itself (the tests' member, which has no
+// clone); the member's end path passes the resolver that reads the branch.
 func treeFinish(p Packet, r Result) Result {
+	return treeFinishWith(p, r, acceptFullSha(p.Branch))
+}
+
+func treeFinishWith(p Packet, r Result, resolve cardtree.ShaResolve) Result {
 	if !r.Shaped || r.Verdict == "nothing" {
 		return r
 	}
@@ -21,7 +27,7 @@ func treeFinish(p Packet, r Result) Result {
 	if !t.IsTree() || len(t.Work()) == 0 {
 		return r
 	}
-	v := cardtree.ParseVerdicts(r.Body)
+	v := cardtree.ParseVerdicts(r.Body, resolve)
 	if len(v) == 0 {
 		return r // no step lines at all: the card's own verdict stands, as for a flat card
 	}

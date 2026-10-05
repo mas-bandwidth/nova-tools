@@ -138,7 +138,7 @@ func TestNoSeatKeyAtAllDrifts(t *testing.T) {
 func TestSeatCheckNeedsTheSecretsTool(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
-	os.Remove(filepath.Join(b.bin, "nova-secrets"))
+	require.NoError(t, os.Remove(filepath.Join(b.bin, "nova-secrets")))
 	b.drift(t, "nova-secrets not on PATH for seat check of "+filepath.Join(b.home, ".config/nova-secrets/rows.key"))
 }
 

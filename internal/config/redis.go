@@ -654,12 +654,23 @@ func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, act
 	return nil
 }
 
+// registrySet is the set that holds the names of one kind's rows that name a
+// machine: the function library writes friend names to "friends" and bench
+// names to "benches" (internal/nsprint/fn/lua/capacity.lua registry_set).
+func registrySet(kind string) string {
+	if kind == KindFriend {
+		return FriendsKey
+	}
+	return "benches"
+}
+
 func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string) error {
 	var users []string
 	for _, kind := range []string{KindFriend, "bench"} {
-		names, err := a.Client.SMembers(ctx, kind+"s").Result()
+		set := registrySet(kind)
+		names, err := a.Client.SMembers(ctx, set).Result()
 		if err != nil {
-			return fmt.Errorf("redis: read %ss: %w", kind, err)
+			return fmt.Errorf("redis: read %s: %w", set, err)
 		}
 		if len(names) == 0 {
 			continue
@@ -670,7 +681,7 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 			cmds[i] = pipe.HGet(ctx, kind+":"+n+":desired", "machine")
 		}
 		if err := redisconn.Exec(ctx, pipe); err != nil {
-			return fmt.Errorf("redis: read %ss: %w", kind, err)
+			return fmt.Errorf("redis: read %s: %w", set, err)
 		}
 		for i, n := range names {
 			if cmds[i].Val() == m {

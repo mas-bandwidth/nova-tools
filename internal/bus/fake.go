@@ -24,6 +24,10 @@ type Fake struct {
 	streams map[string][]Entry
 	groups  map[string]*fakeGroup // stream + "/" + group
 	seq     int64
+	hashes  map[string]map[string]string
+	// Friends is which names of the roster are friends (the set `friends`);
+	// the rest are machines. A test sets it before the first send.
+	Friends []string
 	// Fail, when set, is the error every command answers: a store that is down.
 	Fail error
 	// Trips counts the commands sent.
@@ -69,7 +73,25 @@ func (f *Fake) Roster(context.Context) ([]string, time.Time, error) {
 	return slices.Clone(f.names), f.now, nil
 }
 
-func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]string) error {
+func (f *Fake) Members(context.Context) ([]string, []string, time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	f.now = f.now.Add(time.Second)
+	var friends, machines []string
+	for _, n := range f.names {
+		if slices.Contains(f.Friends, n) {
+			friends = append(friends, n)
+		} else {
+			machines = append(machines, n)
+		}
+	}
+	return friends, machines, f.now, nil
+}
+
+func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]string, marks ...Mark) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.trip(); err != nil {
@@ -80,7 +102,52 @@ func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]str
 	for _, s := range streams {
 		f.streams[s] = append(f.streams[s], Entry{Stream: s, Entry: id, Fields: maps.Clone(fields)})
 	}
+	for _, m := range marks {
+		if m.Clear {
+			delete(f.hashes[m.Key], m.Field)
+			continue
+		}
+		if f.hashes == nil {
+			f.hashes = map[string]map[string]string{}
+		}
+		if f.hashes[m.Key] == nil {
+			f.hashes[m.Key] = map[string]string{}
+		}
+		f.hashes[m.Key][m.Field] = m.Value
+	}
 	return nil
+}
+
+func (f *Fake) Unmark(_ context.Context, key string, fields ...string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, k := range fields {
+		if _, ok := f.hashes[key][k]; ok {
+			delete(f.hashes[key], k)
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *Fake) Marks(_ context.Context, keys ...string) ([]map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return nil, err
+	}
+	out := make([]map[string]string, len(keys))
+	for i, k := range keys {
+		out[i] = maps.Clone(f.hashes[k])
+		if out[i] == nil {
+			out[i] = map[string]string{}
+		}
+	}
+	return out, nil
 }
 
 func (f *Fake) EnsureGroup(_ context.Context, stream, group string) error {
@@ -250,7 +317,7 @@ func (f *Fake) Get(_ context.Context, stream string, entries []string) ([]Entry,
 func after(a, b string) bool {
 	num := func(id string) (int64, int64) {
 		ms, seq, _ := strings.Cut(id, "-")
-		m, _ := strconv.ParseInt(ms, 10, 64)  // ignored: a fake id is always one this file made, or "-"/"+"
+		m, _ := strconv.ParseInt(ms, 10, 64)  // ignored: a fake id is one this file made, and a range end that is no id reads as 0
 		s, _ := strconv.ParseInt(seq, 10, 64) // ignored: as above
 		return m, s
 	}

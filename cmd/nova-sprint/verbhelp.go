@@ -10,7 +10,8 @@ import (
 
 // releaseHoldWords tells release apart from the holds on a member, a reader,
 // and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
-const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, or friend:
+const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
+  unhold <name>... releases any of them (one verb for the four)
   fleet up <member> releases a held member
   reader up <reader> releases a held reader
   friend up <friend> releases a held friend
@@ -24,19 +25,27 @@ const exitLine = "exit codes: 0 done, 1 failed or incomplete (including refused)
 
 // verbExit is a verb's own exit codes where they are not the common three.
 var verbExit = map[string]string{
-	"run":         "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
-	"fleet sync":  "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
-	"friend sync": "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
-	"land":        "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
-	"check":       "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
-	"selftest":    "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
-	"answer":      "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
-	"dashboard":   "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"run":           "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"fleet sync":    "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
+	"friend sync":   "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
+	"land":          "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
+	"check":         "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
+	"selftest":      "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
+	"answer":        "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
+	"dashboard":     "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"selftest land": "exit codes: 0 done, 1 failed (lander broken or card did not land), 2 usage",
+	"server switch": "exit codes: 0 done, 1 failed, 2 usage",
 }
 
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
+	"hold":             "local write: holds the named members, readers, friends or streams in the sprint's store (--return also hands back their begun work); --dry-run writes nothing",
+	"unhold":           "local write: releases the named holds in the sprint's store; --dry-run writes nothing",
+	"check":            "inspection: reads the sprint's tables and prints each violation, writes nothing",
+	"routes":           "inspection: reads the route table and prints each route, writes nothing",
+	"promote":          "delivery: promotes the landed cards toward the development branch and records the promotion in the sprint's store; --dry-run prints the branch and the landed cards and changes nothing",
+	"friend clean":     "local write: removes the friends' finished job directories and listings past --days under --root; --dry-run prints every removal with the bytes it would free and removes nothing",
 	"where":            "inspection: reads the sprint table and its rows, writes nothing",
 	"card":             "inspection: reads one card, its brief and its attempts, writes nothing",
 	"log":              "inspection: reads the sprint's change log, writes nothing",
@@ -63,6 +72,8 @@ var verbEffect = map[string]string{
 	"dashboard":        "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator":      "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 	"answer":           "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
+	"selftest land":    "inspection: lands a canned card on a scratch clone with this binary, writes nothing to the sprint",
+	"server switch":    "local write: switches the server binary on disk, keeping the previous binary and rolling back on land failure in the window",
 }
 
 // commonExit is the codes of every other verb.
@@ -190,6 +201,10 @@ func verbProse(name string) string {
 		return friendLevelWords
 	case "add", "brief":
 		return cardHelpWords
+	case "hold", "unhold":
+		return holdWords()
+	case "fleet down", "reader away", "reader up":
+		return oldHoldWords(name)
 	default:
 		return ""
 	}

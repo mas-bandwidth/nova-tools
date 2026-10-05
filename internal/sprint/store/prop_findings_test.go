@@ -72,9 +72,7 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.takeAndFinish(false, "p2")
 	h.machine() // asks two readers
 	var cards []*sprint.Card
-	for _, rc := range h.snap().Readers.Of("p2") {
-		cards = append(cards, rc)
-	}
+	cards = append(cards, h.snap().Readers.Of("p2")...)
 	require.Len(t, cards, 2, "asked: %d read cards", len(cards))
 	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
 	h.tick(sprint.DeadlineUnbegun + time.Minute)

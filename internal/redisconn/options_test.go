@@ -149,11 +149,11 @@ func TestResolveRefusals(t *testing.T) {
 		{"too many colons", Options{Addr: "a:b:6379"}, nil, Unreachable, "too many colons in address"},
 		{"a relative path", Options{Addr: "run/store.sock"}, nil, Unreachable, "missing port in address"},
 		{"a space in host:port", Options{Addr: "store.test :6379"}, nil, Unreachable,
-			`redis at "store.test :6379" given to this tool: unreachable: not an address: it holds a space or a control character`},
+			`redis at "store.test :6379" given to this tool: unreachable: not an address: it holds whitespace or a control character`},
 		{"a line break in host:port", Options{Addr: "store.test:6379\nNOAUTH"}, nil, Unreachable,
-			`redis at "store.test:6379\nNOAUTH" given to this tool: unreachable: not an address: it holds a space or a control character`},
+			`redis at "store.test:6379\nNOAUTH" given to this tool: unreachable: not an address: it holds whitespace or a control character`},
 		{"a control character in a path", Options{Addr: "/var/run/store\x1b.sock"}, nil, Unreachable,
-			`redis at "/var/run/store\x1b.sock" given to this tool: unreachable: not an address: it holds a space or a control character`},
+			`redis at "/var/run/store\x1b.sock" given to this tool: unreachable: not an address: it holds whitespace or a control character`},
 		{"a URL, which is not shown", Options{Env: GeneralEnv}, map[string]string{GeneralEnv.Addr: "redis://bench:hunter2@store.test:6379/0"}, Unreachable,
 			"redis at the address from NOVA_REDIS_ADDR (not shown): unreachable: not an address: it is a URL or carries a login; next: give host:port (a port from 1 to 65535) or the absolute path of a Unix socket, the user (NOVA_REDIS_USER) and the name of the password's variable (NOVA_REDIS_PASSWORD_ENV) on their own"},
 		{"a login before the host, which is not shown", Options{Addr: "bench:hunter2@store.test:6379"}, nil, Unreachable,
@@ -293,7 +293,7 @@ func TestOptionsString(t *testing.T) {
 		{Options{Addr: "store.test:6379", User: "bench", PasswordEnv: "NOVA_TEST_PW"}, "addr=store.test:6379 user=bench password-env=NOVA_TEST_PW"},
 		{Options{Addr: "/a b/s.sock", User: "u=1\nuser=root", PasswordEnv: "P W"}, `addr=/a\x20b/s.sock user=u\x3d1\x0auser\x3droot password-env=P\x20W`},
 	} {
-		for _, got := range []string{c.o.String(), fmt.Sprint(c.o), fmt.Sprintf("%v", c.o), fmt.Sprintf("%+v", c.o), fmt.Sprintf("%s", c.o)} {
+		for _, got := range []string{c.o.String(), fmt.Sprint(c.o), fmt.Sprintf("%v", c.o), fmt.Sprintf("%+v", c.o), c.o.String()} {
 			if got != c.want {
 				assert.EqualValues(t, c.want, got, "%#v renders %q; want %q", c.o, got, c.want)
 			}

@@ -191,7 +191,8 @@ func Parse(r io.Reader) ([]Event, error) {
 // row was cut from and where it was measured, a CI run or a runner label
 // ciBenches reads from ci.yml. A malformed row, a budget that is not a
 // positive number, a row with no measurement, a budget under its measurement
-// or over MaxHeadroom times it, or a row written twice is an error naming its
+// or over MaxHeadroom times it, a package column that is not the full
+// module-relative path, or a row written twice is an error naming its
 // 1-based line.
 func ParseAllowlist(r io.Reader) ([]Row, error) {
 	benches, err := ciBenches()
@@ -219,6 +220,9 @@ func parseAllowlist(r io.Reader, benches []string) ([]Row, error) {
 		f := strings.Split(text, "\t")
 		if len(f) != 4 || f[0] == "" || f[1] == "" {
 			return nil, fmt.Errorf("line %d: want pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>, got %q", line, text)
+		}
+		if err := refuseShortPackage(line, f[0]); err != nil {
+			return nil, err
 		}
 		secs, err := strconv.ParseFloat(f[2], 64)
 		if err != nil || secs <= 0 {
@@ -358,8 +362,9 @@ func measuredWhere(where string, benches []string) bool {
 }
 
 // ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
-// lines and # comments skipped. A malformed row or a row written twice is an
-// error naming its 1-based line.
+// lines and # comments skipped. A malformed row, a package column that is not
+// the full module-relative path, or a row written twice is an error naming
+// its 1-based line.
 func ParseSleeps(r io.Reader) ([]SleepRow, error) {
 	sc := bufio.NewScanner(r)
 	var rows []SleepRow
@@ -375,6 +380,9 @@ func ParseSleeps(r io.Reader) ([]SleepRow, error) {
 		if len(f) != 3 || f[0] == "" || f[1] == "" || f[2] == "" || strings.Contains(f[1], "/") {
 			return nil, fmt.Errorf("line %d: want pkg<TAB>TopLevelTest<TAB>where, got %q", line, text)
 		}
+		if err := refuseShortPackage(line, f[0]); err != nil {
+			return nil, err
+		}
 		key := f[0] + "\t" + f[1]
 		if first, dup := seen[key]; dup {
 			return nil, fmt.Errorf("line %d: %s %s is already on line %d", line, f[0], f[1], first)
@@ -386,6 +394,18 @@ func ParseSleeps(r io.Reader) ([]SleepRow, error) {
 		return nil, err
 	}
 	return rows, nil
+}
+
+// refuseShortPackage refuses a package column that does not start with cmd/,
+// internal/, or tools/. matches still compares by trailing elements, so a
+// column that is only a trailing name would raise every import path that ends
+// the same way. docs/SPEC-CI.md, "The unit tier's budgets": a row names
+// exactly that package, and the column is the full module-relative path.
+func refuseShortPackage(line int, pkg string) error {
+	if strings.HasPrefix(pkg, "cmd/") || strings.HasPrefix(pkg, "internal/") || strings.HasPrefix(pkg, "tools/") {
+		return nil
+	}
+	return fmt.Errorf("line %d: package %q must be the full module-relative path", line, pkg)
 }
 
 // matches reports whether a module-relative allowlist package names an event's
@@ -415,12 +435,6 @@ func topLevel(test string) string {
 		return test[:i]
 	}
 	return test
-}
-
-// Sum folds the events into a report against one package budget and no
-// per-test budget: Judge with Budgets{Package: budget}.
-func Sum(events []Event, budget time.Duration) Report {
-	return Judge(events, Budgets{Package: budget.Seconds()})
 }
 
 // Judge folds the events into a report. A package's total is the sum of its
@@ -518,17 +532,6 @@ func Seconds(seconds float64) string {
 // "60s", 1.5 is "1.5s".
 func budgetText(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'f', -1, 64) + "s"
-}
-
-// ExitCode is the enforced verdict (the nightly leg's): 1, the check ran and
-// said no, when any package or test is over budget or any test is an
-// unledgered SLEEPS skip, 0 when none is; 2 is left to a run that could not
-// read its input. Verdict is what a leg exits with.
-func (r Report) ExitCode() int {
-	if len(r.Over) > 0 || len(r.OverTests) > 0 || len(r.Sleepers) > 0 {
-		return 1
-	}
-	return 0
 }
 
 // OverLines is one line per over-budget package, worst first, then one per
