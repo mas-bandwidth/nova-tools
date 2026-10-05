@@ -260,7 +260,16 @@ turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is
 command accepting the input, not the turn ending). Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
-cannot take never comes back for ever. A delivery the adapter defers,
+cannot take never comes back for ever. The daemon saves each ordinary failure
+atomically in `delivery-state.json` under its state directory, keyed by message
+ID, before its terminal acknowledgement; a saved count therefore survives a
+restart. At startup it snapshots every pending delivery (up to 10,000; a larger
+backlog refuses restart for reconciliation), releases that snapshot once, and
+the ordinary receive path claims it immediately. This redelivers a turn lost to
+a daemon crash without waiting fifteen minutes, while retaining batching and
+ping handling. An exhausted saved count retries acknowledgement only, never a
+fourth model turn. A malformed or unwritable delivery state stops the daemon
+before it can refund a failed delivery. A delivery the adapter defers,
 `Deferred`, the session unable to take a turn now with nothing wrong, such as
 both Codex delivery commands being unavailable, is neither a failure nor
 an ack: the turn stays in the daemon's hand, tried again every ten seconds,

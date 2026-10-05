@@ -56,8 +56,9 @@ const DefaultBrokenAfter = 3
 // travels as one argument to some harnesses (opencode run), under the
 // platform's argument limit.
 const (
-	MaxBatch   = 32
-	BatchBytes = 256 << 10
+	MaxBatch            = 32
+	BatchBytes          = 256 << 10
+	startupPendingLimit = 10000
 )
 
 // The subjects of the daemon's own messages on the bus.
@@ -79,10 +80,14 @@ const (
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
-	Width                int
-	Store                bus.Store
-	Deliver              Deliverer
-	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	// StateDir is the daemon state directory. Delivery failures are saved here
+	// before their terminal acknowledgement so restart does not grant another
+	// MaxDeliveries attempts.
+	StateDir string
+	Width    int
+	Store    bus.Store
+	Deliver  Deliverer
+	Beat     func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
 	// tasks under Dir), both read at most once an IdleWalkEvery; IdleAfter is her
@@ -237,6 +242,8 @@ type loop struct {
 	brokenAfter  int
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	failed       map[string]int  // entries whose turn failed, and how often
+	err          error
+	recovered    bool            // the startup pending snapshot was released
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
 	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
 	notice       *Push           // the latest word about the coordinator the session is owed
@@ -272,8 +279,12 @@ type loop struct {
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
-		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		answered: map[string]bool{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
+	var err error
+	if l.failed, err = ReadDeliveryState(d.StateDir, d.Friend); err != nil {
+		return err
+	}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
 		l.silentStop = DefaultSilentStop
@@ -286,7 +297,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if !l.passive {
 		d.status.Session = SessionOK
 	}
+	l.recovered = l.passive
 	for ctx.Err() == nil {
+		if l.err != nil {
+			return l.err
+		}
 		now := d.Now()
 		for _, p := range d.m.Tick(now) {
 			l.say(p)
@@ -297,6 +312,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.notice = nil
 		}
 		mode, width := l.row(now)
+		if !l.recovered {
+			if err := l.recover(); err != nil {
+				d.status.StoreError = err.Error()
+			} else {
+				l.recovered = true
+			}
+		}
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
 		storeOK := l.read(now)
 		if ctx.Err() != nil {
@@ -312,6 +334,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case r := <-l.lanes.results:
 			l.laneDone(r, now)
 		default:
+		}
+		if l.err != nil {
+			return l.err
 		}
 		// a change of mode waits for the other mode's turns to end
 		if mode != l.mode && l.busy == nil && !l.lanes.running() {
@@ -357,6 +382,41 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 		}
 		d.flush(now)
+	}
+	return nil
+}
+
+func (t *turn) messageID(entry string) string {
+	for i, e := range t.entries {
+		if e == entry && i < len(t.msgs) && t.msgs[i].ID != "" {
+			return t.msgs[i].ID
+		}
+	}
+	return entry
+}
+
+// recover releases the daemon's complete pending snapshot once at startup.
+// The next ordinary Recv claims it at once, so restart uses the same ping,
+// batching and exhausted-budget path as every other delivery. The hard limit
+// is a refusal rather than silently leaving excess entries to ClaimAfter.
+func (l *loop) recover() error {
+	d := l.d
+	stream := bus.StreamOf(d.Friend)
+	if err := d.Store.EnsureGroup(l.ctx, stream, d.Friend); err != nil {
+		return fmt.Errorf("recover pending deliveries: %w", err)
+	}
+	ids, err := d.Store.Pending(l.ctx, stream, d.Friend, startupPendingLimit+1)
+	if err != nil {
+		return fmt.Errorf("recover pending deliveries: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) > startupPendingLimit {
+		return fmt.Errorf("recover pending deliveries: more than %d pending entries; reconcile the backlog before restart", startupPendingLimit)
+	}
+	if err := d.Store.Release(l.ctx, stream, d.Friend, ids...); err != nil {
+		return fmt.Errorf("recover pending deliveries: %w", err)
 	}
 	return nil
 }
@@ -575,6 +635,9 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
+			} else if l.exhausted(e, now) {
+				// The terminal failure was saved before its failed ACK. A later
+				// claim retries only that ACK, never another model turn.
 			} else if !l.inHand[e.Entry] {
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
@@ -614,6 +677,25 @@ func (l *loop) read(now time.Time) bool {
 	}
 	d.Pause(l.ctx, BeatEvery)
 	return ok
+}
+
+func (l *loop) exhausted(e bus.Entry, now time.Time) bool {
+	id := e.Message().ID
+	if l.failed[id] < MaxDeliveries {
+		return false
+	}
+	if _, err := l.b.AckEntry(l.ctx, l.d.Friend, e.Entry); err != nil {
+		l.d.status.StoreError = err.Error()
+		l.err = fmt.Errorf("retry exhausted delivery acknowledgement: %w", err)
+		return true
+	}
+	delete(l.failed, id)
+	if err := WriteDeliveryState(l.d.StateDir, l.d.Friend, l.failed); err != nil {
+		l.err = err
+		return true
+	}
+	l.d.Record(fmt.Sprintf("%s entry=%s given_up=true acked=true after retry", now.UTC().Format(time.RFC3339), e.Entry))
+	return true
 }
 
 // take is the messages of the hand that go in the next turn: oldest first,
@@ -733,7 +815,11 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 				d.status.Delivered += len(t.entries)
 				line += " acked=true"
 				for _, e := range t.entries {
-					delete(l.failed, e)
+					delete(l.failed, t.messageID(e))
+				}
+				if err := WriteDeliveryState(d.StateDir, d.Friend, l.failed); err != nil {
+					l.err = err
+					return line
 				}
 			}
 		}
@@ -754,13 +840,20 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		l.streak, l.refusal = 0, ""
 		var given []string
 		for _, e := range t.entries {
-			l.failed[e]++
-			if l.failed[e] >= MaxDeliveries {
+			id := t.messageID(e)
+			l.failed[id]++
+			if l.failed[id] >= MaxDeliveries {
 				given = append(given, e)
 			}
 		}
 		if len(t.entries) > 0 {
-			line += fmt.Sprintf(" deliveries=%d/%d", l.failed[t.entries[0]], MaxDeliveries)
+			if err := WriteDeliveryState(d.StateDir, d.Friend, l.failed); err != nil {
+				l.err = err
+				return line
+			}
+		}
+		if len(t.entries) > 0 {
+			line += fmt.Sprintf(" deliveries=%d/%d", l.failed[t.messageID(t.entries[0])], MaxDeliveries)
 		}
 		if len(given) > 0 {
 			line += " given_up=true"
@@ -773,7 +866,11 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 			} else {
 				line += " acked=true"
 				for _, e := range given {
-					delete(l.failed, e)
+					delete(l.failed, t.messageID(e))
+				}
+				if err := WriteDeliveryState(d.StateDir, d.Friend, l.failed); err != nil {
+					l.err = err
+					return line
 				}
 			}
 		}

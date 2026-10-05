@@ -3,6 +3,8 @@ package friend
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -294,6 +296,98 @@ func TestAMessageThatFailsThreeTimesIsAckedAndTheRecordSaysSo(t *testing.T) {
 	assert.Equal(t, MaxDeliveries, failed, "%v", r.records)
 	assert.Contains(t, r.records[len(r.records)-1], "deliveries=3/3 given_up=true acked=true")
 	assert.Equal(t, 0, r.last().Delivered, "a message given up on was never delivered")
+}
+
+// A daemon owns the stream consumer. When it dies with a turn in flight, its
+// replacement takes that pending entry at startup instead of waiting for the
+// stale-claim interval. The delivery still fails here so the later assertion
+// can also pin that the replacement made a real attempt.
+func TestFailedDeliveryCountSurvivesARestartAndRedeliversAtOnce(t *testing.T) {
+	t.Parallel()
+	setup := newRig(t)
+	setup.d.StateDir = t.TempDir()
+	m := setup.send(t, "ada", "poison", "x")
+	setup.exit = 3
+	setup.run(t, 3)
+	failed, err := ReadDeliveryState(setup.d.StateDir, "bob")
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{m.ID: 1}, failed)
+
+	restarted := newRig(t)
+	restarted.store, restarted.d.Store = setup.store, setup.store
+	restarted.bus = &bus.Bus{Store: setup.store}
+	restarted.d.StateDir = setup.d.StateDir
+	restarted.exit = 3
+	restarted.run(t, 3)
+
+	require.Equal(t, []string{Text(m)}, restarted.delivered, "restart reclaims its own in-flight turn without waiting for ClaimAfter")
+	failed, err = ReadDeliveryState(setup.d.StateDir, "bob")
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{m.ID: 2}, failed, "restart continues the failure budget instead of granting a fresh three turns")
+}
+
+type failingDeliveryAckStore struct {
+	bus.Store
+	fail bool
+}
+
+func (s *failingDeliveryAckStore) Ack(ctx context.Context, stream, group string, entries ...string) (int64, error) {
+	if s.fail {
+		return 0, errors.New("ack unavailable")
+	}
+	return s.Store.Ack(ctx, stream, group, entries...)
+}
+
+func TestAnExhaustedDeliveryRetriesOnlyAcknowledgementAfterRestart(t *testing.T) {
+	t.Parallel()
+	setup := newRig(t)
+	m := setup.send(t, "ada", "poison", "x")
+	_, ok, err := setup.bus.Recv(context.Background(), "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	dir := t.TempDir()
+	require.NoError(t, WriteDeliveryState(dir, "bob", map[string]int{m.ID: MaxDeliveries}))
+
+	failing := &failingDeliveryAckStore{Store: setup.store, fail: true}
+	first := newRig(t)
+	first.store, first.d.Store = setup.store, failing
+	first.bus, first.d.StateDir = &bus.Bus{Store: setup.store}, dir
+	require.ErrorContains(t, first.d.Run(context.Background()), "retry exhausted delivery acknowledgement")
+	assert.Empty(t, first.delivered, "an exhausted budget must not run a fourth turn when its acknowledgement fails")
+
+	restarted := newRig(t)
+	restarted.store, restarted.d.Store = setup.store, setup.store
+	restarted.bus, restarted.d.StateDir = &bus.Bus{Store: setup.store}, dir
+	restarted.run(t, 3)
+	assert.Empty(t, restarted.delivered, "restart retries the acknowledgement, never delivery")
+	failed, err := ReadDeliveryState(dir, "bob")
+	require.NoError(t, err)
+	assert.Empty(t, failed)
+}
+
+func TestMalformedDeliveryStateStopsBeforeDispatch(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.StateDir = t.TempDir()
+	r.send(t, "ada", "poison", "x")
+	require.NoError(t, os.WriteFile(filepath.Join(r.d.StateDir, DeliveryStateFile), []byte("{"), 0o600))
+	require.ErrorContains(t, r.d.Run(context.Background()), "delivery state")
+	assert.Empty(t, r.delivered)
+}
+
+func TestUnwritableDeliveryStateStopsBeforeAcknowledgement(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { require.NoError(t, os.Chmod(dir, 0o755)) })
+	r.d.StateDir, r.exit = dir, 3
+	r.send(t, "ada", "poison", "x")
+	require.Error(t, r.d.Run(context.Background()))
+	assert.Len(t, r.delivered, 1, "the failed turn was not acknowledged when its durable count could not be saved")
+	pending, _, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Len(t, pending, 1)
 }
 
 // deferrer is a harness whose session cannot take a turn now and nothing is

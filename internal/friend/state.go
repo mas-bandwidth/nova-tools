@@ -21,11 +21,59 @@ import (
 // coordinator's and the session's, under the working directory
 // (SPEC-FRIEND.md, the files).
 const (
-	StatusFile = "status.json"
-	PongFile   = "pong.json"
-	LogFile    = "deliver.log"
-	QueueFile  = "inbox/QUEUE.json"
+	StatusFile        = "status.json"
+	PongFile          = "pong.json"
+	LogFile           = "deliver.log"
+	QueueFile         = "inbox/QUEUE.json"
+	DeliveryStateFile = "delivery-state.json"
 )
+
+// DeliveryState is the daemon's durable failure budget. Counts are keyed by
+// message ID because a stream entry is local to one recipient stream while a
+// message keeps its identity across a restarted daemon's claim.
+type DeliveryState struct {
+	Version int            `json:"version"`
+	Friend  string         `json:"friend"`
+	Failed  map[string]int `json:"failed,omitempty"`
+}
+
+// ReadDeliveryState reads the saved failure budget. A missing state file is
+// the first daemon run; malformed state stops delivery instead of refunding a
+// failure budget after a restart.
+func ReadDeliveryState(stateDir, friend string) (map[string]int, error) {
+	if stateDir == "" {
+		return map[string]int{}, nil
+	}
+	var state DeliveryState
+	found, err := read(filepath.Join(stateDir, DeliveryStateFile), &state)
+	if err != nil {
+		return nil, fmt.Errorf("delivery state: %w", err)
+	}
+	if !found {
+		return map[string]int{}, nil
+	}
+	if state.Version != 1 || state.Friend != friend {
+		return nil, fmt.Errorf("delivery state does not belong to this daemon")
+	}
+	for id, count := range state.Failed {
+		if id == "" || count < 1 || count > MaxDeliveries {
+			return nil, fmt.Errorf("delivery state has an invalid failure count")
+		}
+	}
+	if state.Failed == nil {
+		state.Failed = map[string]int{}
+	}
+	return state.Failed, nil
+}
+
+// WriteDeliveryState replaces the complete failure budget atomically. A
+// failure is returned to the daemon before it can acknowledge a failed turn.
+func WriteDeliveryState(stateDir, friend string, failed map[string]int) error {
+	if stateDir == "" {
+		return nil
+	}
+	return write(filepath.Join(stateDir, DeliveryStateFile), DeliveryState{Version: 1, Friend: friend, Failed: failed})
+}
 
 // DaemonStale is how old the status file may be while the daemon counts
 // as up: it rewrites the file at least every StatusEvery.
