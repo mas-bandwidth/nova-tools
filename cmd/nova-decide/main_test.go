@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -287,6 +288,35 @@ func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
 		{Args: []string{"findings", "--record", rec, "--bar", "0.5,0.7"}, Code: 2, Says: `--bar "0.5,0.7" wants one probability from 0 to 1`},
 		{Args: []string{"score", "--card", td + "card.md", "--diff", td + "nope.diff", "--backend", "fixed", "--answers", td + "score-answers.json", "--record", rec}, Code: 2, Says: "nope.diff"},
 	})
+}
+
+// TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards pins one-token card fields.
+func TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevScoreReply(0.83))).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	score := []string{"score", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec, "--op", ""}
+	for _, op := range []string{"card,a@landed@0123456789ab", `other card\tag@landed@0123456789ac`} {
+		args := append([]string(nil), score...)
+		args[len(args)-1] = op
+		jev.Do(t, args...).Exit(0)
+	}
+	out := jev.Do(t, "findings", "--record", rec).Exit(0)
+	const want = `FINDINGS FINDING class=stranded_fragment count=2 cards=card\x2ca,other\x20card\tag`
+	out.Out(want)
+	fields := strings.Fields(strings.SplitN(out.Stdout, "FINDINGS FINDING ", 2)[1])
+	var cards string
+	var count int
+	for _, field := range fields {
+		if value, ok := strings.CutPrefix(field, "cards="); ok {
+			cards = value
+		}
+		if value, ok := strings.CutPrefix(field, "count="); ok {
+			count, _ = strconv.Atoi(value)
+		}
+	}
+	assert.Equal(t, count, len(strings.Split(cards, ",")), "escaped card IDs split into exactly the reported number of cards")
 }
 
 // jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
