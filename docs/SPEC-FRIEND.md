@@ -561,6 +561,39 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
+
+A lane's child (the harness run that opens its session and each card's turn)
+runs inside the wall of a profile (`internal/sandbox/profile.go`,
+`LaneProfile`; docs/SPEC-SANDBOX.md, the subsection of the same name). The
+profile is the friend row's, read off the beat as `row_profile=<name>` beside
+`row_mode=` and `row_width=`, else `run --profile`, whose default is `friend`,
+the one profile there is; a name that is not a profile is refused. The lane
+marks its context (`LaneContext`) and the daemon's harness `Exec` (`Wall.Exec`)
+runs a lane's command as `nova-friend wall --profile <p> --dir <dir>
+--deny <self>... [--config-dir <c>] [--job <j>]... [--read <r>]... -- <harness> <args>`, in the
+same directory with the same stdin; a batch turn and anything else not a
+lane's runs as it did. The `wall` verb (`RunWall`) is dispatched before the
+verb table, which carries no argv after `--`: it builds the profile's wall
+for the command, prints nothing on stdout but the command's own (a harness's
+answer, a session listing, is read through it unchanged), says each refusal
+as one `WALL REFUSED reason=<r> <text>` line on stderr at exit 125, and
+answers the command's exit. Inside, `HOME` is the config directory (else the
+working directory) and `CLAUDE_CONFIG_DIR` is set when given; the SSH and GPG
+agent variables are dropped (`sandbox.ChildEnv`). A daemon that cannot name
+its own binary walls nothing: a lane's command is refused, never run outside
+the wall. `run` flags: `--profile`, `--config-dir` (default
+`CLAUDE_CONFIG_DIR`), `--deny-self` (default `NOVA_FRIEND_DENY_SELF`: the
+coordinator's self, which no write inside the wall reaches; a wall that
+denies nothing is refused, so a one-shot daemon with none runs no lane),
+`--wall-jobs` and `--wall-reads` (comma-separated).
+
+Not yet: nova-sprint's beat does not print `row_profile=` and the friend row
+has no `profile` column (internal/sprint and internal/config are outside this
+card), so today the profile is `run --profile`. A cancelled turn signals the
+wall's group, and the wall passes SIGTERM to the harness's own group; the
+SIGKILL after `KillDelay` reaches the wall only.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the
