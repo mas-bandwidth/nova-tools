@@ -435,7 +435,8 @@ name of the git bus it replaced.
 
 ### First run
 
-A Redis whose nova-config rows name ada and bob, its address in `--redis` or
+A Redis whose nova-config rows name ada and bob, each with a proven inbox push
+(their friend daemons' proofs on `bus2:push`), its address in `--redis` or
 `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus)):
 
 ```sh
@@ -460,9 +461,14 @@ line, the body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the
 message for fifteen minutes. With `--exec '<command>'` the command reads that same text on its
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
-answers `acked=false` for an id that is not pending, at exit 0. What a first run
+answers `acked=false` for an id that is not pending, at exit 0. `names` prints
+each name's push (`push=proven|stale|down|none age= harness=`). What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
-`recv` refuse it with the `nova-config friend add` line that adds one);
+`recv` refuse it with the `nova-config friend add` line that adds one); a deaf
+name, the sender, a recipient or the reader, with no inbox push its friend daemon
+proved in the last ten minutes (`deaf: <name> has no proven push since <age>` and
+the remedy: run the friend daemon, `nova-friend install`, and answer its SESSION
+CHECK; [SPEC-BUS.md](SPEC-BUS.md), bus-requires-inbox-push-proof);
 `--forever` without `--exec` (a loop that acks nothing would hand out the same
 message for ever); no store named (`--redis`, else `NOVA_BUS_REDIS`, else the fleet row's `bus` field read
 from the sprint store at `NOVA_SPRINT_REDIS`: `nova-config fleet set --bus <host:port>`, then `apply`); a store
@@ -485,12 +491,12 @@ next run). The third is by hand, after a plain `recv`.
 
 | Command | What it does |
 | --- | --- |
-| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction |
+| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction; refused while the sender or a recipient is deaf (no proven inbox push) |
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
-| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0 |
+| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0; refused while the reader is deaf |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
 | `log [--bodies] [--max <n>]` | The log, oldest first |
-| `names` | The known names: nova-config's friend and machine rows |
+| `names` | The known names (nova-config's friend and machine rows), each with its inbox push: proven, stale, down or none, and its age |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`) and logs
