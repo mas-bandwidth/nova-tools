@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -92,6 +93,9 @@ func (r *rig) world() world {
 // session is the directory's, and a turn carrying a session check is
 // answered with the check's nonce unless the session is deaf.
 func (r *rig) opencode(_ context.Context, dir, _ string, args []string, _ string) (string, int, error) {
+	if len(args) > 0 && args[0] == "export" {
+		return `{"info":{"cost":0,"tokens":{"input":0}}}`, 0, nil
+	}
 	if args[0] == "session" {
 		return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
 	}
@@ -536,6 +540,9 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
+			if len(args) > 0 && args[0] == "export" {
+				return `{"info":{"cost":0.01,"tokens":{"input":10}}}`, 0, nil
+			}
 			if !checked { // the session check goes into her newest session first; her answer brings her up, and the beat with the row
 				if args[0] == "session" {
 					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
@@ -861,4 +868,99 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`daemon=down`, `status=down why="bus cannot deliver: daemon down 31s (2 undelivered)"`)
 
 	cli.Do(t, "status", "--as", "bob", "--dir", dir, "--redis", "").Exit(0).Out(`undelivered not counted`)
+}
+
+// A headless Claude Code account runs as lanes with no shell script: each card
+// is one claude -p run on --config-dir's account (through env, no shell),
+// priced and its limits read from its stream-json on the record; a run that
+// meets the limit stops the daemon (no beat, no card) until the limit's own
+// resetsAt, and after it the card is handed again; status reads the account's
+// runs, spend and limits.
+func TestRunAHeadlessClaudeAccountAsLanesPausesAtItsLimit(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, "ada", "bob")
+		r.onPath = map[string]string{"nova-bus": "/opt/nova/bin/nova-bus"}
+		w := r.world()
+		var cancel context.CancelFunc
+		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel = context.WithCancel(ctx)
+			return ctx, cancel
+		}
+		var mu, clock sync.Mutex // the lanes' runs read the clock from their own goroutines
+		var paused []time.Duration
+		w.now = func() time.Time {
+			clock.Lock()
+			defer clock.Unlock()
+			return r.now
+		}
+		w.sleep = func(_ context.Context, d time.Duration) {
+			if d > time.Minute {
+				clock.Lock()
+				paused = append(paused, d)
+				r.now = r.now.Add(d)
+				clock.Unlock()
+				return
+			}
+			clock.Lock()
+			r.now = r.now.Add(d)
+			clock.Unlock()
+			synctest.Wait()
+		}
+		dir, cfg := t.TempDir(), filepath.Join(t.TempDir(), "config")
+		for _, id := range []string{"c1", "c2"} {
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", id+"~15"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", id+"~15", "BRIEF.md"), []byte("RESULT: "+id+" tier: flash\n"), 0o644))
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"},{"id":"c2","state":"queued"}]}`), 0o644))
+		reset := start.Add(2 * time.Hour).Unix()
+		var runs []string
+		w.exec = func(_ context.Context, d, name string, args []string, stdin string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			require.Equal(t, "env", name)
+			require.Equal(t, []string{"CLAUDE_CONFIG_DIR=" + cfg, "claude", "-p", "--output-format", "stream-json", "--verbose", "--model", "claude-haiku-4-5-20251001"}, args[:8])
+			card := "c1"
+			if strings.Contains(stdin, "one card this turn, c2.") {
+				card = "c2"
+			}
+			runs = append(runs, card)
+			if card == "c2" && len(runs) == 2 {
+				return `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset, 10) + `,"rateLimitType":"five_hour","utilization":1}}
+{"type":"result","is_error":true,"result":"Claude AI usage limit reached","total_cost_usd":0}`, 1, nil
+			}
+			out := filepath.Join(dir, "outbox", card+"~15")
+			require.NoError(t, os.MkdirAll(out, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("done\n"), 0o644))
+			if card == "c2" {
+				cancel()
+			}
+			return `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":` + strconv.FormatInt(reset, 10) + `,"rateLimitType":"five_hour","utilization":0.5}}
+{"type":"result","is_error":false,"num_turns":3,"total_cost_usd":0.25,"usage":{"input_tokens":5,"output_tokens":50}}`, 0, nil
+		}
+		beats := 0
+		w.beat = func(context.Context, string, string, time.Time) (string, error) {
+			beats++
+			if beats == 400 {
+				cancel()
+			}
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+		}
+		var out, errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "claude", "--config-dir", cfg, "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		require.Equal(t, 0, code, errb.String())
+		assert.Equal(t, []string{"c1", "c2", "c2"}, runs, "c2 met the limit, and was handed again after its reset\n%s", out.String())
+		require.Len(t, paused, 1)
+		assert.Contains(t, out.String(), "RUN CLAUDE RUN session=claude-")
+		assert.Contains(t, out.String(), "card=c1 model=claude-haiku-4-5-20251001 exit=0 cost_usd=0.25 turns=3 tokens_in=5 tokens_out=50 cache_write=- cache_read=- limit=five_hour:allowed:0.5:2026-10-04T05:00:00Z")
+		assert.Contains(t, out.String(), "RUN CLAUDE LIMIT five_hour rejected until 2026-10-04T05:00:00Z")
+		assert.Contains(t, out.String(), " LIMIT five_hour until 2026-10-04T05:00:00Z: the daemon stops, no beat and no card, until then")
+		assert.Contains(t, out.String(), " RESUME after the five_hour limit's reset")
+		assert.NotContains(t, out.String(), "card=set_aside")
+
+		cli := testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+			return run(args, stdin, stdout, stderr, w)
+		})
+		cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("harness=claude", "runs=3 cost_usd=0.5", `limits="five_hour:allowed:0.5:2026-10-04T05:00:00Z"`)
+	})
 }

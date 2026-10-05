@@ -271,15 +271,21 @@ next only when the turn ends; a card with no RESULT.md after two turns is set as
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
 (row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
 --dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that
-denies nothing is refused), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Prints
-one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
+denies nothing is refused), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Passing --config-dir with
+--harness claude (not the flag's default, which the wall still uses) makes the friend a headless Claude
+Code account (docs/SPEC-FRIEND.md, the headless Claude lane): each card is one claude -p on that account,
+no shell, the trimmed call, the model the card's tier names, stream-json read for the price and the
+rate_limit_event, said as RUN CLAUDE RUN and kept in claude-limits.json, which status reads. There is no
+standing session, so no session check holds the beat. A run that meets the limit stops the daemon until
+that reset (RUN LIMIT, then RUN RESUME): no beat, no card, and the card under way is handed again.
+Prints one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
 dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
-					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR)")
+					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR); passed with --harness claude, the account whose headless claude -p runs the lanes")
 					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
@@ -461,7 +467,8 @@ session_pong_age is the session's own pong (the pong file), daemon_pong_age the 
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
+harnesses omit route. A headless Claude Code account (run --harness claude --config-dir) adds runs= cost_usd= limits=, from claude-limits.json in
+the state directory, and limited_until= with a NOTE while a limit it met lasts. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
 (known for grok, a tail under the window: running; unknown elsewhere, never down on its own); at a limit (the state directory's
 ` + friend.LimitFile + `) is down until the reset; no session answer (the pong file) under ` + friend.AnswerBound.String() + ` is down; a bus that cannot
 deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes it up. why
@@ -597,9 +604,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
 	rowMode, rowWidth := "", 0
+	var recording sync.Mutex // the lanes' runs say their lines from their own goroutines
 	record := func(line string) {
+		recording.Lock()
+		defer recording.Unlock()
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
+	}
+	// a headless Claude Code account (docs/SPEC-FRIEND.md, the headless Claude lane): --config-dir
+	// passed, not the wall's default. Its runs are walled like any lane child and are not watched by
+	// Limits; the account's own rate_limit_event stops the daemon until that reset.
+	var claude *friend.Claude
+	if c.Str("harness") == "claude" && c.Given("config-dir") && c.Str("config-dir") != "" {
+		claude = &friend.Claude{Dir: dir, ConfigDir: c.Str("config-dir"), StateDir: state, Run: walled, Out: lineWriter(record), Now: w.now}
+		deliver = claude
 	}
 	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
@@ -675,9 +693,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
 		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
-		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
+		// beat carries the session's last activity, closed over here (fold of 2026-10-05).
+		// A headless Claude account has no standing session to answer a check, so neither
+		// wrapper holds its beat; a limit stops the daemon instead (below).
 		Beat: func(ctx context.Context, active time.Time) error {
-			return sc.Beat(fl.Beat(func(ctx context.Context) error {
+			step := func(ctx context.Context) error {
 				answer, err := w.beat(ctx, server, name, active)
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
@@ -686,7 +706,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 					rowProfile.Store(&p)
 				}
 				return err
-			}))(ctx)
+			}
+			if claude != nil {
+				return step(ctx)
+			}
+			return sc.Beat(fl.Beat(step))(ctx)
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
@@ -737,11 +761,50 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if w.alive != nil {
 		watch.Alive = w.alive
 	}
-	if err := d.Run(ctx); err != nil {
-		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
-		return tool.Exit(1)
+	if claude == nil {
+		if err := d.Run(ctx); err != nil {
+			fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
+			return tool.Exit(1)
+		}
+		return tool.Exit(0)
+	}
+	// the account's limit stops this daemon (no beat, no card) until the limit's own reset, then starts it again
+	for ctx.Err() == nil {
+		if l, limited := claude.Limited(w.now()); limited {
+			record(fmt.Sprintf("%s LIMIT %s until %s: the daemon stops, no beat and no card, until then", w.now().UTC().Format(time.RFC3339), l.Type, l.ResetsAt.UTC().Format(time.RFC3339)))
+			wait := l.ResetsAt.Sub(w.now())
+			if wait < 0 {
+				wait = 0
+			}
+			w.sleep(ctx, wait)
+			if ctx.Err() != nil {
+				break
+			}
+			record(fmt.Sprintf("%s RESUME after the %s limit's reset", w.now().UTC().Format(time.RFC3339), l.Type))
+			continue
+		}
+		dctx, dcancel := context.WithCancel(ctx)
+		claude.OnLimit = func(friend.ClaudeLimit) { dcancel() }
+		err := d.Run(dctx)
+		dcancel()
+		if err != nil {
+			fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
+			return tool.Exit(1)
+		}
 	}
 	return tool.Exit(0)
+}
+
+// lineWriter is the record as a writer: each line written is one record line.
+type lineWriter func(string)
+
+func (r lineWriter) Write(p []byte) (int, error) {
+	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+		if line != "" {
+			r(line)
+		}
+	}
+	return len(p), nil
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
@@ -970,6 +1033,16 @@ func (w world) status(c *tool.Call) *tool.Out {
 		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
+	}
+	if l, found, lerr := friend.ReadClaudeLimits(state); lerr != nil {
+		o.Note("the claude limits file: " + lerr.Error())
+	} else if found {
+		// a headless Claude Code account (run --config-dir): its runs, their price, its limits
+		o.Fact("runs", l.Runs).Fact("cost_usd", dash(l.CostUSD)).Fact("limits", tool.Text(friend.SaidLimits(l.Limits)))
+		if now.Before(l.Until) {
+			o.Fact("limited_until", stamp(l.Until))
+			o.Note("the account met its " + l.Met + " limit: the daemon takes no card and does not beat until " + stamp(l.Until))
+		}
 	}
 	var route, routeLine string
 	var routeErr error

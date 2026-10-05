@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -193,13 +194,120 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 }
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
-// <id> --dir <dir> <text>`, its output read for a refused permission.
+// <id> --dir <dir> <text>`, its output read for a refused permission. With a
+// record (Out), the turn is priced from opencode's own session record, the
+// session's running cost and tokens before the turn and after it
+// (SessionSpend), and said in one OPENCODE RUN line with the provider's
+// rate limit when the output carries one: an API friend has no window to
+// read, only the provider's refusal (docs/SPEC-FRIEND.md, the headless
+// Claude lane and the OpenCode lane).
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
+	var before SessionSpend
+	var berr error
+	price := o.prices()
+	if price {
+		before, berr = o.spend(ctx, id)
+	}
 	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
+	if price {
+		limit := "-"
+		if m := providerErrorType.FindStringSubmatch(out); m != nil && m[1] == "rate_limit_error" {
+			limit = m[1]
+		}
+		after, aerr := o.spend(ctx, id)
+		if aerr == nil && berr == nil {
+			fmt.Fprintf(o.Out, "OPENCODE RUN session=%s exit=%d %s limit=%s\n", id, exit, after.Minus(before), limit)
+		} else {
+			fmt.Fprintf(o.Out, "OPENCODE RUN session=%s exit=%d cost_usd=- limit=%s unpriced=%q\n", id, exit, limit, oneLine(errors.Join(berr, aerr).Error(), 200))
+		}
+	}
 	exit, err = refused(id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+}
+
+// SessionSpend is an opencode session's running cost and tokens, as its own
+// record says them (`opencode export <id>`, the session's info).
+type SessionSpend struct {
+	Cost   json.Number `json:"cost"`
+	Tokens struct {
+		Input     int64 `json:"input"`
+		Output    int64 `json:"output"`
+		Reasoning int64 `json:"reasoning"`
+		Cache     struct {
+			Read  int64 `json:"read"`
+			Write int64 `json:"write"`
+		} `json:"cache"`
+	} `json:"tokens"`
+}
+
+// Minus is the turn between two reads of the session, said as the record's
+// words: cost_usd= tokens_in= tokens_out= reasoning= cache_read= cache_write=.
+func (s SessionSpend) Minus(before SessionSpend) string {
+	cost := "-"
+	if a, ok := new(big.Rat).SetString(string(s.Cost)); ok {
+		b, ok := new(big.Rat).SetString(string(before.Cost))
+		if !ok {
+			b = new(big.Rat)
+		}
+		cost = strings.TrimRight(strings.TrimRight(a.Sub(a, b).FloatString(8), "0"), ".")
+	}
+	return fmt.Sprintf("cost_usd=%s tokens_in=%d tokens_out=%d reasoning=%d cache_read=%d cache_write=%d", cost,
+		s.Tokens.Input-before.Tokens.Input, s.Tokens.Output-before.Tokens.Output, s.Tokens.Reasoning-before.Tokens.Reasoning,
+		s.Tokens.Cache.Read-before.Tokens.Cache.Read, s.Tokens.Cache.Write-before.Tokens.Cache.Write)
+}
+
+// ReadSessionSpend reads the session's info from an export: only the
+// leading "info" object, so an export cut short after it (measured
+// 2026-10-04: a 680 KB export read through a pipe ended mid-string) still
+// prices the turn.
+func ReadSessionSpend(export string) (SessionSpend, error) {
+	dec := json.NewDecoder(strings.NewReader(export))
+	dec.UseNumber()
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return SessionSpend{}, fmt.Errorf("opencode export: not a JSON object")
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return SessionSpend{}, fmt.Errorf("opencode export: %v", err)
+		}
+		if key == "info" {
+			var s SessionSpend
+			if err := dec.Decode(&s); err != nil {
+				return SessionSpend{}, fmt.Errorf("opencode export: the session's info: %v", err)
+			}
+			return s, nil
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return SessionSpend{}, fmt.Errorf("opencode export: %v", err)
+		}
+	}
+	return SessionSpend{}, fmt.Errorf("opencode export: no session info")
+}
+
+// prices says a turn is read from opencode's own session record. A stand-in
+// program (the lane-wall test runs this binary as the harness) is not
+// opencode: an export through it is not a session record, and is not run.
+func (o *OpenCode) prices() bool {
+	if o.Out == nil {
+		return false
+	}
+	p := o.Program
+	return p == "" || p == "opencode" || strings.HasSuffix(p, "/opencode")
+}
+
+func (o *OpenCode) spend(ctx context.Context, id string) (SessionSpend, error) {
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"export", id}, "")
+	if err != nil {
+		return SessionSpend{}, fmt.Errorf("opencode export %s: %w", id, err)
+	}
+	if exit != 0 {
+		return SessionSpend{}, fmt.Errorf("opencode export %s exited %d", id, exit)
+	}
+	return ReadSessionSpend(out)
 }

@@ -394,7 +394,9 @@ Antigravity and Grok, each below; and DSH and Gemini, from the harness survey
 at the end. A turn while a challenge is open carries, at its head, the exact `pong` line for
 this friend (the binary by path, the name, the directory, the store, the
 nonce), so a small model has one line to run and nothing to fill in. Claude
-has no deliver command yet: its daemon is passive, taking nothing off the
+with `--config-dir` is a headless Claude Code account, each turn one
+`claude -p` run (below, the headless Claude lane). Claude without it has no
+deliver command: its daemon is passive, taking nothing off the
 stream (the session's own blocking read does), peeking so a ping is still
 answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
@@ -647,7 +649,7 @@ every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
 late), so the late rule never returns a printing card for want of a stamp.
 
 Only a harness that can open a session and deliver into a named one has
-lanes (`LaneHarness`; OpenCode today: `opencode run --dir <dir> <seed>` with no
+lanes (`LaneHarness`; a headless Claude account, below, and OpenCode: `opencode run --dir <dir> <seed>` with no
 `--session` opens one, found as the session the listing of the directory
 gained, and `opencode run --session <id>` takes each card). On any other
 harness a one-shot row is delivered in batch, said once in the record.
@@ -664,6 +666,75 @@ be written is said in the record and the turn goes ahead). The schema is
 OpenCode's documented permission map; it is not yet measured on a live lane.
 A refusal the turn's output still shows is the lane's `rejected=` on the
 record and the card's reason.
+
+### The headless Claude lane (internal/friend/adapter_claude.go)
+
+On 2026-10-04 four Claude Code accounts (the buds) and one OpenCode API
+friend ran their cards through hand-written zsh runners (`runner.zsh`,
+`reader.zsh`) that wrote PAUSED files at a limit and guessed the reset from
+the error's text; the owner: "Golang nova-tools and nova-sprint verbs only".
+`nova-friend run --as <bud> --harness claude --config-dir <dir> --dir <d>
+--width <n>` is that runner as a friend: one-shot lanes (above) on the
+account whose Claude Code config directory is `<dir>`. A lane's session is
+no Claude session: opening it runs nothing and keeps the lane's seed. Each
+card is one run, `env CLAUDE_CONFIG_DIR=<dir> claude -p --output-format
+stream-json --verbose --model <m> --permission-mode bypassPermissions
+--strict-mcp-config --disable-slash-commands --no-chrome --tools Bash Read
+Write Edit Grep Glob`, run directly with no shell, the lane's seed (who the
+friend is, from her own files) and the card's turn on stdin, so each card
+starts from the friend's own files and carries nothing of the last one. The
+trimmed call cut the context of a call from about 50k tokens to 12.7k
+(measured 2026-10-04). The model is the card's tier, the brief's `RESULT:
+<id> tier: <t>` line: frontier `claude-fable-5-1`, heavy `claude-opus-5-5`,
+pro `claude-sonnet-5-5`, flash `claude-haiku-4-5-20251001`, none
+`claude-opus-5-5` (the owner, 2026-10-04 4:15 PM). stream-json prints as the
+run works, so the silence watch sees a working run; the text format printed
+nothing until the end.
+
+Every run is priced and its limits read from its own stream: the `result`
+event's `total_cost_usd`, `num_turns` and `usage` (a class not reported is a
+dash, never 0), and each `rate_limit_event`'s `rate_limit_info` (`rateLimitType`
+five_hour or seven_day, `status` allowed, allowed_warning or rejected,
+`utilization`, `resetsAt`), said in one record line, `CLAUDE RUN session=
+card= model= exit= cost_usd= turns= tokens_in= tokens_out= cache_write=
+cache_read= limit=<window>:<status>:<utilization>:<resets_at>,...`, and
+kept in `claude-limits.json` in the state directory (the runs, their summed
+price, the latest limit per window), which `status` reads: `runs= cost_usd=
+limits=`. The stream's field names are the ones Claude Code documents for
+`--output-format stream-json`; a live account's stream is not yet recorded
+in a test.
+
+A run meets the limit when a window says `rejected`, or when the run ends in
+error saying it is out (the words the runners matched: usage limit, hit your
+limit, limit reached, out of extra usage, weekly limit), and then the reset
+is the latest `resetsAt` a window said, else an hour, said as a guess. At the
+limit the record says `CLAUDE LIMIT <window> rejected until <t>`, the daemon
+stops, so it neither beats (out of credits is down, the owner, 2026-10-04
+4:12 PM: the sprint reads the friend down and deals her nothing) nor takes a
+card, `LIMIT <window> until <t>` on the record, and starts again at the
+limit's own `resetsAt`, `RESUME`. The run that met the limit returns only
+once the daemon has stopped, so its card is counted toward nothing and is
+handed again after the reset; the other lanes' runs on the same account stop
+with it. A daemon started while a kept limit lasts waits it out first.
+Passing `--config-dir` is what makes the account headless. The flag's default, the environment's `CLAUDE_CONFIG_DIR`, is only the lane wall's writable directory and does not. A headless account has no standing session, so no session check is asked and none holds the beat; the beat still carries the row, and a limit stops the daemon instead of holding it. Without `--config-dir`, `--harness claude` stays the passive harness above.
+
+An OpenCode lane is priced the same way from opencode's own session record:
+before and after each card's turn the lane reads `opencode export <id>`, the
+session's `info` (its running `cost` and `tokens`; only the leading object
+is read, because an export read through a pipe was cut short mid-string,
+measured 2026-10-04), and says the difference in one line, `OPENCODE RUN
+session= exit= cost_usd= tokens_in= tokens_out= reasoning= cache_read=
+cache_write= limit=`, the limit being the provider's `rate_limit_error` when
+the turn's output carries one: an API friend has no window to read.
+
+The scripts are retired for cards: a bud runs `nova-friend run --harness
+claude --config-dir <its config> --width <n> --mode one-shot` (or its row's
+mode) in place of `runner.zsh`. Not yet here: the bud's reader
+(`reader.zsh`: `queue --as reader-<bud>`, `read --begin`, a claude run,
+`read --ok|--broken|--return`), which is the sprint's read verbs and not a
+card queue; `install` carrying `--config-dir` into the launchd agent; and
+the beat carrying the spend and the limits, which waits on `friend beat`
+taking numbers (the server's side).
 
 Open design question, not built (the owner, 2026-10-04 1:45 PM: "tbd."): a
 per-friend `tier` on the row (flash, pro, heavy, frontier), defaulted from a
