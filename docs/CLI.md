@@ -1184,6 +1184,20 @@ the old server running, when the shadow exits non-zero, panics, misses `--tick-d
 at `<target>.shadow.json`, beside the switch record. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
 
+### adoption-is-a-pipeline.w1: nova-sprint adopt
+
+`nova-sprint adopt [--state <file>] --repo-dir <clone> --base <branch> --server-bin <path> [--daemon <path>...]
+--bench <host> --bench-src <dir> --bench-out <dir> --out <dir> --release <vX.Y.Z> --machines <file>
+[--adopt-args <flags>] [--stream <s>] [--judgment-to <file>] [--tick-every <d>] [--missed <n>] [--watch <n>]`
+runs one pass of the adoption pipeline: when the base tip is not the live server's build it builds on the
+bench, runs the canary and the shadow tick, adds the cold-read card, and raises one judgment (`JUDGMENT adopt
+<tip12> ...`); after a yes it keeps rollback copies, switches the server and daemons, pushes to every machine
+row and reads each version back, and rolls back by itself on missed ticks. `nova-sprint adopt --answer
+yes|no --judgment <tip12> --reason <text>` answers the judgment and runs nothing; `--show` prints the record.
+Exit 0 for any pass that ran (its lines say the stage), 1 when the base, the live build or the record does not
+read or an answer is refused, 2 usage. The runbook is
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
+
 ### Exit codes
 
 | exit | meaning |

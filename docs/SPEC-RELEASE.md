@@ -501,6 +501,16 @@ A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receip
 `TestCycleRefusesBeforeAnyPlay`, `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks`,
 `TestATransitiveChangeRebuildsTheTool`, `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer`.*
 
+## 14. The adoption after a landing is a pipeline
+
+`nova-sprint adopt` runs sections 8 and 13's order unattended whenever the sprint base moves past the live
+build: build on a bench, verify, canary and shadow, a cold read, one judgment to the coordinator, then on yes
+the switch and, through **the build's own** `nova-update release adopt`, one push per machine row with the
+version read back, and a rollback from kept copies on missed ticks. The runbook is
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
+
+*Test: `TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
