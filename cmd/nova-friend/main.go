@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -57,6 +59,7 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
+	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                           // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat      func(ctx context.Context, server, friend string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error               // one progress verb to the sprint server (friend.ProgressArgv)
 	launchctl friend.Launchctl
@@ -71,7 +74,7 @@ type world struct {
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, exec: friend.RealExec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+	w := world{getenv: os.Getenv, exec: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -144,6 +147,11 @@ func realWorld() world {
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
+	if len(args) > 0 && args[0] == friend.WallVerb {
+		// the lane's wall around one command: its argv follows "--", which the verb table
+		// does not carry, so it is dispatched here (internal/friend RunWall)
+		return friend.RunWall(args[1:], os.Environ(), stdin, stdout, stderr)
+	}
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
 
@@ -219,7 +227,7 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -238,13 +246,21 @@ bus; a restart clears it. The friend row's mode and width come with each beat's 
 row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Prints
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Every
+lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
+(row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
+--dir, --wall-jobs and --config-dir, never to the coordinator's self (~/rowan-working/rowan-new and
+/Volumes/nova/ai/rowan/working/rowan-new), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Prints
 one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
 dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
+					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR)")
+					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
+					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
@@ -439,7 +455,25 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec, c.Stdout)
+	// every lane child runs inside the wall of the profile her row names, else --profile
+	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w1); a batch turn runs as it did
+	var rowProfile atomic.Pointer[string]
+	wall := friend.Wall{Dir: dir, ConfigDir: c.Str("config-dir"), Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads"))}
+	if bin, err := w.binary(); err == nil {
+		wall.Self = []string{bin}
+	} // else no Self: a lane's child is refused, never run outside the wall
+	walled := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+		if w.wall == nil {
+			return w.exec(ctx, d, prog, args, stdin)
+		}
+		wl := wall
+		wl.Profile = c.Str("profile")
+		if p := rowProfile.Load(); p != nil {
+			wl.Profile = *p
+		}
+		return w.wall(wl, w.exec)(ctx, d, prog, args, stdin)
+	}
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), walled, c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
@@ -478,6 +512,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			answer, err := w.beat(ctx, server, name)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 				rowMode, rowWidth = m, wd
+			}
+			if p, ok := friend.ParseProfile(answer); err == nil && ok {
+				rowProfile.Store(&p)
 			}
 			return err
 		},
@@ -839,6 +876,17 @@ func secretNames(csv string) []string {
 }
 
 // fileThere says whether path is there, a symlink counting as itself.
+// commaList is a comma-separated flag's values, blanks dropped.
+func commaList(csv string) []string {
+	var out []string
+	for _, v := range strings.Split(csv, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func fileThere(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil

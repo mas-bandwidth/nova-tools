@@ -1369,6 +1369,42 @@ done so in its own argv": a directory the caller named in its own `--read` or
 `--write`, and a home that lies inside the caller's own lists, which is what the
 job's data home always is.
 
+### buds-in-the-wall-r.w1 — the lane profile, and the deny list
+
+A nova-friend lane's children run inside a **wall profile** (`LaneProfile`,
+`internal/sandbox/profile.go`; docs/SPEC-FRIEND.md has the lane side). The
+one profile is `friend` (`LaneProfiles`; any other name is refused):
+
+| | |
+|---|---|
+| writes | the friend's working directory, her job directories outside it, her config directory (`CLAUDE_CONFIG_DIR`), and nothing else |
+| `HOME` | the config directory, else the working directory |
+| reads | the roots, the harness's own directory, and what the caller names |
+| denied | `DeniedSelf`: `~/rowan-working/rowan-new` and `/Volumes/nova/ai/rowan/working/rowan-new`, with their `memory/`, `identity/` and `MEMORY-*.md` |
+| network | `--net-deny`, with `LaneNetPorts` (TCP 443 and 22) opened outbound |
+
+**The deny list is a field of the input** (`Input.Deny`). Both bodies grant
+writing only where they are told to, so a denied path no grant covers is
+denied by having no grant; `Build` refuses, `reason=denied_write`, every
+`--write`, `--cwd`, `--tmp` and `HOME` that is a denied path, lies inside one
+or holds one, so no grant can cover one. A denied path is resolved through
+its symlinks when it is there and compared by name when it is not, with the
+same `Inside` as every other question here. It is a deny of named paths: a
+clone of the self under a granted directory is not one of them.
+
+**The network is ports, not hosts.** `Input.NetPorts` is allowed only with
+`--net-deny`, and each port is 1 to 65535 (`reason=bad_net`). On darwin the
+profile grants, under `--net-deny`, the name resolver and `(allow
+network-outbound (remote tcp "*:<port>"))` per port: SBPL filters a remote
+host only as `localhost` or `*`, so 443 is open to every host, github.com and
+the harness's provider among them (measured on darwin 27.2 with
+`sandbox-exec -p`: github.com:443 answered 200, example.com:80 did not
+connect, rc=7). On linux Landlock is handled here with no port rule, so the
+ports are not granted and the denial is whole: fail closed, and a lane on a
+linux machine reaches no TCP host. Holding a lane to github.com and the
+benches by host is the egress verbs' kind of wall (nftables, by address),
+not this one's.
+
 ## macOS — `sandbox-exec` with a generated profile
 
 The wrap is `sandbox-exec -p <profile text> -D <name>=<value>... -- <command>
