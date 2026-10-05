@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	// A race-built helper child otherwise sleeps at exit; every helper this
 	// binary spawns inherits the setting.
 	if os.Getenv("GORACE") == "" {
-		os.Setenv("GORACE", "atexit_sleep_ms=0")
+		os.Setenv("GORACE", "atexit_sleep_ms=0") // ignored: a tuning for race-built helpers; when it does not take, they keep the default exit sleep
 	}
 	code := m.Run()
 	if testCleanup != nil {
