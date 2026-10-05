@@ -44,6 +44,7 @@ var treeTests = []string{"internal/docs", "internal/ci"}
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
 	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
 	defer b.Cancel()
+	defer l.landProc(ctx, "", procOf(run, dir))()
 	var env []string
 	if l.a != nil {
 		env = l.a.gitEnv
@@ -239,12 +240,28 @@ func treePackages(dir string) []string {
 	return have
 }
 
+// gateHost is the machine the tree gate runs on: this one, by its name.
+func gateHost() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "-"
+	}
+	return h
+}
+
 // treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
 // is green or the clone has no module, else the finding (gateWhy).
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
+	landStep(ctx, l.clock(), "gate", "")
+	defer func(start time.Time) {
+		if l.times != nil {
+			since(&l.times.Gate, start)
+			l.times.GateOn = gateHost()
+		}
+	}(time.Now())
 	for _, run := range gateRuns(tests, treePackages(dir)) {
 		if out, err := l.goRun(ctx, dir, run); err != nil {
 			return gateWhy(run, err, out)

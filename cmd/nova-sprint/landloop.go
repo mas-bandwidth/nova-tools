@@ -24,12 +24,17 @@ import (
 // LandEvery is how often the loop looks for cards queued to merge.
 const LandEvery = 2 * time.Second
 
-// landLoop runs landRound every LandEvery until ctx ends.
-func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
-	fmt.Fprintf(stdout, "LANDING every %s: land runs here for every stream with cards queued to merge, one landing at a time\n", LandEvery)
+// landLoop runs landCycle every LandEvery until ctx ends: a landing at a time beside it,
+// and a line every cycle (landbeat.go); a landing past deadline (0: LandDeadline) with cards
+// queued raises one judgment.
+func (a *app) landLoop(ctx context.Context, addr string, deadline time.Duration, stdout io.Writer) {
+	if deadline <= 0 {
+		deadline = LandDeadline
+	}
+	fmt.Fprintf(stdout, "LANDING every %s: land runs here for every stream with cards queued to merge, one landing at a time; every %s a line, and a landing that runs %s with cards queued is a judgment\n", LandEvery, LandEvery, deadline)
+	b := &landBeat{deadline: deadline}
 	for ctx.Err() == nil {
-		a.landRound(ctx, addr, nil, stdout)
-		a.sleep(LandEvery)
+		a.landCycle(ctx, addr, nil, b, LandEvery, stdout)
 	}
 }
 
@@ -52,11 +57,13 @@ func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 func (a *app) landRound(ctx context.Context, addr string, more []string, stdout io.Writer) int {
 	code, idle := a.landOnce(ctx, addr, more, stdout)
 	if a.prune.due(idle, a.now()) {
+		landStep(ctx, a.now(), "prune", "")
 		at := oneline.Field(a.now().Format("15:04:05"))
 		for _, r := range a.flushPrune(ctx, false) {
 			fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(r.line(false)))
 		}
 	}
+	landStep(ctx, a.now(), "promote", "")
 	a.promoteOnTick(ctx, stdout)
 	return code
 }
@@ -64,9 +71,14 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 // landOnce is a round's landing: land's exit code, and idle when the merge queue was
 // read and held nothing.
 func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
+	landStep(ctx, a.now(), "read", "")
 	a.serial.Lock()
-	queued, coordinator, err := a.queuedToMerge(ctx, addr)
+	n, coordinator, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
+	queued := n > 0
+	if err == nil {
+		landQueued(ctx, n)
+	}
 	idle := err == nil && !queued
 	var lines []string
 	code := 0
@@ -120,25 +132,23 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 	return code, idle
 }
 
-// queuedToMerge says a stream has a card queued to merge, and names the sprint's
+// queuedToMerge is how many cards the streams hold queued to merge, and names the sprint's
 // coordinator, whose the landing is ("" when the sprint has none); err when the sprint
 // could not be read, which says nothing of what is queued.
-func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coordinator string, err error) {
+func (a *app) queuedToMerge(ctx context.Context, addr string) (queued int, coordinator string, err error) {
 	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
 	if err != nil {
-		return false, "", err
+		return 0, "", err
 	}
 	if coordinator, err = st.B.Coordinator(ctx); err != nil {
-		return false, "", err
+		return 0, "", err
 	}
 	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
 	if err != nil {
-		return false, "", err
+		return 0, "", err
 	}
 	for _, row := range s.Merge.Rows() {
-		if s.Merge.Count(row, sprint.Queued) > 0 {
-			return true, coordinator, nil
-		}
+		queued += s.Merge.Count(row, sprint.Queued)
 	}
-	return false, coordinator, nil
+	return queued, coordinator, nil
 }

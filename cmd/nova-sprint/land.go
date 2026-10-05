@@ -158,7 +158,9 @@ type landBatch struct {
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
 // fetched at its merge), the check, the queue read again before the push, the push and
-// the report. A rebuild on a moved base adds its fetch, merges, check and push.
+// the report. A rebuild on a moved base adds its fetch, merges, check and push. Gate is
+// the tree gate's wall time, the base's and every head's (inside the merges), and GateOn
+// the machine it ran on, "" when no gate ran.
 type landTimes struct {
 	Fetch  float64 `json:"fetch"`
 	Merge  float64 `json:"merge"`
@@ -166,6 +168,8 @@ type landTimes struct {
 	Queue  float64 `json:"queue"`
 	Push   float64 `json:"push"`
 	Report float64 `json:"report"`
+	Gate   float64 `json:"gate"`
+	GateOn string  `json:"gate_on,omitempty"`
 }
 
 // since adds the seconds from start to now to *to.
@@ -187,6 +191,9 @@ func (b landBatch) line() string {
 	}
 	if t := b.Times; t != nil {
 		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs check=%.1fs queue=%.1fs push=%.1fs report=%.1fs", t.Fetch, t.Merge, t.Check, t.Queue, t.Push, t.Report)
+		if t.GateOn != "" {
+			l += fmt.Sprintf(" gate=%.1fs gate_on=%s", t.Gate, oneline.Field(t.GateOn))
+		}
 	}
 	if p := b.Prune; p != nil {
 		switch {
@@ -292,6 +299,9 @@ type lander struct {
 	baseWhy   string
 	now       func() time.Time
 	rulesOff  []string
+	// times is the batch's steps being timed (batch), where the tree gate adds its wall
+	// time and its machine (treeGate); nil outside a batch
+	times *landTimes
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -354,7 +364,8 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			l.repoDir = abs
 		}
 	}
-	ctx := context.Background()
+	// the land loop's landing says its steps to the loop's beat (landbeat.go)
+	ctx := withLandBeat(context.Background(), landBeatOf(a.landCtx))
 	a.serial.Lock()
 	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
 	a.serial.Unlock()
@@ -592,6 +603,8 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		b.Cleaned = files
 	}
 	b.Times = &landTimes{}
+	l.times = b.Times
+	defer func() { l.times = nil }()
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
 	if why != "" && l.baseCount {
@@ -613,6 +626,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 			return refuse("the batch branch has no tip: " + firstLine("", err))
 		}
 		start := time.Now()
+		landStep(ctx, l.clock(), "check", "")
 		why, out := l.runCheck(ctx, dir)
 		if why != "" {
 			why = l.gateRerun(ctx, dir, stream, b.Base, tip, cards[:len(merged)], why, out)
@@ -623,6 +637,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
 		}
 		start = time.Now()
+		landStep(ctx, l.clock(), "queue", "")
 		why = l.queueHead(ctx, stream, cards[:len(merged)])
 		since(&b.Times.Queue, start)
 		if why != "" {
@@ -636,6 +651,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
+			landStep(ctx, l.clock(), "report", "")
 			if !l.landed(b, stream, cards[:len(merged)]) {
 				return false, false
 			}
@@ -1248,6 +1264,7 @@ func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
+	defer l.landProc(ctx, "check", procOf([]string{"sh", "-c", l.check}, dir))()
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
 	raw, err := b.Cmd.CombinedOutput()
 	if err = b.Wrap("check "+l.check, err); err != nil {
@@ -1455,6 +1472,7 @@ func rejected(err error) bool {
 // except -z output whose status columns and paths are byte-exact; an error
 // carries git's own words.
 func (l *lander) git(ctx context.Context, dir string, args ...string) (string, error) {
+	defer l.landProc(ctx, stepOfGit(args), procOf(append([]string{"git"}, args...), dir))()
 	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
 	if err != nil {
 		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))

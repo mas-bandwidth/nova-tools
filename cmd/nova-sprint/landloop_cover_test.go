@@ -49,7 +49,7 @@ func TestLandloopCoverRounds(t *testing.T) {
 			slept := 0
 			ta.a.sleep = func(time.Duration) { slept++; cancel() }
 			var out bytes.Buffer
-			ta.a.landLoop(ctx, "mem:0", &out)
+			ta.a.landLoop(ctx, "mem:0", 0, &out)
 			assert.Equal(t, 1, slept, "landLoop sleeps once, then sees the context is done")
 			for _, want := range tc.want {
 				assert.Contains(t, out.String(), want)
