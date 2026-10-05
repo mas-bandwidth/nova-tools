@@ -401,15 +401,17 @@ type launch struct {
 	// start, or its end (the child's result read and, for a work card, its commit pushed).
 	// A busy launch is left alone: not reported, not reaped, not forgotten, until the work
 	// posts what it found and a pass collects it.
-	busy    bool
-	busyAt  time.Time // when that long work began
-	res     *Result   // how the child ended, once its end has been collected
-	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
-	decided *decided  // the take's attempt decision, once asked (Config.Attempt): reported with the finish, never asked again
-	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
-	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
-	retried bool      // a read run again after a stage failure: a second one is returned
-	stamped time.Time // when the member last stamped progress on the card (stampProgress); zero: never
+	busy       bool
+	busyAt     time.Time // when that long work began
+	res        *Result   // how the child ended, once its end has been collected
+	push       *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
+	decided    *decided  // the take's attempt decision, once asked (Config.Attempt): reported with the finish, never asked again
+	spent      bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
+	retryAt    time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
+	retried    bool      // a read run again after a stage failure: a second one is returned
+	claimMoved bool      // a prior queue answer showed the claim moved while still running
+	dropped    bool      // a prior queue answer showed the card left the queue while still running
+	stamped    time.Time // when the member last stamped progress on the card (stampProgress); zero: never
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -701,15 +703,12 @@ func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Wr
 	}
 }
 
-// Tick is one pass of the loop: read the queue, report every child
-// that ended, take (begin) up to the width, start each card taken. It returns
-// the number of cards it acted on (reports plus starts), and an error naming
-// the verbs the store did not answer; a refused verb is not an error here (it
-// is printed and the card is left for the next pass). A verb the store did not
-// answer never ends the pass: it is said, its card is left as it was for the
-// next pass, and the pass goes on to every other ended child and to the take,
-// so one lost finish never leaves the other finished cards unreported behind
-// it, pass after pass. Only the pass's first read, the queue, ends it.
+// Tick is one pass of the loop: collect and push what ended, read the queue,
+// report every child that ended, recover working cards, and take up to the width.
+// When the queue read fails or times out, local completed children are still
+// collected, pushed, reported, and cleaned up so an injected failing queue cannot
+// starve an already-finished child, while new takes are suppressed (docs/SPEC-SWARM.md, member;
+// docs/SPEC-SPRINT.md, the fleet).
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.advanced()
 	m.passNow = now
@@ -733,16 +732,59 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			err = fmt.Errorf("the store did not answer %d of this pass's verbs (%s); each is tried again next pass", len(unanswered), strings.Join(unanswered, ", "))
 		}
 	}()
+
+	wasOurs := map[string]bool{}
+	for id := range m.running {
+		wasOurs[id] = true
+	}
+	claimMoved := map[string]bool{}
+	acted += m.collect()
+	m.endEndedLocal()
+	acted += m.collect()
+	m.spent.Push = since()
+
+	reportOnQueueFailure := func() int {
+		reports := 0
+		for _, id := range slices.Sorted(maps.Keys(m.running)) {
+			l, ours := m.running[id]
+			if !ours || l.busy || l.spent {
+				continue
+			}
+			if l.dropped && (l.res != nil || (l.child != nil && l.child.Done())) {
+				m.forget(id, false)
+				fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
+				continue
+			}
+			if l.claimMoved && (l.res != nil || (l.child != nil && l.child.Done())) {
+				m.forget(id, false)
+				fmt.Fprintf(m.out, "%s %s: the claim moved\n", FinishReaped, id)
+				continue
+			}
+			if l.res == nil {
+				continue
+			}
+			if m.reportOne(id, l, now, nil, noAnswer) {
+				reports++
+			}
+		}
+		m.spent.Report += since()
+		return reports
+	}
+
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
 	// minutes by its pushes and finishes never lets the machine go down while it works
 	code, out := queueOf(m.run, m.queueArgs())
 	m.spent.Queue = since()
 	if code != 0 {
-		return 0, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
+		acted += m.collect()
+		acted += reportOnQueueFailure()
+		return acted, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
 	}
 	var q queueOut
 	if err := json.Unmarshal(out, &q); err != nil {
-		return 0, fmt.Errorf("queue: not JSON: %w", err)
+		acted += m.collect()
+		acted += reportOnQueueFailure()
+		return acted, fmt.Errorf("queue: not JSON: %w", err)
 	}
 	m.epoch = q.Epoch
 	if e, ok := m.runner.(Epocher); ok {
@@ -777,17 +819,13 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
+
 	// 1. Report every child that ended, one verb per card (each report is its
 	// own words).
-	wasOurs := map[string]bool{}
-	for id := range m.running {
-		wasOurs[id] = true
-	}
-	claimMoved := map[string]bool{}
 	acted += m.collect()
 	m.endEnded(ids, byID)
 	acted += m.collect() // a member that is not Background did its ends just now
-	m.spent.Push = since()
+	m.spent.Push += since()
 	for _, id := range ids {
 		c := byID[id]
 		l, ours := m.running[id]
@@ -803,6 +841,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			// ended launch kept there holds the width with nothing reported
 			// (tla/CardContract.tla, Reap and EveryLaunchEnds)
 			if !l.child.Done() {
+				l.claimMoved = true
+				m.running[id] = l
 				continue
 			}
 			epoch, gen, attempt := m.claim(c)
@@ -819,151 +859,28 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			// card's commit pushed) has not been collected yet
 			continue
 		}
-		r := *l.res
-		if r.End == EndUnverifiable {
-			m.usageStopped = now // the member's rest (UsageRest), from the last such end
+		if m.reportOne(id, l, now, c.Packet, noAnswer) {
+			acted++
 		}
-		launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
-		var args []string
-		ok := r.OK // as reported: a work card whose push was refused is reported failed
-		if m.cfg.Reader {
-			if r.End == EndStaging && !l.retried && !m.drain {
-				// (a draining reader starts nothing: its stage failure is handed back below)
-				// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure is never a
-				// verdict. The stage is tried once more here after ReadStageRetry; a second
-				// failure falls to the return below, which hands the read to another reader.
-				if l.retryAt.IsZero() {
-					l.retryAt = now.Add(ReadStageRetry)
-					m.running[id] = l
-					fmt.Fprintf(m.out, "read %s: stage failed (%s); no verdict recorded; run again in %s\n", id, oneLine(r.Staging), ReadStageRetry)
-					continue
-				}
-				if now.Before(l.retryAt) {
-					continue
-				}
-				// the retry is owed once per card: it is remembered across a start that fails and
-				// across a launch the recovery path makes (start gives it to the launch)
-				delete(m.running, id)
-				m.stageRetried[id] = true
-				p := l.packet // the claim has not moved: the launch's packet is the card's
-				if c.Packet != nil {
-					p = *c.Packet
-				}
-				if m.start(p) {
-					acted++
-				}
-				continue
-			}
-			finding := oneLine(r.Report)
-			if r.Verdict == "broken" {
-				finding = findingOf(r)
-			}
-			// a broken verdict whose finding names no file, line or rule is no verdict
-			// (docs/SPEC-CARD-CONTRACT.md section 3): handed back as "no finding", so the
-			// sprint asks another reader and the coordinator never judges on nothing
-			noFinding := r.Ran && r.Verdict == "broken" && !typedrec.NamesADefect(finding)
-			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") || noFinding {
-				// no verdict is no finding, and not a read: the read is
-				// returned, and the sprint's next tick asks it of another
-				// reader free at the attempt, or of this reader again, which
-				// does not begin it before ReadStageRetry (docs/SPEC-SPRINT.md
-				// section 6; tla/DirtyTick.tla, ReadReturn,
-				// JudgedOnlyAfterTheBound). A return refused leaves the
-				// launch spent: the read stays for the lateness rule.
-				why := oneLine(r.Report)
-				switch {
-				case r.End == EndStaging:
-					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
-				case r.End == EndProvider && r.Provider != "":
-					why = EndProvider + ": " + oneLine(r.Provider) // the provider's cause, as Judge names it
-				}
-				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
-				if noFinding {
-					reason = cut(NoFinding + ": the broken read names no file, line or rule: " + finding)
-				}
-				args := append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
-				code, out := m.run(args...)
-				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
-				if code == 2 {
-					noAnswer("read --return "+id, out)
-					continue
-				}
-				if code != 0 {
-					l.spent = true
-					m.running[id] = l
-					continue
-				}
-				m.forget(id, true) // returned with no verdict
-				m.returnedAt[id] = now
-				acted++
-				continue
-			}
-			word := "--ok"
-			if r.Verdict == "broken" {
-				word = "--broken"
-			}
-			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", finding}, usageArgs(r)...), launched...)
-		} else {
-			pu := *l.push
-			fin, why, report := finishReport(r, pu, l.branch)
-			switch {
-			case pu.Sha != "":
-				fmt.Fprintf(m.out, "push %s pushed=%s branch=%s\n", id, pu.Sha, l.branch)
-				if pu.PRNote != "" {
-					fmt.Fprintf(m.out, "NOTE pr %s not opened: %s\n", id, oneLine(pu.PRNote))
-				}
-			case pu.Refused != "":
-				fmt.Fprintf(m.out, "NOTE push %s refused: %s\n", id, pu.Refused)
-			default:
-				fmt.Fprintf(m.out, "push %s: not pushed: %s\n", id, pu.None)
-			}
-			if fin != FinishOK {
-				fmt.Fprintf(m.out, "NOTE finish %s failed: %s\n", id, why)
-			}
-			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", report}
-			// the head and the branch are the push's: a finish names only what origin holds
-			if pu.Sha != "" {
-				args = append(args, "--head", pu.Sha)
-				if l.branch != "" {
-					args = append(args, "--branch", l.branch)
-				}
-			}
-			if fin != FinishOK {
-				args = append(args, "--failed")
-			}
-			args = append(args, usageArgs(r)...)
-			// the take's attempt decision, when one was asked (attempt): the finish carries it
-			if d := l.decided; d != nil && d.err != nil {
-				fmt.Fprintf(m.out, "NOTE attempt %s not decided: %s; the reason line routes the finish\n", id, oneLine(d.err.Error()))
-			} else if d != nil {
-				fmt.Fprintf(m.out, "decide %s attempt %s\n", id, d.line)
-				args = append(args, "--decision", string(d.decision))
-			}
-			ok = fin == FinishOK
-			args = append(args, launched...)
-		}
-		code, out := m.run(args...)
-		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", args[0], id, ok, code, routeWords(l.packet))
-		if code == 2 {
-			noAnswer(args[0]+" "+id, out)
-			continue
-		}
-		m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
-		acted++
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
 	// card was dealt elsewhere) has nothing left to report to: once it has
 	// ended it is forgotten, so it does not hold a place of the width for ever.
 	for id, l := range m.running {
-		if _, listed := byID[id]; !listed && !l.busy && l.child.Done() {
-			m.forget(id, false)
-			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
+		if _, listed := byID[id]; !listed && !l.busy {
+			if l.child.Done() {
+				m.forget(id, false)
+				fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
+			} else {
+				l.dropped = true
+				m.running[id] = l
+			}
 		}
 	}
 	if out := m.stampProgress(now); out != nil {
 		noAnswer("progress", out)
 	}
-	m.spent.Report = since()
+	m.spent.Report += since()
 	if m.drain {
 		return acted, nil
 	}
@@ -985,7 +902,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			return returned
 		}
 	}
-	// 2. Recover in-flight (working/reading) cards that have no child of ours,
+	// 4. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child
 	// of ours is a card from before this process started (or one whose moved
 	// claim just reaped): it is run again from its packet, at the same
@@ -993,13 +910,148 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// recovery never overflows capacity; excess cards remain in the queue for
 	// subsequent passes.
 	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved, launch)
-	// 3. Take (begin) for the lanes the reports freed.
+	// 5. Take (begin) for the lanes the reports freed.
 	n, out := m.take(q, held, now, launch)
 	if out != nil {
 		noAnswer(m.takeVerb(), out)
 	}
 	m.spent.Fill = since()
 	return acted + n, nil
+}
+
+// reportOne reports one ended launch whose result is ready. It returns true if the card
+// was acted on and forgotten, or false if retained for retry or left in flight.
+func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, noAnswer func(string, []byte)) bool {
+	r := *l.res
+	if r.End == EndUnverifiable {
+		m.usageStopped = now // the member's rest (UsageRest), from the last such end
+	}
+	launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
+	var args []string
+	ok := r.OK // as reported: a work card whose push was refused is reported failed
+	if m.cfg.Reader {
+		if r.End == EndStaging && !l.retried && !m.drain {
+			// (a draining reader starts nothing: its stage failure is handed back below)
+			// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure is never a
+			// verdict. The stage is tried once more here after ReadStageRetry; a second
+			// failure falls to the return below, which hands the read to another reader.
+			if l.retryAt.IsZero() {
+				l.retryAt = now.Add(ReadStageRetry)
+				m.running[id] = l
+				fmt.Fprintf(m.out, "read %s: stage failed (%s); no verdict recorded; run again in %s\n", id, oneLine(r.Staging), ReadStageRetry)
+				return false
+			}
+			if now.Before(l.retryAt) {
+				return false
+			}
+			if qPacket == nil {
+				return false // suppress new starts from an unknown queue state
+			}
+			// the retry is owed once per card: it is remembered across a start that fails and
+			// across a launch the recovery path makes (start gives it to the launch)
+			delete(m.running, id)
+			m.stageRetried[id] = true
+			p := l.packet
+			if qPacket != nil {
+				p = *qPacket
+			}
+			return m.start(p)
+		}
+		finding := oneLine(r.Report)
+		if r.Verdict == "broken" {
+			finding = findingOf(r)
+		}
+		// a broken verdict whose finding names no file, line or rule is no verdict
+		// (docs/SPEC-CARD-CONTRACT.md section 3): handed back as "no finding", so the
+		// sprint asks another reader and the coordinator never judges on nothing
+		noFinding := r.Ran && r.Verdict == "broken" && !typedrec.NamesADefect(finding)
+		if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") || noFinding {
+			// no verdict is no finding, and not a read: the read is
+			// returned, and the sprint's next tick asks it of another
+			// reader free at the attempt, or of this reader again, which
+			// does not begin it before ReadStageRetry (docs/SPEC-SPRINT.md
+			// section 6; tla/DirtyTick.tla, ReadReturn,
+			// JudgedOnlyAfterTheBound). A return refused leaves the
+			// launch spent: the read stays for the lateness rule.
+			why := oneLine(r.Report)
+			switch {
+			case r.End == EndStaging:
+				why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
+			case r.End == EndProvider && r.Provider != "":
+				why = EndProvider + ": " + oneLine(r.Provider) // the provider's cause, as Judge names it
+			}
+			reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
+			if noFinding {
+				reason = cut(NoFinding + ": the broken read names no file, line or rule: " + finding)
+			}
+			args = append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
+			code, out := m.run(args...)
+			fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
+			if code == 2 {
+				noAnswer("read --return "+id, out)
+				return false
+			}
+			if code != 0 {
+				l.spent = true
+				m.running[id] = l
+				return false
+			}
+			m.forget(id, true) // returned with no verdict
+			m.returnedAt[id] = now
+			return true
+		}
+		word := "--ok"
+		if r.Verdict == "broken" {
+			word = "--broken"
+		}
+		args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", finding}, usageArgs(r)...), launched...)
+	} else {
+		pu := *l.push
+		fin, why, report := finishReport(r, pu, l.branch)
+		switch {
+		case pu.Sha != "":
+			fmt.Fprintf(m.out, "push %s pushed=%s branch=%s\n", id, pu.Sha, l.branch)
+			if pu.PRNote != "" {
+				fmt.Fprintf(m.out, "NOTE pr %s not opened: %s\n", id, oneLine(pu.PRNote))
+			}
+		case pu.Refused != "":
+			fmt.Fprintf(m.out, "NOTE push %s refused: %s\n", id, pu.Refused)
+		default:
+			fmt.Fprintf(m.out, "push %s: not pushed: %s\n", id, pu.None)
+		}
+		if fin != FinishOK {
+			fmt.Fprintf(m.out, "NOTE finish %s failed: %s\n", id, why)
+		}
+		args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", report}
+		// the head and the branch are the push's: a finish names only what origin holds
+		if pu.Sha != "" {
+			args = append(args, "--head", pu.Sha)
+			if l.branch != "" {
+				args = append(args, "--branch", l.branch)
+			}
+		}
+		if fin != FinishOK {
+			args = append(args, "--failed")
+		}
+		args = append(args, usageArgs(r)...)
+		// the take's attempt decision, when one was asked (attempt): the finish carries it
+		if d := l.decided; d != nil && d.err != nil {
+			fmt.Fprintf(m.out, "NOTE attempt %s not decided: %s; the reason line routes the finish\n", id, oneLine(d.err.Error()))
+		} else if d != nil {
+			fmt.Fprintf(m.out, "decide %s attempt %s\n", id, d.line)
+			args = append(args, "--decision", string(d.decision))
+		}
+		ok = fin == FinishOK
+		args = append(args, launched...)
+	}
+	code, out := m.run(args...)
+	fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", args[0], id, ok, code, routeWords(l.packet))
+	if code == 2 {
+		noAnswer(args[0]+" "+id, out)
+		return false
+	}
+	m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
+	return true
 }
 
 // takeVerb is the verb a take is: a reader's is read --begin.
@@ -1248,51 +1300,6 @@ func (m *Member) collect() (acted int) {
 	return acted
 }
 
-// stampProgress stamps progress on the work cards whose child printed since the card's last
-// stamp, each at most every ProgressEvery: `progress --as <member> <card>@<gen>... --epoch
-// <n>`, one verb for the cards of each epoch (docs/SPEC-SPRINT.md section 8, the rules
-// table's row late; tla/SprintRules.tla, Stamp). A child that prints nothing stamps nothing:
-// the silence is what the late rule reads. A refused stamp waits ProgressEvery like any
-// other; it returns what the verb printed when the store did not answer, nil otherwise.
-func (m *Member) stampProgress(now time.Time) (unanswered []byte) {
-	if m.cfg.Reader {
-		return nil
-	}
-	byEpoch := map[uint64][]string{}
-	for id, l := range m.running {
-		p, ok := l.child.(Printer)
-		if !ok || l.busy || l.spent || l.res != nil || l.child.Done() {
-			continue
-		}
-		if at := p.Printed(); at.IsZero() || !at.After(l.stamped) || now.Sub(l.stamped) < ProgressEvery {
-			continue
-		}
-		byEpoch[l.epoch] = append(byEpoch[l.epoch], id)
-	}
-	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
-		ids := slices.Sorted(slices.Values(byEpoch[epoch]))
-		args := []string{"progress", "--as", m.cfg.As}
-		for _, id := range ids {
-			args = append(args, id+"@"+strconv.Itoa(m.running[id].gen))
-		}
-		args = append(args, "--epoch", strconv.FormatUint(epoch, 10))
-		code, out := m.run(args...)
-		if code == 2 {
-			unanswered = out
-			continue
-		}
-		if code != 0 {
-			fmt.Fprintf(m.out, "NOTE progress refused (exit %d): %s\n", code, oneLine(strings.TrimSpace(string(out))))
-		}
-		for _, id := range ids {
-			l := m.running[id]
-			l.stamped = now
-			m.running[id] = l
-		}
-	}
-	return unanswered
-}
-
 // forget drops a launch and what is remembered of its card, and tells a runner that is an
 // Ender the launch is done with (failed: a person may want to inspect it).
 func (m *Member) forget(id string, failed bool) {
@@ -1489,6 +1496,51 @@ func queueOf(run func(...string) (int, []byte), args []string) (int, []byte) {
 	return run(args[:i]...)
 }
 
+// stampProgress stamps progress on the work cards whose child printed since the card's last
+// stamp, each at most every ProgressEvery: `progress --as <member> <card>@<gen>... --epoch
+// <n>`, one verb for the cards of each epoch (docs/SPEC-SPRINT.md section 8, the rules
+// table's row late; tla/SprintRules.tla, Stamp). A child that prints nothing stamps nothing:
+// the silence is what the late rule reads. A refused stamp waits ProgressEvery like any
+// other; it returns what the verb printed when the store did not answer, nil otherwise.
+func (m *Member) stampProgress(now time.Time) (unanswered []byte) {
+	if m.cfg.Reader {
+		return nil
+	}
+	byEpoch := map[uint64][]string{}
+	for id, l := range m.running {
+		p, ok := l.child.(Printer)
+		if !ok || l.busy || l.spent || l.res != nil || l.child.Done() {
+			continue
+		}
+		if at := p.Printed(); at.IsZero() || !at.After(l.stamped) || now.Sub(l.stamped) < ProgressEvery {
+			continue
+		}
+		byEpoch[l.epoch] = append(byEpoch[l.epoch], id)
+	}
+	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
+		ids := slices.Sorted(slices.Values(byEpoch[epoch]))
+		args := []string{"progress", "--as", m.cfg.As}
+		for _, id := range ids {
+			args = append(args, id+"@"+strconv.Itoa(m.running[id].gen))
+		}
+		args = append(args, "--epoch", strconv.FormatUint(epoch, 10))
+		code, out := m.run(args...)
+		if code == 2 {
+			unanswered = out
+			continue
+		}
+		if code != 0 {
+			fmt.Fprintf(m.out, "NOTE progress refused (exit %d): %s\n", code, oneLine(strings.TrimSpace(string(out))))
+		}
+		for _, id := range ids {
+			l := m.running[id]
+			l.stamped = now
+			m.running[id] = l
+		}
+	}
+	return unanswered
+}
+
 // endEnded begins the end of every launch whose child has exited and whose claim the queue
 // still holds: the child's result is read and, for a work card, its commit is pushed,
 // pushWidth pushes at a time. Both are long (files read; a fetch and one exchange with the
@@ -1541,6 +1593,55 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 	m.longWork()
 	if !m.cfg.Background {
 		ends.Wait() // a pass is one step: the ends it began, side by side, are its own
+	}
+}
+
+// endEndedLocal begins the end of locally running launches whose child has exited
+// when the queue read failed or timed out, so completed children are not starved
+// (docs/SPEC-SWARM.md, member; docs/SPEC-SPRINT.md, the fleet).
+func (m *Member) endEndedLocal() {
+	var ends sync.WaitGroup
+	for _, id := range slices.Sorted(maps.Keys(m.running)) {
+		l, ours := m.running[id]
+		if !ours || l.busy || l.res != nil || l.spent || l.child == nil || !l.child.Done() || l.claimMoved || l.dropped {
+			continue
+		}
+		l.busy, l.busyAt = true, m.clock()
+		m.running[id] = l
+		child, p, branch := l.child, l.packet, l.branch
+		ends.Add(1)
+		m.longs.Add(1)
+		go func() {
+			defer m.longs.Done()
+			defer ends.Done()
+			r := child.Result()
+			if m.cfg.Reader {
+				m.post(id, post{res: &r})
+				return
+			}
+			r = treeFinish(p, r)
+			var pu Push
+			switch {
+			case r.Head == "":
+				pu.None = "the child's result names no commit (no head: line, no push recorded)"
+			case branch == "":
+				pu.None = "the packet names no branch to push to"
+			case m.pusher == nil:
+				pu.None = "this member has no pusher"
+			default:
+				m.pushGate <- struct{}{}
+				pu = m.pusher.Push(p, r)
+				<-m.pushGate
+				if pu.Sha == "" && pu.Refused == "" && pu.None == "" {
+					pu.Refused = "the pusher said nothing"
+				}
+			}
+			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
+		}()
+	}
+	m.longWork()
+	if !m.cfg.Background {
+		ends.Wait()
 	}
 }
 
