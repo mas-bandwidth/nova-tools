@@ -1,6 +1,6 @@
 # BENCH-WINDOWS — a native Windows machine as a release target
 
-*What `nova-update release adopt --platform windows-amd64` assumes of the native Windows
+*What `nova-release adopt --platform windows-amd64` assumes of the native Windows
 machine it installs to: its account, its ssh shell, its paths and the checks that say it is
 ready.*
 

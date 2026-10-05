@@ -86,7 +86,7 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 	t.Parallel()
 	dash := writeFile(t, "dash.tsv", Header+"\nfoo\ttool\t1.0.0\t-\tnone\tme\n")
 	adopt := writeFile(t, "adopt.tsv", "check\tcommand\towner\n")
-	verbs := "the verbs are example, check, status, apply, report, watch, adoption, release, version"
+	verbs := "the verbs are example, check, status, apply, report, watch, adoption, version"
 	for _, c := range []struct {
 		name string
 		args []string
@@ -107,10 +107,6 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 		{"watch names the missing delivery flag", []string{"watch", "--adopt", adopt, "--as", "me"}, []string{"missing --to"}},
 		{"watch with an argument", []string{"watch", "--adopt", adopt, "x"}, []string{"; run: nova-update watch -h"}},
 		{"adoption with no file", []string{"adoption"}, []string{"missing --file", "; run: nova-update adoption -h"}},
-		{"release with no verb", []string{"release"}, []string{"RELEASE REFUSED: a release verb is required; the release verbs are cut, build, install, adopt, pull, cycle; run: nova-update help release"}},
-		{"unknown release verb", []string{"release", "bogus"}, []string{`RELEASE REFUSED: unknown release verb "bogus"; the release verbs are cut, build, install, adopt, pull, cycle; run: nova-update help release`}},
-		{"release flag misspelled", []string{"release", "cut", "--rpeo", "x"}, []string{"CUT REFUSED:", "--rpeo", "; run: nova-update release cut -h"}},
-		{"release missing flags", []string{"release", "build"}, []string{"missing --version, --out, --source", "; run: nova-update release build -h"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			code, out, errs := runTool(t, "nova-update", c.args...)
@@ -124,6 +120,15 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 			}
 		})
 	}
+	// `release` is the one verb that moved to its own binary, and its refusal
+	// hands the reader across (the movedVerb doctrine, SPEC-VERSION's TOOLS
+	// MOVED note): one line, the tool that answers now, exit 2.
+	t.Run("the moved release verb", func(t *testing.T) {
+		code, out, errs := runTool(t, "nova-update", "release", "cut")
+		assert.Equal(t, 2, code)
+		assert.Empty(t, out)
+		assert.Equal(t, "UPDATE REFUSED: release moved to nova-release; run: nova-release help\n", errs)
+	})
 }
 
 // nova-version's refusals name every problem and the shape that would run
@@ -224,10 +229,9 @@ func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
 	})
 }
 
-// The release verbs are one line of nova-update's usage, pointing at their own
-// help (ledger U5): the manifest verbs' screen is not the release pipeline's.
-// `help release` holds the five usage lines and notes, and each release verb's
-// -h lists its flags with what each wants, the exit codes, and no person.
+// The release pipeline is its own binary, and nova-update's banner names none
+// of it (ledger U5): the manifest verbs' screen is not the release pipeline's,
+// and every door to the moved verb answers with the tool that holds it now.
 // Every manifest verb's -h states its effect, and those that read a manifest
 // state its rules.
 func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
@@ -246,22 +250,16 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	code, banner, _ := runTool(t, "nova-update", "help")
 	require.Equal(t, 0, code)
 	release := linesOf(banner, "nova-update release")
-	require.Len(t, release, 1, banner)
-	assert.Contains(t, banner, "nova-update help release")
-	assert.Contains(t, banner, "Every verb but watch and release takes --json")
+	require.Empty(t, release, "the banner still names the release pipeline:\n%s", banner)
+	assert.Contains(t, banner, "Every verb but watch takes --json")
 	_, watch, _ := runTool(t, "nova-update", "watch", "-h")
 	assert.Contains(t, watch, "its sha= the first twelve hex")
-	code, rel, _ := runTool(t, "nova-update", "help", "release")
-	require.Equal(t, 0, code)
-	assert.Len(t, linesOf(rel, "nova-update release "), 6, rel)
-	for _, verb := range []string{"cut", "build", "install", "adopt", "pull", "cycle"} {
-		t.Run("release "+verb, func(t *testing.T) {
-			code, h, _ := runTool(t, "nova-update", "release", verb, "-h")
-			assert.Equal(t, 0, code)
-			assert.Contains(t, h, "flags:\n")
-			assert.Contains(t, h, "  --version <string>  ")
-			assert.Contains(t, h, "exit codes: 0 ")
-			assert.NotContains(t, h, "Johnny")
+	for _, door := range [][]string{{"release"}, {"help", "release"}} {
+		t.Run("moved door "+strings.Join(door, " "), func(t *testing.T) {
+			code, out, errs := runTool(t, "nova-update", door...)
+			assert.Equal(t, 2, code)
+			assert.Empty(t, out)
+			assert.Contains(t, errs, "UPDATE REFUSED: release moved to nova-release; run: nova-release help")
 		})
 	}
 	for _, verb := range []string{"check", "status", "apply", "report", "watch", "adoption", "version"} {

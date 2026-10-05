@@ -110,11 +110,6 @@ nova-update adoption description,example
 nova-update apply example
 nova-update check example
 nova-update example description,example
-nova-update release adopt example,usage
-nova-update release build example,usage
-nova-update release cut example,usage
-nova-update release install description,example,usage
-nova-update release pull example,usage
 nova-update report example
 nova-update status example
 nova-update version description,example

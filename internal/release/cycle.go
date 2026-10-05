@@ -154,7 +154,7 @@ func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		if why == "" {
 			why = "it printed no inventory object"
 		}
-		fmt.Fprintf(errs, "CYCLE REFUSED: %s; run: nova-update release cycle -h\n", oneline.Err(refuse(
+		fmt.Fprintf(errs, "CYCLE REFUSED: %s; run: nova-release cycle -h\n", oneline.Err(refuse(
 			"the inventory needs the store's login: NOVA_SPRINT_REDIS_USER and NOVA_SPRINT_REDIS_PASSWORD_ENV, see docs/FLEET.md",
 			"the inventory %s cannot list: %s", o.inventory, why)))
 		return 1

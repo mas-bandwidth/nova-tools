@@ -9,22 +9,46 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Verbs is the usage block `nova-update help` prints for this verb, and the same
-// five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
+// Verbs is the usage block `nova-release help` prints, and the same six lines
+// docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
 // default path: a path guessed from the cwd or from `$HOME` makes a release cut
 // from a laptop and a release cut from a bench mean different things, so the
 // same command is the same release on either host. The one exception is
 // --receipts, and internal/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
-nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
-nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
-nova-update release cycle --version <v> --source <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
+const Verbs = `nova-release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
+nova-release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--dry-run] [--timeout <d>]
+nova-release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
+nova-release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-release cycle --version <v> --source <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
+
+// ReleaseOpening opens the banner with its three answers: what the tool does
+// (line 1, the README's sentence), how it works, and the first run
+// (ONBOARDING.md point 6). The verbs that build and install ask for real
+// paths and a real checkout, so a first run of this binary reads rather than
+// builds, and the opening says so: even a --dry-run names its paths.
+const ReleaseOpening = `nova-release: cut, build, install, adopt and pull a repository's releases
+
+how it works: one green commit becomes a version, stamped binaries and the
+same binaries answering for themselves on every machine that runs them:
+cut tags it and runs the gates, build compiles every cmd/* binary for each
+platform and writes one SHA256SUMS per platform, install puts one platform's
+set in place by rename, adopt fans out over ssh and pull withdraws.
+first run: the binary alone; the lines under example: answer with help, a
+verb's own help and this binary's version line; they build nothing.`
+
+// BuildEffect and InstallEffect are the effect line of `build -h` and
+// `install -h` (STANDARD §3: a verb states what it writes; the tool-answers
+// class rule reads this line).
+const (
+	BuildEffect   = "effect: local write: compiles every cmd/nova-* of --source into <out>/<version>/<goos-goarch>/ and writes its SHA256SUMS there; --dry-run prints the plan and writes nothing"
+	InstallEffect = "effect: local write: replaces the release's binaries in --bin, optionally clears --retire, and prunes older releases under --from; --dry-run verifies the release and writes nothing"
+)
 
 // CutNote is the gate in front of a tag, said where a person will meet it.
 // It is a var rather than a const because it names the list, and the list has
@@ -45,7 +69,7 @@ const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fa
 	"When the release was built elsewhere, --from may name that machine as host:dir and --stage <dir> says where to fetch it first. " +
 	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, --expect-sums <sha256> names it outright, or --expect-sums-from <file> reads it out of the " + DigestFile + " this host's own `release build` wrote. " +
 	"A dev build has no tag, which is why the third exists; the file must be a LOCAL one, because a digest computed on the machine holding the bits is that machine vouching for itself. " +
-	"Install the release on this host before adopting it: the nova-update running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
+	"Install the release on this host before adopting it: the nova-release running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
 	"--machines is " + MachinesShape + ". " + RemotePathsNote + ". " +
 	"--retire <dir> removes this release's own nova-* files from a second directory nobody should still be running from (~/go/bin); it refuses to be --bin or the live stamp. " +
 	"--bin, --dest and --retire must be absolute or ~/-rooted and free of shell metacharacters; they are validated before any remote command is composed."
@@ -65,7 +89,7 @@ type Deps struct {
 	// receipts off disk and reaches nothing else.
 	Dogfood Dogfood
 	Now     func() time.Time
-	// Self answers what the nova-update RUNNING THIS is stamped with. It is a
+	// Self answers what the nova-release RUNNING THIS is stamped with. It is a
 	// seam rather than a constant because this package is a library and the
 	// stamp lives in main; a nil Self means `adopt` cannot compare its own
 	// version with the release's and does not pretend to.
@@ -147,7 +171,7 @@ func (p *platformList) Set(v string) error {
 // re-read `cut`.
 func VerbUsage(verb string) string {
 	for _, line := range strings.Split(Verbs, "\n") {
-		if strings.HasPrefix(line, "nova-update release "+verb+" ") {
+		if strings.HasPrefix(line, "nova-release "+verb+" ") {
 			return line
 		}
 	}
@@ -156,18 +180,28 @@ func VerbUsage(verb string) string {
 
 // refusal is the one refusal line (STANDARD §2): what was wrong and what the
 // input wants, then the command a reader runs next, the help of the verb that
-// refused (token is that verb, upper-case) or of the release verbs as a whole.
+// refused (token is that verb, upper-case) or of the tool as a whole.
 func refusal(w io.Writer, token string, err error) int {
-	run := "nova-update release " + strings.ToLower(token) + " -h"
+	run := "nova-release " + strings.ToLower(token) + " -h"
 	if token == "RELEASE" {
-		run = "nova-update help release"
+		run = "nova-release help"
 	}
 	fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run)
 	return 2
 }
 
-// verbNames are the release verbs, as a refusal lists them.
-const verbNames = "cut, build, install, adopt, pull, cycle"
+// verbSummary is the one sentence each verb's -h prints under its usage line.
+var verbSummary = map[string]string{
+	"cut":     "cut tags the green commit of --from as --version and writes the release's section of the changelog.",
+	"build":   "build compiles every tool of --source for each platform into --out and writes one SHA256SUMS per platform.",
+	"install": "install verifies one platform's built release whole and puts its binaries in --bin.",
+	"adopt":   "adopt installs a built release on every machine of --machines over ssh and certifies each.",
+	"pull":    "pull withdraws a release: it deletes the built directories and marks the changelog section pulled.",
+	"cycle":   "cycle builds a release, then runs the fleet's install play as a check and then for real.",
+}
+
+// verbNames are the verbs, as a refusal lists them.
+const verbNames = "cut, build, install, adopt, pull, cycle, version"
 
 // ExitCodes is the release verbs' exit-code line, which each verb's -h prints.
 const ExitCodes = "exit codes: 0 the verb did what its line says (a --dry-run printed its plan and changed nothing); " +
@@ -190,32 +224,72 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
 }
 
-// Run is `nova-update release <verb>`. The verb is dispatched here and each of
-// the four validates its own flags, so a missing flag is named by the verb that
-// wanted it rather than by a shared check that knows about all of them.
+// versionVerb prints the one version line every binary answers (the version
+// class rule, TestEveryToolPrintsTheOneVersionLine): `<name> <identity>
+// <goos>/<goarch> <go version>`, the identity from the stamp main hands down
+// through Deps.Self.
+func versionVerb(name string, deps Deps, args []string, out, errs io.Writer) int {
+	// version takes no flag but -h, so the arguments are read here rather
+	// than through a flag set: the one argument that is not a refusal is a
+	// request for help, and asking is not an error.
+	if len(args) > 0 {
+		switch arg := args[0]; {
+		case len(args) == 1 && (arg == "-h" || arg == "-help" || arg == "--help"):
+			fmt.Fprintln(out, "usage: "+name+" version")
+			fmt.Fprintln(out, "version prints this binary's version line: its name, its release, the platform and the Go version.")
+			fmt.Fprintln(out, "flags:")
+			fmt.Fprintln(out, "  -h  this help")
+			fmt.Fprintln(out, "effect: inspection: prints this binary's version line, writes nothing")
+			fmt.Fprintln(out, ExitCodes)
+			fmt.Fprintln(out, "example: "+name+" version")
+			return 0
+		case strings.HasPrefix(arg, "-"):
+			return refusal(errs, "VERSION", fmt.Errorf("unknown flag --%s; version takes no flags but -h", strings.TrimLeft(arg, "-")))
+		default:
+			return refusal(errs, "VERSION", fmt.Errorf("version takes no positional arguments, got %q", arg))
+		}
+	}
+	stamp := ""
+	if deps.Self != nil {
+		stamp = deps.Self()
+	}
+	fmt.Fprintln(out, buildinfo.Line(name, stamp))
+	return 0
+}
+
+// Run is nova-release's verb dispatch. Each verb validates its own flags, so
+// a missing flag is named by the verb that wanted it rather than by a shared
+// check that knows about all of them.
 func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
 	if len(args) == 0 {
-		return refusal(errs, "RELEASE", fmt.Errorf("a release verb is required; the release verbs are %s", verbNames))
+		return refusal(errs, "RELEASE", fmt.Errorf("a verb is required; the verbs are %s", verbNames))
 	}
 	verb := args[0]
 	args = args[1:]
 	switch verb {
 	case "cut", "build", "install", "adopt", "pull", "cycle":
+	case "version", "--version":
+		return versionVerb(name, deps, args, out, errs)
 	case "help", "--help", "-h":
-		fmt.Fprintln(out, Verbs)
-		fmt.Fprintln(out, ExitCodes+" `nova-update release <verb> -h` lists a verb's flags.")
+		// The banner answers the three questions a stranger brings
+		// (ONBOARDING.md point 6) before the usage lines, and the notes the
+		// verbs carry follow the usage they belong to.
+		fmt.Fprintf(out, "%s\n\n", ReleaseOpening)
+		fmt.Fprintf(out, "usage:\n%s\nnova-release help\nnova-release version (or --version)\n", Verbs)
+		fmt.Fprintln(out, ExitCodes+" `nova-release <verb> -h` lists a verb's flags.")
 		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, DogfoodNote)
 		fmt.Fprintln(out, IncrementalNote)
 		fmt.Fprintln(out, AdoptNote)
 		fmt.Fprintln(out, PullNote)
 		fmt.Fprintln(out, CycleNote)
+		fmt.Fprint(out, "\nexample:\n  nova-release help\n  nova-release cut -h\n  nova-release version\n")
 		return 0
 	default:
-		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %q; the release verbs are %s", verb, verbNames))
+		return refusal(errs, "RELEASE", fmt.Errorf("unknown verb %q; the verbs are %s", verb, verbNames))
 	}
 	o := options{timeout: 10 * time.Minute}
 	f := flag.NewFlagSet("release "+verb, flag.ContinueOnError)
@@ -243,6 +317,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.source, "source", "", "the checkout to build")
 		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
 		addDogfoodFlags(f, &o, "<--source>/docs/CLI.md")
+		f.BoolVar(&o.dryRun, "dry-run", false, "resolve the platforms and the tools and print the plan, compile and write nothing")
 		f.StringVar(&o.gate, "gate", "refuse", "refuse: an open dogfood edge refuses the build; report: the edges are printed and the build goes on, --reason <why> required (a machinery install during a sprint; cut always refuses)")
 		f.BoolVar(&o.incremental, "incremental", false, "compile only the tools whose packages changed since the newest clean build recorded under --out, and copy the rest from it, verified")
 		required = []string{"version", "out", "source"}
@@ -263,6 +338,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.bin, "bin", "", "the directory the binaries are installed into")
 		f.StringVar(&o.retire, "retire", "", "a second directory to clear of this release's tools")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
+		f.BoolVar(&o.dryRun, "dry-run", false, "verify the release and print what would be installed, write nothing")
 		required = []string{"version", "from", "bin"}
 	case "adopt":
 		f.StringVar(&o.from, "from", "", "the artifact root a release build wrote, here or as host:dir on another machine")
@@ -309,7 +385,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// here with that verb's usage, and exit 0, because asking is not an
 		// error.
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(out, VerbUsage(verb))
+			fmt.Fprintln(out, "usage: "+VerbUsage(verb))
+			fmt.Fprintln(out, verbSummary[verb])
 			fmt.Fprintln(out, "flags:")
 			f.VisitAll(func(fl *flag.Flag) {
 				kind, wants := flag.UnquoteUsage(fl)
@@ -319,6 +396,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 				fmt.Fprintf(out, "  --%s%s  %s\n", fl.Name, kind, wants)
 			})
 			fmt.Fprintln(out, ExitCodes)
+			fmt.Fprintln(out, "example: nova-release help")
 			switch verb {
 			case "cut":
 				fmt.Fprintln(out, CutNote)
@@ -326,6 +404,9 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			case "build":
 				fmt.Fprintln(out, DogfoodNote)
 				fmt.Fprintln(out, IncrementalNote)
+				fmt.Fprintln(out, BuildEffect)
+			case "install":
+				fmt.Fprintln(out, InstallEffect)
 			case "cycle":
 				fmt.Fprintln(out, CycleNote)
 			case "adopt":
@@ -336,12 +417,16 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			return 0
 		}
 		if flagName, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -"); ok {
-			err = fmt.Errorf("unknown flag --%s (the verb's help lists its flags)", strings.TrimLeft(flagName, "-"))
+			// An unknown flag is named with every flag the verb takes
+			// (STANDARD §3.2), so the next call is a paste.
+			var names []string
+			f.VisitAll(func(fl *flag.Flag) { names = append(names, "--"+fl.Name) })
+			err = fmt.Errorf("unknown flag --%s; the flags are %s", strings.TrimLeft(flagName, "-"), strings.Join(names, ", "))
 		}
 		return refusal(errs, token, err)
 	}
 	if len(f.Args()) != 0 {
-		return refusal(errs, token, fmt.Errorf("release %s takes no positional arguments, got %q", verb, f.Arg(0)))
+		return refusal(errs, token, fmt.Errorf("%s takes no positional arguments, got %q", verb, f.Arg(0)))
 	}
 	// EVERY missing flag at once. A refusal that names one of four sends
 	// somebody round the loop four times.
