@@ -29,6 +29,18 @@ type TierCosts struct {
 	// and cents rounded up, over every card of the stream; a record with no tier is
 	// "untiered".
 	CostByTier map[string]string `json:"cost_by_tier,omitempty"`
+	// TotalCost is the stream's complete recorded spend: every take and read of every card
+	// of it in any column, landed or not, at each record's charged figure (the harness's
+	// cost, else its tokens at the route's prices), dollars and cents rounded up; "" when
+	// nothing of it was priced.
+	TotalCost string `json:"total_cost,omitempty"`
+	// UnpricedRuns counts the stream's records that carry no cost at all: runs whose usage
+	// never reached the sprint (cardcost.WhyNoTokens), which the total cannot hold.
+	UnpricedRuns int `json:"unpriced_runs,omitempty"`
+	// Unreconciled is the SPRINT's, the same on every stream's record: what the providers
+	// counted beyond the sprint's records since the epoch began (UnreconciledSpend,
+	// cost_reconcile.go), dollars and cents rounded up; "" when nothing is.
+	Unreconciled string `json:"unreconciled,omitempty"`
 }
 
 // TierWord is the tier a card's brief names on its line 1 (any word the brief carries),
@@ -63,6 +75,7 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}}
 	byTier := map[string]*big.Rat{}
 	var landedCost []string
+	var allCost []string
 	landed := 0
 	for _, col := range States {
 		for _, c := range s.Work.Cell(stream, col) {
@@ -76,6 +89,13 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 					landedCost = append(landedCost, v)
 				}
 			}
+			// the card's whole record, whatever its column: every take and read behind it,
+			// the records past the list's bound included (FieldCostTotal)
+			tot := CardCostOf(c).Total
+			if tot.Charged != "" {
+				allCost = append(allCost, tot.Charged)
+			}
+			t.UnpricedRuns += tot.Records - tot.ChargedOf
 			for _, con := range CardCostOf(c).Consumers {
 				usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
 				if err != nil || usd == nil {
@@ -94,6 +114,11 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			t.PerLanded = cardcost.Cents(total.Quo(total, big.NewRat(int64(landed), 1)))
 		}
 	}
+	if sum, ok := cardcost.Sum(allCost...); ok && len(allCost) > 0 {
+		if total, err := amountOf(sum); err == nil && total != nil {
+			t.TotalCost = cardcost.Cents(total)
+		}
+	}
 	tiers := make([]string, 0, len(byTier))
 	for tier := range byTier {
 		tiers = append(tiers, tier)
@@ -101,6 +126,9 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	sort.Strings(tiers)
 	for _, tier := range tiers {
 		t.CostByTier[tier] = cardcost.Cents(byTier[tier])
+	}
+	if unrec := UnreconciledSpend(s); unrec > 0 {
+		t.Unreconciled = cardcost.Cents(new(big.Rat).SetFloat64(unrec))
 	}
 	return t
 }

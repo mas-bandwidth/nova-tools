@@ -1157,6 +1157,45 @@ section 5), end, the tokens, wait, run, predicted, actual and
 card retired and no consumer record cleaned up can lose cost: the record is
 already in the card. A figure not known prints `-`, never 0.
 
+**Every run's cost, whatever its end.** A take or a read records its cost in the step
+that ends it, whatever the end (done, failed, no result, the provider's failure, a refusal
+at staging, a read of any verdict or none): the consumer record carries its route, model,
+tier, card, kind (work or read) and end, and its charged figure is the harness's own cost
+where it reported one, else its tokens at the route's prices (`costRecord`); a run that
+reported no token is counted unpriced, never as a zero. A launch's child appends one row
+per attempt to its job's `usage.tsv` before the summary line that carries the launch's
+spend; a launch stopped between the two still reports what the rows say
+(`member.ReceiptUsage`): every attempt's tokens summed, the model, and the harness's cost
+only when every attempt that reported tokens reported one. A launch the member reaps
+because its claim moved (the card redealt or dropped under it) reports nothing, and its
+spend reaches the dashboard only on the unreconciled line below; so does the record of a
+card that leaves the work table.
+
+**The reconciliation** (`internal/sprint/cost_reconcile.go`, `sprint.CostReconcile`). Its
+step takes each provider's own count of the dollars its key used on a UTC day (openrouter:
+`GET /api/v1/key`, `data.usage_daily`) and sets it beside the sprint's records of that
+provider for the same UTC day: every consumer record on every primary whose route (else
+reported provider/model) is that provider's and whose end stamp falls on that day, at its
+charged figure. A day is compared with the same day, never with all time. The read is written
+to the fleet table's property `cost_reconcile_<provider>`, the last read of each day kept for
+62 days. A gap over 5% of the provider's figure, and of at least $1.00, opens ONE judgment on
+the provider (`a provider's usage and the sprint's cost records disagree`, filed under
+`provider:<p>`, decisions ack and wait), never a second while it is open; a read back within
+the bound closes it. A provider with no usage endpoint (opencode) or no key is recorded
+unknown with why, and changes nothing. **Not yet run:** the loop that reads each provider
+when `nova-sprint run` begins and every hour after (through the seat's key in its own
+environment, outside every tick, as the balance poll does), with the judgment's entry in
+`Decisions` and its line in the help, lives in `cmd/nova-sprint` and is owed; until it lands
+no read is written, no judgment opens, and the unreconciled line below reads $0.00.
+
+**The dashboard's cost** is the complete total: every take and read of every card on the
+work table in any column, landed or not (`total_cost` on each stream's `stream_costs`), plus
+what is unreconciled, on a line of its own beside the count of runs unpriced. Unreconciled is,
+over the days since the epoch began, each day's last provider figure beyond the sprint's
+records of that day, summed over the providers (`unreconciled`, the sprint's, the same on
+every stream's record). The cost per card is that recorded total over the cards landed, so
+every attempt and read behind them counts, those of cards not landed included.
+
 **A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
 script card, when it is anything that is not an LLM", "preference: lisp, or golang obv.", a
