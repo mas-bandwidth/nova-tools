@@ -65,9 +65,8 @@ func TestShadowTickStoreRefusesEveryWrite(t *testing.T) {
 	before, err := ta.m.Snapshot()
 	require.NoError(t, err)
 	ro := store.ReadOnly(ta.m)
-	require.True(t, store.IsReadOnly(ro))
-	assert.True(t, store.IsReadOnly(ro.AtEpoch(1, false)), "a pinned read-only store stays read-only")
 	ctx := context.Background()
+	assert.ErrorIs(t, ro.AtEpoch(1, false).SetCursor(ctx, "1-0"), store.ErrReadOnly, "a pinned read-only store stays read-only")
 	kv := ro.(store.KV)
 	writes := map[string]func() error{
 		"Apply":          func() error { _, err := ro.Apply(ctx, ntable.BatchManifest{}); return err },

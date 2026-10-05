@@ -1606,9 +1606,6 @@ func ReadOnly(b Backend) Backend {
 	return readOnly{b: b}
 }
 
-// IsReadOnly says the backend refuses every write (ReadOnly).
-func IsReadOnly(b Backend) bool { _, ok := b.(readOnly); return ok }
-
 var (
 	_ Backend    = readOnly{}
 	_ KV         = readOnly{}

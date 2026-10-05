@@ -323,10 +323,6 @@ func ladder(e Entry) [][]string {
 
 type processFunc func(context.Context, []string, io.Reader, int) ProcessResult
 
-func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
-	return installed(ctx, e, timeout, report, Environment{}.runProcess)
-}
-
 // installed keeps the version decisions independent of the child transport.
 func installed(ctx context.Context, e Entry, timeout time.Duration, report bool, run processFunc) Read {
 	if ctx.Err() != nil {
