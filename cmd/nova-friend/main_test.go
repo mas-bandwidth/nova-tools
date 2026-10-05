@@ -496,21 +496,40 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 // The daemon's new flags reach the agent's command line when they are set
 // and not the default, so a reinstall with the same flags writes the same
 // plist.
-func TestInstallCarriesTheCoordinatorAndANonDefaultSilentStop(t *testing.T) {
+func TestInstallCarriesTheCoordinatorAndANonDefaultNoProgress(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--silent-stop", "30m").Exit(0)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--coordinator", "ada", "--no-progress", "30m").Exit(0)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>\n    <string>--silent-stop</string>\n    <string>30m0s</string>")
+	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>\n    <string>--no-progress</string>\n    <string>30m0s</string>")
+	assert.NotContains(t, string(raw), "--silent-stop")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--no-progress", "0").Exit(0)
+	raw, err = os.ReadFile(plist)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "<string>--no-progress</string>\n    <string>0s</string>", "0 never stops, and it is not the default, so it is written")
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0)
 	raw, err = os.ReadFile(plist)
 	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "--silent-stop", "the defaults are not written")
+	assert.NotContains(t, string(raw), "--no-progress", "the default is not written")
+	assert.NotContains(t, string(raw), "--silent-stop")
 	assert.NotContains(t, string(raw), "--broken-after")
 	assert.NotContains(t, string(raw), "--coordinator")
+}
+
+// The run verb's help names the stop line and that 0 never stops, and docs/CLI.md carries the same sentence.
+func TestRunHelpNamesTheNoProgressStopAndThatZeroNeverStops(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "run", "-h").Exit(0).Stdout
+	const line = `No output for --no-progress (default 20m0s; 0 never stops) stops the turn once: the record says stopping: no output for <d> and stopped="no output for <d>", and the message stays pending.`
+	assert.Contains(t, help, line)
+	assert.Contains(t, help, "--no-progress")
+	assert.NotContains(t, help, "--silent-stop")
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), line)
 }
 
 // The row's one-shot mode, read from the beat, wires the lanes end to end:

@@ -41,11 +41,10 @@ const (
 	DeferredSaidEvery = time.Minute
 )
 
-// DefaultSilentStop is how long a turn may print nothing before the daemon
-// stops it (--silent-stop): a turn that prints keeps running however long
-// it takes (the finding of 2026-10-04: a fixed ten-minute cap killed a
-// friend's real work mid-turn).
-const DefaultSilentStop = 20 * time.Minute
+// DefaultNoProgressAfter is how long a turn may print nothing before the
+// daemon stops it (--no-progress). A turn that prints keeps running however
+// long it takes. Zero never stops (docs/SPEC-FRIEND.md, the loop).
+const DefaultNoProgressAfter = 20 * time.Minute
 
 // DefaultBrokenAfter is how many turns in a row the provider must refuse
 // with the same reason before the session is broken (--broken-after).
@@ -110,12 +109,16 @@ type Daemon struct {
 	// a challenge is open, so a small model has one line to run and nothing
 	// to fill in.
 	PongCommand func(nonce string) string
-	// SilentStop is how long a running turn may print nothing before it is
-	// stopped (DefaultSilentStop when zero); BrokenAfter how many turns in a
-	// row the provider refuses the same way before the session is broken
-	// (DefaultBrokenAfter when zero); Coordinator who is told of a broken
-	// session when no ping has named the seat.
-	SilentStop  time.Duration
+	// NoProgressAfter is how long a running turn may print nothing before it
+	// is stopped (docs/SPEC-FRIEND.md, the loop). Zero never stops. Each byte
+	// of output resets the clock. The run verb's --no-progress defaults to
+	// DefaultNoProgressAfter; a daemon left at zero never stops a turn.
+	NoProgressAfter time.Duration
+	// SilentStop is retained only because lane_end_test.go (outside PATHS) sets it.
+	SilentStop time.Duration
+	// BrokenAfter is how many turns in a row the provider refuses the same
+	// way before the session is broken (DefaultBrokenAfter when zero).
+	// Coordinator is who is told of a broken session when no ping has named the seat.
 	BrokenAfter int
 	Coordinator string
 	// Row is the friend's nova-config row as the daemon last read it (from
@@ -165,7 +168,7 @@ type turn struct {
 	seen     *atomic.Int64 // outputs the command printed
 	seenN    int64
 	lastOut  time.Time // when the daemon last saw the turn print, or its start
-	stopped  bool      // the daemon stopped it: silent past SilentStop
+	stopped  bool      // the daemon stopped it: no output for NoProgressAfter
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 }
@@ -229,31 +232,35 @@ func oneLine(s string, n int) string {
 // loop is one run of the daemon: what Run keeps between steps, shared by the
 // batch turn and the one-shot lanes.
 type loop struct {
-	d            *Daemon
-	ctx          context.Context
-	b            *bus.Bus
-	passive      bool
-	silentStop   time.Duration
-	brokenAfter  int
-	answered     map[string]bool // entries whose ping the daemon has ponged
-	failed       map[string]int  // entries whose turn failed, and how often
-	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
-	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
-	notice       *Push           // the latest word about the coordinator the session is owed
-	noticeTaken  *Push           // the word the last head() put in a turn
-	saidSilent   bool            // what the session last heard: the coordinator silent
-	busy         *turn           // the batch turn under way, or deferred in hand
-	retry        time.Time       // when the deferred turn in hand is tried again; zero while none is
-	deferrals    int
-	deferSaid    time.Time
-	refusal      string // the last provider refusal, and how many turns in a row said it
-	streak       int
-	broken, told bool
-	results      chan result
-	lanes        *laneSet
-	mode         string // the mode the daemon delivers in now
-	saidNoLanes  bool
-	wake         bool // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	d               *Daemon
+	ctx             context.Context
+	b               *bus.Bus
+	passive         bool
+	noProgressAfter time.Duration // zero never stops
+	silentStop      time.Duration // lanes.go (outside PATHS) reads this name
+	freeAt          time.Time     // no new batch delivery before this (an adapter with no Busy, after a stop)
+	askBusy         bool          // after a stop or a failure, ask Busy before the next delivery
+	busyWait        time.Time     // a Busy deferral is asked again then
+	brokenAfter     int
+	answered        map[string]bool // entries whose ping the daemon has ponged
+	failed          map[string]int  // entries whose turn failed, and how often
+	hand            []bus.Entry     // messages read and not yet in a turn, oldest first
+	inHand          map[string]bool // entries read and not yet acked or failed: in hand or in a turn
+	notice          *Push           // the latest word about the coordinator the session is owed
+	noticeTaken     *Push           // the word the last head() put in a turn
+	saidSilent      bool            // what the session last heard: the coordinator silent
+	busy            *turn           // the batch turn under way, or deferred in hand
+	retry           time.Time       // when the deferred turn in hand is tried again; zero while none is
+	deferrals       int
+	deferSaid       time.Time
+	refusal         string // the last provider refusal, and how many turns in a row said it
+	streak          int
+	broken, told    bool
+	results         chan result
+	lanes           *laneSet
+	mode            string // the mode the daemon delivers in now
+	saidNoLanes     bool
+	wake            bool // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -261,7 +268,7 @@ type loop struct {
 // stream when nothing waits on it (a ping is answered by the daemon at once
 // and acked, never pushed in), else one peek, so a ping arriving during a
 // long turn is still answered at once; each running turn's output watched,
-// and a turn silent past SilentStop stopped; the turns' results (exit 0 acks
+// and a turn with no output for NoProgressAfter stopped (zero never stops); the turns' results (exit 0 acks
 // every message a turn carried); then, in batch mode, one turn with every
 // waiting message when the session is free, else an owed wake check pushed
 // in as its own turn holding only the pong line (startWake), and in one-shot
@@ -271,13 +278,11 @@ type loop struct {
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
-	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
+	noProgressAfter := d.noProgressAfter()
+	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, noProgressAfter: noProgressAfter, silentStop: noProgressAfter, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
-	if l.silentStop <= 0 {
-		l.silentStop = DefaultSilentStop
-	}
 	if l.brokenAfter <= 0 {
 		l.brokenAfter = DefaultBrokenAfter
 	}
@@ -319,14 +324,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.mode = mode
 		}
 		d.status.Mode = l.mode
+		free := false
+		if !l.broken && l.mode != ModeOneShot && l.busy == nil && (len(l.hand) > 0 || (l.wake && drained)) {
+			free = l.deliveryAllowed(now) // docs/SPEC-FRIEND.md, the loop: one turn, then only when the session is free
+		}
 		switch {
 		case l.broken:
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
 			d.status.Lanes = l.lanes.said(width)
-		case l.busy == nil && len(l.hand) > 0:
+		case free && len(l.hand) > 0:
 			l.startBatch(now)
-		case l.busy == nil && l.wake && drained:
+		case free && l.wake && drained:
 			l.startWake(now)
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
@@ -666,17 +675,18 @@ func (l *loop) startBatch(now time.Time) {
 	l.startTurn(t, now, l.deliverBatch(t))
 }
 
-// watch is the silence watch on a running turn: a turn that prints is
-// working; one silent past SilentStop is stopped, said on the record.
+// watch is the silence watch on a running turn (docs/SPEC-FRIEND.md, the loop).
+// A turn that prints is working; each byte resets the clock. One with no
+// output for NoProgressAfter is stopped once. Zero never stops.
 func (l *loop) watch(t *turn, now time.Time) {
 	if n := t.seen.Load(); n != t.seenN {
 		t.seenN, t.lastOut = n, now
 	}
-	if !t.stopped && now.Sub(t.lastOut) >= l.silentStop {
+	if l.noProgressAfter > 0 && !t.stopped && now.Sub(t.lastOut) >= l.noProgressAfter {
 		t.stopped = true
 		t.cancel()
 		l.d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
-			now.UTC().Format(time.RFC3339), t.subjects, l.silentStop, t.lastOut.UTC().Format(time.RFC3339)))
+			now.UTC().Format(time.RFC3339), t.subjects, l.noProgressAfter, t.lastOut.UTC().Format(time.RFC3339)))
 	}
 }
 
@@ -813,7 +823,7 @@ func (l *loop) batchDone(r result, now time.Time) {
 		line += " error=" + fmt.Sprintf("%q", r.err.Error())
 	}
 	if r.t.stopped {
-		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
+		line += fmt.Sprintf(" stopped=%q", "no output for "+l.noProgressAfter.String())
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
 	line += l.settle(r.t, ok, r.err, now)
@@ -821,6 +831,97 @@ func (l *loop) batchDone(r result, now time.Time) {
 		d.Record(part)
 	}
 	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
+	l.afterTurn(r.t, ok, now)
+}
+
+// noProgressAfter is the silence window (docs/SPEC-FRIEND.md, the loop).
+// Zero never stops. NoProgressAfter wins when it is set; otherwise SilentStop,
+// retained for lane_end_test.go (outside PATHS).
+func (d *Daemon) noProgressAfter() time.Duration {
+	if d.NoProgressAfter > 0 {
+		return d.NoProgressAfter
+	}
+	return d.SilentStop
+}
+
+// deliveryAllowed says whether a new batch delivery may start
+// (docs/SPEC-FRIEND.md, the loop). One turn at a time is the caller's check
+// that nothing is running. After a stop, an adapter with no Busy waits
+// NoProgressAfter. After a stop or a failure, an adapter with Busy is asked:
+// busy, or an error, defers and nothing is delivered.
+func (l *loop) deliveryAllowed(now time.Time) bool {
+	if !l.freeAt.IsZero() && now.Before(l.freeAt) {
+		return false
+	}
+	l.freeAt = time.Time{}
+	if !l.askBusy {
+		return true
+	}
+	if !l.busyWait.IsZero() && now.Before(l.busyWait) {
+		return false
+	}
+	bc, ok := busyChecker(l.d.Deliver)
+	if !ok {
+		l.askBusy = false
+		return true
+	}
+	busy, err := bc.Busy(l.ctx)
+	if err == nil && !busy {
+		l.askBusy = false
+		l.busyWait = time.Time{}
+		return true
+	}
+	l.busyWait = now.Add(RecheckEvery)
+	if l.deferSaid.IsZero() || now.Sub(l.deferSaid) >= DeferredSaidEvery {
+		l.deferSaid = now
+		why := "the session is busy"
+		if err != nil {
+			why = "busy check failed: " + oneLine(err.Error(), 200)
+		}
+		l.d.Record(fmt.Sprintf("%s deferred: %s; tried again every %s, nothing delivered", now.UTC().Format(time.RFC3339), why, RecheckEvery))
+	}
+	return false
+}
+
+// afterTurn arms the next delivery (docs/SPEC-FRIEND.md, the loop). A stopped
+// or failed turn whose adapter can tell waits until Busy is false, and a Busy
+// error waits the same way. A stop whose adapter cannot tell waits
+// NoProgressAfter. A turn that ends at exit 0 waits for nothing.
+func (l *loop) afterTurn(t *turn, ok bool, now time.Time) {
+	if ok {
+		return
+	}
+	if _, has := busyChecker(l.d.Deliver); has {
+		l.askBusy = true
+		l.busyWait = time.Time{}
+		l.deferSaid = time.Time{}
+		return
+	}
+	if t.stopped && l.noProgressAfter > 0 {
+		l.freeAt = now.Add(l.noProgressAfter)
+	}
+}
+
+// busyChecker is the adapter's Busy, looking through the session-check and
+// limit gates (docs/SPEC-FRIEND.md, the loop). Those gates wrap Deliver and
+// do not themselves know whether the session is in a turn.
+func busyChecker(d Deliverer) (BusyChecker, bool) {
+	for i := 0; i < 6 && d != nil; i++ {
+		switch g := d.(type) {
+		case turnGated:
+			d = g.Deliverer
+		case turnGatedLanes:
+			d = g.Deliverer
+		case *gated:
+			d = g.d
+		case *gatedLanes:
+			d = g.d
+		default:
+			b, ok := d.(BusyChecker)
+			return b, ok
+		}
+	}
+	return nil, false
 }
 
 // tellBroken sends the coordinator one message that the session is broken:

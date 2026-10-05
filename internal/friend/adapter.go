@@ -27,6 +27,15 @@ type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
+// BusyChecker is optional on a Deliverer. Busy reports whether the session
+// still has a turn running (docs/SPEC-FRIEND.md, the loop). The daemon asks
+// after a stopped or failed delivery and starts the next only when Busy is
+// false. An error defers, the same as busy: nothing is delivered. An adapter
+// that does not implement it waits NoProgressAfter after a stop.
+type BusyChecker interface {
+	Busy(ctx context.Context) (bool, error)
+}
+
 // Deferred is a Deliverer's answer when the session cannot take a turn now
 // and nothing has failed (for example, neither Codex queue nor resume can
 // accept it). The daemon keeps the message in hand, tries again
@@ -51,7 +60,7 @@ type outputKey struct{}
 
 // WithOutputSeen is ctx carrying seen, called each time the command a
 // delivery runs prints to stdout or stderr: a turn that prints is working,
-// and only a turn silent past the daemon's SilentStop is stopped.
+// and only a turn with no output for the daemon's NoProgressAfter is stopped.
 func WithOutputSeen(ctx context.Context, seen func()) context.Context {
 	return context.WithValue(ctx, outputKey{}, seen)
 }
@@ -72,7 +81,7 @@ func (w *seenWriter) Write(p []byte) (int, error) {
 // RealExec runs the command through os/exec: the program directly, never a
 // shell, so a message's text is never interpolated. No clock bounds it: a
 // turn that prints keeps running however long it takes, and the daemon
-// stops one silent past its SilentStop by cancelling ctx (the finding of
+// stops one with no output for NoProgressAfter by cancelling ctx (the finding of
 // 2026-10-04: a fixed ten-minute cap killed real work mid-turn). Every write
 // to stdout or stderr is said to the watch in ctx (WithOutputSeen). The
 // command is its own session leader (Setsid), and on a cancel the whole

@@ -18,7 +18,7 @@ import (
 )
 
 // A deliver command that forks (as opencode run does) and is stopped (the
-// daemon cancels a turn silent past its SilentStop) is stopped with
+// daemon cancels a turn with no output for NoProgressAfter) is stopped with
 // everything it forked: the grandchild's group is gone once Deliver returns. Both tests fork a real /bin/sh and run on
 // real time, so they are the functional tier's, not the unit tier's.
 func TestAStoppedDeliveryIsStoppedWithItsWholeProcessGroup(t *testing.T) {

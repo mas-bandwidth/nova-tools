@@ -511,3 +511,310 @@ func TestStatusSaysTheChallengeIsAnsweredTheSecondAfterAPongIsWritten(t *testing
 	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce should end the challenge")
 	assert.Equal(t, 1, s.Pongs, "the pongs count should be incremented")
 }
+
+// clocked is a delivery that blocks until the daemon cancels it. Later calls
+// return at once, exit 0. print tells the daemon's output watch.
+type clocked struct {
+	mu    sync.Mutex
+	calls int
+	stops int
+	seen  func()
+	texts []string
+}
+
+func (c *clocked) Deliver(ctx context.Context, text string) (int, error) {
+	c.mu.Lock()
+	c.calls++
+	c.texts = append(c.texts, text)
+	n := c.calls
+	c.seen, _ = ctx.Value(outputKey{}).(func())
+	c.mu.Unlock()
+	if n > 1 {
+		return 0, nil
+	}
+	<-ctx.Done()
+	c.mu.Lock()
+	c.stops++
+	c.mu.Unlock()
+	return -1, errors.New("the delivery was stopped with its process group")
+}
+
+func (c *clocked) print() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen != nil {
+		c.seen()
+	}
+}
+
+func (c *clocked) n() (calls, stops int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls, c.stops
+}
+
+// finishing is clocked, and also ends the first turn at exit 0 when done closes.
+type finishing struct {
+	clocked
+	done chan struct{}
+}
+
+func (f *finishing) Deliver(ctx context.Context, text string) (int, error) {
+	f.mu.Lock()
+	f.calls++
+	f.texts = append(f.texts, text)
+	n := f.calls
+	f.seen, _ = ctx.Value(outputKey{}).(func())
+	done := f.done
+	f.mu.Unlock()
+	if n > 1 {
+		return 0, nil
+	}
+	select {
+	case <-done:
+		return 0, nil
+	case <-ctx.Done():
+		f.mu.Lock()
+		f.stops++
+		f.mu.Unlock()
+		return -1, errors.New("the delivery was stopped with its process group")
+	}
+}
+
+// busySession can say whether the session is still in a turn.
+type busySession struct {
+	clocked
+	busy bool
+	err  error
+}
+
+func (b *busySession) Busy(context.Context) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.err != nil {
+		return false, b.err
+	}
+	return b.busy, nil
+}
+
+func clockPause(r *rig) {
+	r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+}
+
+// A turn that prints once a minute for 45 minutes is never stopped, and the
+// message is acked when the turn exits 0 (docs/SPEC-FRIEND.md, the loop).
+func TestATurnThatKeepsWorkingIsNeverStopped(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		f := &finishing{done: make(chan struct{})}
+		r.d.Deliver = f
+		r.d.NoProgressAfter = DefaultNoProgressAfter
+		clockPause(r)
+		r.send(t, "ada", "card dealt", "real work")
+		minute := int(time.Minute / BeatEvery)
+		for m := 1; m <= 45; m++ {
+			r.at[m*minute] = func() { f.print() }
+		}
+		r.at[45*minute+1] = func() { close(f.done) }
+		r.run(t, 45*minute+8)
+		calls, stops := f.n()
+		assert.Equal(t, 1, calls)
+		assert.Equal(t, 0, stops, "a turn that keeps printing is not stopped")
+		for _, line := range r.records {
+			assert.NotContains(t, line, "stopping:")
+			assert.NotContains(t, line, "budget")
+		}
+		pending, fresh := r.pending(t)
+		assert.Empty(t, pending, "exit 0 acks the message")
+		assert.Empty(t, fresh)
+		assert.Contains(t, strings.Join(r.records, "\n"), "acked=true")
+	})
+}
+
+// No output for the silence window stops the group once. The message stays pending.
+func TestATurnSilentForTheWindowIsStopped(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		c := &clocked{}
+		r.d.Deliver = c
+		window := 20 * time.Second
+		r.d.NoProgressAfter = window
+		clockPause(r)
+		r.send(t, "ada", "silent", "nothing")
+		r.run(t, int(window/BeatEvery)+15)
+		calls, stops := c.n()
+		assert.Equal(t, 1, calls, "no second delivery")
+		assert.Equal(t, 1, stops, "the group is signalled once")
+		var stopping int
+		for _, line := range r.records {
+			if strings.Contains(line, "stopping: no output for 20s") && strings.Contains(line, "process group is signalled") {
+				stopping++
+			}
+			assert.NotContains(t, line, "budget")
+			assert.NotContains(t, line, "acked=true")
+		}
+		assert.Equal(t, 1, stopping)
+		assert.Contains(t, strings.Join(r.records, "\n"), `stopped="no output for 20s"`)
+		assert.Contains(t, strings.Join(r.records, "\n"), "deliveries=1/3")
+		pending, _ := r.pending(t)
+		assert.Len(t, pending, 1, "the message stays pending")
+	})
+}
+
+// A second message that arrives during a running delivery is not delivered until it ends.
+func TestNoSecondTurnWhileOneRuns(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		f := &finishing{done: make(chan struct{})}
+		r.d.Deliver = f
+		r.d.NoProgressAfter = time.Hour
+		clockPause(r)
+		r.send(t, "ada", "first", "one")
+		var during int
+		r.at[10] = func() {
+			r.send(t, "ada", "second", "two")
+			f.mu.Lock()
+			during = f.calls
+			f.mu.Unlock()
+		}
+		r.at[11] = func() { close(f.done) }
+		r.run(t, 20)
+		assert.Equal(t, 1, during, "the second message is not a turn while the first runs")
+		calls, stops := f.n()
+		assert.Equal(t, 0, stops)
+		assert.Equal(t, 2, calls)
+		f.mu.Lock()
+		texts := append([]string(nil), f.texts...)
+		f.mu.Unlock()
+		require.Len(t, texts, 2)
+		assert.NotContains(t, texts[0], "second")
+		assert.Contains(t, texts[1], "second")
+	})
+}
+
+// After a stop, Busy true defers and Busy false delivers.
+func TestNoRedeliveryWhileTheSessionIsBusy(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		b := &busySession{busy: true}
+		r.d.Deliver = b
+		window := 20 * time.Second
+		r.d.NoProgressAfter = window
+		clockPause(r)
+		r.send(t, "ada", "first", "one")
+		r.at[3] = func() { r.send(t, "ada", "second", "two") }
+		held := int(window/BeatEvery) + int(RecheckEvery/BeatEvery)*3
+		var whileBusy int
+		r.at[held] = func() {
+			b.mu.Lock()
+			whileBusy = b.calls
+			b.busy = false
+			b.mu.Unlock()
+		}
+		r.run(t, held+int(RecheckEvery/BeatEvery)*3)
+		_, stops := b.n()
+		assert.Equal(t, 1, stops, "signalled once")
+		assert.Equal(t, 1, whileBusy, "Busy true delivers nothing")
+		calls, _ := b.n()
+		assert.Equal(t, 2, calls, "Busy false delivers the waiting message")
+		b.mu.Lock()
+		texts := append([]string(nil), b.texts...)
+		b.mu.Unlock()
+		require.Len(t, texts, 2)
+		assert.Contains(t, texts[1], "second")
+	})
+}
+
+// A Busy error defers and never delivers.
+func TestABusyErrorDefersAndNeverDelivers(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		b := &busySession{err: errors.New("session probe failed")}
+		r.d.Deliver = b
+		window := 20 * time.Second
+		r.d.NoProgressAfter = window
+		clockPause(r)
+		r.send(t, "ada", "first", "one")
+		r.at[3] = func() { r.send(t, "ada", "second", "two") }
+		r.run(t, int(window/BeatEvery)+int(RecheckEvery/BeatEvery)*5)
+		calls, stops := b.n()
+		assert.Equal(t, 1, stops)
+		assert.Equal(t, 1, calls, "a Busy error delivers nothing")
+		assert.Contains(t, strings.Join(r.records, "\n"), "busy check failed")
+		pending, _ := r.pending(t)
+		assert.NotEmpty(t, pending)
+	})
+}
+
+// An adapter that cannot tell waits NoProgressAfter after a stop before the next delivery.
+func TestAnAdapterWithoutBusyWaitsNoProgressAfterAStop(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		c := &clocked{}
+		r.d.Deliver = c
+		window := 20 * time.Second
+		r.d.NoProgressAfter = window
+		clockPause(r)
+		r.send(t, "ada", "first", "one")
+		r.at[3] = func() { r.send(t, "ada", "second", "two") }
+		stop := int(window / BeatEvery)
+		var tooSoon int
+		r.at[stop+10] = func() {
+			c.mu.Lock()
+			tooSoon = c.calls
+			c.mu.Unlock()
+		}
+		r.run(t, stop+stop+15)
+		assert.Equal(t, 1, tooSoon, "the waiting message does not go in until the window has passed again")
+		calls, stops := c.n()
+		assert.Equal(t, 1, stops)
+		assert.Equal(t, 2, calls, "after the window, the waiting message goes in")
+	})
+}
+
+// --no-progress 0, a zero window, leaves a long silent delivery running.
+func TestNoProgressZeroNeverStops(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		c := &clocked{}
+		r.d.Deliver = c
+		r.d.NoProgressAfter = 0
+		clockPause(r)
+		r.send(t, "ada", "long", "still working, quietly")
+		minute := int(time.Minute / BeatEvery)
+		var midCalls, midStops int
+		r.at[45*minute] = func() {
+			c.mu.Lock()
+			midCalls, midStops = c.calls, c.stops
+			c.mu.Unlock()
+		}
+		r.run(t, 45*minute+3)
+		assert.Equal(t, 1, midCalls, "45 minutes of silence is not a stop when the window is 0")
+		assert.Equal(t, 0, midStops)
+		for _, line := range r.records {
+			assert.NotContains(t, line, "stopping:")
+		}
+	})
+}
+
+// The agent's command line writes --no-progress when the value differs from
+// the default, and 0 is included because 0 never stops.
+func TestAgentWritesNoProgressIncludingZero(t *testing.T) {
+	t.Parallel()
+	a := Agent{Binary: "nova-friend", Friend: "a", Harness: "opencode", Dir: "/d", Redis: "r:1", Server: "s:1", Width: 1}
+	joined := strings.Join(a.Args(), " ")
+	assert.NotContains(t, joined, "--no-progress")
+	assert.NotContains(t, joined, "--silent-stop")
+	a.NoProgressAfter = 30 * time.Minute
+	a.WriteNoProgress = true
+	assert.Contains(t, strings.Join(a.Args(), " "), "--no-progress 30m0s")
+	a.NoProgressAfter = 0
+	assert.Contains(t, strings.Join(a.Args(), " "), "--no-progress 0s")
+}

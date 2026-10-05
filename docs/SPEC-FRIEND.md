@@ -300,13 +300,22 @@ harness exposes the session's own turn events, they would be a second source; no
 yet, so a session that works without writing a file (a long read, a long think) looks idle
 after the setting, and the alarm says "written nothing", not "stuck".
 
-No clock bounds a turn: a turn that prints keeps running however long it
-takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
-(twenty minutes by default) is stopped, its process group signalled, and the
-record says so with the reason (`stopping: no output for 20m0s`, then
-`stopped=` on the turn's line); its messages count one failed delivery each.
-The finding of 2026-10-04: a fixed ten-minute cap killed a friend's real work
-mid-turn.
+No fixed cap bounds a turn. A turn that prints keeps running however long it
+takes: each byte on stdout or stderr resets the clock. A turn that has printed
+nothing for `--no-progress` (`DefaultNoProgressAfter`, twenty minutes) is
+stopped once, its process group signalled, and the record says
+`stopping: no output for <d>` and then `stopped="no output for <d>"` on the
+turn's line, never a budget. `--no-progress 0` never stops a turn. Its messages
+stay pending and count one failed delivery each. One turn at a time per
+session: the daemon starts no delivery while one runs (the next message waits;
+a ping is still answered at once). After a stopped or failed delivery the next
+one waits until the session is free. An adapter that can tell (`Busy`) is
+asked, and a busy answer or a `Busy` error defers the delivery and delivers
+nothing; an adapter that cannot tell waits another `--no-progress` after a
+stop. A delivery that returns at once is unchanged. There is no ten-minute
+budget. The finding of 2026-10-04: a fixed ten-minute cap killed real work
+mid-turn. One delivering at a time per session is the delivery machine's
+invariant.
 
 A session the provider refuses is broken, not its messages. An adapter that
 sees the turn's output (OpenCode, Codex, DSH, Gemini) reads a provider's JSON
@@ -755,7 +764,7 @@ aside after `CardTurns`; that end is the card's finish (`lane_end.go`):
 - she did not: the lane writes `outbox/<job>/REPORT.md` itself, with
   `Verdict: FAIL`, or `Verdict: HOLD` with `Head: <sha>` when she pushed, and
   one paragraph naming the lane and how the run ended: its exit, its wall, the
-  turns it had, the cap that stopped it (`no output for <SilentStop>`) or the
+  turns it had, the cap that stopped it (`no output for <NoProgressAfter>`) or the
   permission refused or the harness's error, and the pushed head or
   `no pushed head found`. It then sends the failed finish to the sprint
   server, as the friend's row:
