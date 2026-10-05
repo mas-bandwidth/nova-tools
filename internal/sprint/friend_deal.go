@@ -105,6 +105,9 @@ type FriendSeat struct {
 	// of the card's tier on the work card it places on her row (friend_model.go); a tier
 	// with none is dealt with no model.
 	Models map[string]string
+	// Probes is the model her probe card of each tier reported: a tier whose model it is not
+	// is dealt no real card until it is (FriendProven).
+	Probes map[string]string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -125,11 +128,13 @@ func friendTiers(f FriendSeat) []string {
 }
 
 // friendTakes says the friend may be given a card of the tier: it is one of her tiers
-// (friendTiers), never her class as a whole. A friend whose row names no tier takes none,
-// and every friend deal and move is gated on it, whatever the card's WHO line, so a
-// frontier card never reaches a friend without frontier.
+// (friendTiers), never her class as a whole, and its model is proven (FriendProven: her
+// probe of the tier returned her row's model, or her row names none). A friend whose row
+// names no tier takes none, and every friend deal and move is gated on it, whatever the
+// card's WHO line, so a frontier card never reaches a friend without frontier, nor a heavy
+// card one whose heavy model has not answered its probe.
 func friendTakes(f FriendSeat, tier string) bool {
-	return slices.Contains(friendTiers(f), tier)
+	return slices.Contains(friendTiers(f), tier) && FriendProven(f.Models, f.Probes, tier)
 }
 
 // friendsLeft is the friends the work card has left (FieldFriendsLeft), with the one it

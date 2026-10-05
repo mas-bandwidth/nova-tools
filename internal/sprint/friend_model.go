@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -105,4 +106,56 @@ func FriendModelMismatch(want, report string) string {
 		return "the report says the card ran on " + got + ", and her row's model for the card's tier is " + want
 	}
 	return ""
+}
+
+// A friend's probe (the fifth way she knows, "proven before first use"; docs/SPEC-FRIEND.md,
+// a friend's models). A tier her row maps to a model is dealt no real card until her probe
+// of it has returned that model: friend sync puts one probe job of the tier in her inbox
+// (FriendProbeJob, FriendProbeBrief: report your model and harness), reads her report, and
+// records the model it names on her seat (FriendSeat.Probes); the deal and the level take
+// the tier only once the two agree (friendTakes). A changed model is a new probe, by its own
+// job. A tier with no model needs no probe and is dealt as before.
+
+// FriendProven says the tier's cards may reach her: her row names no model for it, or her
+// probe of it reported that model (case aside).
+func FriendProven(models, probes map[string]string, tier string) bool {
+	m := models[tier]
+	return m == "" || strings.EqualFold(probes[tier], m)
+}
+
+// FriendProbesOwed is the tiers of models whose probe is owed (not FriendProven), sorted.
+func FriendProbesOwed(models, probes map[string]string) []string {
+	var out []string
+	for _, t := range slices.Sorted(maps.Keys(models)) {
+		if !FriendProven(models, probes, t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// FriendProbeJob is the job (inbox/<job>, outbox/<job>, and her queue file's task id) of
+// her probe of the tier on the model: probe-<tier>-<model>, the model's characters other
+// than letters, digits, '.', '_' and '-' written '-', so a changed model is a new job.
+func FriendProbeJob(tier, model string) string {
+	clean := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			return r
+		}
+		return '-'
+	}, model)
+	return "probe-" + tier + "-" + clean
+}
+
+// FriendProbeBrief is the BRIEF.md of her probe of the tier on the model: no repository and
+// no branch, only the two lines she reports, which friend sync reads (ReportModel).
+func FriendProbeBrief(name, tier, model string) string {
+	job := FriendProbeJob(tier, model)
+	return "STATUS: nova-sprint probe " + job + " for friend " + name + "; no branch, nothing to push; when done, write outbox/" + job + "/REPORT.md and outbox/" + job + "/RESULT.md\n" +
+		FriendTierLine(tier, model) + "\n\n" +
+		"Your nova-config row now serves " + tier + " on " + model + ". Before any real " + tier + " card reaches you, prove it: run this probe in a child on " + model +
+		" (or, if your harness cannot choose a child's model, on your session's model) and have that child write outbox/" + job + "/REPORT.md with exactly these lines:\n\n" +
+		"Verdict: LAND\nModel: <the model id the child runs on, as the harness names it>\nHarness: <the harness and its version>\n\n" +
+		"and outbox/" + job + "/RESULT.md with one line, RESULT: " + job + ". Report the model you are on, not the one asked for: a probe that names another model holds the tier, and the coordinator is told.\n"
 }
