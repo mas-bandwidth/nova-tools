@@ -302,7 +302,7 @@ func snapshotAdopted(file string, timeout, budget time.Duration, env Environment
 		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s; nova-version example --out %s writes one to start from)", file, manifestShape, file))
 	}
 	entries, err := Load(f)
-	f.Close()
+	_ = f.Close() // ignored: file was opened only to be read
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("%s: %s", file, err))
 	}

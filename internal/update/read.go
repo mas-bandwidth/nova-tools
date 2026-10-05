@@ -135,14 +135,14 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "execution failed: " + clip(err.Error(), 160)
 		return r
 	}
-	defer stdoutRead.Close()
+	defer func() { _ = stdoutRead.Close() }() // ignored: pipe read end; child's exit is the report
 	stderrRead, stderrWrite, err := os.Pipe()
 	if err != nil {
-		stdoutWrite.Close()
+		_ = stdoutWrite.Close() // ignored: pipe management on pipe creation failure
 		r.Reason = "execution failed: " + clip(err.Error(), 160)
 		return r
 	}
-	defer stderrRead.Close()
+	defer func() { _ = stderrRead.Close() }() // ignored: pipe read end; child's exit is the report
 	cmd.Stdout = stdoutWrite
 	cmd.Stderr = stderrWrite
 	configureProcess(cmd)
@@ -155,10 +155,10 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	go func() { defer copyWG.Done(); _, _ = io.Copy(errs, stderrRead) }()
 
 	if err := cmd.Start(); err != nil {
-		stdoutWrite.Close()
-		stderrWrite.Close()
-		stdoutRead.Close()
-		stderrRead.Close()
+		_ = stdoutWrite.Close() // ignored: pipe management on start failure
+		_ = stderrWrite.Close() // ignored: pipe management on start failure
+		_ = stdoutRead.Close()  // ignored: pipe management on start failure
+		_ = stderrRead.Close()  // ignored: pipe management on start failure
 		copyWG.Wait()
 		if ctx.Err() != nil || child.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded") {
 			r.Reason = "timeout"
@@ -169,8 +169,8 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	}
 	// The parent's write ends must close so a read sees EOF once the child and
 	// its descendants have all closed theirs.
-	stdoutWrite.Close()
-	stderrWrite.Close()
+	_ = stdoutWrite.Close() // ignored: parent closing write end to deliver EOF
+	_ = stderrWrite.Close() // ignored: parent closing write end to deliver EOF
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -202,8 +202,8 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 			stopTimer()
 		case <-timerChan:
 			held = true
-			stdoutRead.Close()
-			stderrRead.Close()
+			_ = stdoutRead.Close() // ignored: killing the pipe on drain timeout
+			_ = stderrRead.Close() // ignored: killing the pipe on drain timeout
 			<-done
 		}
 	} else {

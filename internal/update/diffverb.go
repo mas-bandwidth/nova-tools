@@ -18,7 +18,7 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot open")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: read-only file
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4096), 1024*1024)
 	if !sc.Scan() || sc.Text() != snapshotHeader {

@@ -83,7 +83,7 @@ func capped(o *tool.Out, max int) *tool.Out {
 // payload (a --draft note) prints the payload alone.
 func text(w io.Writer, o *tool.Out) {
 	if payloadOnly(o) {
-		fmt.Fprintln(w, strings.TrimSuffix(o.Payload, "\n"))
+		_, _ = fmt.Fprintln(w, strings.TrimSuffix(o.Payload, "\n")) // ignored: writes to bytes.Buffer in emit; write error is reported by emit
 		return
 	}
 	token := strings.ToUpper(o.Verb)
@@ -93,10 +93,10 @@ func text(w io.Writer, o *tool.Out) {
 		tail = "; run: " + oneline.Escape(o.Remedy)
 	}
 	if len(o.Why) == 0 {
-		fmt.Fprintln(w, head+tail)
+		_, _ = fmt.Fprintln(w, head+tail) // ignored: writes to bytes.Buffer in emit; write error is reported by emit
 	}
 	for _, why := range o.Why {
-		fmt.Fprintln(w, head+": "+oneline.Escape(why)+tail)
+		_, _ = fmt.Fprintln(w, head+": "+oneline.Escape(why)+tail) // ignored: writes to bytes.Buffer in emit; write error is reported by emit
 	}
 	for _, it := range o.Items {
 		line := token + " " + strings.ToUpper(it.Kind) + typed(it.Fields)
@@ -112,16 +112,16 @@ func text(w io.Writer, o *tool.Out) {
 		if v, ok := said["remedy"]; ok {
 			line += " (" + oneline.Escape(v) + ")"
 		}
-		fmt.Fprintln(w, line)
+		_, _ = fmt.Fprintln(w, line) // ignored: writes to bytes.Buffer in emit; write error is reported by emit
 	}
 	for _, m := range o.More {
-		fmt.Fprintln(w, bounded.MoreLine(token, m.Kind, m.Shown, m.Total, m.Remedy))
+		_, _ = fmt.Fprintln(w, bounded.MoreLine(token, m.Kind, m.Shown, m.Total, m.Remedy)) // ignored: writes to bytes.Buffer in emit; write error is reported by emit
 	}
 	for _, n := range o.Notes {
-		fmt.Fprintln(w, token+" NOTE "+oneline.Escape(n))
+		_, _ = fmt.Fprintln(w, token+" NOTE "+oneline.Escape(n)) // ignored: writes to bytes.Buffer in emit; write error is reported by emit
 	}
 	if o.Payload != "" {
-		fmt.Fprintln(w, strings.TrimSuffix(o.Payload, "\n"))
+		_, _ = fmt.Fprintln(w, strings.TrimSuffix(o.Payload, "\n")) // ignored: writes to bytes.Buffer in emit; write error is reported by emit
 	}
 }
 
