@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // The server lands what the readers passed (run --land): the last of the sprint's
@@ -64,6 +65,7 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 // read and held nothing.
 func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
 	a.serial.Lock()
+	a.retryRejected(ctx, addr, stdout)
 	queued, coordinator, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
 	idle := err == nil && !queued
@@ -127,4 +129,30 @@ func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coor
 		}
 	}
 	return false, coordinator, nil
+}
+
+// retryRejected resumes, once each, the streams stopped for a rejected batch, before the
+// round reads the queue, so a refusal that has passed lets the stream land again without a
+// person (sprint.RetryRejected); a stream rejected again stays stopped with its one judgment.
+// A store that cannot be read or written says nothing here: the round reads it next.
+func (a *app) retryRejected(ctx context.Context, addr string, stdout io.Writer) {
+	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
+	// ignored: the round's own read of the queue reports an unreadable store
+	if err != nil {
+		return
+	}
+	who, err := st.B.Coordinator(ctx)
+	// ignored: no coordinator, or an unreadable one, is the round's own finding
+	if err != nil || who == "" {
+		return
+	}
+	res, err := st.Run(ctx, store.Step{Verb: "resume", Load: []string{sprint.Merge, sprint.Work}, Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RetryRejected(s, who) }})
+	// ignored: the stream stays stopped and the next round tries the resume again
+	if err != nil {
+		return
+	}
+	for _, line := range res.Moved {
+		fmt.Fprintf(stdout, "%s LAND RETRY %s\n", oneline.Field(a.now().Format("15:04:05")), oneline.Escape(line))
+	}
 }

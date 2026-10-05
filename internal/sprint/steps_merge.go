@@ -375,7 +375,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
-				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
+				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, FieldRetried)))
 				u.Notes = notes
 			}
 			merged := map[string]string{"merged": now}
@@ -417,6 +417,32 @@ type ResumeReq struct {
 	Did     string // what the coordinator did
 	Answers []string
 	Who     string
+	// Retry resumes a stream stopped for a rejected batch once, for the lander to push
+	// again (RetryRejected); a person's resume leaves it unset.
+	Retry bool
+}
+
+// FieldRetried marks a stream whose rejected batch the machine has resumed once; the next
+// landing clears it, a second rejection leaves it and the stop stands for a person.
+const FieldRetried = "retried"
+
+// RetryRejected is the machine's one resume of a stream stopped for a rejected batch (a
+// push refused by a rule on the base, or a base that moved twice), so a transient refusal
+// does not hold the stream until a person resumes it (docs/SPEC-SPRINT.md, the stream
+// lifecycle): each such stream not yet retried resumes, its judgment answered, and the
+// lander pushes again. A stream rejected again stays stopped with its judgment open.
+func RetryRejected(s *Snapshot, who string) Plan {
+	var p Plan
+	for _, st := range s.Merge.Rows() {
+		ctl := s.StreamCtl(st)
+		if ctl == nil || ctl.F("state") != StreamStopped || ctl.F("cause") != "rejected" || ctl.F(FieldRetried) != "" {
+			continue
+		}
+		q := Resume(s, ResumeReq{Stream: st, Did: "the push is tried again after a rejection", Who: who, Retry: true})
+		p.Units = append(p.Units, q.Units...)
+		p.Refused = append(p.Refused, q.Refused...)
+	}
+	return p
 }
 
 // Resume moves a stopped stream's stuck cards whose cause is resolved back to
@@ -465,7 +491,13 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	if r.Did != "" {
 		set["did"] = r.Did
 	}
-	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other", FieldConflictKind, FieldConflictPaths))},
+	unset := []string{"cause", "card", "other", FieldConflictKind, FieldConflictPaths}
+	if r.Retry {
+		set[FieldRetried] = "1"
+	} else {
+		unset = append(unset, FieldRetried)
+	}
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
 	if state == StreamLanded {
 		n := happened(NStreamLanded, r.Stream, s.Now)
