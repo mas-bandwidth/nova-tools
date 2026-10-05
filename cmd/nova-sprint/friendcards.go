@@ -21,7 +21,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -413,6 +412,12 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 // wakes a friend's daemon when it delivers her a card.
 const busRedisEnv = "NOVA_BUS_REDIS"
 
+// busUserEnv and busPasswordEnvEnv are the bus's own login, apart from the sprint store's.
+const (
+	busUserEnv        = "NOVA_BUS_REDIS_USER"
+	busPasswordEnvEnv = "NOVA_BUS_REDIS_PASSWORD_ENV"
+)
+
 // busSendFn sends one message on the friends' bus; say is handed each line the send has
 // for the verb's output (a bus store's alarm raised or cleared).
 type busSendFn func(ctx context.Context, m bus.Message, say func(string)) error
@@ -444,12 +449,12 @@ func (a *app) busWatch(addr, user string) *bus.Watch {
 // openBus is the real busOpen: the bus store dialed as nova-bus dials it
 // (internal/redisconn, the fleet's login from the environment).
 func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	// the bus has its own login (NOVA_BUS_REDIS_USER, NOVA_BUS_REDIS_PASSWORD_ENV), never the
+	// sprint store's: a coordinator's store login sent to a bus with no users is refused
+	// (WRONGPASS), and every note to a friend failed that way on 2026-10-04
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: busUserEnv}}
 	if user != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if a.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
+		o.Env.PasswordEnv = busPasswordEnvEnv
 	}
 	conn, err := redisconn.Open(ctx, o, a.getenv)
 	if err != nil {
@@ -470,7 +475,7 @@ func (a *app) sendBus(ctx context.Context, m bus.Message, say func(string)) erro
 	if addr == "" {
 		return errors.New(busRedisEnv + " is not set: no bus to send on")
 	}
-	user := a.getenv(redisauth.UserEnv)
+	user := a.getenv(busUserEnv)
 	c := &friend.Courier{
 		Now:   func() time.Time { return a.now() },
 		Open:  func(ctx context.Context) (*bus.Bus, func(), error) { return a.busOpen(ctx, addr, user) },
