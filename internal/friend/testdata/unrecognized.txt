@@ -1,0 +1,10 @@
+exit status 2: undefined: SomeSymbol
+500 Internal Server Error
+exit status 2: line 402
+see issue 429 for details
+syntax error in main.go:402: missing ','
+panic: runtime error at 0x429
+git commit 429abc: fixed bug
+error at column 402
+build failed on port 402
+PR 429 has merge conflict

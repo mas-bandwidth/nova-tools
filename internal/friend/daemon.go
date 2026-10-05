@@ -71,6 +71,9 @@ const (
 const (
 	SessionOK     = "ok"
 	SessionBroken = "broken"
+	// SessionLimited is a harness at its usage limit or out of credits, down
+	// until the reset and a wake (Limits; the status file's kind= and until=).
+	SessionLimited = "limited"
 )
 
 // Daemon is one friend's loop: the recv loop over the friend's stream with
@@ -118,6 +121,10 @@ type Daemon struct {
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
+	// Limited is the harness's limit (Limits.LimitState): while it holds,
+	// the status file says session=limited with its kind and until; nil
+	// reads no limit.
+	Limited func() (kind string, until time.Time, limited bool)
 	// Row is the friend's nova-config row as the daemon last read it (from
 	// its beat): her delivery mode (ModeBatch or ModeOneShot) and width,
 	// read every step so a change takes effect without a restart; nil, or
@@ -874,6 +881,11 @@ func (d *Daemon) flush(now time.Time) {
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
 	s.At, s.LastBeat, s.Beats = time.Time{}, time.Time{}, 0 // what every beat changes is not a change
+	if d.Limited != nil && s.Session != SessionBroken {
+		if kind, until, limited := d.Limited(); limited {
+			s.Session, s.LimitKind, s.LimitUntil = SessionLimited, kind, until
+		}
+	}
 	if s == d.written0 && now.Sub(d.written) < StatusEvery {
 		return
 	}

@@ -58,12 +58,17 @@ type Status struct {
 	BeatError      string    `json:"beat_error,omitempty"`
 	StoreError     string    `json:"store_error,omitempty"`
 	Width          int       `json:"width"`
-	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
-	// turns in a row the same way; empty for a passive harness.
+	// Session is SessionOK, SessionBroken once the provider refused BrokenAfter
+	// turns in a row the same way, or SessionLimited while the harness is at
+	// its limit; empty for a passive harness.
 	Session       string    `json:"session,omitempty"`
 	SessionID     string    `json:"session_id,omitempty"`
 	SessionReason string    `json:"session_reason,omitempty"`
 	BrokenAt      time.Time `json:"broken_at,omitempty"`
+	// LimitKind (limit or credits) and LimitUntil are the harness's limit
+	// while Session is SessionLimited.
+	LimitKind  string    `json:"kind,omitempty"`
+	LimitUntil time.Time `json:"until,omitempty"`
 	// Mode is how the daemon delivers now (batch or one-shot), and Lanes the
 	// one-shot lanes as n:session:card/turn, empty in batch.
 	Mode  string `json:"mode,omitempty"`

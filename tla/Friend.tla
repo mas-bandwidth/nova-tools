@@ -29,15 +29,38 @@
 \*   "stalepong"      any nonce the session ever saw answers: OnlyCurrentNonceAnswers
 \*   "daemonpongends" the daemon's pong ends a wake challenge (session-pong.w1):
 \*                    OnlySessionPongEnds
+\*   "turnwhilelimited" a turn goes into a session at its limit:
+\*                    NoTurnWhileLimited
+\*   "endsonclock"    the limit ends when its reset comes, nothing answered:
+\*                    LimitEndsOnlyByAnAnswer
+\*   "failureends"    a reset turn that fails without the answer ends the
+\*                    limit (attempt 1 of limits-mean-down-w.w2):
+\*                    LimitEndsOnlyByAnAnswer
+\*   "neverwake"      no turn is tried at the reset: LimitedEnds
+\*
+\* The harness's limit (limits-mean-down-w.w2; internal/friend/limit.go
+\* Limits, limits.go WatchHarness): limited, resetAt, limits. A turn's
+\* output saying a usage limit or an empty balance (HitLimit, the outside,
+\* at most MaxLimits times) ends it and makes the friend limited until a
+\* reset at most Rest ticks away (the reset the text names, else
+\* --limit-rest); while limited no turn goes in (Gate defers it; the daemon
+\* still answers pings); at the reset one reset turn is tried (Gate's wake
+\* with its nonce, ResetTurn), and only its answer (Heard) ends the limit
+\* when it ends (ResetEnds); one that says the limit again takes the next
+\* reset from it (HitLimit), one that fails otherwise leaves it limited,
+\* tried again. heard is whether the reset turn's answer was seen. turn is what the running turn is: "msg" (a turn of
+\* messages, or the wake check's pong line) or "reset".
 
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Window, MaxTime, MaxPings, Broken
+CONSTANTS Window, MaxTime, MaxPings, Rest, MaxLimits, Broken
 
 VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, busy, owed
-vars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
+          daemonPongs, busy, owed, turn, limited, resetAt, limits, heard
+friendVars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
           daemonPongs, busy, owed>>
+limitVars == <<turn, limited, resetAt, limits, heard>>
+vars == <<friendVars, limitVars>>
 
 NoNonce == 0
 
@@ -57,6 +80,11 @@ TypeOK ==
   /\ daemonPongs \in 0..MaxPings
   /\ busy \in BOOLEAN
   /\ owed \in BOOLEAN
+  /\ turn \in {"msg", "reset"}
+  /\ limited \in BOOLEAN
+  /\ resetAt \in 0..MaxTime
+  /\ limits \in 0..MaxLimits
+  /\ heard \in BOOLEAN
 
 \* Up is what the daemon reports: the session answered the current challenge
 \* and has answered at least once (machine.go Up). The witness lets the
@@ -71,6 +99,7 @@ Init ==
   /\ silentSaid = 0 /\ outages = 0
   /\ answered = NoNonce
   /\ daemonPongs = 0 /\ busy = FALSE /\ owed = FALSE
+  /\ turn = "msg" /\ limited = FALSE /\ resetAt = 0 /\ limits = 0 /\ heard = FALSE
 
 \* The clock (machine.go Tick): a window without a ping makes the
 \* coordinator silent, said once at that moment; a window challenged with
@@ -85,7 +114,8 @@ Tick ==
        ELSE /\ UNCHANGED <<conn, silentFrom, outages>>
             /\ silentSaid' = IF Broken = "silenttwice" /\ conn = "silent" THEN silentSaid + 1 ELSE silentSaid
   /\ chal' = IF chal = "challenged" /\ now + 1 - asked >= Window /\ Broken # "neverdeaf" THEN "deaf" ELSE chal
-  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, busy, owed>>
+  /\ limited' = IF Broken = "endsonclock" /\ limited /\ now + 1 >= resetAt THEN FALSE ELSE limited
+  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, busy, owed, turn, resetAt, limits, heard>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping;
 \* daemon.go loop.ping): the daemon answers it at once (daemonPongs), the
@@ -105,29 +135,74 @@ Ping(wake) ==
   /\ asked' = now
   /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
   /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, busy>>
+  /\ UNCHANGED limitVars
 
 \* A turn carrying messages starts in the free session (daemon.go
 \* startBatch): while a challenge is open the pong line for the current nonce
 \* rides at its head (loop.head), and an owed wake check is paid by it.
 Turn ==
   /\ ~busy
-  /\ busy' = TRUE
+  /\ (~limited \/ Broken = "turnwhilelimited")
+  /\ busy' = TRUE /\ turn' = "msg"
   /\ IF chal # "quiet"
        THEN seen' = seen \cup {nonce} /\ owed' = FALSE
        ELSE UNCHANGED <<seen, owed>>
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ UNCHANGED <<limited, resetAt, limits, heard>>
 
 \* A wake check owed to a free session with no message waiting is pushed
 \* in as its own turn holding only the pong line (daemon.go startWake).
 WakeTurn ==
   /\ ~busy /\ owed /\ chal # "quiet"
-  /\ busy' = TRUE /\ owed' = FALSE
+  /\ ~limited
+  /\ busy' = TRUE /\ owed' = FALSE /\ turn' = "msg"
   /\ seen' = seen \cup {nonce}
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ UNCHANGED <<limited, resetAt, limits, heard>>
 
 TurnEnds ==
-  /\ busy
+  /\ busy /\ turn = "msg"
   /\ busy' = FALSE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
+  /\ UNCHANGED limitVars
+
+\* A turn's output says a usage limit or an empty balance (limits.go
+\* WatchHarness, limit.go Limits.see), the outside: the turn ends, Deferred
+\* (its messages stay in hand), and the friend is limited until a reset in
+\* the next Rest ticks; a reset turn that says it again takes the next reset
+\* from it.
+HitLimit ==
+  /\ busy /\ limits < MaxLimits /\ now < MaxTime
+  /\ busy' = FALSE /\ limits' = limits + 1 /\ limited' = TRUE
+  /\ resetAt' \in (now + 1)..(IF now + Rest > MaxTime THEN MaxTime ELSE now + Rest)
+  /\ UNCHANGED <<turn, heard>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
+
+\* At the reset one turn is tried (limit.go gated.Deliver, the wake with its
+\* fresh nonce). The witness never tries it.
+ResetTurn ==
+  /\ ~busy /\ limited /\ now >= resetAt
+  /\ Broken # "neverwake"
+  /\ busy' = TRUE /\ turn' = "reset" /\ heard' = FALSE
+  /\ UNCHANGED <<limited, resetAt, limits>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
+
+\* The session answers the reset turn: its output carries the nonce
+\* (Limits.Watch sees it), the outside.
+Heard ==
+  /\ busy /\ turn = "reset" /\ ~heard
+  /\ heard' = TRUE
+  /\ UNCHANGED <<turn, limited, resetAt, limits>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed>>
+
+\* The reset turn ends: answered, the friend is up (Limits.Up, the seat told
+\* once; the beat goes again); otherwise (no answer, an ordinary failure)
+\* still limited, tried again. The witness ends the limit on any end.
+ResetEnds ==
+  /\ busy /\ turn = "reset"
+  /\ busy' = FALSE
+  /\ limited' = ~(heard \/ Broken = "failureends")
+  /\ UNCHANGED <<turn, resetAt, limits, heard>>
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
 
 \* The session answers with a nonce it has seen (machine.go Pong): the
@@ -139,6 +214,7 @@ Pong(n) ==
   /\ (n = nonce \/ Broken = "stalepong")
   /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs, busy>>
+  /\ UNCHANGED limitVars
 
 Next ==
   \/ Tick
@@ -147,8 +223,18 @@ Next ==
   \/ WakeTurn
   \/ TurnEnds
   \/ \E n \in 1..MaxPings : Pong(n)
+  \/ HitLimit
+  \/ ResetTurn
+  \/ Heard
+  \/ ResetEnds
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
+
+\* Limited ends only under the assumption that the session answers some
+\* reset turn: the daemon tries one at each reset and every turn ends (weak
+\* fairness), and a session tried again and again answers one (strong
+\* fairness).
+SpecLive == Spec /\ WF_vars(ResetTurn) /\ WF_vars(ResetEnds) /\ SF_vars(Heard)
 
 \* ---------------------------------------------------------------- the rules
 
@@ -180,7 +266,18 @@ OnlySessionPongEnds ==
 \* pays it, so a wake turn never carries an answered nonce.
 OwedOnlyWhileAsked == owed => chal # "quiet"
 
-\* No liveness is claimed: the clock is finite here, and DeafAfterWindow
+\* No turn goes into the session while it is limited: no message turn and
+\* no wake check runs at its limit; a reset turn alone is tried.
+NoTurnWhileLimited == (limited /\ busy) => turn = "reset"
+
+\* The limit ends only by the session's answer to a reset turn, never by
+\* the clock alone, never by a turn that failed.
+LimitEndsOnlyByAnAnswer == [][(limited /\ ~limited') => (busy /\ turn = "reset" /\ heard)]_vars
+
+\* Limited ends (under SpecLive).
+LimitedEnds == limited ~> ~limited
+
+\* No liveness is claimed for the challenge: the clock is finite here, and DeafAfterWindow
 \* already says an open challenge is younger than a window at every state,
 \* so once the clock moves a window it is answered or deaf.
 

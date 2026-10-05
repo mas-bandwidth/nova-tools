@@ -356,6 +356,49 @@ usage is on the beat as `--five-hour <pct> --seven-day <pct>`
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
+### limits-mean-down-w.w2: a harness's own limit and credits texts (internal/friend/limits.go)
+
+A usage limit or an empty balance is down, whatever words the harness says it
+in (the owner, 2026-10-04: "out of credits = down"). This is the same limit as the
+one above, read by the same `Limits`, never a second machine:
+`Limits.WatchHarness(harness, rest, run)` is `Watch`, and, on a command that
+failed (exit not 0, or an error), its output read in that harness's own words
+besides (`ReadHarnessLimit`): one parser per harness (claude, codex, opencode,
+grok, antigravity, dsh, gemini) of its 429 and 402 bodies and its own wording
+(`rate_limit_error`, `insufficient_quota`, `RESOURCE_EXHAUSTED`, `insufficient
+balance`, `credits exhausted`, ...), answering the kind, `credits` for an empty
+balance and `limit` otherwise, and the reset the line names (as `ReadLimit`
+reads one; an RFC3339 time; a 24-hour clock; `in`, `after` or `wait` N units),
+else `--limit-rest` from now (an hour by default). A line `ReadLimit` already
+reads is its; a text no parser knows stays an ordinary failure, and a command
+that answered is read by `Watch` alone, so a reply that talks about limits
+sends no one down. The fixtures are `internal/friend/testdata/<harness>.txt`,
+a limit line and a credits line each, and `unrecognized.txt`, texts that
+must stay failures.
+
+A match is a limit like any other: `Down` once with its reset (the seat told
+on the bus, `LimitDownText`), the turn `Deferred` by `Gate` so its messages stay
+pending, counted toward nothing, nothing delivered while it holds, pings still
+answered with the daemon pong, and the beat held (`Limits.Beat`: no beat goes
+to the sprint server, so her row reads down, and the beat's error says the
+until and the reason). The status file says `session=limited kind=<limit|credits>
+until=<RFC3339>` while it holds (`Daemon.Limited`, `Limits.LimitState`), and
+`status` prints `kind=` and `until=`. At the reset one wake turn is tried: a
+wake that says the limit again takes the next reset from its text; one that
+fails otherwise leaves her down, tried again; only the answer to its nonce
+brings her up (`Up`, the seat told once, the beat going again).
+`tla/Friend.tla` holds it beside the daemon's machine (limited, resetAt,
+limits, heard; `HitLimit`, `ResetTurn`, `Heard`, `ResetEnds`):
+`NoTurnWhileLimited`, `LimitEndsOnlyByAnAnswer`, and `LimitedEnds` under
+`SpecLive` (a reset turn tried at each reset and a session that answers one
+in the end), with four reversed witnesses: a turn at the limit, the limit
+ended by the clock, ended by a failed reset turn, and no reset turn tried.
+The model's fairness on the reset turn stands for a delivery reaching the
+gate after the reset (a pending message, a wake check, the session check):
+the code tries the wake only on a delivery. `TestUsageLimitMarksDownUntilReset`,
+`TestEachHarnessLimitAndCreditsTextParsesWithItsReset`,
+`TestAnUnrecognisedTextStaysAnOrdinaryFailure`.
+
 ### The harness check (internal/friend/alive.go)
 
 A session that cannot answer is caught by the challenge only after a window;

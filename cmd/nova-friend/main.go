@@ -227,6 +227,7 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
+		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the harness is down when its usage-limit or out-of-credits text names no reset")
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
@@ -272,7 +273,9 @@ on --broken-after turns in a row marks the session broken: nothing more is deliv
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
 bus; a restart clears it. A turn whose harness says it is out of credits or at a usage limit (a Claude
 Code rate_limit_event rejected, "Insufficient AI Credits ... will refresh 6:52 PM", "usage limit ...
-try again at") makes the friend down until the reset: the presence file says down with the limit,
+try again at"; or a failed turn's 429 or 402 body in the harness's own words, until the reset it names,
+else for --limit-rest) makes the friend down until the reset: status says session=limited kind= until=,
+the presence file says down with the limit,
 no beat goes to the sprint server (her row reads down), nothing is delivered, and the seat (else
 --coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
@@ -529,8 +532,8 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
-(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
+last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|limited|-> mode=<batch|one-shot|-> presence=<up|down>
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; limited: kind=<limit|credits> until=; one-shot: lanes=)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
@@ -653,7 +656,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
 	fl := &friend.Limits{Now: w.now, Nonce: w.random}
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(walled), c.Stdout)
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.WatchHarness(c.Str("harness"), c.Dur("limit-rest"), walled), c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
@@ -747,6 +750,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
+		Limited: fl.LimitState,
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
@@ -1068,6 +1072,9 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+	}
+	if s.Session == friend.SessionLimited {
+		o.Fact("kind", s.LimitKind).Fact("until", stamp(s.LimitUntil))
 	}
 	pr, prFound, prErr := friend.ReadPresence(state)
 	switch {

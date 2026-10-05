@@ -401,3 +401,8 @@ MCCoordinatorPassBehind.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordin
 MCCoordinatorPassBrokenDoublePush.cfg	MCCoordinatorPass.tla	invariant	OnePushATick	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
+MCFriendLimitedLive.cfg	MCFriend.tla	pass	-	ignore-terminal	friend	required	-
+MCFriendBrokenTurnWhileLimited.cfg	MCFriend.tla	invariant	NoTurnWhileLimited	ignore-terminal	friend	required	-
+MCFriendBrokenEndsOnClock.cfg	MCFriend.tla	action	LimitEndsOnlyByAnAnswer	ignore-terminal	friend	required	-
+MCFriendBrokenFailureEnds.cfg	MCFriend.tla	action	LimitEndsOnlyByAnAnswer	ignore-terminal	friend	required	-
+MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-

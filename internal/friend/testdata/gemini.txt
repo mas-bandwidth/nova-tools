@@ -1,0 +1,2 @@
+google.api_core.exceptions.ResourceExhausted: 429 Quota exceeded for gemini-2.5-pro
+google.api_core.exceptions.GoogleAPICallError: 402 Prepaid credits exhausted

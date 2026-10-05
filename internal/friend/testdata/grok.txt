@@ -1,0 +1,2 @@
+{"code": 429, "error": "Rate limit reached. Try again at 18:30:00"}
+{"code": 402, "error": "AI credits exhausted for this billing cycle"}
