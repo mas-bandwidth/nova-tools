@@ -1,0 +1,5 @@
+# The shell scripts this tree still tracks (TestNoShellScriptsShip): one path per
+# line, shrink-only. A line whose file is gone, or is no longer a shell script,
+# fails the test: delete the line with the file. A new line is a refusal; the
+# remedy is a Go verb or a Go test binary fake. The ledger is empty: every loop
+# and helper is a Go verb.
