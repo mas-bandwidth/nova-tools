@@ -63,13 +63,13 @@ func TestWhereReadersTableIsOneRowTheSumOfAllReaders(t *testing.T) {
 	block := tableOf(ta.ok("where --all"), "readers")
 	lines := strings.Split(strings.TrimRight(block, "\n"), "\n")
 	require.Len(t, lines, 3, "header, rule, one row; no footer:\n%s", block)
-	assert.Equal(t, []string{"readers", "asked", "reading", "width", "ok", "broken", "tiers"}, cells(lines[0]))
+	assert.Equal(t, []string{"readers", "asked", "reading", "width", "served", "ok", "broken", "tiers"}, cells(lines[0]))
 	assert.True(t, strings.HasPrefix(lines[1], "--"), "the rule: %q", lines[1])
 	want := []string{allRow}
 	for _, c := range cols {
 		want = append(want, strconv.Itoa(sums[c]))
 	}
-	want = slices.Insert(want, 3, "-")
+	want = slices.Insert(want, 3, "-", "3/3") // width, and served of all (reader.go)
 	want = append(want, "all")
 	assert.Equal(t, want, cells(lines[2]))
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {

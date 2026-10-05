@@ -2102,8 +2102,22 @@ id (`--op`) returns the original result, with no second counter or notification.
   cards kept) until `reader up`. A held reader is asked nothing, its reads
   asked and not begun are asked of another, and its reads begun finish (with
   `--return` they are taken back at the hold, where a reader up is free to read
-  them); a reader away or down has every read, begun or not, taken back. The readers table has no `status`
-  column and `where` shows no reader's state; the state is never stored in the
+  them); a reader away or down has every read, begun or not, taken back.
+  A reader is read by a process that beats for it (a machine's `nova-swarm
+  member --reader`, a bud's reader loop, a friend's harness, each asking
+  `queue --as <reader>`), never by its row: `reader up` of a reader no process
+  serves (`sprint.ReaderServed`: no beat within the bound) is refused, exit 1,
+  nothing written, the whole call, each such reader named with why (never
+  beaten, or its last beat's age) and the beat that would serve it, by name
+  (`sprint.ReaderServeRemedy`); `reader up --unserved` releases the hold anyway
+  (a retired reader's loop beats again only once it is up), and the reader
+  stays away or down until a process beats for it (the owner, 2026-10-05:
+  `reader up` of two readers printed OK and both were away on the
+  next tick; `TestReaderUpRefusesAReaderNobodyServes`). Each row of the readers
+  table in `where` carries `served`, `served` or `unserved` from its beat, and
+  the summed row the count served of all (cmd/nova-sprint/reader.go). The readers table has no `status`
+  column and `where` shows no reader's state (served is its beat, not its
+  state: a held reader may be served); the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
 - The readers' rebalance runs once at the start of every tick, before any
@@ -2270,7 +2284,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   cards wait): the tick raises one judgment, `fewer than two readers up:
   <readers and their states>`, for the sprint (not one for each primary),
   closed when enough are up or no such primary waits; `reader up` and
-  `reader add` answer it.
+  `reader add` answer it. It is one condition, whichever ask holds it: while
+  a frontier read waits for a friend (section 4, the friend ask) the machine
+  ask, which does not see that primary, does not close it, so it is raised
+  once and updated in place, never a new judgment each tick (the owner,
+  2026-10-05: 3,949 such lines in two hours, the judgment closed and raised
+  again every other tick; `sprint.oneFewReaders`,
+  `TestFewerThanTwoReadersUpStaysOneJudgmentWhileAFriendReadWaits`).
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
   (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn
@@ -3515,7 +3535,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | lane list | every machine's holders and queue of each lane kind, the timeouts applied; where --json --cards carries the same rows as `lanes` |
 | reader add | declares readers |
 | reader away | `hold <reader>... --return` in the old words, for one release: holds readers whatever they beat (state `held`): no read is asked of them, a read asked and not begun is asked of another at the next tick, and a read begun is taken back where a reader up is free to read it |
-| reader up | `unhold <reader>...` in the old words, for one release: releases the hold; the reader's state is then its beat's |
+| reader up | `unhold <reader>...` in the old words, for one release: releases the hold; the reader's state is then its beat's. Refused, exit 1, nothing written, when a named reader is served by no process (no beat within the bound), naming the beat that would serve it; `--unserved` releases it anyway (section 6) |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: `--attempts` sets the streams' attempt cap, their control cards' `attempts`, over the sprint's (section 2); `--reason` records why the read tier is set as `read_tier_reason`, and `--answers` answers the judgment `raise the read tier of the stream?`; the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |

@@ -201,9 +201,16 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 // sync writes it). With no friend up with room it asks no one and raises the
 // one judgment a read with no reader up already raises (NFewReaders).
 func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
+	p, _, err := friendReadAsk(s, seats, dir)
+	return p, err
+}
+
+// friendReadAsk is FriendReadAsk, and whether a frontier read waits for a
+// friend up with room: the friend ask's half of the condition NFewReaders.
+func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, bool, error) {
 	var p Plan
 	if s == nil || s.Work == nil || s.Fleet == nil {
-		return p, nil
+		return p, false, nil
 	}
 	free, lanes := map[string]int{}, map[string]int{}
 	var up []FriendSeat
@@ -244,14 +251,14 @@ func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
 			continue
 		}
 		if err := askOneFriend(&p, s, pr, seats, name, dir, attempt, free, lanes, declared); err != nil {
-			return Plan{}, err
+			return Plan{}, false, err
 		}
 	}
 	if waiting {
 		// the existing sprint-level judgment, once, not one rewritten note per primary
 		notify(&p, s, []cond{{typ: NFewReaders, streamLevel: true, what: fewReaders(s)}}, []string{NFewReaders}, TickReq{})
 	}
-	return Lawful(p), nil
+	return Lawful(p), waiting, nil
 }
 
 func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir string, attempt int, free, lanes map[string]int, declared map[string]bool) error {
@@ -370,19 +377,41 @@ func init() {
 
 func friendAskPart(machine TickPartFn) TickPartFn {
 	return func(s *Snapshot, r TickReq) (Plan, int) {
-		fp, err := FriendReadAsk(s, r.Friends, "")
+		fp, waiting, err := friendReadAsk(s, r.Friends, "")
 		restore := hideFriendReadPrimaries(s)
 		defer restore()
 		mp, due := machine(s, r)
 		if err != nil {
 			mp.refuse("ask", err.Error())
 		}
+		if waiting {
+			oneFewReaders(&fp, &mp)
+		}
 		mp.Rows = append(fp.Rows, mp.Rows...)
 		mp.Units = append(fp.Units, mp.Units...)
 		mp.Refused = append(mp.Refused, fp.Refused...)
 		mp.Notes = append(mp.Notes, fp.Notes...)
 		mp.Closes = append(mp.Closes, fp.Closes...)
+		mp.Updates = append(mp.Updates, fp.Updates...)
 		return mp, due
+	}
+}
+
+// oneFewReaders keeps fewer than two readers up one judgment while a frontier
+// read waits for a friend (fp, the friend ask's plan, raises it) whatever the
+// machine ask (mp) holds: the machine ask, which no longer sees the frontier
+// primaries, does not close it, and when both raise it in the same tick, or
+// both update it, the machine's stands alone. Before, the machine ask closed
+// what the friend ask had raised on every other tick, and the log carried a
+// new judgment every two ticks (2026-10-05: 3,949 lines in two hours).
+func oneFewReaders(fp, mp *Plan) {
+	mp.Closes = slices.DeleteFunc(mp.Closes, func(o Open) bool { return o.Note.Type == NFewReaders })
+	few := func(n Note) bool { return n.Type == NFewReaders }
+	if slices.ContainsFunc(mp.Notes, few) {
+		fp.Notes = slices.DeleteFunc(fp.Notes, few)
+	}
+	if slices.ContainsFunc(mp.Updates, few) {
+		fp.Updates = slices.DeleteFunc(fp.Updates, few)
 	}
 }
 
