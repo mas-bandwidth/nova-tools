@@ -41,7 +41,7 @@ func copyBinary(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer in.Close() // ignored: a read-only source; the copy's write side is checked
 
 	fi, err := in.Stat()
 	if err != nil {

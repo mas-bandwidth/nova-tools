@@ -208,7 +208,7 @@ func lineAttempt(l sprint.Line) int {
 		return l.Note.Attempt
 	}
 	n := 0
-	fmt.Sscan(attemptOf(l), &n)
+	fmt.Sscan(attemptOf(l), &n) // ignored: an attempt that does not parse reads as 0, which the story shows as no attempt
 	return n
 }
 

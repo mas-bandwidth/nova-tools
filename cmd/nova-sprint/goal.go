@@ -89,7 +89,7 @@ func readTextFile(path string, limit int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only file
 	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return "", err

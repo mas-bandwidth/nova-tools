@@ -115,7 +115,7 @@ func (a *app) realOutside() outside {
 			if err != nil {
 				return 0, nil, err
 			}
-			defer resp.Body.Close()
+			defer resp.Body.Close() // ignored: a read response body
 			body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			return resp.StatusCode, body, err
 		},
