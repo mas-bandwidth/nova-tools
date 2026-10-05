@@ -53,7 +53,7 @@ func TestExecuteHelper(t *testing.T) {
 	if code < 0 {
 		t.Skip("not the helper process")
 	}
-	os.Stdout.WriteString("helper output\n")
+	_, _ = os.Stdout.WriteString("helper output\n") // ignored: helper output to stdout
 	os.Exit(code)
 }
 
