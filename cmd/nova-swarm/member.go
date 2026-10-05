@@ -219,7 +219,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, os.Getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
+	m := member.New(memberConfig(*as, *width, *reader, meter, room, *root, *noWall), sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -253,6 +253,19 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
 	return 0
+}
+
+// memberConfig is the member.Config nova-swarm runs a member or a reader with. A reader's
+// ScriptVerify reads a script card's head out of the bench mirror and runs its program in
+// the member's wall, so a script card whose head is its program's output needs no model
+// read (docs/SPEC-SPRINT.md, the script read); a worker's is nil. Sleep is time.Sleep:
+// harness starts are StartGap apart.
+func memberConfig(as string, width int, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
+	cfg := member.Config{As: as, Width: width, Reader: reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(reader, os.Getenv)}
+	if reader {
+		cfg.ScriptVerify = scriptVerify(root, "", noWall)
+	}
+	return cfg
 }
 
 // exitReplaced is member's exit when its binary was replaced under it: not 0, so
