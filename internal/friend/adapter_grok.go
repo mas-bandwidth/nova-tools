@@ -269,3 +269,85 @@ func WakeLine(text string) string {
 	text = strings.TrimRight(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	return "nova-friend: " + strings.ReplaceAll(text, "\n", " ⏎ ")
 }
+
+// grokWakeRecord is the wake path install writes under the grok home, so a
+// unit does not have to have the path typed in by hand.
+const grokWakeRecord = "nova-friend-wake"
+
+// planGrok records the wake file (~/.grok/nova-friend-wake holds the path;
+// the file itself is created by Write). --session, when set, is that path.
+// Empty is <dir>/nova-friend.wake. The parent must be a real directory, and
+// the wake path must not be a symlink.
+func planGrok(p *Prepared) error {
+	wake := p.settings.Wake
+	if wake == "" {
+		if err := requireRealDir(p.settings.Dir); err != nil {
+			return fmt.Errorf("grok wake file: %w", err)
+		}
+		wake = filepath.Join(p.settings.Dir, "nova-friend.wake")
+	}
+	if !filepath.IsAbs(wake) || strings.ContainsAny(wake, " \t\r\n") {
+		return fmt.Errorf("grok wake file: the monitor's wake path must be absolute")
+	}
+	parent := filepath.Dir(wake)
+	if err := requireRealDir(parent); err != nil {
+		return fmt.Errorf("grok wake file: %w", err)
+	}
+	info, err := os.Lstat(wake)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("grok wake file: %s is a symlink, not a file; name a real path and run nova-friend install again", wake)
+	}
+	if err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("grok wake file: %s is not a file", wake)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	home := p.settings.Home
+	if p.settings.Home == "" {
+		return errors.New("grok wake file: home is required")
+	}
+	grokHome := filepath.Join(home, ".grok")
+	if err := stageDir(p, grokHome); err != nil {
+		return fmt.Errorf("grok: %w", err)
+	}
+	record := filepath.Join(grokHome, grokWakeRecord)
+	raw, readErr := os.ReadFile(record)
+	installed := strings.TrimSpace(string(raw))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if readErr != nil || installed != wake {
+		shown := "missing"
+		if readErr == nil {
+			shown = strconv.Quote(installed)
+		}
+		p.drifts = append(p.drifts, fmt.Sprintf("grok wake_file: installed %s, want %s", shown, strconv.Quote(wake)))
+	}
+	p.Wake = wake
+	p.Files[record] = wake + "\n"
+	return nil
+}
+
+// createWakeFile creates the wake file when it is absent. An existing regular
+// file is left as it is (deliveries append to it). A symlink is refused.
+func createWakeFile(wake string) error {
+	f, err := os.OpenFile(wake, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if !os.IsExist(err) {
+			return err
+		}
+		info, lerr := os.Lstat(wake)
+		if lerr != nil {
+			return lerr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("grok wake file: %s is a symlink, not a file; name a real path and run nova-friend install again", wake)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("grok wake file: %s is not a file", wake)
+		}
+		return nil
+	}
+	return f.Close()
+}

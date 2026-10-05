@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -216,4 +217,80 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 	}
 	exit, err = refused(id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+}
+
+// openCodeGlobalConfig is the user-level opencode config, not the project
+// file AllowDirs merges (OpenCodeConfig, in the friend's directory).
+const openCodeGlobalConfig = "opencode.json"
+
+// openCodeSchema is the schema a new global config carries.
+const openCodeSchema = "https://opencode.ai/config.json"
+
+// planOpenCode writes "model" in <home>/.config/opencode/opencode.json when
+// Model is provider/model. Empty writes nothing: install does not invent a
+// model (docs/SPEC-FRIEND.md, harness settings). Other keys are kept. A
+// symlinked config directory is refused.
+func planOpenCode(p *Prepared) error {
+	model := p.settings.Model
+	if model == "" {
+		return nil
+	}
+	if strings.TrimSpace(model) != model || strings.ContainsAny(model, " \t\r\n") || !strings.Contains(model, "/") {
+		return fmt.Errorf("opencode model: %s is not provider/model; name one and run nova-friend install again", strconv.Quote(model))
+	}
+	dir := filepath.Join(p.settings.Home, ".config", "opencode")
+	if err := stageDir(p, dir); err != nil {
+		return fmt.Errorf("opencode: %w", err)
+	}
+	path := filepath.Join(dir, openCodeGlobalConfig)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	next, installed, present, err := openCodeModelText(raw, model)
+	if err != nil {
+		return fmt.Errorf("opencode: %s: %w", path, err)
+	}
+	if !present || installed != model {
+		shown := "missing"
+		if present {
+			shown = strconv.Quote(installed)
+		}
+		p.drifts = append(p.drifts, fmt.Sprintf("opencode model: installed %s, want %s", shown, strconv.Quote(model)))
+	}
+	p.Files[path] = next
+	return nil
+}
+
+// openCodeModelText is opencode.json with model set. When the file already
+// has that model, the bytes are unchanged. A new file carries $schema.
+func openCodeModelText(raw []byte, model string) (next, installed string, present bool, err error) {
+	if strings.TrimSpace(string(raw)) == "" {
+		body, merr := json.MarshalIndent(map[string]any{"$schema": openCodeSchema, "model": model}, "", "  ")
+		if merr != nil {
+			return "", "", false, merr
+		}
+		return string(append(body, '\n')), "", false, nil
+	}
+	cfg := map[string]any{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", "", false, fmt.Errorf("opencode.json is not a JSON object: %w", err)
+	}
+	if cur, ok := cfg["model"].(string); ok && cur == model {
+		return string(raw), cur, true, nil
+	}
+	if _, exists := cfg["model"]; exists {
+		present = true
+		if s, ok := cfg["model"].(string); ok {
+			installed = s
+		} else {
+			installed = fmt.Sprint(cfg["model"])
+		}
+	}
+	cfg["model"] = model
+	body, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return "", "", false, err
+	}
+	return string(append(body, '\n')), installed, present, nil
 }

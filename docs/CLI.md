@@ -532,7 +532,10 @@ nova-friend status --as bob --dir ./bob
 `install --dry-run` prints the agent's label, plist path and launchd log, and
 the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
 under that label, bootstrap the new one; without `--dry-run` it does them
-(`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
+(`INSTALL RAN`) and running it again replaces the agent. `install` also writes the
+harness settings that friend needs and a later `check` names any drift from
+what install wrote; it does not repair the file
+([SPEC-FRIEND.md](SPEC-FRIEND.md)). `ping` prints `PING OK
 nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
 OK nonce= to= id= at=` and writes the pong file under `~/.nova-friend/<me>`
 (the state directory, `--state-dir` to move it; the daemon and the queue file
@@ -588,10 +591,11 @@ The help of `nova-friend check -h` says, and this is the same text:
 ```
 The health check: is each friend's row true. The friends are the arguments, else every friend with a
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
-window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
+window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, six lines in
 this order:
 CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
 CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK SETTINGS friend=<f> drift=<line|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
 CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
@@ -607,7 +611,7 @@ is not loaded the verdict is untrue. --json prints one object instead of the lin
 friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
 reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
-verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
+verdict{friend, verdict, shown, why}, settings{friend, drift}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
 (a refused flag, an unreadable --shown).
 ```

@@ -23,6 +23,7 @@ type Agent struct {
 	Redis, Server                 string   // the bus store and the sprint server
 	Home, Path                    string   // the environment the agent runs in
 	LaunchdLog                    string   // launchd's own stdout and stderr path, off the friend's volume
+	ConfigDir                     string   // CLAUDE_CONFIG_DIR, when harness is claude: a real directory
 	// Secrets are the names of the secrets the daemon needs in its environment
 	// (never values); with any, the command is wrapped in nova-secrets exec as
 	// the seat Seat, with SecretsTool and Sops by absolute path, the store under
@@ -100,7 +101,11 @@ func (a Agent) Plist() string {
   <dict>
     <key>HOME</key><string>` + esc(a.Home) + `</string>
     <key>PATH</key><string>` + esc(a.Path) + `</string>
-  </dict>
+`)
+	if a.ConfigDir != "" {
+		b.WriteString("    <key>CLAUDE_CONFIG_DIR</key><string>" + esc(a.ConfigDir) + "</string>\n")
+	}
+	b.WriteString(`  </dict>
   <key>WorkingDirectory</key><string>` + esc(a.Home) + `</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

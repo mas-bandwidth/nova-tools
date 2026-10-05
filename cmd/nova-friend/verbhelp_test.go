@@ -59,8 +59,8 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 			lines = append(lines, line)
 		}
 	}
-	require.Len(t, lines, 6, "five CHECK lines and the exit-code line")
-	for _, prefix := range []string{"CHECK DAEMON", "CHECK HARNESS", "CHECK BUS", "CHECK WORK", "CHECK VERDICT", "Exit 0"} {
+	require.Len(t, lines, 7, "six CHECK lines and the exit-code line")
+	for _, prefix := range []string{"CHECK DAEMON", "CHECK HARNESS", "CHECK SETTINGS", "CHECK BUS", "CHECK WORK", "CHECK VERDICT", "Exit 0"} {
 		require.True(t, slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, prefix) }), prefix)
 	}
 	for _, line := range lines {

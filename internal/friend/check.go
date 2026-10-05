@@ -54,6 +54,14 @@ type HarnessFacts struct {
 	Reason         string `json:"reason"`    // one line or "-"
 }
 
+// SettingsFacts is where the harness files differ from what install wrote.
+// Drift is one line, or "-". It is said and it is not a verdict
+// (docs/SPEC-FRIEND.md, harness settings).
+type SettingsFacts struct {
+	Friend string `json:"friend"`
+	Drift  string `json:"drift"`
+}
+
 // BusFacts carries facts about real messages on the bus.
 type BusFacts struct {
 	Friend    string `json:"friend"`
@@ -80,12 +88,13 @@ type VerdictFacts struct {
 
 // FriendCheck is the full fact sheet for one friend.
 type FriendCheck struct {
-	Friend  string       `json:"friend"`
-	Daemon  DaemonFacts  `json:"daemon"`
-	Harness HarnessFacts `json:"harness"`
-	Bus     BusFacts     `json:"bus"`
-	Work    WorkFacts    `json:"work"`
-	Verdict VerdictFacts `json:"verdict"`
+	Friend   string        `json:"friend"`
+	Daemon   DaemonFacts   `json:"daemon"`
+	Harness  HarnessFacts  `json:"harness"`
+	Settings SettingsFacts `json:"settings"`
+	Bus      BusFacts      `json:"bus"`
+	Work     WorkFacts     `json:"work"`
+	Verdict  VerdictFacts  `json:"verdict"`
 }
 
 // CheckSummary is the counts across all checked friends.
@@ -485,16 +494,30 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		}
 	}
 
+	// Settings: drift from what install wrote. No record is "-". A symlinked
+	// directory is one line, not a failed check, and it does not move the verdict.
+	sf := SettingsFacts{Friend: friendName, Drift: "-"}
+	if seams.Home != "" {
+		drifts, err := SettingsDrift(seams.Home, friendName)
+		switch {
+		case err != nil:
+			sf.Drift = err.Error()
+		case len(drifts) > 0:
+			sf.Drift = strings.Join(drifts, "; ")
+		}
+	}
+
 	// Verdict
 	vf := DecideVerdict(df, hf, bf, wf, shown, since)
 
 	return FriendCheck{
-		Friend:  friendName,
-		Daemon:  df,
-		Harness: hf,
-		Bus:     bf,
-		Work:    wf,
-		Verdict: vf,
+		Friend:   friendName,
+		Daemon:   df,
+		Harness:  hf,
+		Settings: sf,
+		Bus:      bf,
+		Work:     wf,
+		Verdict:  vf,
 	}
 }
 
@@ -574,6 +597,11 @@ func (hf HarnessFacts) Line() string {
 		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason))
 }
 
+// Line renders the CHECK SETTINGS line. drift=- is no drift.
+func (sf SettingsFacts) Line() string {
+	return fmt.Sprintf("CHECK SETTINGS friend=%s drift=%s", sf.Friend, QuoteWhy(sf.Drift))
+}
+
 // Line renders the CHECK BUS line.
 func (bf BusFacts) Line() string {
 	return fmt.Sprintf("CHECK BUS friend=%s real_since=%d last_real=%s",
@@ -592,11 +620,12 @@ func (vf VerdictFacts) Line() string {
 		vf.Friend, vf.Verdict, vf.Shown, QuoteWhy(vf.Why))
 }
 
-// Lines renders the five CHECK lines for one friend.
+// Lines renders the six CHECK lines for one friend.
 func (fc FriendCheck) Lines() []string {
 	return []string{
 		fc.Daemon.Line(),
 		fc.Harness.Line(),
+		fc.Settings.Line(),
 		fc.Bus.Line(),
 		fc.Work.Line(),
 		fc.Verdict.Line(),

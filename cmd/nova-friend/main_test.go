@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -97,7 +99,7 @@ func (r *rig) world() world {
 // answered with the check's nonce unless the session is deaf.
 func (r *rig) opencode(_ context.Context, dir, _ string, args []string, _ string) (string, int, error) {
 	if args[0] == "session" {
-		return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
+		return `[{"id":"ses_1","directory":` + strconv.Quote(dir) + `,"updated":1}]`, 0, nil
 	}
 	text := args[len(args)-1]
 	if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok && !r.deaf {
@@ -285,6 +287,36 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK label=com.nova.friend-bob", `UNINSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`)
 	assert.NoFileExists(t, plist)
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK")
+}
+
+// A dry run names the Codex config it would write and writes nothing. A
+// symlinked working directory is refused. The home is a directory in this
+// card's job, not a login's harness config.
+func TestInstallDryRunPlansHarnessSettingsAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	module := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	root, err := os.MkdirTemp(filepath.Dir(module), "hs-cli-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	home := filepath.Join(root, "home")
+	dir := filepath.Join(root, "work")
+	require.NoError(t, os.Mkdir(home, 0o755))
+	require.NoError(t, os.Mkdir(dir, 0o755))
+
+	r := newRig(t, "ada", "bob")
+	r.home = home
+	config := filepath.Join(home, ".codex", "config.toml")
+	r.cli().Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", dir, "--dry-run").Exit(0).
+		Out(`INSTALL PLAN command="write ` + config + `"`)
+	assert.NoFileExists(t, config)
+	assert.NoFileExists(t, filepath.Join(home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
+
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(dir, link))
+	r.cli().Do(t, "install", "--as", "bob", "--harness", "codex", "--dir", link, "--dry-run").Exit(2).Err("symlink")
+	assert.NoFileExists(t, config)
 }
 
 // The verb wires the removable-volume rule (docs/SPEC-FRIEND.md). The binary
@@ -542,7 +574,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			defer mu.Unlock()
 			if !checked { // the session check goes into her newest session first; her answer brings her up, and the beat with the row
 				if args[0] == "session" {
-					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
+					return `[{"id":"ses_main","directory":` + strconv.Quote(dir) + `,"updated":1}]`, 0, nil
 				}
 				text := args[len(args)-1]
 				if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
@@ -556,7 +588,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 				if lists == 1 {
 					return "[]", 0, nil
 				}
-				return `[{"id":"ses_lane1","directory":"` + dir + `","updated":1}]`, 0, nil
+				return `[{"id":"ses_lane1","directory":` + strconv.Quote(dir) + `,"updated":1}]`, 0, nil
 			}
 			runs = append(runs, strings.Join(args, " "))
 			return "ok\n", 0, nil

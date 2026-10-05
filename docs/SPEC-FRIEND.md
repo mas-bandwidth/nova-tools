@@ -787,6 +787,43 @@ each friend's machine (docs/TESTING.md). Not covered: a lane's
 turn is under way goes in beside it, not after it (the check runs in its own
 process and does not hold the daemon's turn).
 
+### Harness settings install writes (internal/friend/harness_settings.go)
+
+`nova-friend install` writes the settings a friend needs into that harness's own files, under the home
+the agent runs in, and records what it wrote at `~/.nova-friend/<friend>/harness-settings.json`.
+`nova-friend check` reads that record, rebuilds the same plan, and names every difference on
+`CHECK SETTINGS friend=<f> drift=<line|->`. Drift does not change the verdict and check does not repair
+the file. No record (install wrote no settings for that friend) is `drift=-`. A directory install
+records is a real directory: `Lstat`, never a symlink, and a symlinked path is refused before anything
+is written (`name the real directory and run nova-friend install again`). The friend's working directory
+is not created.
+
+- Codex (`<CODEX_HOME|~/.codex>/config.toml`): `sandbox_mode = "workspace-write"` only when the file does
+  not already name one, and `[sandbox_workspace_write]` `writable_roots` is one line holding the friend's
+  directory. A `writable_roots` install cannot read as one line is left untouched and named as drift. A
+  root that is itself a symlink is dropped from what is written and named; the directory being added must
+  already exist and must not be a symlink (the finding of 2026-10-05: a symlinked writable root, and the
+  session did no work).
+- DeepSeek Harness (`<DSH_HOME|~/.dsh>/settings.yaml`): `agent-presets.default` is `""`. The one-shot
+  runner refuses a session under any preset, and under `minimal` in particular, before any write (the dsh
+  row below). Other keys are kept. Changing the default does not recompose a session that is already open:
+  a session keeps the preset it was created with, and a later session is the one that gets no preset.
+- Grok: the wake file is `--session` when that path is absolute and has no whitespace, else
+  `<dir>/nova-friend.wake`. The parent must already be a real directory. The file is created if absent and
+  an existing regular file is not truncated. `~/.grok/nova-friend-wake` holds the path, and the agent's
+  plist carries `--session` with it. A symlink is refused.
+- Claude: `CLAUDE_CONFIG_DIR` is `--config-dir` when set, else `~/.claude`, created as a real directory
+  and set in the agent's environment. When the plist exists, check compares that key to the path install
+  would write. A missing plist is not drift.
+- OpenCode: `--model provider/model` is written to `~/.config/opencode/opencode.json`, other keys kept.
+  With no `--model`, install writes no model and does not touch that file. A new file carries `$schema`
+  `https://opencode.ai/config.json`.
+- Antigravity: `~/.gemini/antigravity` is a real directory, created when absent. No model or preset is invented.
+
+Gemini and a harness install does not own are left untouched. The plan is held in memory (`Prepared.Files`,
+the twin of the bytes) and compared with the home after `Write`. Tests use a fake home and do not sleep.
+The test is `TestInstallWritesTheHarnessSettingsAFriendNeeds`.
+
 ### Check
 
 `nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]`
@@ -811,6 +848,8 @@ the log file, the bus store, the directory listing) so the verdict is a function
    daemon-pong or keepalive), and `last_real`.
 4. Work: the entries in the friend's `inbox/` (not dotfiles or `QUEUE.json`) and `outbox/`, and the
    newest outbox entry.
+5. Settings: where the harness files differ from what install wrote (`drift`, one line, or `-`). It is
+   said on `CHECK SETTINGS` and it is not an input to the verdict. Check does not repair the file.
 
 **The verdicts**, a pure function of the facts, the first rule that holds:
 
@@ -833,7 +872,7 @@ facts verdict is `ok` but the friend is asleep or its agent is not loaded, the v
 
 The summary is `CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>`. Exit 0
 when every verdict is ok, 1 when any is not, 2 when the check could not run. With `--json` the same
-facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `work` and `verdict`, and
+facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `settings`, `bus`, `work` and `verdict`, and
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
 internal/friend/check.go; each cites this section.
 

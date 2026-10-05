@@ -299,7 +299,7 @@ dir= state= redis=): no store is opened and nothing is written.`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--model <provider/model>] [--config-dir <d>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the launchd agent com.nova.friend-<me> and loads it",
 				Detail: `Writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
@@ -312,8 +312,15 @@ the person's permission); --state-dir moves them. A binary on a removable volume
 cannot be made is refused and the agent is not loaded. --secrets NAME[,NAME] wraps the daemon in nova-secrets
 exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
 opening exactly those names to the harness and refusing to start without every one; nova-secrets
-and sops are found on PATH at install and written by absolute path. --dry-run prints the plan and
-writes nothing. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
+and sops are found on PATH at install and written by absolute path. It also writes the settings that
+harness needs, each path a real directory and never a symlink (refused, and nothing is written): Codex
+writable_roots in <CODEX_HOME|~/.codex>/config.toml, DeepSeek Harness agent-presets.default "" in
+<DSH_HOME|~/.dsh>/settings.yaml (a session already open keeps the preset it was created with), the grok
+wake file (recorded under ~/.grok and passed as --session), CLAUDE_CONFIG_DIR (--config-dir, else ~/.claude),
+and, when --model provider/model is set, that model in ~/.config/opencode/opencode.json. Antigravity's
+data directory ~/.gemini/antigravity is created when it is absent. --dry-run prints those paths in the
+plan and writes nothing. After the agent loads, a NOTE says settings: drift=- or the lines that differ;
+check names the same drift and does not repair it. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
 (--session names the wake file in place of <file>.wake): one command in the session, not a flag, an
 environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
 (the message stays pending and is tried again), never failed and never dropped. Once the agent is
@@ -325,6 +332,8 @@ NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
 					f.String("secrets", "", "the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec")
 					f.String("seat", "", "the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets")
 					f.String("launchd-log", "", "launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)")
+					f.String("model", "", "opencode: the model install writes into ~/.config/opencode/opencode.json, as provider/model; empty writes no model")
+					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "claude: CLAUDE_CONFIG_DIR, a real directory the agent runs with (default: CLAUDE_CONFIG_DIR, else ~/.claude)")
 					f.Duration("within", friend.DefaultCheckWithin, "how long the delivery check after loading waits for the session's pong")
 					f.Check(func(c *tool.Call) {
 						if c.Str("secrets") != "" && c.Str("seat") == "" {
@@ -358,10 +367,11 @@ NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
 				DryRun:  true,
 				Detail: `The health check: is each friend's row true. The friends are the arguments, else every friend with a
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
-window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
+window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, six lines in
 this order:
 CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
 CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK SETTINGS friend=<f> drift=<line|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
 CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
@@ -377,7 +387,7 @@ is not loaded the verdict is untrue. --json prints one object instead of the lin
 friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
 reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
-verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
+verdict{friend, verdict, shown, why}, settings{friend, drift}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
 (a refused flag, an unreadable --shown).
 With --harness the verb is the delivery check instead, which
@@ -828,6 +838,20 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
+	prepared, err := (friend.Settings{
+		Friend: a.Friend, Harness: a.Harness, Home: w.home, Dir: a.Dir,
+		Model: c.Str("model"), Wake: a.Session, ConfigDir: c.Str("config-dir"),
+		CodexHome: w.getenv("CODEX_HOME"), DSHHome: w.getenv("DSH_HOME"),
+	}).Prepare()
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if prepared.Wake != "" {
+		a.Session = prepared.Wake
+	}
+	if prepared.ConfigDir != "" {
+		a.ConfigDir = prepared.ConfigDir
+	}
 	src := a.Binary
 	placed, copy, err := friend.PlanBinary(src, a.Home)
 	if err != nil {
@@ -839,11 +863,15 @@ func (w world) install(c *tool.Call) *tool.Out {
 		if copy {
 			o.Item("plan", "command", tool.Text("copy "+src+" "+placed))
 		}
+		planSettings(o, prepared)
 		o.Item("plan", "command", tool.Text("write "+a.PlistPath())).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + a.Said())
 		return noteGrokMonitor(o, a.Harness, a.Session)
+	}
+	if err := prepared.Write(); err != nil {
+		return tool.Refuse(err.Error())
 	}
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -868,7 +896,36 @@ func (w world) install(c *tool.Call) *tool.Out {
 	} else {
 		o.Note("check: " + res.Line())
 	}
+	o.Note("settings: drift=" + settingsDriftNote(w.home, a.Friend))
 	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+}
+
+// planSettings adds the harness files and directories install would write.
+func planSettings(o *tool.Out, p friend.Prepared) {
+	dirs := map[string]bool{}
+	for _, d := range p.Dirs {
+		dirs[d] = true
+	}
+	for _, path := range p.Paths() {
+		if dirs[path] {
+			o.Item("plan", "command", tool.Text("mkdir "+path))
+			continue
+		}
+		o.Item("plan", "command", tool.Text("write "+path))
+	}
+}
+
+// settingsDriftNote is the drift check names, or "-" when the harness files
+// match what install wrote. It does not repair them.
+func settingsDriftNote(home, friendName string) string {
+	lines, err := friend.SettingsDrift(home, friendName)
+	if err != nil {
+		return err.Error()
+	}
+	if len(lines) == 0 {
+		return "-"
+	}
+	return strings.Join(lines, "; ")
 }
 
 // checkTo is whom the check's pong goes to: to, else the seat the daemon's

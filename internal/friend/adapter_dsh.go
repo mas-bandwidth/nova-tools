@@ -1,14 +1,18 @@
 package friend
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // DSHProgram is where the DeepSeek Harness desktop app ships its CLI on this
@@ -126,4 +130,114 @@ func dshHome() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".dsh", "sessions")
+}
+
+// dshPresetNone is the agent preset install writes. dsh headless refuses a
+// session under any preset, and "minimal" in particular, before any write
+// (docs/SPEC-FRIEND.md, the dsh row). An empty default is no preset, so a
+// new session is one the runner can adopt.
+const dshPresetNone = ""
+
+// planDSH sets agent-presets.default in <DSH_HOME|home/.dsh>/settings.yaml
+// to no preset. Other keys are kept. A symlinked .dsh directory is refused.
+func planDSH(p *Prepared) error {
+	home := p.settings.DSHHome
+	if home == "" {
+		home = filepath.Join(p.settings.Home, ".dsh")
+	}
+	if err := stageDir(p, home); err != nil {
+		return fmt.Errorf("dsh: %w", err)
+	}
+	path := filepath.Join(home, "settings.yaml")
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	next, installed, present, err := dshPresetText(string(raw))
+	if err != nil {
+		return fmt.Errorf("dsh: %s: %w", path, err)
+	}
+	if !present || installed != dshPresetNone {
+		shown := "missing"
+		if present {
+			shown = strconv.Quote(installed)
+		}
+		p.drifts = append(p.drifts, fmt.Sprintf("dsh agent_preset: installed %s, want %s", shown, strconv.Quote(dshPresetNone)))
+	}
+	p.Files[path] = next
+	return nil
+}
+
+// dshPresetText is settings.yaml with agent-presets.default set to no preset.
+// The current default is installed; present is false when the key is absent.
+func dshPresetText(current string) (next, installed string, present bool, err error) {
+	if strings.TrimSpace(current) == "" {
+		return "agent-presets:\n  default: \"\"\n", "", false, nil
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(current), &doc); err != nil {
+		return "", "", false, fmt.Errorf("settings.yaml is not YAML: %w", err)
+	}
+	root := yamlMapping(&doc)
+	if root == nil || root.Kind != yaml.MappingNode {
+		return "", "", false, fmt.Errorf("settings.yaml is not a YAML map")
+	}
+	presets := yamlMapGet(root, "agent-presets")
+	if presets == nil {
+		presets = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "agent-presets"},
+			presets)
+	}
+	if presets.Kind != yaml.MappingNode {
+		return "", "", false, fmt.Errorf("settings.yaml agent-presets is not a map")
+	}
+	def := yamlMapGet(presets, "default")
+	if def != nil {
+		present = true
+		if def.Tag == "!!null" {
+			installed = ""
+		} else {
+			installed = def.Value
+		}
+	}
+	if present && installed == dshPresetNone && def.Tag != "!!null" {
+		return current, installed, true, nil
+	}
+	if def == nil {
+		presets.Content = append(presets.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "default"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: dshPresetNone, Style: yaml.DoubleQuotedStyle})
+	} else {
+		def.Kind = yaml.ScalarNode
+		def.Tag = "!!str"
+		def.Value = dshPresetNone
+		def.Style = yaml.DoubleQuotedStyle
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return "", "", false, err
+	}
+	if err := enc.Close(); err != nil {
+		return "", "", false, err
+	}
+	return buf.String(), installed, present, nil
+}
+
+func yamlMapping(doc *yaml.Node) *yaml.Node {
+	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
+		return doc.Content[0]
+	}
+	return doc
+}
+
+func yamlMapGet(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
 }

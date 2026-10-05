@@ -330,3 +330,19 @@ func Read(readJSON []byte, id string) bool {
 	var read map[string]bool
 	return json.Unmarshal(readJSON, &read) == nil && read[id]
 }
+
+// planAntigravity makes the harness data directory a real directory. No model
+// or preset is invented (docs/SPEC-FRIEND.md, harness settings). A symlink is
+// refused. A missing directory is created by Write and named as drift until then.
+func planAntigravity(p *Prepared) error {
+	data := filepath.Join(p.settings.Home, filepath.FromSlash(AntigravityData))
+	exists, err := classifyDir(data)
+	if err != nil {
+		return fmt.Errorf("antigravity data: %w", err)
+	}
+	if !exists {
+		p.drifts = append(p.drifts, fmt.Sprintf("antigravity data: %s is not a real directory", data))
+		p.Dirs = append(p.Dirs, data)
+	}
+	return nil
+}

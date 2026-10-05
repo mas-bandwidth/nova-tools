@@ -147,6 +147,11 @@ func TestLineFormatting(t *testing.T) {
 	}
 	assert.Equal(t, "CHECK HARNESS friend=bob harness=opencode route=push last=2026-10-05T10:00:00Z last_exit=0 failed_of_last20=0 deferred=0 broken=- reason=-", hf.Line())
 
+	sf := SettingsFacts{Friend: "bob", Drift: "-"}
+	assert.Equal(t, "CHECK SETTINGS friend=bob drift=-", sf.Line())
+	sf.Drift = `dsh agent_preset: installed "minimal", want ""`
+	assert.Equal(t, `CHECK SETTINGS friend=bob drift="dsh agent_preset: installed \"minimal\", want \"\""`, sf.Line())
+
 	bf := BusFacts{Friend: "bob", RealSince: 4, LastReal: "2026-10-05T10:05:00Z"}
 	assert.Equal(t, "CHECK BUS friend=bob real_since=4 last_real=2026-10-05T10:05:00Z", bf.Line())
 

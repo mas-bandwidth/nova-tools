@@ -239,6 +239,11 @@ nova-config loop add seat-push --machine bench-a --argv '["/usr/bin/env","NOVA_S
 nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127.0.0.1:6390
 ```
 
+   `install` writes that harness's settings (a Codex writable root that is a real
+   directory, no DeepSeek agent preset, the grok wake file, `CLAUDE_CONFIG_DIR`,
+   and an OpenCode `--model` when one is given) and `nova-friend check` names any
+   drift. `--dir` must already exist.
+
    It parks on her bus stream, pushes incoming messages into the session, and
    beats to the sprint server. It replaces `com.nova.loop.wake-serve-<seat>` and
    `nova-wake`.
