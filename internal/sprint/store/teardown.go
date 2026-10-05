@@ -19,7 +19,7 @@ import (
 // (Names.Key): the fence and its generation, the notification stream, the
 // judgments, the open subjects, the coordinator's cursor, the streams'
 // progress and the callers' results. Each epoch has its own.
-var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue}
+var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue, keyAliases, keyAnswered}
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
@@ -43,7 +43,7 @@ type Epochs struct {
 	// Readers is every reader of the readers table of every epoch: each may
 	// have a beat record and a hold (readers.go).
 	Readers []string
-	// Friends is every friend of the roster: each may have a beat record
+	// Friends is every friend of the roster: each may have a beat record and a health record
 	// (friends.go).
 	Friends []string
 }
@@ -100,7 +100,7 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 		keys = append(keys, names.Key(readerBeatKey(r)), names.Key(readerAwayKey(r)))
 	}
 	for _, f := range epochs.Friends {
-		keys = append(keys, names.Key(friendBeatKey(f)))
+		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendHealthKey(f)))
 	}
 	return append(keys, names.EpochKey())
 }
@@ -453,6 +453,16 @@ func sprintKey(l *memLog, s string, del bool) bool {
 		held = len(l.queue) > 0
 		if del {
 			l.queue = nil
+		}
+	case keyAliases:
+		held = len(l.aliases) > 0
+		if del {
+			l.aliases = map[string]string{}
+		}
+	case keyAnswered:
+		held = len(l.answered) > 0
+		if del {
+			l.answered = nil
 		}
 	case keyProgress:
 		held = len(l.progress) > 0

@@ -75,6 +75,13 @@ type Store struct {
 	// Updates is the tick's table updates, in order; nil is the tick's own
 	// (sprint.TickTables). A test gives its own.
 	Updates []sprint.TableUpdate
+	// AnswerRules says the tick answers the mechanical judgments by rule (run and tick
+	// --answer-rules, on by default there; docs/SPEC-SPRINT.md section 8, answered by rule):
+	// false, every judgment is the coordinator's, as before the rules.
+	AnswerRules bool
+	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
+	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
+	IdleAlarm bool
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats
@@ -147,6 +154,10 @@ type Step struct {
 	// Acquire; through RouteCache when one is given (a tick's, read once).
 	Routes     bool
 	RouteCache *RouteCache
+	// Answers is the judgment ids the step answers (--answers): who answered each
+	// that is answered already is read before the step's first read of the
+	// tables (Backend.Answered) and handed to the plan (sprint.Snapshot.Answered).
+	Answers []string
 	// Prices says the step prices what a worker reports (finish, read with usage:
 	// internal/sprint/cost.go): it plans with the routes alone, the routes set and
 	// each route's record (routes.go, PriceRoutes), read before its tables. It reads
@@ -209,15 +220,17 @@ func replay(step Step, raw string) (Result, error) {
 
 // Result is what a step did.
 type Result struct {
-	Verb     string           `json:"verb"`
-	Op       string           `json:"op,omitempty"`
-	Moved    []string         `json:"moved"`
-	Refused  []sprint.Refusal `json:"refused"`
-	Notes    int              `json:"notes"`
-	Attempts int              `json:"attempts"`
-	Replay   bool             `json:"replay,omitempty"` // the recorded result of the caller's operation id
-	Repaired []string         `json:"repaired,omitempty"`
-	Pending  string           `json:"pending,omitempty"` // an operation left in the fence
+	Verb    string           `json:"verb"`
+	Op      string           `json:"op,omitempty"`
+	Moved   []string         `json:"moved"`
+	Refused []sprint.Refusal `json:"refused"`
+	Notes   int              `json:"notes"`
+	// Said is what the step tells beside its moves (sprint.Plan.Said): a NOTE line each.
+	Said     []string `json:"said,omitempty"`
+	Attempts int      `json:"attempts"`
+	Replay   bool     `json:"replay,omitempty"` // the recorded result of the caller's operation id
+	Repaired []string `json:"repaired,omitempty"`
+	Pending  string   `json:"pending,omitempty"` // an operation left in the fence
 	// Skipped is each entry a repair of this operation did not apply because
 	// its expectation no longer held: recorded with the result, so a replay of
 	// the caller's operation id returns it.
@@ -436,6 +449,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 	}
+	var answered map[string]string
+	if len(step.Answers) > 0 {
+		if answered, err = st.B.Answered(ctx, step.Answers); err != nil {
+			return res, err
+		}
+	}
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
@@ -531,6 +550,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if step.Prices {
 			snap.Routes = priced
 		}
+		snap.Answered = answered
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates
 		} else if step.Readers {
@@ -568,6 +588,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		res.Refused = plan.Refused
 		res.Moved = nil
+		res.Said = plan.Said
 		for _, u := range plan.Units {
 			if u.Moved != "" {
 				res.Moved = append(res.Moved, u.Moved)
@@ -603,7 +624,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 {
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
@@ -1207,7 +1228,7 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // entries, each expecting the revision the one before it leaves; then the
 // notifications and the answers.
 func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
-	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat}
+	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Health: plan.Health}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}

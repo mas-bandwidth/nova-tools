@@ -171,6 +171,14 @@ func splitList(s, sep string) []string {
 	return out
 }
 
+// counted is the numeric rule of Work, Fleet and Friends (docs/SPEC-SPRINT-DASHBOARD.md,
+// Page: "All numbers: monospace (ui-monospace, Menlo), right-aligned"): the row's name, a
+// status pill and a fraction column ("n / total", "n / width") are no number, and every
+// other column is one.
+func counted(cols []string, fractions map[string]bool) func(string) bool {
+	return func(name string) bool { return name != cols[0] && name != "status" && !fractions[name] }
+}
+
 // ruleSections are the spec's sections that are rules over the page or notes on serving
 // it; every other section is a part of the page, in order from the top. A new section is
 // one of the two, or the test below is red until it is classified here.
@@ -245,12 +253,21 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 	workFractions, fleetFractions := fractionsOf("Work"), fractionsOf("Fleet")
 	assert.Equal(t, map[string]bool{"landed": true}, workFractions, "Work's fraction columns in the spec")
 	assert.Equal(t, map[string]bool{"working": true}, fleetFractions, "Fleet's fraction columns in the spec")
+	lanesSec := sp.section(t, "Lanes")
+	lanes := splitList(match(t, `(?m)^- Columns: ([^(\n]+)\(headers exactly so`, lanesSec, "Lanes' columns"), "|")
+	lanesNumber := match(t, `\(headers exactly so, all lowercase\); (\w+) alone\s+is a number`, lanesSec, "Lanes' numeric column")
 	for _, tc := range []struct {
-		id        string
-		cols      []string
-		fractions map[string]bool
-	}{{"streams", work, workFractions}, {"fleet", fleet, fleetFractions}, {"friends", friends, fleetFractions}} {
-		fractions := tc.fractions
+		id      string
+		cols    []string
+		numeric func(name string) bool
+	}{
+		{"streams", work, counted(work, workFractions)},
+		{"fleet", fleet, counted(fleet, fleetFractions)},
+		{"friends", friends, counted(friends, fleetFractions)},
+		// Lanes names its one number instead: its other columns are names, not counts, so
+		// "every column but the first is a number" does not fit it.
+		{"lanes", lanes, func(name string) bool { return name == lanesNumber }},
+	} {
 		head := body.one(t, "#"+tc.id, byID(tc.id)).one(t, "a header row in #"+tc.id, byClass("head"))
 		var names []string
 		for _, cell := range head.children {
@@ -259,8 +276,7 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 				continue // the fleet's figure column: its header is the narrow layout's alone
 			}
 			names = append(names, name)
-			numeric := name != tc.cols[0] && name != "status" && !fractions[name]
-			assert.Equal(t, numeric, cell.has("num"), "#%s column %q: numeric (right-aligned) is %v in the spec", tc.id, name, numeric)
+			assert.Equal(t, tc.numeric(name), cell.has("num"), "#%s column %q: numeric (right-aligned) is %v in the spec", tc.id, name, tc.numeric(name))
 			if name == "landed" {
 				assert.True(t, cell.has("frac"), "#%s column landed is the n / total figure, class frac", tc.id)
 			}

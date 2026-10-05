@@ -32,7 +32,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "snapshot", Flags: []string{"--bin", "{dir}/bin", "--out", "{dir}/snap.tsv"}},
 		{Verb: "diff", Flags: []string{"--from", "{dir}/a.tsv"}},
 		{Verb: "report", Flags: append(file, "--snapshot", "{dir}/snap")},
-		{Verb: "send", Flags: append(file, "--bus", "{dir}/bus")},
+		{Verb: "send", Flags: file},
 		{Verb: "version"},
 	})
 	testverbhelp.HelpVerb(t, versionRun, "nova-version", "moved", "snapshot", "send", "version")

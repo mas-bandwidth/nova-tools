@@ -69,7 +69,9 @@ func TestTokensCoverFolderAddOverlapsTurns(t *testing.T) {
 	m.Counts.Set(Input, 5)
 	m.Counts.Set(Reasoning, 7)
 
-	// The second label sorts first, so the overlap pair is written in sorted order.
+	// An id is scoped to one provider. These two labels are two providers, so the
+	// shared id is not an overlap and neither message is dropped (TokenFold
+	// invariant UnscopedIDNotDeduped).
 	f.Add("swarm:two", m)
 	f.Add("claude:one", m)
 
@@ -82,7 +84,8 @@ func TestTokensCoverFolderAddOverlapsTurns(t *testing.T) {
 	assert.Equal(t, "p", row.Provider)
 	assert.Equal(t, []string{"claude:one", "swarm:two"}, row.Sources())
 
-	assert.Equal(t, []Overlap{{A: "claude:one", B: "swarm:two", IDs: 1}}, f.Overlaps())
+	assert.Empty(t, f.Overlaps(), "an id shared across providers is not an overlap")
+	assert.False(t, f.RefuseWrite(), "a cross-provider id is not a refusal")
 	assert.Equal(t, []string{"2026-09-11"}, f.Days())
 
 	n, ok := f.Turns("2026-09-11")

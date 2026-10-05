@@ -96,13 +96,16 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 }
 
 // SLOW: 11.1 s on bench-tier at dev 64b9bec48, over the five-second line.
-// TestNativeThreeFailedReadsEndTheCardUnverifiable, and two then an answer end nothing.
+// TestNativeFailedReadsEndNothingByThemselves: a reader that refuses every read, and one that
+// refuses twice then answers, both end nothing; the child ends by itself.
 //
-// A READ THAT FAILS IS NOT A SOURCE THAT REPORTED NOTHING: the first ends a card, because a
-// numeric budget the tool has stopped being able to see is a budget the caller believes is
-// enforced and is not; the second leaves the budget unable to fire and the deadline to end
-// the job.
-func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
+// A READ THAT FAILS NEVER ENDS A CARD BY ITSELF (cmd/nova-swarm/nativesample.go,
+// UnverifiableAfter): three failed reads in a row used to, and on 2026-10-03 one member ended
+// 32 cards that way in three machine-wide bursts while its sqlite3 launches stalled. The
+// budget is enforced against the last answer plus an extrapolation while reads fail, and an
+// outage ends the card only past UnverifiableAfter with that figure at the ceiling
+// (TestAnOutageEndsTheCardOnlyPastTheBoundWithTheExtrapolatedSpendAtTheCeiling).
+func TestNativeFailedReadsEndNothingByThemselves(t *testing.T) {
 	windowsIsNotABench(t)
 	needsSQLite(t)
 	bin := nativeHarness(t)
@@ -113,7 +116,7 @@ func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
 		wantStop string
 		wantEnd  string
 	}{
-		{"three_in_a_row_ends_it", 1000, 1, "unverifiable", swarm.EndUnverifiable},
+		{"every_read_refused_ends_nothing", 1000, 0, "", swarm.EndDone},
 		{"twice_then_an_answer_ends_nothing", 2, 0, "", swarm.EndDone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

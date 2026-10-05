@@ -143,7 +143,7 @@ type winPlacer interface {
 	// RemoveTree removes <scratch>/nova-<n>, retrying a transient hold for a bounded
 	// window before it is a leak (W7). The ROOT is the caller's --scratch and it is passed
 	// separately on purpose: deletion in this repository is a verb over a validated path
-	// BELOW A ROOT (Glenn, 2026-09-17, "it is just one mistake away from deleting the whole
+	// BELOW A ROOT (the coordinator, 2026-09-17, "it is just one mistake away from deleting the whole
 	// disk"), and the class test in internal/ci holds every os.RemoveAll of a computed path
 	// to safepath.RemoveUnder. A removal that only knew the leaf could not be checked
 	// against anything but its own parent, which is no check at all.
@@ -600,8 +600,8 @@ func wslInArgv(argv []string) (string, bool) {
 }
 
 // winCommandLine is argv as CreateProcessW wants it: one string, quoted by the rule
-// CommandLineToArgvW un-quotes by. A tool that built this by joining on a space would hand a
-// path with a space in it to the child as TWO arguments -- and `C:\Program Files` is not an
+// CommandLineToArgvW un-quotes by. A tool that built this by joining on whitespace would hand a
+// path with whitespace in it to the child as TWO arguments -- and `C:\Program Files` is not an
 // unusual path on windows, it is the ordinary one. It lives here, beside the platform-
 // independent half, because a quoting rule is a pure function of a string and a pure
 // function of a string is testable on a Mac.

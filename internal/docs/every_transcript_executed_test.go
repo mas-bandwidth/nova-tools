@@ -23,7 +23,6 @@ const testsMDPath = "../../docs/TESTS.md"
 // that gains a test, or that is no longer a section, fails until its line is
 // removed. Nothing may be added to it.
 var notYetExecuted = map[string]string{
-	"nova-bus":     "#1652 (T7): firstrun_test.go reads the section by hand, not through onboarding.Execute",
 	"nova-secrets": "#1652 (T7): no firstrun_test.go",
 }
 

@@ -92,7 +92,9 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("postgres dsn: %w", err)
+		// The parser's text masks a password only on a best-effort basis, so the
+		// refusal names the defect class and never wraps it (docs/nova-config/README.md, "Connecting").
+		return nil, fmt.Errorf("postgres dsn could not be parsed (%T)", err)
 	}
 	_ = cfg
 	db, err := sql.Open("pgx", dsn)
@@ -162,7 +164,8 @@ func (p *PG) Applied(ctx context.Context) ([]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
 	}
-	defer rows.Close()
+	// ignored: rows.Err reports a read failure; closing a finished read cannot add one
+	defer func() { _ = rows.Close() }()
 	var out []int
 	for rows.Next() {
 		var v int
@@ -238,7 +241,8 @@ func (p *PG) Ownership(ctx context.Context) (Ownership, error) {
 	if err != nil {
 		return Ownership{}, fmt.Errorf("postgres: read the owners of schema config: %w", err)
 	}
-	defer rows.Close()
+	// ignored: rows.Err reports a read failure; closing a finished read cannot add one
+	defer func() { _ = rows.Close() }()
 	o := Ownership{Tables: map[string]string{}}
 	for rows.Next() {
 		var table, owner string
@@ -398,7 +402,8 @@ func listRows(ctx context.Context, q queryer, kind string) ([]Row, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list %s: %w", kind, err)
 	}
-	defer rows.Close()
+	// ignored: rows.Err reports a read failure; closing a finished read cannot add one
+	defer func() { _ = rows.Close() }()
 	var out []Row
 	for rows.Next() {
 		row, err := scanRow(k, rows.Scan)
@@ -590,7 +595,8 @@ func (p *PG) History(ctx context.Context, kind, name string) ([]Change, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres: history %s %s: %w", kind, name, err)
 	}
-	defer rows.Close()
+	// ignored: rows.Err reports a read failure; closing a finished read cannot add one
+	defer func() { _ = rows.Close() }()
 	var out []Change
 	for rows.Next() {
 		var c Change
