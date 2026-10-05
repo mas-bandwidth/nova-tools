@@ -102,6 +102,9 @@ type Daemon struct {
 	// Pong is the session's recorded answer, read each step while a
 	// challenge is open (ReadPong over the state files).
 	Pong func() (Pong, bool, error)
+	// Spoke is when the session last sent any bus line since the time given
+	// (ok false: none): a line from it proves it as a pong does.
+	Spoke func(since time.Time) (time.Time, bool, error)
 	// Status receives the daemon's state whenever it changes, and every
 	// StatusEvery (WriteStatus over the state files).
 	Status func(Status) error
@@ -346,6 +349,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now
 			}
 			l.idle(now)
+		}
+		if d.m.Challenge != Quiet && d.Spoke != nil { // any line the session sent since the ask is proof it is there
+			if at, ok, err := d.Spoke(d.m.Asked); err == nil && ok {
+				d.m.Pong(at, d.m.Nonce)
+			}
 		}
 		if d.m.Challenge != Quiet { // the nonce says which challenge a pong answers; its at is the store's clock, never compared with ours
 			if p, found, err := d.Pong(); err == nil && found {
@@ -647,9 +655,56 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	}
 }
 
+// supersede drops from the hand the daemon's own notices of which a newer one
+// waits, acking each with the newer's id on the record (docs/SPEC-FRIEND.md,
+// "The loop").
+func (l *loop) supersede(now time.Time) {
+	msgs := make([]bus.Message, len(l.hand))
+	for i, e := range l.hand {
+		msgs[i] = e.Message()
+	}
+	drop := Superseded(msgs, l.d.Friend)
+	if len(drop) == 0 {
+		return
+	}
+	kept := l.hand[:0:0]
+	for _, e := range l.hand {
+		id := e.Message().ID
+		newer, dropped := drop[id]
+		if !dropped {
+			kept = append(kept, e)
+			continue
+		}
+		if _, err := l.d.Store.Ack(l.ctx, bus.StreamOf(l.d.Friend), l.d.Friend, e.Entry); err != nil {
+			l.d.status.StoreError = err.Error()
+			kept = append(kept, e) // tried again next step
+			continue
+		}
+		delete(l.inHand, e.Entry)
+		l.d.Record(fmt.Sprintf("%s dropped=%s superseded=%s acked=true", now.UTC().Format(time.RFC3339), id, newer))
+	}
+	l.hand = kept
+}
+
+// startBatch is the free session's turn: every message waiting as one
+// envelope, oldest first, what does not fit the text limit left in hand and
+// named in the text (Envelope).
 func (l *loop) startBatch(now time.Time) {
 	t := &turn{}
-	t.entries, t.msgs = l.take()
+	l.supersede(now)
+	if len(l.hand) == 0 {
+		return
+	}
+	msgs := make([]bus.Message, len(l.hand))
+	for i, e := range l.hand {
+		msgs[i] = e.Message()
+	}
+	envelope, carried := Envelope(msgs, now, l.d.Friend, BatchBytes)
+	for _, e := range l.hand[:carried] {
+		t.entries = append(t.entries, e.Entry)
+	}
+	t.msgs = msgs[:carried]
+	l.hand = l.hand[carried:]
 	var subjects []string
 	for _, m := range t.msgs {
 		subjects = append(subjects, m.Subject)
@@ -657,7 +712,13 @@ func (l *loop) startBatch(now time.Time) {
 	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
 	notice, pong := l.head()
 	t.notice = l.noticeTaken
-	t.text = Batch(t.msgs, notice, pong)
+	t.text = envelope
+	if notice != "" {
+		t.text = "nova-friend: " + notice + "\n\n" + t.text
+	}
+	if pong != "" {
+		t.text = "Run this now, first, exactly as written: " + pong + "\nThen read on.\n\n" + t.text
+	}
 	l.busy = t
 	l.startTurn(t, now, l.deliverBatch(t))
 }

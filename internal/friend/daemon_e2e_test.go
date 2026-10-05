@@ -41,10 +41,11 @@ func TestAllPendingMessagesGoInAsOneTurnAndAreAckedTogether(t *testing.T) {
 	require.Len(t, r.delivered, 1, "one turn for the three: %v", r.delivered)
 	text := r.delivered[0]
 	assert.Contains(t, text, "3 message(s) for you, oldest first")
-	i1, i2, i3 := strings.Index(text, Text(m1)), strings.Index(text, Text(m2)), strings.Index(text, Text(m3))
+	i1, i2, i3 := strings.Index(text, "[1/3] "+m1.ID), strings.Index(text, "[2/3] "+m2.ID), strings.Index(text, "[3/3] "+m3.ID)
 	assert.True(t, i1 >= 0 && i1 < i2 && i2 < i3, "each message whole, oldest first: %q", text)
 	for i, m := range []bus.Message{m1, m2, m3} {
-		assert.Contains(t, text, "=== message "+string(rune('1'+i))+" of 3: id="+m.ID+" from=ada subject=\""+m.Subject+"\" ===")
+		assert.Contains(t, text, " "+m.ID+" from=ada at=")
+		assert.Contains(t, text, " subject="+m.Subject+"\n"+m.Body+"\n", "message %d", i+1)
 	}
 	pending, fresh := r.pending(t)
 	assert.Empty(t, pending, "acked together at exit 0")
@@ -67,7 +68,7 @@ func TestMessagesThatLandDuringATurnGoInTogetherAsTheNextTurn(t *testing.T) {
 	}
 	r.run(t, 40)
 	require.Len(t, r.delivered, 2, "the long task, then one turn for the three that waited: %v", r.delivered)
-	assert.Equal(t, 3, strings.Count(r.delivered[1], "subject=\"later\" ===\n"), r.delivered[1])
+	assert.Equal(t, 3, strings.Count(r.delivered[1], " subject=later\n"), r.delivered[1])
 	pending, fresh := r.pending(t)
 	assert.Empty(t, pending)
 	assert.Empty(t, fresh)
@@ -117,7 +118,7 @@ func TestAPingIsAnsweredByTheDaemonAndNeverPushedInAlone(t *testing.T) {
 	assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2", "daemon-pong: daemon-pong n3"}, r.adaGot(t), "each ping answered once, at once")
 	require.Len(t, r.delivered, 1, "no ping is a turn; the one turn is the work: %v", r.delivered)
 	assert.True(t, strings.HasPrefix(r.delivered[0], "Run this now, first, exactly as written: /opt/nova/bin/nova-friend pong --as bob --nonce n3 --dir /w/bob --redis store:6379\nThen read on.\n\n"), r.delivered[0])
-	assert.Contains(t, r.delivered[0], Text(work))
+	assert.Contains(t, r.delivered[0], " "+work.ID+" from=ada at=")
 	assert.NotContains(t, r.delivered[0], "PING n", "the pings themselves are not in the turn")
 	assert.Equal(t, Challenged, afterPing.Challenge)
 	assert.Equal(t, "ada", afterPing.Seat)
