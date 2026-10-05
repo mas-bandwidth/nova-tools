@@ -25,7 +25,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aMemberWithFreeLanes, aFriendStalls, aCardPastItsCap} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -186,6 +186,21 @@ func lanesFreedBesideABacklog(k *walk) []sample {
 		k.try(sprint.Take(k.s, sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 1}, Who: m}))
 	}
 	if !k.emptyLanes() {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// aMemberWithFreeLanes has one member take all of its ready cards, with the
+// others holding ready backlogs, and snapshots where the tick's level moves a
+// card to it: the walks, which drop a card a waiting card needs only by refusal
+// (docs/SPEC-SPRINT.md section 11), reach the level seldom.
+func aMemberWithFreeLanes(k *walk) []sample {
+	for range 4 * len(k.members) {
+		k.addTo(k.streams[0])
+	}
+	k.wholeTick()
+	if !k.unlevel() || !k.emptyLanes() {
 		return nil
 	}
 	return []sample{k.sample()}
