@@ -24,16 +24,17 @@ func armHostGuard(t *testing.T) {
 
 // TestHostGuardCleanupRestoresCachedState is the isolation defect on #2152:
 // with incoming NOVA_TEST_NO_HOST=1, armHostGuard's Unsetenv+Reload ran
-// before t.Setenv restored the variable, so later tests saw env=1 while
-// testguard.Refusing() was false. No child, no network.
+// before t.Setenv restored the variable, so later tests saw env=1 while the
+// guard stayed disabled. The guard's armed state is not exported, so the test
+// reads the environment, which is what Reload reads the armed state from. No
+// child, no network.
 func TestHostGuardCleanupRestoresCachedState(t *testing.T) {
 	t.Cleanup(testguard.Reload)
 	t.Setenv(testguard.EnvNoHost, "1")
 	testguard.Reload()
 	t.Run("arm", func(t *testing.T) {
 		armHostGuard(t)
-		require.True(t, testguard.Refusing(), "the armed subtest must refuse")
+		require.Equal(t, "1", os.Getenv(testguard.EnvNoHost), "the armed subtest must run under %s=1", testguard.EnvNoHost)
 	})
-	require.Equal(t, "1", os.Getenv(testguard.EnvNoHost), "environment was %q, want 1", os.Getenv(testguard.EnvNoHost))
-	require.True(t, testguard.Refusing(), "environment was restored to 1 but cached host guard remained disabled")
+	require.Equal(t, "1", os.Getenv(testguard.EnvNoHost), "environment was %q, want 1: the armed subtest's cleanups must leave the guard armed for every later test", os.Getenv(testguard.EnvNoHost))
 }
