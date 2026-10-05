@@ -12,7 +12,7 @@
 // exits non-zero, ASK THE OPERATING SYSTEM what it refused and print one line per path,
 // with the flag that would have allowed it.
 //
-// THE HONEST LIMIT, measured on this Studio (macOS 26, arm64, 2026-09-18) and stated here
+// THE HONEST LIMIT, measured on this machine (macOS 26, arm64, 2026-09-18) and stated here
 // because a reader will otherwise think this is broken:
 //
 //   - macOS does report seatbelt violations to the unified log, under the subsystem

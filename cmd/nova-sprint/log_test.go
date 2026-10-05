@@ -23,8 +23,8 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'the tests went red'")
 	out := ta.ok("log --card s1-1")
 	for _, want := range []string{
-		"03:04:05  2 cards: s1-1 added to s1 by coordinator (with s1-2)",
-		" bytes, shown by nova-sprint card s1-1", // a brief is said, not printed (log_brief_test.go)
+		"03:04:05  s1-1 added to s1 by coordinator (in a set of 2)", // a set move as the card's own line (log_card_test.go)
+		" bytes, shown by nova-sprint card s1-1",                    // a brief is said, not printed (log_brief_test.go)
 		"attempt 1 dealt to m1",
 		"m1 took attempt 1",
 		"m1 finished attempt 1: FAILED",
@@ -67,7 +67,7 @@ func TestCardTellsTheStory(t *testing.T) {
 	ta := newTestApp(t)
 	ta.a.loc = time.UTC
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case, tier: pro")) // pro: two readers
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "handle the empty case, tier: pro")) // pro: two readers
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'the tests went red'")
@@ -118,7 +118,7 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "handle the empty case"))
 	ta.deal(1)
 	out := ta.ok("take --as m1 s1-1.w1@1")
 	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/s1-1.w1.g1.e0", "  brief:\n    handle the empty case", "  notes: none",

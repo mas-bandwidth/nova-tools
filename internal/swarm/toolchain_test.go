@@ -182,7 +182,54 @@ func TestBenchGoBinFindsTheSdkGoTheUnitPathLacks(t *testing.T) {
 			default:
 				want, _ = filepath.EvalSymlinks(filepath.Join(home, filepath.FromSlash(c.want)))
 			}
-			assert.Equal(t, want, BenchGoBin(home, c.path))
+			assert.Equal(t, want, BenchGoBin(runtime.GOOS, home, c.path))
 		})
 	}
+}
+
+// TestBenchPathIsTheWallsExecRootsMadeFindable is the fleet tooling probe of 2026-10-04: every
+// up member's toolchain (go, dotnet, cargo, java, node, dart, elixir, bats) lives under ~/sdk,
+// which the wall executes, and the child's PATH named none of it, so a card found only what
+// the loop unit's PATH held -- on one bench a stale /usr/local/bin/go that go.mod refused.
+// BenchPath is the exec'd home roots' bin directories and then GOROOT/bin, read off the same
+// list the wall's argv is built from, ahead of anything the member's PATH holds.
+func TestBenchPathIsTheWallsExecRootsMadeFindable(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the bench layouts are links into the sdk tree")
+	}
+	exe := []byte("#!/bin/sh\nexit 0\n")
+	home := t.TempDir()
+	goroot := filepath.Join(home, "sdk", "go1.26.6", "bin")
+	sdkBin := filepath.Join(home, "sdk", "bin")
+	require.NoError(t, os.MkdirAll(goroot, 0o755))
+	require.NoError(t, os.MkdirAll(sdkBin, 0o755))
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(goroot, "go"), exe, 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(goroot, "go"), filepath.Join(sdkBin, "go")))
+	for _, tool := range []string{"dotnet", "cargo"} {
+		require.NoError(t, testbin.WriteExecutable(filepath.Join(sdkBin, tool), exe, 0o755))
+	}
+	stale := t.TempDir() // the member's PATH: a Go of its own, which comes after the sdk's
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(stale, "go"), exe, 0o755))
+	realGoroot, err := filepath.EvalSymlinks(goroot)
+	require.NoError(t, err)
+
+	for _, goos := range ToolchainRootOSes() {
+		t.Run(goos, func(t *testing.T) {
+			assert.Equal(t, []string{sdkBin, realGoroot}, BenchPath(goos, home, stale))
+			// derived from the roots, not restated: every exec'd home root's bin is on it
+			for _, r := range ToolchainRootList(goos) {
+				if r.Exec && r.Home() {
+					assert.Contains(t, BenchToolBins(goos, home), filepath.Join(home, filepath.FromSlash(r.Name), "bin"), "root %s", r.Name)
+				}
+			}
+		})
+	}
+	// a bench with no sdk: nothing but the Go the member's PATH holds
+	bare := t.TempDir()
+	staleReal, err := filepath.EvalSymlinks(stale)
+	require.NoError(t, err)
+	assert.Equal(t, []string{staleReal}, BenchPath(runtime.GOOS, bare, stale))
+	assert.Nil(t, BenchPath(runtime.GOOS, bare, "/nonexistent"))
+	assert.Nil(t, BenchPath(runtime.GOOS, "", "/nonexistent"), "no home names no home-relative root")
 }

@@ -43,8 +43,8 @@ func (r *Refusal) Error() string {
 	return "plan file=" + r.File + ": " + r.Reason
 }
 
-// ExitCode is 2 for every refusal, the code docs/nova-lessons.md fixes for a
-// plan that could not be read.
+// ExitCode is 2 for every refusal, the code the self repository's lessons
+// file nova-lessons.md fixes for a plan that could not be read.
 func (r *Refusal) ExitCode() int { return 2 }
 
 func refuse(file, reason string) *Refusal { return &Refusal{File: file, Reason: reason} }
@@ -112,7 +112,7 @@ func Read(file string, data []byte, limits Limits) (Form, error) {
 	if err != nil {
 		return Form{}, err
 	}
-	r.skipSpace()
+	r.skipWhitespace()
 	if r.pos < len(r.data) {
 		return Form{}, refuse(file, fmt.Sprintf(
 			"trailing bytes after one form, at byte=%d", r.pos))
@@ -160,9 +160,9 @@ func scanSyntax(file string, data []byte) error {
 	return nil
 }
 
-// skipSpace consumes whitespace and line comments. A comment runs to the end of
+// skipWhitespace consumes whitespace and line comments. A comment runs to the end of
 // its line and is text, never syntax.
-func (r *reader) skipSpace() {
+func (r *reader) skipWhitespace() {
 	for r.pos < len(r.data) {
 		switch r.data[r.pos] {
 		case ' ', '\t', '\r', '\n', '\f':
@@ -190,7 +190,7 @@ func (r *reader) node(off int) error {
 }
 
 func (r *reader) form() (Form, error) {
-	r.skipSpace()
+	r.skipWhitespace()
 	if r.pos >= len(r.data) {
 		return Form{}, refuse(r.file, fmt.Sprintf(
 			"unbalanced form; input ended at byte=%d", r.pos))
@@ -237,7 +237,7 @@ func (r *reader) list() (Form, error) {
 	defer func() { r.depth-- }()
 	out := Form{Kind: List, Offset: start}
 	for {
-		r.skipSpace()
+		r.skipWhitespace()
 		if r.pos >= len(r.data) {
 			return Form{}, refuse(r.file, fmt.Sprintf(
 				"unbalanced form; input ended at byte=%d", r.pos))

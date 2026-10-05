@@ -87,7 +87,7 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "a tick after the done")
 
 	// Work added: STOPPED, no longer done.
-	out = ta.ok("add --stream s2 --count 1")
+	out = ta.ok("add --stream s2 --count 1 --one")
 	require.Contains(t, out, "\nSTOPPED  9/10 90.0%", "an add after the done:\n%s\nview %q", out, ta.viewLine())
 	require.Equal(t, "STOPPED", ta.viewLine(), "an add after the done:\n%s\nview %q", out, ta.viewLine())
 	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "the machine ran after an add")

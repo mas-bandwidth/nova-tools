@@ -47,7 +47,7 @@ func TestAddBriefFileStoresTheBriefByteForByte(t *testing.T) {
 		path := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "-")+".md")
 		require.NoError(t, os.WriteFile(path, []byte(c.file), 0o600))
 		stream := "s" + strings.ReplaceAll(c.name, " ", "")
-		ta.ok("add --stream " + stream + " --count 1 --brief-file " + path)
+		ta.ok("add --stream " + stream + " --count 1 --one --brief-file " + path)
 		ta.deal(1)
 		assert.Equal(t, c.want, ta.briefOf("m1", stream+"-1"), "%s: the packet in queue --json carries the brief", c.name)
 		var took struct{ Packets []sprint.Packet }
@@ -72,9 +72,9 @@ func TestAddBriefFileRefusals(t *testing.T) {
 	missing := filepath.Join(dir, "absent.md")
 	before := ta.applies()
 	for _, c := range []struct{ line, want string }{
-		{"add --stream s1 --count 1 --brief x --brief-file " + path, "--brief and --brief-file are two ways to give the brief"},
-		{"add --stream s1 --count 1 --brief-file " + missing, missing},
-		{"add --stream s1 --count 1 --brief-file " + dir, dir},
+		{"add --stream s1 --count 1 --one --brief x --brief-file " + path, "--brief and --brief-file are two ways to give the brief"},
+		{"add --stream s1 --count 1 --one --brief-file " + missing, missing},
+		{"add --stream s1 --count 1 --one --brief-file " + dir, dir},
 	} {
 		code, out, errs := ta.do(c.line)
 		assert.Equal(t, 2, code, "%s: exit %d, out %q, err %q; want exit 2 naming %q", c.line, code, out, errs, c.want)
@@ -93,11 +93,11 @@ func (ta *testApp) raw(line string) (int, string, string) {
 }
 
 // Which verbs need --epoch: the verbs that act on cards handed to an actor
-// outside the sprint (take by id, finish, read, ci, and a merge by anyone but
-// the coordinator), never the coordinator's own. A table over every verb.
+// outside the sprint (take by id, finish, progress, read, ci, and a merge by anyone
+// but the coordinator), never the coordinator's own. A table over every verb.
 func TestWhichVerbsNeedAnEpoch(t *testing.T) {
 	t.Parallel()
-	always := map[string]bool{"finish": true, "read": true, "ci": true, "take by id": true}
+	always := map[string]bool{"finish": true, "progress": true, "read": true, "ci": true, "take by id": true}
 	seen := map[string]bool{}
 	for _, v := range append(append([]verb(nil), verbs...), verb{name: "take by id"}) {
 		seen[v.name] = true
@@ -175,7 +175,7 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.deal(4)
 	ta.failOnce("m1", "s1-1.w1@1", "the tests went red")
 	ta.failOnce("m1", "s1-2.w1@1", "the tests went red")
@@ -254,18 +254,6 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 	ta.json("inbox", &in)
 	require.Len(t, in.Judgments, 1, "the judgments after the answers: %+v", in.Judgments)
 	require.NotEqual(t, sprint.NWorkFailed, in.Judgments[0].Type, "the judgments after the answers: %+v", in.Judgments)
-}
-
-// byType is the judgment of a type.
-func byType(t *testing.T, js []inboxJudgment, typ string) inboxJudgment {
-	t.Helper()
-	for _, j := range js {
-		if j.Type == typ {
-			return j
-		}
-	}
-	t.Fatalf("no judgment %q in %+v", typ, js)
-	return inboxJudgment{}
 }
 
 // byStream is the judgment of a stream.

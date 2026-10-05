@@ -52,7 +52,7 @@ func TestFirstError(t *testing.T) {
 		{"an absent value, wrapped", []redis.Cmder{command(wrapped{redis.Nil})}, wrapped{redis.Nil}, nil},
 	} {
 		if got := FirstError(c.cmds, c.execErr); got != c.want {
-			assert.True(t, got == c.want, "%s: FirstError = %v; want %v", c.name, got, c.want)
+			assert.Equal(t, c.want, got, "%s: FirstError = %v; want %v", c.name, got, c.want)
 		}
 	}
 }

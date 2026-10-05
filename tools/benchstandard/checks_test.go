@@ -7,50 +7,46 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// drift runs the witness and requires it to drift, every DRIFT line starting
+// want; it returns what it printed for a row that reads the output further.
+func (b *bench) drift(t *testing.T, want string) string {
+	t.Helper()
+	code, output := b.standard()
+	wantOnlyDrift(t, code, output, want)
+	return output
+}
 
 func TestAConformingBenchIsStandardOK(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	code, output := b.standard()
-	if code != 0 || len(drifts(output)) != 0 {
-		t.Fatalf("exit %d:\n%s", code, output)
-	}
-	want := "STANDARD OK go=go1.26.5 bins=" + benchWant + " harness=ok seats=1 free=400G\n"
-	if output != want {
-		t.Errorf("output %q, want %q", output, want)
-	}
+	require.Equal(t, 0, code, output)
+	assert.Empty(t, drifts(output))
+	assert.Equal(t, "STANDARD OK go=go1.26.5 bins="+benchWant+" harness=ok seats=1 free=400G\n", output)
 }
 
 // The witness is not a noop: an empty bench drifts, exits 1, and is never told
 // it conforms.
 func TestAnEmptyBenchDriftsAndIsNeverStandardOK(t *testing.T) {
 	t.Parallel()
-	b := emptyBench(t)
-	code, output := b.standard()
-	if code != 1 {
-		t.Errorf("exit %d, want 1", code)
-	}
-	if len(drifts(output)) == 0 {
-		t.Errorf("an empty bench drew no DRIFT line:\n%s", output)
-	}
-	if strings.Contains(output, "STANDARD OK") {
-		t.Errorf("an empty bench was given a clean bill of health:\n%s", output)
-	}
-	if !strings.HasSuffix(output, "STANDARD DRIFT (see lines above)\n") {
-		t.Errorf("the verdict is not the last line:\n%s", output)
-	}
+	code, output := emptyBench(t).standard()
+	assert.Equal(t, 1, code)
+	assert.NotEmpty(t, drifts(output), "an empty bench drew no DRIFT line")
+	assert.NotContains(t, output, "STANDARD OK")
+	assert.True(t, strings.HasSuffix(output, "STANDARD DRIFT (see lines above)\n"), "the verdict is not the last line:\n%s", output)
 }
 
 func TestEveryFindingIsOneDriftLineBeforeTheVerdict(t *testing.T) {
 	t.Parallel()
-	b := emptyBench(t)
-	_, output := b.standard()
+	_, output := emptyBench(t).standard()
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
 	for i, l := range lines[:len(lines)-1] {
-		if !strings.HasPrefix(l, "DRIFT ") {
-			t.Errorf("line %d is not a DRIFT line: %q", i+1, l)
-		}
+		assert.True(t, strings.HasPrefix(l, "DRIFT "), "line %d is not a DRIFT line: %q", i+1, l)
 	}
 }
 
@@ -59,35 +55,29 @@ func TestHelpNamesApplyAsKillingStraysAndNothingMore(t *testing.T) {
 	b := conformingBench(t)
 	for _, flag := range []string{"--help", "-h"} {
 		code, output := b.standard(flag)
-		if code != 0 {
-			t.Errorf("%s: exit %d", flag, code)
-		}
+		assert.Equal(t, 0, code, flag)
 		low := strings.ToLower(output)
-		if !strings.Contains(low, "--apply") || !strings.Contains(low, "kills stray") || !strings.Contains(low, "nothing more") {
-			t.Errorf("%s does not say --apply kills strays and nothing more:\n%s", flag, output)
-		}
+		assert.Contains(t, low, "--apply", flag)
+		assert.Contains(t, low, "kills stray", flag)
+		assert.Contains(t, low, "nothing more", flag)
 	}
-	if len(b.h.ran) != 0 {
-		t.Errorf("--help started processes: %v", b.h.ran)
-	}
+	assert.Empty(t, b.h.ran, "--help started processes")
 }
 
 func TestAnUnknownArgumentIsRefusedLoudly(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	code, output := b.standard("--no-such-flag")
-	if code != 1 || !strings.Contains(output, "DRIFT unknown argument --no-such-flag\n") || !strings.Contains(output, "STANDARD DRIFT") {
-		t.Errorf("exit %d:\n%s", code, output)
-	}
+	assert.Equal(t, 1, code)
+	assert.Contains(t, output, "DRIFT unknown argument --no-such-flag\n")
+	assert.Contains(t, output, "STANDARD DRIFT")
 	// Even next to a valid one, and before any check has run.
 	b2 := conformingBench(t)
 	code, output = b2.standard("--apply", "--reboot-the-host")
-	if code != 1 || !strings.Contains(output, "DRIFT unknown argument --reboot-the-host") {
-		t.Errorf("exit %d:\n%s", code, output)
-	}
-	if len(b2.h.ran) != 0 || len(b2.h.killed) != 0 {
-		t.Errorf("a refused argument still ran things: ran=%v killed=%v", b2.h.ran, b2.h.killed)
-	}
+	assert.Equal(t, 1, code)
+	assert.Contains(t, output, "DRIFT unknown argument --reboot-the-host")
+	assert.Empty(t, b2.h.ran, "a refused argument still ran things")
+	assert.Empty(t, b2.h.killed, "a refused argument still ran things")
 }
 
 // Nothing but the bench's own scratch directories is created or removed, and
@@ -95,25 +85,15 @@ func TestAnUnknownArgumentIsRefusedLoudly(t *testing.T) {
 func TestAPlainRunMutatesNothingButItsOwnScratchDirectories(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
-	if code, output := b.standard(); code != 0 {
-		t.Fatalf("exit %d:\n%s", code, output)
-	}
-	if len(b.h.killed) != 0 {
-		t.Errorf("a run without --apply killed %v", b.h.killed)
-	}
-	if len(b.h.made) != 2 {
-		t.Errorf("made %v, want the canary and probe directories", b.h.made)
-	}
-	if !reflect.DeepEqual(b.h.made, b.h.removed) {
-		t.Errorf("made %v but removed %v: a scratch directory was left or another path was removed", b.h.made, b.h.removed)
-	}
+	code, output := b.standard()
+	require.Equal(t, 0, code, output)
+	assert.Empty(t, b.h.killed, "a run without --apply killed")
+	assert.Len(t, b.h.made, 2, "want the canary and probe directories")
+	assert.Equal(t, b.h.made, b.h.removed, "a scratch directory was left or another path was removed")
 	for _, d := range b.h.made {
-		if !strings.HasPrefix(d, filepath.Join(b.home, "nova-bench")+string(filepath.Separator)) {
-			t.Errorf("scratch directory %s is outside nova-bench", d)
-		}
-		if _, err := os.Stat(d); err == nil {
-			t.Errorf("scratch directory %s still exists", d)
-		}
+		assert.True(t, strings.HasPrefix(d, filepath.Join(b.home, "nova-bench")+string(filepath.Separator)), "scratch directory %s is outside nova-bench", d)
+		_, err := os.Stat(d)
+		assert.Error(t, err, "scratch directory %s still exists", d)
 	}
 }
 
@@ -123,75 +103,59 @@ func TestTheWantedGoTracksGoMod(t *testing.T) {
 	b := conformingBench(t)
 	b.unsetEnv("NOVA_GO")
 	tree := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example\n\ngo 1.99.0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example\n\ngo 1.99.0\n"), 0o644))
 	var buf strings.Builder
 	code := run(nil, env{stdout: &buf, h: b.h, exeDir: filepath.Join(tree, "bin"), cwd: t.TempDir(), systemDir: b.t.TempDir()})
-	if code != 1 || !strings.Contains(buf.String(), "DRIFT go version [go version go1.26.5 linux/amd64] want go1.99.0\n") {
-		t.Errorf("exit %d:\n%s", code, buf.String())
-	}
+	assert.Equal(t, 1, code, buf.String())
+	assert.Contains(t, buf.String(), "DRIFT go version [go version go1.26.5 linux/amd64] want go1.99.0\n")
 	// The same from the working directory, found above a subdirectory.
 	sub := filepath.Join(tree, "tools", "x")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(sub, 0o755))
 	buf.Reset()
 	run(nil, env{stdout: &buf, h: b.h, exeDir: t.TempDir(), cwd: sub, systemDir: b.t.TempDir()})
-	if !strings.Contains(buf.String(), "want go1.99.0") {
-		t.Errorf("the go.mod above the working directory was not read:\n%s", buf.String())
-	}
+	assert.Contains(t, buf.String(), "want go1.99.0", "the go.mod above the working directory was not read")
 }
 
 func TestNovaGoOverridesGoMod(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	tree := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example\n\ngo 1.99.0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example\n\ngo 1.99.0\n"), 0o644))
 	var buf strings.Builder
 	code := run(nil, env{stdout: &buf, h: b.h, exeDir: filepath.Join(tree, "bin"), cwd: tree, systemDir: b.t.TempDir()})
-	if code != 0 {
-		t.Errorf("NOVA_GO=go1.26.5 was overridden by go.mod:\n%s", buf.String())
+	assert.Equal(t, 0, code, "NOVA_GO=go1.26.5 was overridden by go.mod:\n%s", buf.String())
+}
+
+func TestGoVersionRows(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		setup func(*testing.T, *bench)
+		want  func(*bench) string
+	}{
+		{"TestNoGoModAndNoNovaGoIsDriftNotAGuess", func(t *testing.T, b *bench) { b.unsetEnv("NOVA_GO") },
+			func(*bench) string {
+				return "go.mod go directive unread; set NOVA_GO or run from a nova-tools checkout"
+			}},
+		{"TestAGoOnePatchBehindTheTreeDrifts", func(t *testing.T, b *bench) { b.setEnv("NOVA_GO=go1.26.6") },
+			func(*bench) string { return "go version [go version go1.26.5 linux/amd64] want go1.26.6" }},
+		{"TestGoNotOnPathDrifts", func(t *testing.T, b *bench) { require.NoError(t, os.Remove(filepath.Join(b.bin, "go"))) },
+			func(*bench) string { return "go not on PATH want go1.26.5" }},
+		{"TestToolchainRootsMissingDrift", func(t *testing.T, b *bench) {
+			require.NoError(t, os.RemoveAll(filepath.Join(b.home, "go", "pkg", "mod")))
+		},
+			func(b *bench) string {
+				return "toolchain root " + filepath.Join(b.home, "go/pkg/mod") + " missing; the sandbox wall grants this path and a card's go lives under it"
+			}},
 	}
-}
-
-func TestNoGoModAndNoNovaGoIsDriftNotAGuess(t *testing.T) {
-	t.Parallel()
-	b := conformingBench(t)
-	b.unsetEnv("NOVA_GO")
-	code, output := b.standard()
-	wantOnlyDrift(t, code, output, "go.mod go directive unread; set NOVA_GO or run from a nova-tools checkout")
-}
-
-func TestAGoOnePatchBehindTheTreeDrifts(t *testing.T) {
-	t.Parallel()
-	b := conformingBench(t)
-	b.setEnv("NOVA_GO=go1.26.6")
-	code, output := b.standard()
-	wantOnlyDrift(t, code, output, "go version [go version go1.26.5 linux/amd64] want go1.26.6")
-}
-
-func TestGoNotOnPathDrifts(t *testing.T) {
-	t.Parallel()
-	b := conformingBench(t)
-	if err := os.Remove(filepath.Join(b.bin, "go")); err != nil {
-		t.Fatal(err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := conformingBench(t)
+			tc.setup(t, b)
+			b.drift(t, tc.want(b))
+		})
 	}
-	code, output := b.standard()
-	wantOnlyDrift(t, code, output, "go not on PATH want go1.26.5")
-}
-
-func TestToolchainRootsMissingDrift(t *testing.T) {
-	t.Parallel()
-	b := conformingBench(t)
-	if err := os.RemoveAll(filepath.Join(b.home, "go", "pkg", "mod")); err != nil {
-		t.Fatal(err)
-	}
-	code, output := b.standard()
-	want := "toolchain root " + filepath.Join(b.home, "go/pkg/mod") + " missing; the sandbox wall grants this path and a card's go lives under it"
-	wantOnlyDrift(t, code, output, want)
 }
 
 // The card's environment is the sdk env file's, so a caller's PATH that puts a
@@ -242,8 +206,7 @@ func TestSbclRows(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		os.Remove(filepath.Join(b.bin, "sbcl"))
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "sbcl not on PATH")
+		output := b.drift(t, "sbcl not on PATH")
 		if n := len(drifts(output)); n != 1 {
 			t.Errorf("an absent sbcl drew %d lines, want 1 (the pin rows wait for a present one):\n%s", n, output)
 		}
@@ -252,11 +215,10 @@ func TestSbclRows(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.h.reply("sbcl", []string{"--version"}, out("SBCL 2.6.0.debian\n"))
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "sbcl version [SBCL 2.6.0.debian] want 2.5.8 (NOVA_SBCL)")
+		b.drift(t, "sbcl version [SBCL 2.6.0.debian] want 2.5.8 (NOVA_SBCL)")
 		// 2.5.80 is not 2.5.8.
 		b.h.reply("sbcl", []string{"--version"}, out("SBCL 2.5.80\n"))
-		if code, output = b.standard(); code != 1 {
+		if code, output := b.standard(); code != 1 {
 			t.Errorf("2.5.80 passed the 2.5.8 pin:\n%s", output)
 		}
 	})
@@ -297,18 +259,17 @@ func TestProRungRows(t *testing.T) {
 	if err := os.Remove(filepath.Join(b.home, "nova-bench", "rungs", "pro")); err != nil {
 		t.Fatal(err)
 	}
-	code, output := b.standard()
-	wantOnlyDrift(t, code, output, "pro rung missing (no executable NOVA_PRO_RUNG, no "+b.home+"/nova-bench/rungs/pro, no "+b.home+"/nova-bench/pro)")
+	b.drift(t, "pro rung missing (no executable NOVA_PRO_RUNG, no "+b.home+"/nova-bench/rungs/pro, no "+b.home+"/nova-bench/pro)")
 
 	// NOVA_PRO_RUNG naming an executable satisfies it.
 	b.setEnv("NOVA_PRO_RUNG=" + filepath.Join(b.home, "nova-bench", "harness-v1", "opencode"))
-	if code, output = b.standard(); code != 0 {
+	if code, output := b.standard(); code != 0 {
 		t.Errorf("an executable NOVA_PRO_RUNG still drifted:\n%s", output)
 	}
 	// So does the other directory.
 	b.unsetEnv("NOVA_PRO_RUNG")
 	b.mkdir("nova-bench", "pro")
-	if code, output = b.standard(); code != 0 {
+	if code, output := b.standard(); code != 0 {
 		t.Errorf("nova-bench/pro still drifted:\n%s", output)
 	}
 	// A rung file with no execute bit is not one.
@@ -324,8 +285,7 @@ func TestSqliteRows(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	os.Remove(filepath.Join(b.bin, "sqlite3"))
-	code, output := b.standard()
-	wantOnlyDrift(t, code, output, "sqlite3 not on PATH (want "+b.home+"/sdk/sqlite3-<ver>/bin/sqlite3)")
+	b.drift(t, "sqlite3 not on PATH (want "+b.home+"/sdk/sqlite3-<ver>/bin/sqlite3)")
 
 	// One outside sdk is named with where it resolves.
 	b2 := conformingBench(t)
@@ -335,7 +295,7 @@ func TestSqliteRows(t *testing.T) {
 	os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755)
 	os.Remove(filepath.Join(b2.bin, "sqlite3"))
 	os.Symlink(real, filepath.Join(b2.bin, "sqlite3"))
-	code, output = b2.standard()
+	code, output := b2.standard()
 	if code != 1 || len(driftWith(output, "sqlite3 at ")) != 1 || !strings.Contains(output, "not under "+b2.home+"/sdk (want "+b2.home+"/sdk/sqlite3-<ver>/bin/sqlite3)") {
 		t.Errorf("exit %d:\n%s", code, output)
 	}
@@ -345,16 +305,14 @@ func TestSlotShareRows(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	b.unsetEnv("NOVA_SLOT_SHARE")
-	code, output := b.standard()
-	wantOnlyDrift(t, code, output, "NOVA_SLOT_SHARE unset (declare the bench's slot share, a positive whole number of slots)")
+	b.drift(t, "NOVA_SLOT_SHARE unset (declare the bench's slot share, a positive whole number of slots)")
 	for _, bad := range []string{"lots", "0", "07", "1.5", "-3", "6 4"} {
 		b.setEnv("NOVA_SLOT_SHARE=" + bad)
-		code, output = b.standard()
-		wantOnlyDrift(t, code, output, "NOVA_SLOT_SHARE="+bad+" is not a positive whole number of slots")
+		b.drift(t, "NOVA_SLOT_SHARE="+bad+" is not a positive whole number of slots")
 	}
 	for _, good := range []string{"1", "64", "512"} {
 		b.setEnv("NOVA_SLOT_SHARE=" + good)
-		if code, output = b.standard(); code != 0 {
+		if code, output := b.standard(); code != 0 {
 			t.Errorf("NOVA_SLOT_SHARE=%s drifted:\n%s", good, output)
 		}
 	}
@@ -364,22 +322,20 @@ func TestHarnessRows(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	os.Remove(filepath.Join(b.home, "nova-bench", "harness-v1", "opencode"))
-	code, output := b.standard()
-	wantOnlyDrift(t, code, output, "harness missing at "+b.home+"/nova-bench/harness-<ver>/opencode")
+	b.drift(t, "harness missing at "+b.home+"/nova-bench/harness-<ver>/opencode")
 	if len(sandboxRuns(b.h)) != 1 { // only the network probe; no canary without a harness
 		t.Errorf("the canary ran without a harness: %v", b.h.ran)
 	}
 
 	b2 := conformingBench(t)
 	b2.setEnv("NOVA_HARNESS=" + filepath.Join(b2.home, "no-such-harness"))
-	code, output = b2.standard()
-	wantOnlyDrift(t, code, output, "harness missing at NOVA_HARNESS="+b2.home+"/no-such-harness")
+	b2.drift(t, "harness missing at NOVA_HARNESS="+b2.home+"/no-such-harness")
 
 	// An executable NOVA_HARNESS is the harness whatever else is on the bench.
 	b3 := conformingBench(t)
 	os.Remove(filepath.Join(b3.home, "nova-bench", "harness-v1", "opencode"))
 	b3.setEnv("NOVA_HARNESS=" + b3.write("nova-bench/mine/opencode", "x", true))
-	if code, output = b3.standard(); code != 0 {
+	if code, output := b3.standard(); code != 0 {
 		t.Errorf("exit %d:\n%s", code, output)
 	}
 }
@@ -389,9 +345,8 @@ func TestHarnessCanaryDetectsSandboxWallDenial(t *testing.T) {
 	t.Parallel()
 	b := conformingBench(t)
 	b.h.first(isCanary, runResult{stderr: "SANDBOX REFUSED: harness denied by wall\n", code: 1})
-	code, output := b.standard()
 	opencode := filepath.Join(b.home, "nova-bench", "harness-v1", "opencode")
-	wantOnlyDrift(t, code, output, "harness cannot start inside the sandbox wall; "+opencode+" --help failed under nova-sandbox")
+	b.drift(t, "harness cannot start inside the sandbox wall; "+opencode+" --help failed under nova-sandbox")
 
 	// The canary runs the harness under a HOME of its own, inside its scratch
 	// directory, with the bench readable and the scratch writable.
@@ -475,7 +430,6 @@ func TestSandboxNetworkRows(t *testing.T) {
 		{"not a status: the sandbox did not run curl", runResult{stdout: "nova-sandbox: refused"}, ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := conformingBench(t)
@@ -557,22 +511,19 @@ func TestNovaBinRows(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.unsetEnv("NOVA_WANT")
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "NOVA_WANT unset (set NOVA_WANT to the wanted version)")
+		b.drift(t, "NOVA_WANT unset (set NOVA_WANT to the wanted version)")
 	})
 	t.Run("a binary missing", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		os.Remove(filepath.Join(b.home, ".local", "bin", "nova-fuse"))
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "nova-fuse missing at "+filepath.Join(b.home, ".local/bin/nova-fuse"))
+		b.drift(t, "nova-fuse missing at "+filepath.Join(b.home, ".local/bin/nova-fuse"))
 	})
 	t.Run("a wrong version", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.h.reply("nova-swarm", []string{"version"}, out("nova-swarm v0.0.1\n"))
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "nova-swarm version [nova-swarm v0.0.1] want "+benchWant)
+		b.drift(t, "nova-swarm version [nova-swarm v0.0.1] want "+benchWant)
 	})
 	t.Run("--version when version is refused", func(t *testing.T) {
 		t.Parallel()
@@ -583,27 +534,22 @@ func TestNovaBinRows(t *testing.T) {
 			t.Errorf("exit %d:\n%s", code, output)
 		}
 		b.h.reply("nova-check", []string{"--version"}, out("nova-check 1.0\n"))
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "nova-check version [nova-check 1.0] want "+benchWant)
+		b.drift(t, "nova-check version [nova-check 1.0] want "+benchWant)
 	})
 	t.Run("the eleven", func(t *testing.T) {
 		t.Parallel()
-		if len(novaBins) != 11 {
-			t.Errorf("the standard checks %d binaries, want 11: %v", len(novaBins), novaBins)
-		}
+		assert.Len(t, novaBins, 11, "the standard checks 11 binaries: %v", novaBins)
 	})
 }
 
 func TestPlaintextKeyRows(t *testing.T) {
 	t.Parallel()
 	for _, rel := range []string{".local/share/opencode/auth.json", ".config/deepseek/env"} {
-		rel := rel
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
 			b := conformingBench(t)
 			b.write(rel, "secret", false)
-			code, output := b.standard()
-			wantOnlyDrift(t, code, output, "plaintext key file "+filepath.Join(b.home, rel)+" present")
+			b.drift(t, "plaintext key file "+filepath.Join(b.home, rel)+" present")
 		})
 	}
 	t.Run("a literal apiKey in an opencode json", func(t *testing.T) {
@@ -611,8 +557,7 @@ func TestPlaintextKeyRows(t *testing.T) {
 		b := conformingBench(t)
 		bad := b.write(".config/opencode/opencode.json", `{"apiKey": "sk-abc"}`, false)
 		b.write(".config/opencode/other.json", `{"apiKey": "{env:KEY}"}`, false)
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "plaintext apiKey in "+bad)
+		output := b.drift(t, "plaintext apiKey in "+bad)
 		if n := len(drifts(output)); n != 1 {
 			t.Errorf("%d findings, want only the literal key:\n%s", n, output)
 		}
@@ -700,13 +645,11 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 			"not a count": out("Filesystem\n/dev/x 1 1 lots 1% /\n"),
 			"df fails":    {err: errNoAnswer},
 		} {
-			res := res
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				b := conformingBench(t)
 				b.h.reply("df", []string{"-Pk"}, res)
-				code, output := b.standard()
-				wantOnlyDrift(t, code, output, "disk free unknown: df answered nothing readable for "+b.home)
+				b.drift(t, "disk free unknown: df answered nothing readable for "+b.home)
 			})
 		}
 	})
@@ -729,8 +672,7 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
 		b.setEnv("NOVA_MIN_FREE_G=lots")
-		code, output := b.standard()
-		wantOnlyDrift(t, code, output, "NOVA_MIN_FREE_G=lots is not a whole number of gigabytes")
+		b.drift(t, "NOVA_MIN_FREE_G=lots is not a whole number of gigabytes")
 	})
 	t.Run("the floor is exactly the boundary", func(t *testing.T) {
 		t.Parallel()

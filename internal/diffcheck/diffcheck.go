@@ -110,22 +110,60 @@ const (
 	UpdatedRerun = "updated, rerun"
 )
 
+// CatalogFile is the hand-written catalog a card that adds a directory may add a row to
+// (internal/docs/catalog.go; docs/SPEC-SPRINT.md section 7, land-e12-catalog-rows).
+const CatalogFile = "internal/docs/catalog.go"
+
+// AgentsMap says p is an AGENTS.md map tools/agentsmap writes: the root page, or a
+// directory's page. docs/STANDARD.md is not one.
+func AgentsMap(p string) bool {
+	return p == "AGENTS.md" || strings.HasSuffix(p, "/AGENTS.md")
+}
+
+// AgentsMapRoots are the maps tools/agentsmap writes from the catalog's pages. The
+// lander regenerates them at a merge (docs/SPEC-SPRINT.md section 7, land-e12-catalog-rows).
+var AgentsMapRoots = []string{
+	"AGENTS.md",
+	"cmd/AGENTS.md",
+	"docs/AGENTS.md",
+	"internal/AGENTS.md",
+	"internal/ghevent/AGENTS.md",
+	"tools/AGENTS.md",
+}
+
 // Outside is every file the diff changes that the card may not (E12); nil when paths is
 // empty (a card that names no PATHS is held to none). A file is the card's when its
 // PATHS globs name it or it is a ledger (Ledger). A rename holds both sides: the file it
 // moves from is the card's, and the file it moves to is the card's too or stays in the
 // directory it was in (a name card renames a file in place). A rename out of a PATHS
 // file to anywhere else, and a file moved into the ledgers' directory, are outside.
-func Outside(paths []string, diff string) []string {
+//
+// trackedBefore is the tree the merge lands on: the paths git tracks before it. nil is
+// an unknown tree, and then nothing is exempt. A directory that holds no tracked file
+// before, under which the diff adds a file the card's PATHS name (the file, or that
+// directory), is a new directory the card adds: CatalogFile is then the card's when its
+// change is added lines only, each a row naming one of those directories, and every
+// AGENTS.md map is the card's. Any other change to the catalog, or a map change from a
+// card that adds no directory, stays outside (docs/SPEC-SPRINT.md section 7,
+// land-e12-catalog-rows).
+func Outside(paths []string, diff string, trackedBefore []string) []string {
 	if len(paths) == 0 {
 		return nil
+	}
+	files := Parse(diff)
+	var dirs []string
+	if trackedBefore != nil {
+		dirs = newPackageDirs(paths, files, trackedBefore)
 	}
 	named := func(p string) bool {
 		return slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, p) })
 	}
 	mine := func(p string) bool { return named(p) || Ledger(p) }
 	var out []string
-	for _, f := range Parse(diff) {
+	for _, f := range files {
+		if catalogExempt(f, dirs) || len(dirs) > 0 && f.Old == f.New && AgentsMap(f.New) {
+			continue
+		}
 		from := mine(f.Old)
 		to := mine(f.New) || f.Old != f.New && named(f.Old) && path.Dir(f.Old) == path.Dir(f.New)
 		if !from || !to {
@@ -133,6 +171,99 @@ func Outside(paths []string, diff string) []string {
 		}
 	}
 	return out
+}
+
+// newPackageDirs are the directories the diff adds that paths name: a file under a
+// directory that holds no tracked file before the merge, the file or that directory
+// named by paths. Ancestors that themselves hold no tracked file are included, so a
+// row may name the package rather than a nested directory of it.
+func newPackageDirs(paths []string, files []File, tracked []string) []string {
+	set := map[string]bool{}
+	for _, p := range tracked {
+		if p != "" {
+			set[p] = true
+		}
+	}
+	named := func(p string) bool {
+		if slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, p) }) {
+			return true
+		}
+		for d := path.Dir(p); d != "." && d != "/"; d = path.Dir(d) {
+			if slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, d) }) {
+				return true
+			}
+		}
+		return false
+	}
+	var dirs []string
+	seen := map[string]bool{}
+	for _, f := range files {
+		if f.New == "" || set[f.New] || !named(f.New) {
+			continue
+		}
+		for d := path.Dir(f.New); d != "." && d != "/"; d = path.Dir(d) {
+			if dirTracked(d, set) {
+				break
+			}
+			if !seen[d] {
+				seen[d] = true
+				dirs = append(dirs, d)
+			}
+		}
+	}
+	return dirs
+}
+
+// dirTracked says the tree before holds a file at dir or under it.
+func dirTracked(dir string, set map[string]bool) bool {
+	prefix := dir + "/"
+	for p := range set {
+		if p == dir || strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// catalogExempt says the catalog change is added lines only, each a row naming one of dirs.
+func catalogExempt(f File, dirs []string) bool {
+	if len(dirs) == 0 || f.Old != CatalogFile || f.New != CatalogFile {
+		return false
+	}
+	added := false
+	for _, h := range f.Hunks {
+		for _, l := range h.Lines {
+			switch l[0] {
+			case '-':
+				return false
+			case '+':
+				dir, ok := catalogRowDir(l[1:])
+				if !ok || !slices.Contains(dirs, dir) {
+					return false
+				}
+				added = true
+			}
+		}
+	}
+	return added
+}
+
+// catalogRowDir is the directory a catalog row names, the first quoted argument of E or Page.
+func catalogRowDir(line string) (string, bool) {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "E(") && !strings.HasPrefix(t, "Page(") {
+		return "", false
+	}
+	i := strings.Index(t, `"`)
+	if i < 0 {
+		return "", false
+	}
+	t = t[i+1:]
+	j := strings.Index(t, `"`)
+	if j < 0 {
+		return "", false
+	}
+	return t[:j], j > 0
 }
 
 // Finding is one place a changed line breaks the text beside it.

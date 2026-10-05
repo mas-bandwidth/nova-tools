@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -171,7 +170,7 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 	if refused > 0 {
 		code = 1
 	}
-	if o.bus != "" {
+	if o.to != "" {
 		var body bytes.Buffer
 		fmt.Fprintf(&body, "From: %s\nTo: %s\nSubject: adoption on %s at %s\n\n", o.as, o.to, dash(o.host), started.UTC().Format("2006-01-02T15:04:05Z"))
 		body.Write(okBuf.Bytes())
@@ -187,41 +186,12 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 	return code
 }
 
-// postAdoptReceipt publishes the adoption receipt through the prepared
-// artifact protocol, the same validation-before-send the reporter uses.
+// postAdoptReceipt publishes the adoption receipt on the Redis bus.
+// SPEC-UPDATE.md rule 27: with --as and --to, the pass posts the receipt as its own.
+// nova-bus reads the store from NOVA_BUS_REDIS; the confirmation is SEND OK id=.
 func postAdoptReceipt(ctx context.Context, o options, body []byte, env Environment) (string, error) {
-	allowance := deliveryAllowance(ctx, env.Now())
-	if allowance <= 0 {
-		return "", fmt.Errorf("delivery budget exhausted (retry watch with the same --adopt)")
-	}
-	child, cancel := context.WithTimeout(ctx, allowance)
-	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
-	cancel()
-	if prepared.Reason != "" {
-		return "", fmt.Errorf("prepare refused: %s; the bus said: %s (check nova-bus and the named bus; retry watch)", prepared.Reason, busSaid(prepared))
-	}
-	id, err := validatePrepared([]byte(prepared.Stdout))
-	if err != nil {
-		return "", fmt.Errorf("%s (use a compatible nova-bus)", err)
-	}
-	var artifact map[string]string
-	_ = artifact
-	allowance = deliveryAllowance(ctx, env.Now())
-	if allowance <= 0 {
-		return "", fmt.Errorf("pending %s not sent: the budget is spent (retry watch with the same --adopt)", id)
-	}
-	attempts, gitSeconds := busBounds(allowance)
-	args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as,
-		"--attempts", strconv.Itoa(attempts), "--git-timeout", strconv.Itoa(gitSeconds)}
-	child2, cancel2 := context.WithTimeout(ctx, allowance)
-	r := captureRun(child2, args, []byte(prepared.Stdout), ChildCap)
-	cancel2()
-	for _, l := range strings.Split(r.Stdout, "\n") {
-		if confirmed(l, id) {
-			return l, nil
-		}
-	}
-	return "", fmt.Errorf("pending %s not confirmed: %s; the bus said: %s (retry watch with the same --adopt)", id, dash(r.Reason), busSaid(r))
+	_, line, _, err := redisSend(ctx, env, o.as, o.to, noteSubject(body), body, "retry watch with the same --adopt")
+	return line, err
 }
 
 func loadAdoptFile(path string) ([]AdoptCheck, error) {
@@ -244,10 +214,7 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 	f := flag.NewFlagSet("watch", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.adopt, "adopt", "", "the checks file (required): a header line check<TAB>command<TAB>owner, then one check per line, its command run as written")
-	f.StringVar(&o.bus, "bus", "", "the bus checkout that delivers the receipt; with it, --remote, --branch, --as and --to are required")
-	f.StringVar(&o.remote, "remote", "", "the bus remote")
-	f.StringVar(&o.branch, "branch", "", "the bus branch")
-	f.StringVar(&o.as, "as", "", "the sender the receipt is from")
+	f.StringVar(&o.as, "as", "", "the sender the receipt is from; with --to, the pass posts the receipt through nova-bus send (nova-bus reads its store from NOVA_BUS_REDIS)")
 	f.StringVar(&o.to, "to", "", "the receipt's recipients, comma-separated (those who answer a refused check)")
 	f.StringVar(&o.host, "host", "", "a label for the machine the pass ran on, carried in the receipt's subject")
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one check's deadline, such as 5s")
@@ -261,9 +228,9 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 	if o.adopt == "" {
 		missing = append(missing, "--adopt")
 	}
-	// The bus flags go together: one names a delivery, and a delivery needs all five.
-	if o.bus != "" || o.remote != "" || o.branch != "" || o.as != "" || o.to != "" {
-		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"remote", o.remote}, {"branch", o.branch}, {"as", o.as}, {"to", o.to}} {
+	// A delivery needs the sender and the recipients; nova-bus reads the store itself.
+	if o.as != "" || o.to != "" {
+		for _, x := range []struct{ n, v string }{{"as", o.as}, {"to", o.to}} {
 			if x.v == "" {
 				missing = append(missing, "--"+x.n)
 			}

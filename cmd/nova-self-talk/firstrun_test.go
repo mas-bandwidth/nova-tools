@@ -144,8 +144,12 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 // The documented paths are typed as written. `./pages` is a copy of the fixture
 // in a directory of the test's own, because the tool PRINTS THE PATH BACK on
 // every finding: a rewritten path is no longer the line the document promised,
-// which is what the old test's `localize` gave up.
+// which is what the old test's `localize` gave up. The read resolves under the
+// directory the test passes; the printed path stays the words that were typed,
+// so the test runs in parallel without moving the process working directory
+// (docs/STANDARD.md section 8).
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
 	doc := transcriptDoc(t)
 	lines, err := onboarding.FirstRun(doc, "nova-self-talk")
 	require.NoError(t, err)
@@ -155,9 +159,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	copyDir(t, examplePages, filepath.Join(dir, "pages"))
-	t.Chdir(dir)
 
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	for _, p := range onboarding.Execute(steps, runDocumentedIn(dir)) {
 		t.Error(p)
 	}
 }
@@ -200,14 +203,23 @@ func TestHelpExamplesAreTheFirstRunThroughTheComparator(t *testing.T) {
 }
 
 // runDocumented calls this binary's own entry point with the documented
-// arguments, keeping the two streams apart.
+// arguments, keeping the two streams apart. A relative path is read against
+// the process working directory.
 func runDocumented(s onboarding.Step) (onboarding.Result, error) {
-	if s.Stdin != "" {
-		return onboarding.Result{}, errReadsNothing
+	return runDocumentedIn("")(s)
+}
+
+// runDocumentedIn is runDocumented with the working directory a relative file
+// is read against (docs/STANDARD.md section 8).
+func runDocumentedIn(dir string) onboarding.Runner {
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		var out, errb bytes.Buffer
+		code := runIn(dir, s.Args, &out, &errb)
+		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
-	var out, errb bytes.Buffer
-	code := run(s.Args, &out, &errb)
-	return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 }
 
 type readsNothing struct{}
@@ -218,8 +230,8 @@ func (readsNothing) Error() string {
 
 var errReadsNothing = readsNothing{}
 
-// transcriptDoc is docs/TESTS.md, read BEFORE the test moves into its own
-// directory.
+// transcriptDoc is docs/TESTS.md, read from the package directory. The test
+// does not move the process working directory.
 func transcriptDoc(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))

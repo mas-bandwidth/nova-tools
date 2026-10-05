@@ -226,7 +226,7 @@ func TestDashReadsStandardInput(t *testing.T) {
 	t.Parallel()
 
 	var out, errb bytes.Buffer
-	exit := runStdin([]string{"-"}, strings.NewReader("# Journal\nI am bad at estimating time.\n"), &out, &errb)
+	exit := runStdin("", []string{"-"}, strings.NewReader("# Journal\nI am bad at estimating time.\n"), &out, &errb)
 	assert.Equal(t, 1, exit)
 	assert.Contains(t, errb.String(), `SELFTALK FAIL -:2: STANDING match="bad at": I am bad at estimating time.`)
 }
@@ -316,6 +316,42 @@ func TestExampleWritesThePagesFromTheBinary(t *testing.T) {
 	exit, _, stderr = runSelfTalk(t, "example")
 	assert.Equal(t, 2, exit)
 	assert.Contains(t, stderr, "takes one directory to write the pages into, got 0 arguments: nova-self-talk example ./pages")
+}
+
+// Example publishes complete pages without replacing a target, including a dangling link.
+func TestExampleWritesItsPagesWithoutReplacingAndLeavesNoPartialFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("complete pages without temporary files", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		exit, _, stderr := runSelfTalk(t, "example", dir)
+		require.Equal(t, 0, exit, stderr)
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		require.Len(t, entries, 2)
+		for _, entry := range entries {
+			want, err := pages.ReadFile("testdata/example-pages/" + entry.Name())
+			require.NoError(t, err)
+			got, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+		}
+	})
+	t.Run("dangling symlink never writes outside directory", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "outside.md")
+		target := filepath.Join(dir, "journal.md")
+		require.NoError(t, os.Symlink(outside, target))
+		exit, _, stderr := runSelfTalk(t, "example", dir)
+		assert.Equal(t, 2, exit, stderr)
+		assert.Contains(t, stderr, "cannot write")
+		assert.NoFileExists(t, outside)
+		link, err := os.Readlink(target)
+		require.NoError(t, err)
+		assert.Equal(t, outside, link)
+	})
 }
 
 // The command example points to must survive shell parsing as one literal path, including a

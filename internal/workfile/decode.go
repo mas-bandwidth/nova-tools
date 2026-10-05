@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
@@ -94,9 +95,15 @@ func (d decoder) str(at, key string, f worklang.Form) (string, error) {
 	return f.Value, nil
 }
 
+// num reads a positive integer whose spelling is the one strconv.Itoa
+// writes (SPEC-WORK-V1 section 1.2: the file is canonical, one tree, one
+// file, so the SHA-256 names the tree): the form's source span is the
+// number's spelling, so a leading '+' or leading zeros, which the worklang
+// integer reader takes, is refused here.
 func (d decoder) num(at, key string, f worklang.Form) (int, error) {
-	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > 1<<31 {
-		return 0, d.errf(at, ":%s wants a positive integer", key)
+	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > 1<<31 ||
+		f.End-f.Offset != len(strconv.Itoa(int(f.Int))) {
+		return 0, d.errf(at, ":%s wants a positive integer written canonically", key)
 	}
 	return int(f.Int), nil
 }
@@ -333,6 +340,9 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 			if *s.dst, err = d.str(rat, s.key, rm[s.key]); err != nil {
 				return is, err
 			}
+		}
+		if r.Kind == "" && (r.Repo != "" || r.URL != "") {
+			return is, d.errf(rat, ":kind \"\" wants :repo \"\" and :url \"\"")
 		}
 		if r.Number, err = d.refNumber(rat, r.Kind, rm["number"]); err != nil {
 			return is, err
