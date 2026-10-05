@@ -506,8 +506,8 @@ func TestRun(t *testing.T) {
 			stderr: []string{"PUT REFUSED: unknown flag --stor; the flags of put are --json, --key, --max, --n, --store; did you mean --store?; run: nova-demo put -h\n"}},
 		{name: "an unknown flag with nothing near names the flags alone", args: []string{"who", "--zzzz"}, code: 2, emptyStdout: true,
 			stderr: []string{"WHO REFUSED: unknown flag --zzzz; the flags of who are --actor, --json, --op, --redis, --width; run: nova-demo who -h\n"}},
-		{name: "a bad value says what the flag wants and never repeats the value", args: []string{"put", "--n", "x"}, code: 2, emptyStdout: true,
-			absent: []string{`"x"`}, stderr: []string{`PUT REFUSED: invalid value for --n: it wants a whole number (how many rows); run: nova-demo put -h`}},
+		{name: "a bad value says what the flag wants and what it got", args: []string{"put", "--n", "x"}, code: 2, emptyStdout: true,
+			stderr: []string{`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h`}},
 		{name: "a flag with no value says what it wants", args: []string{"put", "--store"}, code: 2, emptyStdout: true,
 			stderr: []string{"PUT REFUSED: --store needs a value: it wants a directory (required); run: nova-demo put -h"}},
 		{name: "a misspelled verb names the nearest verb and the verbs", args: []string{"pt"}, code: 2, emptyStdout: true,
@@ -727,6 +727,76 @@ func TestAnUnknownFlagNamesTheNearestAndEveryFlag(t *testing.T) {
 	assert.Contains(t, run("--ope"), "did you mean --op?", "one edit")
 	assert.Contains(t, run("--xy"), "did you mean --op?", "two edits on a short flag")
 	assert.NotContains(t, run("--zzzz"), "did you mean", "nothing near is not a guess")
+}
+
+// oneOf is a flag.Value of a verb's own: it words its own reason when it
+// refuses a value, and the refusal carries that reason after the value.
+type oneOf struct{ s string }
+
+func (v *oneOf) String() string { return v.s }
+func (v *oneOf) Set(s string) error {
+	if s != "a" && s != "b" {
+		return fmt.Errorf("only a or b")
+	}
+	v.s = s
+	return nil
+}
+
+// TestEveryBadValueIsNamedAtOnce pins every bad value at once (skeleton
+// contract 1.8; STANDARD §3 point 2: one run reports every problem it can
+// find): the skeleton parses every flag value, words each failure as one
+// problem in the order the words were typed, and refuses once listing all, so
+// two bad values and an unknown flag are three problems in one refusal, and no
+// message holds the flag package's own `parse error` or `provided but not
+// defined`.
+func TestEveryBadValueIsNamedAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string // the whole of stderr: one refusal, one line per problem, in order
+	}{
+		{"two bad values and an unknown flag are three problems in one refusal",
+			[]string{"put", "--n", "x", "--fix", "--max", "y"},
+			`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --max wants a whole number (items listed before one MORE line stands for the rest; 0 lists all), got "y"; run: nova-demo put -h` + "\n"},
+		{"a bad value and a flag missing its value are two problems",
+			[]string{"put", "--n", "x", "--store"},
+			`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --store needs a value: it wants a directory (required); run: nova-demo put -h` + "\n"},
+		{"a word after an unknown flag hides no bad value behind it",
+			[]string{"put", "--fix", "s", "--n", "x"},
+			`PUT REFUSED: unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --n wants a whole number (how many rows), got "x"; run: nova-demo put -h` + "\n"},
+		{"a bad boolean value wants true or false, and the next flag is read on",
+			[]string{"fn", "load", "--dry-run=x", "--name"},
+			`FN-LOAD REFUSED: --dry-run wants true or false (print what the verb would write and write nothing), got "x"; run: nova-demo fn load -h` + "\n" +
+				`FN-LOAD REFUSED: --name needs a value: it wants the function's name (required); run: nova-demo fn load -h` + "\n"},
+		{"a malformed flag word is named and the reading goes on",
+			[]string{"put", "--=x", "--n", "y"},
+			`PUT REFUSED: bad flag syntax: --=x; run: nova-demo put -h` + "\n" +
+				`PUT REFUSED: --n wants a whole number (how many rows), got "y"; run: nova-demo put -h` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(demo().Run).Run(tc.args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Empty(t, r.Stdout)
+			assert.Equal(t, tc.want, r.Stderr)
+			assert.NotContains(t, r.Stderr, "parse error", "the flag package's own text is no wording")
+			assert.NotContains(t, r.Stderr, "provided but not defined", "the flag package's own text is no wording")
+		})
+	}
+	// A flag.Value of the verb's own words its own reason: the refusal carries
+	// it after the value, so the reason the value was refused is not lost.
+	own := &Tool{Name: "nova-own", What: "reads one value of its own", ExitTable: "0 done, 2 could not run.",
+		Verbs: []Verb{{Name: "put", Usage: "put --one <a|b>", Effect: Inspection,
+			Flags: func(f *Flags) { f.Var(&oneOf{}, "one", "the letter a or b") },
+			Run:   func(*Call) *Out { return Done() }}}}
+	r := testkit.Main(own.Run).Run("put", "--one", "c")
+	assert.Equal(t, 2, r.Code, "stderr %q", r.Stderr)
+	assert.Equal(t, `PUT REFUSED: --one wants the letter a or b, got "c" (only a or b); run: nova-own put -h`+"\n", r.Stderr)
 }
 
 // selfTalk is a tool whose plain use is `<tool> <file>...`: its default verb.

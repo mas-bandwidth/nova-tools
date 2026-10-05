@@ -25,6 +25,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -303,26 +304,157 @@ func editDistance(a, b string) int {
 	return row[len(b)]
 }
 
-// unknownFlagWhy words an unknown flag the way an unknown verb is worded: every
+// unknownFlag words an unknown flag the way an unknown verb is worded: every
 // flag of the verb, and did you mean when one name is within two edits or a
-// unique prefix, never a list cut to "and <n> more". ok is false for a missing
-// value or a bad value, which stay verbflag.Explain (STANDARD §2).
-func unknownFlagWhy(fs *flag.FlagSet, err error) (string, bool) {
-	rest, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -")
-	if !ok {
-		return "", false
-	}
-	got := "--" + strings.TrimLeft(rest, "-")
+// unique prefix, never a list cut to "and <n> more" (STANDARD §2: an unknown
+// verb or flag is answered with the names there are and the nearest).
+func unknownFlag(fs *flag.FlagSet, name string) string {
+	got := "--" + name
 	var names []string
 	fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
 	if len(names) == 0 {
-		return "unknown flag " + got + "; " + fs.Name() + " takes no flags", true
+		return "unknown flag " + got + "; " + fs.Name() + " takes no flags"
 	}
 	near := didYouMean(got, names)
 	if near != "" {
 		near = ";" + near
 	}
-	return "unknown flag " + got + "; the flags of " + fs.Name() + " are " + strings.Join(names, ", ") + near, true
+	return "unknown flag " + got + "; the flags of " + fs.Name() + " are " + strings.Join(names, ", ") + near
+}
+
+// unknownFlagWhy is unknownFlag for a parse error that names an undefined flag.
+func unknownFlagWhy(fs *flag.FlagSet, err error) (string, bool) {
+	rest, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -")
+	if !ok {
+		return "", false
+	}
+	return unknownFlag(fs, strings.TrimLeft(rest, "-")), true
+}
+
+// isFlagWord reports whether a word is read as a flag, as the flag package
+// reads one: a dash and one character after it at least.
+func isFlagWord(a string) bool { return len(a) > 1 && a[0] == '-' }
+
+// parseProblems reads args the way the flag package reads them, past the first
+// failure, and words every failure of the reading as one problem, in the order
+// the words were typed, so one run names every bad value at once and the tool
+// refuses once listing all (skeleton contract 1.8; STANDARD §3 point 2: one run
+// reports every problem it can find; ONBOARDING point 2). An unknown flag keeps
+// the wording unknownFlag gives it and a flag missing its value the wording
+// verbflag.Explain gives it, so one flag is worded the same everywhere; a value
+// its flag cannot take is worded by badValue, and a malformed flag word by the
+// one name the shape has ("bad flag syntax"). The word after an unknown flag
+// may be its value or the first argument: the reading passes it over and reads
+// on, so a later bad value is named too. The terminator `--`, the first
+// argument and a help word end the reading, as they end the flag package's.
+func parseProblems(fs *flag.FlagSet, args []string) []string {
+	var problems []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !isFlagWord(a) {
+			return problems // the terminator or the first argument ends the flags
+		}
+		numMinuses := 1
+		if a[1] == '-' {
+			numMinuses = 2
+		}
+		name := a[numMinuses:]
+		if name == "" || name[0] == '-' || name[0] == '=' {
+			problems = append(problems, "bad flag syntax: "+a)
+			if !strings.Contains(a, "=") && i+1 < len(args) && !isFlagWord(args[i+1]) {
+				i++ // the word may be its value: pass it over and read on
+			}
+			continue
+		}
+		value := ""
+		inline := false
+		if j := strings.IndexByte(name, '='); j >= 1 { // equals cannot be first (the flag package's reading)
+			name, value, inline = name[:j], name[j+1:], true
+		}
+		f := fs.Lookup(name)
+		switch {
+		case f == nil:
+			if name == "help" || name == "h" {
+				return problems // the parse would have answered help here
+			}
+			problems = append(problems, unknownFlag(fs, name))
+			if !inline && i+1 < len(args) && !isFlagWord(args[i+1]) {
+				i++ // the word may be its value: pass it over and read on
+			}
+		case isBoolFlag(f):
+			if inline {
+				if _, err := strconv.ParseBool(value); err != nil {
+					problems = append(problems, badValue(f, value, ""))
+				}
+			}
+		default:
+			if !inline {
+				if i+1 >= len(args) {
+					return append(problems, "--"+f.Name+" needs a value: it wants "+wants(f))
+				}
+				i++
+				value = args[i]
+			}
+			if err := fs.Set(name, value); err != nil {
+				reason := err.Error()
+				if reason == "parse error" { // the flag package's own word says nothing
+					reason = ""
+				}
+				problems = append(problems, badValue(f, value, reason))
+			}
+		}
+	}
+	return problems
+}
+
+// badValue words a value its flag cannot take: the flag named with two dashes,
+// what it wants, and the value given (oneline.Quote: it keeps its spaces),
+// with the flag.Value's own reason after the value when it gave one — never
+// the flag package's own `parse error` (skeleton contract 1.8; STANDARD §3
+// point 2: the refusal says what the flag WANTS).
+func badValue(f *flag.Flag, value, reason string) string {
+	s := "--" + f.Name + " wants " + wants(f) + ", got " + oneline.Quote(value)
+	if reason != "" {
+		s += " (" + reason + ")"
+	}
+	return s
+}
+
+// kindWants is what a value of each of the flag package's kinds is, in words.
+var kindWants = map[string]string{
+	"int": "a whole number", "uint": "a whole number of zero or more", "float": "a number",
+	"duration": "a duration such as 30s or 5m",
+}
+
+// wants is what flag f wants: its kind in words, then its description — the
+// same text verbflag.Explain's "it wants" carries, so one flag is worded the
+// same in every refusal. The skeleton keeps its own: verbflag's wants is
+// unexported (STANDARD §7: kept custom, the shared one is out of reach).
+func wants(f *flag.Flag) string {
+	kind, text := flag.UnquoteUsage(f)
+	if isBoolFlag(f) {
+		kind = "true or false"
+	} else if w := kindWants[kind]; w != "" {
+		kind = w
+	} else {
+		kind = ""
+	}
+	switch {
+	case kind == "" && text == "":
+		return "a value"
+	case kind == "":
+		return text
+	case text == "":
+		return kind
+	}
+	return kind + " (" + text + ")"
+}
+
+// isBoolFlag reports whether f is a boolean flag, as the flag package reads
+// one: it takes no value word after it.
+func isBoolFlag(f *flag.Flag) bool {
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
 }
 
 // Cmd renders the words of a command a reader is told to run, so a POSIX shell
@@ -558,15 +690,28 @@ func lines(s string) []string {
 }
 
 // call parses one verb's flags, runs it, caps its listing, and renders its Out.
+// A parse failure is read on past its first error (parseProblems), so one run
+// names every bad value at once and the verb refuses once listing all
+// (skeleton contract 1.8; STANDARD §3 point 2).
 func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	f := v.flags()
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
-		why := verbflag.Explain(f.FlagSet, err)
-		if u, ok := unknownFlagWhy(f.FlagSet, err); ok {
-			why = u
+		problems := parseProblems(f.FlagSet, args)
+		if len(problems) == 0 {
+			// A parse error the reading words none of (a boolean flag whose own
+			// Set("true") fails): the one wording the error has, so the refusal
+			// always says what is wrong and is never an envelope alone.
+			why := verbflag.Explain(f.FlagSet, err)
+			if u, ok := unknownFlagWhy(f.FlagSet, err); ok {
+				why = u
+			}
+			problems = []string{why}
 		}
-		o := Refuse(oneline.Cap(why, oneline.TailBytes))
+		for i, p := range problems {
+			problems[i] = oneline.Cap(p, oneline.TailBytes)
+		}
+		o := Refuse(problems...)
 		o.Remedy = t.verbHelp(v.Name)
 		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
 	}
