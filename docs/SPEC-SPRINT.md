@@ -2007,7 +2007,17 @@ makes a waiting stream merging; the merge step (when it lands the last queued
 card of a stream not done), return and drop make a merging stream with nothing
 queued or stuck waiting, with `since` then, and a stream landed when every
 primary of it left on the table has landed. A stopped stream stays stopped
-until it resumes. accept closes the open card judgments of the primaries it
+until it resumes, by a person's `resume` or, for one cause only, by the land
+loop: a stream stopped because the merge queue rejected (the push refused, a
+protected branch's GH006 among them) is resumed by the loop (`resumeRejected`,
+cmd/nova-sprint/landloop.go) once `PushRetryAfter` (1m) has passed since it
+stopped, and again after twice that wait, up to `PushRetries` (3) resumes; the
+cards stayed queued, so the landing that follows pushes again, and a push that
+succeeds lands the stream with its judgment closed by the resume. A push that
+is refused every time leaves the stream stopped under its one open judgment, for
+a person (`TestAStreamStoppedByATransientPushRefusalResumesItselfOnceThePushSucceeds`,
+`TestAStreamWhosePushIsRefusedForGoodStaysStoppedUnderOneJudgment`). Every other
+cause stays stopped until a person resumes it. accept closes the open card judgments of the primaries it
 accepts.
 
 `since` is the clock time the state last changed. The merge step is mechanical

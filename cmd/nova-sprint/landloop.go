@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // The server lands what the readers passed (run --land): the last of the sprint's
@@ -30,6 +31,22 @@ func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 		a.landRound(ctx, addr, nil, stdout)
 		a.sleep(LandEvery)
 	}
+}
+
+// PushRetryAfter is how long the loop leaves a stream stopped by a refused push before it
+// resumes it, and PushRetries how many times it does (each wait twice the one before): a
+// refusal that was transient (a protected branch's GH006, a base that moved twice) then
+// clears with no person; one that holds stays stopped under its one judgment
+// (docs/SPEC-SPRINT.md, the stream lifecycle).
+const (
+	PushRetryAfter = time.Minute
+	PushRetries    = 3
+)
+
+// pushRetry is one stream's resumes after a refused push: n done, the next not before next.
+type pushRetry struct {
+	n    int
+	next time.Time
 }
 
 // landRound runs one land over every stream with cards queued, as the sprint's
@@ -64,6 +81,7 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 // read and held nothing.
 func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
 	a.serial.Lock()
+	a.resumeRejected(ctx, addr)
 	queued, coordinator, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
 	idle := err == nil && !queued
@@ -127,4 +145,54 @@ func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coor
 		}
 	}
 	return false, coordinator, nil
+}
+
+// resumeRejected resumes, as the loop, each stream stopped because its push was rejected
+// (the merge queue rejected) once its wait has passed, so the landing that follows pushes
+// again: the cards stayed queued. The wait doubles with each resume and the loop gives up
+// after PushRetries, leaving the stream stopped under its one judgment; the count is kept
+// until the stream has nothing queued, so a push refused again after a resume does not
+// begin it afresh. A store that cannot be read is left to the round's own read.
+func (a *app) resumeRejected(ctx context.Context, addr string) {
+	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
+	// ignored: queuedToMerge reads the store next and fails the round with the error
+	if err != nil {
+		return
+	}
+	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
+	// ignored: queuedToMerge reads the store next and fails the round with the error
+	if err != nil {
+		return
+	}
+	if a.pushRetry == nil {
+		a.pushRetry = map[string]*pushRetry{}
+	}
+	now := a.now()
+	for _, row := range s.Merge.Rows() {
+		ctl := s.StreamCtl(row)
+		if ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "rejected" {
+			if s.Merge.Count(row, sprint.Queued) == 0 {
+				delete(a.pushRetry, row)
+			}
+			continue
+		}
+		r := a.pushRetry[row]
+		if r == nil {
+			r = &pushRetry{next: now.Add(PushRetryAfter)}
+			a.pushRetry[row] = r
+		}
+		if r.n >= PushRetries || now.Before(r.next) {
+			continue
+		}
+		coordinator, err := st.B.Coordinator(ctx)
+		if err != nil || coordinator == "" {
+			continue
+		}
+		did := fmt.Sprintf("the land loop resumes it: retry %d of %d of the push the remote refused", r.n+1, PushRetries)
+		if res, err := st.Run(ctx, store.ResumeStep(sprint.ResumeReq{Stream: row, Did: did, Who: coordinator})); err != nil || len(res.Refused) > 0 {
+			continue
+		}
+		r.n++
+		r.next = now.Add(PushRetryAfter << r.n)
+	}
 }
