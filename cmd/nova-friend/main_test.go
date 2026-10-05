@@ -30,6 +30,7 @@ type rig struct {
 	store     *bustest.Fake
 	env       map[string]string
 	launchctl []string
+	copy      friend.CopyFile
 	onPath    map[string]string // what lookPath finds, by name
 	now       time.Time
 	home      string
@@ -74,6 +75,7 @@ func (r *rig) world() world {
 		uid:     501,
 		home:    r.home,
 		binary:  func() (string, error) { return "/opt/nova/bin/nova-friend", nil },
+		copy:    r.copy,
 		lookPath: func(name string) (string, error) {
 			if p, ok := r.onPath[name]; ok {
 				return p, nil
@@ -279,6 +281,54 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK label=com.nova.friend-bob", `UNINSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`)
 	assert.NoFileExists(t, plist)
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK")
+}
+
+// The verb wires the removable-volume rule (docs/SPEC-FRIEND.md). The binary
+// path is fake and the copy is the test's, so nothing is installed on the machine.
+func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
+	t.Parallel()
+	const src = "/Volumes/disk/bin/nova-friend"
+
+	r := newRig(t, "ada", "bob")
+	dst := friend.InstalledBinary(r.home)
+	var copied []string
+	r.copy = func(from, to string) error {
+		copied = append(copied, from+" -> "+to)
+		return nil
+	}
+	w := r.world()
+	w.binary = func() (string, error) { return src, nil }
+	cli := testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		return run(args, stdin, stdout, stderr, w)
+	})
+	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--dry-run").Exit(0).
+		Out(`INSTALL PLAN command="copy ` + src + " " + dst + `"`)
+	assert.Empty(t, copied, "a dry run copies nothing")
+	assert.Empty(t, r.launchctl)
+	assert.NoFileExists(t, plist)
+
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0).
+		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
+	assert.Equal(t, []string{src + " -> " + dst}, copied)
+	raw, err := os.ReadFile(plist)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "<string>"+dst+"</string>")
+	assert.NotContains(t, string(raw), "/Volumes/")
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+
+	refused := newRig(t, "ada", "bob")
+	refused.copy = func(string, string) error { return errors.New("disk full") }
+	w = refused.world()
+	w.binary = func() (string, error) { return src, nil }
+	cli = testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		return run(args, stdin, stdout, stderr, w)
+	})
+	plist = filepath.Join(refused.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(2).
+		Err("INSTALL REFUSED", "removable volume", "disk full")
+	assert.Empty(t, refused.launchctl)
+	assert.NoFileExists(t, plist)
 }
 
 // run over the fake store, a stub harness and a cancelled context: the
