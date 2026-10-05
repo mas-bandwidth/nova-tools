@@ -200,3 +200,20 @@ func entries(stream string, msgs []redis.XMessage) []Entry {
 	}
 	return out
 }
+
+// PendingPage uses the server's exclusive cursor and ownership filter.
+func (r Redis) PendingPage(ctx context.Context, stream, group, consumer, after string, count int) ([]string, error) {
+	start := "-"
+	if after != "" {
+		start = "(" + after
+	}
+	rows, err := r.C.XPendingExt(ctx, &redis.XPendingExtArgs{Stream: stream, Group: group, Consumer: consumer, Start: start, End: "+", Count: int64(count)}).Result()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(rows))
+	for i, p := range rows {
+		ids[i] = p.ID
+	}
+	return ids, nil
+}

@@ -10,12 +10,13 @@
 \* pongs; daemonPongs, the daemon's own answers; busy, whether a turn is in
 \* the session, and owed, a wake check not yet pushed in (daemon.go loop.wake).
 \* The clock is now, one unit a tick, Window units a window. The outside: the
-\* coordinator pinging (Ping, each ping a fresh nonce, plain or a wake check),
-\* the session's turns (Turn, one carrying messages, with the pong line at its
-\* head while a challenge is open; WakeTurn, the pong line alone, pushed into
-\* a free session for a wake check; TurnEnds), the session having seen every
-\* nonce a turn put in front of it (seen), and the session answering (Pong,
-\* with any nonce it has seen, so a stale or replayed pong is possible). The pushes the session is owed are counted: silentSaid
+\* coordinator pinging (Ping, each ping a fresh nonce, plain or a wake check;
+\* RepeatPing with the current nonce), the session's turns (Turn, one carrying
+\* messages, with the pong line at its head while a challenge is open; WakeTurn,
+\* the pong line alone, pushed into a free session for a wake check; TurnEnds),
+\* the session having seen every nonce a turn put in front of it (seen), and
+\* the session answering (Pong, with any nonce it has seen, so a stale or
+\* replayed pong is possible). The pushes the session is owed are counted: silentSaid
 \* (the "coordinator silent" pushes) beside outages (the times the
 \* connection went silent).
 \*
@@ -130,6 +131,13 @@ TurnEnds ==
   /\ busy' = FALSE
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
 
+\* Repeating the current nonce refreshes the connection only: the original
+\* deadline and any accepted pong survive both peek/receive and new entries.
+RepeatPing ==
+  /\ nonce # NoNonce
+  /\ conn' = "connected" /\ lastPing' = now
+  /\ UNCHANGED <<now, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed>>
+
 \* The session answers with a nonce it has seen (machine.go Pong): the
 \* current one ends the challenge; any other changes nothing. The witness
 \* takes any seen nonce; answered records which one did.
@@ -143,6 +151,7 @@ Pong(n) ==
 Next ==
   \/ Tick
   \/ \E wake \in BOOLEAN : Ping(wake)
+  \/ RepeatPing
   \/ Turn
   \/ WakeTurn
   \/ TurnEnds
@@ -183,5 +192,8 @@ OwedOnlyWhileAsked == owed => chal # "quiet"
 \* No liveness is claimed: the clock is finite here, and DeafAfterWindow
 \* already says an open challenge is younger than a window at every state,
 \* so once the clock moves a window it is answered or deaf.
+\* This Spec is the awake challenge projection, including A2 RepeatPing.
+\* MCFriendSleep.tla separately defines SleepSpec for sleep/delivery safety;
+\* neither projection alone proves their cross-layer Go daemon integration.
 
 =============================================================================

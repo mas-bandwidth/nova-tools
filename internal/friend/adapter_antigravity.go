@@ -26,7 +26,7 @@ import (
 // a high-priority message and its watcher starts a turn on it; the session
 // marks the message read in read.json there as it takes it. Measured
 // 2026-10-04 08:52 ET: sent at :28, the turn's first step at :32, the
-// friend's "got it" on nova-bus2 at :35.
+// friend's "got it" on nova-bus at :35.
 //
 // The server's address and CSRF token are read off the language_server
 // process each delivery (ps, then lsof for its listening ports; the one that

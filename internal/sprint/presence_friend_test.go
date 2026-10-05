@@ -35,3 +35,27 @@ func TestAFriendIsDownAfterFifteenSecondsWithoutABeat(t *testing.T) {
 	assert.Equal(t, Up, FriendStatus(FriendPresence{Beat: Beat{At: again}, Generation: FirstSeatGeneration}, again), "a beat at t+16 s is up at once")
 	assert.Equal(t, Down, FriendStatus(FriendPresence{Generation: FirstSeatGeneration}, p0), "never beaten is down")
 }
+
+func TestAsleepFriendIsShownDownAndKeepsMachinePresenceSeparate(t *testing.T) {
+	t.Parallel()
+	b := Beat{At: p0, Asleep: true}
+	for _, c := range []struct {
+		name string
+		at   time.Duration
+		held bool
+		want string
+	}{
+		{"fresh", 0, false, Down},
+		{"before expiry", 14 * time.Second, false, Down},
+		{"expired", FriendDownAfter, false, Down},
+		{"held fresh", 0, true, Held},
+		{"held expired", FriendDownAfter, true, Held},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, FriendStatus(FriendPresence{Held: c.held, Beat: b, Generation: FirstSeatGeneration}, p0.Add(c.at)))
+		})
+	}
+	assert.Equal(t, Up, PresenceStatus(false, b, p0), "sleep is a friend state, not machine presence")
+	assert.Equal(t, Down, FriendStatus(FriendPresence{Beat: Beat{Asleep: true}, Generation: FirstSeatGeneration}, p0), "sleep without a beat is down")
+}

@@ -46,7 +46,7 @@ import (
 // workerVerb is the worker a verb of a batch acts as and how many words its
 // verb is, or why the server does not run it. A worker sends its own verbs only:
 // take, finish, read or queue, then --as and its name; or fleet beat, its name,
-// --load and a number, and nothing more; or friend beat, its name, and its report's flags each with its value (friendBeatReport). The name is one worker, never a list.
+// --load and a number, and nothing more; or friend beat, an optional --asleep, its name, and its report's flags each with its value (friendBeatReport). The name is one worker, never a list.
 // No later word, wherever it stands, is a flag named as, redis or actor: the
 // server gives the store and the actor (serve puts them before the worker's
 // words, where nothing the worker sent can take them as a value or end the
@@ -59,6 +59,28 @@ import (
 // the worker wants) are held to their shapes here, before the verb runs: a count, and card
 // ids (packetsWanted).
 func workerVerb(argv []string) (as string, words int, why string) {
+	// the coordinator's keepalive (nova-friend coordinate) reads the seat and the friends, and
+	// writes one friend's health under the seat it read: three narrow shapes, nothing else
+	if slices.Equal(argv, []string{"seat", "--json"}) || slices.Equal(argv, []string{"where", "--json"}) {
+		return "", 1, ""
+	}
+	if len(argv) >= 2 && argv[0] == "friend" && argv[1] == "health" {
+		if len(argv) != 11 || argv[2] != "--actor" || !sprint.ValidID(argv[3]) {
+			return "", 0, "friend health sent to the server begins `friend health --actor <coordinator> <friend>`"
+		}
+		if !sprint.ValidID(argv[4]) || argv[5] != "--state" || !slices.Contains(sprint.HealthStates, argv[6]) ||
+			argv[7] != "--seen" || argv[8] == "" || argv[9] != "--generation" {
+			return "", 0, "friend health names one friend after its coordinator: `friend health --actor <coordinator> <friend> --state <up|asleep|down> --seen <RFC3339> --generation <n>` and nothing more"
+		}
+		if _, err := time.Parse(time.RFC3339, argv[8]); err != nil {
+			return "", 0, "friend health proof time is RFC3339"
+		}
+		generation, err := strconv.ParseUint(argv[10], 10, 64)
+		if err != nil || generation == 0 {
+			return "", 0, "friend health generation is a positive integer"
+		}
+		return argv[3], 2, ""
+	}
 	if len(argv) >= 2 && argv[0] == "fleet" && argv[1] == "beat" {
 		rest := argv[2:]
 		if len(rest) != 3 || rest[1] != "--load" || !sprint.ValidID(rest[0]) {
@@ -70,13 +92,17 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		return rest[0], 2, ""
 	}
 	if len(argv) >= 2 && argv[0] == "friend" && argv[1] == "beat" {
-		if len(argv) < 3 || !sprint.ValidID(argv[2]) {
-			return "", 0, "a friend's beat sent to the server is `friend beat <friend>` and its report's flags (" + friendBeatServed + ") and nothing more"
+		rest := argv[2:]
+		if len(rest) > 0 && rest[0] == "--asleep" {
+			rest = rest[1:]
 		}
-		if why := friendBeatReport(argv[3:]); why != "" {
+		if len(rest) < 1 || !sprint.ValidID(rest[0]) {
+			return "", 0, "a friend's beat sent to the server is `friend beat [--asleep] <friend>` and its report's flags (" + friendBeatServed + ") and nothing more"
+		}
+		if why := friendBeatReport(rest[1:]); why != "" {
 			return "", 0, why
 		}
-		return argv[2], 2, ""
+		return rest[0], 2, ""
 	}
 	if len(argv) >= 2 && argv[0] == "lane" && (argv[1] == "take" || argv[1] == "give") {
 		// a lane's take or give (lane.go; docs/SPEC-SPRINT.md section 18): its kind, the
@@ -203,6 +229,16 @@ func (a *app) serveCtx(ctx context.Context, req sprintwire.Request, local bool) 
 				lane = "beat"
 			}
 			args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
+			switch {
+			case as == "": // the keepalive's reads: no worker acts, nothing is written
+				serving = false
+				if v := readVerb(argv); lanes != nil && v.err == nil && onReadLane(v) {
+					lane = "read"
+				}
+			case argv[0] == "friend" && argv[1] == "health": // the actor is the coordinator named after the verb, and only its name
+				serving = false
+				args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[4:])
+			}
 		case local:
 			v := readVerb(argv)
 			if why = v.unserved(); why == "" {
@@ -398,6 +434,10 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 // friendBeatFlags are the flags of a friend's beat the server runs, each with the shape of
 // its value: what her machinery reports of her work (friend beat).
 var friendBeatFlags = map[string]func(string) bool{
+	"--active": func(v string) bool {
+		_, err := time.Parse(time.RFC3339, v)
+		return err == nil
+	},
 	"--running": runningIDs,
 	"--working": wholeAtLeast(0),
 	"--queue":   wholeAtLeast(0),
