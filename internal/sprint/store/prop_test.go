@@ -98,8 +98,6 @@ func stallWhy(d string) string {
 // interrupt (a stall judgment, written by the next tick) must hold it.
 var knownStalls = map[string]string{}
 
-const findingF3 = "FINDING-F3: the overdue decision act prints ack for every judgment; an ack of the one judgment that holds a primary (ready to accept, stranded in review, reads exhausted, sentinel reached) leaves it with nothing open"
-
 var propCutPoints = []string{"release", "apply p-work before", "apply p-merge before", "apply p-readers before", "apply p-fleet before"}
 
 // genProp is the random sprint of a seed: 2 to 4 streams, 5 to 40

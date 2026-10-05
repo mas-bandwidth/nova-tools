@@ -25,7 +25,6 @@ type crWorld struct {
 	silentWorkers, silentReaders, silentMerger, silentCoord int
 	stopAt, stopFor                                         int
 	crossAge                                                map[string]int
-	log                                                     []string
 	holderFail                                              []string
 	readyToAccept                                           map[string]int // primary -> rounds seen
 	droppedDone                                             bool
