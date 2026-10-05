@@ -73,6 +73,7 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 	case err != nil:
 		lines, code = []string{"LAND FAILED the merge queue could not be read: " + oneline.Err(err) + "; nothing was landed, and the next round tries again; run: nova-sprint where"}, 2
 	case queued && coordinator != "":
+		lines = a.resumeRejected(ctx, addr, coordinator)
 		var out, errb bytes.Buffer
 		a.landLazy, a.landCtx = true, ctx
 		code = a.cmdLand(append([]string{"--redis", addr, "--actor", coordinator}, more...), &out, &errb)
@@ -104,6 +105,44 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 		fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(line))
 	}
 	return code, idle
+}
+
+// resumeRejected resumes, once, each stream a refused push stopped (cause rejected),
+// so a refusal that was transient costs one round and no person: the stream's cards
+// are queued again and this round's land pushes them. A stream already resumed this way
+// and stopped again is left stopped, with the judgment its stop raised, for the
+// coordinator; the mark (a.rejectedResumed) clears when the stream is seen not
+// stopped for that cause. A resume that fails is returned as lines for the round to
+// print: the stream stays stopped and the judgment stands.
+func (a *app) resumeRejected(ctx context.Context, addr, coordinator string) []string {
+	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
+	if err != nil {
+		return nil // ignored: the round's own read of the queue just succeeded; the next round tries again
+	}
+	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
+	if err != nil {
+		return nil // ignored: as above
+	}
+	var said []string
+	for _, row := range s.Merge.Rows() {
+		ctl := s.StreamCtl(row)
+		if ctl == nil || ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "rejected" {
+			delete(a.rejectedResumed, row)
+			continue
+		}
+		if a.rejectedResumed[row] {
+			continue
+		}
+		if a.rejectedResumed == nil {
+			a.rejectedResumed = map[string]bool{}
+		}
+		a.rejectedResumed[row] = true
+		var out, errb bytes.Buffer
+		if a.cmdResume([]string{"--redis", addr, "--actor", coordinator, "--stream", row, "--did", "the lander retries a push the remote refused"}, &out, &errb) != 0 {
+			said = append(said, strings.TrimSpace(errb.String()))
+		}
+	}
+	return said
 }
 
 // queuedToMerge says a stream has a card queued to merge, and names the sprint's
