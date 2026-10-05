@@ -33,7 +33,8 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	// ignored: a deferred close whose error is not the result already chosen
+	defer func() { _ = st.Close() }()
 	schema, err := st.Version(ctx)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -102,7 +103,8 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer rs.Close()
+	// ignored: a deferred close whose error is not the result already chosen
+	defer func() { _ = rs.Close() }()
 	line += " redis=" + config.Value(addr)
 	o.Fact("redis", addr)
 	behind := 0
