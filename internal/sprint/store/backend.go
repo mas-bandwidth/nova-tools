@@ -212,6 +212,11 @@ type OpRecord struct {
 	// Health is a friend's health observed (store/friends.go): its commit
 	// writes it as her friend-health record.
 	Health *sprint.FriendHealthWrite `json:"health,omitempty"`
+	// Timers is what the step does to the timer record (store/timers.go):
+	// its commit applies it to the record as the commit reads it
+	// (sprint.Timers.With), so the timers it raised are closed in the same
+	// step as their judgment and a set or cancel since its read is kept.
+	Timers *sprint.TimerChange `json:"timers,omitempty"`
 }
 
 // Tables is the stored table names of the record's manifests, in order.

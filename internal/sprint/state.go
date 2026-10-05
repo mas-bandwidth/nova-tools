@@ -306,6 +306,10 @@ type Snapshot struct {
 	// that drains it.
 	QueueLen int
 	Queue    []QueuedChange
+	// Timers is the timer record, read under the step's fence by a step that
+	// asks for it (store.Step.Timers): a set, a cancel and the tick's timer
+	// duty plan on it (timers.go).
+	Timers Timers
 	// Held is the work cards a change queued after the pump's drain names,
 	// read with a pump part's step: the part leaves them for the next tick's
 	// pump (LeaveQueued), and a part that plans a card's move reads it to

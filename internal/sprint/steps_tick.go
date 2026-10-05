@@ -1064,12 +1064,11 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		j.subjects = append(j.subjects, o.Subject())
 	}
 	overdue := func(n Note) bool {
-		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
-			return s.Now.After(n.Review)
-		}
 		if !n.Review.IsZero() {
-			d, ok := r.running(s.Now, stamp(n.ReviewSet))
-			return ok && d >= n.Review.Sub(n.ReviewSet)
+			// The review time wait set counts running time from when wait set
+			// it, by the tree's one clock comparison, the same one a timer is
+			// due by (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers").
+			return DueNow(s.Now, n.Review, n.ReviewSet, r.Stopped)
 		}
 		d, ok := r.running(s.Now, stamp(n.At))
 		return ok && d > DeadlineJudgment
@@ -1228,7 +1227,9 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	}
 	for _, o := range s.Acked {
 		if !o.Note.Review.IsZero() && contains(types, o.Note.Type) {
-			if d, ok := r.running(s.Now, o.Note.At.UTC().Format(time.RFC3339)); ok && d >= o.Note.Review.Sub(o.Note.At) {
+			// the hold's review time counts running time from the hold, by the
+			// tree's one due test (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers")
+			if DueNow(s.Now, o.Note.Review, o.Note.At, r.Stopped) {
 				p.Closes = append(p.Closes, o)
 				continue
 			}

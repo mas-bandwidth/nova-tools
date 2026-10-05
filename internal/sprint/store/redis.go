@@ -523,17 +523,26 @@ func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 			if cur != prefix {
 				return nil // empty (released) or another operation's
 			}
+			timers := ""
+			if commit && op.Timers != nil {
+				if timers, err = r.timersAfter(ctx, tx, *op.Timers); err != nil {
+					return err
+				}
+			}
 			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
 				if commit {
 					if err := r.commit(ctx, p, op); err != nil {
 						return err
+					}
+					if op.Timers != nil {
+						p.Set(ctx, r.Names.Key(keyTimers), timers, 0)
 					}
 				}
 				p.Del(ctx, fence)
 				return nil
 			})
 			return err
-		}, fence)
+		}, fence, r.Names.Key(keyTimers))
 		// The fence moved while this release was prepared: another writer
 		// finishing the same operation released it, or took the fence after;
 		// read it again, and release only if it still holds this operation.
@@ -695,6 +704,25 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
 	}
 	return nil
+}
+
+// timersAfter is the timer record the operation's change leaves of the record
+// as the release's transaction reads it (sprint.Timers.With): the key is
+// watched with the fence, so the write is of the record the change was
+// applied to.
+func (r *Redis) timersAfter(ctx context.Context, tx *redis.Tx, c sprint.TimerChange) (string, error) {
+	var cur sprint.Timers
+	raw, err := tx.Get(ctx, r.Names.Key(keyTimers)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", err
+	}
+	if err == nil {
+		if err := json.Unmarshal([]byte(raw), &cur); err != nil {
+			return "", fmt.Errorf("the machine's %s record is unreadable: %w", keyTimers, err)
+		}
+	}
+	rec, err := json.Marshal(cur.With(c))
+	return string(rec), err
 }
 
 // QueueRead is LRANGE over the whole queue: one exchange.

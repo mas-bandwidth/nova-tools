@@ -88,14 +88,18 @@ func ValidGoalName(name string) error {
 
 // ValidGoalText is nil for text a reminder can carry: not blank, valid UTF-8,
 // no more than max bytes.
-func ValidGoalText(text string, max int) error {
+func ValidGoalText(text string, max int) error { return validText("the goal text", text, max) }
+
+// validText is nil for text of at most max bytes that is not blank, is valid
+// UTF-8 and holds no NUL; its refusal names the text as what.
+func validText(what, text string, max int) error {
 	switch {
 	case strings.TrimSpace(text) == "":
-		return fmt.Errorf("the goal text is empty")
+		return fmt.Errorf("%s is empty", what)
 	case !utf8.ValidString(text) || strings.ContainsRune(text, 0):
-		return fmt.Errorf("the goal text is not text (invalid UTF-8 or a NUL byte)")
+		return fmt.Errorf("%s is not text (invalid UTF-8 or a NUL byte)", what)
 	case len(text) > max:
-		return fmt.Errorf("the goal text is %d bytes; the bound is %d", len(text), max)
+		return fmt.Errorf("%s is %d bytes; the bound is %d", what, len(text), max)
 	}
 	return nil
 }
