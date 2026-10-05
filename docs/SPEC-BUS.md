@@ -112,6 +112,42 @@ IDLE` of `ClaimAfter`, `JUSTID`), so the next `recv` without the filter, or
 with another, gets it in its order; a skip costs a round trip, and a run of
 skipped claimed messages one more to hand them back.
 
+### fr-delivery-receipts.w1: receipts, and the send alarm
+
+A message to a friend is owed her session's receipt; the stream's ack is not
+one. `send` marks the message, in its own transaction, on the hash
+`bus2:owed:<friend>` (field the message's id, value its `at`) for every
+friend it names in to or cc but the sender; a message to a machine is owed
+nothing (the friends are the set `friends`, read in the roster's trip, so
+send stays two round trips). A receipt clears the mark (`HDEL`) and is
+idempotent. Only the session gives one: `ack --id` (the session's verb, a
+receipt for every id it names, pending or not, so a daemon that acked the
+stream first takes nothing from it), or a message from the friend naming
+the one it answers (`re`), cleared in the reply's own transaction. The
+daemon's ack at the end of a turn (`XACK`) and `recv --ack`/`--exec` are no
+receipts. A ping is answered by the daemon's `daemon-pong`, which names it
+(`re`): a ping is the daemon's, never pushed into the session, and that is
+its receipt. `Bus.Undelivered` reads each friend's hash in one trip
+(`HGETALL` in a pipeline): the count and the oldest by its `at`, what the
+friends table shows as undelivered and the oldest undelivered age
+(SPEC-FRIEND.md). The keys are written by the tool and cleared by a receipt;
+an entry of a stream is still never deleted.
+
+A send that fails on the login (`NOAUTH`, `WRONGPASS`, as
+internal/redisconn classifies it) or on the connection is an outage, said
+by `bus.Watch` as one alarm naming the store and the user, raised at the
+first such failure, counting every later one, and cleared at the next send
+that succeeds (the clear says how many failed). The alarm's reason is the
+store's refusal word for a login, never the rest of its text, and the
+transport's error for a connection; it never holds a password. A refusal of
+the message itself (an unknown name, an empty body) is the sender's mistake
+and neither raises nor clears. The alarm goes to the coordinator by the
+caller's `Raise`, never over the bus that is failing.
+
+The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
+store with users: a sender marks the recipients' hashes, as it writes their
+streams.
+
 ## The identity
 
 Who a verb acts as is the user the connection logged in as, never a word on
@@ -134,9 +170,9 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `EXEC` | `friends`, `machines` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag) |
+| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC` | `friends`, `machines` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re) |
 | recv | `SMEMBERS`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:to:<f>` |
-| ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK` | `bus2:to:<f>` |
+| ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
 | names | `SMEMBERS`, `TIME` | `friends`, `machines` |
@@ -154,9 +190,9 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xrange
+  +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall
 ```
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
@@ -187,5 +223,5 @@ its machine rows; no new kind or field was needed.
 ## Round trips
 
 send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
-four (the roster, the group, the claim, the read). ack: four (group, pending,
-the entries, `XACK`). peek: up to four. log: one. names: one.
+four (the roster, the group, the claim, the read). ack: five (group, pending,
+the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
