@@ -17,7 +17,6 @@ import (
 // her runner started beside the last.
 func TestAFriendsCardIsNeverWithdrawnForARestingRoute(t *testing.T) {
 	t.Parallel()
-	t.Skip("asserts friends-first dealing (a friend card dealt to a friend with room ahead of the fleet), which reaches the sprint base with card port-friends-first-dealing; that card removes this skip")
 	h := routeHarness(t, providerRoute("or-a", "flash", "openrouter"))
 	ids := []string{"a", "b", "c"}
 	for _, id := range ids {

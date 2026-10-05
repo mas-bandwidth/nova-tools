@@ -21,8 +21,11 @@ import (
 // hold are returned to ready and dealt again, and a queue id that is no card of her row
 // is named.
 
-// reconcileApp is a running sprint with amy beating, n cards whose briefs say WHO: friend
-// amy, dealt to her row and delivered into her inbox, and the root her directory is under.
+// reconcileApp is a running sprint with amy beating, n cards whose briefs say WHO: only
+// friend amy, dealt to her row and delivered into her inbox, and the root her directory
+// is under. The hard pin is what keeps a returned card ready while her beat has lapsed:
+// a preference would overflow to the fleet, and this test deals it to her again only
+// once she beats.
 func reconcileApp(t *testing.T, n int) (*testApp, string) {
 	t.Helper()
 	ta, _ := friendApp(t, "amy")
@@ -33,7 +36,7 @@ func reconcileApp(t *testing.T, n int) (*testApp, string) {
 	dir := t.TempDir()
 	for i := 1; i <= n; i++ {
 		id := "s1-" + strconv.Itoa(i)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy")), 0o644))
 	}
 	ta.ok("add --stream s1 --brief-dir " + dir)
 	ta.ok("start")

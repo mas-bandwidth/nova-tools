@@ -304,6 +304,13 @@ func NoteStep(verb string, n sprint.Note) Step {
 	}}
 }
 
+// UnpinStep drops stored WHO pins atomically with their audit notes. The fleet
+// table is loaded so a first attempt returned by friend take can be recognised.
+func UnpinStep(r sprint.UnpinReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "unpin", Load: tables(sprint.Work, sprint.Fleet),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Unpin(s, r) }}
+}
+
 // RelinkStep re-points the needs of an old card to its twin (sprint.Relink): it reads the
 // work table and the old cards' records, placed or not.
 func RelinkStep(r sprint.RelinkReq) Step {

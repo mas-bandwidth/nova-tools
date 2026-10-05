@@ -517,23 +517,9 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		}
 		return strings.Join(held, "; "), "", true
 	case Ready:
-		if name, ok := FriendCard(pr); ok {
-			// a friend's card waits for a friend up below her room, DealAhead times her
-			// width (FriendDeal), whose beats and widths are the friends' records, not
-			// the tables'
-			from := ""
-			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
-				from, _ = FriendOfRow(wc.F(FieldTakenFrom))
-			}
-			switch {
-			case from != "" && from == name:
-				return "a friend's card taken back from " + name + ", the friend its WHO line names: brief it for another friend, or drop it", "", true
-			case from != "" && name == "":
-				name = "a friend other than " + from
-			case name == "":
-				name = "any friend"
-			}
-			return "a friend's card, waiting for " + name + " to be up with room", "", true
+		if OnlyFriend(pr) {
+			name, _ := FriendCard(pr)
+			return "waits for only friend " + name, "", true
 		}
 		up := s.UpMembers()
 		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {
