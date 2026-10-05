@@ -156,7 +156,7 @@ nova-config loop add seat-push --machine bench-a --argv '["/usr/bin/env","NOVA_S
    judgment and note into the holder's inbox directory,
    `~/<holder>-working/inbox/sprint-judgments/`, and follows the seat when it
    moves. It replaces the hand-written launch agent `com.nova.loop.seat-push-<seat>`
-   (a zsh script under `nova-secrets exec`) and `watch.sh`.
+   (a zsh script under `nova-secrets exec`).
 
 2. **The receive thread**: The coordinator is a friend row like any other (the
    sprint row's `coordinator` names her). Her receive thread is her own
