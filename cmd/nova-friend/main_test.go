@@ -33,11 +33,24 @@ type rig struct {
 	now       time.Time
 	home      string
 	answered  map[string]bool // the session checks bob's fake session has answered
+	alive     friend.Aliver
+}
+
+type fakeAlive struct {
+	running bool
+	why     string
+}
+
+func (f fakeAlive) Alive(context.Context) friend.Liveness {
+	if f.running {
+		return friend.Liveness{Known: true, Running: true, Why: f.why}
+	}
+	return friend.Liveness{Known: true, Running: false, Why: f.why}
 }
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}}
 }
 
 func (r *rig) world() world {
@@ -66,6 +79,7 @@ func (r *rig) world() world {
 			return "", errors.New("executable file not found in ")
 		},
 		random: func() string { return "r4nd0m" },
+		alive:  r.alive,
 	}
 }
 
@@ -653,3 +667,41 @@ func (l *lockedBuilder) Write(p []byte) (int, error) {
 
 // String is read with the lock held by the caller.
 func (l *lockedBuilder) String() string { return l.b.String() }
+
+// A friend whose harness is not running is down at once: run wires
+// HarnessWatch in front of the daemon's beat, beats fail with harness not
+// running, status says so on the beat's error, and no beat reaches the
+// sprint server while the harness is down (docs/SPEC-FRIEND.md, the harness check).
+func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	r.alive = fakeAlive{running: false, why: "the harness app is closed"}
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	beats, sleeps := 0, 0
+	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
+	w.sleep = func(context.Context, time.Duration) {
+		r.now = r.now.Add(time.Minute)
+		if sleeps++; sleeps == 5 {
+			cancel()
+		}
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, errb.String())
+	assert.Zero(t, beats, "no beat reaches the sprint server while harness is not running")
+	assert.Contains(t, out.String(), "down: harness not running: the harness app is closed")
+
+	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	require.NoError(t, err)
+	assert.Equal(t, friend.HarnessNotRunning, st.BeatError)
+
+	r.now = st.At
+	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out("NOTE the last beat failed: harness not running")
+}
