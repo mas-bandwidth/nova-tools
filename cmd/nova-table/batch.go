@@ -87,7 +87,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 		if openErr != nil {
 			return refuse(stderr, verb, fmt.Sprintf("cannot read the manifest file %q: %v (a manifest is a file path, - for stdin, or JSON that starts with {); changed=no; run: nova-table batch -h", pos[0], openErr))
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }() // ignored: a manifest opened only to be read
 		var readErr error
 		raw, readErr = readManifest(f)
 		if readErr != nil {

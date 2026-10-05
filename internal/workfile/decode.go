@@ -341,6 +341,9 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 				return is, err
 			}
 		}
+		if r.Kind == "" && (r.Repo != "" || r.URL != "") {
+			return is, d.errf(rat, ":kind \"\" wants :repo \"\" and :url \"\"")
+		}
 		if r.Number, err = d.refNumber(rat, r.Kind, rm["number"]); err != nil {
 			return is, err
 		}

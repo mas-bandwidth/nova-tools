@@ -335,3 +335,34 @@ func TestOriginOf(t *testing.T) {
 	require.Equal(t, "external", workfile.OriginOf("CONTRIBUTOR"), "origin")
 	require.Equal(t, "external", workfile.OriginOf(""), "origin")
 }
+
+// TestDecodeRefusesANullSourceReferenceCarryingARepoOrURL pins security#82
+// finding 4: a null-source reference is canonical only with empty repo and url.
+func TestDecodeRefusesANullSourceReferenceCarryingARepoOrURL(t *testing.T) {
+	t.Parallel()
+	canonical, err := workfile.Encode(hard())
+	require.NoError(t, err)
+	t.Run("repo on a null source", func(t *testing.T) {
+		t.Parallel()
+		s := strings.Replace(string(canonical), `:kind "" :repo ""`, `:kind "" :repo "o/a"`, 1)
+		_, err := workfile.Decode("repo", []byte(s), workfile.Limits(len(s)))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "repo")
+	})
+	t.Run("url on a null source", func(t *testing.T) {
+		t.Parallel()
+		s := strings.Replace(string(canonical), `:kind "" :repo ""`, `:kind "" :repo ""`, 1)
+		s = strings.Replace(s, `:number 0 :url ""`, `:number 0 :url "https://example.invalid/o/a"`, 1)
+		_, err := workfile.Decode("url", []byte(s), workfile.Limits(len(s)))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "url")
+	})
+	t.Run("untouched round-trips", func(t *testing.T) {
+		t.Parallel()
+		back, err := workfile.Decode("same", canonical, workfile.Limits(len(canonical)))
+		require.NoError(t, err)
+		again, err := workfile.Encode(back)
+		require.NoError(t, err)
+		assert.True(t, bytes.Equal(canonical, again))
+	})
+}

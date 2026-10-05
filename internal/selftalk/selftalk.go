@@ -128,7 +128,6 @@ func Base(p string) string {
 	return path.Base(strings.ReplaceAll(p, `\`, "/"))
 }
 
-
 // flattenLineStarts returns the flattened text and the offset at which each
 // source line begins in that text. starts is sorted. One int per source line,
 // not one int per input byte.
