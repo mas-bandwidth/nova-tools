@@ -194,7 +194,7 @@ func TestWakeLineIsOneLine(t *testing.T) {
 
 func TestGrokAdapterBacklogDeliveredAsPacedWrites(t *testing.T) {
 	t.Parallel()
-	home, dir, wake, listing := grokHouse(t)
+	home, dir, _, listing := grokHouse(t)
 	const pace = 50 * time.Millisecond
 
 	now := time.Time{}.Add(time.Hour)
