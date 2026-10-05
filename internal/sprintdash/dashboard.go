@@ -88,10 +88,17 @@ type Server struct {
 }
 
 // snapshot is /api/sprint's body: the page reads data, throughput,
-// throughputMinutes and build; the rest says how the reads are going.
+// throughputMinutes, build and the release fields; the rest says how the reads are going.
+// Data is the copy as the release shows it (release.go): release is the one shown,
+// current the one shown when none is asked, releases every label a stream carries, and
+// releaseStreams the streams shown (absent for all).
 type snapshot struct {
 	OK                bool            `json:"ok"`
 	Data              json.RawMessage `json:"data"`
+	Release           string          `json:"release,omitempty"`
+	Current           string          `json:"current,omitempty"`
+	Releases          []string        `json:"releases,omitempty"`
+	ReleaseStreams    []string        `json:"releaseStreams,omitempty"`
 	FetchedAt         *time.Time      `json:"fetchedAt"`
 	Error             *string         `json:"error"`
 	Throughput        *float64        `json:"throughput"`
@@ -134,9 +141,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/api/sprint":
 		s.Refresh()
-		s.send(w, "application/json", s.Snapshot())
+		s.send(w, "application/json", s.SnapshotOf(r.URL.Query().Get("release")))
 	case "/events":
-		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.Snapshot(), true })
+		rel := r.URL.Query().Get("release")
+		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.SnapshotOf(rel), true })
 	case "/healthz":
 		s.healthz(w)
 	default:
@@ -304,13 +312,21 @@ func (s *Server) logf(at time.Time, format string, args ...any) {
 	}
 }
 
-// Snapshot is /api/sprint's body now, with the build number.
-func (s *Server) Snapshot() []byte {
+// Snapshot is /api/sprint's body now, with the build number, as the default release shows it.
+func (s *Server) Snapshot() []byte { return s.SnapshotOf("") }
+
+// SnapshotOf is /api/sprint's body now as release shows it (release.go): "" is the
+// default, all is every stream.
+func (s *Server) SnapshotOf(release string) []byte {
 	build := s.Build()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snap := s.snap
 	snap.Build, snap.Stale = build, s.fresh.alarmed
+	if len(snap.Data) > 0 {
+		v := viewOf(snap.Data, release)
+		snap.Data, snap.Release, snap.Current, snap.Releases, snap.ReleaseStreams = v.Data, v.Release, v.Current, v.Releases, v.Streams
+	}
 	b, err := json.Marshal(snap)
 	if err != nil {
 		panic("dashboard: the snapshot does not marshal: " + err.Error())

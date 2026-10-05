@@ -684,6 +684,22 @@ nothing. `dashboard` serves a page that is a second view of the same JSON
 ([SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)); the frame `where` draws stays
 the canonical view.
 
+The page shows the streams of one release (the owner, 2026-10-05 7:05 PM: "Please make
+sure the sprint dashboard shows only the v1.0.0 work streams."). A stream's release is its
+label (`stream set --release`, `where --json`'s `streams[].Release`). `/api/sprint` and
+`/events` take `?release=<name>` or `?release=all`; with none, or one no stream carries,
+they show the current release: the earliest, in version order, with cards left (`where
+--json`'s `releases`), else the last. Their answer names `release` (shown), `current`,
+`releases` (every label, in version order) and `releaseStreams`, and its data is the copy
+with those streams alone: the work and merge rows, the stream clocks, costs and stalls, the
+critical path (a card whose stream the copy does not say is left out), the cards dealt and
+merging, and `landed`, `all` and the summary line counted over those rows, the ETA the
+sprint's scaled to the release's cards left at the same rate, with no `held=` (held is the
+sprint's count). The fleet, friends and lanes stay the sprint's. A sprint with no label is
+shown whole, as `where` printed it. The header carries a one-line switch: each release,
+then all, the one shown lit (`TestTheDashboardShowsOnlyTheCurrentReleasesStreams`). A
+puller reads its upstream's `?release=all` and switches on its own.
+
 The dashboard also serves each worker its own view, pulled when the worker wants it (the
 owner, 2026-10-03 11:18 AM: "Think from the point of view of the worker. How to get the
 current in the dashboard to them efficiently for their own visibility, on request (pull)."

@@ -548,6 +548,25 @@ var lastGood = null, inFlight = false, build = null, throughput = null, throughp
 // Readers and merge are hidden by default; ?all=1 shows them.
 var SHOW_ALL = /(?:^|[?&])all=1(?:&|$)/.test(location.search);
 if (SHOW_ALL) $("readers-panel").hidden = false;
+// The page shows one release's streams: ?release=<name> or all; none is the server's
+// current release. The switch in the header lists every release a stream carries, then all.
+var RELEASE = (/(?:^|[?&])release=([^&]*)/.exec(location.search) || [])[1];
+RELEASE = RELEASE ? decodeURIComponent(RELEASE) : "";
+var RELEASE_Q = RELEASE ? "?release=" + encodeURIComponent(RELEASE) : "";
+function renderRelease(j) {
+  var box = $("release"); if (!box) return;
+  var names = (j.releases || []).concat(j.releases && j.releases.length ? ["all"] : []);
+  var key = names.join("|") + ">" + (j.release || "");
+  if (box._key === key) return;
+  box._key = key;
+  box.textContent = "";
+  box.hidden = !names.length;
+  names.forEach(function (n) {
+    var a = el("a", n === j.release ? "on" : "", n);
+    a.setAttribute("href", "?release=" + encodeURIComponent(n) + (SHOW_ALL ? "&all=1" : ""));
+    box.appendChild(a);
+  });
+}
 // The clock shows the time of the data on screen. A failed read or a
 // restarting server changes nothing on the page: the last data, clock and
 // dot stay exactly as they were (failures are logged by the server only).
@@ -698,7 +717,7 @@ var stream = null;
 function poll() {
   if (inFlight || (stream && stream.readyState === 1)) return;
   inFlight = true;
-  fetch("/api/sprint", { cache: "no-store" }).then(function (r) {
+  fetch("/api/sprint" + RELEASE_Q, { cache: "no-store" }).then(function (r) {
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
   }).then(apply).catch(function () {
@@ -710,6 +729,7 @@ function apply(j) {
     throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0;
     if (!lastGood || lastGood.at !== j.data.at) { try { render(j.data); } catch (e) { console.error(e); } }
     lastGood = j.data;
+    renderRelease(j);
     setLive(new Date(j.data.at));
   }
   if (j.build) { if (build == null) build = j.build; else if (build !== j.build) location.reload(); }
@@ -719,7 +739,7 @@ function apply(j) {
 // toggle and no light tokens.
 // the stream reconnects on its own; while it is not open, the timer's poll runs
 if (window.EventSource) {
-  stream = new EventSource("/events");
+  stream = new EventSource("/events" + RELEASE_Q);
   stream.addEventListener("sprint", function (e) { try { apply(JSON.parse(e.data)); } catch (x) { console.error(x); } });
 }
 poll();
