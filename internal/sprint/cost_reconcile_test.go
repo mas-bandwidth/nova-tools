@@ -1,10 +1,6 @@
 package sprint
 
 import (
-	"bytes"
-	"context"
-	"io"
-	"net/http"
 	"testing"
 	"time"
 
@@ -14,144 +10,156 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
-type roundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return fn(req)
-}
-
-func TestCostReconcileRaisesJudgmentOverThreshold(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	s := &Snapshot{
-		Now:   now,
-		Fleet: NewTable(Fleet),
-		Work:  NewTable(Work),
-		Routes: []Route{
-			{Name: "flash-or", Provider: "openrouter", Model: "anthropic/claude-3.5-haiku"},
-		},
-	}
-	s.Work.SetRows([]string{"s1"})
-	pr := &Card{ID: "s1-1", Row: "s1", Col: "landed", Fields: map[string]string{}}
+// reconcileWorld is a world with an openrouter route and one primary carrying records of
+// $10.00 on the day of t0 (a take priced by the harness, a read priced at the route's prices)
+// and $40.00 the day before, and an opencode take of $5.00 on the day of t0.
+func reconcileWorld(t *testing.T) *world {
+	w := newWorld(t)
+	w.s.Routes = []Route{{Name: "flash-or", Provider: "openrouter", Model: "m"}, {Name: "flash-oc", Provider: "opencode", Model: "m"}}
+	w.s.Work.SetRows([]string{"s1"})
+	pr := &Card{ID: "s1-1", Row: "s1", Col: Working, Fields: map[string]string{}}
+	today, yesterday := stamp(w.s.Now.Add(-time.Hour)), stamp(w.s.Now.Add(-24*time.Hour))
 	book(pr,
-		Consumer{Kind: "work", Card: "s1-1.w1", Route: "flash-or", Model: "anthropic/claude-3.5-haiku", Usage: cardcost.ParseUsage("input=100 actual_usd=10.0")},
+		Consumer{Kind: "work", Card: "s1-1", Key: "s1-1#g1", Route: "flash-or", End: "no result", At: today, Usage: cardcost.ParseUsage("input=100 actual_usd=6 actual_by=harness")},
+		Consumer{Kind: "read", Card: "s1-1.r1", Key: "s1-1.r1#v", Model: "openrouter/m", End: "ok", At: today, Usage: cardcost.ParseUsage("input=50 predicted_usd=4")},
+		Consumer{Kind: "work", Card: "s1-1", Key: "s1-1#g0", Route: "flash-or", End: "failed", At: yesterday, Usage: cardcost.ParseUsage("input=100 actual_usd=40 actual_by=harness")},
+		Consumer{Kind: "work", Card: "s1-1", Key: "s1-1#oc", Route: "flash-oc", End: "ok", At: today, Usage: cardcost.ParseUsage("input=100 actual_usd=5 actual_by=harness")},
 	)
-	s.Work.Put(pr)
+	w.s.Work.Put(pr)
+	return w
+}
 
-	// Case 1: Provider usage $12.00 vs internal $10.00 -> gap $2.00 (16.7% > 5%)
-	p := CostReconcile(s, CostReconcileReq{
-		Provider:      "openrouter",
-		ProviderUsage: 12.00,
-	})
-	require.Len(t, p.Notes, 1, "gap > 5% raises ONE judgment")
-	assert.Equal(t, Judgment, p.Notes[0].Kind)
+func openrouterRead(w *world, used float64) CostReconcileReq {
+	return CostReconcileReq{Reads: []UsageRead{{Provider: "openrouter", Known: true, Day: w.s.Now.UTC().Format(time.DateOnly), Used: used}}}
+}
+
+func gapJudgments(w *world) int {
+	n := 0
+	for _, o := range w.s.Open {
+		if o.Note.Type == NCostGap {
+			n++
+		}
+	}
+	return n
+}
+
+// The sprint's records of a provider on a day are every take and read of that provider that
+// ended that day, whatever its end, at its charged figure: never another day's, never another
+// provider's.
+func TestTheRecordsOfADayAreThatDaysOnly(t *testing.T) {
+	t.Parallel()
+	w := reconcileWorld(t)
+	day := w.s.Now.UTC().Format(time.DateOnly)
+	assert.InDelta(t, 10.0, InternalSpendOn(w.s, "openrouter", day), 1e-9)
+	assert.InDelta(t, 40.0, InternalSpendOn(w.s, "openrouter", w.s.Now.Add(-24*time.Hour).UTC().Format(time.DateOnly)), 1e-9)
+	assert.InDelta(t, 5.0, InternalSpendOn(w.s, "opencode", day), 1e-9)
+}
+
+// A gap of 10% between the provider's count of today and the sprint's records of today opens
+// ONE judgment on the provider (fake provider read, the world's clock); a second read past the
+// bound an hour later opens none, a read back within it closes it, and a gap past the bound
+// again opens one anew.
+func TestAReconciliationRaisesOneJudgmentOnATenPercentGap(t *testing.T) {
+	t.Parallel()
+	w := reconcileWorld(t)
+	p := w.must(CostReconcile(w.s, openrouterRead(w, 100.0/9))) // $11.11 against $10.00: 10%
+	require.Len(t, p.Notes, 1)
 	assert.Equal(t, NCostGap, p.Notes[0].Type)
-	assert.True(t, p.Notes[0].SprintLevel)
-	assert.Contains(t, p.Notes[0].What, "provider openrouter cost reconciliation gap")
-	require.Len(t, p.Props, 1)
-	assert.Equal(t, Fleet, p.Props[0].Table)
-	assert.Equal(t, "cost_reconcile_openrouter", p.Props[0].Name)
-
-	// Case 2: Judgment already in s.Open -> raises no duplicate judgment
-	s.Open = []Open{{
-		Key:  OpenKey("j1", SprintSubject),
-		Note: Note{ID: "j1", Kind: Judgment, Type: NCostGap, Primaries: []string{"openrouter"}},
-	}}
-	p2 := CostReconcile(s, CostReconcileReq{
-		Provider:      "openrouter",
-		ProviderUsage: 12.00,
-	})
-	assert.Empty(t, p2.Notes, "an existing judgment prevents duplicate notes")
-
-	// Case 3: Within 5% threshold ($10.20 vs $10.00 -> 1.96% < 5%)
-	s.Open = nil
-	p3 := CostReconcile(s, CostReconcileReq{
-		Provider:      "openrouter",
-		ProviderUsage: 10.20,
-	})
-	assert.Empty(t, p3.Notes, "gap <= 5% raises no judgment")
-
-	// Case 4: Custom threshold 20% ($11.50 vs $10.00 -> 13% gap < 20%)
-	p4 := CostReconcile(s, CostReconcileReq{
-		Provider:      "openrouter",
-		ProviderUsage: 11.50,
-		Threshold:     0.20,
-	})
-	assert.Empty(t, p4.Notes, "custom threshold 20% is respected")
-}
-
-func TestReadProviderUsage(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	// Unknown provider returns false, nil
-	usage, ok, err := ReadProviderUsage(ctx, nil, "opencode", func(string) string { return "" })
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Equal(t, 0.0, usage)
-
-	// Missing API key returns error
-	_, _, err = ReadProviderUsage(ctx, nil, "openrouter", func(string) string { return "" })
-	assert.Error(t, err)
-
-	// Successful response with usage_daily
-	rt := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		assert.Equal(t, OpenRouterKeyURL, req.URL.String())
-		assert.Equal(t, "Bearer test-key", req.Header.Get("Authorization"))
-		body := `{"data": {"usage_daily": 15.5, "usage": 120.0}}`
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(bytes.NewBufferString(body)),
-		}, nil
-	})
-	usage, ok, err = ReadProviderUsage(ctx, rt, "openrouter", func(k string) string { return "test-key" })
-	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, 15.5, usage)
-
-	// Fallback to usage when usage_daily is missing
-	rtFallback := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"data": {"usage": 42.25}}`
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(bytes.NewBufferString(body)),
-		}, nil
-	})
-	usage, ok, err = ReadProviderUsage(ctx, rtFallback, "openrouter", func(k string) string { return "test-key" })
-	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, 42.25, usage)
-}
-
-func TestUnreconciledSpend(t *testing.T) {
-	t.Parallel()
-	s := &Snapshot{
-		Fleet: NewTable(Fleet),
-	}
-	s.Fleet.SetProp("cost_reconcile_openrouter", `{"provider":"openrouter","provider_usage":15.5,"internal":10.0,"gap":5.5,"pct_gap":0.35}`)
-	unrec := UnreconciledSpend(s)
-	assert.InDelta(t, 5.5, unrec, 0.001)
-}
-
-func TestStreamTierCostsTotalAndUnreconciled(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	s := &Snapshot{
-		Now:   now,
-		Fleet: NewTable(Fleet),
-		Work:  NewTable(Work),
-	}
-	s.Work.SetRows([]string{"s1"})
-	s.Fleet.SetProp("cost_reconcile_openrouter", `{"provider":"openrouter","provider_usage":12.5,"internal":10.0,"gap":2.5}`)
-
-	c1 := &Card{ID: "s1-1", Row: "s1", Col: "landed", Fields: map[string]string{FieldCost: "5.00"}}
-	c2 := &Card{ID: "s1-2", Row: "s1", Col: "working", Fields: map[string]string{FieldCostTotal: "3.50"}}
-	s.Work.Put(c1)
-	s.Work.Put(c2)
-
-	costs := StreamTierCosts(s)
-	s1Costs, ok := costs["s1"]
+	assert.Equal(t, Judgment, p.Notes[0].Kind)
+	assert.Equal(t, ProviderSubject("openrouter"), p.Notes[0].Stream)
+	assert.Contains(t, p.Notes[0].What, "provider openrouter counted $11.12 on 2030-01-02 and the sprint's cost records of it hold $10.00")
+	assert.Equal(t, []string{"ack", "wait"}, p.Notes[0].Decisions)
+	rec, ok := CostReconcileOf(w.s.Fleet, "openrouter")
 	require.True(t, ok)
-	assert.Equal(t, "$8.50", s1Costs.TotalCost, "total cost includes landed ($5.00) and working ($3.50)")
-	assert.Equal(t, "$2.50", s1Costs.Unreconciled, "unreconciled gap from provider is reflected")
+	assert.InDelta(t, 10.0, rec.Internal, 1e-9, "today's records, never yesterday's $40")
+	assert.InDelta(t, 0.1, rec.Share, 1e-9)
+
+	w.tick(CostReconcileEvery)
+	p = w.must(CostReconcile(w.s, openrouterRead(w, 12)))
+	assert.Empty(t, p.Notes, "no second judgment while the one is open")
+	assert.Equal(t, 1, gapJudgments(w))
+
+	w.tick(CostReconcileEvery)
+	w.must(CostReconcile(w.s, openrouterRead(w, 10.2)))
+	assert.Zero(t, gapJudgments(w), "a read within 5% closes it")
+
+	w.tick(CostReconcileEvery)
+	w.must(CostReconcile(w.s, openrouterRead(w, 12)))
+	assert.Equal(t, 1, gapJudgments(w), "past the bound again: one anew")
+}
+
+// The bound: a gap within 5%, or under CostGapFloor dollars, opens nothing; an unknown
+// read writes why and opens nothing, keeping the days it had.
+func TestAReconciliationWithinTheBoundOrUnknownOpensNothing(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		read UsageRead
+	}{
+		{"within 5%", UsageRead{Provider: "openrouter", Known: true, Used: 10.2}},
+		{"under the floor", UsageRead{Provider: "opencode", Known: true, Used: 5.9}},
+		{"unknown", UsageRead{Provider: "openrouter", Note: "OPENROUTER_API_KEY is not in the run loop's environment"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			w := reconcileWorld(t)
+			c.read.Day = w.s.Now.UTC().Format(time.DateOnly)
+			p := w.must(CostReconcile(w.s, CostReconcileReq{Reads: []UsageRead{c.read}}))
+			assert.Empty(t, p.Notes)
+			rec, ok := CostReconcileOf(w.s.Fleet, c.read.Provider)
+			require.True(t, ok)
+			assert.Equal(t, c.read.Known, rec.Known)
+			assert.Equal(t, c.read.Note, rec.Note)
+		})
+	}
+}
+
+// What is unreconciled is, over the days since the epoch began, each day's last provider
+// figure beyond the sprint's records of it: a day the records exceed adds nothing, and a day
+// before the epoch is not the sprint's.
+func TestUnreconciledSpendIsEachDaysLastGapSinceTheEpoch(t *testing.T) {
+	t.Parallel()
+	w := reconcileWorld(t)
+	w.s.Cleared = w.s.Now.Add(-20 * time.Hour) // the day before t0
+	before := w.s.Now
+	w.s.Now = before.Add(-48 * time.Hour) // a day before the epoch: $3 over records of $0
+	w.must(CostReconcile(w.s, openrouterRead(w, 3)))
+	w.s.Now = before.Add(-24 * time.Hour) // yesterday: $45 over $40
+	w.must(CostReconcile(w.s, openrouterRead(w, 45)))
+	w.s.Now = before
+	w.must(CostReconcile(w.s, openrouterRead(w, 11))) // today, read twice: the last read stands
+	w.tick(time.Minute)
+	w.must(CostReconcile(w.s, openrouterRead(w, 12)))
+	w.must(CostReconcile(w.s, CostReconcileReq{Reads: []UsageRead{{Provider: "opencode", Known: true, Day: w.s.Now.UTC().Format(time.DateOnly), Used: 4}}}))
+	assert.InDelta(t, 5.0+2.0, UnreconciledSpend(w.s), 1e-9, "yesterday's $5 and today's $2; opencode's records exceed its count")
+
+	tc := StreamTierCosts(w.s)["s1"]
+	assert.Equal(t, "$7.00", tc.Unreconciled, "the sprint's, on the stream's record")
+	assert.Equal(t, "$55.00", tc.TotalCost, "every record of the card, any day, any provider")
+}
+
+// A stream's total is every take and read of every card in any column, landed or not, and a
+// record with no cost is counted as unpriced, never as a zero.
+func TestAStreamsTotalIsEveryRecordOfEveryCard(t *testing.T) {
+	t.Parallel()
+	s := &Snapshot{Now: t0, Fleet: NewTable(Fleet), Work: NewTable(Work)}
+	s.Work.SetRows([]string{"s1"})
+	landed := &Card{ID: "s1-1", Row: "s1", Col: Landed, Fields: map[string]string{}}
+	book(landed,
+		Consumer{Kind: "work", Card: "s1-1", Key: "s1-1#g1", End: "failed", At: stamp(t0), Usage: cardcost.ParseUsage("input=1 actual_usd=2 actual_by=harness")},
+		Consumer{Kind: "work", Card: "s1-1", Key: "s1-1#g2", End: "ok", At: stamp(t0), Usage: cardcost.ParseUsage("input=1 actual_usd=3 actual_by=harness")},
+	)
+	landed.Fields[FieldCost] = "5"
+	working := &Card{ID: "s1-2", Row: "s1", Col: Working, Fields: map[string]string{}}
+	book(working,
+		Consumer{Kind: "work", Card: "s1-2", Key: "s1-2#g1", End: "no result", At: stamp(t0), Usage: cardcost.ParseUsage("input=10 predicted_usd=3.5")},
+		Consumer{Kind: "work", Card: "s1-2", Key: "s1-2#g2", End: "no result", At: stamp(t0), Usage: cardcost.ParseUsage("unpriced=no-tokens")},
+	)
+	s.Work.Put(landed)
+	s.Work.Put(working)
+	tc := StreamTierCosts(s)["s1"]
+	assert.Equal(t, "$8.50", tc.TotalCost)
+	assert.Equal(t, 1, tc.UnpricedRuns)
+	assert.Equal(t, "$5.00", tc.PerLanded)
+	assert.Empty(t, tc.Unreconciled)
 }
