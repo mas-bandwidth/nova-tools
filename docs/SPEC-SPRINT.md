@@ -2704,6 +2704,22 @@ by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rule
 cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
 `LadderClimbs`, `WaitOnce`, `BaseStopsOnThird`).
 
+#### land-base-gate-stops-stream
+
+The base-gate count is the store's, never only the lander's memory: a hand land starts every
+run with none, and the server every start, so a base red at its tip was refused round after
+round and no stream stopped (found by hand, 2026-10-04: 62 refusals of one
+stream from 12:04 PM, no judgment, `where` showing it merging, `resume` refusing it as not
+stopped). Each landing refused because the lander ran the base's tree gate and it was red
+(not one refused inside a retry's wait, nor with the rule off) is counted through the merge
+step (`MergeReq.BaseRefused`, `Base`) on the stream's control card per stream and base
+(`base_gate_refused`, `base_gate_base`, `base_gate_first`; a count on another base starts again
+at one). The `sprint.BaseGateStops`-th (3) refusal, or the lander's own third failure, stops
+the stream with one judgment, `stream stopped: the base fails its tree gate`, its text naming
+the base, the gate, the refusals and the first refusal's time, every card where it is; `resume`
+then moves the stream and clears the count, as do a pass that merges and every other stop
+(`TestBaseGateRefusedThreeTimesStopsTheStreamWithAJudgment`, cmd/nova-sprint/land_basegate_count_test.go).
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared

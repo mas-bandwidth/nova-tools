@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
@@ -40,8 +41,15 @@ type MergeReq struct {
 	// rule): the base failed its tree gate at its tip three times, and this is the error. The
 	// stream stops with the judgment NBaseRed; no card moves.
 	BaseRed string `json:",omitempty"`
-	Note    string
-	Who     string
+	// BaseRefused is a landing refused because the base failed its tree gate at its tip (the
+	// lander ran the gate and it was red), this the finding, Base the base's branch: the
+	// refusal is counted on the stream's control card per base (FieldBaseGateRefused), across
+	// passes and processes, and the BaseGateStops-th stops the stream with the judgment NBaseRed
+	// naming the base, the gate and the first refusal. No card moves.
+	BaseRefused string `json:",omitempty"`
+	Base        string `json:",omitempty"`
+	Note        string
+	Who         string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
@@ -85,6 +93,56 @@ func landedRefusals(s *Snapshot, stream string, pins []LandedPin) []Refusal {
 		}
 	}
 	return out
+}
+
+// The base-gate count on a stream's control card (docs/SPEC-SPRINT.md section 8,
+// land-base-gate-stops-stream): how many landings in a row were refused on the base's tree
+// gate, the base they were refused on, and when the first was. A pass that merges, any other
+// stop, a stop on the base and a resume clear it.
+const (
+	FieldBaseGateRefused = "base_gate_refused"
+	FieldBaseGateBase    = "base_gate_base"
+	FieldBaseGateFirst   = "base_gate_first"
+)
+
+var baseGateCount = []string{FieldBaseGateRefused, FieldBaseGateBase, FieldBaseGateFirst}
+
+// BaseGateStops is the refusals on one base that stop its stream: the first failure of its
+// tree gate and one at each retry (BaseGateRetries).
+var BaseGateStops = len(BaseGateRetries) + 1
+
+// baseGateStep counts a refusal on the base's gate on the stream's control card, and stops
+// the stream with the judgment NBaseRed at the BaseGateStops-th, or at once on BaseRed. A
+// count on another base starts again at one.
+func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
+	n, first := 1, stamp(s.Now)
+	if m := ctl.Int(FieldBaseGateRefused); m > 0 && ctl.F(FieldBaseGateBase) == r.Base {
+		n = m + 1
+		if f := ctl.F(FieldBaseGateFirst); f != "" {
+			first = f
+		}
+	}
+	if r.BaseRed == "" && n < BaseGateStops {
+		set := map[string]string{FieldBaseGateRefused: itoa(n), FieldBaseGateBase: r.Base, FieldBaseGateFirst: first}
+		p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set))},
+			Moved: fmt.Sprintf("stream %s: the base %s refused at its tree gate (%d of %d)", r.Stream, r.Base, n, BaseGateStops)})
+		return p
+	}
+	// the base, not a card: the stream stops with the error, every card where it is
+	what := r.BaseRed
+	if what == "" {
+		what = r.BaseRefused
+	}
+	if r.Base != "" {
+		at, _ := time.Parse(time.RFC3339, first)
+		what = fmt.Sprintf("the base %s fails its tree gate, refused %d times, first refused at %s: %s", r.Base, n, at.UTC().Format("15:04:05 MST"), what)
+	}
+	set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
+	j := judgment(NBaseRed, r.Stream, s.Now, 0)
+	j.StreamLevel, j.Who, j.What = true, r.Who, cutText(what, MaxCardTextBytes)
+	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"card", "other"}, baseGateCount...)...))}, Notes: []Note{j},
+		Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"})
+	return p
 }
 
 // streamDone says every primary of the stream on the table has landed, given
@@ -151,14 +209,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		p.refuse(r.Stream, "landed")
 		return p
 	}
-	if r.BaseRed != "" {
-		// the base, not a card: the stream stops with the error, every card where it is
-		set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
-		j := judgment(NBaseRed, r.Stream, s.Now, 0)
-		j.StreamLevel, j.Who, j.What = true, r.Who, cutText(r.BaseRed, MaxCardTextBytes)
-		p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "card", "other"))}, Notes: []Note{j},
-			Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"})
-		return p
+	if r.BaseRed != "" || r.BaseRefused != "" {
+		return baseGateStep(p, s, ctl, r)
 	}
 	// A stuck card is a barrier: the step never passes an earlier stuck card.
 	queued := s.Merge.Cell(r.Stream, Queued)
@@ -237,7 +289,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		ctlSet["state"], ctlSet["since"], ctlSet["cause"] = StreamStopped, now, cause
 		j := judgment(typ, r.Stream, s.Now, before, primaries...)
 		j.StreamLevel, j.Who, j.What = true, r.Who, r.Note
-		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, unset...))}, Notes: append(notes, j)}
+		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, append(unset, baseGateCount...)...))}, Notes: append(notes, j)}
 	}
 	switch {
 	case r.Conflict != "":
@@ -375,7 +427,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
-				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
+				// a pass that merges: the base passed its gate, and its count starts again
+				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, baseGateCount...)))
 				u.Notes = notes
 			}
 			merged := map[string]string{"merged": now}
@@ -465,7 +518,7 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	if r.Did != "" {
 		set["did"] = r.Did
 	}
-	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other", FieldConflictKind, FieldConflictPaths))},
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"cause", "card", "other", FieldConflictKind, FieldConflictPaths}, baseGateCount...)...))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
 	if state == StreamLanded {
 		n := happened(NStreamLanded, r.Stream, s.Now)
