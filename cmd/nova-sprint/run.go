@@ -306,6 +306,15 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		}
 		go a.decideLoop(context.Background(), c.redis, stdout)
 	}
+	// on server start, keep every in-flight read whose lease is live and only
+	// take back reads whose lease has lapsed (tla/ServerLanes.tla, Restart)
+	// ignored: a best-effort read cleanup on startup; tick takes care of any subsequent lapses
+	_, _ = st.Run(context.Background(), store.Step{
+		Verb: "restart",
+		Load: []string{sprint.Readers, sprint.Work},
+		Plan: sprint.RestartReads,
+	})
+
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
 		return exitReplaced

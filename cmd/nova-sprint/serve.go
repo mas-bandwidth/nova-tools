@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
@@ -238,6 +239,18 @@ func (a *app) serveCtx(ctx context.Context, req sprintwire.Request, local bool) 
 		var stdout, stderr bytes.Buffer
 		code := a.run(args, &stdout, &stderr)
 		out.Results[i] = sprintwire.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
+		if code == 0 && len(argv) > 0 && argv[0] == "queue" && as != "" {
+			if st, err := a.store(common{redis: a.serveAddr, actor: as}); err == nil && st != nil {
+				// ignored: a best-effort lease renewal on reader beat; next beat will renew
+				_, _ = st.Run(ctx, store.Step{
+					Verb: "lease",
+					Load: []string{sprint.Readers},
+					Plan: func(s *sprint.Snapshot) sprint.Plan {
+						return sprint.RenewReaderLeases(s, as)
+					},
+				})
+			}
+		}
 	}
 	return out
 }
@@ -328,7 +341,7 @@ func listenRefused(host string) string {
 // (docs/SPEC-SPRINT.md section 14, The server). The refusal is returned before
 // a socket is opened. The coordinator's verbs stay on loopback; a private or
 // tailnet address is the workers' listener beside that loopback listener.
-func (a *app) listen(addr, store string, stdout io.Writer) error {
+func (a *app) listen(addr, redis string, stdout io.Writer) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("--listen wants host:port, found %s", addr)
@@ -345,10 +358,18 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		lns[addr] = a
 	}
-	a.serveAddr, a.serveLog = store, stdout
+	a.serveAddr, a.serveLog = redis, stdout
 	// the lanes are made before the first batch, while the line is free: a batch never
 	// waits for the line to make them (servelanes.go)
 	a.lanesFor(context.Background())
+	if st, err := a.store(common{redis: redis}); err == nil && st != nil {
+		// ignored: a best-effort read cleanup on server listen; tick takes care of any subsequent lapses
+		_, _ = st.Run(context.Background(), store.Step{
+			Verb: "restart",
+			Load: []string{sprint.Readers, sprint.Work},
+			Plan: sprint.RestartReads,
+		})
+	}
 	for at, h := range lns {
 		ln, err := net.Listen("tcp", at)
 		if err != nil {
