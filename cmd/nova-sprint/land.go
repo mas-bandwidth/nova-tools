@@ -81,7 +81,11 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     the stream, and after resume land merges the head again. The clone is --repo-dir,
     else the dir= each line names; git uses the caller's environment. A kept
     clone a pass cut short left not clean is restored to the fetched base before
-    the batch (LAND CLEANED names the files); a --repo-dir one is refused. After
+    the batch (LAND CLEANED names the files); a --repo-dir one is refused. One
+    lander per clone: the pass holds <clone>.land-lock (its pid and verb) to its
+    end, and a batch whose clone another live lander holds is refused naming it;
+    a lock whose process is gone is taken over (LAND TAKEOVER). While the server
+    runs with --land, a land by hand is refused naming the server. After
     the whole pass each landed merge diff is scored (nova-decide's score
     decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
     decide/score.jsonl under the land root): a batch whose cards' top class meets
@@ -154,6 +158,9 @@ type landBatch struct {
 	// Cleaned is every file the lander's restore of its own clone discarded before the
 	// batch (restore), one LAND CLEANED line; nil when the clone was clean.
 	Cleaned []string `json:"cleaned,omitempty"`
+	// TookOver is each lander that was gone whose lock on the clone this batch took over
+	// (landlock.go), one LAND TAKEOVER line each.
+	TookOver []landHolder `json:"took_over,omitempty"`
 }
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
@@ -292,6 +299,11 @@ type lander struct {
 	baseWhy   string
 	now       func() time.Time
 	rulesOff  []string
+	// locks is each clone lock the pass holds, its path to the pass's token; tookOver the
+	// holders gone whose locks it took over, for the next batch's line (landlock.go)
+	locks    map[string]string
+	token    string
+	tookOver []landHolder
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -320,6 +332,14 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(bad) > 0 {
 		return refuse(stderr, "land", strings.Join(bad, "; "))
+	}
+	// the server that lands is the one lander: a land beside it is refused before anything
+	// is read (landlock.go); a dry run writes nothing and is not
+	if !a.landLazy && !*dry {
+		if why := a.landServerWhy(); why != "" {
+			fmt.Fprintf(stderr, "%s land REFUSED: %s; run: nova-sprint where\n", prog, oneline.Escape(why))
+			return 1
+		}
 	}
 	// land's reads and its report are steps of the sprint: each takes the server's one
 	// line of control (a.serial) when this process is the server (run --land), so none
@@ -352,6 +372,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if *repoDir != "" {
 		if abs, err := filepath.Abs(*repoDir); err == nil {
 			l.repoDir = abs
+		}
+	}
+	// every clone lock the pass takes is held to its end (landlock.go)
+	defer l.unlockClones()
+	if a.landLazy && !l.dry {
+		if err := l.markLandServer(); err != nil {
+			fmt.Fprintf(stderr, "NOTE the server's land pass could not record itself, so a land beside it is refused only by the clone lock: %s; run: nova-sprint land -h\n", oneline.Err(err))
 		}
 	}
 	ctx := context.Background()
@@ -434,6 +461,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		return code
 	}
 	for _, b := range l.out {
+		for _, h := range b.TookOver {
+			fmt.Fprintf(stdout, "LAND TAKEOVER stream=%s dir=%s pid=%d verb=%s since=%s\n", oneline.Field(b.Stream), oneline.Field(dashed(b.Dir)), h.Pid, oneline.Field(h.Verb), oneline.Field(h.At))
+		}
 		if b.Cleaned != nil {
 			fmt.Fprintf(stdout, "LAND CLEANED stream=%s dir=%s files=%d paths=%s\n", oneline.Field(b.Stream), oneline.Field(b.Dir), len(b.Cleaned), oneline.Field(strings.Join(b.Cleaned, ",")))
 		}
@@ -574,6 +604,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		return refuse(why)
 	}
 	dir, why := l.clone(ctx, b.Repo)
+	b.TookOver, l.tookOver = l.tookOver, nil
 	if why != "" {
 		return refuse(why)
 	}
@@ -1277,6 +1308,9 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 		if l.dry {
 			return l.repoDir, ""
 		}
+		if why := l.lockClone(l.repoDir); why != "" {
+			return l.repoDir, why
+		}
 		return l.repoDir, l.originIs(ctx, l.repoDir, repo)
 	}
 	if l.root == "" {
@@ -1289,6 +1323,11 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	dir = filepath.Join(l.root, repoDirName(repo))
 	if l.dry {
 		return dir, ""
+	}
+	// the lock comes before the clone is made or touched: two landers never clone into, or
+	// land in, one directory (landlock.go)
+	if why := l.lockClone(dir); why != "" {
+		return dir, why
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 		return dir, l.originIs(ctx, dir, repo)

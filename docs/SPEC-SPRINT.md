@@ -2590,6 +2590,22 @@ the batch with the step that failed. A clone the caller gives with `--repo-dir` 
 caller's: it is never cleaned, and a dirty one is refused as before
 (`TestLanderRestoresItsOwnDirtyCacheClone`, cmd/nova-sprint/land_clean_clone_test.go).
 
+#### land-one-lander-now.w1
+
+One lander per clone (found by hand, 2026-10-04: a hand land beside the server's run --land
+in one kept clone left it dirty, and every stream was refused). A pass of land holds a lock
+file beside each clone it lands in, `<clone>.land-lock`, holding its pid, start stamp, verb
+(`land` or `run --land`) and when it was taken; the lock is made whole or not at all before
+the pass's first git there, a fresh clone included, and released at the end of the pass. A
+batch whose clone another live lander holds is refused, naming the holder's pid, verb and
+since, and nothing is fetched or pushed. A lock whose holder's process is gone (or whose pid
+now runs with another start stamp) is taken over and said on `LAND TAKEOVER stream= dir=
+pid= verb= since=` (`--json`: the batch item's `took_over`); a lock that names no lander is
+refused with its path. The server's land pass records itself in `server.land` under the land
+root, and while that server lives a land by hand is refused outright, naming it (exit 1).
+`land --dry-run` takes no lock and is not refused beside the server
+(`TestLandRefusesWhileAnotherLanderHoldsTheClone`, cmd/nova-sprint/landlock_test.go).
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
