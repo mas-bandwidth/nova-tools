@@ -639,7 +639,9 @@ finished after 2 turns (lane <n>): <reason>`. The reason is the last turn's:
 a permission the harness refused, a turn stopped silent, the provider's
 refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
-finishes its card and takes no other. The silence watch, the provider's
+(or beyond the live cap a rate limit lowered, below) finishes the turn under
+way and takes no other; a card it holds between turns goes back to the queue
+for a lane within the width. The silence watch, the provider's
 refusal streak and the broken session are the batch turn's, across every
 lane. The friend daemon stamps progress on the sprint for each card whose
 one-shot turn printed since that card's last stamp (`stampProgress`, at most
@@ -664,6 +666,59 @@ be written is said in the record and the turn goes ahead). The schema is
 OpenCode's documented permission map; it is not yet measured on a live lane.
 A refusal the turn's output still shows is the lane's `rejected=` on the
 record and the card's reason.
+
+### rate-limit-backs-off-not-down.w1 — a rate limit backs off; out of funds holds
+
+A rate limit passes in a minute; out of funds does not (the finding of
+2026-10-05, 10:34 AM: a friend at 24 lanes hit his provider's input-token
+rate limit, the runner held him down as if out of funds and returned 20
+cards, and the coordinator cleared the pause by hand and lowered him to 12).
+The OpenCode lanes read the last 2 KiB of each turn's output, whatever its
+exit, and of a failed session open (`ProviderLimit`, `internal/friend/ratelimit.go`),
+before a provider's refusal of the session: a line saying out of funds or
+credit (a `402`, `payment required`, `insufficient balance`, `insufficient
+... credits`, `out of funds`) is `OutOfFunds`, unless its reset is beside it
+(that is the harness's own limit, `Limits` above); else a line saying a rate
+limit (a `429` after `status`, `code`, `error` or `HTTP`, `rate limit
+reached` or `exceeded`, `rate_limit_error`, `too many requests`, `input token
+limit exceeded`, `tokens per min`) is `RateLimited`. A card whose
+`RESULT.md` is there is done whatever its output said.
+
+A rate-limited turn keeps its card in the lane's hand, counted toward
+nothing (`card=kept`, never `card=again`, never set aside), and its messages
+go back pending, counted toward nothing. The lanes' governor (`LaneGovernor`)
+pauses every new turn and open for a backoff, 30 s doubling to 10 minutes,
+and lowers the live lane cap by a quarter (at least one lane, never below
+one): 24, 18, 14, 11 ... Lanes whose turns started before that lowering met
+the same episode and change nothing. When the pause ends the lanes resume at
+the cap; a lane beyond it takes nothing and hands back a card it holds
+between turns. A clean ten minutes, measured (no rate limit, and a lane turn
+ended clean in it), raises the cap one lane, up to the row's width; back at
+the width the backoff starts over at 30 s. There is no hold and no person in
+it: the beat goes on, the friend reads up, the cards stay hers. Each change
+is one line on the record (`rate limit: lanes paused <d> until <t>, cap
+<a> -> <b> of <w>: <reason>`, `rate limit: lanes resume at cap <c> of <w>`,
+`rate limit: cap raised <a> -> <b> of <w> after a clean 10m0s`), and the
+status's lanes say `:capped` beyond the cap and `:paused` during a backoff.
+Three lowerings within an hour are one judgment: a blocker to the
+coordinator, `friend <name>: lane cap lowered 3 times in 1h0m0s by rate
+limits, now <c> of <w>`, naming `nova-config friend set <name> --width <c>`
+as the way to keep it lower; the next three are another.
+
+Out of funds holds the lanes: no new turn or open until the daemon restarts,
+every card kept in its lane's hand, the status's lanes `:held`, said once on
+the record (`out of funds: lanes held until the daemon restarts`) and once
+to the coordinator as a blocker, `friend <name>: out of funds: <reason>`,
+with the `nova-sprint friend down` line that shows it on her row and the
+restart once paid. It lowers no cap.
+`TestARateLimitBacksOffAndResumesWithoutAHold`,
+`TestOutOfFundsHoldsTheLanesWithOneJudgment`,
+`TestTheLaneGovernorBacksOffAndRaisesByMeasurement`. Not here: the batch
+turn (one session, no lanes) still treats a rate limit as an ordinary failed
+turn; a line that says a rate limit with a reset in minutes beside it
+(`rate limit reached ... try again in 2 minutes`) is still read by `Limits`
+as the harness's limit; and the funds hold does not stop the beat, so her
+row reads down only when the coordinator runs the line it is told.
 
 Open design question, not built (the owner, 2026-10-04 1:45 PM: "tbd."): a
 per-friend `tier` on the row (flash, pro, heavy, frontier), defaulted from a
