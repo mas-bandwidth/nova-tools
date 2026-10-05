@@ -105,7 +105,7 @@ func TestStartAfterAWithdrawalDealsTheSameCard(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	require.Len(t, reads, 2, "read cards of attempt 1: %v", reads)
+	require.Len(t, reads, 1, "read cards of attempt 1 (the first read alone): %v", reads)
 	// rework advances the attempt: the next card is w2 and its reads are r2
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "f"}))
 	pr = w.s.Work.Card("s1-1")

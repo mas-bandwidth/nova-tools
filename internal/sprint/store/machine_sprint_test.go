@@ -207,7 +207,15 @@ func (w *crWorld) round(r int) {
 		res2 := h.machine()
 		for _, p := range res2.Parts {
 			if p.Name != sprint.PartDrain && (len(p.Moved) > 0 || p.Notes > 0) {
-				require.Fail(h.t, fmt.Sprintf("round %d: second tick moved %v notes %d in %s", r, p.Moved, p.Notes, p.Name))
+				var first []string
+				for _, q := range res.Parts {
+					first = append(first, q.Name+": "+strings.Join(q.Moved, " | "))
+				}
+				loads := map[string]int{}
+				for _, rc := range h.snap().Readers.Column(sprint.Asked, sprint.Reading) {
+					loads[rc.Row+":"+rc.Col]++
+				}
+				require.Fail(h.t, fmt.Sprintf("round %d: second tick moved %v notes %d in %s\nfirst tick: %s\nloads after: %v", r, p.Moved, p.Notes, p.Name, strings.Join(first, "\n  "), loads))
 			}
 		}
 		_ = before

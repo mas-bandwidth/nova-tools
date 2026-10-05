@@ -23,6 +23,7 @@ func TestCardShowsTheHeadTheNextAttemptStartsFrom(t *testing.T) {
 	assert.Contains(t, ta.ok("card s1-1"), "NEXT starts from attempt 1 head="+sha)
 	ta.ok("ask")
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a --finding 'fine'")
+	ta.ok("ask") // the second read, the first ok
 	ta.ok("read --as reader-b --broken s1-1.r1.reader-b --finding 'line 3: the test is missing'")
 	ta.ok("rework s1-1 --fix 'add the test'")
 	ta.deal(1)

@@ -210,19 +210,23 @@ func TestActionsCoverFinish(t *testing.T) {
 	coverRefused(t, err)
 }
 
-// TestActionsCoverAsk covers Ask (actions.go): a primary in review is asked
-// of the next two readers; one not in review is refused.
+// TestActionsCoverAsk covers Ask (actions.go): a primary in review is asked its
+// first read alone (ReadsWanted, sequential reads); asked again while that read
+// is outstanding it wants none and is refused.
 func TestActionsCoverAsk(t *testing.T) {
 	t.Parallel()
 	s := New([]string{"r1", "r2"}, nil, "c")
 	s.Primaries["p"] = Primary{Stream: "s", Kind: KindPrimary, State: Review, Attempt: 1}
 
-	n, err := Ask(s, "p", []string{"r1", "r2"})
+	_, err := Ask(s, "p", []string{"r1", "r2"})
+	coverBadChoice(t, err) // the pair at once: the reads are asked one at a time
+
+	n, err := Ask(s, "p", []string{"r1"})
 	require.NoError(t, err)
 	assert.Equal(t, Asked, n.Reads[RC("p", 1, "r1")].Place)
-	assert.Equal(t, Asked, n.Reads[RC("p", 1, "r2")].Place)
+	assert.NotContains(t, n.Reads, RC("p", 1, "r2"))
 
-	_, err = Ask(n, "p", []string{"r1", "r2"})
+	_, err = Ask(n, "p", []string{"r2"})
 	coverRefused(t, err)
 }
 
@@ -257,9 +261,10 @@ func TestActionsCoverReadStart(t *testing.T) {
 	coverRefused(t, err)
 }
 
-// TestActionsCoverRead covers Read (actions.go): a reading reader records ok
-// and the read that leaves none outstanding opens reads exhausted; a report
-// on no card is refused.
+// TestActionsCoverRead covers Read (actions.go): a reading reader records ok;
+// one ok of the two a card needs opens no reads exhausted (the second read is
+// the ask's: ReadsWanted), and a broken read that leaves none outstanding
+// does; a report on no card is refused.
 func TestActionsCoverRead(t *testing.T) {
 	t.Parallel()
 	s := New([]string{"r1", "r2"}, nil, "c")
@@ -269,27 +274,39 @@ func TestActionsCoverRead(t *testing.T) {
 	n, err := Read(s, "r1", RC("p", 1, "r1"), true)
 	require.NoError(t, err)
 	assert.Equal(t, OK, n.Reads[RC("p", 1, "r1")].Place)
-	assert.True(t, n.Open[Judgment{JReads, "p"}])
+	assert.False(t, n.Open[Judgment{JReads, "p"}], "the second read is the ask's")
+	assert.Equal(t, 1, n.ReadsWanted("p"))
+
+	b, err := Read(s, "r1", RC("p", 1, "r1"), false)
+	require.NoError(t, err)
+	assert.Equal(t, Broken, b.Reads[RC("p", 1, "r1")].Place)
+	assert.Equal(t, 0, b.ReadsWanted("p"), "a broken read: no second read")
 
 	_, err = Read(s, "r1", RC("p", 1, "missing"), true)
 	coverRefused(t, err)
 }
 
 // TestActionsCoverExhaust covers exhaust (actions.go): an asked primary with
-// no read outstanding opens reads exhausted; one never asked opens stranded
-// in review.
+// no read outstanding and none wanted opens reads exhausted; one whose read was
+// retired, or never asked, wants a read, which is the ask's, and opens nothing.
 func TestActionsCoverExhaust(t *testing.T) {
 	t.Parallel()
 	asked := New([]string{"r1"}, nil, "c")
 	asked.Primaries["p"] = Primary{Stream: "s", Kind: KindPrimary, State: Review, Attempt: 1}
-	asked.Reads[RC("p", 1, "r1")] = ReadCard{Primary: "p", Attempt: 1, Reader: "r1", Place: Retired}
+	asked.Reads[RC("p", 1, "r1")] = ReadCard{Primary: "p", Attempt: 1, Reader: "r1", Place: Broken}
 	asked.exhaust("p")
 	assert.True(t, asked.Open[Judgment{JReads, "p"}])
+
+	retired := New([]string{"r1"}, nil, "c")
+	retired.Primaries["p"] = Primary{Stream: "s", Kind: KindPrimary, State: Review, Attempt: 1}
+	retired.Reads[RC("p", 1, "r1")] = ReadCard{Primary: "p", Attempt: 1, Reader: "r1", Place: Retired}
+	retired.exhaust("p")
+	assert.Empty(t, retired.Open, "a retired read is asked again: the ask's")
 
 	stranded := New(nil, nil, "c")
 	stranded.Primaries["p"] = Primary{Stream: "s", Kind: KindPrimary, State: Review, Attempt: 1}
 	stranded.exhaust("p")
-	assert.True(t, stranded.Open[Judgment{JStranded, "p"}])
+	assert.Empty(t, stranded.Open, "its first read is wanted: the ask's")
 }
 
 // TestActionsCoverAccept covers Accept (actions.go): an acceptable primary is
@@ -618,9 +635,10 @@ func TestActionsCoverCiGreen(t *testing.T) {
 	coverRefused(t, err)
 }
 
-// TestActionsCoverAck covers Ack (actions.go): a ci red is answered and the
-// review's exhausted judgment written; a blocked judgment waives the named
-// dropped need; a type its decisions do not list is refused.
+// TestActionsCoverAck covers Ack (actions.go): a ci red is answered, and a
+// primary never asked writes no judgment (its first read is wanted: the
+// ask's); a blocked judgment waives the named dropped need; a type its
+// decisions do not list is refused.
 func TestActionsCoverAck(t *testing.T) {
 	t.Parallel()
 	s := New(nil, nil, "c")
@@ -629,7 +647,8 @@ func TestActionsCoverAck(t *testing.T) {
 
 	n, err := Ack(s, JCI, []string{"p"}, nil)
 	require.NoError(t, err)
-	assert.True(t, n.Open[Judgment{JStranded, "p"}])
+	assert.False(t, n.Open[Judgment{JCI, "p"}])
+	assert.False(t, n.Open[Judgment{JStranded, "p"}], "its first read is the ask's")
 
 	b := New(nil, nil, "c")
 	b.Primaries["p"] = Primary{Stream: "s", Kind: KindPrimary, State: Waiting, Needs: []string{"q"}}
@@ -689,4 +708,22 @@ func TestActionsCoverDefaultScore(t *testing.T) {
 	assert.Equal(t, 12.0, DefaultScore(s, AddArgs{Stream: "s"}, 0, 11))
 	assert.Equal(t, 9.5, DefaultScore(s, AddArgs{Stream: "s", Before: "b"}, 0, 0))
 	assert.Equal(t, 10.5, DefaultScore(s, AddArgs{Stream: "s", After: "b"}, 0, 0))
+}
+
+// TestReworkFinderIsTheFirstBrokenReadInReaderOrder: the model's rework names as the
+// finder the reader of the first broken read in the model's reader list order (the
+// readers table's row order, sprint.finderOf), never in name order: r-m1 is listed
+// before r-a, so it is the finder although r-a sorts first by name.
+func TestReworkFinderIsTheFirstBrokenReadInReaderOrder(t *testing.T) {
+	t.Parallel()
+	s := New([]string{"r-m1", "r-a"}, []string{"m"}, "c")
+	s.Members["m"] = Up
+	s.Primaries["p"] = Primary{Stream: "s", Kind: KindPrimary, State: Review, Attempt: 1}
+	for _, r := range []string{"r-a", "r-m1"} {
+		s.Reads[RC("p", 1, r)] = ReadCard{Primary: "p", Attempt: 1, Reader: r, Place: Broken, Verdict: "broken"}
+	}
+	n, err := Rework(s, "p", "m")
+	require.NoError(t, err)
+	assert.Equal(t, "r-m1", n.Primaries["p"].Finder, "the first broken read in reader order")
+	assert.Equal(t, 1, n.Primaries["p"].FindingAttempt)
 }

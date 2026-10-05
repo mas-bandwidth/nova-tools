@@ -928,9 +928,15 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor); the seat then moves by coordinator <name>")
 	owner := fs.String("owner", "", "the sprint's owner, who may give the seat and whose name a take of it carries (coordinator --take --approved-by); set once, never changed (else "+OwnerEnv+")")
 	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
+	attempts := fs.String("attempts", "", fmt.Sprintf("the sprint's attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to %d (default %d; later: nova-sprint set --attempts <n>)", sprint.AttemptsMax, sprint.AttemptsDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "init", err.Error())
+	}
+	if *attempts != "" {
+		if _, err := sprint.ParseAttempts(*attempts); err != nil {
+			return refuse(stderr, "init", err.Error())
+		}
 	}
 	if len(pos) > 0 {
 		return refuse(stderr, "init", "takes no words, found "+pos[0])
@@ -1006,6 +1012,13 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	if *attempts != "" {
+		// the sprint's attempt cap, as set --attempts writes it (the coordinator's: init names them)
+		if res, err := st.Run(ctx, store.SetStep(sprint.SetReq{Attempts: *attempts, Who: *coordinator})); err != nil || len(res.Refused) > 0 {
+			fmt.Fprintf(stderr, "%s init: --attempts: %v %v\n", prog, err, res.Refused)
+			return 1
+		}
+	}
 	readerRows, err := st.ReaderRows(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
@@ -1022,7 +1035,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	var memberNames []string
 	for _, m := range specs {
-		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width, false), steps, stderr); code != 0 {
+		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width, false, 0, false), steps, stderr); code != 0 {
 			return code
 		}
 		memberNames = append(memberNames, m.Name)
@@ -2475,9 +2488,10 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	name := "fleet " + op
 	fs, c := a.verbSetup(name)
-	var width *string
+	var width, deadline *string
 	if op == "up" {
 		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it runs at once; the deal holds it at %d times that, ready and working; 1 to %d (default: as it is, %d for a new member); 0 drains the member: no new deals, its untaken ready cards are levelled away, its working cards finish (fleet down deals them again elsewhere)", sprint.DealAhead, sprint.MaxWidth, sprint.DefaultWidth))
+		deadline = fs.String("deadline", "", fmt.Sprintf("pin the deadline every card dealt to the member gets, a duration (45m, 2700s); default takes the pin off: each card's own deadline, or %d times the member's median run wall over its last %d ok attempts, whichever is larger", sprint.DeadlineK, sprint.DeadlineSamples))
 	}
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -2494,6 +2508,12 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	d, off := 0, false
+	if deadline != nil && *deadline != "" {
+		if d, off, err = sprint.ParseDeadline(*deadline); err != nil {
+			return refuse(stderr, name, err.Error())
+		}
+	}
 	member := ""
 	if len(pos) == 1 {
 		member = pos[0]
@@ -2502,7 +2522,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain), stdout, stderr)
+	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain, d, off), stdout, stderr)
 }
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
@@ -2674,6 +2694,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("set")
 	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: each card's own tier)")
 	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
+	attempts := fs.String("attempts", "", fmt.Sprintf("the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect (brief, drop; never dealt again); 1 to %d, or default (%d); a stream's own: nova-sprint stream set <s> --attempts <n>", sprint.AttemptsMax, sprint.AttemptsDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
@@ -2685,7 +2706,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
 	}
-	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Attempts: *attempts, Who: c.actor}), stdout, stderr)
 }
 
 // cmdPromoted is the coordinator's word that the sprint branch was promoted into dev
@@ -2696,6 +2717,7 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	sha := fs.String("sha", "", "the merge commit's sha on dev, 7 to 40 hex digits (required)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	dry := fs.Bool("dry-run", false, "check the sha and say what would be recorded; record nothing")
+	returned := fs.String("returned", "", "landed cards dev or an audit returned with this promotion, comma separated: each is marked on the card and the tick asks to raise its stream's read tier")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
@@ -2715,7 +2737,7 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "PROMOTED DRY-RUN sha=%s; nothing was changed\n", sha)
 		return 0
 	}
-	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
+	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Answers: answers(*ans), Returned: sprint.Split(*returned), Who: c.actor}), stdout, stderr)
 }
 
 // cmdFunded is the coordinator's word that a provider was paid: its rest of its funds ends
@@ -2740,18 +2762,21 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
+	attempts := fs.String("attempts", "", fmt.Sprintf("the stream's attempt cap, over the sprint's: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to %d, or default (the sprint's)", sprint.AttemptsMax))
+	reason := fs.String("reason", "", "why the read tier is set, recorded on the stream row (the judgment 'raise the read tier of the stream?' names it)")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	if len(names) == 0 || *tier == "" {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default>")
+	if len(names) == 0 || *tier == "" && *attempts == "" {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default> or --attempts <n|default>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Who: c.actor}), stdout, stderr)
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Attempts: *attempts, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:
