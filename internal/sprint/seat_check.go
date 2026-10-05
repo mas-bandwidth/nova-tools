@@ -29,6 +29,7 @@ const (
 	SeatCheckInbox     = "inbox"
 	SeatCheckQueue     = "queue"
 	SeatCheckVersions  = "versions"
+	SeatCheckPush      = "push"
 )
 
 // SeatCheckToken is the first word of every line.
@@ -138,6 +139,16 @@ type VersionsM struct {
 	Machines []MachineVersionM `json:"machines,omitempty"`
 }
 
+// PushM is the seat's push proof (pushproof.go): the holder and its push
+// record, as read; Measured false is a check that did not read it, which says
+// no line.
+type PushM struct {
+	Measured bool       `json:"measured,omitempty"`
+	Holder   string     `json:"holder,omitempty"`
+	Record   PushRecord `json:"record,omitzero"`
+	Recorded bool       `json:"recorded,omitempty"`
+}
+
 // SeatCheckMeasures is everything the probes measured, in one struct so a
 // test or command can evaluate any state of the machinery.
 type SeatCheckMeasures struct {
@@ -151,6 +162,7 @@ type SeatCheckMeasures struct {
 	Inbox     InboxM            `json:"inbox"`
 	Queue     QueueM            `json:"queue,omitempty"`
 	Versions  VersionsM         `json:"versions,omitempty"`
+	Push      PushM             `json:"push,omitzero"`
 	Host      string            `json:"host"`
 	Errs      map[string]string `json:"errs,omitempty"`
 }
@@ -529,6 +541,16 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 				facts = append(facts, fmt.Sprintf("machines=%d", len(v.Machines)))
 				add(SeatCheckLine{Thing: SeatCheckVersions, Up: true, Facts: facts})
 			}
+		}
+	}
+
+	// 12. the push proof: PUSH DOWN with the setup while the seat has none live
+	if p := m.Push; p.Measured && !failed(SeatCheckPush) {
+		facts := []string{"holder=" + orDash(p.Holder), "harness=" + orDash(p.Record.Harness)}
+		if why := PushWhy(p.Holder, p.Record, p.Recorded, now); why != "" {
+			add(SeatCheckLine{Thing: SeatCheckPush, Facts: append(facts, "why="+quoteSeatCheck(why)), Remedy: PushSetup(p.Holder, p.Record, p.Recorded)})
+		} else {
+			add(SeatCheckLine{Thing: SeatCheckPush, Up: true, Facts: append(facts, "proven="+formatAge(now.Sub(p.Record.Proven))+" ago")})
 		}
 	}
 
