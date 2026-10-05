@@ -2519,6 +2519,17 @@ and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: conflict on a card; stream branch red; a
 card needs a card of another stream first; the merge queue rejected.
 
+A stream stopped by a rejected push remains eligible for `land` retries after its
+retry backoff (`LandRetryBackoff`, 1 minute). The land loop retries its queued
+batch while the rejection judgment stays open; only after a later push succeeds
+does it resume the stream and close that judgment before recording the landing.
+Another rejected retry leaves the same judgment open and resets the retry
+backoff. If a retried rejected stream meets another stop fact (a red check, a
+conflict, or a base gate refusal), that fact replaces the rejection cause,
+unsets the retry backoff, and closes the rejection judgment, keeping exactly one
+open judgment. Other stopped streams remain excluded until their cause is
+resolved by the coordinator or the tick's rule.
+
 `land` is the coordinator's landing step as one command (section 11): it
 merges each batch's heads in work order onto a branch cut from the base, checks
 and pushes it, and reports it through this merge step, with the facts above

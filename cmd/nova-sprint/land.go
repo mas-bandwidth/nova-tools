@@ -366,7 +366,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	var order []string
 	for _, name := range s.Streams() {
 		named := slices.Contains(streams, name)
-		if named || len(streams) == 0 && s.StreamCtl(name) != nil && s.StreamCtl(name).F("state") != sprint.StreamStopped && len(landQueue(s, name)) > 0 {
+		ctl := s.StreamCtl(name)
+		retryRejected := ctl != nil && ctl.F("state") == sprint.StreamStopped && ctl.F("cause") == "rejected"
+		if named || len(streams) == 0 && ctl != nil && (ctl.F("state") != sprint.StreamStopped || (retryRejected && a.retryDue(ctl))) && len(landQueue(s, name)) > 0 {
 			order = append(order, name)
 		}
 	}
@@ -509,9 +511,10 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	switch {
 	case ctl == nil:
 		return refused("no such stream; run: nova-sprint where")
-	case ctl.F("state") == sprint.StreamStopped:
+	case ctl.F("state") == sprint.StreamStopped && ctl.F("cause") != "rejected":
 		return refused("stopped (" + ctl.F("cause") + "); run: nova-sprint resume --stream " + stream)
 	}
+	retryRejected := ctl.F("state") == sprint.StreamStopped && ctl.F("cause") == "rejected"
 	queue := landQueue(s, stream)
 	if len(queue) == 0 {
 		return refused("nothing queued to merge in stream " + stream + "; run: nova-sprint queue --stream " + stream)
@@ -535,13 +538,16 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
 			n++
 		}
-		landed, ok := l.batch(ctx, s, stream, cards[:n])
+		landed, ok := l.batch(ctx, s, stream, cards[:n], retryRejected)
 		if !ok {
 			return false
 		}
 		if !landed {
 			return true
 		}
+		// The first successful retry resumed the stream; later batches use
+		// the ordinary moving-stream path and must not try to resume it again.
+		retryRejected = false
 		cards = cards[n:]
 	}
 	return true
@@ -553,7 +559,7 @@ var shaRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 // batch lands one batch: landed says every card of it landed (the stream
 // goes on to its next batch), ok is false when a push landed and its report
 // did not.
-func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, cards []landCard) (landed, ok bool) {
+func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, cards []landCard, retryRejected bool) (landed, ok bool) {
 	ids := make([]string, len(cards))
 	for i, c := range cards {
 		ids[i] = c.id
@@ -597,7 +603,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	if why != "" && l.baseCount {
 		// the base-gate rule: the refusal counted per stream and base in the store, its third
 		// (or this process's third failure) stopping the stream with the coordinator's judgment
-		return l.baseRefused(b, stream, why)
+		return l.baseRefused(b, stream, why, retryRejected)
 	}
 	if why != "" {
 		return refuse(why)
@@ -620,10 +626,10 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		since(&b.Times.Check, start)
 		if why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
-			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
+			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why, retryRejected)
 		}
 		start = time.Now()
-		why = l.queueHead(ctx, stream, cards[:len(merged)])
+		why = l.queueHead(ctx, stream, cards[:len(merged)], retryRejected)
 		since(&b.Times.Queue, start)
 		if why != "" {
 			return refuse(why)
@@ -636,11 +642,19 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
+			if retryRejected {
+				if why := l.resumeRejected(stream); why != "" {
+					b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" but the rejected stream did not resume ("+why+"); run land again"
+					l.out = append(l.out, b)
+					return false, false
+				}
+				b.Also = append(b.Also, "stream resumed after its rejected push succeeded")
+			}
 			if !l.landed(b, stream, cards[:len(merged)]) {
 				return false, false
 			}
 			if failed.id != "" {
-				l.conflict(stream, failed)
+				l.conflict(stream, failed, retryRejected)
 				return false, true
 			}
 			return true, true
@@ -650,7 +664,11 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		}
 		if attempt == 2 {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
-			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, cards[:len(merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
+			why := "the push to " + b.Base + " was rejected again after a rebuild on the moved base: " + firstLine("", err)
+			if retryRejected {
+				why = "the push to " + b.Base + " was rejected again; its existing judgment remains open: " + firstLine("", err)
+			}
+			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, cards[:len(merged)], "rejected", why, retryRejected)
 		}
 		merged, failed, why = l.build(ctx, dir, stream, cards, b.Times)
 		b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
@@ -659,8 +677,32 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		}
 		b.Scope = l.scopeOf(merged)
 	}
-	l.conflict(stream, failed)
+	l.conflict(stream, failed, retryRejected)
 	return false, true
+}
+
+// resumeRejected closes the stream's one open rejection judgment only after a
+// later push succeeds (docs/SPEC-SPRINT.md, land). The subsequent merge step
+// records the already-pushed batch as usual.
+func (l *lander) resumeRejected(stream string) string {
+	step := store.ResumeStep(sprint.ResumeReq{Stream: stream, Did: "the push succeeded after its rejection", Who: l.c.actor})
+	plan := step.Plan
+	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
+		ctl := s.StreamCtl(stream)
+		if ctl == nil || ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "rejected" {
+			return sprint.Plan{Refused: []sprint.Refusal{{Key: stream, Why: "the stream is no longer stopped for a rejected push"}}}
+		}
+		return plan(s)
+	}
+	epoch := l.epoch
+	step.Epoch = &epoch
+	l.a.serial.Lock()
+	res, err := l.st.Run(context.Background(), step)
+	l.a.serial.Unlock()
+	if code := stepExit(res, err); code != 0 {
+		return stepWhy(res, err)
+	}
+	return ""
 }
 
 // placeWhy is why land cannot place a batch before any git, "" when it can:
@@ -760,17 +802,17 @@ type conflictCard struct {
 // conflict reports the card that ended its batch with the conflict fact: the
 // step's batch is that one card, by name, at the head that did not merge (a
 // replacement attempt is never blamed).
-func (l *lander) conflict(stream string, f conflictCard) {
+func (l *lander) conflict(stream string, f conflictCard, retryRejected bool) {
 	b := landBatch{Stream: stream, Status: "refused", Cards: 1, IDs: []string{f.id}}
-	l.fact(b, sprint.MergeReq{Stream: stream, Batch: 1, Conflict: f.id, Note: f.why, ConflictKind: f.kind, ConflictPaths: f.paths}, []landCard{f.landCard}, "conflict", f.why)
+	l.fact(b, sprint.MergeReq{Stream: stream, Batch: 1, Conflict: f.id, Note: f.why, ConflictKind: f.kind, ConflictPaths: f.paths}, []landCard{f.landCard}, "conflict", f.why, retryRejected)
 }
 
 // fact reports a fact that stops the stream through the merge step, and the
 // batch refused with it.
-func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why string) (bool, bool) {
+func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why string, retryRejected bool) (bool, bool) {
 	b.Status, b.Fact, b.Reason = "refused", fact, why
 	r.Who = l.c.actor
-	res, err := l.step(r, pins)
+	res, err := l.step(r, pins, retryRejected)
 	if code := stepExit(res, err); code != 0 {
 		b.Fact = ""
 		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(r.Stream)
@@ -782,13 +824,13 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 // baseRefused counts a refusal on the base's gate through the merge step
 // (sprint.MergeReq.BaseRefused) and refuses the batch with it: the fact is base when the
 // count stopped the stream.
-func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
+func (l *lander) baseRefused(b landBatch, stream, why string, retryRejected bool) (bool, bool) {
 	r := sprint.MergeReq{Stream: stream, Base: b.Base, BaseRefused: l.baseWhy, Who: l.c.actor}
 	if l.baseStop {
 		r.BaseRed = l.baseWhy
 	}
 	b.Status, b.Reason = "refused", why
-	res, err := l.step(r, nil)
+	res, err := l.step(r, nil, retryRejected)
 	switch {
 	case stepExit(res, err) != 0:
 		b.Reason = why + "; the merge step did not count it (" + stepWhy(res, err) + "); " + againRemedy(stream)
@@ -817,7 +859,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	}
 	b.Cards, b.IDs = len(ids), ids
 	start := time.Now()
-	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins, false)
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}
@@ -876,7 +918,7 @@ func movedExactly(moved, ids []string) bool {
 // head, refuses the report and nothing is recorded that was not pushed. The pins are part of
 // the step's arguments, and under the caller's --op its op id is the op and
 // those arguments, so a replay returns only the receipt of this very batch.
-func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) {
+func (l *lander) step(r sprint.MergeReq, pins []landCard, retryRejected bool) (store.Result, error) {
 	// the batch is the pinned cards by name, never the first n of the queue, each with
 	// what its landing did past a merge of its head
 	r.Cards = make([]string, len(pins))
@@ -892,7 +934,7 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 	step := store.MergeStep(r)
 	plan := step.Plan
 	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
-		if why := headWhy(s, r.Stream, pins); why != "" {
+		if why := headWhy(s, r.Stream, pins, retryRejected); why != "" {
 			return sprint.Plan{Refused: []sprint.Refusal{{Key: r.Stream, Why: why}}}
 		}
 		return plan(s)
@@ -934,14 +976,14 @@ func stepWhy(res store.Result, err error) string {
 // read, no longer holds the pinned cards at their heads, or why the push pauses
 // (a merge window opened since, or the base's merge queue holding a group:
 // docs/SPEC-SPRINT.md section 7, the lander's pause); "" when it does not.
-func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) string {
+func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard, retryRejected bool) string {
 	l.a.serial.Lock()
 	s, err := l.st.Load(ctx, []string{sprint.Merge, sprint.Work}, nil)
 	l.a.serial.Unlock()
 	if err != nil {
 		return "the merge queue could not be read again at epoch " + strconv.FormatUint(l.epoch, 10) + ": " + oneline.Err(err)
 	}
-	if why := headWhy(s, stream, pins); why != "" {
+	if why := headWhy(s, stream, pins, retryRejected); why != "" {
 		return why
 	}
 	return l.pause(ctx, s, pins[0].repo, pins[0].base)
@@ -955,10 +997,10 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 // and counting that as a change would refuse almost every landing, or leave a
 // pushed batch with nothing to report. A pinned card
 // gone from the queue, or reworked to another head, still refuses.
-func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
+func headWhy(s *sprint.Snapshot, stream string, pins []landCard, retryRejected bool) string {
 	// a stream stopped since land read it (a red recorded while an earlier stream of the
 	// same run landed) is not pushed: a stopped stream moves only after resume
-	if ctl := s.StreamCtl(stream); ctl != nil && ctl.F("state") == sprint.StreamStopped {
+	if ctl := s.StreamCtl(stream); ctl != nil && ctl.F("state") == sprint.StreamStopped && !(retryRejected && ctl.F("cause") == "rejected") {
 		return "stopped (" + ctl.F("cause") + ") since it was read; run: nova-sprint resume --stream " + stream
 	}
 	queued := map[string]bool{}

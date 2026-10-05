@@ -136,9 +136,46 @@ func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coor
 		return false, "", err
 	}
 	for _, row := range s.Merge.Rows() {
-		if s.Merge.Count(row, sprint.Queued) > 0 {
+		ctl := s.StreamCtl(row)
+		retryRejected := ctl != nil && ctl.F("state") == sprint.StreamStopped && ctl.F("cause") == "rejected"
+		if retryRejected && !a.retryDue(ctl) {
+			continue
+		}
+		if s.Merge.Count(row, sprint.Queued) > 0 && (ctl == nil || ctl.F("state") != sprint.StreamStopped || retryRejected) {
 			return true, coordinator, nil
 		}
 	}
 	return false, coordinator, nil
+}
+
+// retryDue reports whether a stopped-rejected stream's retry backoff has passed.
+func (a *app) retryDue(ctl *sprint.Card) bool {
+	if ctl == nil {
+		return false
+	}
+	at := ctl.F(sprint.FieldRetryAt)
+	if at == "" {
+		since := ctl.F("since")
+		if since == "" {
+			return true
+		}
+		t, err := time.Parse(time.RFC3339, since)
+		if err != nil {
+			return true
+		}
+		now := time.Now()
+		if a != nil && a.now != nil {
+			now = a.now()
+		}
+		return !now.Before(t.Add(sprint.LandRetryBackoff))
+	}
+	t, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return true
+	}
+	now := time.Now()
+	if a != nil && a.now != nil {
+		now = a.now()
+	}
+	return !now.Before(t)
 }

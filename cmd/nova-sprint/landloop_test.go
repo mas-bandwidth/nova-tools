@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,152 @@ func TestTheServerLandsWhatIsQueued(t *testing.T) {
 	out.Reset()
 	assert.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out))
 	assert.Empty(t, out.String(), "landed: the next round has nothing to do")
+	r.clean()
+}
+
+// A later successful push retries a rejected stream, closes its one judgment,
+// and records the queued batch (docs/SPEC-SPRINT.md, land).
+func TestTheLandLoopResumesARejectedStreamAfterThePushSucceeds(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "push", "-q", "origin", "main:refs/heads/alt")
+	briefDir := t.TempDir()
+	brief := func(id, base string) string {
+		path := filepath.Join(briefDir, id+".md")
+		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
+		return path
+	}
+	r.ok("add --stream s1 --brief-file " + brief("s1-1", "main") + " --brief-file " + brief("s1-2", "alt"))
+	r.queued(map[string]string{
+		"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n"),
+		"s1-2": r.head("s1-2", "alt", "s1-2.txt", "two\n"),
+	}, "s1-1", "s1-2")
+	firstRound, repeatedRefusal, pushes := true, false, 0
+	r.a.beforePush = func(int) {
+		pushes++
+		if firstRound || repeatedRefusal {
+			r.moveBase("main", "moved"+strconv.Itoa(pushes)+".txt")
+		}
+	}
+	more := []string{"--repo-dir", r.clone, "--base", "main"}
+	var out bytes.Buffer
+	assert.Equal(t, 1, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+	assert.Equal(t, "stopped rejected", r.streamState("s1"))
+	assert.Equal(t, 1, strings.Count(r.ok("inbox"), "stream stopped: the merge queue rejected"), "repeated refusal keeps one judgment open")
+	assert.Equal(t, 2, pushes, "one rejection and one rebuild refusal open the judgment")
+
+	// Within backoff, a second round does not retry the rejected stream and pushes nothing.
+	out.Reset()
+	assert.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+	assert.Equal(t, 2, pushes, "no retry attempted before backoff expires")
+	assert.Empty(t, out.String())
+
+	firstRound, repeatedRefusal = false, true
+	r.a.sleep(sprint.LandRetryBackoff)
+	out.Reset()
+	assert.Equal(t, 1, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+	assert.Equal(t, 4, pushes, "another rejected retry is attempted once with one rebuild")
+	assert.Equal(t, 1, strings.Count(r.ok("inbox"), "stream stopped: the merge queue rejected"), "repeated refusal keeps the same judgment open")
+
+	// Within backoff again, pushes nothing.
+	out.Reset()
+	assert.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+	assert.Equal(t, 4, pushes, "no retry attempted before backoff expires")
+	assert.Empty(t, out.String())
+
+	repeatedRefusal = false
+	r.a.sleep(sprint.LandRetryBackoff)
+	out.Reset()
+	assert.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+	assert.Equal(t, 6, pushes, "the later round retries both distinct base batches")
+	assert.Contains(t, out.String(), "LAND OK stream=s1 cards=1 base=main")
+	assert.Contains(t, out.String(), "LAND OK stream=s1 cards=1 base=alt")
+	assert.Equal(t, "landed", r.streamState("s1"))
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	assert.NotRegexp(t, `(?m)^JUDGMENT .*stream stopped: the merge queue rejected`, r.ok("inbox"), "successful retry closes the original open judgment")
+	r.clean()
+}
+
+// Only rejected-push stops are retried by land; other causes remain for the
+// coordinator, even when a stream is named explicitly (docs/SPEC-SPRINT.md).
+func TestTheLandLoopDoesNotRetryOtherStoppedStreams(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		stop string
+	}{
+		{"red", "merge --stream s1 --red --suspect s1-1"},
+		{"conflict", "merge --stream s1 --conflict s1-1"},
+		{"base", "merge --stream s1 --base-red 'base gate failed'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			r.ok("add --stream s1 --count 2")
+			r.queued(map[string]string{
+				"s1-1": r.head("s1-1", "main", "a.txt", "a\n"),
+				"s1-2": r.head("s1-2", "main", "b.txt", "b\n"),
+			}, "s1-1", "s1-2")
+			r.ok(tc.stop)
+			pushes := 0
+			r.a.beforePush = func(int) { pushes++ }
+			var out bytes.Buffer
+			assert.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", nil, &out), out.String())
+			assert.Empty(t, out.String(), "the loop excludes non-rejected stops")
+			assert.Equal(t, 1, r.a.cmdLand([]string{"--stream", "s1", "--repo-dir", r.clone, "--base", "main"}, &out, &out))
+			assert.Contains(t, out.String(), "stopped")
+			assert.Zero(t, pushes, "an explicit stream name does not bypass its stop")
+			assert.Equal(t, "stopped "+tc.name, r.streamState("s1"))
+			r.clean()
+		})
+	}
+}
+
+// When a retried rejected stream encounters a red check, the fact step replaces
+// the rejected cause, closes the rejection judgment, and leaves the stream stopped red.
+func TestTheLandLoopRecordsRedFactWhenRetryingRejectedStream(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 2")
+	r.queued(map[string]string{
+		"s1-1": r.head("s1-1", "main", "a.txt", "a\n"),
+		"s1-2": r.head("s1-2", "main", "b.txt", "b\n"),
+	}, "s1-1", "s1-2")
+
+	// First round: reject the push so the stream is stopped rejected.
+	pushes := 0
+	r.a.beforePush = func(int) {
+		pushes++
+		r.moveBase("main", "moved"+strconv.Itoa(pushes)+".txt")
+	}
+	more := []string{"--repo-dir", r.clone, "--base", "main"}
+	var out bytes.Buffer
+	assert.Equal(t, 1, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+	assert.Equal(t, "stopped rejected", r.streamState("s1"))
+	assert.Equal(t, 1, strings.Count(r.ok("inbox"), "stream stopped: the merge queue rejected"))
+	assert.Equal(t, 2, pushes)
+
+	// Advance clock past backoff and run next round with a failing check.
+	r.a.sleep(sprint.LandRetryBackoff)
+	r.a.beforePush = nil
+	moreRed := []string{"--repo-dir", r.clone, "--base", "main", "--check", "echo tests failed; exit 2"}
+	out.Reset()
+	assert.Equal(t, 1, r.a.landRound(context.Background(), "mem:0", moreRed, &out), out.String())
+	assert.Contains(t, out.String(), "fact=red")
+	assert.Equal(t, "stopped red", r.streamState("s1"))
+	assert.Equal(t, 2, pushes, "check failed before any push")
+
+	// Old rejection judgment was closed; exactly one judgment (red) remains open.
+	inbox := r.ok("inbox")
+	assert.NotRegexp(t, `(?m)^JUDGMENT .*stream stopped: the merge queue rejected`, inbox, "old rejection judgment closed")
+	assert.Regexp(t, `(?m)^JUDGMENT .*stream stopped: stream branch red`, inbox, "new red judgment opened")
+
+	// Subsequent round does not retry stopped red stream.
+	r.a.sleep(sprint.LandRetryBackoff)
+	out.Reset()
+	assert.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out), out.String())
+	assert.Empty(t, out.String())
+	assert.Equal(t, 2, pushes)
 	r.clean()
 }
 

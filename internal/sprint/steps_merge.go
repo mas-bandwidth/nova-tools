@@ -103,6 +103,8 @@ const (
 	FieldBaseGateRefused = "base_gate_refused"
 	FieldBaseGateBase    = "base_gate_base"
 	FieldBaseGateFirst   = "base_gate_first"
+	FieldRetryAt         = "retry_at"
+	LandRetryBackoff     = time.Minute
 )
 
 var baseGateCount = []string{FieldBaseGateRefused, FieldBaseGateBase, FieldBaseGateFirst}
@@ -124,6 +126,9 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 	}
 	if r.BaseRed == "" && n < BaseGateStops {
 		set := map[string]string{FieldBaseGateRefused: itoa(n), FieldBaseGateBase: r.Base, FieldBaseGateFirst: first}
+		if ctl.F("cause") == "rejected" {
+			set[FieldRetryAt] = stamp(s.Now.Add(LandRetryBackoff))
+		}
 		p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set))},
 			Moved: fmt.Sprintf("stream %s: the base %s refused at its tree gate (%d of %d)", r.Stream, r.Base, n, BaseGateStops)})
 		return p
@@ -140,8 +145,16 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 	set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
 	j := judgment(NBaseRed, r.Stream, s.Now, 0)
 	j.StreamLevel, j.Who, j.What = true, r.Who, cutText(what, MaxCardTextBytes)
-	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"card", "other"}, baseGateCount...)...))}, Notes: []Note{j},
-		Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"})
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"card", "other", FieldRetryAt}, baseGateCount...)...))}, Notes: []Note{j},
+		Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"}
+	if ctl.F("cause") == "rejected" {
+		for _, o := range s.Open {
+			if o.Subject() == StreamSubject(r.Stream) {
+				u.Closes = append(u.Closes, o)
+			}
+		}
+	}
+	p.Units = append(p.Units, u)
 	return p
 }
 
@@ -201,10 +214,13 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		return p
 	}
 	state := ctl.F("state")
+	isFact := r.Red || r.Conflict != "" || r.Cross != "" || r.BaseRed != "" || r.BaseRefused != "" || r.Rejected
 	switch state {
 	case StreamStopped:
-		p.refuse(r.Stream, "stopped ("+ctl.F("cause")+"); run: nova-sprint resume --stream "+r.Stream)
-		return p
+		if ctl.F("cause") != "rejected" || !isFact {
+			p.refuse(r.Stream, "stopped ("+ctl.F("cause")+"); run: nova-sprint resume --stream "+r.Stream)
+			return p
+		}
 	case StreamLanded:
 		p.refuse(r.Stream, "landed")
 		return p
@@ -287,9 +303,25 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	stop := func(cause, typ string, primaries []string, before int, unset ...string) Unit {
 		ctlSet["state"], ctlSet["since"], ctlSet["cause"] = StreamStopped, now, cause
+		if cause == "rejected" {
+			ctlSet[FieldRetryAt] = stamp(s.Now.Add(LandRetryBackoff))
+		} else {
+			unset = append(unset, FieldRetryAt)
+		}
+		if ctl.F("cause") == "rejected" && cause == "rejected" {
+			return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, append(unset, baseGateCount...)...))}}
+		}
 		j := judgment(typ, r.Stream, s.Now, before, primaries...)
 		j.StreamLevel, j.Who, j.What = true, r.Who, r.Note
-		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, append(unset, baseGateCount...)...))}, Notes: append(notes, j)}
+		u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, append(unset, baseGateCount...)...))}, Notes: append(notes, j)}
+		if ctl.F("cause") == "rejected" {
+			for _, o := range s.Open {
+				if o.Subject() == StreamSubject(r.Stream) {
+					u.Closes = append(u.Closes, o)
+				}
+			}
+		}
+		return u
 	}
 	switch {
 	case r.Conflict != "":
@@ -368,8 +400,13 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		u.Moved = fmt.Sprintf("stream %s stopped: branch red on a batch of %d", r.Stream, len(ids))
 		p.Units = append(p.Units, u)
 	case r.Rejected:
+		wasRejected := ctl.F("cause") == "rejected"
 		u := stop("rejected", NRejected, ids, 0, "other", "card")
-		u.Moved = fmt.Sprintf("stream %s stopped: the merge queue rejected a batch of %d", r.Stream, len(ids))
+		if wasRejected {
+			u.Moved = fmt.Sprintf("stream %s: the merge queue rejected a batch of %d again", r.Stream, len(ids))
+		} else {
+			u.Moved = fmt.Sprintf("stream %s stopped: the merge queue rejected a batch of %d", r.Stream, len(ids))
+		}
 		p.Units = append(p.Units, u)
 	default:
 		// A card queued in merge but not merging in work is refused; the
@@ -518,7 +555,7 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	if r.Did != "" {
 		set["did"] = r.Did
 	}
-	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"cause", "card", "other", FieldConflictKind, FieldConflictPaths}, baseGateCount...)...))},
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"cause", "card", "other", FieldConflictKind, FieldConflictPaths, FieldRetryAt}, baseGateCount...)...))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
 	if state == StreamLanded {
 		n := happened(NStreamLanded, r.Stream, s.Now)
