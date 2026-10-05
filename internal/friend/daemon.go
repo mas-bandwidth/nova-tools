@@ -707,8 +707,8 @@ func (l *loop) read(now time.Time) bool {
 	switch {
 	case l.passive:
 	case l.broken:
-	case l.state.Asleep || len(l.held) > 0 || (l.state.WakeBarrier != "" && !l.isHeld(l.state.WakeBarrier)):
-		return l.readHeld(now)
+	case l.state.Asleep || (l.state.WakeBarrier != "" && !l.isHeld(l.state.WakeBarrier)) || (len(l.held) > 0 && l.busy == nil):
+		return l.readHeld(now) // while a turn runs awake, only a peek, as ever
 	case l.busy == nil && len(l.hand) < MaxBatch:
 		// in one-shot mode the lanes' turns run while the loop reads: it reads
 		// at once and pauses after, so a lane's result is never a block behind
