@@ -2958,7 +2958,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `failed` | work came back failed (a take with no result is redealt by the machine, section 5, and reaches here as its bound) | the next attempt (rework, the report its fix) on the next route of its tier, the routes it drew left out; the `RuleAttemptCap`-th (2) failure on one tier (`rule_tier`, `rule_fails` on the primary) a new attempt one tier up (`rework --tier`: flash to pro to heavy, the first tier above that a route serves); past heavy, a friend's card (`who=friend`: the friends' deal gives it to a friend up with room) |
 | `bound` | a card reached its bound (its redeal bound at its ceiling, or the second identical failure) | a new attempt one tier up, as `failed`'s climb; past heavy, a friend's card. A card every member up refused at staging, or at its brief's bound, is left |
 | `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp: the server's time of its holder's last `progress` verb, which the member sends every 3 minutes while its child prints and the friend daemon while a lane's turn on the card prints; a stamp from before the card's take is another holder's and counts as none) a wait of 30 minutes, once a generation (`rule_waited`). The default is wait only: a working card whose holder has stamped no progress since its take is held 30 minutes at a time and never returned by this rule, so a member that does not stamp never loses an honest long child to it (`tla/SprintRules.tla`, `NeverStampedNeverReturned`). A card whose holder stamped and then went silent past the 10 minutes, or whose one wait is spent, is returned and dealt again once its holder has had its own whole deadline (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A friend's card is left: a friend keeps her cards |
-| `conflict` | stream stopped: conflict on a card, where the lander said the paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports) | the card returned to review (`rule_redo` its attempt), the stream resumed, and the card reworked with the fix `redo the same change on the current tip`; a conflict in a ledger the lander could not resolve, or one whose files the lander did not say, is left |
+| `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
 
@@ -2972,9 +2972,28 @@ same card twice is a brief defect, above). So does every other type. `run` and `
 by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rules`); nova-config's sprint row `answer_rules_off` (a list of
 `base-gate, bound, brief-defect, conflict, failed, late`, applied to
 `sprint:answer_rules_off` and read with the routes) turns single rules off
-(`TestEachRuleHasAnOffSwitch`). The tests are internal/sprint/store/rule_answers_test.go and
-cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
+(`TestEachRuleHasAnOffSwitch`). The tests are internal/sprint/store/rule_answers_test.go,
+internal/sprint/rules_conflict_test.go and cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
 `LadderClimbs`, `WaitOnce`, `BaseStopsOnThird`).
+
+#### v11-conflict-rule-in-tick-now.w1
+
+A refused head is the tick's, not the coordinator's (the owner: "the machine keeps itself
+fed"; "a hand step is a missing instruction"). On 2026-10-04 every head that did not merge,
+changed files outside its PATHS, or failed the tree gate stopped its whole stream until the
+coordinator returned it, reworked it on the tip and resumed the stream: 19 streams sat
+stopped and the coordinator answered them by hand every two minutes, because the lander
+records a PATHS or gate refusal as a conflict with no `conflict_kind`, and the conflict rule
+left every such stop to a mind. The rule now places all three (`sprint.RefusalWay`:
+`conflict`, `paths`, `checks`, `gate`) and answers each in the tick that sees it: the card
+returned with its way and words on it and its next attempt at flash, the stream resumed so
+the rest of its batch lands, the card reworked on the base's tip with the refusal as its fix.
+Only the same card refused the same way a second time (a brief defect) keeps its stream
+stopped, with one judgment, prefixed `brief defect: `, for a mind. A refusal of another way
+is redone again; the way compared is the one the card was last returned on.
+`TestAConflictingHeadIsRedoneOnTheTipAndItsStreamKeepsLanding` drives each way on the twin
+store: the stream merging again after one tick, the next card landing, the redo at flash
+with its fix, and the repeat stopping the stream with the mark.
 
 #### land-base-gate-stops-stream
 
