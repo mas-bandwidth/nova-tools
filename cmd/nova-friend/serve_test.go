@@ -28,7 +28,9 @@ type serveRig struct {
 
 func newServeRig(t *testing.T) *serveRig {
 	t.Helper()
-	return &serveRig{rig: newRig(t, "ada", "bob", "cy", "dee"), clock: start, answered: map[string]int{}, nonces: map[string][]string{}}
+	r := newRig(t, "ada", "bob", "cy", "dee")
+	r.store.Friends = []string{"ada", "bob", "cy", "dee"}
+	return &serveRig{rig: r, clock: start, answered: map[string]int{}, nonces: map[string][]string{}}
 }
 
 func (s *serveRig) pong(t *testing.T, from, nonce string) {
@@ -45,7 +47,6 @@ func TestPingMarksAFriendDownAfterTenSecondsWithoutAPong(t *testing.T) {
 	n := 0
 	w.now = func() time.Time { return s.clock }
 	w.random = func() string { n++; return fmt.Sprintf("n%05d", n) }
-	w.friends = func(context.Context, string) ([]string, error) { return []string{"ada", "bob", "cy", "dee"}, nil }
 	var cancel context.CancelFunc
 	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
 		ctx, cancel = context.WithCancel(ctx)
@@ -94,21 +95,24 @@ func TestPingMarksAFriendDownAfterTenSecondsWithoutAPong(t *testing.T) {
 func TestServeRefusesWithoutItsNameOrRows(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name string
-		args []string
-		rows func(context.Context, string) ([]string, error)
-		says []string
+		name    string
+		args    []string
+		friends []string
+		fail    error
+		says    []string
 	}{
-		{"nothing given", []string{"serve"}, nil, []string{"--as is required"}},
-		{"rows unreadable", []string{"serve", "--as", "ada", "--dry-run"}, func(context.Context, string) ([]string, error) { return nil, fmt.Errorf("--pg is required") }, []string{"the friend rows cannot be read", "--pg is required"}},
-		{"no friend but me", []string{"serve", "--as", "ada", "--dry-run"}, func(context.Context, string) ([]string, error) { return []string{"ada"}, nil }, []string{"no friend row but ada", "nova-config friend add"}},
+		{"nothing given", []string{"serve"}, []string{"ada", "bob"}, nil, []string{"--as is required"}},
+		{"rows unreadable", []string{"serve", "--as", "ada", "--dry-run"}, []string{"ada", "bob"}, fmt.Errorf("connection refused"), []string{"connection refused"}},
+		{"no friend but me", []string{"serve", "--as", "ada", "--dry-run"}, []string{"ada"}, nil, []string{"no friend row but ada", "nova-config friend add"}},
+		{"no friend but me, the loop", []string{"serve", "--as", "ada"}, []string{"ada"}, nil, []string{"no friend row but ada"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			r := newRig(t, "ada", "bob")
+			r.store.Friends = c.friends
+			r.store.Fail = c.fail
 			w := r.world()
-			w.friends = c.rows
 			var out, errb strings.Builder
 			code := run(c.args, strings.NewReader(""), &out, &errb, w)
 			assert.Equal(t, 2, code)
@@ -121,12 +125,14 @@ func TestServeRefusesWithoutItsNameOrRows(t *testing.T) {
 
 func TestServeDryRunNamesTheFriendsItWouldPing(t *testing.T) {
 	t.Parallel()
-	r := newRig(t, "ada", "bob")
+	r := newRig(t, "cy", "ada", "bob", "m1")
+	r.store.Friends = []string{"cy", "ada", "bob"} // m1 is a machine row, never pinged
 	w := r.world()
-	w.friends = func(context.Context, string) ([]string, error) { return []string{"cy", "ada", "bob"}, nil }
 	var out, errb strings.Builder
 	code := run([]string{"serve", "--as", "ada", "--dry-run"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Equal(t, "SERVE OK friends=bob,cy every=1s down_after=10s dry_run=true\n", out.String())
-	assert.Zero(t, r.store.Trips, "a dry run opens no store")
+	for _, n := range []string{"ada", "bob", "cy", "m1"} {
+		assert.Zero(t, r.store.Len(bus.StreamOf(n)), "a dry run sends nothing")
+	}
 }

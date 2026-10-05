@@ -608,9 +608,11 @@ message's `from`, never its body, and a stale, replayed or other friend's
 nonce changes nothing. Then each friend whose state changed is said, and every
 friend row but the coordinator's own is sent a `PING` with a fresh nonce and
 the seat line (`since` the loop's start). The friends are nova-config's friend
-rows, read at the start and again each minute (`RowsEvery`), so a friend or a
-bud added as a row is pinged with no list kept anywhere else, and a row
-removed is forgotten. A friend is up on a counted pong and down once ten
+rows as the bus store holds them (the set `friends`, written by `nova-config
+apply`, the roster a send is checked against), read at the start in the trip
+that fixes where the stream is read from, and again each minute
+(`RowsEvery`), so a friend or a bud added as a row is pinged with no list kept
+anywhere else, and a row removed is forgotten. A friend is up on a counted pong and down once ten
 seconds pass without one, counted from the last pong, or from when its row was
 first read; a ping that could not be sent is named in the down line's reason.
 The state is one process's, in memory (a last pong and the nonces of the last

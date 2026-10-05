@@ -8,38 +8,21 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // serveRange bounds one read of the coordinator's stream; the rest is the next tick's.
 const serveRange = 10000
 
-// readFriendRows is the real friends: the names of nova-config's friend rows,
-// the store by config.ResolveDSN (--pg, else NOVA_PG_DSN), bounded.
-func (w world) readFriendRows(ctx context.Context, pg string) ([]string, error) {
-	dsn, err := config.ResolveDSN(pg, w.getenv)
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	st, err := config.OpenPG(ctx, dsn)
-	if err != nil {
-		return nil, err
-	}
-	defer st.Close() // ignored: closing a read of the config store, nothing was written
-	rows, err := st.List(ctx, config.KindFriend)
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, r := range rows {
-		names = append(names, r.Name)
-	}
-	return names, nil
+// friendRows is the names of nova-config's friend rows as the bus store
+// holds them (the set `friends`, written by nova-config apply), and the
+// store's time, in one trip.
+func friendRows(ctx context.Context, st bus.Store) ([]string, time.Time, error) {
+	friends, _, now, err := st.Members(ctx)
+	return friends, now, err
 }
 
 // peers is the friend rows but the coordinator's own, sorted.
@@ -58,37 +41,51 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	if o := c.Refused(); o != nil {
 		return o
 	}
-	me, pg, dry := c.Str("as"), c.Str("pg"), c.DryRun()
-	ctx, stop := w.signals(context.Background())
-	defer stop()
-	rows, err := w.friends(ctx, pg)
-	if err != nil {
-		return tool.Refuse("the friend rows cannot be read: " + err.Error())
-	}
-	names := peers(me, rows)
-	if len(names) == 0 {
-		o := tool.Refuse("there is no friend row but " + me + " to ping")
-		o.Remedy = "nova-config friend add <name> --width <n>"
-		return o
-	}
+	me, dry := c.Str("as"), c.DryRun()
+	say := func(line string) { fmt.Fprintln(c.Stdout, "SERVE "+line) }
 	if dry {
-		// the rows read; no store opened, nothing sent
+		// the rows read; nothing sent
+		b, closeStore, o := w.bus(c)
+		if o != nil {
+			return o
+		}
+		defer closeStore()
+		ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+		defer cancel()
+		rows, _, err := friendRows(ctx, b.Store)
+		if err != nil {
+			return tool.Refuse("the friend rows cannot be read: " + err.Error())
+		}
+		names := peers(me, rows)
+		if len(names) == 0 {
+			return noPeers(me)
+		}
 		return tool.Done().Fact("friends", strings.Join(names, ",")).Fact("every", friend.PingEvery).Fact("down_after", friend.DownAfter)
 	}
-	say := func(line string) { fmt.Fprintln(c.Stdout, "SERVE "+line) }
+	ctx, stop := w.signals(context.Background())
+	defer stop()
 	st, closeStore := w.openUntil(ctx, addr, func(line string) { say("NOTE " + line) })
 	if st == nil {
 		say("STOP interrupted")
 		return tool.Exit(0)
 	}
 	defer closeStore()
+	rows, storeNow, err := friendRows(ctx, st)
+	if err != nil {
+		return tool.Refuse("the friend rows cannot be read: " + err.Error())
+	}
+	names := peers(me, rows)
+	if len(names) == 0 {
+		return noPeers(me)
+	}
 	b := &bus.Bus{Store: st}
 	k := friend.NewKeepalive()
 	start := w.now()
 	k.Friends(start, names)
 	rowsAt := start
 	say(fmt.Sprintf("OK friends=%s every=%s down_after=%s", strings.Join(k.Names(), ","), friend.PingEvery, k.DownAfter))
-	cursor, failing := "", ""
+	// the stream from the store's now: no pong from before the loop answers a nonce of its own
+	cursor, failing := bus.IDAt(storeNow), ""
 	bad := false
 	fail := func(what string) {
 		bad = true
@@ -100,22 +97,14 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	for ctx.Err() == nil {
 		now := w.now()
 		bad = false
+		ok := true
 		if now.Sub(rowsAt) >= friend.RowsEvery {
-			if rows, err := w.friends(ctx, pg); err != nil {
+			if rows, _, err := friendRows(ctx, st); err != nil {
 				fail("the friend rows cannot be read: " + err.Error())
+				ok = false
 			} else {
 				k.Friends(now, peers(me, rows))
 				rowsAt = now
-			}
-		}
-		ok := true
-		if cursor == "" {
-			// the stream from the store's now: no pong from before the loop answers a nonce of its own
-			if _, storeNow, err := st.Roster(ctx); err != nil {
-				fail("the store did not answer: " + err.Error())
-				ok = false
-			} else {
-				cursor = bus.IDAt(storeNow)
 			}
 		}
 		if ok {
@@ -160,4 +149,10 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	}
 	say("STOP interrupted")
 	return tool.Exit(0)
+}
+
+func noPeers(me string) *tool.Out {
+	o := tool.Refuse("there is no friend row but " + me + " to ping")
+	o.Remedy = "nova-config friend add <name> --width <n>"
+	return o
 }
