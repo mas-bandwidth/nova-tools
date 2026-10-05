@@ -77,10 +77,10 @@ SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z bytes=
 
 $ nova-bus peek --as bob
 PEEK OK pending=0 new=1
-PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
+PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject=hello
 
 $ nova-bus recv --as bob --exec true
-RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject="hello"
+RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject=hello
 
 $ nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ACK OK acked=0 asked=1 login=none
@@ -88,7 +88,7 @@ ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
 $ nova-bus log --max 5
 LOG OK total=1
-LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject=hello
 
 $ nova-bus names
 NAMES OK count=2
