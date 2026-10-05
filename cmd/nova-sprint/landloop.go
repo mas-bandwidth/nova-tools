@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // The server lands what the readers passed (run --land): the last of the sprint's
@@ -63,6 +64,7 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 // landOnce is a round's landing: land's exit code, and idle when the merge queue was
 // read and held nothing.
 func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
+	_ = a.resumeRefused(ctx, addr, stdout) // ignored: a store that cannot be read fails the read just below, which says so once
 	a.serial.Lock()
 	queued, coordinator, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
@@ -127,4 +129,44 @@ func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coor
 		}
 	}
 	return false, coordinator, nil
+}
+
+// resumeRefused resumes, before the round's landing, each stream a refused push stopped
+// that sprint.PushRetryDue says is due: a push the remote refused for a moment (GH006 on a
+// protected base) is tried again by the machine, at most sprint.PushRetryMax times, each
+// PushRetryAfter after the stop, and a landing clears the count. A refusal that does not
+// pass stops the stream each time with its one judgment (a resume closes the one before),
+// and after the last retry that judgment stays open for the coordinator. A round that
+// could not read the sprint returns why, and landOnce's own read says it.
+func (a *app) resumeRefused(ctx context.Context, addr string, stdout io.Writer) error {
+	a.serial.Lock()
+	defer a.serial.Unlock()
+	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
+	if err != nil {
+		return err
+	}
+	coordinator, err := st.B.Coordinator(ctx)
+	if err != nil || coordinator == "" {
+		return err
+	}
+	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
+	if err != nil {
+		return err
+	}
+	for _, row := range s.Merge.Rows() {
+		if !sprint.PushRetryDue(s.StreamCtl(row), a.now()) {
+			continue
+		}
+		c := common{verb: "resume", redis: addr, actor: coordinator}
+		rst, err := a.storeCtx(ctx, c)
+		if err != nil {
+			return err
+		}
+		var out, errb bytes.Buffer
+		step := store.ResumeStep(sprint.ResumeReq{Stream: row, Did: "the remote turned the push down; the lander tries it again", Who: coordinator, PushRetry: true})
+		if a.runStep("resume", c, rst, step, &out, &errb) == 0 {
+			fmt.Fprintf(stdout, "%s LAND RETRY stream=%s the remote turned the push down; the stream is resumed and lands again this round\n", oneline.Field(a.now().Format("15:04:05")), oneline.Field(row))
+		}
+	}
+	return nil
 }

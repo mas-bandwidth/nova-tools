@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
@@ -375,7 +376,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
-				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
+				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, FieldPushRetries)))
 				u.Notes = notes
 			}
 			merged := map[string]string{"merged": now}
@@ -417,6 +418,32 @@ type ResumeReq struct {
 	Did     string // what the coordinator did
 	Answers []string
 	Who     string
+	// PushRetry is the lander's own resume of a stream its push was refused on
+	// (PushRetryDue): counted on the stream (FieldPushRetries) and refused past
+	// PushRetryMax, so a refusal that does not pass is left to the judgment.
+	PushRetry bool
+}
+
+// FieldPushRetries is the stream's count of the lander's resumes since a batch of it last
+// landed; the landing clears it.
+const FieldPushRetries = "push_retries"
+
+// PushRetryMax is how many times the lander resumes one stream stopped on a refused push
+// before it leaves the stream to the coordinator, and PushRetryAfter how long a stop waits
+// before each of them (a transient refusal, such as GH006 on a protected base, passes).
+const (
+	PushRetryMax   = 3
+	PushRetryAfter = time.Minute
+)
+
+// PushRetryDue says the lander resumes this stream now: stopped on a rejected push, fewer
+// than PushRetryMax resumes made since it last landed, and the stop PushRetryAfter old.
+func PushRetryDue(ctl *Card, now time.Time) bool {
+	if ctl == nil || ctl.F("state") != StreamStopped || ctl.F("cause") != "rejected" || ctl.Int(FieldPushRetries) >= PushRetryMax {
+		return false
+	}
+	since, err := time.Parse(time.RFC3339, ctl.F("since"))
+	return err == nil && !now.Before(since.Add(PushRetryAfter))
 }
 
 // Resume moves a stopped stream's stuck cards whose cause is resolved back to
@@ -442,6 +469,10 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		p.refuse(r.Stream, "stopped for a red branch; say what was done: nova-sprint resume --stream "+r.Stream+" --did <text>")
 		return p
 	}
+	if r.PushRetry && !PushRetryDue(ctl, s.Now) {
+		p.refuse(r.Stream, "no push retry is due")
+		return p
+	}
 	stuck := s.Merge.Cell(r.Stream, Stuck)
 	for _, c := range stuck {
 		if ctl.F("cause") != "cross" {
@@ -464,6 +495,9 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	set := map[string]string{"state": state, "since": stamp(s.Now)}
 	if r.Did != "" {
 		set["did"] = r.Did
+	}
+	if r.PushRetry {
+		set[FieldPushRetries] = itoa(ctl.Int(FieldPushRetries) + 1)
 	}
 	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other", FieldConflictKind, FieldConflictPaths))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
