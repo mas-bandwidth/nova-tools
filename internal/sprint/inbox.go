@@ -538,6 +538,9 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"fleet beat '<member>'")
 		case d == "ask --another":
 			add(d, cmd+"ask"+subj+" --another"+subjAns)
+		case strings.HasPrefix(d, "land --stream "):
+			// the act: land merges, pushes and records what it pushed (a merge step is its report)
+			add(d, cmd+d)
 		case strings.HasPrefix(d, "merge --stream "):
 			// a merge step is a report: it names its epoch, the judgment's
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))

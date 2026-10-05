@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,7 +26,19 @@ type MergeReq struct {
 	// ancestor of the base branch's tip. The step lands exactly these cards, and refuses all of
 	// them, naming each card and why, and writes nothing, unless every one is merging in the
 	// stream, at the head given, with that head in the base.
-	Landed   []LandedPin `json:",omitempty"`
+	Landed []LandedPin `json:",omitempty"`
+	// CheckAncestry is a record by place (no fact, no Landed) from a caller that did not push:
+	// the merge verb sets it, the lander, which pushed the batch itself, does not. The step then
+	// lands no card that carries a head unless Ancestry holds that head on the base: one card off
+	// the base, or not checked, and the record is refused whole, each card named with its head,
+	// why and the remedy (land --stream), and nothing is written (docs/SPEC-SPRINT.md section 8,
+	// no-merge-step-prints-land-and-merge-refuses-a-head-off-the-base). A card whose head names
+	// no commit (none, or a finish without --head) has no commit to check.
+	CheckAncestry bool `json:",omitempty"`
+	// Ancestry is the caller's fact for each queued card of the stream that carries a head: one
+	// git merge-base --is-ancestor of that head against the fetched tip of its base, never run
+	// by the tick.
+	Ancestry []LandedPin `json:",omitempty"`
 	Conflict string      // a card of the batch that did not merge
 	// ConflictKind and ConflictPaths are what the lander knows of a conflict: "file" when the
 	// paths that did not merge are files no generated ledger owns, "ledger" when one is, and
@@ -63,6 +76,46 @@ type LandedPin struct {
 	ID     string
 	Head   string
 	InBase bool
+	// Tip is the base tip the head was checked against, and Why, when set, why it could not
+	// be checked (a record by place, MergeReq.Ancestry); both are for the refusal's words.
+	Tip string `json:",omitempty"`
+	Why string `json:",omitempty"`
+}
+
+// commitID is a head that names a commit, whole or abbreviated: the heads the ancestry facts
+// are about (MergeReq.CheckAncestry).
+var commitID = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+
+// ancestryRefusals is why each card of a record by place is refused (MergeReq.CheckAncestry):
+// a card whose head the caller's facts do not hold on the base, or did not check. Empty when
+// every card of the batch with a head is on the base.
+func ancestryRefusals(s *Snapshot, stream string, batch []*Card, facts []LandedPin) []Refusal {
+	byID := map[string]LandedPin{}
+	for _, f := range facts {
+		byID[f.ID] = f
+	}
+	remedy := "; nothing was recorded; run: nova-sprint land --stream " + stream + " (it merges, pushes and records what it pushed)"
+	var out []Refusal
+	for _, c := range batch {
+		pr := s.Work.Placed(c.ID)
+		head := ""
+		if pr != nil {
+			head = pr.F("head")
+		}
+		if !commitID.MatchString(head) {
+			continue // no head, or one that names no commit (a finish without --head records the work card's id)
+		}
+		f, ok := byID[c.ID]
+		switch {
+		case !ok || f.Head != head:
+			out = append(out, Refusal{c.ID, "head " + head + " was not checked against the base branch's tip" + remedy})
+		case f.Why != "":
+			out = append(out, Refusal{c.ID, "head " + head + " could not be checked against the base branch's tip: " + f.Why + remedy})
+		case !f.InBase:
+			out = append(out, Refusal{c.ID, "head " + head + " is not an ancestor of the base branch's tip " + orDash(f.Tip) + "; it was not landed" + remedy})
+		}
+	}
+	return out
 }
 
 // landedRefusals is why each pin of a record by name is refused, in the pins' order: a card
@@ -375,6 +428,12 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		// A card queued in merge but not merging in work is refused; the
 		// stream's control change and its notes ride on the first card that
 		// lands, and the batch note lists only the cards that landed.
+		if r.CheckAncestry && len(r.Landed) == 0 {
+			if why := ancestryRefusals(s, r.Stream, batch, r.Ancestry); len(why) > 0 {
+				p.Refused = append(p.Refused, why...)
+				return p
+			}
+		}
 		var landing []*Card
 		var landed []string
 		for _, c := range batch {

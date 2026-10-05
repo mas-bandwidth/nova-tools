@@ -161,10 +161,16 @@ func (l *lander) verify(ctx context.Context, checks []landedCheck) {
 		f, done := bases[key]
 		if !done {
 			ref := "refs/remotes/origin/" + ch.Base
-			if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+ch.Base+":"+ref); err != nil {
-				f.why = "the fetch of " + ch.Base + " in " + dir + " failed: " + firstLine("", err)
-			} else if f.tip, err = l.git(ctx, dir, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
-				f.why = "the base " + ch.Base + " could not be read in " + dir + ": " + firstLine("", err)
+			var err error
+			if !l.fetched[key] { // a land pass reads a base it fetched as is
+				if _, err = l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+ch.Base+":"+ref); err != nil {
+					f.why = "the fetch of " + ch.Base + " in " + dir + " failed: " + firstLine("", err)
+				}
+			}
+			if err == nil {
+				if f.tip, err = l.git(ctx, dir, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
+					f.why = "the base " + ch.Base + " could not be read in " + dir + ": " + firstLine("", err)
+				}
 			}
 			bases[key] = f
 		}

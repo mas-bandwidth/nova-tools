@@ -10,18 +10,24 @@ import (
 // A card the store records landed whose head is not on origin's base is listed by
 // verify-landed, by git alone, and the verb exits 1; a card land put on the branch is not
 // listed, and nothing in the store moves (docs/SPEC-SPRINT.md section 7,
-// land-verify-landed-ancestry-r.w1). The false record is made as it was found: merge recorded
-// the card landed and nothing pushed it.
+// land-verify-landed-ancestry-r.w1). The false record is made as it was found: the merge step
+// recorded the card landed and nothing pushed it; the land pass finds it too.
 func TestVerifyLandedListsALandedRecordMissingFromTheBase(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.ok("add --stream s1 --count 2")
 	heads := map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "s1-1\n"), "s1-2": r.head("s1-2", "main", "s1-2.txt", "s1-2\n")}
 	r.queued(heads, "s1-1", "s1-2")
-	r.ok("merge --stream s1 --batch 1")
-	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main"), "LAND OK stream=s1 cards=1")
+	// merge now refuses that record (merge_ancestry_test.go): the step is run as the lander
+	// runs it, with no ancestry facts asked for
+	r.recordLanded("s1", 1)
+	landOut := r.ok("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, landOut, "LAND OK stream=s1 cards=1")
 	require.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
 	tip := r.git(r.remote, "rev-parse", "main")
+	// the land pass reconciles the landed records against the base and finds the false one
+	assert.Contains(t, landOut, "LANDED-MISSING s1-1 stream=s1 head="+heads["s1-1"]+" base=main tip="+tip+"\n")
+	assert.NotContains(t, landOut, "LANDED-MISSING s1-2")
 
 	code, out, errs := r.do("verify-landed --repo-dir " + r.clone + " --base main")
 	require.Equal(t, 1, code, "verify-landed: %s%s", out, errs)
