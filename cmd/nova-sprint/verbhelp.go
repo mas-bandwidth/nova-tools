@@ -57,7 +57,7 @@ var verbEffect = map[string]string{
 	"sentinels":        "inspection: reads the sentinels and what each waits on, writes nothing",
 	"view coordinator": "inspection: reads what needs the seat (the tables, the inbox, the friends and the machines), writes nothing",
 	"view worker":      "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
-	"seat":             "inspection: reads the seat (holder, epoch, generation), writes nothing",
+	"seat":             "inspection: reads the seat (holder, epoch, generation), writes nothing; --wrapper prints the seat wrapper for the calling actor (no secret value) and --wrapper --install <dir> writes it as ns.sh, mode 0755, leaving a different file untouched unless --replace",
 	"rules":            "inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing",
 	"relink":           "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
 	"friend take":      "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
