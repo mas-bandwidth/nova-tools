@@ -1041,6 +1041,12 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
 		if card == "" && env == "" {
+			var note string
+			if note, card, env = l.uniqueRecords(ctx, dir, *c, before); note != "" {
+				c.resolved = strings.TrimPrefix(c.resolved+"; "+note, "; ")
+			}
+		}
+		if card == "" && env == "" {
 			card, env = l.checkCard(ctx, dir, *c, before)
 		}
 		if card == "" && env == "" {
