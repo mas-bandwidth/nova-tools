@@ -665,3 +665,79 @@ func TestLinksReportsATargetReachedThroughADirectorySymlinkOutOfTheTree(t *testi
 		assert.Equal(t, expectedReason, b.Reason)
 	}
 }
+
+// TestLinksReportsATargetReachedThroughADirectorySymlinkOutOfTheTreeWhenRootIsASymlink
+// pins the same judgement on a tree whose root is itself a symlink. macOS
+// temp dirs sit under /tmp or /var, which are symlinks; Linux /tmp usually is
+// not, so the test above can pass there while the prefix check still compares
+// a resolved target to an unresolved root. The root passed in is the link,
+// not its target.
+func TestLinksReportsATargetReachedThroughADirectorySymlinkOutOfTheTreeWhenRootIsASymlink(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlinks require elevated privileges or developer mode")
+	}
+
+	real := t.TempDir()
+	linkParent := t.TempDir()
+	tree := filepath.Join(linkParent, "tree")
+	if err := os.Symlink(real, tree); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	info, err := os.Lstat(tree)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSymlink, "tree root must be a symlink")
+	resolvedRoot, err := filepath.EvalSymlinks(tree)
+	require.NoError(t, err)
+	require.NotEqual(t, filepath.Clean(tree), filepath.Clean(resolvedRoot))
+
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "there.md"), []byte("outside content\n"), 0o644))
+
+	docsDir := filepath.Join(tree, "docs")
+	require.NoError(t, os.MkdirAll(docsDir, 0o755))
+	if err := os.Symlink(outside, filepath.Join(docsDir, "escape")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	insideDir := filepath.Join(tree, "inside")
+	require.NoError(t, os.MkdirAll(insideDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(insideDir, "here.md"), []byte("inside content\n"), 0o644))
+	if err := os.Symlink(insideDir, filepath.Join(docsDir, "internal")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	aMD := filepath.Join(docsDir, "a.md")
+	content := "[there](escape/there.md) and [nowhere](escape/nowhere.md) and [internal](internal/here.md)\n"
+	require.NoError(t, os.WriteFile(aMD, []byte(content), 0o644))
+
+	wantFailures := map[string]string{
+		"escape/there.md":   "escapes the tree through a symlink; cannot survive the repo travelling alone",
+		"escape/nowhere.md": "does not exist",
+	}
+
+	checked, broken := checkFileLinks(tree, aMD, nil)
+	assert.Equal(t, 3, checked)
+	require.Len(t, broken, 2, "broken = %v, want 2 broken links from checkFileLinks", broken)
+	for _, b := range broken {
+		assert.Equal(t, "docs/a.md", b.File)
+		assert.Equal(t, 1, b.Line)
+		expectedReason, ok := wantFailures[b.Target]
+		require.True(t, ok, "unexpected broken target %q", b.Target)
+		assert.Equal(t, expectedReason, b.Reason)
+	}
+
+	res, err := LinksExcluding(tree, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.MDFiles)
+	assert.Equal(t, 3, res.Checked)
+	require.Len(t, res.Broken, 2, "broken = %v, want 2 broken links", res.Broken)
+	for _, b := range res.Broken {
+		assert.Equal(t, "docs/a.md", b.File)
+		assert.Equal(t, 1, b.Line)
+		expectedReason, ok := wantFailures[b.Target]
+		require.True(t, ok, "unexpected broken target %q", b.Target)
+		assert.Equal(t, expectedReason, b.Reason)
+	}
+}
