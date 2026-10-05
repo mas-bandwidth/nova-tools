@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/stretchr/testify/assert"
@@ -27,8 +26,8 @@ func TestSlowThing(t *testing.T) {
 	events, err := slowtests.Parse(strings.NewReader(string(fixture)))
 	require.NoError(t, err, "slowtests.Parse: %v", err)
 
-	report := slowtests.Sum(events, 60*time.Second)
-	require.Equal(t, 1, report.ExitCode(), "exit code = %d, want 1; the package is over budget", report.ExitCode())
+	report := slowtests.Judge(events, slowtests.Budgets{Package: 60})
+	require.NotEmpty(t, report.Over, "Over = empty, want 1: the package is over budget")
 
 	lines := report.OverLines()
 	require.Len(t, lines, 1, "over lines = %d, want 1: %v", len(lines), lines)
