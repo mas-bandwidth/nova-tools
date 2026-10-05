@@ -9,14 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A reader is asked an attempt once (one read card per reader per attempt,
-// ReadCardID: placed or retired, read or taken back), and the next attempt is
-// read on new cards: the readers of an earlier attempt are eligible again
-// (docs/SPEC-SPRINT.md section 6; tla/DirtyTick.tla, NewAttempt: "no reader
-// has read it"). The night of 2026-10-03: five cards at one attempt, each
-// read card taken back from five readers in turn as their beats lapsed, and
-// five judgments "cannot ask"; the five are one judgment, "no eligible
-// reader for <ids>" (TickAsk, cannotAskCond).
+// A reader who gave a verdict or a return is asked an attempt once, and the
+// next attempt is read on new cards: the readers of an earlier attempt are
+// eligible again (docs/SPEC-SPRINT.md section 6; tla/DirtyTick.tla,
+// NewAttempt: "no reader has read it"). A take-back with no verdict is not
+// that ask (read-asked-again-after-takebackc). The night of 2026-10-03: five
+// cards at one attempt, each read returned by five readers, and five
+// judgments "cannot ask"; the five are one judgment, "no eligible reader
+// for <ids>" (TickAsk, cannotAskCond).
 
 // TestTheReadersOfAnEarlierAttemptAreAskedTheNext pins the rule as it stands:
 // the two readers that read attempt 1 are the only readers up when attempt 2
@@ -54,8 +54,8 @@ func TestTheReadersOfAnEarlierAttemptAreAskedTheNext(t *testing.T) {
 }
 
 // burnedWorld is n flash primaries in review at attempt 1 and five readers
-// up, each holding a read card at that attempt taken back from it (retired
-// by away): no reader may be asked any of them.
+// up, each holding a read card at that attempt retired by a return: a return
+// is a verdict for this rule, so no reader may be asked any of them.
 func burnedWorld(t *testing.T, n int) *world {
 	t.Helper()
 	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d", "reader-e"}
@@ -72,13 +72,13 @@ func burnedWorld(t *testing.T, n int) *world {
 }
 
 // burn adds the flash primary p in review at attempt 1 with a read card of
-// every reader at that attempt taken back from it.
+// every reader at that attempt retired by a return.
 func burn(w *world, p string, readers []string) {
 	w.s.Work.Put(&Card{ID: p, Row: "s1", Col: Review, Score: float64(len(w.s.Work.Cards())), Rev: 1,
 		Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1", "head": "h1"}})
 	for _, rd := range readers {
 		w.s.Readers.Put(&Card{ID: ReadCardID(p, 1, rd), Rev: 1, Fields: map[string]string{"kind": "read", "primary": p, "stream": "s1",
-			"reader": rd, "attempt": "1", "head": "h1", "asked": stamp(t0), "retired": stamp(t0), "retired_by": "away"}})
+			"reader": rd, "attempt": "1", "head": "h1", "asked": stamp(t0), "retired": stamp(t0), "retired_by": "returned"}})
 	}
 }
 
