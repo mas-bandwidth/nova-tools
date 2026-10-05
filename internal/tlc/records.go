@@ -155,7 +155,7 @@ func ReadRecordsFile(path string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only to be read
 	recs, err := ReadRecords(f)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", path, err)
