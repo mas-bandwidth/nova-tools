@@ -66,6 +66,7 @@ type world struct {
 	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	seat      func(ctx context.Context, server string) (string, error)                                      // the coordinator seat holder as the sprint server says it; nil is unknown
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -133,6 +134,18 @@ func realWorld() world {
 				return "", fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
 			}
 			return res[0].Stdout, nil
+		},
+		seat: func(ctx context.Context, server string) (string, error) {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"seat"})
+			if err != nil {
+				return "", err
+			}
+			if len(res) != 1 || res[0].Code != 0 {
+				return "", fmt.Errorf("seat: the server did not answer one SEAT line")
+			}
+			return friend.ParseSeat(res[0].Stdout), nil
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
@@ -769,6 +782,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return m, rowWidth // the override, for a test
 			}
 			return rowMode, rowWidth
+		},
+		Seat: func(ctx context.Context) (string, error) {
+			if w.seat == nil {
+				return "", nil // a world that reads none (a test's): the seat is unknown
+			}
+			return w.seat(ctx, server)
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Progress: func(ctx context.Context, cards []friend.Card) error {

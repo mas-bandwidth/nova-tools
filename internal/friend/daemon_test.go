@@ -53,6 +53,7 @@ func newRig(t *testing.T) *rig {
 	r.d = &Daemon{
 		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store,
 		Deliver: r,
+		Seat:    func(context.Context) (string, error) { return "ada", nil }, // ada holds the seat: her messages are the instructions the rig's tests expect plain
 		Now: func() time.Time {
 			r.mu.Lock()
 			defer r.mu.Unlock()
