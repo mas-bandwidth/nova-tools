@@ -1022,9 +1022,19 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now)}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
 	}
 	return t
+}
+
+// activeCell is the friends table's active cell: how long ago her session last wrote a file
+// under her working directory and outbox, as her daemon walked them and her beat carried it
+// ("-" when no beat has reported one). A down or held friend's is still her last.
+func activeCell(f store.FriendRow, now time.Time) string {
+	if f.Active.IsZero() {
+		return "-"
+	}
+	return ageWord(now.Sub(f.Active)) + " ago"
 }
 
 // allRow is the label of the one row the view draws for the readers and the

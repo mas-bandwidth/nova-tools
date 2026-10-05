@@ -81,8 +81,12 @@ type Daemon struct {
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
-	Beat                 func(ctx context.Context) error // one beat to the sprint server
-	Now                  func() time.Time
+	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	// Activity is the newest write of the session's files (NewestWrite over her
+	// directory), run at most once an ActivityEvery and carried on each beat; nil
+	// carries none.
+	Activity func() time.Time
+	Now      func() time.Time
 	// Pause waits d when the store did not: after a read that answered at
 	// once (blocked false: an error, or a store that does not block), and
 	// while a delivery runs and the loop only peeks.
@@ -128,6 +132,8 @@ type Daemon struct {
 	written     time.Time
 	written0    Status
 	statusErrAt time.Time
+	active      time.Time // the last walk's answer
+	walked      time.Time // when it was
 }
 
 // turn is one delivery into the session: the messages it carries (acked
@@ -308,7 +314,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.told = d.tellBroken(ctx, l.b, l.brokenAfter)
 		}
 		if storeOK {
-			if err := d.Beat(ctx); err != nil {
+			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
+				d.active, d.walked = d.Activity(), now
+			}
+			if err := d.Beat(ctx, d.active); err != nil {
 				d.status.BeatError = err.Error()
 			} else {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now

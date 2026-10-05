@@ -85,6 +85,13 @@
 # are as they were. No column changed, so the lines below are unchanged. Held by
 # TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
 # TestADownFriendShowsNoneWorking.
+#
+# Change, 2026-10-04, asked for by the card friend-session-liveness.w1 (the friends table
+# showed whether a friend's daemon answers, not whether her session moves: one friend idle
+# from 2:40 to 4:34 PM read up with 8 working). friends.active is the new column: a text
+# cell with no fold, how long ago her session last wrote a file under her working directory
+# and outbox ("4m ago", "-" when her beat reported none), after status. Held by
+# TestSprintTablesAreLocked; the rule is docs/SPEC-SPRINT.md, last session activity.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -121,6 +128,7 @@ friends.width text sum shown
 friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
+friends.active text none shown
 friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet

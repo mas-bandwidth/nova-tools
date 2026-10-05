@@ -33,6 +33,7 @@ type rig struct {
 	passive   bool // no worker: a pause returns at once
 	exit      int
 	beats     int
+	actives   []time.Time // what each beat carried as the session's last activity
 	beatErr   error
 	pong      Pong
 	pongSet   bool
@@ -71,9 +72,10 @@ func newRig(t *testing.T) *rig {
 			}
 			<-r.gate
 		},
-		Beat: func(context.Context) error {
+		Beat: func(_ context.Context, active time.Time) error {
 			r.mu.Lock()
 			r.beats++
+			r.actives = append(r.actives, active)
 			f, stop := r.at[r.beats], r.beats >= r.stopAfter
 			r.mu.Unlock()
 			if f != nil {
