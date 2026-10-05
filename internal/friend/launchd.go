@@ -258,19 +258,32 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	if err := write(path, []byte(a.Plist())); err != nil {
 		return path, nil, err
 	}
-	domain := fmt.Sprintf("gui/%d", uid)
-	bootout := []string{"bootout", domain + "/" + a.Label()}
-	ran = append(ran, "launchctl "+strings.Join(bootout, " "))
+	ran = append(ran, Bootout(ctx, a, uid, run))
+	more, err := Bootstrap(ctx, path, uid, run, wait)
+	return path, append(ran, more...), err
+}
+
+// Bootout stops the agent's label in the user's domain; a label that is not
+// loaded is the state wanted. It answers the command it ran.
+func Bootout(ctx context.Context, a Agent, uid int, run Launchctl) string {
+	bootout := []string{"bootout", fmt.Sprintf("gui/%d/%s", uid, a.Label())}
 	_, _ = run(ctx, bootout...) // ignored: a label that is not loaded answers an error, and that is the state wanted
-	bootstrap := []string{"bootstrap", domain, path}
+	return "launchctl " + strings.Join(bootout, " ")
+}
+
+// Bootstrap loads the plist at path into the user's domain, sent again after
+// wait() while launchd answers EIO from the bootout before it. It answers the
+// commands it ran.
+func Bootstrap(ctx context.Context, path string, uid int, run Launchctl, wait func()) (ran []string, err error) {
+	bootstrap := []string{"bootstrap", fmt.Sprintf("gui/%d", uid), path}
 	for try := 1; ; try++ {
 		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
 		out, err := run(ctx, bootstrap...)
 		if err == nil {
-			return path, ran, nil
+			return ran, nil
 		}
 		if try == BootstrapTries || !strings.Contains(out, "Input/output error") {
-			return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
+			return ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
 		}
 		wait()
 	}
