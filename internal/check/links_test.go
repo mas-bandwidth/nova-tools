@@ -596,3 +596,72 @@ func TestLinksFilesSymlinkToRegularFileWorksAndFifoIsNamedFailure(t *testing.T) 
 	assert.Empty(t, res.Broken[0].Target)
 	assert.Contains(t, res.Broken[0].Reason, "not a regular file")
 }
+
+// A markdown link whose path lexically looks inside the tree but traverses a
+// directory symlink pointing outside the tree must be reported as escaping
+// the tree when the outside target exists, and as "does not exist" when it does not.
+// A symlink that stays inside the tree must still pass.
+func TestLinksReportsATargetReachedThroughADirectorySymlinkOutOfTheTree(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlinks require elevated privileges or developer mode")
+	}
+
+	tree := t.TempDir()
+	outside := t.TempDir()
+
+	// outside/ holds there.md and not nowhere.md
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "there.md"), []byte("outside content\n"), 0o644))
+
+	// tree/docs/escape is a symlink to outside/
+	docsDir := filepath.Join(tree, "docs")
+	require.NoError(t, os.MkdirAll(docsDir, 0o755))
+	escapeLink := filepath.Join(docsDir, "escape")
+	if err := os.Symlink(outside, escapeLink); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	// Inside symlink: tree/docs/internal -> tree/inside (stays inside the tree).
+	insideDir := filepath.Join(tree, "inside")
+	require.NoError(t, os.MkdirAll(insideDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(insideDir, "here.md"), []byte("inside content\n"), 0o644))
+	insideLink := filepath.Join(docsDir, "internal")
+	if err := os.Symlink(insideDir, insideLink); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	// docs/a.md links escape/there.md, escape/nowhere.md, and internal/here.md
+	aMD := filepath.Join(docsDir, "a.md")
+	content := "[there](escape/there.md) and [nowhere](escape/nowhere.md) and [internal](internal/here.md)\n"
+	require.NoError(t, os.WriteFile(aMD, []byte(content), 0o644))
+
+	wantFailures := map[string]string{
+		"escape/there.md":   "escapes the tree through a symlink; cannot survive the repo travelling alone",
+		"escape/nowhere.md": "does not exist",
+	}
+
+	checked, broken := checkFileLinks(tree, aMD, nil)
+	assert.Equal(t, 3, checked)
+	require.Len(t, broken, 2, "broken = %v, want 2 broken links from checkFileLinks", broken)
+	for _, b := range broken {
+		assert.Equal(t, "docs/a.md", b.File)
+		assert.Equal(t, 1, b.Line)
+		expectedReason, ok := wantFailures[b.Target]
+		require.True(t, ok, "unexpected broken target %q", b.Target)
+		assert.Equal(t, expectedReason, b.Reason)
+	}
+
+	res, err := LinksExcluding(tree, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.MDFiles)
+	assert.Equal(t, 3, res.Checked)
+	require.Len(t, res.Broken, 2, "broken = %v, want 2 broken links", res.Broken)
+	for _, b := range res.Broken {
+		assert.Equal(t, "docs/a.md", b.File)
+		assert.Equal(t, 1, b.Line)
+		expectedReason, ok := wantFailures[b.Target]
+		require.True(t, ok, "unexpected broken target %q", b.Target)
+		assert.Equal(t, expectedReason, b.Reason)
+	}
+}
