@@ -18,6 +18,7 @@ import (
 // snapshot's writer (a leftover is preferable to deleting another writer's
 // work), and the killed write retries cleanly on top of the leftover.
 func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGKILL on a process group stages the death; the owed Windows validation is named in the pull request")
 	}

@@ -134,11 +134,12 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 // the writer has synced and closed its actual temporary but cannot rename it
 // until stdin is released. The parent instead kills this process at that point.
 func TestSnapshotRenameBarrierHelper(t *testing.T) {
+	t.Parallel()
 	ready := os.Getenv("NOVA_SNAPSHOT_BARRIER")
 	if ready == "" {
 		return
 	}
-	renameSnapshot = func(oldPath, newPath string) error {
+	hold := func(oldPath, newPath string) error {
 		if err := os.WriteFile(ready, []byte(oldPath), 0600); err != nil {
 			return err
 		}
@@ -148,8 +149,8 @@ func TestSnapshotRenameBarrierHelper(t *testing.T) {
 		}
 		return os.Rename(oldPath, newPath)
 	}
-	os.Exit(Main("nova-update", []string{"report", "--file", os.Getenv("NOVA_SNAPSHOT_MANIFEST"),
-		"--snapshot", os.Getenv("NOVA_SNAPSHOT_PATH")}, "test", os.Stdout, os.Stderr))
+	os.Exit(Run("nova-update", []string{"report", "--file", os.Getenv("NOVA_SNAPSHOT_MANIFEST"),
+		"--snapshot", os.Getenv("NOVA_SNAPSHOT_PATH")}, "test", os.Stdout, os.Stderr, Environment{Rename: hold}))
 }
 
 // SPEC-UPDATE: "Those three usage lines are the string `nova-update help` prints,

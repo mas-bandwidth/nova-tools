@@ -80,7 +80,7 @@ type adoptResult struct {
 	observedLine string
 }
 
-func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Duration) []adoptResult {
+func runAdoptChecks(ctx context.Context, env Environment, checks []AdoptCheck, timeout time.Duration) []adoptResult {
 	rs := make([]adoptResult, len(checks))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -93,7 +93,7 @@ func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Durat
 					continue
 				}
 				child, cancel := context.WithTimeout(ctx, timeout)
-				p := process(child, c.Command, nil, ChildCap)
+				p := process(child, env.Env, c.Command, nil, ChildCap)
 				cancel()
 				if p.Reason != "" {
 					remedy := "repair the check command"
@@ -130,7 +130,7 @@ func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Durat
 // named, posts the receipt as the coordinator's own. Every REFUSED check is
 // handed to the duty tier on an ESCALATE line naming its owner.
 func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started time.Time, out, errs io.Writer, env Environment) int {
-	rs := runAdoptChecks(ctx, checks, o.timeout)
+	rs := runAdoptChecks(ctx, env, checks, o.timeout)
 	var lines []string
 	ok, refused := 0, 0
 	var okBuf, refuseBuf bytes.Buffer
