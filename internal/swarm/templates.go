@@ -96,9 +96,9 @@ const templateFixCard = `fix-card — take one card and land the fix
 
 // GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
 // the card's steps): a red gate line names its file and says whether the file is the child's own
-// (in PATHS) or was already red at BASE, so the child neither fixes a file it may not touch nor
+// (yours) or is unchanged from BASE, so the child neither fixes a file it may not touch nor
 // reports a failure that is not its own. templateCard and cardgen.Render share it.
-const GateNamesWhoseFile = "When a test fails, name its file and say whether that file is in PATHS (yours) or not (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
+const GateNamesWhoseFile = "When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
 
 // templateCard is the card the coordinator starts from: the contract line, the RULES
 // paragraph with every general rule of DefaultChildRules quoted verbatim (lintchild.go), the task,

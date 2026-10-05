@@ -28,3 +28,12 @@ func TestTheCardTemplateCarriesRepoAndBase(t *testing.T) {
 	assert.Equal(t, CardRepoURL("owner/name"), cb.Repo)
 	assert.Equal(t, "main", cb.Ref)
 }
+
+// The card template's STEP 4 gate names whose file failed, so an unchanged file
+// that fails a test is checked against BASE rather than assumed to be the child's own.
+func TestTheCardTemplateCarriesGateNamesWhoseFile(t *testing.T) {
+	t.Parallel()
+	body, err := Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, body, GateNamesWhoseFile)
+}

@@ -283,11 +283,11 @@ func TestAPackageWithNoTestFileGetsItsTestOnTheNEWLine(t *testing.T) {
 
 // The gate step of every card the generators write, and of the card template, tells the
 // child what to do when the gate is red: name the failing test's file, say whether it is
-// in PATHS (the child's own) or already red at BASE, and report that line first. The card
+// changed by the child's work (yours) or is unchanged (already red at BASE), and report that line first. The card
 // stays under the lint's advisory size and still passes the lint.
 func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
 	t.Parallel()
-	const sentence = "When a test fails, name its file and say whether that file is in PATHS (yours) or not (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
+	const sentence = "When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
 	gateStep := func(brief string) string {
 		for _, line := range strings.Split(brief, "\n") {
 			if strings.HasPrefix(line, "STEP 4.") {
