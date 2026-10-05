@@ -342,6 +342,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	}
 	// the providers' balances, read outside every tick (balance.go)
 	go a.balanceLoop(context.Background(), st, stdout)
+	// the store round trip, timed every 10 s for where (store-latency-row-r.w2)
+	go a.storeRTTLoop(context.Background(), st)
 	if decideDir != "" {
 		var b decide.Backend
 		if key := a.getenv(decide.JevSecret); key != "" {
@@ -540,6 +542,23 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		cursor, why = a.pace(ctx, st, res.Epoch, cursor, began)
 	}
 	return false
+}
+
+// storeRTTLoop times one store round trip every store.StoreRTTEvery, waiting on
+// a.after between them, until ctx is done; where shows the p50 and p99 of the last
+// minute (store.MeasureStoreRTT, docs/SPEC-SPRINT.md section 14,
+// store-latency-row-r.w2). A failed round trip is not a sample, and the next is
+// timed as usual.
+func (a *app) storeRTTLoop(ctx context.Context, st *store.Store) {
+	for ctx.Err() == nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.after(store.StoreRTTEvery):
+			// ignored: a failed round trip records nothing; the next one is timed in 10 s
+			_, _ = st.MeasureStoreRTT(ctx)
+		}
+	}
 }
 
 // pace is the wait between two ticks of run: it blocks on the log of the

@@ -522,6 +522,10 @@ type whereView struct {
 	Friends []store.FriendRow `json:"friends,omitempty"`
 	// Releases is the count of cards left per release across the streams (docs/SPEC-SPRINT.md section 11, where --release).
 	Releases map[string]int64 `json:"releases,omitempty"`
+	// StoreRTTP50MS and StoreRTTP99MS are the store round trip's p50 and p99 over the
+	// last minute, as the server measured it (store.StoreRTTRecord, store-latency-row-r.w2).
+	StoreRTTP50MS *float64 `json:"store_rtt_p50_ms,omitempty"`
+	StoreRTTP99MS *float64 `json:"store_rtt_p99_ms,omitempty"`
 }
 
 // dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
@@ -854,6 +858,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	if err != nil {
 		return whereView{}, "", err
 	}
+	if facts.HasStoreRTT {
+		p50, p99 := facts.StoreRTTP50MS, facts.StoreRTTP99MS
+		v.StoreRTTP50MS, v.StoreRTTP99MS = &p50, &p99
+	}
 	v.Held = int64(facts.Held)
 	v.Ready = readyPrimaries(shapes[0])
 	v.Width = upWidth(shapes[3])
@@ -954,6 +962,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		shown = append(shown, parts[t])
 	}
 	b.WriteString(strings.Join(shown, "\n"))
+	if line := facts.StoreLine(); line != "" {
+		b.WriteString("\n" + line + "\n")
+	}
 	a.goalsView(ctx, st, &v)
 	if v.Providers, err = providersView(ctx, st, shapes, now); err != nil {
 		return whereView{}, "", err
