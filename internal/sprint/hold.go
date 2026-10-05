@@ -315,13 +315,14 @@ func returnReads(s *Snapshot, reader, who string) (Plan, string) {
 // back from its reader.
 const RetiredByHold = "hold"
 
-// readTakerUp says a reader up other than reader, with no read of c's primary at its
-// attempt, can be asked the read (the readers' sweep's rule, sweepReads).
+// readTakerUp says a reader up other than reader, reading c's primary's tier, with no
+// read of c's primary at its attempt, can be asked the read (the readers' sweep's rule, sweepReads).
 func readTakerUp(s *Snapshot, c *Card, reader string) bool {
-	if pr := s.Work.Card(c.F("primary")); pr == nil || !enoughReadersUp(s, pr) {
+	pr := s.Work.Card(c.F("primary"))
+	if pr == nil || !enoughReadersUp(s, pr) {
 		return false
 	}
-	for _, rd := range s.UpReaders() {
+	for _, rd := range s.upReadersFor(pr) {
 		if rd != reader && s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
 			return true
 		}

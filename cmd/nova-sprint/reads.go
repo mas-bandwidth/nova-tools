@@ -919,6 +919,16 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			rows[r.Key] = cells
 		}
 		v.Tables[logical] = rows
+		var tiersLine string
+		if logical == sprint.Readers && all {
+			// with --all, which shows the readers table: a line under it naming
+			// the readers of some tiers only (reader_tiers.go); text only, so
+			// --json stays the same with --all and its round trips stay bounded
+			// (where_cost_test.go); reader add and reader set print the tiers
+			if tiersLine, err = readerTiersLine(ctx, st, sortedKeys(rows)); err != nil {
+				return whereView{}, "", err
+			}
+		}
 		if logical == sprint.Work {
 			// dollars per landed card, a column of the text table and a field of each row;
 			// the tiers and the spend by tier go to StreamCosts, from the tick's record (cost_view.go)
@@ -948,7 +958,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			continue
 		}
 		// every table shows, every stream row in it, empty or not
-		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical})
+		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical}) + tiersLine
 	}
 	friends, err := st.FriendRows(ctx, now)
 	if err != nil {
