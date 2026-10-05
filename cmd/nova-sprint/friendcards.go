@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
@@ -68,7 +69,11 @@ func friendBrief(name string, p sprint.Packet) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
-	if p.Attempt > 1 {
+	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
+		// a twin recut --widen made starts from the held attempt's head (member.Carried)
+		p.BaseHead, p.BaseAttempt = c.Head, c.Attempt
+	}
+	if p.Attempt > 1 || p.BaseHead != "" {
 		b.WriteString(friendStart(p))
 	}
 	for _, l := range [][2]string{{"This attempt exists because: ", p.Why}, {"A reader found: ", p.Finding}, {"The coordinator asks: ", p.Fix}} {
@@ -211,8 +216,20 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 		r.Failed, r.Report = true, "friend "+name+" LAND with no Head: <full sha>; "+para
 	case verdict == VerdictHold || verdict == VerdictFail || verdict == "FAILED" || verdict == "BROKEN":
 		r.Failed, r.Report = true, "friend "+name+" "+verdict+": "+para
+		// a HOLD's Head, when it is origin's tip, is kept as the attempt's pushed head, so
+		// recut --widen starts its twin from it; a tip not read keeps none, never refuses
+		if repo := swarm.ReadCardBase([]byte(p.Brief)).Repo; verdict == VerdictHold && typedrec.IsFullSha(head) && repo != "" {
+			if at, err := tip(ctx, repo, p.Branch); err == nil && strings.EqualFold(at, head) {
+				r.Head = at
+			}
+		}
 	default:
 		r.Failed, r.Report = true, "friend "+name+" verdict "+cmp.Or(verdict, "none")+" is not LAND, HOLD or FAIL; "+para
+	}
+	// the report's PATHS-PROPOSED line, wherever it stands, rides on the card for recut --widen
+	// (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1")
+	if globs, ok := member.PathsProposed(report); ok && len(globs) > 0 {
+		r.Report += "; " + member.ProposedKey + " " + strings.Join(globs, ",")
 	}
 	return r, nil
 }

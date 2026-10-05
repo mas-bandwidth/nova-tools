@@ -373,6 +373,20 @@ an allowed family. The member keeps the forge credentials for its own push and p
 request after the push, as itself, from the card's branch into the base ref, with the title and
 the body, and the finish's report carries its address.
 
+### recut-widen-r.w1: a HOLD proposes the PATHS it lacked
+
+A child that holds because its card's PATHS are too narrow says which globs it needs on one
+line of its report or result body: `PATHS-PROPOSED: <glob>[,<glob>...]`, each a path or a glob
+relative to the repository root, never climbing out with `..`, each naming a file at the card's
+base or one its pushed head creates. The child still pushes what it did and reports its head.
+The member keeps that line at the end of the finish's report, inside the 500-byte cut
+(`member.CarryProposed`), and friend sync keeps it on a friend's HOLD, with the HOLD's `Head`
+when it is origin's tip of the card's branch; so the line is on the card, and `nova-sprint recut
+<id> --widen` reads it there (docs/SPEC-SPRINT.md section 2). The twin's brief carries a header
+line `CARRY: <old id> attempt <n> head=<sha>`, and the member stages the twin's first attempt
+at that head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's
+brief (`TestRecutWidenAppliesPathsProposed`).
+
 ## 5. Profiles
 
 A profile is keyed by model family, derived from the model id the member runs the child on:
