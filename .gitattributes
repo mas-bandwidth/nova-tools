@@ -17,3 +17,11 @@
 # `# ceiling:` line and rows an update removes, which a union merge would
 # resurrect or duplicate.
 internal/ci/testdata/deleted-tests.txt merge=union
+
+# The append-only records: a header, then one row per key (the first field), rows only
+# appended, so two changes that each add a row at the end touch the same place. A union
+# merge keeps both sides' rows; the lander then drops a row held twice and refuses a key
+# held by two different rows (cmd/nova-sprint/landrecords.go; docs/STANDARD.md section
+# 10, the file classes). A hand resolution of these once deleted seven measured rows.
+tla/CASES.tsv merge=union
+tla/RUNS.tsv merge=union

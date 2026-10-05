@@ -2660,6 +2660,30 @@ one line per resolved ledger, `ledger <path>: resolved as the union of removals
 (-n left, -m right)` (the batch's `NOTE`), and the card's merge card and timeline
 say the ledgers were resolved as the union of both sides' removals.
 
+**The append-only records.** A merge never stops on an append-only record. The
+records are the `.tsv` files the tree's `.gitattributes` marks `merge=union`
+(today `tla/CASES.tsv` and `tla/RUNS.tsv`): a header line, then one row per key
+(the first field), rows appended at the end. Two cards that each append a row
+touch the same place, and git's union driver keeps both sides' lines, the tip's
+first. Measured on the epoch 15 log, these and the generated files above were
+713 conflicts, each a failed landing or a model's hand resolution (one deleted
+seven measured RUNS.tsv rows). After each card's merge `land` reads every record
+the merge changed (`git check-attr merge`) and drops each row held twice, the
+first kept and the order and the header untouched (`uniqueRows`; not a `sort -u`,
+which would reorder the case plan RUNS.tsv follows); when it dropped any it
+amends the merge with a body naming them, the land log carries one line per
+record, `record <path>: merged by union, n repeated rows dropped` (the batch's
+`NOTE`), and the card's merge card and timeline say so. A key two different rows
+hold after the union (a side changed a row the other side's appended hunk held)
+is no append: the card is refused with the conflict fact and kind `file`, its
+reason naming the record and the key, the batch branch reset to before its
+merge (cmd/nova-sprint/landrecords.go; `TestAnAppendOnlyRecordConflictMergesByUnion`).
+`internal/sprint/TABLES.lock` is no record and has no generator yet: its body is
+rendered by `TestSprintTablesAreLocked` (internal/ci), which only compares, and
+its comment block carries the owner's change records, which a regeneration has
+to keep; until that test has an update mode a conflict in it is refused as any
+conflict is.
+
 **The landed score.** Once every stream of the run has landed what it could,
 `land` scores each landed card's merge diff (the diff its checks read) against
 the card's brief with nova-decide's score decision (docs/SPEC-NOVA-DECIDE.md
