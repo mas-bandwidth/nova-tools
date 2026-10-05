@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // `card <id>` shows each attempt's pushed head and the head the next attempt starts from, and
@@ -46,4 +49,46 @@ func TestCardShowsTheHeadTheNextAttemptStartsFrom(t *testing.T) {
 	}
 	assert.Contains(t, card, "NEXT starts from attempt 1 head="+sha, "attempt 2 failed with no commit: attempt 3's base is attempt 1's head")
 	assert.Contains(t, ta.ok("queue --as m1 --json"), `"base_head":"`+sha+`","base_attempt":1`)
+}
+
+// `card base <id> <branch>` re-points a merging card's BASE (docs/SPEC-SPRINT.md,
+// lander-dead-base): it refuses a card that is not merging and a branch not on origin, and
+// keeps the card's place, writing one log line.
+func TestCardBaseReplacesBaseForMergingCardAndRefusesNotOnOrigin(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	briefs := t.TempDir()
+	brief := func(id, base string) string {
+		path := filepath.Join(briefs, id+".md")
+		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
+		return path
+	}
+	r.ok("add --stream s1 --one --brief-file " + brief("s1-1", "old-branch"))
+
+	// Unstarted card: not merging
+	code, _, errs := r.do("card base s1-1 main")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, errs, "card s1-1 is not merging")
+
+	heads := map[string]string{
+		"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n"),
+	}
+	r.queued(heads, "s1-1")
+
+	// Merging card, but target branch is not on origin
+	code, _, errs = r.do("card base s1-1 branch-does-not-exist")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, errs, "the branch branch-does-not-exist is not on origin")
+
+	// Merging card, target branch main is on origin
+	out := r.ok("card base s1-1 main")
+	assert.Contains(t, out, "card s1-1 base -> main")
+
+	// Log records the move
+	log := r.ok("log --card s1-1")
+	assert.Contains(t, log, "card s1-1 base -> main")
+
+	// The work and reads are kept
+	places := r.places("s1-1")
+	assert.Equal(t, "merging/queued", places["s1-1"])
 }
