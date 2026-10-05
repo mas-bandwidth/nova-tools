@@ -38,6 +38,14 @@ type FriendLevelReq struct {
 // of squared backlogs and a card moves at most once, so it ends. The first unit's line
 // says where the cards went: "moved=N to <friend>(n),... from <friend>(n),...".
 func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
+	return friendLevel(s, r, nil, nil)
+}
+
+// friendLevel is FriendLevel after a deal not yet applied (docs/SPEC-SPRINT.md section 1,
+// friend-deal-most-room-now.w1): dealt is the cards the deal places on each friend's row, and
+// dealtWorking those of them that go into working; they count against her room and her
+// lanes, and none of them moves.
+func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]int) Plan {
 	var p Plan
 	classes := map[string][]FriendSeat{}
 	for _, f := range r.Seats {
@@ -58,7 +66,7 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 			}
 			width[f.Name] = w
 			row := FriendRow(f.Name)
-			held[f.Name], working[f.Name] = friendLoad(s, f.Name), s.Fleet.Count(row, Working)
+			held[f.Name], working[f.Name] = friendLoad(s, f.Name)+dealt[f.Name], s.Fleet.Count(row, Working)+dealtWorking[f.Name]
 			for _, c := range s.Fleet.Cell(row, Ready) {
 				if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.F(FieldWho) == WhoFriend && r.Started[c.ID] == "" {
 					queues[f.Name] = append(queues[f.Name], c)
@@ -116,4 +124,26 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", n, countsByMember(to), countsByMember(from))
 	}
 	return p
+}
+
+// FriendStartedOf is the cards on a friend's row, ready or working, that she has started as
+// the store knows it (docs/SPEC-SPRINT.md section 1, friend-deal-most-room-now.w1), each
+// with its why: her beat names it running (running, by its id, its job or its primary), or
+// it carries a progress stamp (FieldProgress). The tick levels with it; it reads no branch.
+func FriendStartedOf(s *Snapshot, friend string, running []string) map[string]string {
+	out := map[string]string{}
+	row := FriendRow(friend)
+	for _, c := range append(s.Fleet.Cell(row, Working), s.Fleet.Cell(row, Ready)...) {
+		job := StoredID(c.ID, s.Epoch)
+		if g := c.Int("gen"); g > 1 {
+			job += ".g" + itoa(g)
+		}
+		switch {
+		case slices.Contains(running, c.ID) || slices.Contains(running, job) || (c.F("primary") != "" && slices.Contains(running, c.F("primary"))):
+			out[c.ID] = "her beat names it running"
+		case c.F(FieldProgress) != "":
+			out[c.ID] = "a progress stamp at " + c.F(FieldProgress)
+		}
+	}
+	return out
 }

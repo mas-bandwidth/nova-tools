@@ -795,6 +795,29 @@ would have been taken is refused too, "not taken: --all-or-nothing, and <n> of
 the cards named <was|were> refused"
 (`TestFriendTakeTakesTheTakeableAndNamesTheRest`).
 
+### friend-deal-most-room-now.w1
+
+**The friends' deal by room within a class, and the tick's friend level**
+(the owner, 2026-10-04: "Keep looking for verbs you are missing";
+`sprint.FriendDeal`, `sprint.TickDeal`). A card for any friend (`WHO:
+friend`) goes to the friend up of its class with the most room free, her room
+being DealAhead (two) times her width less her working and ready cards, the
+first by name among equals: her class is of the card when it holds the card's
+tier, and when no friend up has a class holding it, every friend up is of its
+class. A friend at or over her room is dealt nothing while one of her class
+has room, a friend of another class is dealt nothing, and a card taken back
+from a friend is never dealt back to her. After its deal, every tick levels
+the friends as `friend level` does (`sprint.FriendLevel`), counting against
+each friend's room and lanes the cards the deal placed on her row in the same
+tick, so a backlog evens itself without the coordinator; the tick levels only
+with the cards the friends have started read beside the seats
+(`TickReq.FriendStarted`; not read, it levels no friend). The store's tick
+reads the seats whenever the roster has a friend, and what she has started
+from store data alone, never a branch: her beat naming the card running, or a
+progress stamp on it (`sprint.FriendStartedOf`). Where an earlier
+paragraph says the tick does not level the friends, this one holds
+(`TestFriendDealPrefersTheFriendWithTheMostRoom`).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a

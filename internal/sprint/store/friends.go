@@ -338,22 +338,30 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 }
 
 // friendSeats is every friend of the roster as the tick's deal gives her a friend's card
-// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
-// holds a friend's card ready; nil, and no read, when it holds none.
-func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
-	if s != nil {
-		ready := false
-		for _, c := range s.Work.Column(sprint.Ready) {
-			if _, ok := sprint.FriendCard(c); ok {
-				ready = true
-				break
-			}
-		}
-		if !ready {
-			return nil, nil
-		}
+// (sprint.FriendDeal) and levels the friends after it (sprint.FriendLevel): her name, width
+// and status at now, read whenever the roster has a friend, and the cards each friend up has
+// started as the store knows them (sprint.FriendStartedOf: her beat naming it running, or a
+// progress stamp; docs/SPEC-SPRINT.md section 1, friend-deal-most-room-now.w1). A store with
+// no friend gives nil and nil.
+func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, map[string]string, error) {
+	rows, err := st.FriendRows(ctx, now)
+	if err != nil || len(rows) == 0 {
+		return nil, nil, err
 	}
-	return st.FriendSeats(ctx, now)
+	seats := make([]sprint.FriendSeat, len(rows))
+	started := map[string]string{}
+	for i, r := range rows {
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode}
+		if r.Status != sprint.Up || s == nil || s.Fleet == nil {
+			continue
+		}
+		var running []string
+		if r.Report != nil {
+			running = r.Report.Running
+		}
+		maps.Copy(started, sprint.FriendStartedOf(s, r.Name, running))
+	}
+	return seats, started, nil
 }
 
 // FriendNames is every friend of the roster in name order (the friends table's rows), for
