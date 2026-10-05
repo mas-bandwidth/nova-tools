@@ -16,6 +16,7 @@ import (
 // progress (the last change of its state or of any of its counts).
 type StreamClock struct {
 	Stream   string
+	Release  string `json:",omitempty"`
 	State    string
 	Since    time.Time
 	Progress time.Time
