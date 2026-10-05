@@ -28,9 +28,9 @@ func TestTheBeatReportsOpenFileDescriptorsAndTheTopHolders(t *testing.T) {
 				return nil, holdersErr
 			}
 			return []Holder{
-				{PID: 7, Command: "small", User: "rowan", Open: 3},
-				{PID: 200, Command: "redis-server", User: "rowan", Open: 9000},
-				{PID: 300, Command: "node", User: "rowan", Open: 40000},
+				{PID: 7, Command: "small", User: "build", Open: 3},
+				{PID: 200, Command: "redis-server", User: "build", Open: 9000},
+				{PID: 300, Command: "node", User: "build", Open: 40000},
 			}, nil
 		},
 		FilesWarn: 50000, FilesAlarm: 150000}
@@ -51,12 +51,12 @@ func TestTheBeatReportsOpenFileDescriptorsAndTheTopHolders(t *testing.T) {
 	require.Equal(t, LevelWarn, st.Files.Level())
 	require.Equal(t, 1, calls)
 	require.Equal(t, []Holder{
-		{PID: 300, Command: "node", User: "rowan", Open: 40000},
-		{PID: 200, Command: "redis-server", User: "rowan", Open: 9000},
-		{PID: 7, Command: "small", User: "rowan", Open: 3},
+		{PID: 300, Command: "node", User: "build", Open: 40000},
+		{PID: 200, Command: "redis-server", User: "build", Open: 9000},
+		{PID: 7, Command: "small", User: "build", Open: 3},
 	}, st.Files.Top)
 	require.Equal(t, t0.Add(5*time.Second), st.Files.TopAt)
-	require.Equal(t, "node pid=300 user=rowan fds=40000, redis-server pid=200 user=rowan fds=9000, small pid=7 user=rowan fds=3", st.Files.TopText())
+	require.Equal(t, "node pid=300 user=build fds=40000, redis-server pid=200 user=build fds=9000, small pid=7 user=build fds=3", st.Files.TopText())
 
 	// within HoldersEvery the holders stand; the count is new
 	open = 70000
@@ -153,10 +153,10 @@ func TestParseFileNr(t *testing.T) {
 // line per open file; only the numbered descriptors count (cwd, txt and mem are none).
 func TestParseLsof(t *testing.T) {
 	t.Parallel()
-	out := "p45721\nczsh\nLglenn\nfcwd\nftxt\nf0\nf1\nf2\nf10\np200\ncredis-server\nLrowan\nf0\nf1\nfmem\np9\ncidle\nLroot\nftxt\n"
+	out := "p45721\nczsh\nLops\nfcwd\nftxt\nf0\nf1\nf2\nf10\np200\ncredis-server\nLbuild\nf0\nf1\nfmem\np9\ncidle\nLroot\nftxt\n"
 	require.Equal(t, []Holder{
-		{PID: 45721, Command: "zsh", User: "glenn", Open: 4},
-		{PID: 200, Command: "redis-server", User: "rowan", Open: 2},
+		{PID: 45721, Command: "zsh", User: "ops", Open: 4},
+		{PID: 200, Command: "redis-server", User: "build", Open: 2},
 	}, ParseLsof(out), "a process with no numbered descriptor is no holder")
 	require.Empty(t, ParseLsof(""))
 	require.Empty(t, ParseLsof("pnot-a-pid\nf1\n"), "a line set with no pid counts nothing")

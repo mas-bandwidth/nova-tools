@@ -20,7 +20,7 @@ func TestFleetBeatMeasuresOpenFilesBesideTheLoad(t *testing.T) {
 	open := 1000
 	ta.a.meter.OpenFiles = func() (int, int, error) { return open, 491520, nil }
 	ta.a.meter.Holders = func() ([]hostload.Holder, error) {
-		return []hostload.Holder{{PID: 200, Command: "redis-server", User: "rowan", Open: 9000}, {PID: 300, Command: "node", User: "rowan", Open: 60000}}, nil
+		return []hostload.Holder{{PID: 200, Command: "redis-server", User: "build", Open: 9000}, {PID: 300, Command: "node", User: "build", Open: 60000}}, nil
 	}
 
 	out := ta.ok("fleet beat m1")
@@ -30,7 +30,7 @@ func TestFleetBeatMeasuresOpenFilesBesideTheLoad(t *testing.T) {
 	open = 60000
 	out = ta.ok("fleet beat m1 --load 12.5")
 	require.Contains(t, out, "load=12.5% last=12.5% how=given cores=4 fds=60000 fds-max=491520 fds-level=warn\n", "a given load: the files measured still")
-	require.Contains(t, out, "  node pid=300 user=rowan fds=60000\n  redis-server pid=200 user=rowan fds=9000\n", "the top holders, most first")
+	require.Contains(t, out, "  node pid=300 user=build fds=60000\n  redis-server pid=200 user=build fds=9000\n", "the top holders, most first")
 
 	out = ta.ok("fleet beat m1 --fd-warn 100000 --fd-alarm 200000")
 	require.Contains(t, out, "fds=60000 fds-max=491520 fds-level=ok\n", "the bounds given")

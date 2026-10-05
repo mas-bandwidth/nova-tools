@@ -50,7 +50,7 @@ type Holder struct {
 }
 
 // String is the holder as the beat and the judgment say it, the workshop tool's words:
-// "node pid=300 user=rowan fds=40000".
+// "node pid=300 user=build fds=40000".
 func (h Holder) String() string {
 	s := h.Command + " pid=" + strconv.Itoa(h.PID)
 	if h.User != "" {

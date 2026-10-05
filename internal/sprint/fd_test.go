@@ -28,8 +28,8 @@ func (f *fdMeter) source() hostload.Source {
 		OpenFiles: func() (int, int, error) { f.mu.Lock(); defer f.mu.Unlock(); return f.open, 491520, nil },
 		Holders: func() ([]hostload.Holder, error) {
 			return []hostload.Holder{
-				{PID: 200, Command: "redis-server", User: "rowan", Open: 9000},
-				{PID: 300, Command: "node", User: "rowan", Open: 140000},
+				{PID: 200, Command: "redis-server", User: "build", Open: 9000},
+				{PID: 300, Command: "node", User: "build", Open: 140000},
 			}, nil
 		},
 		FilesWarn: 50000, FilesAlarm: 150000}
@@ -124,7 +124,7 @@ func TestOpenFilesOverTheAlarmRaiseOneJudgmentNamingTheTopHolders(t *testing.T) 
 	require.Equal(t, "160000 alarm", r.fdText())
 	j := js[0]
 	assert.Equal(t, sprint.MemberSubject("m1"), j.Stream, "the judgment is the member's")
-	for _, want := range []string{"m1 has 160000 open files, above its alarm of 150000", "node pid=300 user=rowan fds=140000", "redis-server pid=200 user=rowan fds=9000", wc.ID + " (deadline)"} {
+	for _, want := range []string{"m1 has 160000 open files, above its alarm of 150000", "node pid=300 user=build fds=140000", "redis-server pid=200 user=build fds=9000", wc.ID + " (deadline)"} {
 		assert.Contains(t, j.What, want, "the judgment names %q", want)
 	}
 	assert.Equal(t, []string{"fleet up m1 --width 2", "fleet down m1"}, j.Decisions)
