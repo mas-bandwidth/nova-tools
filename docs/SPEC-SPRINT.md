@@ -3456,6 +3456,44 @@ Each line has the format `MACHINERY <thing> OK|DOWN <facts> [remedy="<command>"]
 A summary line `MACHINERY OK n=<total>` or `MACHINERY DOWN n=<down> of=<total>` concludes the output.
 `--json` prints one JSON object with `at`, `lines`, `down`, `exit_code`, and `measures`.
 
+### The seat's store login
+
+(the owner, 2026-10-05: "We need to get away from these one shot shell scripts"; card
+seat-store-login-built-in.w1, which replaces the shell wrapper every store verb went through.)
+
+The coordinator's login to the store is a setting of nova-sprint itself, never a wrapper that runs
+it under `nova-secrets exec` with the `NOVA_SPRINT_REDIS*` variables set:
+
+```
+nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
+nova-sprint seat login --check
+nova-sprint seat logout
+```
+
+`seat login` records the address, the ACL user and where the user's password is in nova-secrets
+(store, seat, key, sops, the secret's NAME; never the password) in the per-user config file
+`$XDG_CONFIG_HOME/nova-sprint/login.json`, else `~/.config/nova-sprint/login.json`, mode 0600,
+written whole by a rename. The paths are recorded absolute and `--sops` left off is the `sops` on
+`PATH`. A login is recorded only when its secret resolves; the twin (`mem:<file>`) takes none.
+
+Every verb after it opens the store as follows. The address is `--redis`, else
+`NOVA_SPRINT_REDIS`, else `NOVA_REDIS_ADDR`, else the recorded address. The login is the
+environment's when `NOVA_SPRINT_REDIS_USER` is set (that user, the password in the variable
+`NOVA_SPRINT_REDIS_PASSWORD_ENV` names), which wins; else the recorded user, when the store opened
+is the recorded address (an explicit other address is never sent the recorded password); else the
+store's default user. The recorded password is read in the verb's own process through
+`secrets.ReadLogin` (internal/secrets/login.go), which takes the path `nova-secrets exec` takes
+(`OpenSeatFile`: the store's invariants, the key's mode, the sops version, then the decrypt), and
+is handed to the connection through the getenv redisconn reads it by. It is never printed, never
+written, and never in the process's environment, so no child of the verb inherits it. A recorded
+secret that does not resolve, or a login file that is not a whole login, is a refusal naming the
+file and the remedy (`nova-sprint seat login --check`, then `seat login` again or `seat logout`),
+never a login without a password. `seat login --check` prints the recorded login, which login wins
+when the environment names one (`wins=env:NOVA_SPRINT_REDIS_USER`, `redis-wins=env:<addr>`), and
+`resolves=yes|no` (exit 1 on no); `seat logout` removes the file (`was=recorded|none`). The code is
+`cmd/nova-sprint/storelogin.go`; `TestABareVerbOpensTheStoreWithTheSeatLoginFromSecrets` measures
+it on the in-memory store with a fake secrets reader.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded

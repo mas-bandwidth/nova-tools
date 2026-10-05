@@ -706,6 +706,18 @@ equal to `--as`. A refused run leaves the store byte for byte and runs no git.
 unchanged: the shape `seal` opens, which the gate approves with no rule of its own —
 `TestGateApprovesAnInjectPullRequest` measures it.
 
+### A tool's store login
+
+`secrets.ReadLogin(Login{Store, As, Key, Sops, Name})` (internal/secrets/login.go) reads one name
+from one seat in the caller's own process: `OpenSeatFile`, the path `exec` takes before it
+decrypts, then the name. The value comes back as a `Secret` and goes into no environment; a `Login`
+holds no secret, so a tool may record it in its config file and print every field. A field left
+empty, a seat that does not open, a name the seat does not hold and a name it holds empty are each
+a refusal naming the seat, the store and the next command (`nova-secrets names`, `nova-secrets
+seal`); none is ever an empty password. `nova-sprint seat login` records one (docs/SPEC-SPRINT.md,
+"The seat's store login"), so the sprint's verbs need no `exec` wrapper; nova-config can read its
+store login through the same helper.
+
 ### Refused, by name, with where it lives
 
 One line, on stderr, naming the door — exit 2, or 125 from `exec`:

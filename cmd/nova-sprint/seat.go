@@ -559,6 +559,16 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 // --reason) writes the key from the record, logged with who and why
 // (seat-key-follows-record.w2).
 func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
+	// seat login and seat logout are the seat's store login, kept on this machine and
+	// never in the store (storelogin.go)
+	if len(args) > 0 {
+		switch args[0] {
+		case "login":
+			return a.cmdSeatLogin(args[1:], stdout, stderr)
+		case "logout":
+			return a.cmdSeatLogout(args[1:], stdout, stderr)
+		}
+	}
 	fs, c := a.verbSetup("seat")
 	repair := fs.Bool("repair", false, "write the coordinator key from the seat's record when they differ: the record's holder or the owner, with --reason; logged with who and why")
 	reason := fs.String("reason", "", "with --repair, why the key is repaired, recorded in the log (required)")
