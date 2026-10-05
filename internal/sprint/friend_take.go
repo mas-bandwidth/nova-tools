@@ -66,8 +66,11 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 	var take []*Card
 	if r.All {
 		for _, c := range mine {
-			if r.Started[c.ID] == "" {
-				take = append(take, c) // a started one stays: the caller says it
+			// a hold takes started cards too: a card sitting on a held friend blocks every card
+			// that needs it (the owner, 2026-10-04: "Held friends cards need to be
+			// redistributed automatically"); the coordinator's own take keeps a started one
+			if r.Started[c.ID] == "" || r.Hold {
+				take = append(take, c)
 			}
 		}
 	}

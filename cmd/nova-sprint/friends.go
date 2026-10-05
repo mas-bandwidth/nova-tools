@@ -362,7 +362,7 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 		if !back.IsZero() {
 			say += " until=" + back.UTC().Format(time.RFC3339)
 		}
-		c.says = append([]string{say}, keptSays(friend, started)...)
+		c.says = []string{say} // a hold keeps no card, started or not (sprint.FriendTake)
 		return a.runStep(name, *c, st, store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, All: true, Hold: true, Started: started, Who: c.actor}), stdout, stderr)
 	}
 	line, facts := token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held}
