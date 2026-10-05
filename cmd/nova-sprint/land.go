@@ -221,6 +221,8 @@ func idSpan(ids []string) string {
 // keeps the id and the epoch), and the repository and base its brief names.
 type landCard struct {
 	id, head, attempt, repo, base string
+	start                         string       // the attempt's start commit, if known (sprint.BaseOf for attempt > 1)
+	result                        string       // the finished work card's recorded result (claimText), "" when the sprint holds none
 	paths                         []string     // the brief's PATHS globs, nil when it names none (checkCard)
 	brief                         string       // the brief, the card a landed diff is scored against (landscore.go)
 	primary                       *sprint.Card // the primary, whose brief decision its landing attaches to (briefdecide.go)
@@ -329,7 +331,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	a.serial.Lock()
-	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
 	a.serial.Unlock()
 	if err != nil {
 		return a.readFailed("land", err, stderr)
@@ -496,6 +498,18 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
+			lc.result = claimText(s.Fleet.Card(sprint.WorkCardID(pr.ID, pr.Int("attempt"))))
+			if pr.Int("attempt") > 1 {
+				var earlier []*sprint.Card
+				for k := 1; k < pr.Int("attempt"); k++ {
+					if w := s.Fleet.Card(sprint.WorkCardID(pr.ID, k)); w != nil {
+						earlier = append(earlier, w)
+					}
+				}
+				if b := sprint.BaseOf(earlier); b.Head != "" {
+					lc.start = b.Head
+				}
+			}
 		}
 		cards = append(cards, lc)
 	}
@@ -596,6 +610,9 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 				return false, false
 			}
 			if failed.id != "" {
+				if failed.emptyCommit {
+					return l.returnCard(stream, failed)
+				}
 				l.conflict(stream, failed)
 				return false, true
 			}
@@ -613,6 +630,9 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		if why != "" {
 			return refuse(why)
 		}
+	}
+	if failed.emptyCommit {
+		return l.returnCard(stream, failed)
 	}
 	l.conflict(stream, failed)
 	return false, true
@@ -706,8 +726,54 @@ type conflictCard struct {
 	// one is a file no generated ledger owns, "ledger" when every one is a ledger whose
 	// resolution failed, "" when the card failed for any other cause (sprint.MergeReq,
 	// ConflictKind: the conflict rule redoes a file conflict on the tip).
-	kind  string
-	paths []string
+	kind        string
+	paths       []string
+	emptyCommit bool
+}
+
+// returnCard returns one card to review when its landing was refused because of an empty commit.
+func (l *lander) returnCard(stream string, f conflictCard) (bool, bool) {
+	b := landBatch{
+		Stream: stream,
+		Status: "refused",
+		Cards:  1,
+		IDs:    []string{f.id},
+		Repo:   f.repo,
+		Base:   f.base,
+		Reason: f.why,
+		DryRun: l.dry,
+	}
+	if l.dry || l.st == nil {
+		l.out = append(l.out, b)
+		return false, true
+	}
+	req := sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{f.id}}, Reason: f.why, Who: l.c.actor}
+	step := store.ReturnStep(req)
+	plan := step.Plan
+	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
+		if why := headWhy(s, stream, []landCard{f.landCard}); why != "" {
+			return sprint.Plan{Refused: []sprint.Refusal{{Key: stream, Why: why}}}
+		}
+		return plan(s)
+	}
+	named := []string{f.pin()}
+	step.Args = store.ArgsOf(struct {
+		Req  sprint.ReturnReq
+		Pins []string
+	}{req, named})
+	epoch := l.epoch
+	step.Epoch = &epoch
+	if l.c.op != "" {
+		step.CallerOp = l.c.op + "." + stream + "." + step.Args
+	}
+	l.a.serial.Lock()
+	res, err := l.st.Run(context.Background(), step)
+	l.a.serial.Unlock()
+	if code := stepExit(res, err); code != 0 || len(res.Moved) == 0 {
+		b.Reason = f.why + "; the return step did not record it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+	}
+	l.out = append(l.out, b)
+	return false, true
 }
 
 // conflict reports the card that ended its batch with the conflict fact: the
@@ -960,9 +1026,10 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		}
 		var card, env string
 		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
+		var emptyCommit bool
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
 		if card == "" && env == "" {
-			card, env = l.checkCard(ctx, dir, *c, before)
+			card, env, emptyCommit = l.checkCard(ctx, dir, *c, before)
 		}
 		if card == "" && env == "" {
 			card, env = l.gateCard(ctx, dir, *c, before)
@@ -971,7 +1038,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case card != "":
-			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}, ""
+			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths, emptyCommit: emptyCommit}, ""
 		}
 		merged = append(merged, c.id)
 	}
@@ -1105,27 +1172,102 @@ func (l *lander) ledgers() []landLedger {
 	return landLedgers
 }
 
+var (
+	verdictOkRE = regexp.MustCompile(`(?im)^\s*verdict:\s*ok\b`)
+	// nothingRE is a result line that says the child found nothing to do: the verdict line
+	// or a line that begins with the finish kind (cardhdr.EndNothing, cardhdr.EndNoCommit),
+	// never the words anywhere in prose.
+	nothingRE  = regexp.MustCompile(`(?im)^\s*(?:verdict:\s*nothing\b|(?:report:\s*)?(?:nothing[- ]to[- ]do|no commit)\b)`)
+	stepShaRE  = regexp.MustCompile(`(?im)^\s*step\b[^\n]*`)
+	hexTokenRE = regexp.MustCompile(`\b[0-9a-f]{7,64}\b`)
+	diffStatRE = regexp.MustCompile(`(?im)(\b[1-9]\d*\s+files?\s+changed\b|\b[1-9]\d*\s+insertions?\b|\b[1-9]\d*\s+deletions?\b|\b[1-9]\d*\s+lines?\s+added\b|\b[1-9]\d*\s+lines?\s+removed\b|^\s*[\w./-]+\s+\|\s+[1-9]\d*|\bdiff\s*stat:\s*\+?[1-9])`)
+	stepDashRE = regexp.MustCompile(`(?im)^\s*step[^\n]*?[-–—]\s*$`)
+)
+
+// hasSha says a line holds a token shaped like a commit id: 7 to 64 hex characters with a
+// digit in them, so an all-letter word such as "decade" or "defaced" is not one.
+func hasSha(line string) bool {
+	for _, tok := range hexTokenRE.FindAllString(strings.ToLower(line), -1) {
+		if strings.ContainsAny(tok, "0123456789") {
+			return true
+		}
+	}
+	return false
+}
+
+// claimText is the result the lander holds for a card: what the finished work card recorded
+// (the store's ok, head and report fields), written as the result lines checkEmptyCommit reads.
+// ok is a finish at a pushed head, so its verdict is ok unless the report is the member's word
+// for no new work (sprint.IsNothingNew); a card finished ok with no report still claims.
+func claimText(wc *sprint.Card) string {
+	if wc == nil {
+		return ""
+	}
+	report := strings.TrimSpace(wc.F("report"))
+	verdict := "nothing"
+	if wc.F("ok") == "yes" && !sprint.IsNothingNew(report) {
+		verdict = "ok"
+	}
+	return "verdict: " + verdict + "\nhead: " + wc.F("head") + "\n" + report + "\n"
+}
+
+// checkEmptyCommit decides a landing whose head commit's diff from the attempt's start commit
+// is empty (docs/SPEC-SPRINT.md section 7, the lander's checks; the finish's ok is a verdict
+// ok and a pushed commit). resultText is the attempt's recorded result (claimText). An empty
+// diff with a result that claims changes (a verdict ok line, a step line with a commit sha, or
+// a non-empty diff stat) is refused with the finding "empty commit: the result claims changes
+// the diff does not show"; a result that claims nothing (a nothing-to-do verdict or report
+// line, every step -) passes. A result the lander does not hold cannot be told to claim
+// nothing, so an empty diff with no result text is refused too. A non-empty diff passes.
+func checkEmptyCommit(emptyDiff bool, resultText string) string {
+	const finding = "empty commit: the result claims changes the diff does not show"
+	if !emptyDiff {
+		return ""
+	}
+	if strings.TrimSpace(resultText) == "" || verdictOkRE.MatchString(resultText) {
+		return finding
+	}
+	if nothingRE.MatchString(resultText) {
+		return ""
+	}
+	steps := stepShaRE.FindAllString(resultText, -1)
+	allDash := len(steps) > 0
+	for _, st := range steps {
+		if hasSha(st) {
+			return finding
+		}
+		allDash = allDash && stepDashRE.MatchString(st)
+	}
+	if allDash {
+		return ""
+	}
+	if diffStatRE.MatchString(resultText) {
+		return finding
+	}
+	return ""
+}
+
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
-// merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
-// sentence fragment or unmatched backquote (E4). A card that adds a directory owns its
+// merge's own diff touches no file outside the card's PATHS (E12), leaves no stranded
+// sentence fragment or unmatched backquote (E4), makes no empty commit claiming changes. A card that adds a directory owns its
 // catalog row and the AGENTS.md maps (diffcheck.Outside). A card that fails is taken
 // off the batch branch (reset to before) and ends the batch as a head that does not
 // merge does, with what failed; card and env are mergeHead's. A merge that made no
 // commit (the head is in the base already) is not checked: it changes nothing the base
 // does not hold.
-func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
+func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string, emptyCommit bool) {
 	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || after == before {
-		return "", ""
+		return "", "", false
 	}
 	diff, err := l.git(ctx, dir, "diff", "-M", "--no-color", before, after)
 	if err != nil {
-		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err)
+		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err), false
 	}
 	tracked, err := l.git(ctx, dir, "ls-tree", "-r", "--name-only", before)
 	if err != nil {
-		return "", "the files tracked before the merge of " + c.id + " could not be listed: " + firstLine("", err)
+		return "", "the files tracked before the merge of " + c.id + " could not be listed: " + firstLine("", err), false
 	}
 	beforePaths := []string{}
 	if tracked != "" {
@@ -1138,14 +1280,35 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 	for _, f := range diffcheck.Fragments(diff) {
 		why = append(why, f.String()+" (E4)")
 	}
+	// The attempt's start: its earlier attempt's pushed head when the card has one (stream),
+	// else where the head left the base. A git error here (an unknown sha) leaves the diff
+	// unjudged as empty, so the check skips and the other checks stand.
+	start := c.start
+	if start == "" {
+		if s, err := l.git(ctx, dir, "merge-base", "refs/remotes/origin/"+c.base, c.head); err == nil && s != "" {
+			start = s
+		} else if s, err := l.git(ctx, dir, "merge-base", before, c.head); err == nil && s != "" {
+			start = s
+		} else {
+			start = "refs/remotes/origin/" + c.base
+		}
+	}
+	if _, err := l.git(ctx, dir, "diff", "--quiet", start, c.head); err == nil {
+		if finding := checkEmptyCommit(true, c.result); finding != "" {
+			if _, rerr := l.git(ctx, dir, "reset", "-q", "--hard", before); rerr != nil {
+				return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", rerr), false
+			}
+			return finding, "", true
+		}
+	}
 	if len(why) == 0 {
 		l.diffs[c.id] = diff
-		return "", ""
+		return "", "", false
 	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
-		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err)
+		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err), false
 	}
-	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), ""
+	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), "", false
 }
 
 // containsAny says s holds one of words.
