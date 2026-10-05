@@ -983,13 +983,29 @@ result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
-are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
+are reports; `tick`, `run`, `backup` and `friend clean` are the machine's. Reads need no
 actor except `inbox --read`, which moves the coordinator's cursor. A set is
 ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 `--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### A backup of the store
+
+`nova-sprint backup --file <path>` writes the store to the file and checks it
+before it stays: the file is read back against its SHA-256, restored into a twin
+(a twin store: the whole document and its counts must come back; a Redis: its
+RDB, checked as `snapshot` checks it) and scanned for secrets (a private key
+block, an AWS key id, a GitHub, Slack or `sk-` token, a bearer token, a
+`password=` or `token:` assignment). A file that fails a check is removed and
+the verb exits 1 with the check, the pattern and the line, never the value, so a
+file at `--file` is a verified one. It is the machine's (no actor), reads the
+store and writes only the file, and a Redis store is read on its host. Success
+prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n>
+verified=<checks> secrets=none`; `--json` prints the same fields. It replaces
+the hand procedure of a restore test and a secrets scan; `snapshot` keeps a
+directory of them on a schedule.
 
 ### A card re-cut as its twin
 
