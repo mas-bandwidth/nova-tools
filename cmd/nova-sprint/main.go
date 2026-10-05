@@ -122,6 +122,10 @@ type app struct {
 	// red batch gate (landgate.go); nil asks Jev with the key JEV_API_KEY holds, on the
 	// wall clock.
 	gateBackend func() (decide.Backend, func() time.Time)
+	// mergeQueue is the forge's merge queue of a branch land asks before it lands onto it
+	// (mergewindow.go): gh's for a GitHub repository, each answer kept a while; a test gives
+	// a fake and asks no forge.
+	mergeQueue sprint.MergeQueue
 	// serial is the server's one line of control (serve.go): a worker's batch
 	// and a tick of the run loop each hold it, so neither runs during the other;
 	// the tick takes it at its turn, not behind every batch waiting (sprint.ControlLine).
@@ -273,6 +277,7 @@ func newApp(getenv func(string) string) *app {
 	a.home = os.UserHomeDir
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
 	a.briefBar = a.readBriefBar
+	a.mergeQueue = &keptQueue{ask: ghMergeQueue{host: githubHost}, now: func() time.Time { return a.now() }, kept: map[string]keptAnswer{}}
 	return a
 }
 

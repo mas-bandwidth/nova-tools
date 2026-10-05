@@ -38,6 +38,8 @@ type testApp struct {
 	// sent is every message the app sent on the friends' bus.
 	sent  []bus.Message
 	quiet map[string]bool
+	// queue is the merge queues land asks, a fake: no forge is asked
+	queue *heldQueue
 }
 
 func newTestApp(t *testing.T) *testApp {
@@ -57,6 +59,9 @@ func newTestApp(t *testing.T) *testApp {
 	// run's wait on a quiet log steps the clock by the time it may take
 	ta.m.LogWait = func(d time.Duration) { ta.a.sleep(d) }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
+	// land asks no forge: every branch's merge queue is clear unless a test holds one
+	ta.queue = &heldQueue{held: map[string]bool{}}
+	ta.a.mergeQueue = ta.queue
 	// every part a tick plans on its twin is checked against a fresh read
 	ta.a.checkTwin = func(twin, fresh *sprint.Snapshot) error {
 		if d := store.TwinDiff(twin, fresh); d != "" {
