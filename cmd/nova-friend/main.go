@@ -446,18 +446,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
-	fl := &friend.Limits{
-		Now:   w.now,
-		Nonce: w.random,
-		Down: func(until time.Time, reason string) {
-			// ignored: best-effort status record of harness limit
-			_ = friend.WritePresence(state, friend.PresenceStatus{Friend: name, Presence: friend.PresenceDown, Reason: reason, At: w.now()})
-		},
-		Up: func(nonce string) {
-			// ignored: best-effort status record of limit cleared
-			_ = friend.WritePresence(state, friend.PresenceStatus{Friend: name, Presence: friend.PresenceUp, At: w.now()})
-		},
-	}
+	// her harness's limit: every command's output read for it, her turns held while she is
+	// down and a wake after the reset (friend.Limits); its hooks are set once record is
+	fl := &friend.Limits{Now: w.now, Nonce: w.random}
 	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(w.exec), c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
@@ -482,6 +473,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
+	// the presence file says a limit while there is one, whatever the session check saw
+	writePresence := func(p friend.PresenceStatus) error {
+		if until, reason, limited := fl.Limited(); limited {
+			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
+		}
+		return friend.WritePresence(state, p)
+	}
+	fl.Down = func(until time.Time, reason string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns held until then, then a wake")
+		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
+			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
+		}
+	}
+	fl.Up = func(nonce string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
+	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	st, closeStore := w.openUntil(ctx, addr, record)
@@ -503,7 +510,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// presence is the session's, never the daemon's (docs/SPEC-FRIEND.md, presence)
 	sc := &friend.SessionCheck{
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record,
-		Save: func(p friend.PresenceStatus) error { return friend.WritePresence(state, p) },
+		Save: writePresence,
 		Text: func(nonce string) string {
 			bin, err := w.binary()
 			if err != nil {
@@ -518,10 +525,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Beat: sc.Beat(func(ctx context.Context) error {
-			// ignored: harness usage flags for beat
-			_ = fl.Usage().BeatFlags()
-			// ignored: harness limit status check
-			_, _, _ = fl.Limited()
 			answer, err := w.beat(ctx, server, name)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 				rowMode, rowWidth = m, wd

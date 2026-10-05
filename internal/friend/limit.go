@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -15,8 +14,7 @@ import (
 )
 
 // A harness at its usage limit or out of credits is down until its reset,
-// woken after it, and its measured usage rides on its beat (SPEC-FRIEND.md,
-// a harness at its limit). The finding of 2026-10-04: a friend's harness
+// and woken after it (SPEC-FRIEND.md, a harness at its limit). The finding of 2026-10-04: a friend's harness
 // stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while her row
 // read up with six working cards, and four Claude accounts ran out of their
 // weekly usage unseen.
@@ -37,16 +35,6 @@ type Usage struct {
 	FiveHour, SevenDay             float64
 	FiveHourResets, SevenDayResets time.Time
 	At                             time.Time
-}
-
-// BeatFlags is the usage as the beat's flags, each window in whole percent,
-// so pacing reads it; none when nothing was measured.
-func (u Usage) BeatFlags() []string {
-	if u.At.IsZero() {
-		return nil
-	}
-	pct := func(f float64) string { return strconv.Itoa(int(math.Round(f * 100))) }
-	return []string{"--five-hour", pct(u.FiveHour), "--seven-day", pct(u.SevenDay)}
 }
 
 // Limit is what a command's output says of the harness's limit: Limited,
@@ -239,7 +227,6 @@ type Limits struct {
 	episodes int // limits seen, so a turn knows it hit one
 	waking   string
 	answered bool
-	usage    Usage
 }
 
 // Limited is the limit now: until when and why, and whether there is one.
@@ -247,13 +234,6 @@ func (l *Limits) Limited() (until time.Time, reason string, limited bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.until, l.reason, l.limited
-}
-
-// Usage is the last measured usage, for the beat (Usage.BeatFlags).
-func (l *Limits) Usage() Usage {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.usage
 }
 
 // Watch is run reading every command's output for a limit and, while a wake
@@ -272,9 +252,6 @@ func (l *Limits) see(out string) {
 	l.mu.Lock()
 	if l.waking != "" && strings.Contains(out, l.waking) {
 		l.answered = true
-	}
-	if found && !lim.Usage.At.IsZero() {
-		l.usage = lim.Usage
 	}
 	if found && lim.Overage && !l.AllowOverage && !lim.Limited {
 		lim.Limited = true
@@ -303,7 +280,8 @@ func WakeText(nonce string) string {
 // counted toward nothing); the first after the reset is a wake turn
 // (WakeText) whose output must carry its nonce, a fresh one each try, before
 // the message goes in; a turn that hits a limit is Deferred too. A passive
-// d is d.
+// d is d. A LaneHarness stays one (gatedLanes): its batch Deliver is held,
+// and its lanes are not.
 func (l *Limits) Gate(d Deliverer) Deliverer {
 	if _, passive := d.(interface{ Passive() }); passive {
 		return d
@@ -315,6 +293,16 @@ func (l *Limits) Gate(d Deliverer) Deliverer {
 	return g
 }
 
+// gatedLanes is a LaneHarness under the gate: Deliver, the batch turn and
+// the session check, is gated's; OpenSession and DeliverTo, the one-shot
+// lanes, go straight to the harness, and their output is still read for a
+// limit (Watch is under the harness, not here), so a lane turn that hits
+// one sends the friend Down all the same. They are exempt because a lane has
+// no deferral: lanes.go counts an error from a lane turn toward CardTurns and
+// sets the card aside at the last, and retries a failed open after
+// LaneOpenRetry, so a Deferred lane turn would give up her card while she
+// waits out the reset. Holding the lanes while she is down is owed to the
+// lanes' loop (a deferral that keeps the card in hand), not to this gate.
 type gatedLanes struct {
 	*gated
 	lh LaneHarness

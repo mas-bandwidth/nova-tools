@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -164,7 +166,9 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 
 	// the bus is down: the delivery stands, sync says so, and the card's story has it
 	ta2, root2 := friendCardApp(t, "friend amy", "amy")
-	ta2.a.bus = func(_ context.Context, _ bus.Message) error { return errors.New("dial tcp: connection refused") }
+	ta2.a.bus = func(_ context.Context, _ bus.Message, _ func(string)) error {
+		return errors.New("dial tcp: connection refused")
+	}
 	ta2.ok("tick")
 	out := ta2.ok("friend sync --root " + root2)
 	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
@@ -178,18 +182,47 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	ta2.clean()
 }
 
-func TestSendBusCourierWatchesAlarm(t *testing.T) {
+// friend sync's bus message goes through friend.Courier, its result watched: a store that
+// refuses the server's login is one alarm, raised at the first failed send as one
+// FRIEND-CARD BUS-ALARM line on sync's output and named in the note on the card's story,
+// and cleared at the next send that succeeds (docs/SPEC-FRIEND.md, fr-delivery-receipts.w1).
+// The store is bus's fake behind the app's dial (busOpen): no socket.
+func TestFriendSyncSaysTheBusStoresAlarmAndTheNextSendClearsIt(t *testing.T) {
 	t.Parallel()
-	a := newApp(func(k string) string {
-		if k == busRedisEnv {
-			return "127.0.0.1:6399"
-		}
-		return ""
-	})
-	m := bus.Message{From: "coordinator", To: []string{"amy"}, Subject: "test", Body: "hello"}
-	err := a.sendBus(context.Background(), m)
-	require.Error(t, err)
-	w := a.busWatch("127.0.0.1:6399", "")
-	require.NotNil(t, w)
-	assert.True(t, w.Open())
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	env := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		return map[string]string{busRedisEnv: "bus.test:6379", redisauth.UserEnv: "sprint"}[k] + env(k)
+	}
+	fake := bustest.NewFake(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), "coordinator", "amy")
+	fake.Friends = []string{"amy"}
+	fake.Fail = errors.New("WRONGPASS invalid username-password pair or user is disabled.")
+	var dialed []string
+	ta.a.busOpen = func(_ context.Context, addr, user string) (*bus.Bus, func(), error) {
+		dialed = append(dialed, addr+" as "+user)
+		return &bus.Bus{Store: fake}, func() {}, nil
+	}
+	ta.a.bus = ta.a.sendBus
+	ta.ok("tick")
+	out := ta.ok("friend sync --root " + root)
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
+	assert.Contains(t, out, "FRIEND-CARD BUS-ALARM bus store bus.test:6379 refuses the login of user sprint: login refused (WRONGPASS)")
+	_, alarm, _ := strings.Cut(out, "FRIEND-CARD BUS-ALARM")
+	alarm, _, _ = strings.Cut(alarm, "\n")
+	assert.NotContains(t, alarm, "invalid username-password", "the alarm carries the store's refusal word, never the rest of its text")
+	assert.Contains(t, out, "the bus store's alarm is raised: FRIEND-CARD BUS-ALARM", "the note names the alarm")
+	assert.Equal(t, 1, strings.Count(out, "BUS-ALARM bus store"), "raised once")
+
+	var said []string
+	say := func(line string) { said = append(said, line) }
+	m := bus.Message{From: "coordinator", To: []string{"amy"}, Subject: "card c2 dealt", Body: "hello"}
+	require.Error(t, ta.a.sendBus(context.Background(), m, say))
+	assert.Empty(t, said, "a second failure counts in the raised alarm and says nothing new")
+
+	fake.Fail = nil
+	require.NoError(t, ta.a.sendBus(context.Background(), m, say))
+	require.Len(t, said, 1)
+	assert.Contains(t, said[0], "FRIEND-CARD BUS-ALARM bus store bus.test:6379 answers user sprint again: 2 sends failed (auth)")
+	assert.Equal(t, 1, fake.Len(bus.StreamOf("amy")), "the message reached her stream once the store answered")
+	assert.Equal(t, []string{"bus.test:6379 as sprint", "bus.test:6379 as sprint", "bus.test:6379 as sprint"}, dialed, "one connection per send")
 }
