@@ -659,6 +659,21 @@ again with the same operation id, which returns the original receipt if the batc
 was applied and applies it if it was not. The caller's epoch is always the
 "requested" epoch and the store's the "active" one.
 
+#### Cost of a batch
+
+A guard costs what its members cost, not what the table holds. A placed member the
+batch only guards (no create, move, remove, set or unset) is checked against its own
+record and the one cell that record names (one `ZSCORE`); a member whose recorded cell
+does not hold it refuses `DRIFT`. No whole-table pass runs for it, so a guard batch of
+placed members against 100,000 rows x 1,000 columns issues a small constant number of
+cell reads. A member the batch writes, and an unplaced member (a record with no
+`place:<table>`, or no record), need the reverse check, that no cell other than its
+own holds it, and that check reads every cell of the table once, for all such members
+of the batch together: one `ZRANGE` of the rows plus one `ZRANGE` or `ZMSCORE` per cell
+(rows x columns calls), the one bound that scales with the table. A guarded placed
+member that a second cell also holds is not seen by a guard-only batch; any batch that
+writes it, and `nova-table check`, find that disagreement.
+
 ### CLI batch verb (`nova-table batch`)
 
 `nova-table batch (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]`

@@ -8,12 +8,15 @@ package ntable_test
 // and no part of the input is echoed.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -227,4 +230,53 @@ func TestReadSetMembersBound(t *testing.T) {
 		assert.ErrorContains(t, err, w, "refusal lacks %q: %s", w, err)
 	}
 	assert.NotContains(t, err.Error(), echoMarker, "refusal echoes the input: %.200s", err)
+}
+
+// A batch costs what its members cost, not what the table holds (security#78
+// finding 4): a one-member guard batch of a placed member verifies the one cell
+// its record names and reads no other, however many rows the table has. The
+// store's own count (INFO commandstats, through cellReads) is the measure, so
+// the test holds no clock. A placed member whose recorded cell lost it, and an
+// unplaced member that some cell holds, are still refused DRIFT.
+func TestBatchOfOnePlacedMemberDoesNotScanEveryCellOfTheTable(t *testing.T) {
+	t.Parallel()
+	_, c := live(t)
+	ctx := context.Background()
+	const rows = 200
+	require.NoError(t, ntable.Create(ctx, c, demo(), time.Now()))
+	for r := 0; r < rows; r++ {
+		_, err := ntable.RowAdd(ctx, c, "demo", fmt.Sprintf("r%d", r), ntable.RowSpec{})
+		require.NoError(t, err)
+	}
+	guard := func(op string, ids ...string) ntable.BatchManifest {
+		m := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: op, Actor: "p"}
+		for _, id := range ids {
+			m.Members = append(m.Members, ntable.BatchMemberEntry{ID: id, Expect: &ntable.MemberExpect{}})
+		}
+		return m
+	}
+	seed := guard("seed")
+	seed.Members = []ntable.BatchMemberEntry{
+		{ID: "a", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r0", Col: "ready", Score: 1}},
+		{ID: "b", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r1", Col: "ready", Score: 2}},
+	}
+	_, err := ntable.ApplyBatch(ctx, c, seed)
+	require.NoError(t, err)
+
+	before := cellReads(t, c)
+	_, err = ntable.ApplyBatch(ctx, c, guard("one", "a"))
+	require.NoError(t, err)
+	got := cellReads(t, c) - before
+	require.LessOrEqual(t, got, int64(10), "a one-member guard batch over %d rows x %d columns read cells %d times; want a small constant", rows, len(demo().Columns), got)
+
+	// the recorded cell lost the member: DRIFT
+	require.NoError(t, c.ZRem(ctx, ntable.CellKey("demo", "r1", "ready"), "b").Err())
+	_, err = ntable.ApplyBatch(ctx, c, guard("lost", "b"))
+	require.ErrorIs(t, err, ntable.ErrDrift)
+
+	// an unplaced member held by a cell: DRIFT
+	require.NoError(t, ntable.MemberCreate(ctx, c, "demo", "u"))
+	require.NoError(t, c.ZAdd(ctx, ntable.CellKey("demo", "r5", "done"), redis.Z{Score: 1, Member: "u"}).Err())
+	_, err = ntable.ApplyBatch(ctx, c, guard("stray", "u"))
+	require.ErrorIs(t, err, ntable.ErrDrift)
 }
