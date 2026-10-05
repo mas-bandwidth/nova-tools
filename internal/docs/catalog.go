@@ -137,6 +137,7 @@ var DefaultCatalog = []Entry{
 	// tools/
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),
 	E("tools/analyzers", "vetlaw verb-law analyzers", "go test ./tools/analyzers/...", "make vet-laws"),
+	E("tools/clidoc", "docs/CLI.md reference block generator: rewrites each tool's clidoc-marked block from its built help, --check fails on drift", "go test ./tools/clidoc", "make clidoc"),
 	E("tools/benchstandard", "the Linux bench's acceptance witness: one DRIFT line per finding against the standard, STANDARD OK or STANDARD DRIFT, and --apply kills stray runner listeners and nothing else", "go test ./tools/benchstandard", "go run ./tools/benchstandard"),
 	E("tools/ci", "the verbs CI and the Makefile call: package selection and the shard deal, the test-step checks, the ancestry fetch, gofmt, the redis, postgres and sbcl installs, the lisp tier, the job aggregates, revert-on-red and the run reports; one runner for every process", "go test ./tools/ci", "go run ./tools/ci help"),
 	E("tools/fardelay", "a store at a distance as a process: a loopback proxy that holds each write of its clients back by a fixed delay", "go test ./tools/fardelay", "go run ./tools/fardelay --target HOST:PORT --delay 64ms"),
