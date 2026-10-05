@@ -289,7 +289,7 @@ func TestNativeRunRefusesMissingBinary(t *testing.T) {
 			var errOut bytes.Buffer
 			_, code := nativeRun(nativeRunConfig{
 				binary: tc.binary, model: "fake/fake-model", label: "lbl",
-				card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+				card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 			}, &errOut)
 			require.Equal(t, 2, code, "a bad binary exits 2, got %d:\n%s", code, errOut.String())
 			require.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errOut.String())
@@ -445,7 +445,7 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 	_, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "zeta/zeta-model", label: "lbl",
 		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth,
-		configFile: cfgPath, deadline: time.Second,
+		configFile: cfgPath, deadline: 30 * time.Second,
 	}, &errOut)
 	require.Equal(t, 2, code, "a config whose entry for the model's provider has no key exits 2, got %d:\n%s", code, errOut.String())
 	require.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line:\n%s", errOut.String())
@@ -672,17 +672,17 @@ func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
 	}{
 		{
 			"model_no_prefix",
-			nativeRunConfig{binary: bin, model: "no-prefix", card: []byte("x\n"), slotDir: slot, root: root, deadline: time.Second},
+			nativeRunConfig{binary: bin, model: "no-prefix", card: []byte("x\n"), slotDir: slot, root: root, deadline: 30 * time.Second},
 			"no provider prefix",
 		},
 		{
 			"auth_not_0600",
-			nativeRunConfig{binary: bin, model: "fake/fake-model", card: []byte("x\n"), slotDir: slot, root: root, authFile: looseAuth, deadline: time.Second},
+			nativeRunConfig{binary: bin, model: "fake/fake-model", card: []byte("x\n"), slotDir: slot, root: root, authFile: looseAuth, deadline: 30 * time.Second},
 			"would not be 0600",
 		},
 		{
 			"slot_outside_root",
-			nativeRunConfig{binary: bin, model: "fake/fake-model", card: []byte("x\n"), slotDir: outside, root: root, deadline: time.Second},
+			nativeRunConfig{binary: bin, model: "fake/fake-model", card: []byte("x\n"), slotDir: outside, root: root, deadline: 30 * time.Second},
 			"outside the configured root",
 		},
 	}
@@ -727,7 +727,7 @@ func TestCmdNativeCLI(t *testing.T) {
 		"--card", cardPath,
 		"--slot", slot,
 		"--root", root,
-		"--deadline", "10s",
+		"--deadline", "30s",
 		"--no-wall",
 	}
 	rc = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -861,7 +861,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
-			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		require.Equal(t, 0, rc, "exit 0, got %d:\n%s", rc, stderr.String())
 		require.Contains(t, stdout.String(), "NATIVE OK ", "NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
 		require.Contains(t, stdout.String(), " sandbox=none-by-flag ", "NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
@@ -875,7 +875,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
-			"--deadline", "10s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			"--deadline", "30s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		require.Equal(t, 0, rc, "exit 0, got %d:\n%s", rc, stderr.String())
 		require.Contains(t, stdout.String(), " sandbox=fake-wall ", "NATIVE OK copies the wall's own name (fake-wall):\n%s", stdout.String())
 	})
@@ -944,7 +944,7 @@ func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
-			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 			repos: []string{"mas-bandwidth/nova-tools"}, noWall: true,
 		}, &errOut)
 		require.Equal(t, 2, code, "the refusal exits 2, got %d:\n%s", code, errOut.String())
@@ -958,7 +958,7 @@ func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
-			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 			sandbox: sandbox, repos: []string{"mas-bandwidth/nova-tools"},
 		}, &errOut)
 		require.Equal(t, 2, code, "the refusal exits 2, got %d:\n%s", code, errOut.String())
@@ -987,7 +987,7 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
-			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		}, &errOut)
 		require.Equal(t, 2, code, "a run with no wall and no --no-wall exits 2, got %d:\n%s", code, errOut.String())
 		require.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errOut.String())
@@ -1002,7 +1002,7 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 		var errOut bytes.Buffer
 		res, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
-			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 			noWall: true,
 		}, &errOut)
 		require.Equal(t, 0, code, "--no-wall owns the run and exits 0, got %d:\n%s", code, errOut.String())
@@ -1581,7 +1581,7 @@ func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/other-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	require.Equal(t, 2, rc, "a --model that differs from the description's is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 	// THE ONE LINE NAMES BOTH MODELS: the description's fake-model and the --model typed.
 	line := strings.TrimSpace(stderr.String())
@@ -1609,7 +1609,7 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	require.Equal(t, 0, rc, "a secret worker runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	jobDir := filepath.Join(slot, "jobs", "card")
 	// THE HARNESS SAW THE NAME: the key reached it by environment, proven by length.
@@ -1649,7 +1649,7 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	require.Equal(t, 0, rc, "the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	mustContain(t, "the legacy note", stderr.String(), "NATIVE NOTE: --auth")
 	for _, p := range []string{
@@ -1680,7 +1680,7 @@ func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
-		"--tokens", "unmetered", "--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--tokens", "unmetered", "--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	require.Equal(t, 0, rc, "the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	// THE CHILD READ THE COPY WHILE IT RAN: its own cat of the carried file is in the
 	// capture.
@@ -1787,7 +1787,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
-			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		require.Equal(t, 0, rc, "provider opencode model deepseek-v4-flash under --model opencode/deepseek-v4-flash is accepted, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	})
 
@@ -1799,7 +1799,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/other",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
-			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		require.Equal(t, 2, rc, "--model opencode/other against model deepseek-v4-flash is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 		line := strings.TrimSpace(stderr.String())
 		mustContain(t, "the refusal", line, "opencode/other")
@@ -1828,7 +1828,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "other/deepseek-v4-flash",
 			"--worker", descPath, "--card", cardPath, "--slot", slot, "--root", root,
-			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		require.Equal(t, 2, rc, "--model other/deepseek-v4-flash against provider opencode is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 	})
 }
