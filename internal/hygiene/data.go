@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -135,26 +134,4 @@ func Kinds() []string {
 func KindDeclared(name string) bool {
 	_, set := loadKinds()
 	return set[name]
-}
-
-// StrayKinds is every kind named in the stray list's exception column, so a test can
-// hold the two files to each other: an exception granted to a kind that does not exist
-// is an exception granted to nobody, and the test is what notices.
-func StrayKinds() []string {
-	rules, _, err := load()
-	if err != nil {
-		return nil
-	}
-	var out []string
-	seen := map[string]bool{}
-	for _, r := range rules {
-		for k := range r.except {
-			if !seen[k] {
-				seen[k] = true
-				out = append(out, k)
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
 }
