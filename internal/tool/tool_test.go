@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
@@ -625,6 +626,107 @@ func TestNamesInARefusal(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, didYouMean(tc.got, []string{"--session", "--store", "--key", "open", "put", "deny"}), tc.got)
 	}
+}
+
+// TestCmdRendersTheWordsAShellReadsBack pins Cmd (skeleton contract 1.9: a
+// remedy is one runnable command): every word goes through oneline.ShellWord,
+// so a word holding a blank, a quote or a $ is one word a shell reads back and
+// a word no shell gives a meaning prints as it is. The words are split the way
+// a shell splits them (onboarding.SplitShell, nothing executed), never run.
+func TestCmdRendersTheWordsAShellReadsBack(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		words []string
+		want  string
+	}{
+		{"words no shell reads print as they are", []string{"nova-demo", "put", "-h"}, "nova-demo put -h"},
+		{"a blank, a quote and a $ stay one word each", []string{"work trees", "it's", "e$f"}, `'work trees' 'it'"'"'s' 'e$f'`},
+		{"the empty word is quoted, so it is still one word", []string{"nova-demo", ""}, "nova-demo ''"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := Cmd(tc.words...)
+			assert.Equal(t, tc.want, got)
+			back, err := onboarding.SplitShell(got)
+			require.NoError(t, err)
+			assert.Equal(t, tc.words, back, "a shell reads the command back as the words meant")
+		})
+	}
+}
+
+// TestAUniquePrefixIsTheNearestName pins the nearest-name rule an unknown name
+// is answered with (STANDARD §2: the names there are and the nearest): a name
+// within two edits, or the one name an unknown word is a unique prefix of, is
+// the nearest; a prefix of two names and a word nothing is near guess nothing.
+func TestAUniquePrefixIsTheNearestName(t *testing.T) {
+	t.Parallel()
+	names := []string{"configure", "recall", "scan", "shapes"}
+	for _, tc := range []struct{ got, want string }{
+		{"conf", " did you mean configure?"}, // a unique prefix, five edits away
+		{"recal", " did you mean recall?"},   // one edit
+		{"s", ""},                            // a prefix of scan and shapes: not unique
+		{"zzz", ""},                          // nothing near and no prefix
+	} {
+		t.Run(tc.got, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, didYouMean(tc.got, names), tc.got)
+		})
+	}
+}
+
+// TestAnUnknownVerbListsEveryName pins that an unknown-verb refusal lists every
+// verb and names a unique prefix, never cutting the list to "and <n> more"
+// (STANDARD §2: an unknown verb is answered with the names there are and the
+// nearest).
+func TestAnUnknownVerbListsEveryName(t *testing.T) {
+	t.Parallel()
+	verbs := make([]Verb, 0, verbflag.ListMax+2)
+	for i := 1; i <= verbflag.ListMax+2; i++ {
+		verbs = append(verbs, Verb{Name: fmt.Sprintf("v%02d", i), Usage: "v", Effect: Inspection,
+			Run: func(*Call) *Out { return Done() }})
+	}
+	verbs = append(verbs, Verb{Name: "configure", Usage: "configure", Effect: Inspection,
+		Run: func(*Call) *Out { return Done() }})
+	tool := &Tool{Name: "nova-many", What: "has many verbs", ExitTable: "0 done, 1 said no, 2 could not run.", Verbs: verbs}
+	r := testkit.Main(tool.Run).Run("conf")
+	assert.Equal(t, 2, r.Code, "stderr %q", r.Stderr)
+	assert.Contains(t, r.Stderr, "did you mean configure?")
+	assert.Contains(t, r.Stderr, "v18", "the last numbered verb is named")
+	assert.Contains(t, r.Stderr, "version", "the version verb every tool has is named")
+	assert.NotContains(t, r.Stderr, "and", "the list is never cut to 'and <n> more'")
+	far := testkit.Main(tool.Run).Run("zzzz")
+	assert.NotContains(t, far.Stderr, "did you mean", "nothing near is not a guess")
+}
+
+// TestAnUnknownFlagNamesTheNearestAndEveryFlag pins an unknown-flag refusal
+// (STANDARD §2): one flag within two edits, a two-edit short flag, or a unique
+// prefix is named, a word nothing is near is not, and every flag is listed,
+// never "and <n> more".
+func TestAnUnknownFlagNamesTheNearestAndEveryFlag(t *testing.T) {
+	t.Parallel()
+	n := verbflag.ListMax + 2
+	tool := &Tool{Name: "nova-flags", What: "has many flags", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{{Name: "put", Usage: "put", Effect: Inspection, Flags: func(f *Flags) {
+			f.String("configure", "", "a long flag")
+			f.String("op", "", "a short flag")
+			for i := 1; i <= n; i++ {
+				f.String(fmt.Sprintf("f%02d", i), "", "a flag")
+			}
+		}, Run: func(*Call) *Out { return Done() }}}}
+	run := func(flag string) string {
+		t.Helper()
+		r := testkit.Main(tool.Run).Run("put", flag)
+		assert.Equal(t, 2, r.Code, "%s: stderr %q", flag, r.Stderr)
+		assert.Contains(t, r.Stderr, "run: nova-flags put -h", flag)
+		assert.Contains(t, r.Stderr, "--f18", "the flag past the old list cut is named")
+		assert.NotContains(t, r.Stderr, "and", "the list is never cut to 'and <n> more'")
+		return r.Stderr
+	}
+	assert.Contains(t, run("--conf"), "did you mean --configure?", "a unique prefix")
+	assert.Contains(t, run("--ope"), "did you mean --op?", "one edit")
+	assert.Contains(t, run("--xy"), "did you mean --op?", "two edits on a short flag")
+	assert.NotContains(t, run("--zzzz"), "did you mean", "nothing near is not a guess")
 }
 
 // selfTalk is a tool whose plain use is `<tool> <file>...`: its default verb.
