@@ -55,7 +55,7 @@ func CommandCounter(t *testing.T) (addr string, count func() int64) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }() // ignored: a test fixture's connection ends when the client hangs up
 				serveCounted(c, &n)
 			}()
 		}

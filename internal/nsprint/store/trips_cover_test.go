@@ -26,7 +26,7 @@ func tripsStore(t *testing.T) *Store {
 		o.PoolSize, o.Dialer = 1, func(context.Context, string, string) (net.Conn, error) {
 			client, server := net.Pipe()
 			go func() {
-				defer server.Close()
+				defer func() { _ = server.Close() }() // ignored: a test fixture's connection ends when its client hangs up
 				r := bufio.NewReader(server)
 				for {
 					cmd, err := readCommand(r)
