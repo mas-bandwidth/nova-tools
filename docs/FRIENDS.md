@@ -243,8 +243,9 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    beats to the sprint server. It replaces `com.nova.loop.wake-serve-<seat>` and
    `nova-wake`.
 
-3. **Session proof of life**: The 10-minute ping loop
-   (`com.nova.loop.friend-ping-<seat>`) is retired in favour of the friends'
-   session proof of life (card fr-session-proof-of-life): `nova-friend` tracks
-   presence via nonces answered by each friend's session, so no background ping
-   script is run.
+3. **Session proof of life**: Routine zsh while-loops are replaced by the
+   coordinator's mechanical wake ping loop (`wake-ping-every.w1`):
+   `nova-friend ping --wake --every 30s --to-friends --as <coordinator>`, installed as a
+   service via `nova-friend ping install` (and removed with `nova-friend ping uninstall`).
+   It pings all up friends from the friends table, skips held, down, or never-wake rows,
+   bounds session pong waiting, and alerts the coordinator via bus note when friends go deaf.

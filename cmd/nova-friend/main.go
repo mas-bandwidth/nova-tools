@@ -59,23 +59,26 @@ const OpenRetryMax = 30 * time.Second
 // a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
-	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
-	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
-	launchctl friend.Launchctl
-	now       func() time.Time
-	sleep     func(ctx context.Context, d time.Duration)
-	signals   func(ctx context.Context) (context.Context, context.CancelFunc)
-	uid       int
-	home      string
-	binary    func() (string, error)
-	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
-	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
-	random    func() string
-	alive     friend.Aliver // the harness check, when set (a test's fake harness); nil watches the adapter
+	getenv       func(string) string
+	open         func(ctx context.Context, addr string) (bus.Store, func(), error)
+	exec         friend.Exec
+	wall         func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat         func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	progress     func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
+	launchctl    friend.Launchctl
+	now          func() time.Time
+	sleep        func(ctx context.Context, d time.Duration)
+	signals      func(ctx context.Context) (context.Context, context.CancelFunc)
+	uid          int
+	home         string
+	binary       func() (string, error)
+	copy         friend.CopyFile              // places a removable-volume binary under home; nil refuses it
+	lookPath     func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
+	random       func() string
+	alive        friend.Aliver // the harness check, when set (a test's fake harness); nil watches the adapter
+	friendsTable func(ctx context.Context) ([]friend.FriendsTableRow, error)
+	goos         string
+	seatLoad     func(goos, op, path string) error
 }
 
 func realWorld() world {
@@ -196,6 +199,10 @@ func (w world) server() string {
 		return s
 	}
 	return DefaultServer
+}
+
+func (w world) redis() string {
+	return w.getenv(RedisEnv)
 }
 
 func friendTool(w world) *tool.Tool {
@@ -427,25 +434,102 @@ example: nova-friend check --as ada bob`,
 			},
 			{
 				Name:    "ping",
-				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--wake] [--redis <addr>] [--dry-run]",
+				Usage:   "ping --as <coordinator> (--to <friend> | --to-friends) [--nonce <n>] [--since <RFC3339>] [--wake] [--every <d>] [--bound <d>] [--table <file>] [--server <addr>] [--redis <addr>] [--dry-run]",
 				Example: "ping --as ada --to bob --nonce abc123",
-				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator",
+				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator, or a wake ping loop over all up friends",
 				DryRun:  true,
 				Detail: `Sends "PING <nonce>" with the seat line (seat=<me> since=<RFC3339>) and the pong command the
 session runs; the nonce is six random characters unless --nonce names one. Prints PING OK
 nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.
 --wake makes it a wake check (a wake=1 line in the body): the daemon still answers at once, and, the session being free,
 pushes the pong line in as its own turn, so an idle session is asked too; only the session's pong ends it (wait-pong).
+With --to-friends and --every <d> (both require --wake, and --every requires --to-friends), runs a wake ping loop over all up friends from the friends table,
+skipping held, down, or never-wake rows. Deaf friends are reported to the coordinator via bus note once per state change.
 --dry-run checks the PING as send checks it and sends nothing.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the coordinator")
-					f.Required("to", "the friend to ping")
+					f.String("to", "", "the friend to ping")
+					f.Bool("to-friends", false, "ping every up friend from the friends table")
 					f.String("nonce", "", "the nonce to carry (default: six random characters)")
 					f.String("since", "", "since when you hold the seat, RFC3339 (default: now)")
 					f.Bool("wake", false, "a wake check: the session is pushed the pong line as its own turn when it is free")
+					f.Duration("every", 0, "run the wake ping loop every d, such as 30s (requires --wake)")
+					f.Duration("bound", friend.Window, "how long to wait for session pongs (default: 3m)")
+					f.String("table", "", "path to friends table file (testing)")
+					f.String("server", "", "sprint server address host:port (default: "+ServerEnv+")")
 					redis(f)
+					f.Check(func(c *tool.Call) {
+						to := c.Str("to")
+						toFriends := c.Bool("to-friends")
+						if to == "" && !toFriends {
+							c.Problem("--to is required (or --to-friends)")
+						}
+						if to != "" && toFriends {
+							c.Problem("--to and --to-friends cannot be used together")
+						}
+						if c.Dur("every") > 0 && !c.Bool("wake") {
+							c.Problem("--every requires --wake")
+						}
+						if toFriends && !c.Bool("wake") {
+							c.Problem("--to-friends requires --wake")
+						}
+						if c.Dur("every") > 0 && !toFriends {
+							c.Problem("--every requires --to-friends")
+						}
+						if c.Dur("every") < 0 {
+							c.Problem("--every wants a positive duration, such as 30s")
+						}
+						if c.Dur("bound") < 0 {
+							c.Problem("--bound wants a positive duration, such as 2s")
+						}
+					})
 				},
 				Run: w.ping,
+			},
+			{
+				Name:    "ping install",
+				Usage:   "ping install --as <coordinator> [--every <d>] [--bound <d>] [--dir <dir>] [--log <file>] [--server <addr>] [--redis <addr>] [--dry-run]",
+				Example: "", // a service install: the banner's example block runs nothing that needs machine state; -h carries the example
+				Effect:  tool.LocalWrite + ": writes the coordinator wake ping loop unit into --dir and loads it with launchctl (macOS) or systemctl --user (Linux)",
+				DryRun:  true,
+				Detail: `Installs the coordinator's wake ping loop as a system service on this machine:
+a launchd agent (macOS) in ~/Library/LaunchAgents or a systemd user unit (Linux) in ~/.config/systemd/user.
+The service runs \"nova-friend ping --wake --every <d> --to-friends\" periodically.
+--dry-run prints the unit and where it would go, and writes and loads nothing.
+example: nova-friend ping install --as ada --every 30s`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator")
+					f.Duration("every", 30*time.Second, "how often to run the wake ping pass (default: 30s)")
+					f.Duration("bound", friend.Window, "how long to wait for session pongs (default: 3m)")
+					f.String("dir", "", "the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
+					f.String("log", "", "the log file path (macOS launchd)")
+					f.String("server", "", "the sprint server address host:port (default: "+ServerEnv+")")
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						if c.Dur("every") <= 0 {
+							c.Problem("--every wants a positive duration, such as 30s")
+						}
+						if c.Dur("bound") <= 0 {
+							c.Problem("--bound wants a positive duration, such as 2s")
+						}
+					})
+				},
+				Run: w.pingInstall,
+			},
+			{
+				Name:    "ping uninstall",
+				Usage:   "ping uninstall [--dir <dir>] [--dry-run]",
+				Example: "", // a service uninstall: the banner's example block runs nothing that needs machine state; -h carries the example
+				Effect:  tool.LocalWrite + ": unloads the coordinator wake ping loop unit and removes its file",
+				DryRun:  true,
+				Detail: `Unloads the coordinator wake ping loop service and removes its unit file from --dir
+(~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux).
+--dry-run says which unit would be unloaded and removed, and unloads and removes nothing.
+example: nova-friend ping uninstall`,
+				Flags: func(f *tool.Flags) {
+					f.String("dir", "", "the directory the unit was written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
+				},
+				Run: w.pingUninstall,
 			},
 			{
 				Name:    "pong",
@@ -1140,6 +1224,9 @@ func (w world) pong(c *tool.Call) *tool.Out {
 }
 
 func (w world) ping(c *tool.Call) *tool.Out {
+	if c.Bool("to-friends") || c.Dur("every") > 0 {
+		return w.wakePingLoop(c)
+	}
 	nonce := c.Str("nonce")
 	if nonce == "" {
 		nonce = w.random()

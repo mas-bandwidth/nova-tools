@@ -93,6 +93,26 @@ TLC catches it). The finding of 2026-10-04: every daemon ponged while a
 friend's session sat idle from 2:40 to 4:34 PM, and an idle session with no
 message waiting was never asked at all.
 
+### wake-ping-every.w1: the coordinator's wake ping loop
+
+Routine non-wake zsh while-loops are replaced by the coordinator's mechanical wake
+ping loop (`wake-ping-every.w1`):
+`nova-friend ping --wake --every <d> --to-friends --as <coordinator>`.
+Each pass:
+1. Reads the friends table (`where --json` from the sprint server, `--table <path>`, or Redis members).
+2. Filters targets: skips the coordinator itself, friends whose status is `held` or `down`, and friends marked `never-wake` on their row.
+3. Sends a wake ping (`wake=1`) with a fresh nonce to every active friend on the roster.
+4. Waits for session pongs up to `--bound <d>` (default: 3 minutes, `friend.Window`).
+5. Tracks deaf friends: sends one bus note to the coordinator (`friend deaf: <names>`) whenever the set of newly deaf friends changes. While a friend remains deaf across consecutive passes, no duplicate note is sent.
+
+`--to-friends` and `--every` both require `--wake`, and `--every` requires `--to-friends`: there is no
+routine (non-wake) ping loop, since a ping the daemon answers says nothing about the session.
+
+The loop can be installed as a service on the coordinator's machine with
+`nova-friend ping install` (and removed with `nova-friend ping uninstall`), creating a
+launchd agent `nova-friend.wake-ping` in `~/Library/LaunchAgents` on macOS or a systemd user unit
+`nova-friend-wake-ping.service` in `~/.config/systemd/user` on Linux.
+
 ## The machine (tla/Friend.tla)
 
 The connection: `connected` while a ping arrived within the window (three
