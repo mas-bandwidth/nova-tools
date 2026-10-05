@@ -1027,7 +1027,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	for _, st := range s.Merge.Rows() {
 		ctl := s.StreamCtl(st)
 		state := ctl.F("state")
-		if state != StreamMerging && !(state == StreamWaiting && s.Merge.Count(st, Queued) > 0) {
+		if state != StreamMerging && (state != StreamWaiting || s.Merge.Count(st, Queued) <= 0) {
 			continue
 		}
 		last := max(ctl.F("since"), ctl.F("moved"))
@@ -1231,9 +1231,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	// that has run out is closed, and the condition, when it holds, is raised
 	// again.
 	var held []Open
-	for _, o := range s.Open {
-		held = append(held, o)
-	}
+	held = append(held, s.Open...)
 	for _, o := range s.Acked {
 		if !o.Note.Review.IsZero() && contains(types, o.Note.Type) {
 			if d, ok := r.running(s.Now, o.Note.At.UTC().Format(time.RFC3339)); ok && d >= o.Note.Review.Sub(o.Note.At) {
