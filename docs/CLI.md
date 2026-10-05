@@ -1175,6 +1175,17 @@ the old server running, when the shadow exits non-zero, panics, misses `--tick-d
 at `<target>.shadow.json`, beside the switch record. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
 
+### server-from-base-only.w3: the server is built from the sprint base
+
+`nova-sprint server switch <binary> --repo <clone> --base <branch>` (or `NOVA_SPRINT_SERVER_REPO`
+and `NOVA_SPRINT_BASE`) reads the build commit from `<binary> version`, fetches origin's base into
+the clone, and refuses the swap, exit 1 with nothing changed, unless `git merge-base
+--is-ancestor <commit> origin/<base>` holds; a binary with no source commit (devel, a tag, a dirty
+build) is refused the same way, and the refusal names the commit, the base and the remedy (build
+from origin/<base> at its tip, then switch). Without `--repo` and `--base` the check cannot be made and it refuses, exit 1. On
+the base it prints `BASE OK binary= commit= base=origin/<base> tip=` before the shadow tick. The
+contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "server-from-base-only.w3".
+
 ### Exit codes
 
 | exit | meaning |
