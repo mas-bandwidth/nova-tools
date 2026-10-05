@@ -22,15 +22,43 @@ import (
 // finish is verified against it (a report naming no model, or another, is refused); a tier of
 // hers with no model is dealt with none and draws the check's warning, on her config row and
 // on her queue file's row; and a row whose every card runs on her session's model and names
-// two models is refused. The probe card of a tier newly added is not built (the report of
-// friend-tier-models-g.w1 says so).
+// two models is refused. Proven before first use: a tier mapped to a model is dealt no real
+// card until her probe of it reports that model (a hard-pinned card waits ready for her), a
+// probe naming another model keeps it closed, and a changed model is a new probe.
 func TestAFriendIsToldVerifiedAndProbedForEveryTiersModel(t *testing.T) {
 	t.Parallel()
 	const heavy = "claude-opus-5-5"
 
+	// proven before first use: her heavy model has answered no probe, so a heavy card pinned
+	// to her waits ready, and no machine is dealt it
+	pw := friendWorld(t, "c: work tier: heavy\nWHO: only friend amy\n\nThe task.")
+	fresh := FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "heavy,pro", Models: map[string]string{"heavy": heavy}}
+	assert.Equal(t, []string{"heavy"}, FriendProbesOwed(fresh.Models, fresh.Probes), "the tier with a model is owed its probe; the tier with none is not")
+	dealWith(pw, fresh)
+	require.Equal(t, Ready, pw.s.StateOf("s1-1"), "no heavy card reaches her before her probe returns")
+	require.Nil(t, pw.s.Fleet.Card("s1-1.w1"))
+	job := FriendProbeJob("heavy", heavy)
+	assert.Equal(t, "probe-heavy-"+heavy, job)
+	pb := FriendProbeBrief("amy", "heavy", heavy)
+	assert.Contains(t, pb, "outbox/"+job+"/REPORT.md")
+	assert.Contains(t, pb, "tier: heavy model: "+heavy)
+	assert.Contains(t, pb, "run this probe in a child on "+heavy)
+	// a probe that names another model keeps the tier closed
+	fresh.Probes = map[string]string{"heavy": ReportModel("Verdict: LAND\nModel: claude-haiku-4-5-20251001\nHarness: claude\n")}
+	dealWith(pw, fresh)
+	require.Equal(t, Ready, pw.s.StateOf("s1-1"), "a probe naming another model proves nothing")
+	// the probe naming her row's model opens it
+	fresh.Probes = map[string]string{"heavy": ReportModel("Verdict: LAND\nModel: " + heavy + "\nHarness: claude\n")}
+	assert.Empty(t, FriendProbesOwed(fresh.Models, fresh.Probes))
+	dealWith(pw, fresh)
+	require.NotNil(t, pw.s.Fleet.Card("s1-1.w1"), "her heavy cards are dealt once the probe returned her row's model")
+	// a changed model is a new probe, by its own job
+	assert.False(t, FriendProven(map[string]string{"heavy": "claude-fable-5-1"}, fresh.Probes, "heavy"))
+	assert.NotEqual(t, job, FriendProbeJob("heavy", "claude-fable-5-1"))
+
 	// told: the packet of a heavy card dealt to her carries her row's heavy model
 	w := friendWorld(t, "c: work tier: heavy\n\nThe task.", "c: work tier: pro\n\nThe task.")
-	amy := FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "heavy,pro", Models: map[string]string{"heavy": heavy}}
+	amy := FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "heavy,pro", Models: map[string]string{"heavy": heavy}, Probes: map[string]string{"heavy": heavy}}
 	dealWith(w, amy)
 	wc := w.s.Fleet.Card("s1-1.w1")
 	require.NotNil(t, wc, "the heavy card is dealt to her")
@@ -69,9 +97,9 @@ func TestAFriendIsToldVerifiedAndProbedForEveryTiersModel(t *testing.T) {
 	// a one-shot lane: her queue file carries the card's model, and the lane's turn
 	// launches the harness with its model flag
 	dir := t.TempDir()
-	job := filepath.Join(dir, "inbox", "s1-1.w1")
-	require.NoError(t, os.MkdirAll(job, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("STATUS: x\n"+FriendTierLine(p.Tier, p.Model)+"\n"), 0o644))
+	in := filepath.Join(dir, "inbox", "s1-1.w1")
+	require.NoError(t, os.MkdirAll(in, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(in, "BRIEF.md"), []byte("STATUS: x\n"+FriendTierLine(p.Tier, p.Model)+"\n"), 0o644))
 	qrow := &friend.QueueRow{Tiers: []string{"heavy", "pro"}, Models: map[string]string{"heavy": heavy}, Mode: "one-shot", Width: 2}
 	q, err := json.Marshal(friend.Queue{Row: qrow, Tasks: []friend.Task{{ID: "s1-1.w1", Gen: 1, Job: "s1-1.w1", State: "queued", Tier: p.Tier, Model: p.Model}}})
 	require.NoError(t, err)
