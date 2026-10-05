@@ -27,11 +27,15 @@ func TestLoadMissingNeverReplaces(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 
+	source, err := fn.Source()
+	if err != nil {
+		require.NoError(t, err, err)
+	}
 	if err := fn.LoadMissing(ctx, c); err != nil {
 		require.NoError(t, err, "load into an empty store: %v", err)
 	}
-	if st, err := fn.Check(ctx, c); err != nil || !st.OK() {
-		require.Failf(t, "assertion failed", "after LoadMissing on an empty store: %+v %v, want the embedded library", st, err)
+	if code, found, err := fn.Loaded(ctx, c); err != nil || !found || code != source {
+		require.Failf(t, "assertion failed", "after LoadMissing on an empty store: found %v err %v, want the embedded library", found, err)
 	}
 
 	held := "#!lua name=" + fn.Library + "\nredis.register_function('ns_ping', function() return 'PONG' end)\n" +

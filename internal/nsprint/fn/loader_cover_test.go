@@ -15,23 +15,20 @@ import (
 
 // These tests reach the loader's store paths at the unit tier, where no
 // redis-server may be started (STANDARD section 8): the store is fnStoreFake,
-// a go-redis hook that answers FUNCTION LIST, FUNCTION LOAD and FCALL ns_ping
-// from its fields and records what was sent, so the client dials nothing.
+// a go-redis hook that answers FUNCTION LIST and FUNCTION LOAD from its
+// fields and records what was sent, so the client dials nothing.
 // Nothing in the package's helpers or in testredis answers those commands
 // (OnlyFCALL judges a command and RoundTrips counts one; neither replies), so
 // this file holds its own fake.
 
 // fnStoreFake is the store behind a loader test's client: the reply each of
-// the loader's three commands gets, and the record of what the loader sent.
+// the loader's commands gets, and the record of what the loader sent.
 type fnStoreFake struct {
 	libs    []redis.Library // the FUNCTION LIST reply, when listErr is nil
 	listErr error           // the FUNCTION LIST error, else the reply answers
 	loadErr error           // the FUNCTION LOAD error, else the load lands
-	ping    any             // the FCALL ns_ping reply, when pingErr is nil
-	pingErr error           // the FCALL ns_ping error, else the reply answers
 	loads   []string        // the code of every FUNCTION LOAD sent
 	pattern string          // the libraryname pattern of the last FUNCTION LIST
-	pings   int             // the FCALL ns_ping sends
 }
 
 // DialHook fails a dial: the fake answers every command, so a connection is a
@@ -47,7 +44,7 @@ func (s *fnStoreFake) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.
 	return next
 }
 
-// ProcessHook answers the three commands the loader sends and passes nothing
+// ProcessHook answers FUNCTION LIST and FUNCTION LOAD and passes nothing
 // on, so no command reaches a connection.
 func (s *fnStoreFake) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
@@ -73,15 +70,6 @@ func (s *fnStoreFake) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 			}
 			load.SetVal(Library)
 			return nil
-		case len(args) > 0 && args[0] == "fcall":
-			call := cmd.(*redis.Cmd)
-			s.pings++
-			if s.pingErr != nil {
-				call.SetErr(s.pingErr)
-				return s.pingErr
-			}
-			call.SetVal(s.ping)
-			return nil
 		}
 		return next(ctx, cmd)
 	}
@@ -106,57 +94,6 @@ func TestLoaderCoverSum(t *testing.T) {
 	digest := hex.EncodeToString(h[:])
 	assert.Equal(t, digest[:16], Sum("code"), "Sum is not the first 16 hex digits of the source's SHA-256")
 	assert.NotEqual(t, Sum("code"), Sum("code 2"), "two sources that differ name one Sum")
-}
-
-// TestLoaderCoverStateOK: OK holds only when the state is not missing, the
-// loaded Sum is the wanted one and the ping answered PONG; each of the three
-// refusals alone turns it false.
-func TestLoaderCoverStateOK(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		st   State
-		want bool
-	}{
-		{"the loaded library that answers PONG", State{Want: "a", Loaded: "a", Ping: "PONG"}, true},
-		{"a missing library", State{Want: "a", Loaded: "a", Ping: "PONG", Missing: true}, false},
-		{"a stale library", State{Want: "a", Loaded: "b", Ping: "PONG"}, false},
-		{"a skipped ping", State{Want: "a", Loaded: "a", Ping: PingSkipped}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.st.OK(), "State %+v", tt.st)
-		})
-	}
-}
-
-// TestLoaderCoverJudge: judge names a state ours only when the store holds
-// the embedded source byte for byte; a store that holds none is marked
-// Missing and one that holds another body is marked by its own Sum, and both
-// skip the FCALL the caller would run on its own library.
-func TestLoaderCoverJudge(t *testing.T) {
-	t.Parallel()
-
-	const source = "code"
-	tests := []struct {
-		name      string
-		code      string
-		found     bool
-		wantState State
-		wantOurs  bool
-	}{
-		{"the embedded source is ours", source, true, State{Want: Sum(source), Loaded: Sum(source)}, true},
-		{"no library is missing and skipped", "", false, State{Want: Sum(source), Missing: true, Ping: PingSkipped}, false},
-		{"another body is skipped", "other", true, State{Want: Sum(source), Loaded: Sum("other"), Ping: PingSkipped}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			st, ours := judge(source, tt.code, tt.found)
-			assert.Equal(t, tt.wantState, st)
-			assert.Equal(t, tt.wantOurs, ours, "judge(source, %q, %v)", tt.code, tt.found)
-		})
-	}
 }
 
 // TestLoaderCoverLoad: Load sends the embedded source in one FUNCTION LOAD
@@ -269,67 +206,6 @@ func TestLoaderCoverLoaded(t *testing.T) {
 			} else {
 				assert.EqualError(t, err, tt.wantErr)
 			}
-		})
-	}
-}
-
-// TestLoaderCoverCheck: Check reads the loaded library, FCALLs ns_ping only
-// when the store holds exactly the embedded source, carries the error text of
-// a failed ping, and names a list error while keeping the wanted Sum.
-func TestLoaderCoverCheck(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	source, err := Source()
-	require.NoError(t, err, err)
-	other := errors.New("ERR store down")
-	tests := []struct {
-		name      string
-		libs      []redis.Library
-		listErr   error
-		ping      any
-		pingErr   error
-		wantState State
-		wantErr   string
-		wantPings int
-	}{
-		{
-			"the embedded library answers PONG",
-			[]redis.Library{{Name: Library, Code: source}}, nil, "PONG", nil,
-			State{Want: Sum(source), Loaded: Sum(source), Ping: "PONG"}, "", 1,
-		},
-		{
-			"a store that holds none is skipped",
-			nil, nil, nil, nil,
-			State{Want: Sum(source), Missing: true, Ping: PingSkipped}, "", 0,
-		},
-		{
-			"another body is skipped",
-			[]redis.Library{{Name: Library, Code: "#!lua name=other"}}, nil, nil, nil,
-			State{Want: Sum(source), Loaded: Sum("#!lua name=other"), Ping: PingSkipped}, "", 0,
-		},
-		{
-			"a failed ping is the error text",
-			[]redis.Library{{Name: Library, Code: source}}, nil, nil, other,
-			State{Want: Sum(source), Loaded: Sum(source), Ping: other.Error()}, "", 1,
-		},
-		{
-			"a list error is named",
-			nil, other, nil, nil,
-			State{Want: Sum(source)}, "list nova_sprint function library: " + other.Error(), 0,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store := &fnStoreFake{libs: tt.libs, listErr: tt.listErr, ping: tt.ping, pingErr: tt.pingErr}
-			st, err := Check(ctx, fakeClient(t, store))
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-			} else {
-				assert.EqualError(t, err, tt.wantErr)
-			}
-			assert.Equal(t, tt.wantState, st)
-			assert.Equal(t, tt.wantPings, store.pings, "Check sends ns_ping only on its own library")
 		})
 	}
 }
