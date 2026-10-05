@@ -16,8 +16,8 @@ import (
 // it again (generation 2456 by 10:52 PM), each placing a new copy in the friend's inbox that
 // her runner started beside the last.
 func TestAFriendsCardIsNeverWithdrawnForARestingRoute(t *testing.T) {
-	t.Skip("asserts friends-first dealing (a friend card dealt to a friend with room ahead of the fleet), which reaches the sprint base with card port-friends-first-dealing; that card removes this skip")
 	t.Parallel()
+	t.Skip("asserts friends-first dealing (a friend card dealt to a friend with room ahead of the fleet), which reaches the sprint base with card port-friends-first-dealing; that card removes this skip")
 	h := routeHarness(t, providerRoute("or-a", "flash", "openrouter"))
 	ids := []string{"a", "b", "c"}
 	for _, id := range ids {
