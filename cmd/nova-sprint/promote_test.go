@@ -25,6 +25,8 @@ type promoteScript struct {
 	gated                                 string
 	cfg                                   map[string]string
 	enqueued                              bool
+	prChecksOut                           string
+	prChecksErr                           error
 }
 
 func (s *promoteScript) config(args []string) (string, error) {
@@ -100,6 +102,9 @@ func (s *promoteScript) gh(_ context.Context, _ string, args ...string) (string,
 	case args[0] == "pr" && args[1] == "view":
 		return `{"id":"PR_node_1","state":"OPEN"}`, nil
 	case args[0] == "pr" && args[1] == "checks":
+		if s.prChecksOut != "" || s.prChecksErr != nil {
+			return s.prChecksOut, s.prChecksErr
+		}
 		return `[]`, nil
 	case strings.Contains(joined, "enqueuePullRequest"):
 		s.enqueued = true
@@ -388,10 +393,13 @@ func runPromoteDry(t *testing.T, rig *promoteRig, now time.Time) string {
 }
 
 // TestPromoteCarriesACutToARecordedPromotion tests the promote verb with a twin
-// repository and a fake forge:
+// repository and a fake forge, and tests ghForge PR checks through ghRun:
 // 1. A clean cut is merged with the target, opened, queued and recorded.
 // 2. A conflicting target stops with the judgment naming the files.
 // 3. A failed queue run raises one judgment naming the failing check.
+// 4. A failing check from gh pr checks raises one judgment naming the check.
+// 5. A failing plus pending check raises one judgment for the failing check.
+// 6. A pending check only waits and does not enqueue.
 func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
@@ -515,4 +523,219 @@ func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 		require.Equal(t, "PR_node_102", forge.enqueuedID)
 		require.Equal(t, "sprint/live", rig.git(rig.work, "symbolic-ref", "--short", "HEAD"))
 	})
+
+	// 4. Failing check from gh pr checks raises one judgment and does not enqueue
+	t.Run("ChecksFailedGHRun", func(t *testing.T) {
+		const (
+			live = "sprint/live"
+			tip  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			base = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		)
+		s := &promoteScript{
+			live:        live,
+			tip:         tip,
+			baseSHA:     base,
+			logText:     "land s1-1 (sprint stream s1)\n",
+			prChecksOut: `[{"bucket":"fail","name":"ci/unit-tests","state":"COMPLETED"}]`,
+			prChecksErr: errors.New("gh pr checks: exit status 1"),
+		}
+		p := &promoter{
+			dir:    t.TempDir(),
+			live:   live,
+			base:   "dev",
+			now:    now,
+			gitRun: s.git,
+			ghRun:  s.gh,
+			gate: func(_ context.Context, _ string, _ string) (string, error) {
+				return "", nil
+			},
+		}
+		var stdout, stderr bytes.Buffer
+		out, code := p.step(context.Background(), &stdout, &stderr)
+		require.Equal(t, 1, code)
+		require.Contains(t, stdout.String(), "JUDGMENT check failed")
+		require.Contains(t, stdout.String(), "check=ci/unit-tests")
+		require.NotNil(t, out.Judgment)
+		require.Equal(t, "ci/unit-tests", out.Judgment.Check)
+		require.Equal(t, []string{"fix-and-recut", "skip"}, out.Judgment.Decisions)
+		require.False(t, s.enqueued, "no enqueue on a failed check")
+		require.False(t, s.ghHas("enqueuePullRequest"), "no enqueue mutation called")
+	})
+
+	// 5. Failing plus pending check raises judgment for the failed check and does not enqueue
+	t.Run("ChecksFailedAndPendingGHRun", func(t *testing.T) {
+		const (
+			live = "sprint/live"
+			tip  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			base = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		)
+		s := &promoteScript{
+			live:        live,
+			tip:         tip,
+			baseSHA:     base,
+			logText:     "land s1-1 (sprint stream s1)\n",
+			prChecksOut: `[{"bucket":"pending","name":"ci/build","state":"IN_PROGRESS"},{"bucket":"fail","name":"ci/lint","state":"COMPLETED"}]`,
+			prChecksErr: errors.New("gh pr checks: exit status 1"),
+		}
+		p := &promoter{
+			dir:    t.TempDir(),
+			live:   live,
+			base:   "dev",
+			now:    now,
+			gitRun: s.git,
+			ghRun:  s.gh,
+			gate: func(_ context.Context, _ string, _ string) (string, error) {
+				return "", nil
+			},
+		}
+		var stdout, stderr bytes.Buffer
+		out, code := p.step(context.Background(), &stdout, &stderr)
+		require.Equal(t, 1, code)
+		require.Contains(t, stdout.String(), "JUDGMENT check failed")
+		require.Contains(t, stdout.String(), "check=ci/lint")
+		require.NotNil(t, out.Judgment)
+		require.Equal(t, "ci/lint", out.Judgment.Check)
+		require.Equal(t, []string{"fix-and-recut", "skip"}, out.Judgment.Decisions)
+		require.False(t, s.enqueued, "no enqueue on a failed check")
+		require.False(t, s.ghHas("enqueuePullRequest"), "no enqueue mutation called")
+	})
+
+	// 6. Pending check only waits and does not enqueue
+	t.Run("ChecksPendingGHRun", func(t *testing.T) {
+		const (
+			live = "sprint/live"
+			tip  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			base = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		)
+		s := &promoteScript{
+			live:        live,
+			tip:         tip,
+			baseSHA:     base,
+			logText:     "land s1-1 (sprint stream s1)\n",
+			prChecksOut: `[{"bucket":"pending","name":"ci/build","state":"IN_PROGRESS"}]`,
+			prChecksErr: errors.New("gh pr checks: exit status 8"),
+		}
+		p := &promoter{
+			dir:    t.TempDir(),
+			live:   live,
+			base:   "dev",
+			now:    now,
+			gitRun: s.git,
+			ghRun:  s.gh,
+			gate: func(_ context.Context, _ string, _ string) (string, error) {
+				return "", nil
+			},
+		}
+		var stdout, stderr bytes.Buffer
+		out, code := p.step(context.Background(), &stdout, &stderr)
+		require.Equal(t, 0, code)
+		require.Contains(t, stdout.String(), "PROMOTE WAIT")
+		require.Contains(t, stdout.String(), "checks=pending")
+		require.Nil(t, out.Judgment)
+		require.False(t, s.enqueued, "no enqueue while checks are pending")
+		require.False(t, s.ghHas("enqueuePullRequest"), "no enqueue mutation called")
+	})
+}
+
+// TestGHForgePRChecks verifies PRChecks parsing across exit statuses and bucket types.
+func TestGHForgePRChecks(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		raw         string
+		err         error
+		wantPassed  bool
+		wantFailed  string
+		wantErrText string
+	}{
+		{
+			name:       "NoChecksReportedError",
+			err:        errors.New("gh pr: no checks reported on the pull request"),
+			wantPassed: true,
+		},
+		{
+			name:        "EmptyOutputWithError",
+			err:         errors.New("gh pr: command failed"),
+			wantErrText: "gh pr: command failed",
+		},
+		{
+			name:        "EmptyOutputWithoutError",
+			raw:         "   ",
+			wantErrText: "empty output",
+		},
+		{
+			name:        "UnparseableJSON",
+			raw:         "not json",
+			wantErrText: "pr checks 42: not json",
+		},
+		{
+			name:        "UnparseableJSONWithError",
+			raw:         "not json",
+			err:         errors.New("gh pr: exit status 1"),
+			wantErrText: "gh pr: exit status 1",
+		},
+		{
+			name:       "EmptyArray",
+			raw:        "[]",
+			wantPassed: true,
+		},
+		{
+			name:       "PassedCheck",
+			raw:        `[{"bucket":"pass","name":"build","state":"COMPLETED"}]`,
+			wantPassed: true,
+		},
+		{
+			name:       "PendingCheckWithExit8",
+			raw:        `[{"bucket":"pending","name":"build","state":"IN_PROGRESS"}]`,
+			err:        errors.New("gh pr: exit status 8"),
+			wantPassed: false,
+		},
+		{
+			name:       "FailedCheckWithExit1",
+			raw:        `[{"bucket":"fail","name":"test","state":"COMPLETED"}]`,
+			err:        errors.New("gh pr: exit status 1"),
+			wantPassed: false,
+			wantFailed: "test",
+		},
+		{
+			name:       "CancelledCheckWithExit1",
+			raw:        `[{"bucket":"cancel","name":"lint","state":"CANCELLED"}]`,
+			err:        errors.New("gh pr: exit status 1"),
+			wantPassed: false,
+			wantFailed: "lint",
+		},
+		{
+			name: "FailedWinsOverPending",
+			raw: `[
+				{"bucket":"pending","name":"build","state":"IN_PROGRESS"},
+				{"bucket":"fail","name":"test","state":"COMPLETED"}
+			]`,
+			err:        errors.New("gh pr: exit status 1"),
+			wantPassed: false,
+			wantFailed: "test",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := &promoter{
+				ghRun: func(_ context.Context, _ string, _ ...string) (string, error) {
+					return tc.raw, tc.err
+				},
+			}
+			f := &ghForge{p: p}
+			passed, failedCheck, err := f.PRChecks(context.Background(), "42")
+			if tc.wantErrText != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErrText)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantPassed, passed)
+			require.Equal(t, tc.wantFailed, failedCheck)
+		})
+	}
 }

@@ -136,19 +136,15 @@ func (g *ghForge) PRView(ctx context.Context, number string) (PRView, error) {
 
 func (g *ghForge) PRChecks(ctx context.Context, number string) (bool, string, error) {
 	raw, err := g.p.gh(ctx, "pr", "checks", number, "--json", "bucket,name,state")
-	if err != nil {
-		words := err.Error()
-		if strings.Contains(words, "no checks reported") || strings.Contains(words, "no commit found") {
-			return true, "", nil
-		}
-		if strings.Contains(words, "pending") {
-			return false, "", nil
-		}
-		return false, "", err
+	if err != nil && strings.Contains(err.Error(), "no checks reported") {
+		return true, "", nil
 	}
 	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "[]" {
-		return true, "", nil
+	if raw == "" {
+		if err != nil {
+			return false, "", err
+		}
+		return false, "", fmt.Errorf("pr checks %s: empty output", number)
 	}
 	var checks []struct {
 		Bucket string `json:"bucket"`
@@ -156,18 +152,25 @@ func (g *ghForge) PRChecks(ctx context.Context, number string) (bool, string, er
 		State  string `json:"state"`
 	}
 	if jerr := json.Unmarshal([]byte(raw), &checks); jerr != nil {
+		if err != nil {
+			return false, "", err
+		}
 		return false, "", fmt.Errorf("pr checks %s: %s", number, oneLine(raw))
 	}
 	if len(checks) == 0 {
 		return true, "", nil
 	}
+	var pending bool
 	for _, c := range checks {
 		switch strings.ToLower(c.Bucket) {
 		case "fail", "cancel":
 			return false, c.Name, nil
 		case "pending":
-			return false, "", nil
+			pending = true
 		}
+	}
+	if pending {
+		return false, "", nil
 	}
 	return true, "", nil
 }
