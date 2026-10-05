@@ -90,13 +90,18 @@ type SetReq struct {
 	// they land on (FieldLandProtected, docs/SPEC-SPRINT.md section 7).
 	LandProtected string `json:",omitempty"`
 	Release       string `json:",omitempty"`
-	Who           string
+	// The backlog alarms' thresholds (alarms.go): a count, a percent, on, or off.
+	AlarmReview  string `json:",omitempty"`
+	AlarmMerging string `json:",omitempty"`
+	AlarmFleet   string `json:",omitempty"`
+	AlarmReady   string `json:",omitempty"`
+	Who          string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
 // the coordinator, a read tier that is not flash, pro or default, a dealt bound that
 // is not a positive duration, a mark that names no repository or is not a stream's,
-// nothing to set, or a stream that is not a stream (docs/SPEC-SPRINT.md section 11).
+// an alarm's threshold it does not take, nothing to set, or a stream that is not a stream (docs/SPEC-SPRINT.md section 11).
 func Set(s *Snapshot, r SetReq) Plan {
 	var p Plan
 	var why []string
@@ -119,8 +124,17 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--land-protected is a stream's, not the sprint's: nova-sprint stream set <stream> --land-protected "+r.LandProtected)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" {
-		why = append(why, "nothing to set: --read-tier or --dealt-max")
+	alarms := r.alarms()
+	for _, a := range alarmProps {
+		if v := alarms[a.prop]; v != "" && !alarmValid(a.prop, v) {
+			why = append(why, a.flag+" wants "+a.wants+", or "+AlarmOff+" to take it off; found "+v)
+		}
+		if v := alarms[a.prop]; v != "" && len(r.Streams) > 0 {
+			why = append(why, a.flag+" is the sprint's, not a stream's: nova-sprint set "+a.flag+" "+v)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 {
+		why = append(why, "nothing to set: --read-tier, --dealt-max or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
@@ -162,7 +176,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	for _, kv := range [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}} {
+	kvs := [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}}
+	for _, a := range alarmProps {
+		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
+	}
+	for _, kv := range kvs {
 		if kv[1] == "" {
 			continue
 		}
@@ -183,4 +201,15 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
 	}
 	return "default (each card's own tier)"
+}
+
+// alarms is the backlog alarms' thresholds the request sets, by property; none unset.
+func (r SetReq) alarms() map[string]string {
+	out := map[string]string{}
+	for prop, v := range map[string]string{PropAlarmReview: r.AlarmReview, PropAlarmMerging: r.AlarmMerging, PropAlarmFleet: r.AlarmFleet, PropAlarmReady: r.AlarmReady} {
+		if v != "" {
+			out[prop] = v
+		}
+	}
+	return out
 }
