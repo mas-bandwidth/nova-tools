@@ -103,6 +103,81 @@ func TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours(t *testing.T) {
 		assert.True(t, NoStuckFriend(f).OK, "it left her row")
 	})
 
+	t.Run("a card taken back inside its deadline resets to untaken bound and does not fail", func(t *testing.T) {
+		t.Parallel()
+		// taken at hour 0, withdrawn at hour 1 (untaken bound is 6h from hour 1 = hour 7), now hour 3
+		f := relFacts(hr(3),
+			fleetMove(hr(0), "s1-1.w1", "", amy+":working", map[string]string{"first_taken": stamp(hr(0))}),
+			fleetMove(hr(1), "s1-1.w1", amy+":working", amy+":withdrawn", map[string]string{FieldTakenBack: "taken back", "untaken_since": stamp(hr(1))}),
+		)
+		r := NoStuckFriend(f)
+		assert.True(t, r.OK, r.Evidence)
+		assert.Equal(t, "RELEASE CHECK no-stuck-friend ok "+r.Evidence, r.Line())
+
+		// but at hour 8, it is late past the untaken bound (hour 7)
+		f.now = hr(8)
+		r8 := NoStuckFriend(f)
+		assert.False(t, r8.OK)
+		assert.Contains(t, r8.Evidence, "dealt, never taken")
+		assert.Contains(t, r8.Evidence, stamp(hr(7)))
+	})
+
+	t.Run("a card taken back after its deadline was stuck and fails inside the window", func(t *testing.T) {
+		t.Parallel()
+		// taken at hour 0, deadline 2h, withdrawn at hour 3 (stuck from hour 2 to hour 3), now hour 4
+		f := relFacts(hr(4),
+			fleetMove(hr(0), "s1-1.w1", "", amy+":working", map[string]string{"first_taken": stamp(hr(0))}),
+			fleetMove(hr(3), "s1-1.w1", amy+":working", amy+":withdrawn", map[string]string{FieldTakenBack: "taken back", "untaken_since": stamp(hr(3))}),
+		)
+		r := NoStuckFriend(f)
+		assert.False(t, r.OK)
+		assert.Contains(t, r.Evidence, "friend amy")
+		assert.Contains(t, r.Evidence, stamp(hr(2)))
+	})
+
+	t.Run("a card whose friend deadline is increased historically does not fail", func(t *testing.T) {
+		t.Parallel()
+		// taken at hour 0 with default 2h deadline; at hour 1 friend_deadline updated to 5h; checked at hour 4
+		f := relFacts(hr(4),
+			fleetMove(hr(0), "s1-1.w1", "", amy+":working", map[string]string{"first_taken": stamp(hr(0))}),
+			fleetMove(hr(1), "s1-1.w1", amy+":working", amy+":working", map[string]string{FieldFriendDeadline: strconv.Itoa(5 * 3600)}),
+		)
+		r := NoStuckFriend(f)
+		assert.True(t, r.OK, r.Evidence)
+
+		// checked at hour 6: late from hour 5
+		f.now = hr(6)
+		r6 := NoStuckFriend(f)
+		assert.False(t, r6.OK)
+		assert.Contains(t, r6.Evidence, stamp(hr(5)))
+	})
+
+	t.Run("a card stuck before a clear inside the window fails", func(t *testing.T) {
+		t.Parallel()
+		// taken at hour 0, deadline 2h; clear runs at hour 2.5; checked at hour 3
+		clearLine := Line{Kind: LineMove, At: hr(2.5), Verb: "clear"}
+		f := relFacts(hr(3),
+			fleetMove(hr(0), "s1-1.w1", "", amy+":working", map[string]string{"first_taken": stamp(hr(0))}),
+			clearLine,
+		)
+		r := NoStuckFriend(f)
+		assert.False(t, r.OK)
+		assert.Contains(t, r.Evidence, "friend amy")
+		assert.Contains(t, r.Evidence, stamp(hr(2)))
+	})
+
+	t.Run("a card not yet stuck before a clear does not fail", func(t *testing.T) {
+		t.Parallel()
+		// taken at hour 2.2, deadline 2h; clear runs at hour 2.5; checked at hour 3
+		clearLine := Line{Kind: LineMove, At: hr(2.5), Verb: "clear"}
+		f := relFacts(hr(3),
+			fleetMove(hr(2.2), "s1-1.w1", "", amy+":working", map[string]string{"first_taken": stamp(hr(2.2))}),
+			clearLine,
+		)
+		r := NoStuckFriend(f)
+		assert.True(t, r.OK, r.Evidence)
+	})
+
 	t.Run("a machine's late card is not a friend's", func(t *testing.T) {
 		t.Parallel()
 		f := relFacts(hr(9), fleetMove(hr(0), "s1-1.w1", "", "m1:working", nil))

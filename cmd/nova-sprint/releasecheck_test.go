@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -58,6 +59,44 @@ func TestReleaseCheckNamesAFriendStuckInTheLastFourHours(t *testing.T) {
 	// a stream the glob does not name has no friend stuck in it
 	code, out, errs = ta.do("release check --streams other*")
 	assert.Equal(t, 0, code, "%s %s", out, errs)
+}
+
+func TestReleaseCheckFailsWhenSprintClearedInsideWindow(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.a.sleep(1 * time.Hour)
+	ta.ok("clear --confirm sprint") // clear closes epoch 0 and starts epoch 1 inside the 4h window
+	code, out, errs := ta.do("release check")
+	require.Equal(t, 1, code, "%s %s", out, errs)
+	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend fail coverage incomplete: sprint cleared at ")
+	assert.Contains(t, out, "RELEASE NOT READY failed=1")
+}
+
+func TestReleaseCheckPassesWhenSprintClearedBeforeWindow(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("clear --confirm sprint")
+	ta.a.sleep(5 * time.Hour) // clear was 5 hours ago, so epoch 1 covers the full 4-hour window
+	code, out, errs := ta.do("release check")
+	require.Equal(t, 0, code, "%s %s", out, errs)
+	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend ok ")
+	assert.Contains(t, out, "RELEASE OK checks=1")
+}
+
+func TestReleaseCheckPassesWhenCardTakenBackInsideDeadline(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend", "amy")
+	ta.a.tip = func(_ context.Context, _, _ string) (string, error) { return "", nil }
+	ta.ok("tick")
+	ta.a.sleep(1 * time.Hour) // 1 hour into 2h deadline
+	ta.ok("friend take amy s1-1 --reason 'rebalance'")
+	ta.a.sleep(2 * time.Hour) // hour 3 since deal, hour 2 since withdrawal (untaken deadline is 6h = hour 7)
+	code, out, errs := ta.do("release check")
+	require.Equal(t, 0, code, "%s %s", out, errs)
+	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend ok ")
+	assert.Contains(t, out, "RELEASE OK checks=1")
 }
 
 func TestReleaseCheckRefusesAnUnknownCheckAndWords(t *testing.T) {

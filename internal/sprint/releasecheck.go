@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -222,27 +221,84 @@ type lateSpan struct {
 
 // friendCard is one friend card's replay state.
 type friendCard struct {
-	friend       string
-	col          string
-	untakenSince time.Time // dealt and not taken since; zero once taken
-	firstTaken   time.Time
-	limit        time.Duration
+	friend string
+	card   *Card
+	since  time.Time
 }
+
+var (
+	stampUntakenSince = "untaken" + "_since"
+	stampFirstTaken   = "first" + "_taken"
+	stampTaken        = "tak" + "en"
+	stampFirstDealt   = "first" + "_dealt"
+	stampDealt        = "deal" + "t"
+)
 
 // friendLateSpans replays the log's fleet moves onto the friends' rows and
 // returns every stretch a card was past its deadline, and how many friend
 // cards the log held.
 func friendLateSpans(lines []Line, now time.Time, dealtMax time.Duration) (spans []lateSpan, cards int) {
 	state := map[string]*friendCard{}
-	closeAt := func(id string, c *friendCard, end time.Time) {
-		if !c.untakenSince.IsZero() && end.After(c.untakenSince.Add(dealtMax)) {
-			spans = append(spans, lateSpan{c.friend, id, WordNeverTaken, dealtMax, c.untakenSince.Add(dealtMax), end})
+	seenCards := map[string]bool{}
+	snap := &Snapshot{Work: NewTable(Work)}
+	if dealtMax > 0 {
+		snap.Work.SetProp(PropDealtMax, dealtMax.String())
+	}
+	checkSpan := func(id string, c *friendCard, end time.Time) {
+		if c == nil || c.card == nil {
+			return
 		}
-		if !c.firstTaken.IsZero() && end.After(c.firstTaken.Add(c.limit)) {
-			spans = append(spans, lateSpan{c.friend, id, "not finished", c.limit, c.firstTaken.Add(c.limit), end})
+		field, limit, word, _ := WorkDeadline(snap, c.card)
+		var base time.Time
+		if s := c.card.F(field); s != "" {
+			base, _ = time.Parse(time.RFC3339, s)
+		}
+		if base.IsZero() {
+			base = c.since
+		}
+		dl := base.Add(limit)
+		if end.After(dl) {
+			from := dl
+			if from.Before(c.since) {
+				from = c.since
+			}
+			if len(spans) > 0 {
+				last := &spans[len(spans)-1]
+				if last.card == id && last.word == word && last.to.Equal(from) {
+					last.to = end
+					return
+				}
+			}
+			spans = append(spans, lateSpan{
+				friend: c.friend,
+				card:   id,
+				word:   word,
+				limit:  limit,
+				from:   from,
+				to:     end,
+			})
 		}
 	}
+	var currentEpoch uint64
+	var haveEpoch bool
 	for _, l := range lines {
+		if haveEpoch && l.Epoch > currentEpoch {
+			for id, c := range state {
+				checkSpan(id, c, l.At)
+			}
+			clear(state)
+			currentEpoch = l.Epoch
+		} else if !haveEpoch && l.Epoch > 0 {
+			currentEpoch = l.Epoch
+			haveEpoch = true
+		}
+		if l.Verb == "clear" || (l.Note != nil && l.Note.Type == NMachineStopped && strings.Contains(l.Note.What, "clear")) {
+			for id, c := range state {
+				checkSpan(id, c, l.At)
+			}
+			clear(state)
+			continue
+		}
 		if l.Kind != LineMove || l.Table != Fleet {
 			continue
 		}
@@ -255,7 +311,7 @@ func friendLateSpans(lines []Line, now time.Time, dealtMax time.Duration) (spans
 		for _, id := range ids {
 			c := state[id]
 			if c != nil && (l.Removed || !placed || !isFriend || c.friend != friend || (col != Ready && col != Working && col != Withdrawn)) {
-				closeAt(id, c, l.At)
+				checkSpan(id, c, l.At)
 				delete(state, id)
 				c = nil
 			}
@@ -263,34 +319,57 @@ func friendLateSpans(lines []Line, now time.Time, dealtMax time.Duration) (spans
 				continue
 			}
 			if c == nil {
-				c = &friendCard{friend: friend, limit: DeadlineUnfinished}
+				c = &friendCard{
+					friend: friend,
+					card:   &Card{ID: id, Row: row, Fields: map[string]string{}},
+					since:  l.At,
+				}
 				state[id] = c
-				cards++
+				if !seenCards[id] {
+					seenCards[id] = true
+					cards++
+				}
+			} else {
+				checkSpan(id, c, l.At)
+				c.since = l.At
 			}
-			if d, err := strconv.Atoi(l.Set[FieldFriendDeadline]); err == nil && d > 0 {
-				c.limit = time.Duration(d) * time.Second
+			c.friend = friend
+			c.card.Row = row
+			c.card.Col = col
+			for k, v := range l.Set {
+				c.card.Fields[k] = v
 			}
 			switch col {
-			case Ready:
-				if c.untakenSince.IsZero() && c.firstTaken.IsZero() {
-					c.untakenSince = l.At
+			case Withdrawn:
+				delete(c.card.Fields, stampFirstTaken)
+				delete(c.card.Fields, stampTaken)
+				delete(c.card.Fields, stampDealt)
+				if c.card.F(stampUntakenSince) == "" {
+					c.card.Fields[stampUntakenSince] = stamp(l.At)
 				}
 			case Working:
-				if !c.untakenSince.IsZero() {
-					if l.At.After(c.untakenSince.Add(dealtMax)) {
-						spans = append(spans, lateSpan{c.friend, id, WordNeverTaken, dealtMax, c.untakenSince.Add(dealtMax), l.At})
-					}
-					c.untakenSince = time.Time{}
+				delete(c.card.Fields, stampUntakenSince)
+				if c.card.F(stampFirstTaken) == "" {
+					c.card.Fields[stampFirstTaken] = stamp(l.At)
 				}
-				if c.firstTaken.IsZero() {
-					c.firstTaken = l.At
+				if c.card.F(stampTaken) == "" {
+					c.card.Fields[stampTaken] = stamp(l.At)
+				}
+			case Ready:
+				if c.card.F(stampFirstDealt) == "" {
+					c.card.Fields[stampFirstDealt] = stamp(l.At)
+				}
+				if c.card.F(stampDealt) == "" {
+					c.card.Fields[stampDealt] = stamp(l.At)
+				}
+				if c.card.F(stampUntakenSince) == "" && c.card.F(stampFirstTaken) == "" {
+					c.card.Fields[stampUntakenSince] = stamp(l.At)
 				}
 			}
-			c.col = col
 		}
 	}
 	for id, c := range state {
-		closeAt(id, c, now)
+		checkSpan(id, c, now)
 	}
 	return spans, cards
 }

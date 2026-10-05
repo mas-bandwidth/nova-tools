@@ -68,10 +68,16 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "release check", err.Error())
 	}
 	ctx := context.Background()
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return a.readFailed("release check", err, stderr)
+	}
 	lines, err := st.Log(ctx)
 	if err != nil {
 		return a.readFailed("release check", err, stderr)
 	}
+	now := a.now()
+	from := now.Add(-sprint.StuckWindow)
 	if lines, err = sprint.ReleaseStreamLines(lines, *streams); err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}
@@ -79,9 +85,23 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("release check", err, stderr)
 	}
-	rep, err := sprint.RunReleaseChecks(storeRelease{now: a.now(), lines: lines, dealtMax: s.DealtMax()}, names)
+	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax()}, names)
 	if err != nil {
 		return refuse(stderr, "release check", err.Error())
+	}
+	if es.N > 0 && !es.Cleared.IsZero() && es.Cleared.After(from) {
+		for i, r := range rep.Results {
+			if r.Name == sprint.CheckNoStuckFriend && r.OK {
+				rep.Results[i] = sprint.ReleaseResult{
+					Name:     sprint.CheckNoStuckFriend,
+					OK:       false,
+					Evidence: fmt.Sprintf("coverage incomplete: sprint cleared at %s (%s ago), less than %s window", oneline.Escape(es.Cleared.UTC().Format(time.RFC3339)), now.Sub(es.Cleared).Truncate(time.Second), sprint.StuckWindow),
+				}
+				rep.Failed++
+				rep.Ready = false
+				rep.Summary = fmt.Sprintf("RELEASE NOT READY failed=%d", rep.Failed)
+			}
+		}
 	}
 	if c.json {
 		b, _ := json.Marshal(rep)
