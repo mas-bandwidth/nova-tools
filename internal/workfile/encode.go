@@ -207,7 +207,7 @@ func keyword(v string) (string, error) {
 	}
 	for i := 0; i < len(v); i++ {
 		c := v[i]
-		if !(c >= 'A' && c <= 'Z' || c == '_') {
+		if (c < 'A' || c > 'Z') && c != '_' {
 			return "", fmt.Errorf("enumeration %q holds a byte outside [A-Z_]; refusing to write it lossily", v)
 		}
 	}
@@ -217,7 +217,7 @@ func keyword(v string) (string, error) {
 func unkeyword(name string) (string, error) {
 	for i := 0; i < len(name); i++ {
 		c := name[i]
-		if !(c >= 'a' && c <= 'z' || c == '-') {
+		if (c < 'a' || c > 'z') && c != '-' {
 			return "", fmt.Errorf("keyword :%s holds a byte outside [a-z-]", name)
 		}
 	}
