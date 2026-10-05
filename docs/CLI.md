@@ -1105,6 +1105,14 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 
 `nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store, and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=<document+counts|counts> secrets=none`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).
 
+### merge-tree-node
+
+```
+nova-sprint land-node --stream <s> --as <member> --repo-dir <clone> [--base <branch>] [--check <command>]
+```
+
+A worker verb. The member `--as` names is the actor. On that member's clone it merges the stream's queued cards onto the current base in rank order, runs `--check`, and bisects a red result to the longest green prefix. That prefix is pushed, never forced, to `land/<stream>`. The store records one verdict a card (`landed-in-node`, `red` with the failing gate line, `conflict` with the path, or `ready`) and the `land/<stream>` head. It writes no landed record and it does not push the base. It refuses a clone under the land root, so the lander's own clone is never touched. `nova-sprint help land-node` prints the usage, the flags and the exit codes.
+
 ### A card re-cut as its twin
 
 A card re-cut under a new id is its old card's twin: `add --stream s1 lint-pkg-cairn-tb

@@ -29,6 +29,7 @@ var verbExit = map[string]string{
 	"fleet sync":    "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
 	"friend sync":   "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
 	"land":          "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
+	"land-node":     "exit codes: 0 the green prefix is on land/<stream> and every queued card has a verdict (a red card is named and left queued), 1 refused before a push or with nothing reported (the line names why), 2 usage, a store that did not answer, or a push that landed and was not reported",
 	"check":         "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
 	"selftest":      "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
 	"seat check":    "exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer",
@@ -86,6 +87,7 @@ var verbEffect = map[string]string{
 	"lane list":        "inspection: lists every machine's lanes and holders, writes nothing",
 	"lane take":        "store write: takes one lane on the machine for the worker, or joins the queue; --dry-run checks availability and writes nothing",
 	"lane give":        "store write: gives the worker's lane or queue position back; --dry-run checks whether a lane is held and writes nothing",
+	"land-node":        "delivery: pushes the green prefix to land/<stream> on the clone's origin, never forced, and records each queued card's verdict in the sprint's store; writes no landed record and does not push the base",
 }
 
 // commonExit is the codes of every other verb.

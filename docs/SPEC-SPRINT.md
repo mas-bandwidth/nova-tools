@@ -2825,6 +2825,14 @@ the batch with the step that failed. A clone the caller gives with `--repo-dir` 
 caller's: it is never cleaned, and a dirty one is refused as before
 (`TestLanderRestoresItsOwnDirtyCacheClone`, cmd/nova-sprint/land_clean_clone_test.go).
 
+### merge-tree-node
+
+`nova-sprint land-node --stream <s> --as <member> --repo-dir <clone> [--base <branch>] [--check <command>]` is a worker verb. The actor is the member `--as` names. It runs on that member, in the clone `--repo-dir` names, and it refuses a clone under the land root, so the lander's own clone on the coordinator's machine is never touched. It does not clone for itself.
+
+It reads the stream's merge queue in rank order, up to the first stuck card, and merges those cards onto the current base (the brief's `BASE:`, or `--base`) with the lander's own merge (`build` in `land.go`: `--no-ff`, the card checks, the per-card tree gate). It runs `--check` once on that tip. A red check is bisected to the longest green prefix (`tla/LandTwoLevel.tla`, `GreenLen` and `NodeStage`): the prefixes are probed with the lander's `runCheck` and `gateRerun`. The green prefix is pushed, never forced, to `land/<stream>`. The base is not pushed. No landed record is written; landing that ref onto the base is the root's.
+
+Each queued card is reported in place on its merge card, one verdict: `landed-in-node` for a card on the pushed prefix, `red` with the failing gate line or `conflict` with the path for the one card that stops the prefix (`NodeBlame`; a judgment `card-red` or `sibling-clash`), and `ready` for every card after it. The stream's control card records `node_head` and `node_ref` when a prefix was pushed. The cards stay queued. A second run is how a card that stayed ready is tried again.
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
