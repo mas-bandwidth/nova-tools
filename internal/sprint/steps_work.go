@@ -31,6 +31,9 @@ type CardAdd struct {
 	Rules string
 	Needs []string
 	File  string
+	// Base is the branch the brief names on its BASE: line (swarm.ReadCardBase), "" for
+	// none: add admits a card based on dev only into the promotion stream (SprintBranchWhy).
+	Base string
 	// Sentinel marks this card a sentinel (a stop), not a primary: the
 	// many-brief form's --sentinel <id>, admitted after the brief cards.
 	Sentinel bool
@@ -44,6 +47,8 @@ type AddReq struct {
 	Needs  []string
 	Brief  string
 	Rules  string // the held rules file of every card the add admits with Brief (FieldRules)
+	// Base is the branch Brief names on its BASE: line, as CardAdd.Base.
+	Base string
 	// Cards, when set, is the many-brief form: one card per entry, in order,
 	// each with its own brief and needs (a need names a primary already on
 	// the table or one of this add). IDs, Count, Brief and Needs are then
@@ -202,6 +207,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		return r.Rules
 	}
+	baseOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Base
+		}
+		return r.Base
+	}
 	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
 	// or a card of the many-brief form marked one (its --sentinel <id>).
 	isSent := func(i int) bool {
@@ -242,6 +253,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if unknown := BenchKnown(s, bench); len(unknown) > 0 {
 			bench, benchWhy = nil, BenchRefused(s, bench, unknown)
 		}
+		devWhy := SprintBranchWhy(s, r.Stream, baseOf(i), id)
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -251,6 +263,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		case s.Work.Card(id) != nil:
 			p.refuse(id, "exists already ("+placeWord(s.Work.Card(id))+")")
+			continue
+		case devWhy != "": // a card cut on dev, outside the promotion stream (docs/SPEC-SPRINT.md section 7)
+			p.refuse(id, devWhy)
 			continue
 		case len(missing) > 0:
 			if len(r.Cards) > 0 {

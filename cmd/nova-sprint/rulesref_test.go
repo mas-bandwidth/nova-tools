@@ -36,7 +36,7 @@ func briefFile(t *testing.T, dir, name, text string) string {
 // The briefs of the tests below: one on this repository, one on a repository the members
 // hold no rules file for.
 const (
-	homeBrief   = "RESULT: h sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\nBASE: dev\n\nhandle the empty case"
+	homeBrief   = "RESULT: h sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/foundation\n\nhandle the empty case"
 	schemaBrief = "RESULT: x sha=0123456789ab\nREPO: mas-bandwidth/schema\nBASE: main\n\nhandle the empty case"
 )
 
