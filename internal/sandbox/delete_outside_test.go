@@ -28,6 +28,7 @@ const deleteHelperEnv = "NOVA_TEST_DELETES_ONLY_IN_THE_JOB"
 // A delete in the job dir succeeds. A mutation that hands every write the whole handled
 // set again (the bug) turns this red at rmrf=0.
 func TestTheWallRefusesDeletesOutsideTheJob(t *testing.T) {
+	t.Parallel()
 	if os.Getenv(deleteHelperEnv) == "1" {
 		os.Exit(runDeleteHelper())
 	}
