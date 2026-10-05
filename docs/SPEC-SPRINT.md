@@ -241,22 +241,27 @@ no row of the friends table, and `WHO: friend` while the table has no row
 (exit 2, nothing written); the primary's field `who` is `friend` or
 `friend.<name>`, written with its brief, and `card` prints `who=` on its
 `CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
-as before. The tick's deal deals a friend's card ready, in the deal's stream
-turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
-her room, DealAhead (two) times her friends row's `width`, as the machines'
-rule fills a member (section 5; the cards on her row, ready and working, count
-against it; the owner, 2026-10-04: "Do it just like the fleet, you keep people
-busy by having 2X width queued up in ready per-friend"): the friend it names,
-or for `WHO: friend` the friend up with the most room free, the first by name
-among equals; with none it waits ready, held by the no-stall rule as waiting
-for a friend (`sprint.FriendDeal`). On her row the card is `working` while she
-has a lane free (her width less her working cards; dealt and taken at once)
-and `ready` behind her working cards otherwise, so her inbox holds her width
-working and as many again ready; her finish of a card takes the oldest ready
-card on her row into working in the same step (`sprint.Finish`, `friendNext`),
-no tick between, as a machine's lane that frees takes its next; the next tick
-fills her room again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`:
-width 8 with 30 waiting is 8 working and 8 ready, and a 17th on a landing). The tick reads the
+as before. The tick's deal deals a friend's card ready, in the deal's stream turns, to a
+friend up (the friends' rule: not held, a beat within 15 s) below her room: in
+batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
+times her friends row's `width`, as the machines' rule fills a member (section
+5; the cards on her row, ready and working, count against it; the owner,
+2026-10-04: "Do it just like the fleet, you keep people busy by having 2X width
+queued up in ready per-friend"): on her row the card is `working` while she has a
+lane free (her width less her working cards; dealt and taken at once) and `ready`
+behind her working cards otherwise, so her inbox holds her width working and as
+many again ready; her finish of a card takes the oldest ready card on her row
+into working in the same step (`sprint.Finish`, `friendNext`), no tick between,
+as a machine's lane that frees takes its next; the next tick fills her room
+again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`: width 8 with 30
+waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
+(`mode: one-shot`), the machine deals one card at a time, straight into
+`working` (room 1, lane 1), and the next only after the last one finished
+(item 22 of tmp/manual-to-verbs-2026-10-04.md;
+`TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal picks the
+friend the card names, or for `WHO: friend` the friend up with the most room
+free, the first by name among equals; with none it waits ready, held by the
+no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
 friends' records (the roster, then the beats: two round trips) only when a
 friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name

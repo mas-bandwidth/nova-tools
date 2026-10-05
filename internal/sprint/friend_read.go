@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -210,8 +211,12 @@ func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
 		if f.Status != Up || !slices.Contains(f.Tiers, cardhdr.RouteFrontier) {
 			continue
 		}
-		free[f.Name] = DealAhead*f.Width - friendLoad(s, f.Name)
-		lanes[f.Name] = f.Width - s.Fleet.Count(FriendRow(f.Name), Working)
+		room, width := DealAhead*f.Width, f.Width
+		if f.Mode == config.FriendModeOneShot {
+			room, width = 1, 1
+		}
+		free[f.Name] = room - friendLoad(s, f.Name)
+		lanes[f.Name] = width - s.Fleet.Count(FriendRow(f.Name), Working)
 		up = append(up, f)
 	}
 	slices.SortFunc(up, func(a, b FriendSeat) int { return strings.Compare(a.Name, b.Name) })

@@ -75,6 +75,7 @@ type FriendRow struct {
 	Failed  int    `json:"failed"`
 	Status  string `json:"status"`
 	Class   string `json:"class,omitempty"`
+	Mode    string `json:"mode,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -282,7 +283,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
 			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if h.Observed() {
 			row.Health = &h
 		}
@@ -314,29 +315,36 @@ func (st *Store) friendNames(ctx context.Context) []string {
 	return slices.Sorted(maps.Keys(r))
 }
 
-// friendSeats is every friend of the roster as the tick's deal gives her a friend's card
-// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
-// holds a friend's card ready; nil, and no read, when it holds none.
-func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
-	ready := false
-	for _, c := range s.Work.Column(sprint.Ready) {
-		if _, ok := sprint.FriendCard(c); ok {
-			ready = true
-			break
-		}
-	}
-	if !ready {
-		return nil, nil
-	}
+// FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status, Class, Mode).
+func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
 	rows, err := st.FriendRows(ctx, now)
 	if err != nil {
 		return nil, err
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode}
 	}
 	return seats, nil
+}
+
+// friendSeats is every friend of the roster as the tick's deal gives her a friend's card
+// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
+// holds a friend's card ready; nil, and no read, when it holds none.
+func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	if s != nil {
+		ready := false
+		for _, c := range s.Work.Column(sprint.Ready) {
+			if _, ok := sprint.FriendCard(c); ok {
+				ready = true
+				break
+			}
+		}
+		if !ready {
+			return nil, nil
+		}
+	}
+	return st.FriendSeats(ctx, now)
 }
 
 // FriendNames is every friend of the roster in name order (the friends table's rows), for
