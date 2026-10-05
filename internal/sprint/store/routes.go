@@ -326,7 +326,20 @@ func (st *Store) OutOfCredit(ctx context.Context) (string, error) {
 	}
 	fleet := sprint.NewTable(sprint.Fleet)
 	fleet.SetProps(shapes[0].Props)
-	return sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), st.now()), nil
+	why := sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), st.now())
+	if why == "" {
+		return "", nil
+	}
+	// a friend up keeps the machine running: the paid routes rest, friends are dealt
+	// (sprint.AnyFriendUp; the owner, 2026-10-04)
+	seats, err := st.friendSeats(ctx, nil, st.now())
+	if err != nil {
+		return "", err
+	}
+	if sprint.AnyFriendUp(seats) {
+		return "", nil
+	}
+	return why, nil
 }
 
 // JudgmentBar is the judgment decision's bar as nova-config applied it, read with the
