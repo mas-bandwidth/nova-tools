@@ -128,6 +128,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
 		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
+		{"renew nothing given", []string{"renew"}, []string{"--as is required", "--friend is required", "the last word or --friend"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
