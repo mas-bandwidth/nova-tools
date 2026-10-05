@@ -80,7 +80,16 @@ func TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary(t *testing.T) {
 		target := filepath.Join(t.TempDir(), "nova-sprint")
 		require.NoError(t, os.WriteFile(target, []byte("the running server"), 0o755))
 		ta := newTestApp(t)
-		code, out, errs := ta.do("server switch " + exe + " --target " + target + " --redis mem:" + twinFile + " --rollback")
+		code, out, errs := ta.do("server switch " + exe + " --target " + target + " --redis mem:" + twinFile + " --rollback --dry-run")
+		require.Equal(t, 0, code, errs)
+		assert.Contains(t, out, "SHADOW TICK OK binary="+exe)
+		assert.Contains(t, out, "SERVER SWITCH DRY-RUN target="+target+" binary="+exe)
+		for _, side := range []string{".prev", ".switch.json", ".shadow.json"} {
+			_, err := os.Stat(target + side)
+			assert.True(t, os.IsNotExist(err), "a dry run writes nothing beside the target (%s)", side)
+		}
+
+		code, out, errs = ta.do("server switch " + exe + " --target " + target + " --redis mem:" + twinFile + " --rollback")
 		require.Equal(t, 0, code, errs)
 		assert.Contains(t, out, "SHADOW TICK OK binary="+exe+" epoch=0 state=RUNNING")
 		assert.Contains(t, out, "SERVER SWITCH OK")

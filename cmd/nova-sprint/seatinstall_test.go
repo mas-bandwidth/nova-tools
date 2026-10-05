@@ -48,6 +48,12 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	assert.FileExists(t, unit)
 	assert.Equal(t, []string{"darwin load " + unit}, calls)
 
+	code, out, errs = do("seat", "uninstall", "--dry-run")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "SEAT UNINSTALL DRY-RUN unit="+unit+" present=true")
+	assert.FileExists(t, unit, "a dry run removes nothing")
+	assert.Equal(t, []string{"darwin load " + unit}, calls, "a dry run unloads nothing")
+
 	code, out, errs = do("seat", "uninstall", "--json")
 	require.Equal(t, 0, code, errs)
 	var got struct {
