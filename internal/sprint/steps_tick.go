@@ -162,8 +162,10 @@ type TickReq struct {
 	// the done part's note counts from; zero is not known.
 	Started time.Time
 	// Friends is each friend the deal may give a friend's card to, read by
-	// the binding with the tick when a friend's card is ready (FriendDeal);
-	// nil is none, and a friend's card waits ready.
+	// the binding with every tick while the roster has a friend (FriendDeal),
+	// with what her beat names running (FriendSeat.Running): the tick levels
+	// them after its deal (FriendLevel). nil is none: a friend's card waits
+	// ready and no friend is levelled.
 	Friends []FriendSeat
 	// AnswerRules says the tick answers the mechanical judgments by rule (rules.go; run
 	// --answer-rules); false leaves every judgment to the coordinator.
@@ -677,9 +679,24 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
+	var dealt, dealtWorking map[string]int
 	if len(friends) > 0 {
-		fp := FriendDeal(s, streamTurns(friends, streamRound(s, PropStreamIndex)), r.Friends)
+		var fp Plan
+		fp, dealt, dealtWorking = friendDeal(s, streamTurns(friends, streamRound(s, PropStreamIndex)), r.Friends)
 		p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
+	}
+	if len(r.Friends) > 0 {
+		// the friends level after the deal, every tick and on the tick a friend comes up, so
+		// an idle lane is filled and a backlog evens itself without the coordinator, at most
+		// FriendLevelPerTick cards a tick (docs/SPEC-SPRINT.md section 1,
+		// friend-deal-idle-lanes-first.w1)
+		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick}, dealt, dealtWorking)
+		for _, row := range lp.Rows {
+			if !slices.Contains(p.Rows, row) {
+				p.Rows = append(p.Rows, row)
+			}
+		}
+		p.Units = append(p.Units, lp.Units...)
 	}
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
