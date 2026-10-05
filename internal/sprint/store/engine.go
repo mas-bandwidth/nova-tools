@@ -176,6 +176,9 @@ type Step struct {
 	// within a tick).
 	Readers      bool
 	ReaderStates map[string]string
+	// ReaderTiers is the tiers the readers read, read with ReaderStates and
+	// given with them (sprint.Snapshot.ReaderTiers).
+	ReaderTiers map[string][]string
 	// Friends says the step consults the friends roster (finish, for friendNext
 	// delivery mode): it plans with the friend seats (sprint.Snapshot.Friends).
 	Friends bool
@@ -563,7 +566,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		snap.Answered = answered
 		if step.Readers && step.ReaderStates != nil {
-			snap.ReaderStates = step.ReaderStates
+			snap.ReaderStates, snap.ReaderTiers = step.ReaderStates, step.ReaderTiers
 		} else if step.Readers {
 			if err := st.readerStatesInto(ctx, snap); err != nil {
 				return res, err

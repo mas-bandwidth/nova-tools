@@ -87,6 +87,9 @@ func readersText(s *Snapshot) string {
 		case st == "":
 			st = ReaderDown
 		}
+		if len(s.ReaderTiers[r]) > 0 {
+			st += " (reads " + s.ReaderTiersText(r) + ")" // a reader of some tiers only (reader_tiers.go)
+		}
 		out = append(out, r+" "+st)
 	}
 	sort.Strings(out)
@@ -188,11 +191,17 @@ func ReadsNeeded(pr *Card) int {
 	return 2
 }
 
-// enoughReadersUp says as many readers are up as the primary needs
-// (ReadsNeeded), or the snapshot carries no reader states (every reader up):
-// the ask may ask it (TickAsk); else it waits, judged NFewReaders.
+// enoughReadersUp says as many readers of the primary's read tier are up as
+// it needs (ReadsNeeded; upReadersFor: a reader counts only for a primary
+// whose tier it reads, reader_tiers.go), or the snapshot carries no reader
+// states and no reader tiers (every reader up, reading every tier): the ask
+// may ask it (TickAsk); else it waits, judged NFewReaders, and no reader
+// outside its tier is asked in their place.
 func enoughReadersUp(s *Snapshot, pr *Card) bool {
-	return s.ReaderStates == nil || len(s.UpReaders()) >= ReadsNeeded(pr)
+	if s.ReaderStates == nil && s.ReaderTiers == nil {
+		return true
+	}
+	return len(s.upReadersFor(pr)) >= ReadsNeeded(pr)
 }
 
 // acceptable says the primary has ok reads from ReadsNeeded different readers
@@ -212,13 +221,16 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // returnedReadsAt is the primary's read cards at an attempt handed back with
-// no verdict by readers up (returnedRead): the ask places each again, on a
-// free reader with room, or in place on its own reader, whose room already
-// holds it (readerLoad counts it).
+// no verdict by readers up (returnedRead) that read the primary's tier: the
+// ask places each again, on a free reader with room, or in place on its own
+// reader, whose room already holds it (readerLoad counts it). A read returned
+// by a reader outside the primary's tier is never asked again in place
+// (reader_tiers.go): it is asked of a free reader of the tier, and is no
+// place the ask may count on.
 func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
 	for _, rc := range readsAt(s, pr, attempt) {
-		if !awayRead(s, rc) && returnedRead(rc) {
+		if !awayRead(s, rc) && returnedRead(rc) && s.readerReadsCard(rc.Row, pr) {
 			out = append(out, rc)
 		}
 	}
@@ -226,7 +238,8 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // freeReaders is the readers the ask may ask the primary's attempt of: up,
-// with no read card of it at the attempt, placed or retired. A reader is
+// reading the primary's read tier (readerReadsCard), with no read card of it
+// at the attempt, placed or retired. A reader is
 // asked an attempt once: one read card per reader per attempt (ReadCardID),
 // so a reader with a card at this attempt (read, or taken back away, levelled
 // or returned) is not asked it again; the next attempt is read on new cards,
@@ -234,7 +247,7 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	var out []string
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
+		if s.ReaderIsUp(rd) && s.readerReadsCard(rd, pr) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
 			out = append(out, rd)
 		}
 	}
@@ -364,10 +377,11 @@ func sweepReads(s *Snapshot, p *Plan) {
 		return
 	}
 	taker := func(c *Card) bool {
-		if pr := s.Work.Card(c.F("primary")); pr == nil || !enoughReadersUp(s, pr) {
+		pr := s.Work.Card(c.F("primary"))
+		if pr == nil || !enoughReadersUp(s, pr) {
 			return false
 		}
-		for _, rd := range up {
+		for _, rd := range s.upReadersFor(pr) {
 			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
 				return true
 			}
@@ -483,7 +497,8 @@ func (s *Snapshot) readerRooms(readers []string) map[string]readerRoom {
 // holds a backlog, no move fills a reader past its width (a reader at width is
 // given nothing), and no read is shuttled back: the ask's placement is the
 // level's fixed point. A read moves only to a reader with no card at
-// its primary's attempt, placed or retired: a primary's two reads stay with
+// its primary's attempt, placed or retired, and that reads its primary's tier
+// (readerReadsCard, reader_tiers.go): a primary's two reads stay with
 // two different readers, and no reader is asked an attempt it already read.
 // The move retires the read card (retired_by level: the reader it left is
 // never asked that attempt again) and asks the read of the other reader at
@@ -525,7 +540,12 @@ func levelReads(s *Snapshot, p *Plan) {
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
 			avoid := []string{long}
+			pr := s.Work.Card(q[i].F("primary"))
 			for _, rd := range up {
+				if pr != nil && !s.readerReadsCard(rd, pr) {
+					avoid = append(avoid, rd) // a read moves only to a reader of its tier
+					continue
+				}
 				if id := ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd); s.Readers.Card(id) != nil || planned[id] {
 					avoid = append(avoid, rd)
 				}
