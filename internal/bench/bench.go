@@ -62,7 +62,8 @@ const (
 var Env = []string{"GOFLAGS=-mod=readonly", "NOVA_TEST_NO_HOST=1"}
 
 // Transport is what a run asks of the wire. The production transport is ssh
-// and rsync (Exec); the tests pass a fake that records each call.
+// alone (Exec), the copy a tar stream on its stdin; the tests pass a fake
+// that records each call.
 type Transport interface {
 	// Shell runs one line under the login shell on host, streaming its output.
 	// The int is the remote status (NoAnswer when ssh itself failed); the error
@@ -118,9 +119,9 @@ func CheckHost(h string) error {
 	return nil
 }
 
-// CheckPath refuses a bench path that is not plain: one the remote shell or
-// rsync would read differently from how it is written (~, a blank, a quote),
-// one that climbs (..), or the home or the filesystem root itself.
+// CheckPath refuses a bench path that is not plain: one the remote shell would
+// read differently from how it is written (~, a blank, a quote), one that
+// climbs (..), or the home or the filesystem root itself.
 func CheckPath(flag, p string) error {
 	switch {
 	case strings.Trim(p, "/.") == "":
