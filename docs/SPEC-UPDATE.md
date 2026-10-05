@@ -311,8 +311,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
     of its own. Missing `--as` or `--to` is exit 2 naming the flag. No recipients come from
     the inventory's owner column. Only a `SEND OK id=<id>` line records delivery, the id
     what the snapshot keeps; a refusal, a failure or a child the budget cut off never does,
-    and says `sent=uncertain`. The whole successful SEND line is preserved as `line=`. (The
-    git bus's two-phase prepare and its pending recovery went with that bus, 2026-10-04.)
+    and says `sent=uncertain`. The whole successful SEND line is preserved as `line=`.
 25. **Unchanged state is the caller's to suppress, through a snapshot file the caller
     names.** Absent `--snapshot <path>`, no file is read or written (rule 9: nothing under
     `$HOME`, no state file of this tool's own). Present, the run reads the previous
@@ -888,7 +887,10 @@ A registry that stops answering registry-v2 JSON is UNKNOWN, never OK.
 arrive either way and the two disagree by days. Default: the file names the source
 that installed the copy on this box; a mismatch is a one-line fix to the file, not a
 second source per entry.
-4. **Delivery is one send on the Redis bus.** The git bus and its prepared, two-phase
-delivery were retired 2026-10-04; the reporter and watch hand one note to `nova-bus send`,
+4. **Delivery is one send on the Redis bus.** The reporter and watch hand one note to `nova-bus send`,
 one transaction that answers with the message id (rule 24). No timer or reporter-owned
 network is added.
+
+### simp-git-bus-remnants-w.w1
+
+Delivery is one send on the Redis bus. The reporter and watch hand one note to `nova-bus send`, one transaction that answers with the message id (rule 24). No timer or reporter-owned network is added.
