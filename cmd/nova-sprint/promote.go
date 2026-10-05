@@ -41,25 +41,43 @@ func (a *app) promoteOnTick(ctx context.Context, stdout io.Writer) {
 	promoteArmed(ctx, stdout)
 }
 
-// promoteStep cuts a frozen promo/<date>-<n> from the sprint tip and opens its
-// pull request to dev (docs/SPEC-SPRINT.md section 11, promote). The pull
-// request head is that branch, never the live sprint branch: a queued pull
-// request whose head is the live branch blocks the lander's pushes (GH006,
-// found 2026-10-04). The tree gate runs on the frozen commit before the pull
-// request. Admission to the merge queue is the enqueuePullRequest mutation,
-// which carries no merge strategy (the queue refuses one); a query of
-// mergeQueueEntry confirms the entry. gh pr merge, and a flag named auto, are
-// the spelling TestNoGhPrMergeSpellingInTheToolsGo refuses, and that test names
-// this mutation as the one admission. A failed merge-group run raises one
-// judgment, decisions fix-and-recut and skip, with the failing check's log
-// tail. A merge records `promoted --sha`.
+// promoteStep carries one promotion from a cut to a recorded sha with no hand
+// steps (docs/SPEC-SPRINT.md section 11, promote). It fetches origin and cuts
+// promo/<date>-<n> from origin/<branch>, never from a local ref. A cut that is
+// not ahead of origin/<base> is refused. The target is merged into the cut; a
+// conflict stops with one judgment naming the files and resolves nothing. The
+// tree gate runs on that merged commit, the pull request is opened, and
+// admission is the enqueuePullRequest mutation, which carries no merge strategy
+// (the queue refuses one). The pull request head is the frozen branch, never
+// the live sprint branch: a queued pull request whose head is the live branch
+// blocks the lander's pushes (GH006, found 2026-10-04). A query of
+// mergeQueueEntry confirms the entry. A failed merge-group run raises one
+// judgment naming the failing check, decisions fix-and-recut and skip, with
+// the check's log tail. When the queue merges, the pass records `promoted
+// --sha`. Each step is printed before the call that can block.
 //
 // The queries are one literal each, so they are not an argument list of pr and
 // merge, and neither is a strategy flag.
+//
+// promoteForge is the one seam those forge calls go through. A test passes a
+// fake. The real forge runs gh through internal/subproc.
 const (
 	promoteEnqueueQuery = `mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id}}}`
 	promoteQueueQuery   = `query($id:ID!){node(id:$id){... on PullRequest{mergeQueueEntry{id state}}}}`
 )
+
+// promoteForge is every forge call the promote pass makes. Call is one gh
+// invocation. Tests pass a fake; nothing in a test runs gh.
+type promoteForge interface {
+	Call(ctx context.Context, args ...string) (string, error)
+}
+
+// promoteForgeFunc adapts a function to promoteForge.
+type promoteForgeFunc func(ctx context.Context, args ...string) (string, error)
+
+func (f promoteForgeFunc) Call(ctx context.Context, args ...string) (string, error) {
+	return f(ctx, args...)
+}
 
 // promoteDecisions are the one judgment a failed merge-group run raises.
 var promoteDecisions = []string{"fix-and-recut", "skip"}
@@ -76,8 +94,12 @@ type promoter struct {
 	now                    time.Time
 	dry                    bool
 	env                    []string
+	// forge, when set, is the forge (a test). Nil uses ghRun when that is set,
+	// else gh through internal/subproc. Every forge call goes through
+	// promoteForge, including a ghRun wrapped as one.
+	forge promoteForge
 	// gitRun and ghRun, when set, stand in for git and gh (a test). Nil runs
-	// the real programs.
+	// the real programs. ghRun is wrapped as a promoteForge.
 	gitRun func(ctx context.Context, dir string, args ...string) (string, error)
 	ghRun  func(ctx context.Context, dir string, args ...string) (string, error)
 	// gate, when set, is the tree gate (a test). Nil runs --check, or nothing
@@ -121,13 +143,13 @@ type promoteOutcome struct {
 // nothing. Without it the verb repeats every --every until it is interrupted.
 func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	fs, _ := a.verbSetup("promote")
-	every := fs.Duration("every", promoteEveryDefault, "how often to look, a duration (default 1h); each pass promotes when that long has passed or --landings cards have landed")
+	every := fs.Duration("every", promoteEveryDefault, "how often to look, a duration (default 1h); each pass fetches origin and promotes when that long has passed or --landings cards have landed")
 	landings := fs.Int("landings", 0, "also promote once this many cards have landed since the last promotion (0: the clock only)")
-	dry := fs.Bool("dry-run", false, "print the branch and the landed cards and change nothing")
-	branch := fs.String("branch", "", "the live sprint branch the cut is taken from (default: the checkout's current branch)")
+	dry := fs.Bool("dry-run", false, "fetch origin, print the branch and the landed cards, and change nothing")
+	branch := fs.String("branch", "", "the live sprint branch to cut from origin (default: the checkout's current branch); the cut is origin/<branch>, never the local ref")
 	repo := fs.String("repo-dir", "", "the clone the branch is cut in (default: the current directory)")
-	base := fs.String("base", "dev", "the branch the pull request targets (default dev)")
-	check := fs.String("check", "", "the tree gate, a command run on the frozen commit before the pull request (default: none)")
+	base := fs.String("base", "dev", "the target branch (default dev); origin/<base> is fetched and merged into the cut, which is refused when it is not ahead of that target")
+	check := fs.String("check", "", "the tree gate, a command run on the merged cut before the pull request (default: none)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "promote", argErr("takes no words ", err, pos...))
@@ -171,6 +193,7 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 		if *landings > 0 && wait > time.Minute {
 			wait = time.Minute
 		}
+		fmt.Fprintf(stdout, "PROMOTE WAITING %s before the next pass\n", wait)
 		after := a.after
 		if after == nil {
 			after = time.After
@@ -188,7 +211,8 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-// step is one promote pass.
+// step is one promote pass. It fetches before it reads a tip, cuts from
+// origin/<branch>, and prints a line before every call that can block.
 func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteOutcome, int) {
 	o := promoteOutcome{Live: p.live, Dry: p.dry}
 	if p.base == "" {
@@ -197,13 +221,20 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	if p.now.IsZero() {
 		p.now = time.Now()
 	}
+	if p.live == "" {
+		fmt.Fprintf(stdout, "PROMOTE BRANCH reading the checkout\n")
+	}
 	live, err := p.liveBranch(ctx)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
 	o.Live = live
 	p.live = live
-	tip, err := p.rev(ctx, live)
+	fmt.Fprintf(stdout, "PROMOTE FETCH origin branch=%s base=%s\n", oneline.Field(live), oneline.Field(p.base))
+	if _, err := p.git(ctx, "fetch", "origin", p.fetchSpec(live), p.fetchSpec(p.base)); err != nil {
+		return o, p.fail(stderr, err)
+	}
+	tip, err := p.rev(ctx, p.originRef(live))
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
@@ -211,6 +242,14 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	if branch, pr, ok := p.pending(ctx, tip); ok {
 		o.Branch, o.Head = branch, branch
 		return p.watch(ctx, o, pr, stdout, stderr)
+	}
+	fmt.Fprintf(stdout, "PROMOTE AHEAD cut=origin/%s target=origin/%s\n", oneline.Field(live), oneline.Field(p.base))
+	n, err := p.ahead(ctx, p.originRef(live), p.originRef(p.base))
+	if err != nil {
+		return o, p.fail(stderr, err)
+	}
+	if n == 0 {
+		return o, p.fail(stderr, fmt.Errorf("the cut origin/%s is not ahead of the target origin/%s", live, p.base))
 	}
 	since, err := p.since(ctx)
 	if err != nil {
@@ -246,20 +285,41 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 		fmt.Fprintf(stdout, "PROMOTE WAIT live=%s tip=%s cards=%d landings=%d\n", oneline.Field(live), tip, len(o.Cards), p.landings)
 		return o, 0
 	}
+	fmt.Fprintf(stdout, "PROMOTE CUT-FROM ref=origin/%s sha=%s\n", oneline.Field(live), tip)
 	if _, err := p.git(ctx, "branch", "--no-track", branch, tip); err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if _, err := p.runGate(ctx, tip); err != nil {
+	names, err := p.mergeIntoCut(ctx, stdout, branch, live, p.originRef(p.base))
+	if err != nil {
+		return o, p.fail(stderr, err)
+	}
+	if len(names) > 0 {
+		files := strings.Join(names, ",")
+		o.Judgment = &promoteJudgment{
+			What:      fmt.Sprintf("merge of origin/%s into %s conflicted: %s", p.base, branch, files),
+			Decisions: append([]string(nil), promoteDecisions...),
+		}
+		fmt.Fprintf(stdout, "JUDGMENT merge conflict branch=%s files=%s decisions=%s\n", oneline.Field(branch), oneline.Field(files), strings.Join(o.Judgment.Decisions, ","))
+		return o, 1
+	}
+	merged, err := p.rev(ctx, branch)
+	if err != nil {
+		return o, p.fail(stderr, err)
+	}
+	fmt.Fprintf(stdout, "PROMOTE GATE sha=%s\n", merged)
+	if _, err := p.runGate(ctx, merged); err != nil {
 		return o, p.fail(stderr, err)
 	}
 	spec := "refs/heads/" + branch + ":refs/heads/" + branch
 	if strings.Contains(spec, "refs/heads/"+live+":") {
 		return o, p.fail(stderr, errors.New("the push spec names the live sprint branch "+live))
 	}
+	fmt.Fprintf(stdout, "PROMOTE PUSH branch=%s\n", oneline.Field(branch))
 	if _, err := p.git(ctx, "push", "origin", spec); err != nil {
 		return o, p.fail(stderr, err)
 	}
 	title := "promote " + branch
+	fmt.Fprintf(stdout, "PROMOTE OPEN head=%s base=%s\n", oneline.Field(branch), oneline.Field(p.base))
 	url, err := p.gh(ctx, "pr", "create", "--base", p.base, "--head", branch, "--title", title, "--body", o.Body)
 	if err != nil {
 		return o, p.fail(stderr, err)
@@ -274,9 +334,95 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	if _, err := p.git(ctx, "config", "--local", "promote.pr", number); err != nil {
 		return o, p.fail(stderr, err)
 	}
+	if _, err := p.git(ctx, "config", "--local", "promote.tip", tip); err != nil {
+		return o, p.fail(stderr, err)
+	}
 	o.Cut = true
 	fmt.Fprintf(stdout, "PROMOTE CUT branch=%s live=%s tip=%s pr=%s cards=%s\n", oneline.Field(branch), oneline.Field(live), tip, number, oneline.Field(strings.Join(o.Cards, ",")))
 	return p.watch(ctx, o, number, stdout, stderr)
+}
+
+// fetchSpec maps a branch name to the refspec that updates its remote-tracking
+// ref and nothing else.
+func (p *promoter) fetchSpec(name string) string {
+	return "refs/heads/" + name + ":refs/remotes/origin/" + name
+}
+
+// originRef is the remote-tracking ref of a branch. The cut is this ref, never
+// the local one.
+func (p *promoter) originRef(name string) string {
+	return "refs/remotes/origin/" + name
+}
+
+// ahead is how many commits cutRef has that targetRef does not.
+func (p *promoter) ahead(ctx context.Context, cutRef, targetRef string) (int, error) {
+	out, err := p.git(ctx, "rev-list", "--count", targetRef+".."+cutRef)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, fmt.Errorf("ahead count %q", strings.TrimSpace(out))
+	}
+	return n, nil
+}
+
+// mergeIntoCut checks out the cut, merges the target, and returns to live.
+// Conflicted paths are returned and the merge is aborted; nothing is resolved.
+// A clean merge, including one already contained, returns no names.
+func (p *promoter) mergeIntoCut(ctx context.Context, stdout io.Writer, branch, live, targetRef string) ([]string, error) {
+	fmt.Fprintf(stdout, "PROMOTE MERGE target=%s into=%s\n", oneline.Field(targetRef), oneline.Field(branch))
+	if _, err := p.git(ctx, "checkout", "-q", branch); err != nil {
+		return nil, err
+	}
+	_, merr := p.git(ctx, "merge", "--no-edit", "-m", "merge "+targetRef+" into "+branch, targetRef)
+	if merr != nil {
+		names, lerr := p.conflictFiles(ctx)
+		if aerr := p.abortMerge(ctx, live); aerr != nil {
+			return nil, aerr
+		}
+		if lerr != nil {
+			return nil, merr
+		}
+		if len(names) > 0 {
+			return names, nil
+		}
+		return nil, merr
+	}
+	if _, err := p.git(ctx, "checkout", "-q", live); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// conflictFiles is the paths git still has unmerged. Empty means the failure
+// was not a content conflict.
+func (p *promoter) conflictFiles(ctx context.Context) ([]string, error) {
+	out, err := p.git(ctx, "diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			names = append(names, line)
+		}
+	}
+	return names, nil
+}
+
+// abortMerge leaves the cut where it was and the checkout on live. A merge
+// that never started is only the checkout. An error means the worktree may
+// still be mid-merge, so the caller must not report a clean stop.
+func (p *promoter) abortMerge(ctx context.Context, live string) error {
+	if _, err := p.git(ctx, "rev-parse", "-q", "--verify", "MERGE_HEAD"); err == nil {
+		if _, err := p.git(ctx, "merge", "--abort"); err != nil {
+			return err
+		}
+	}
+	_, err := p.git(ctx, "checkout", "-q", live)
+	return err
 }
 
 // due says this pass cuts a branch. With --landings 0 the verb's loop is the
@@ -303,6 +449,7 @@ func (p *promoter) due(n int) bool {
 // watch enqueues a pull request that is not merged, confirms the queue entry,
 // and either records the merge or raises the one judgment.
 func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, stdout, stderr io.Writer) (promoteOutcome, int) {
+	fmt.Fprintf(stdout, "PROMOTE VIEW pr=%s\n", number)
 	view, raw, err := p.prView(ctx, number)
 	if err != nil {
 		return o, p.fail(stderr, err)
@@ -313,10 +460,12 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 	if view.ID == "" {
 		return o, p.fail(stderr, errors.New("the pull request "+number+" has no id ("+oneLine(raw)+")"))
 	}
+	fmt.Fprintf(stdout, "PROMOTE ENQUEUE pr=%s\n", number)
 	entry, err := p.enqueue(ctx, view.ID)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
+	fmt.Fprintf(stdout, "PROMOTE CONFIRM pr=%s\n", number)
 	confirmed, err := p.confirm(ctx, view.ID)
 	if err != nil {
 		return o, p.fail(stderr, err)
@@ -329,7 +478,8 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		o.Entry = confirmed
 	}
 	fmt.Fprintf(stdout, "PROMOTE QUEUE branch=%s entry=%s\n", oneline.Field(o.Branch), oneline.Field(o.Entry))
-	failed, logText, err := p.mergeGroup(ctx, o.Branch)
+	fmt.Fprintf(stdout, "PROMOTE WAITING on merge queue pr=%s branch=%s\n", number, oneline.Field(o.Branch))
+	failed, check, logText, err := p.mergeGroup(ctx, o.Branch)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
@@ -339,12 +489,15 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 			return o, 1
 		}
 		p.judged = o.Branch
+		if check == "" {
+			check = "unknown"
+		}
 		o.Judgment = &promoteJudgment{
-			What:      "a merge-group run failed",
+			What:      "a merge-group run failed: " + check,
 			Tail:      logTail(logText),
 			Decisions: append([]string(nil), promoteDecisions...),
 		}
-		fmt.Fprintf(stdout, "JUDGMENT merge-group failed branch=%s decisions=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","), o.Judgment.Tail)
+		fmt.Fprintf(stdout, "JUDGMENT merge-group failed branch=%s check=%s decisions=%s\n%s\n", oneline.Field(o.Branch), oneline.Field(check), strings.Join(o.Judgment.Decisions, ","), o.Judgment.Tail)
 		return o, 1
 	}
 	// the queue may have merged it between the view and the run list
@@ -362,6 +515,15 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 // record prints `promoted --sha` and remembers the sha so the next pass's
 // landed list starts after it.
 func (p *promoter) record(ctx context.Context, o promoteOutcome, sha string, stdout, stderr io.Writer) (promoteOutcome, int) {
+	if _, err := p.rev(ctx, sha); err != nil {
+		fmt.Fprintf(stdout, "PROMOTE FETCH merge sha=%s from origin/%s\n", sha, oneline.Field(p.base))
+		if _, ferr := p.git(ctx, "fetch", "origin", p.base); ferr != nil {
+			return o, p.fail(stderr, ferr)
+		}
+		if _, err := p.rev(ctx, sha); err != nil {
+			return o, p.fail(stderr, fmt.Errorf("the merge %s is not in the clone after fetching origin/%s", sha, p.base))
+		}
+	}
 	if _, err := p.git(ctx, "update-ref", "refs/promoted/last", sha); err != nil {
 		return o, p.fail(stderr, err)
 	}
@@ -371,6 +533,8 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, sha string, std
 	if _, err := p.git(ctx, "config", "--local", "--unset", "promote.pr"); err != nil {
 		return o, p.fail(stderr, err)
 	}
+	// ignored: the tip key is absent when an older pass recorded the promotion; the sha is already written
+	_, _ = p.git(ctx, "config", "--local", "--unset", "promote.tip")
 	o.Promoted = sha
 	fmt.Fprintf(stdout, "promoted --sha %s\n", sha)
 	return o, 0
@@ -396,27 +560,33 @@ func (p *promoter) liveBranch(ctx context.Context) (string, error) {
 }
 
 // since is the revision the landed list starts after: the last recorded
-// promotion, else the base.
+// promotion, else origin's target. The local base ref is not read.
 func (p *promoter) since(ctx context.Context) (string, error) {
 	if sha, err := p.rev(ctx, "refs/promoted/last"); err == nil && sha != "" {
 		return sha, nil
 	}
-	return p.rev(ctx, p.base)
+	return p.rev(ctx, p.originRef(p.base))
 }
 
-// pending is an open promotion of this same tip: its branch and pull request
-// number. ok is false when there is none or the tip has moved.
+// pending is an open promotion of this same origin tip: its branch and pull
+// request number. The recorded tip is the origin commit the branch was cut
+// from, which stays that commit after the target is merged in. ok is false
+// when there is none or that tip has moved.
 func (p *promoter) pending(ctx context.Context, tip string) (branch, pr string, ok bool) {
 	branch, err := p.git(ctx, "config", "--local", "--get", "promote.branch")
 	if err != nil || branch == "" || branch == p.live || !strings.HasPrefix(branch, "promo/") {
 		return "", "", false
 	}
-	sha, err := p.rev(ctx, branch)
-	if err != nil || sha != tip {
-		return "", "", false
-	}
 	pr, _ = p.git(ctx, "config", "--local", "--get", "promote.pr")
 	if pr == "" {
+		return "", "", false
+	}
+	recorded, err := p.git(ctx, "config", "--local", "--get", "promote.tip")
+	if err == nil && strings.TrimSpace(recorded) != "" {
+		return branch, pr, strings.TrimSpace(recorded) == tip
+	}
+	sha, err := p.rev(ctx, branch)
+	if err != nil || sha != tip {
 		return "", "", false
 	}
 	return branch, pr, true
@@ -518,11 +688,12 @@ func (p *promoter) confirm(ctx context.Context, id string) (string, error) {
 	return resp.Data.Node.MergeQueueEntry.ID, nil
 }
 
-// mergeGroup reports a failed merge-group run for the branch and its log.
-func (p *promoter) mergeGroup(ctx context.Context, branch string) (failed bool, logText string, err error) {
+// mergeGroup reports a failed merge-group run for the branch, the failing
+// check's name, and its log. Several failures are one result, names joined.
+func (p *promoter) mergeGroup(ctx context.Context, branch string) (failed bool, check, logText string, err error) {
 	raw, err := p.gh(ctx, "run", "list", "--branch", branch, "--event", "merge_group", "--json", "databaseId,conclusion,status,name", "--limit", "5")
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	var runs []struct {
 		DatabaseID int    `json:"databaseId"`
@@ -531,19 +702,26 @@ func (p *promoter) mergeGroup(ctx context.Context, branch string) (failed bool, 
 		Name       string `json:"name"`
 	}
 	if jerr := json.Unmarshal([]byte(raw), &runs); jerr != nil {
-		return false, "", fmt.Errorf("merge-group runs: %s", oneLine(raw))
+		return false, "", "", fmt.Errorf("merge-group runs: %s", oneLine(raw))
 	}
+	var names []string
 	for _, r := range runs {
 		if r.Conclusion != "failure" {
 			continue
 		}
-		logText, err = p.gh(ctx, "run", "view", strconv.Itoa(r.DatabaseID), "--log-failed")
-		if err != nil {
-			return true, logText, nil
+		name := r.Name
+		if name == "" {
+			name = "unknown"
 		}
-		return true, logText, nil
+		names = append(names, name)
+		if logText == "" {
+			logText, _ = p.gh(ctx, "run", "view", strconv.Itoa(r.DatabaseID), "--log-failed")
+		}
 	}
-	return false, "", nil
+	if len(names) == 0 {
+		return false, "", "", nil
+	}
+	return true, strings.Join(names, ","), logText, nil
 }
 
 func (p *promoter) git(ctx context.Context, args ...string) (string, error) {
@@ -564,16 +742,39 @@ func (p *promoter) gh(ctx context.Context, args ...string) (string, error) {
 			return "", errors.New("the queue refuses a strategy flag (" + a + ")")
 		}
 	}
-	if p.ghRun != nil {
-		return p.ghRun(ctx, p.dir, args...)
+	return p.forgeCall().Call(ctx, args...)
+}
+
+// forgeCall is the one forge. A test's forge or ghRun is wrapped so every
+// call, including the real gh, goes through promoteForge.
+func (p *promoter) forgeCall() promoteForge {
+	if p.forge != nil {
+		return p.forge
 	}
+	if p.ghRun != nil {
+		run := p.ghRun
+		dir := p.dir
+		return promoteForgeFunc(func(ctx context.Context, args ...string) (string, error) {
+			return run(ctx, dir, args...)
+		})
+	}
+	return ghForge{dir: p.dir, env: p.env}
+}
+
+// ghForge runs gh through internal/subproc. It is the real promoteForge.
+type ghForge struct {
+	dir string
+	env []string
+}
+
+func (g ghForge) Call(ctx context.Context, args ...string) (string, error) {
 	b := subproc.Prepare(ctx, subproc.GHBudget, "gh", args...)
 	defer b.Cancel()
-	if p.dir != "" {
-		b.Cmd.Dir = p.dir
+	if g.dir != "" {
+		b.Cmd.Dir = g.dir
 	}
-	if p.env != nil {
-		b.Cmd.Env = p.env
+	if g.env != nil {
+		b.Cmd.Env = g.env
 	}
 	var stdout, stderr bytes.Buffer
 	b.Cmd.Stdout, b.Cmd.Stderr = &stdout, &stderr

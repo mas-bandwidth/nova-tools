@@ -52,22 +52,27 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 	case "rev-parse":
 		rev := args[len(args)-1]
 		switch rev {
-		case s.live, "refs/heads/" + s.live:
+		case s.live, "refs/heads/" + s.live, "refs/remotes/origin/" + s.live, "origin/" + s.live:
 			return s.tip, nil
-		case "dev", "refs/heads/dev":
+		case "dev", "refs/heads/dev", "refs/remotes/origin/dev", "origin/dev":
 			return s.baseSHA, nil
 		case "refs/promoted/last":
 			return "", errors.New("missing")
 		default:
-			if strings.HasPrefix(rev, "promo/") {
+			if strings.Contains(rev, "promo/") {
 				return s.tip, nil
 			}
 			return "", errors.New("unknown rev " + rev)
 		}
 	case "log":
 		return s.logText, nil
-	case "branch":
+	case "branch", "fetch", "checkout", "merge":
 		return "", nil
+	case "rev-list":
+		if s.tip == s.baseSHA {
+			return "0", nil
+		}
+		return "2", nil
 	case "config":
 		return s.config(args)
 	case "push", "update-ref":
