@@ -511,3 +511,74 @@ func TestStatusSaysTheChallengeIsAnsweredTheSecondAfterAPongIsWritten(t *testing
 	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce should end the challenge")
 	assert.Equal(t, 1, s.Pongs, "the pongs count should be incremented")
 }
+
+func TestDaemonDropsDuplicateDeliveryOfActedMessage(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	m := r.send(t, "ada", "hello", "are you there?")
+	r.at[2] = func() {
+		r.mu.Lock()
+		r.passive = true
+		r.mu.Unlock()
+		// By beat 2 the first turn has finished and acted; redeliver onto bob's stream
+		err := r.store.AddAll(context.Background(), []string{bus.StreamOf("bob")}, map[string]string{
+			"id":      m.ID,
+			"from":    m.From,
+			"to":      strings.Join(m.To, ","),
+			"cc":      strings.Join(m.CC, ","),
+			"re":      m.Re,
+			"at":      m.At.Format(time.RFC3339),
+			"subject": m.Subject,
+			"body":    m.Body,
+		})
+		require.NoError(t, err)
+	}
+	r.run(t, 6)
+
+	assert.Len(t, r.delivered, 1, "duplicate delivery must not be pushed into a turn")
+
+	receipts, err := r.bus.Receipts(context.Background(), "bob", m.ID)
+	require.NoError(t, err)
+	require.Len(t, receipts, 1)
+	assert.Equal(t, bus.ReceiptActed, receipts[0].State)
+
+	var foundDrop bool
+	for _, rec := range r.records {
+		if strings.Contains(rec, "duplicate dropped id="+m.ID) {
+			foundDrop = true
+			break
+		}
+	}
+	assert.True(t, foundDrop, "expected record line 'duplicate dropped id=%s', got records: %v", m.ID, r.records)
+}
+
+// A daemon that restarts remembers nothing, so the store's acted receipt is
+// its memory: a message a turn before the restart acted on, handed in again
+// (the old reader died between the turn's end and its ack), is dropped and
+// acked, never pushed in twice (SPEC-BUS.md, message-receipts.w1).
+func TestARestartedDaemonDropsARedeliveryTheStoreSaysWasActed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	ctx := context.Background()
+	m := r.send(t, "ada", "hello", "are you there?")
+	// the turn before the restart: taken and acted, and the reader died before its ack
+	_, ok, err := r.bus.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, r.bus.MarkReceipts(ctx, "bob", bus.ReceiptActed, m.ID))
+	r.store.Advance(time.Hour) // past ClaimAfter: the new daemon claims it
+
+	r.at[2] = func() {
+		r.mu.Lock()
+		r.passive = true
+		r.mu.Unlock()
+	}
+	r.run(t, 4)
+
+	assert.Empty(t, r.delivered, "an acted message handed in again must not be pushed into a turn")
+	assert.Contains(t, strings.Join(r.records, "\n"), "duplicate dropped id="+m.ID)
+	pending, fresh, err := r.bus.Peek(ctx, "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "the dropped delivery is acked")
+	assert.Empty(t, fresh)
+}
