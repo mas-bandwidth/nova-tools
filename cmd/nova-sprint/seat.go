@@ -302,7 +302,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 			h.Members = append(h.Members, memberView{Member: m, Status: status})
 		}
 	}
-	h.Rules = []string{handoverWaves}
+	h.Rules = append([]string{handoverWaves}, coordinatorRuleLines()...) // the runbook's numbered rules (handover_rules.go)
 	h.First = []string{"nova-sprint where", "nova-sprint inbox --wait --push " + pushSeat, `read docs/SPEC-SPRINT.md, "Handing over the seat"`}
 	return h, a.handoverText(h), nil
 }
@@ -408,8 +408,8 @@ func (a *app) handoverText(h handoverView) string {
 		}
 		line("%s", s)
 	}
-	for _, r := range h.Rules {
-		line("RULE %s", r)
+	for _, r := range handoverRuleText(h.Rules) {
+		line("%s", r)
 	}
 	for _, f := range h.First {
 		line("FIRST %s", f)

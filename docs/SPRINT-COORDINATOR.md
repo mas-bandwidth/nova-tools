@@ -405,9 +405,118 @@ directory, and a bus note pointing to it. It holds, each item with its id and ev
 - The stall count: what was tried for each problem that came back, how many times, how it failed; and
   anything refused or left to the owner on the bus, so another route is not tried.
 
-The seat: the next holder runs under the actor the store names; the first `init` sets it and no later `init`
+`nova-sprint handover` prints most of this from the store, with the rules of section 10. The seat: the next holder runs under the actor the store names; the first `init` sets it and no later `init`
 changes it ([SPEC-SPRINT.md section 11](SPEC-SPRINT.md#11-verbs)). `nova-config sprint set --coordinator
 <friend>` is the deal's and routing's handover, a separate fact. The previous holder stops when the note is sent.
+
+## 10. The rules
+
+The rules a coordinator follows, each with the failure it prevents. "Does it" names the verb lines or the
+setting (a verb's flag) that carry the rule out, or says judgment where the seat decides with no verb; "Card"
+names the card that makes or made the rule mechanical, or none. `nova-sprint handover` prints every rule marked
+"Pass" (the rules of each pass) in its text and every rule in `--json`. This table and
+`cmd/nova-sprint/handover_rules.go` are one list, held equal by `TestHandoverRulesAreTheRunbooksRules`;
+`TestEveryCoordinatorRuleNamesVerbsThatExist` (internal/docs) fails when a rule names a verb or a flag the
+tool does not carry. A rule changes in both places in one change.
+
+| # | Rule | Why | Does it | Card | Pass |
+|---|---|---|---|---|---|
+| 1 | A friend is working only when its cards go working to done; awake, beating or answering pings is not working. Ask a friend holding cards with no finish in the bound what blocks it, and remove the blocker. | Friends stayed awake and answered pings while no card moved. | `nova-sprint set --friend-finish <duration>`, `nova-sprint view coordinator --json` | friend-session-liveness | yes |
+| 2 | A friend whose session does not answer a wake ping is woken and fixed on the same pass, never left overnight; when the cause is the owner's (credit, keys, account), mark it down so its cards move, and tell the owner. | A friend slept deaf all night with work assigned. | `nova-friend ping --as <coordinator> --to <friend>`, `nova-friend wait-pong`, `nova-sprint friend down <friend> --reason <text>` | friend-idle-wake-r | yes |
+| 3 | Every 10 minutes walk the friend chain, stopping at the first failing link: up, hears, delivered, started, progressing, finished, returned, balanced; check the fleet's working against width, ready, review, merging and their ages, and the open judgments. | Problems were found late, and by the owner. | `nova-sprint watch --wake --check <duration>`, `nova-sprint view coordinator --json`, `nova-friend status` | coordinator-wake-verb | yes |
+| 4 | Level idle lanes before topping up full queues: a friend or machine with free width and nothing ready is fed first. | Full queues were topped up while lanes sat idle. | `nova-sprint friend level`, `nova-sprint fleet level` | friend-deal-idle-lanes-first | yes |
+| 5 | Every fix lands on the one sprint base first, and the live server is built only from that base; any side branch a card names is folded into the base every pass, and a build whose commit is not on the base is not installed. | The live server ran from a side branch a thousand commits apart from the base. | `nova-sprint land --base <branch> --dry-run`, `nova-sprint server switch <binary>` | sn-landing-branch-is-sprint | yes |
+| 6 | The base is promoted to dev continually (every 20 to 30 minutes or every 25 landings), and a promotion is recorded. | Stream branches drifted far from dev. | `nova-sprint promote --every <duration> --landings <n>`, `nova-sprint promoted --sha <merge sha>` | promote-loop | yes |
+| 7 | Every adoption reaches every fleet machine in the same step, funded or not, with each machine's version reported; a machine back from down adopts the latest release before it is dealt. | Idle machines fell behind, and returning machines worked on old binaries. | `nova-update release adopt`, `nova-update adoption --file <path>` | fleet-back-up-adopts-latest | yes |
+| 8 | A returning friend or machine is brought up by evidence, its own beat or output, never by expectation. | Friends were shown up while absent, and returning ones stayed down. | `nova-sprint friend up <friend>`, `nova-sprint fleet up <member>` | friend-presence-from-harness | yes |
+| 9 | The same finding twice is a brief defect: the tick refuses a third rework; fix the brief or drop the card. | A card was reworked hundreds of times on one finding. | `nova-sprint brief <id> --brief-file <path>`, `nova-sprint drop <id> --reason <text>` | none | yes |
+| 10 | Work that needs a file outside a card's PATHS means a twin card with the PATHS widened, never an edit outside them. | Out-of-PATHS edits collided with other cards and were refused at landing. | `nova-sprint recut <id> --brief-file <path> --new <id>`, `nova-sprint relink <old-id> <new-id> --reason <text>` | recut-widen-r | yes |
+| 11 | A rate limit is backed off and resumed; out of funds is held, raised to the owner once per provider, and never answered with a rework. | A night of work landed nothing under a provider with no funds. | `nova-sprint routes`, `nova-sprint funded <provider> --reason <text>` | none | yes |
+| 12 | Shared resources (machines, branches, ports, accounts) are claimed through coordinator verbs with leases; never tell a friend to wait on another friend. | A hand-shaken hold starved a friend when its holder went down. | `nova-sprint lane take <kind> --machine <m> --as <worker>`, `nova-sprint lane give <kind> --machine <m> --as <worker>` | verb-lane-take-give-m1 | yes |
+| 13 | Friends work only in their real working directory: the coordinator writes jobs into its inbox, the friend writes results into its outbox, and no brief names a path outside. | Friends trampled each other's files. | `nova-sprint friend sync --root <dir>` | none | yes |
+| 14 | Put no text on the owner's dashboard that the owner did not ask for. | Unasked notes cluttered the page. | judgment | none | yes |
+| 15 | An order addressed to the coordinator (stop, conserve, sleep) applies to the coordinator only; friends change only on "all friends" or by name. | Single orders stopped the whole team. | judgment | none | no |
+| 16 | Debug a silent friend in order: the bus, the daemon's push, then the friend's own window; never hand the owner text to paste. | The owner was stuck relaying. | `nova-bus peek`, `nova-friend check`, `nova-friend status` | none | no |
+| 17 | Never design a wave as one chain; width comes from independent work. | Work queued behind one fix only one card needed. | `nova-sprint needs --roots` | none | no |
+| 18 | Read a uniform failure shape across one model's cards as our contract failing, fix it per model family, and drop a model only on a measured quality floor. | Capable models were dropped for our own format bugs. | `nova-sprint stats` | none | no |
+| 19 | Express every sprint feature as an operation on table rows or a queue between tables, or leave it out. | Added mechanisms made the design opaque. | judgment | none | no |
+| 20 | Put most work through the sprint, friend work included, as cards in streams. | Hand briefs made cost and progress invisible. | `nova-sprint add --stream <s> --brief-dir <dir>` | none | no |
+| 21 | Give friends the judgment work (design, ratings, audits) and the fleet the mechanical work. | Judgment work failed on mechanical routes. | judgment | none | no |
+| 22 | Open a new sprint with its simplest mechanical class on flash, and hold judgment cards behind a sentinel. | Complex first cards failed expensively. | `nova-sprint add --stream <s> --sentinel <id>`, `nova-sprint release <sentinel> --reason <text>` | none | no |
+| 23 | Every cold read runs at least one temporal probe (land then reopen, claim during resolve), and each reproduction is kept as a test. | Defects in sequences escaped happy-path reads. | judgment | none | no |
+| 24 | A score under 10 names its reasons and the work that would reach 10. | Low scores gave no path to a fix. | judgment | none | no |
+| 25 | Judge the read gate only by periodic cold audits of landed work by a stronger reader, repeated when the card mix changes; never by pass rates. | Pass rates misjudged reader quality. | `nova-sprint stream set <stream> --read-tier <tier>` | none | no |
+| 26 | When streams stick, look across streams for the common failure class and fix the class. | Per-card fixes repeated. | `nova-sprint where --json`, `nova-sprint log --stream <s>` | none | no |
+| 27 | When a pull request is held up by repeated rounds, land the reviewed head as is and cut a follow-up card for the rest. | Endless fix rounds on a moving base. | `nova-sprint accept <id>`, `nova-sprint add --stream <s> --brief-file <f1>` | none | no |
+| 28 | Review landed sprint work stream by stream before the sprint branch merges into the release line; bad hunks become repair cards. | Mechanical work risks bad code. | `nova-sprint log --stream <s>` | none | no |
+| 29 | Shrink test code through harnesses, constructors with defaults and table-driven cases rather than copies. | Test rigs were duplicated. | judgment | none | no |
+| 30 | Gate every layer with a run at 10x to 100x its largest real size with a time limit per operation, and a slow trickle run as well. | Scale and ordering bugs hid at normal size. | `nova-sprint play --simulation --seed <n>` | none | no |
+| 31 | Before cutting a repository, a long-lived branch or an integration branch, name what stops landing on the old line and when. | Branches knotted together. | judgment | none | no |
+| 32 | Make adoption the last step of every build: merge, update every machine, restart what runs it, announce it, use it that day, and turn frictions into cards. | Built tools went unused. | `nova-update release adopt`, `nova-bus send` | none | no |
+| 33 | Follow every adoption with a dogfood receipt the same day: real use, gaps filed with the command and its output. | Adoption without use hid gaps. | judgment | none | no |
+| 34 | Call a tool or loop used only when a dated log shows deliveries; stop a loop with zero deliveries in a day. | Loops refused silently for days while running. | `nova-sprint machinery` | none | no |
+| 35 | Switch to a replacement tool only after every user has sent and received on it and the friction list is empty; keep the old one read-only. | Switchovers stranded users. | judgment | none | no |
+| 36 | Do not build a thing with itself until it is built and reliable; fix it by hand or by child agents, install it, then resume. | A broken sprint was used to fix itself. | judgment | none | no |
+| 37 | When a layer settles, land it, split it to its own boundary, and build the moving work above it. | Settled and moving work tangled. | judgment | none | no |
+| 38 | Keep everything in nova-tools useful without nova-sprint; nova-sprint depends on nova-tools, never the reverse. | Sprint opinions leaked into the general kit. | judgment | none | no |
+| 39 | Build layers bottom up, one at a time, each passing its gate before anything above starts; hold later layers' cards until the layer below locks. | Rebuilds failed without checked foundations. | `nova-sprint add --stream <s> --sentinel <id>`, `nova-sprint held` | none | no |
+| 40 | When an upper layer needs something new below, pause, extend the lower layer under its own gate, then resume. | Workarounds piled above broken layers. | judgment | none | no |
+| 41 | Lock what the owner has stated in words as checked invariants; a lock change needs the owner's words. | The core machine's design drifted. | judgment | none | no |
+| 42 | Release from main by fast-forward promotion of a green revision after a cold audit at the candidate and dogfooding on real work; green CI alone never releases. | Releases went out on branch verdicts. | `nova-update release cut` | none | no |
+| 43 | Release notes are written by an author and read cold before the cut, never generated. | Generated notes said nothing useful. | judgment | none | no |
+| 44 | Docs, help and README work get a final prose pass by the strongest prose author before rating and landing. | Uneven prose lowered read ratings. | judgment | none | no |
+| 45 | Write docs in the present tense only: no parked names, dates or history. | Docs read as archaeology. | judgment | none | no |
+| 46 | Build every tool to the standard (docs/STANDARD.md), each rule naming its class test. | Tools were built inconsistently. | judgment | none | no |
+| 47 | Rate every tool cold two ways, USE (binary and help only) and READ (README then code), by several models; a tool is done at 9 or better from every rater. | Tools that worked were still hard for an AI to pick up. | judgment | none | no |
+| 48 | Ship a working default for every setting; a fresh install with no settings works. | Adopters had to configure before anything ran. | judgment | none | no |
+| 49 | Write tools in Go unless the host demands otherwise, as a library first with a thin command; tools import each other and never exec each other. | Mixed languages and exec chains. | judgment | none | no |
+| 50 | Prefer the simplest code, delete a duplicate path rather than patch it, and run a removal-only pass after every expansion. | Code grew with each fix. | judgment | none | no |
+| 51 | Adopt an off-the-shelf tool only against a measured need, and retire fully what dogfood shows is unused. | The stack sprawled. | judgment | none | no |
+| 52 | Do not open the next sprint until every pull request of the last is landed, closed with a reason, or owned with a named next step. | Unprocessed piles. | `nova-sprint where --json`, `nova-sprint clear --confirm sprint` | none | no |
+| 53 | Optimize priced cost, not token counts. | Token counts misranked the levers. | judgment | none | no |
+| 54 | Measure cost per landed card (work, reads, landing) every cadence, and stop launching when it beats no alternative or the merge queue backs up. | Cost grew unmeasured. | `nova-sprint stats`, `nova-sprint stop --reason <text> --until <time>` | complete-cost | no |
+| 55 | Trial a free route on one mechanical stream against flash, priced at zero in config, before using it. | Free routes were adopted unmeasured. | `nova-sprint routes` | none | no |
+| 56 | When a budget is exhausted, land work in flight and start nothing new. | Spend continued past the budget. | `nova-sprint stop --reason <text> --until <time>`, `nova-sprint land` | none | no |
+| 57 | Prioritize tooling work by tokens and waste removed first, then reliability, then wall clock. | Effort went to low-value fixes. | `nova-sprint rank <id> --first` | none | no |
+| 58 | Run a bounded test (about 50 cards) on any new rules and read its cost per landed card before a broad wave. | Broad releases on untested rules wasted money. | `nova-sprint add --stream <s> --count <n>`, `nova-sprint stats` | none | no |
+| 59 | Change a setting at its source, the config row, never only in the store, where a sync overwrites it. | Store-only edits were silently reverted. | `nova-config apply` | none | no |
+| 60 | Place a CI leg only on a machine that runs its packages in under 2 minutes; slower machines run cards. | Old machines could not hold the CI bar. | judgment | none | no |
+| 61 | Line up shares, guards, probes and 1.5x supply before a load test, with capacity in config. | Changing settings under load went badly. | judgment | none | no |
+| 62 | Seek speed through width (more machines, fewer attempts per card), not per-card latency. | Chasing card latency did not raise throughput. | `nova-config machine width <name>` | none | no |
+| 63 | State each brief's cost bound as a number the gate prints and asserts. | Requirements were met only after rework. | judgment | none | no |
+| 64 | Size cards by tier: fragments for flash, whole things for pro and above, refined by measurement. | Tiny cards paid a fixed toll each; big cards failed on weak models. | `nova-sprint recut <id> --tier <tier>` | none | no |
+| 65 | Fit the card to the executor's model class: small, fully specified work with the probes written in for weaker models. | Loose tasks produced overclaiming reports. | judgment | none | no |
+| 66 | Have every card extend a class test as its executable spec. | Fixes were not pinned. | `nova-swarm lint` | none | no |
+| 67 | Run one card through before cutting many. | A bad frame multiplied across a wave. | `nova-sprint preflight --brief-dir <dir>` | none | no |
+| 68 | Keep the coordinator to coordination: no card work in its own session or account; send work as cards. | The coordinator's account ran out and every child stopped. | judgment | none | no |
+| 69 | Treat a lookup or procedure done twice by hand as a missing verb, and file it. | Rote work was most of the coordinator's tokens. | judgment | none | no |
+| 70 | Ship no scripts: every coordinator need is a product verb, and a stopgap is named with a card that deletes it. | Private scripts made the seat non-transferable. | judgment | none | no |
+| 71 | Every rule a coordinator needs is a receipt, refusal or doc the tools print; the handbook is accepted only after another agent coordinates from it alone. | The seat depended on one agent's private memory. | `nova-sprint handover` | none | no |
+| 72 | Never block the main session: anything over about 15 s runs in the background and notifies, and the coordinator never waits on children or CI without a watcher armed. | The coordinator was found blocked. | `nova-sprint inbox --wait --push seat` | none | no |
+| 73 | Map the owner's phrases to verbs: new sprint is clear, add work is add, start and stop are start and stop, pause and unpause are stop and start. | Commands were ambiguous. | `nova-sprint clear --confirm sprint`, `nova-sprint add --stream <s>`, `nova-sprint stop --reason <text> --until <time>`, `nova-sprint start` | none | no |
+| 74 | Decide inside a layer, record each decision with its reason, and bring the owner only the shape and what touches the owner's world (credentials, machines, money). | The owner was asked about internals. | judgment | decision-record | no |
+| 75 | Turn each design rule the owner states into a checked invariant the same day or label it unchecked, and review results against the owner's sentence. | Implementations drifted from the stated design. | judgment | none | no |
+| 76 | Check every number against its source before quoting it, and measure the primary datum. | Wrong numbers were reported. | `nova-sprint where --json` | none | no |
+| 77 | Set every cap, budget and threshold from a measured distribution, with the numbers shown beside it. | Round guesses set limits. | judgment | none | no |
+| 78 | Fix a defect found in passing the same hour, with a failing test first. | Parked defects accumulated. | judgment | none | no |
+| 79 | Follow every machinery fix within the hour with a probe of 1 to 5 cards through the changed path. | Unproven fixes went to bulk runs. | `nova-sprint quack --streams <a,b> --count <n> --repo <clone url>` | none | no |
+| 80 | When signs of a limit appear (fixes that do not hold, special cases multiplying), stop building upward, name the layers, take the list to the owner, and secure from the bottom; keep an attempts record per approach. | Rebuilds on a broken foundation. | judgment | none | no |
+| 81 | When open pull requests climb or landings stall, start nothing new until the wave lands. | Manual sprints ended badly. | `nova-sprint set --alarm-merging <n>` | none | no |
+| 82 | During a stress run, record every break with a receipt without stopping for non-breakage fixes; study at the end. | Runs stopped midway and lessons were lost. | judgment | none | no |
+| 83 | Before releasing a wave, probe every route, keep the judgment-answer record in place, and arm a watcher on the landed count. | A night of zero landings went unseen. | `nova-sprint quack --streams <a,b> --count <n> --repo <clone url>`, `nova-sprint answer --dry-run`, `nova-sprint watch --wake` | none | no |
+| 84 | Ask the people doing the work what would have stopped the card reaching them, and adopt the answer within the hour. | The same failures recurred. | judgment | none | no |
+| 85 | Send a reader's findings back as the next task with exact lines and the probe file, saying first what was good; help, never grade. | Grading discouraged and did not fix. | `nova-sprint rework <id> --fix <text>` | none | no |
+| 86 | Before the coordinator goes dark, send each friend a note naming its work; when a friend is out, continue its critical work on its branch. | Friends drifted without a coordinator. | `nova-bus send` | none | no |
+| 87 | Mock and drive each new layer with the owner on a disposable store before speccing and building it. | Work built ahead of the drive was thrown away. | `nova-sprint selftest` | none | no |
+| 88 | Settle specs in conversation with the owner, writing each decision into the spec as it is made, with no numeric spec-score gate. | Scored spec gates did not produce good software. | judgment | none | no |
+| 89 | Never switch branches in a clone that live loops run from; edit in a separate clone. | A branch switch deleted live scripts. | judgment | none | no |
+| 90 | Treat a permission or classifier denial as final: log it for the owner, never reword the action to get past it. | Guards were routed around. | judgment | none | no |
+| 91 | Force-push only with a lease on the agents' own branches; rewriting release-line history needs the owner. | Commits were lost. | judgment | none | no |
+| 92 | Only the coordinator role merges on the forge, on named reads; while agents share one identity, trace an unexplained action among the agents before reporting it. | Merges and tags could not be traced. | `nova-sprint land` | none | no |
+| 93 | Commit anything that matters to git; working directories are not backed up. | Work was lost on disk. | judgment | none | no |
+| 94 | Model every state machine in TLA+ beside the code, run TLC on a bench and not the working machine, verify each counterexample by hand, and cite the model from the change. | State machines shipped broken. | judgment | none | no |
+| 95 | Run visual work from a spec file: each request edits one line, and the builder checks against it before every restart. | Dashboard changes regressed earlier decisions. | judgment | none | no |
+| 96 | Report outcomes first, in plain words, with numbers only where they change a decision. | Reports were long and full of jargon. | judgment | none | no |
 
 ## Open items
 
