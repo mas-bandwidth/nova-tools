@@ -1,0 +1,3 @@
+# ceiling: 2
+internal/nsprint/testutil/pg:clock 2 the clock is read here instead of taken as a parameter
+internal/nsprint/testutil/pg:env 5 the environment is read here instead of taken as a parameter

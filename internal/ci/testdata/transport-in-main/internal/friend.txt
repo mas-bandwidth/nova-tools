@@ -1,0 +1,3 @@
+# ceiling: 2
+internal/friend:clock 1 the clock is read here instead of taken as a parameter
+internal/friend:env 2 the environment is read here instead of taken as a parameter

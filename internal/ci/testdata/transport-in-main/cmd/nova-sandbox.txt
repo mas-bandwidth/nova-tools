@@ -1,0 +1,3 @@
+# ceiling: 2
+cmd/nova-sandbox:clock 8 the clock is read here instead of taken as a parameter
+cmd/nova-sandbox:env 3 the environment is read here instead of taken as a parameter
