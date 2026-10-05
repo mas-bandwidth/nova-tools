@@ -207,11 +207,11 @@ travel.
 
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
-    --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/rowan-working/dogfood \
-    --retired ~/rowan-working/bin/retired/README.md \
-    --bin ~/rowan-working/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+    --ledger ~/reports/pitstop-tests-2026-09-17.md \
+    --receipts ~/ada-working/dogfood \
+    --retired ~/ada-working/bin/retired/README.md \
+    --bin ~/ada-working/bin --repo-dir . \
+    --since 2026-09-18T00:00:00Z --state ~/ada-working/convergence.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24
@@ -1738,7 +1738,7 @@ The per-binary deadline is thirty seconds rather than the five every other verb
 takes because of when this verb is run: right after `go install ./cmd/...`, on a
 directory of binaries this machine has never executed. The platform assesses the
 first run of a never-seen executable and charges it to that deadline — measured
-on a darwin/arm64 Studio at 164–571 ms cold against 5 ms warm when idle, and at
+on a darwin/arm64 bench at 164–571 ms cold against 5 ms warm when idle, and at
 a 7.03 s maximum while a tree compiled beside it, which is the state the
 `go install` one command earlier leaves the machine in. At five seconds that
 refused healthy binaries and named a build repair that would have found nothing
@@ -1794,10 +1794,10 @@ rule, the head commit edits `README.md`.
 ```sh
 cd "$(mktemp -d)" && git init -q && git config user.name you && git config user.email you@example.com
 echo age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata > recovery.pub
-printf 'creation_rules:\n  - path_regex: ^mini\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
+printf 'creation_rules:\n  - path_regex: ^bench1\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
 echo 'the store' > README.md && git add -A && git commit -qm base
 echo 'one seat per machine' >> README.md && git commit -qam head
-printf 'mini\tmini.local\tdarwin/arm64\tbench\tmini\t10\t-\n' > ../machines.tsv
+printf 'bench1\tbench1.local\tdarwin/arm64\tbench\tbench1\t10\t-\n' > ../machines.tsv
 nova-secrets gate --store . --base HEAD~1 --head HEAD --machines ../machines.tsv
 ```
 
@@ -1955,7 +1955,7 @@ its allowlist row (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, where is
 `run<id>` or a bench) names more. A `CI-LOAD load=<n> cpus=<n> per-cpu=<n>:
 measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
-only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
+only the nightly enforcing legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
 and exits 1 on every leg. A package `go test` served from its test cache reports a
 package elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can
