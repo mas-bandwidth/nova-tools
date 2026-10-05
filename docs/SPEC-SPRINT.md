@@ -2007,7 +2007,16 @@ makes a waiting stream merging; the merge step (when it lands the last queued
 card of a stream not done), return and drop make a merging stream with nothing
 queued or stuck waiting, with `since` then, and a stream landed when every
 primary of it left on the table has landed. A stopped stream stays stopped
-until it resumes. accept closes the open card judgments of the primaries it
+until it resumes. The one stop the machine
+resumes itself is a refused push (cause `rejected`: a push the remote refused twice, a
+protected-branch GH006 among them, which clears without a person): the land loop resumes it
+as the coordinator after `sprint.RejectedRetries` (2m, then 5m, then 15m, from the stop's
+`since`), and the landing that follows pushes again. The resume answers the stop's judgment,
+so a refusal that clears leaves none open; one that does not stop the stream again with a
+new judgment, and after the third resume the stream stays stopped with its one judgment, the
+coordinator's. A batch that lands restarts the count (`TestAStreamStoppedByATransientPushRefusalResumesItselfWhenThePushSucceeds`,
+`TestAStreamStoppedByAPushRefusalThatDoesNotClearRaisesExactlyOneJudgment`). Every other cause
+stays stopped until a person resumes it. accept closes the open card judgments of the primaries it
 accepts.
 
 `since` is the clock time the state last changed. The merge step is mechanical

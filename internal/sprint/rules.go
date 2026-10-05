@@ -583,6 +583,14 @@ func TickRuleBrief(s *Snapshot, r TickReq) (Plan, int) {
 // the failure after them is its third, and stops the stream (MergeReq.BaseRed, NBaseRed).
 var BaseGateRetries = []time.Duration{2 * time.Minute, 5 * time.Minute}
 
+// RejectedRetries is the lander's wait before it resumes a stream the remote's refusal
+// stopped (cause rejected: a push refused twice, a protected-branch GH006 among them), by
+// itself: after the first, again after the second, and after the third; a stream stopped a
+// fourth time stays stopped, and its one judgment (NRejected) is the coordinator's. A
+// resume closes the stop's judgment, so a refusal that clears raises none that stays.
+// The count restarts when the stream lands a batch.
+var RejectedRetries = []time.Duration{2 * time.Minute, 5 * time.Minute, 15 * time.Minute}
+
 // sameFailure is why a failure is the fleet's and not the card's: RuleSameFailureCards or
 // more cards hold it now (in review with their work failed that way, or ready at their
 // redeal bound with that class), "" when fewer do or the class is unknown. A toolchain a

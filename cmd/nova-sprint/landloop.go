@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -46,9 +47,11 @@ func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 // when it is due: a round with nothing queued to merge, or PruneEvery branches waiting,
 // and no failed cleanup waiting out PruneRetry. Its PRUNE lines are printed as land's.
 // A stop of the loop flushes nothing: what is still queued then stays on origin.
-// Then, still outside the landing, it runs the promote step when one is armed
+// Before the landing the round resumes, by itself, a stream the remote's refusal stopped
+// (resumeRejected). Then, still outside the landing, it runs the promote step when one is armed
 // (promote.go). Nil arms nothing, so run --land does not open a pull request.
 func (a *app) landRound(ctx context.Context, addr string, more []string, stdout io.Writer) int {
+	a.resumeRejected(ctx, addr, stdout)
 	code, idle := a.landOnce(ctx, addr, more, stdout)
 	if a.prune.due(idle, a.now()) {
 		at := oneline.Field(a.now().Format("15:04:05"))
@@ -127,4 +130,90 @@ func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coor
 		}
 	}
 	return false, coordinator, nil
+}
+
+// rejectedRetry is the loop's count of the resumes it gave one stream: n of them since the
+// stream last landed a batch (its `moved` stamp), the stop it last saw (`since`), and when
+// that stop is resumed (due; zero once the retries are spent).
+type rejectedRetry struct {
+	moved, since string
+	n            int
+	due          time.Time
+}
+
+// rejectedRetries is the loop's count for each app (the land loop's own, one a process; a
+// test's app is its own), kept beside the loop rather than on the app, and by stream.
+var (
+	rejectedRetriesMu sync.Mutex
+	rejectedRetries   = map[*app]map[string]*rejectedRetry{}
+)
+
+// resumeRejected resumes, as the sprint's coordinator, each stream stopped by the remote's
+// refusal of its push (cause rejected) once its wait is over: sprint.RejectedRetries[n]
+// after the stop (its `since`, so a loop that starts late does not wait again). The landing that follows pushes again; a push that goes through lands
+// the batch and the stream is merging again, and the resume closed the stop's judgment,
+// so none is left open. A refusal that does not clear stops the stream again, up to
+// len(sprint.RejectedRetries) resumes; after them the stream stays stopped with its one
+// judgment, the coordinator's (docs/SPEC-SPRINT.md section 4, the stopped stream). A
+// stream that landed a batch since starts its count again. A conflict, a red branch and
+// a cross-stream stop are never resumed here: they have a cause only a mind resolves.
+func (a *app) resumeRejected(ctx context.Context, addr string, stdout io.Writer) {
+	a.serial.Lock()
+	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
+	var coordinator string
+	var s *sprint.Snapshot
+	if err == nil {
+		if coordinator, err = st.B.Coordinator(ctx); err == nil {
+			s, err = st.Load(ctx, []string{sprint.Merge}, nil)
+		}
+	}
+	a.serial.Unlock()
+	if err != nil || coordinator == "" {
+		return // unreadable: the landing says so, and the next round tries again
+	}
+	rejectedRetriesMu.Lock()
+	defer rejectedRetriesMu.Unlock()
+	if rejectedRetries[a] == nil {
+		rejectedRetries[a] = map[string]*rejectedRetry{}
+	}
+	seen := rejectedRetries[a]
+	now := a.now()
+	for _, stream := range s.Merge.Rows() {
+		ctl := s.StreamCtl(stream)
+		if ctl == nil || ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "rejected" {
+			continue
+		}
+		rt := seen[stream]
+		if rt == nil {
+			rt = &rejectedRetry{}
+			seen[stream] = rt
+		}
+		if rt.moved != ctl.F("moved") {
+			*rt = rejectedRetry{moved: ctl.F("moved")}
+		}
+		if rt.since != ctl.F("since") {
+			rt.since, rt.due = ctl.F("since"), time.Time{}
+			if rt.n < len(sprint.RejectedRetries) {
+				stopped, perr := time.Parse(time.RFC3339, rt.since)
+				if perr != nil {
+					stopped = now
+				}
+				rt.due = stopped.Add(sprint.RejectedRetries[rt.n])
+			}
+		}
+		if rt.due.IsZero() || now.Before(rt.due) {
+			continue
+		}
+		var out, errb bytes.Buffer
+		did := fmt.Sprintf("the push was refused and is tried again by the land loop (retry %d of %d)", rt.n+1, len(sprint.RejectedRetries))
+		code := a.cmdResume([]string{"--redis", addr, "--actor", coordinator, "--stream", stream, "--did", did}, &out, &errb)
+		rt.n++
+		rt.due = time.Time{}
+		at := oneline.Field(now.Format("15:04:05"))
+		if code != 0 {
+			fmt.Fprintf(stdout, "%s RESUME FAILED stream=%s: %s\n", at, stream, oneline.Escape(strings.TrimSpace(errb.String())))
+			continue
+		}
+		fmt.Fprintf(stdout, "%s RESUMED stream %s: %s\n", at, stream, oneline.Escape(did))
+	}
 }
