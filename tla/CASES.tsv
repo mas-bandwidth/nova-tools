@@ -387,3 +387,4 @@ MCReadsByRoomBrokenCount.cfg	MCReadsByRoom.tla	invariant	WidthRespected	ignore-t
 MCReadsByRoomBrokenNoFinder.cfg	MCReadsByRoom.tla	invariant	FinderFirst	ignore-terminal	readsbyroom	required	-
 MCReadsByRoomBrokenTwoFinders.cfg	MCReadsByRoom.tla	invariant	OneBroken	ignore-terminal	readsbyroom	required	-
 MCFriendBrokenDaemonPongEnds.cfg	MCFriend.tla	action	OnlySessionPongEnds	ignore-terminal	friend	required	-
+MCFriendBrokenDeliverWhileLimited.cfg	MCFriend.tla	invariant	NoTurnWhileLimited	ignore-terminal	friend	required	-

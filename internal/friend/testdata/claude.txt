@@ -1,0 +1,2 @@
+{"type": "error", "error": {"type": "rate_limit_error", "message": "Number of request tokens has exceeded your daily rate limit of 100000. Try again in 2 hours."}}
+{"type": "error", "error": {"type": "invalid_request_error", "message": "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}

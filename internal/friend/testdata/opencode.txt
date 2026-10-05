@@ -1,0 +1,2 @@
+Error 429: rate limit exceeded. Please wait 10m before submitting more requests.
+Insufficient AI Credits. Your credits will refresh 6:52 PM.

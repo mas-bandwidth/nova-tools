@@ -155,7 +155,7 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	if exit, err = refused("(new)", out, exit, err); err != nil {
+	if exit, err = refusedHarness(ctx, "opencode", "(new)", out, exit, err); err != nil {
 		return "", err
 	}
 	if exit != 0 {
@@ -200,6 +200,6 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	exit, err = refused(id, out, exit, err)
+	exit, err = refusedHarness(ctx, "opencode", id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
 }

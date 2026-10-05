@@ -1,0 +1,2 @@
+HTTP 429: rate limit reached, please retry after 30m
+HTTP 402: insufficient balance on account. Please recharge.
