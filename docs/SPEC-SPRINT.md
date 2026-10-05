@@ -346,7 +346,13 @@ rule, written here for friends under its own names because #5300 was not on
 dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
 `TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
-offer again.
+offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own
+rating, `WHO: friend <name>`, was dealt to a machine): a `WHO: friend <name>` card come
+back by a rework, a return or a redo (its `reworks` or `returns` counted;
+`sprint.ReworkPinned`) is dealt only to her, as on its first deal, and waits ready while
+she is down, held or without room, held as a hard pin is, dealt to no other friend and no
+machine (`TestAReworkKeepsTheWhoPin`); a take-back alone (`friend take`) counts neither,
+so a preference taken back from her is still offered on.
 
 **A friend's card taken back** (the owner, 2026-10-04, on cards dealt to a
 friend who would not start them, which could only be dropped and added again:
