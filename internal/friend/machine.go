@@ -12,6 +12,7 @@ package friend
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -163,6 +164,30 @@ func (m *Machine) IdleStep(now, active time.Time, cards int, after time.Duration
 // the one line to run, so a small model gets it right.
 func PingText(seat string, since time.Time, nonce string) string {
 	return fmt.Sprintf("PING %s\nseat=%s since=%s\nAnswer first, before anything else, with one command: nova-friend pong --as <you> --nonce %s --queue <tasks queued> --working <tasks working> --width <your width>\nThen go on with what you were doing.", nonce, seat, since.UTC().Format(time.RFC3339), nonce)
+}
+
+// WakeMark marks a ping as a wake check (nova-friend ping --wake): a line of
+// its own in the ping's body.
+const WakeMark = "wake=1"
+
+// WakePingText is a wake check as the coordinator sends it: the ping, and
+// WakeMark. The daemon answers it at once as any ping and, the session being
+// free, pushes the pong line in as its own turn, so the session is asked
+// even with no message waiting (docs/SPEC-FRIEND.md, session-pong.w1;
+// tla/Friend.tla, WakeTurn).
+func WakePingText(seat string, since time.Time, nonce string) string {
+	return PingText(seat, since, nonce) + "\n" + WakeMark
+}
+
+// IsWake says whether a ping's text asks for a wake check: one of its lines
+// is WakeMark (docs/SPEC-FRIEND.md, session-pong.w1).
+func IsWake(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == WakeMark {
+			return true
+		}
+	}
+	return false
 }
 
 // PongLine is the session pong as it travels on the bus: pong <nonce>

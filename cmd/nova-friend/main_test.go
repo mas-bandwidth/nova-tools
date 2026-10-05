@@ -175,6 +175,16 @@ func TestPingPongAndWaitPongAreTheCanary(t *testing.T) {
 	assert.Contains(t, m.Body, "seat=ada since=2026-10-04T03:00:")
 	assert.Contains(t, m.Body, "nova-friend pong --as <you> --nonce abc123")
 	cli.Do(t, "ping", "--as", "ada", "--to", "bob").Exit(0).Out("PING OK nonce=r4nd0m")
+	assert.False(t, friend.IsWake(m.Body), "a plain ping asks no wake turn")
+	cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "wake01", "--wake").Exit(0).Out("PING OK nonce=wake01")
+	entries, err = r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 10)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	assert.True(t, friend.IsWake(entries[2].Message().Body), "--wake carries the wake line")
+	// the daemon's answer alone never satisfies wait-pong: only the session's pong does
+	_, err = (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.DaemonPongSubject, Body: "daemon-pong wake01\n"})
+	require.NoError(t, err)
+	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "wake01", "--timeout", "2s").Exit(1).Err("WAIT-PONG NONE daemon=true", "the daemon answered and the session did not: deaf")
 
 	// the session answers, naming the coordinator since no daemon has recorded a seat; the pong file goes under the home directory
 	cli.Do(t, "pong", "--as", "bob", "--nonce", "abc123", "--to", "ada", "--queue", "2", "--working", "1", "--width", "4").Exit(0).Out("PONG OK nonce=abc123 to=ada id=")
@@ -213,12 +223,12 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.DefaultStateDir(r.home, "bob")
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
-	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")

@@ -63,6 +63,29 @@ below): the daemon answering is never the session.
   never from the body: a pong is forgeable only by the friend's login.
 - Width is the nova-config friend row's, given to the daemon at install.
 
+### session-pong.w1: a wake check is answered by the session
+
+A wake check is a PING whose body carries a `wake=1` line (`nova-friend ping
+--wake`; `WakePingText`, `IsWake`). The daemon answers it at once with
+`daemon-pong` as any ping, and when the session is free (no turn running, no
+message waiting) pushes in the exact pong line for the current nonce as its own
+short turn (`WakeTurnText`, `startWake`), with no message and no word about the
+coordinator, once per wake ping; while the session is mid-turn, or messages
+wait, the line rides at the head of the next turn that carries messages as
+above, and that pays the wake check. A plain ping is still never a turn, and a
+passive harness, or a one-shot daemon, pushes no wake turn. The two answers are
+kept apart: status.json carries `last_daemon_pong` beside the session's
+`last_pong`, and `nova-friend status` prints `daemon_pong_age` and
+`session_pong_age` as two facts; `wait-pong` accepts only the session's pong.
+The machine stays the one owner of `quiet`, `challenged` and `deaf`: a daemon
+pong ends nothing, so a wake check the session does not answer within the
+window is `deaf` while the daemon pongs (tla/Friend.tla: `WakeTurn`,
+`OnlySessionPongEnds`, `OwedOnlyWhileAsked`; the reversed witness
+`MCFriendBrokenDaemonPongEnds` lets the daemon's pong end a wake challenge and
+TLC catches it). The finding of 2026-10-04: every daemon ponged while a
+friend's session sat idle from 2:40 to 4:34 PM, and an idle session with no
+message waiting was never asked at all.
+
 ## The machine (tla/Friend.tla)
 
 The connection: `connected` while a ping arrived within the window (three

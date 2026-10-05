@@ -47,14 +47,17 @@ type Status struct {
 	SeatSince  time.Time `json:"seat_since"`
 	Challenge  string    `json:"challenge"`
 	Nonce      string    `json:"nonce"`
-	LastPong   time.Time `json:"last_pong"`
+	LastPong   time.Time `json:"last_pong"` // the session's pong, the only answer that ends a challenge
 	Pongs      int       `json:"pongs"`
-	Delivered  int       `json:"delivered"` // messages acked this run
-	Beats      int       `json:"beats"`
-	LastBeat   time.Time `json:"last_beat"`
-	BeatError  string    `json:"beat_error,omitempty"`
-	StoreError string    `json:"store_error,omitempty"`
-	Width      int       `json:"width"`
+	// LastDaemonPong is when the daemon last answered a ping itself: transport,
+	// never the session (docs/SPEC-FRIEND.md, session-pong.w1).
+	LastDaemonPong time.Time `json:"last_daemon_pong"`
+	Delivered      int       `json:"delivered"` // messages acked this run
+	Beats          int       `json:"beats"`
+	LastBeat       time.Time `json:"last_beat"`
+	BeatError      string    `json:"beat_error,omitempty"`
+	StoreError     string    `json:"store_error,omitempty"`
+	Width          int       `json:"width"`
 	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
 	// turns in a row the same way; empty for a passive harness.
 	Session       string    `json:"session,omitempty"`
