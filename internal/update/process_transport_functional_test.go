@@ -19,24 +19,32 @@ func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
 	// long enough that starting a race-instrumented child on a loaded box is not
 	// mistaken for a hang -- at 100ms for all four, the exit-3 case read
 	// "timeout" on a busy machine and the assertion it was making was lost.
+	// Boundedness is the event: every read returns, and a read that never does
+	// fails at the NOVA_TEST_WAIT poll bound instead of being timed against a
+	// wall clock (docs/SPEC-CI.md, `waits`; the allowlist header in
+	// internal/ci/testdata/fixed-waits-allowlist.txt).
 	for _, tc := range []struct {
 		cmd, want string
 		timeout   time.Duration
-		bound     time.Duration
 	}{
-		{command(t, "fail"), "exit 3", 5 * time.Second, 6 * time.Second},
-		{command(t, "huge"), "output", 5 * time.Second, 6 * time.Second},
-		{command(t, "hang"), "timeout", 20 * time.Millisecond, time.Second + killGrace},
-		{"nova-version-no-such-binary", "not_found", 5 * time.Second, time.Second},
+		{command(t, "fail"), "exit 3", 5 * time.Second},
+		{command(t, "huge"), "output", 5 * time.Second},
+		{command(t, "hang"), "timeout", 20 * time.Millisecond},
+		{"nova-version-no-such-binary", "not_found", 5 * time.Second},
 	} {
 		a, _ := argv(tc.cmd)
-		start := time.Now()
-		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
+		done := make(chan Read, 1)
+		go func() {
+			done <- Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
+		}()
+		var r Read
+		select {
+		case r = <-done:
+		case <-time.After(testWait()):
+			require.FailNowf(t, "read never returned", "%s: no result within %s", tc.want, testWait())
+		}
 		if r.Reason != tc.want {
 			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
-		}
-		if took := time.Since(start); took > tc.bound {
-			require.LessOrEqualf(t, took, tc.bound, "%s: %s is past the %s bound", tc.want, took, tc.bound)
 		}
 		if tc.want == "exit 3" && r.Raw != "v9.9.9" {
 			require.Fail(t, fmt.Sprintln(r))
@@ -66,13 +74,35 @@ func TestSnapshotLockWaitsForBudget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "snapshot.json")
 	unlock, err := lockSnapshot(context.Background(), path)
 	require.NoError(t, err)
-	defer unlock()
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
-	release, err := lockSnapshot(ctx, path)
+	// A held lock is the event: a writer whose budget is already spent is
+	// refused as busy, and one whose budget is open waits until the holder
+	// releases, then acquires. Neither is timed against a wall clock.
+	spent, cancel := context.WithCancel(t.Context())
+	cancel()
+	release, err := lockSnapshot(spent, path)
 	if release != nil {
 		release()
 	}
 	require.Error(t, err, "two snapshot writers acquired lock")
-	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	require.ErrorIs(t, spent.Err(), context.Canceled)
+
+	ctx, stop := context.WithTimeout(t.Context(), testWait())
+	defer stop()
+	type got struct {
+		release func()
+		err     error
+	}
+	waiter := make(chan got, 1)
+	go func() {
+		release, err := lockSnapshot(ctx, path)
+		waiter <- got{release, err}
+	}()
+	unlock()
+	select {
+	case g := <-waiter:
+		require.NoError(t, g.err, "the waiting writer did not acquire the released lock")
+		g.release()
+	case <-time.After(testWait()):
+		require.FailNow(t, "the waiting writer never acquired the released lock")
+	}
 }
