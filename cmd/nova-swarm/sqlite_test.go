@@ -24,6 +24,8 @@ func needsSQLite(t *testing.T) {
 }
 
 // usageRows reads a card's usage.tsv into a header and its rows, split on tabs.
+//
+//lint:ignore U1000 used by the functional and slow tagged budget tests, which staticcheck reads without build tags
 func usageRows(t *testing.T, jobDir string) ([]string, [][]string) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(jobDir, "usage.tsv"))
@@ -38,6 +40,8 @@ func usageRows(t *testing.T, jobDir string) ([]string, [][]string) {
 }
 
 // cell is one named column of one usage row.
+//
+//lint:ignore U1000 used by the functional and slow tagged budget tests, which staticcheck reads without build tags
 func cell(t *testing.T, head []string, row []string, name string) string {
 	t.Helper()
 	for i, h := range head {
