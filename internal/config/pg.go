@@ -90,6 +90,9 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 // deadline given, so the package's tests can shorten it: a caller's deadline,
 // longer or shorter, always governs.
 func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
+	// A refusal never reproduces a password from the input (docs/SPEC-CONFIG.md):
+	// the parser's own message runs the DSN through a best-effort redactor that
+	// malformed input defeats, so a rejected DSN names only the error's type.
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		// The parser's text masks a password only on a best-effort basis, so the
@@ -99,7 +102,7 @@ func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*P
 	_ = cfg
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("postgres: %w", err)
+		return nil, fmt.Errorf("postgres could not open (%T)", err)
 	}
 	db.SetMaxOpenConns(2)
 	pingCtx := ctx

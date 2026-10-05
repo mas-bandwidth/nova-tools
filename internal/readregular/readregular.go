@@ -39,7 +39,7 @@ func Read(path string, max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only to be read
 
 	fi2, err := f.Stat()
 	if err != nil {

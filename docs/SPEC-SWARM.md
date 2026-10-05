@@ -428,7 +428,7 @@ The typed records contract governs machine-verified evidence:
 | CHECK | `pass` \| `fail` \| `not-run` | R | R | R | R | R | R |
 | REPO | `owner/name`, `^[a-z0-9-]+/[a-z0-9._-]+$`; must equal the card's repo | R | R | R | R | R | R |
 | BRANCH | git ref (check-ref-format), ≤200 B; must equal the card's branch when it has one | D | D | D | D | O | - |
-| PATHS | 1-256 space-separated repo-relative paths; no `..`, no leading `/`, no duplicates | D | D | D | D | O | - |
+| PATHS | 1-256 whitespace-separated repo-relative paths; no `..`, no leading `/`, no duplicates | D | D | D | D | O | - |
 | RED | text 1-4096 B | D | D | D | - | - | - |
 | GREEN | text 1-4096 B | P | P | P | - | - | - |
 | PRIOR | `#<int> @<hex12>` | - | D | - | - | - | - |
@@ -448,9 +448,9 @@ This one grammar covers every section in every kind.
 - **Lines.** The evidence region is split on `\n`.
 - **Fences.** A fence is a line that starts with three backticks, and each one toggles the fenced state. Fence lines and every line inside a fence are neither rows nor headings.
 - **Headings.** A heading is any line starting `## ` outside a fence.
-- **Sections.** A section is the lines after its heading, up to the next heading or the end of the file. A heading is a contract section only when the whole line is exactly `## <Name>`, byte for byte. So `## Findings` counts, while `## findings`, `##Findings`, `## Findings:` and `## Findings ` (trailing space) do not.
+- **Sections.** A section is the lines after its heading, up to the next heading or the end of the file. A heading is a contract section only when the whole line is exactly `## <Name>`, byte for byte. So `## Findings` counts, while `## findings`, `##Findings`, `## Findings:` and `## Findings ` (trailing whitespace) do not.
 - **Other headings.** Any other heading, such as `## Notes`, is evidence. It ends the section above it and is otherwise ignored. A `### ` line does not start with `## `, so it neither ends a section nor counts as a row.
-- **Rows.** A row is a section line that starts at column 0 with `- ` (hyphen, space) and then has at least one byte that is not a space or tab. Nothing else is a row: blank lines, prose, indented lines (nested bullets, continuations), `* ` and `+ ` bullets, numbered items, table lines, `### ` subheadings, `-x` and a bare `- `. They all stay in the file as evidence and are never counted.
+- **Rows.** A row is a section line that starts at column 0 with `- ` (hyphen, blank) and then has at least one byte that is not a blank or tab. Nothing else is a row: blank lines, prose, indented lines (nested bullets, continuations), `* ` and `+ ` bullets, numbered items, table lines, `### ` subheadings, `-x` and a bare `- `. They all stay in the file as evidence and are never counted.
 - **General rule.** Every section named in the kind's `sections` cell must be present exactly once and must have at least one row. There is exactly one exception. On kind=read, `## Findings` must have exactly FINDINGS rows, so FINDINGS=0 means the heading is present with zero rows. Prose such as "none" is allowed there, and any row is `contradictory`. FINDINGS and PROBES each equal the row count of their section.
 - **Section defects,** each named by field:
   - A heading that is absent gives `field=## <Name> defect=missing line=0`.

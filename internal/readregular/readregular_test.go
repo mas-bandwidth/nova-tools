@@ -77,7 +77,7 @@ func TestReadNonRegularFileSocket(t *testing.T) {
 	if err != nil {
 		t.Skipf("unix socket unavailable: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }() // ignored: the test listener is done with
 
 	_, err = Read(sockPath, DefaultMax)
 	require.Error(t, err)
