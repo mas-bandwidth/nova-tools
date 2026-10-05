@@ -2665,13 +2665,11 @@ do
           T.rethrow(score)
         end
         if not score then return T.refuse('DRIFT', r, c, id) end
-        if not idx then
-          index_ids = {}
-          for _, e in ipairs(members_list) do index_ids[#index_ids + 1] = e.id end
-          idx = T.place_index(d, index_ids)
-        end
-        local drift = T.index_drift(idx, id, current_place)
-        if drift then return drift end
+        -- A placed member is answered from its own record and the one cell the
+        -- record names (the ZSCORE above): no whole-table place index, so the
+        -- cost of a batch is its members', not rows x columns (security#78
+        -- finding 4; docs/SPEC-NOVA-TABLE.md, "Cost of a batch"). The index is
+        -- kept for an unplaced member, whose reverse check needs every cell.
         member_places[id] = current_place
         member_scores[id] = tonumber(score)
         member_score_text[id] = score
