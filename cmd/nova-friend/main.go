@@ -262,10 +262,13 @@ no beat goes to the sprint server (her row reads down), nothing is delivered, an
 --coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
 nonce from inside the session before she beats again, and the seat is told she is back. The friend
-row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
+row's mode and width come with each beat's answer (row_mode=, row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Every
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A claude
+lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
+/dev/null), its result read from the card's outbox; a claude row in one-shot mode with no config_dir
+(nor --config-dir) is refused on the record with the remedy, and no lane runs. Every
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
 (row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
 --dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that
@@ -277,13 +280,16 @@ dir= state= redis=): no store is opened and nothing is written.`,
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
-					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR)")
+					f.String("config-dir", "", "the friend's config directory, writable inside the lane's wall and its HOME there when --config-dir is unset (default: CLAUDE_CONFIG_DIR); for a claude one-shot lane, a value given here overrides the row's config_dir (row_config_dir= on each beat)")
 					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
+						}
+						if d := c.Str("config-dir"); d != "" && !filepath.IsAbs(d) {
+							c.Problem(fmt.Sprintf("--config-dir %q wants an absolute path: CLAUDE_CONFIG_DIR is read as given, never expanded", d))
 						}
 					})
 					f.Prints()
@@ -555,7 +561,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
 	var rowProfile atomic.Pointer[string]
-	wall := friend.Wall{Dir: dir, ConfigDir: c.Str("config-dir"), Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
+	wallCfg := c.Str("config-dir")
+	if wallCfg == "" {
+		wallCfg = w.getenv("CLAUDE_CONFIG_DIR")
+	}
+	wall := friend.Wall{Dir: dir, ConfigDir: wallCfg, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
 	if bin, err := w.binary(); err == nil {
 		wall.Self = []string{bin}
 	} // else no Self: a lane's child is refused, never run outside the wall
@@ -591,8 +601,21 @@ func (w world) run(c *tool.Call) *tool.Out {
 			oc.Allow = append(oc.Allow, alias)
 		}
 	}
-	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
+	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
+	var rowConfigDir atomic.Pointer[string] // read by the lanes' runs, written by the beat
+	if cl, ok := deliver.(*friend.Claude); ok {
+		cl.Friend = name
+		cl.ConfigDir = func() string {
+			if d := c.Str("config-dir"); d != "" {
+				return d // the override
+			}
+			if d := rowConfigDir.Load(); d != nil {
+				return *d
+			}
+			return ""
+		}
+	}
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
@@ -677,6 +700,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 				answer, err := w.beat(ctx, server, name, active)
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
+					cfg := friend.RowConfigDir(answer)
+					rowConfigDir.Store(&cfg)
 				}
 				if p, ok := friend.ParseProfile(answer); err == nil && ok {
 					rowProfile.Store(&p)

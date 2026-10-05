@@ -312,8 +312,50 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
-	assert.Equal(t, "batch", s.Mode, "the row says one-shot; claude opens no session per lane")
-	assert.Contains(t, out.String(), "cannot open a session per lane; delivering in batch")
+	assert.Equal(t, "batch", s.Mode, "the row says one-shot and names no config_dir: claude is refused")
+	assert.Contains(t, out.String(), "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir")
+	assert.Contains(t, out.String(), "run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>")
+}
+
+// The beat's row_config_dir= (or --config-dir over it) is the directory a
+// claude lane runs with: the row one-shot with one, the daemon runs lanes.
+func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, answer string
+		flags        []string
+	}{
+		{"from the beat", " row_config_dir=/accounts/heavy-a", nil},
+		{"the override", "", []string{"--config-dir", "/accounts/heavy-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "ada", "bob")
+			w := r.world()
+			var cancel context.CancelFunc
+			w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel = context.WithCancel(ctx)
+				return ctx, cancel
+			}
+			beats := 0
+			w.beat = func(context.Context, string, string, time.Time) (string, error) {
+				beats++
+				if beats == 3 {
+					cancel()
+				}
+				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2" + tc.answer, nil
+			}
+			var out, errb strings.Builder
+			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+			assert.Equal(t, 0, code, errb.String())
+			assert.NotContains(t, out.String(), "REFUSED")
+			assert.Contains(t, out.String(), "mode: one-shot, from batch (the friend row)")
+		})
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--config-dir", "~/accounts"}, strings.NewReader(""), &out, &errb, newRig(t, "ada", "bob").world())
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errb.String(), `--config-dir "~/accounts" wants an absolute path`)
 }
 
 // A store that is down when the daemon starts is no reason to exit: under launchd's
