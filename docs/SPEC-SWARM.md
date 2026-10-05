@@ -215,9 +215,16 @@ home (`<slot>/data/.claude`, `.codex`, `.grok`), which is the child's `HOME` and
 the wall, and the child is pointed at it by name (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) or,
 for grok, which reads `HOME` alone, by being where `HOME` puts it. Each launch empties it
 and copies in the harness's credential file and nothing else of the bench's own login:
-claude's `.credentials.json` (a machine that keeps it in the OS keychain has none to copy),
-codex's and grok's `auth.json`, mode 0600. The bench's own `~/.claude`, `~/.codex` and
-`~/.grok` are on no mount list, readable or writable, apart from the install the binary
+codex's and grok's `auth.json`, mode 0600. claude copies none: its `.credentials.json` is
+a refreshable OAuth login, and a copy refreshed inside a turn would be discarded with the
+card while the bench's own refresh token went stale; a Mac keeps it in the keychain, which a
+walled child cannot reach. claude's login is the long-lived token in
+`CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`), a nova-secrets key the member hands its
+children by name with `--pass` (`swarm.ClaudeTokenEnv`); the harness keeps it and every
+shell it starts has it unset (the shell wrappers), and a run handed none says
+`NATIVE NOTE login:` naming that remedy and the harness answers logged out, a provider
+failure of class `auth`. The bench's own `~/.claude`, `~/.codex` and `~/.grok` are on no
+mount list, readable or writable, apart from the install the binary
 runs from: the binary is launched by its resolved path and the wall reads its directory
 and, when that is a `bin` directory, the install above it (`swarm.HeadlessProgramRoot`),
 read-only. So a card's shell can read and write the job, the data home and its private
@@ -227,7 +234,8 @@ beside it reads); it cannot read the interactive history, the config, hooks or p
 the bench's login, cannot write anything of it (a write there would run outside the wall
 the next time the login's owner started the harness), and cannot change the credential the
 bench keeps: the copy is the card's and is replaced at the next launch. A token the
-harness refreshes during a turn is refreshed in the copy only.
+harness refreshes during a turn is refreshed in the copy only, and claude has no copy to
+refresh.
 
 There is no session database to sample: the usage is read once from `<job>/harness-output.log` when the child is
 gone, so the live sampler is not started, the budgets (`--tokens`, `--usd`) are asked of
