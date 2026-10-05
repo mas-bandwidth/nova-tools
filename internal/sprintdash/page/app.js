@@ -45,7 +45,7 @@ function el(tag, cls, text) {
 // (.fv) inside the node, so the tint hugs the digits, not the cell. A track
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
-["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
+["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
  "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
   if (!e._fv) {
@@ -222,7 +222,7 @@ function renderStreams(d) {
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
   var keys = streamOrder(d).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  var sum = { cost: 0, totalCost: 0, unreconciled: 0 }, held = 0, landedStreams = 0, prevRank = null;
   var digits = digitsOf(keys.reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
   syncRows(box, box._head, keys, function () {
@@ -238,6 +238,9 @@ function renderStreams(d) {
     var w = work[k], m = merge[k] || {}, s = states[k] || {}, c = {}, total = 0;
     FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; sum[st] += c[st]; });
     var ct = cents(w.cost); if (ct) sum.cost += ct;
+    var sc = (d.stream_costs || {})[k] || {};
+    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+    var uc = cents(sc.unreconciled); if (uc) sum.unreconciled += uc;
     var status = statusOf[k];
     if (status === "held") held++;
     if (status === "landed") landedStreams++;
@@ -440,8 +443,11 @@ function renderHero(d, s) {
     setText($("eta-at"), ms != null && !isNaN(at) ? "around " + clockShort(new Date(at.getTime() + ms)) : " ");
   } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
-  setText($("cost"), money(s.sum.cost));
+  var completeCost = Math.max(s.sum.totalCost || 0, s.sum.cost);
+  var unreconciled = s.sum.unreconciled || 0;
+  setText($("cost"), money(completeCost + unreconciled));
   setHTML($("cost-per"), landed ? money(Math.ceil(s.sum.cost / landed)) + " per card" : " ");
+  setText($("cost-unreconciled"), money(unreconciled) + " unreconciled");
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
   setText($("inflight-sub"), ["working", "review", "merging"].filter(function (k) { return s.sum[k] > 0; })
     .map(function (k) { return s.sum[k] + " " + k; }).join(" · ") || "nothing in flight");

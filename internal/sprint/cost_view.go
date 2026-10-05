@@ -29,6 +29,11 @@ type TierCosts struct {
 	// and cents rounded up, over every card of the stream; a record with no tier is
 	// "untiered".
 	CostByTier map[string]string `json:"cost_by_tier,omitempty"`
+	// TotalCost is the complete spend across every card of the stream (all states),
+	// dollars and cents rounded up.
+	TotalCost string `json:"total_cost,omitempty"`
+	// Unreconciled is the unreconciled spend attributed to this stream, dollars and cents rounded up.
+	Unreconciled string `json:"unreconciled,omitempty"`
 }
 
 // TierWord is the tier a card's brief names on its line 1 (any word the brief carries),
@@ -63,6 +68,7 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}}
 	byTier := map[string]*big.Rat{}
 	var landedCost []string
+	var allCost []string
 	landed := 0
 	for _, col := range States {
 		for _, c := range s.Work.Cell(stream, col) {
@@ -74,6 +80,25 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 				landed++
 				if v := c.F(FieldCost); v != "" {
 					landedCost = append(landedCost, v)
+				}
+			}
+			if v := c.F(FieldCost); v != "" {
+				allCost = append(allCost, v)
+			} else if raw := c.F(FieldCostTotal); raw != "" {
+				if tot := cardcost.ParseTotal(raw).Charged; tot != "" {
+					allCost = append(allCost, tot)
+				} else if _, ok := new(big.Rat).SetString(raw); ok {
+					allCost = append(allCost, raw)
+				}
+			} else {
+				var conCosts []string
+				for _, con := range CardCostOf(c).Consumers {
+					if cUsd := cmp.Or(con.Usage.Actual, con.Usage.Predicted); cUsd != "" {
+						conCosts = append(conCosts, cUsd)
+					}
+				}
+				if sumCon, ok := cardcost.Sum(conCosts...); ok && len(conCosts) > 0 {
+					allCost = append(allCost, sumCon)
 				}
 			}
 			for _, con := range CardCostOf(c).Consumers {
@@ -94,6 +119,11 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			t.PerLanded = cardcost.Cents(total.Quo(total, big.NewRat(int64(landed), 1)))
 		}
 	}
+	if sum, ok := cardcost.Sum(allCost...); ok && len(allCost) > 0 {
+		if total, err := amountOf(sum); err == nil && total != nil {
+			t.TotalCost = cardcost.Cents(total)
+		}
+	}
 	tiers := make([]string, 0, len(byTier))
 	for tier := range byTier {
 		tiers = append(tiers, tier)
@@ -101,6 +131,13 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	sort.Strings(tiers)
 	for _, tier := range tiers {
 		t.CostByTier[tier] = cardcost.Cents(byTier[tier])
+	}
+	if unrec := UnreconciledSpend(s); unrec > 0 {
+		rows := s.Work.Rows()
+		if len(rows) > 0 && stream == rows[0] {
+			rat := new(big.Rat).SetFloat64(unrec)
+			t.Unreconciled = cardcost.Cents(rat)
+		}
 	}
 	return t
 }
