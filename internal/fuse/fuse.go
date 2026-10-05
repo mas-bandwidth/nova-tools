@@ -258,6 +258,9 @@ func planBox(path string, opts ...atomicfile.Option) error {
 	if target != "" {
 		target = filepath.Clean(target)
 	}
+	if err := checkBoxAncestors(target); err != nil {
+		return err
+	}
 	return atomicfile.CheckAfterMkdirAll(target, 0o644, append(opts, atomicfile.ExactMode())...)
 }
 
@@ -276,6 +279,9 @@ func writeBox(path string, b Box, opts ...atomicfile.Option) error {
 	target := path
 	if target != "" {
 		target = filepath.Clean(target)
+	}
+	if err := checkBoxAncestors(target); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
