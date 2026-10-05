@@ -8,11 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -28,6 +32,47 @@ import (
 // every branch is landHead (an injected tip: no socket), unless a test says otherwise.
 
 const landHead = "0123456789abcdef0123456789abcdef01234567"
+
+// TestFriendSyncWakesOnTheBusWithTheBusLogin pins SPEC-SPRINT section 1:
+// the bus connection does not borrow the sprint store's ACL credentials.
+func TestFriendSyncWakesOnTheBusWithTheBusLogin(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, busUser, busPasswordEnv string
+	}{
+		{name: "default bus user"},
+		{name: "named bus user", busUser: "bus", busPasswordEnv: "Q"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{
+				"NOVA_SPRINT_REDIS_USER":         "coordinator",
+				"NOVA_SPRINT_REDIS_PASSWORD_ENV": "P",
+				"NOVA_BUS_REDIS":                 "bus.test:6379",
+				"P":                              "test-password",
+				"NOVA_BUS_REDIS_USER":            tc.busUser,
+				"NOVA_BUS_REDIS_PASSWORD_ENV":    tc.busPasswordEnv,
+				"Q":                              "test-password",
+			}
+			a := app{getenv: func(k string) string { return env[k] }, now: time.Now}
+			o, err := redisconn.Resolve(busOptions(a.getenv), a.getenv)
+			require.NoError(t, err)
+			assert.Equal(t, "bus.test:6379", o.Addr)
+			assert.Equal(t, tc.busUser, o.User, "bus login borrowed the sprint store's user")
+			assert.Equal(t, tc.busPasswordEnv, o.PasswordEnv, "bus login borrowed the sprint store's password variable")
+
+			var dialedUser string
+			a.busOpen = func(_ context.Context, addr, user string) (*bus.Bus, func(), error) {
+				dialedUser = user
+				return &bus.Bus{Store: bustest.NewFake(time.Now(), "coordinator", "amy")}, func() {}, nil
+			}
+			m := bus.Message{From: "coordinator", To: []string{"amy"}, Subject: "sub", Body: "body"}
+			err = a.sendBus(context.Background(), m, func(string) {})
+			require.NoError(t, err)
+			assert.Equal(t, tc.busUser, dialedUser, "sendBus passed sprint store user instead of bus user")
+		})
+	}
+}
 
 // friendRepo is the repository the card's REPO: line names, as the tip is asked of it.
 var friendRepo = swarm.CardRepoURL("mas-bandwidth/nova-tools")

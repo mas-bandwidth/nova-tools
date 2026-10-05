@@ -14,7 +14,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -192,7 +191,7 @@ func TestFriendSyncSaysTheBusStoresAlarmAndTheNextSendClearsIt(t *testing.T) {
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	env := ta.a.getenv
 	ta.a.getenv = func(k string) string {
-		return map[string]string{busRedisEnv: "bus.test:6379", redisauth.UserEnv: "sprint"}[k] + env(k)
+		return map[string]string{busRedisEnv: "bus.test:6379", busRedisUserEnv: "sprint"}[k] + env(k)
 	}
 	fake := bustest.NewFake(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), "coordinator", "amy")
 	fake.Friends = []string{"amy"}

@@ -21,7 +21,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -411,7 +410,11 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 
 // busRedisEnv names the friends' bus store (nova-bus's), where friend sync
 // wakes a friend's daemon when it delivers her a card.
-const busRedisEnv = "NOVA_BUS_REDIS"
+const (
+	busRedisEnv            = "NOVA_BUS_REDIS"
+	busRedisUserEnv        = "NOVA_BUS_REDIS_USER"
+	busRedisPasswordEnvEnv = "NOVA_BUS_REDIS_PASSWORD_ENV"
+)
 
 // busSendFn sends one message on the friends' bus; say is handed each line the send has
 // for the verb's output (a bus store's alarm raised or cleared).
@@ -441,15 +444,23 @@ func (a *app) busWatch(addr, user string) *bus.Watch {
 	return w
 }
 
-// openBus is the real busOpen: the bus store dialed as nova-bus dials it
-// (internal/redisconn, the fleet's login from the environment).
+// busOptions selects the login for the bus connection used by friend sync
+// (SPEC-SPRINT section 1). It holds variable names, never a password value.
+func busOptions(getenv func(string) string) redisconn.Options {
+	return redisconn.Options{Addr: getenv(busRedisEnv), Env: redisconn.Env{
+		User: busRedisUserEnv, PasswordEnv: busRedisPasswordEnvEnv,
+	}}
+}
+
+// openBus is the real busOpen: the bus store dialed with its own login
+// (SPEC-SPRINT section 1).
 func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	o := busOptions(a.getenv)
+	if addr != "" {
+		o.Addr = addr
+	}
 	if user != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if a.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
+		o.User = user
 	}
 	conn, err := redisconn.Open(ctx, o, a.getenv)
 	if err != nil {
@@ -470,9 +481,13 @@ func (a *app) sendBus(ctx context.Context, m bus.Message, say func(string)) erro
 	if addr == "" {
 		return errors.New(busRedisEnv + " is not set: no bus to send on")
 	}
-	user := a.getenv(redisauth.UserEnv)
+	user := a.getenv(busRedisUserEnv)
+	now := time.Now
+	if a.now != nil {
+		now = a.now
+	}
 	c := &friend.Courier{
-		Now:   func() time.Time { return a.now() },
+		Now:   now,
 		Open:  func(ctx context.Context) (*bus.Bus, func(), error) { return a.busOpen(ctx, addr, user) },
 		Watch: a.busWatch(addr, user),
 	}
