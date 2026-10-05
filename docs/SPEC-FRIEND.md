@@ -613,6 +613,69 @@ friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
 loop"; cmd/nova-sprint/friend_loop.go).
 
+## A friend's models (internal/config/friendmodel.go, internal/sprint/friend_model.go, internal/friend/models.go)
+
+The owner, 2026-10-05: "how do friends know which of THEIR models should be used per-tier?",
+"Is the decision made here? Do they decide? Do they even know?" and "Should this be made part
+of the friend configuration?" Before this, nobody decided: a friend row listed tiers and no
+models, and a session friend ran a heavy card on whatever model her window was set to. Now her
+nova-config friend row is the one source:
+
+```sh
+nova-config friend set amy --model flash=<m>,pro=<m>,heavy=<m>,frontier=<m>
+nova-config friend set bob --children no --mode one-shot --width 12
+```
+
+`model` maps each tier she serves to the model she runs it on; `children` (yes or no) says
+whether her harness runs child agents, and `child_model` (yes or no) whether a child's model
+can be chosen ("Not all friends can do child agents."). How a card runs on its tier's model
+follows from the row (`config.FriendHow`):
+
+| row | how | width |
+|---|---|---|
+| mode one-shot | `lane`: each card a headless process, launched with the harness's model flag (`opencode run --model <m>`) | `width` lanes |
+| batch, children yes, child_model yes | `child`: each card in a child agent on the tier's model | `width` |
+| batch, children of one model, or none | `session`: every card on her session's model; her row may name only one model | `width`, or 1 with `children no` |
+
+Going wide is width either way, child agents inside one session or one-shot lanes; only a
+friend in one interactive session with neither runs one card at a time. The one question she
+answers when she takes a card is which model the child that runs it runs on, and the card
+answers it. The machine makes sure she knows:
+
+1. **Told with every card.** The deal writes the tier and her row's model for it on the work
+   card it places on her row (`FieldTier`, `FieldModel`; `withFriendModel`), so the card's
+   packet carries `model`; friend sync re-reads her row at delivery (a card the level moved to
+   her carries the model of the friend it left). Her brief's second line is the tier line,
+   `tier: heavy model: claude-opus-5-5`, with the sentence to run it on that model; the bus
+   message that wakes her daemon starts with `Run this card in a child on <model>`, so a
+   session friend's turn begins with it; a lane's turn says `This card runs on <model>` and is
+   launched on it. Her queue file carries each card's `tier` and `model` and her row (`row`:
+   tiers, models, mode, width, children, child_model).
+2. **Told on change.** When her row differs from the row her queue file carries, friend sync
+   pushes her a bus note (`FRIEND-ROW CHANGED`), "your row changed: tiers=... models=...".
+3. **She can ask.** `nova-friend whoami --as <me> --dir <d>` prints her row from her queue
+   file: `WHOAMI friend= tiers= models=<tier>=<model>,... how= mode= width= lanes= children=
+   child_model= dir= session=`, then a WARN line per tier with no model and a REFUSED line per
+   thing her harness cannot do. A lane's seed tells her it exists.
+4. **Verified on every finish.** Her REPORT.md names the model (`Model: <m>`, or `model=<m>`
+   on its `Usage:` line); a LAND on a card that carries a model whose report names none, or
+   another, is finished failed ("friend <f> LAND on the wrong model: ..."), the "work came back
+   failed" judgment to the coordinator (`sprint.FriendModelMismatch`).
+5. **Proven before first use.** Not built yet: the probe card a new tier deals her, and the gate
+   that holds real cards of that tier until it returns the right model.
+
+`nova-friend check` adds, for each friend whose queue file carries her row, `CHECK MODELS
+friend= tiers= models= how= children= child_model= lanes= harness= warn= refused=`: a tier with
+no model is a warning; a row whose cards all run on her session's model naming two models, and
+a one-shot row on a harness with no lane model flag (`friend.ModelFlags`), are refused, and the
+check exits 1. `nova-config` refuses the first of those, and a model for a tier she does not
+serve, at the row (docs/SPEC-CONFIG.md, friend).
+
+A tier with no model is still served, as every tier was before migration 0034: its card
+carries no model and no tier line, and she runs it on her session's model until the
+coordinator fills it. The test is `TestAFriendIsToldVerifiedAndProbedForEveryTiersModel`
+(internal/sprint).
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
