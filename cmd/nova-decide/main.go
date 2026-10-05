@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -418,10 +419,13 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	}
 	bar, _ := strconv.ParseFloat(c.Str("bar"), 64) // checked by the verb's flag rule
 	from, _ := since(c.Str("since"), w.now())      // checked by the verb's flag rule
-	clusters, scored := decide.Findings(ds, from, bar)
+	clusters, scored, skipped := decide.Findings(ds, from, bar)
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
 		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cl.Cards, ","))
+	}
+	if len(skipped) > 0 {
+		o.Note(skippedNote(skipped))
 	}
 	if c.Str("shadow") == "" {
 		return o
@@ -439,6 +443,20 @@ func (w world) findings(c *tool.Call) *tool.Out {
 		o.Item("shadow", "kind", a.Kind, "count", a.Count, "agree_pct", a.Pct, "high_count", a.HighCount, "high_agree_pct", a.HighPct)
 	}
 	return o
+}
+
+// maxSkippedIDs is how many skipped ids the findings note names; the count says the rest.
+const maxSkippedIDs = 3
+
+// skippedNote says how many score decisions findings left out because their at is not RFC 3339,
+// and names the first few by id: a note, not a refusal (security#79 finding 3).
+func skippedNote(ids []string) string {
+	shown := ids[:min(len(ids), maxSkippedIDs)]
+	fields := make([]string, len(shown))
+	for i, id := range shown {
+		fields[i] = oneline.Field(id)
+	}
+	return fmt.Sprintf("%d score decisions skipped: at is not RFC 3339: %s", len(ids), strings.Join(fields, " "))
 }
 
 // gate reads the gate's output, the card and the diff, names every input it cannot read in

@@ -132,12 +132,21 @@ type Cluster struct {
 
 // Findings clusters the score decisions made at or after since by every class each gives a p
 // at or above bar, plus Unnamed for p(defect) at or above bar with no class there; most
-// cards first, then class order. scored is the decisions in the window.
-func Findings(ds []Decision, since time.Time, bar float64) (clusters []Cluster, scored int) {
+// cards first, then class order. scored is the decisions in the window. skipped is the ids,
+// in record order, of the score decisions whose at is not RFC 3339: they cannot be placed in
+// the window, so they are named and never silently left out (security#79 finding 3).
+func Findings(ds []Decision, since time.Time, bar float64) (clusters []Cluster, scored int, skipped []string) {
 	cards := map[string][]string{}
 	for _, d := range ds {
+		if d.Decision != ScoreName {
+			continue
+		}
 		at, err := time.Parse(time.RFC3339, d.At)
-		if d.Decision != ScoreName || err != nil || at.Before(since) {
+		if err != nil {
+			skipped = append(skipped, d.ID)
+			continue
+		}
+		if at.Before(since) {
 			continue
 		}
 		scored++
@@ -165,5 +174,5 @@ func Findings(ds []Decision, since time.Time, bar float64) (clusters []Cluster, 
 		}
 		return order[a.Class] - order[b.Class]
 	})
-	return clusters, scored
+	return clusters, scored, skipped
 }

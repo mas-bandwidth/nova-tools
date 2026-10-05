@@ -289,6 +289,24 @@ func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
 	})
 }
 
+// A score decision whose at does not parse is not in the window and not silently gone: findings
+// counts the one that parses, and notes the id of the one that does not (security#79 finding 3).
+func TestFindingsNamesAScoreDecisionWhoseAtDoesNotParse(t *testing.T) {
+	t.Parallel()
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	for _, d := range []decide.Decision{
+		{ID: "good@landed@0123456789ab", Decision: decide.ScoreName, At: "2026-10-02T12:00:00Z", State: "s1"},
+		{ID: "bad@landed@0123456789ab", Decision: decide.ScoreName, At: "yesterday", State: "s2"},
+		{ID: "other@x", Decision: "grade", At: "yesterday", State: "s3"},
+	} {
+		_, err := decide.Append(rec, d)
+		require.NoError(t, err)
+	}
+	cli.Do(t, "findings", "--record", rec, "--since", "2026-10-02").Exit(0).Out(
+		"FINDINGS OK scored=1 ",
+		"1 score decisions skipped: at is not RFC 3339: bad@landed@0123456789ab").NotOut("other@x")
+}
+
 // jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
 // the mass on the other options.
 func jevChoice(question, option string, p float64) func([]byte) ([]byte, error) {
