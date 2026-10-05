@@ -720,10 +720,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		return c.Str("coordinator")
 	}
-	// presence is the session's, never the daemon's (docs/SPEC-FRIEND.md, presence)
+	// presence is the session's, never the daemon's (docs/SPEC-FRIEND.md, presence); each
+	// presence saved is also the bus's push proof, without which nova-bus refuses this name
+	// as deaf (docs/SPEC-BUS.md, bus-requires-inbox-push-proof)
+	prover := &friend.PushProver{Friend: name, Harness: c.Str("harness"), Store: st, Now: w.now, Record: record}
 	sc := &friend.SessionCheck{
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record,
-		Save: writePresence,
+		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
 			bin, err := w.binary()
 			if err != nil {
@@ -733,6 +736,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	sc.Deliver = sc.Gate(fl.Gate(deliver))
+	prover.Deliver = sc.Deliver
 	tellSeat = func(subject, body string) {
 		to := answerTo()
 		if to == "" {
