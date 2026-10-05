@@ -81,7 +81,7 @@ func TestExecutePassesTheExitStatusAndKeepsTheOutput(t *testing.T) {
 
 func TestExecuteReportsATimeoutWithoutStartingAnything(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	run := helperRun(t, 0)
 	log := filepath.Join(run.Dir, "out.log")

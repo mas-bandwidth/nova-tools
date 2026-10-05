@@ -69,7 +69,7 @@ func TestInstalledPropagatesOneDeadlineAcrossTheLadder(t *testing.T) {
 func TestInstalledWholeBudgetOverridesChildTimeout(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		parent, cancel := context.WithTimeout(context.Background(), time.Minute)
+		parent, cancel := context.WithTimeout(t.Context(), time.Minute)
 		defer cancel()
 		fake := func(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
 			deadline, ok := ctx.Deadline()
@@ -112,7 +112,7 @@ func TestDrainAllowanceUsesPassedTimeAndFloor(t *testing.T) {
 			assert.Equal(t, tc.want, drainAllowanceAt(ctx, now))
 		})
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	assert.Equal(t, drainFloor, drainAllowanceAt(ctx, now))
 	assert.Equal(t, killGrace, drainAllowanceAt(context.Background(), now))
