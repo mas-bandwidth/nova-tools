@@ -1,0 +1,3 @@
+# ceiling: 2
+internal/testbin:env 1 the environment is passed to decide via os.Getenv
+internal/testbin:stdio 1 refuses output is printed to os.Stderr

@@ -1,0 +1,4 @@
+# ceiling: 3
+cmd/nova-table:clock 5 the clock is read here instead of taken as a parameter
+cmd/nova-table:env 3 the environment is read here instead of taken as a parameter
+cmd/nova-table:stdio 3 the standard stream is named here instead of taken as a parameter

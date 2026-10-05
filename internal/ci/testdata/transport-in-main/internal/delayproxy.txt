@@ -1,0 +1,2 @@
+# ceiling: 1
+internal/delayproxy:clock 1 the clock is read here instead of taken as a parameter
