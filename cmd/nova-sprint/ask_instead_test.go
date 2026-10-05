@@ -53,7 +53,7 @@ func TestAskInsteadTakesOneReadOffOneReaderStoppedAndRunning(t *testing.T) {
 		assert.Contains(t, out+errs, "--instead takes back one read of one primary", line)
 	}
 
-	for _, machine := range []string{"stop", "start"} {
+	for _, machine := range []string{"stop --reason r --until 9999h", "start"} {
 		ta.ok(machine)
 		held, free := holds()
 		require.Len(t, held, 2, machine)

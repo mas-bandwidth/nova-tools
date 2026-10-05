@@ -86,7 +86,7 @@ func fairStreams(t *testing.T, count, width int) {
 		}
 		if tick == 3 {
 			before := ta.streamIndexes()
-			ta.ok("stop")
+			ta.ok("stop --reason r --until 9999h")
 			after := ta.streamIndexes()
 			require.Equal(t, before, after, "the indexes across a stop: %s, then %s", before, after)
 			require.True(t, strings.HasPrefix(before, sprint.PropStreamIndex+"="), "the indexes across a stop: %s, then %s", before, after)

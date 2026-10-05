@@ -595,4 +595,3 @@ the gap test removed from PR #5127's levelTo. Naive: a holds c2 and c3, c3
 refused by c, the emptiest two below; only c3 is tried, and the call returns
 with c2 still able to go to c. NoSkip: c3 goes onto c, its refuser (the code
 before #5000).
-

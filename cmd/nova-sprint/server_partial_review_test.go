@@ -20,7 +20,7 @@ func TestServerReviewRetriesAPartialBatchAfterRestart(t *testing.T) {
 	ta.ok("fleet up m1")
 	ta.ok("start")
 	ta.ok("tick")
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 	ta.a.serveAddr = "mem:0"
 	req := sprintwire.Request{Verbs: [][]string{
 		{"take", "--as", "m1", "--limit", "1", "--epoch", "0", "--op", "partial-first", "--json"},

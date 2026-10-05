@@ -2797,7 +2797,7 @@ command that loads it.
 | quack | cuts quack cards, the sprint's end-to-end test cards, into a running store: `quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]` adds n cards to each stream (a stream new to the sprint is made), the tiers (default `flash,pro`) taken in turn down each stream, the base default `sprint/quack`, the test repository's sprint branch (a `--base dev` is refused outside the promotion stream as `add` refuses it, section 7, the sprint branch); each card's id is `quack-<stamp>-<stream>-<nnn>` and its brief asks for the one file `quacks/<id>.txt` holding the line `quack`, the stamp twelve hex digits drawn once per call (two passes share one with a chance of about one in 2^48, so a pass's files are new to the repository's history, which a clear does not empty), every call drawing its own; under `--op` the call is held to the caller's arguments (streams, count, tiers, repository, base), never to the cards its stamp makes, so the same call retried, or two of it overlapping, replays the store's recorded result while other arguments under that op are refused, and an op this store has no record of (after a teardown, or in another store) adds new cards under a fresh stamp; each brief is a child's whole brief (line 1 its tier, `BASE:`, `REPO:`, what to do, the known answer, the finish and the read) closing with the RULES paragraph of the rule set `add` would hold it to, and is held to the card lint as `add` holds a brief; every card of every stream is checked before anything is written (a stream long enough to make an id over 128 characters is refused, naming the stream and the length), one step adds every stream's cards or none (several streams' named cards are all or none, as one stream's are), and a refusal names every missing or bad input at once, exit 2, nothing written |
 | release | lands reached sentinels, held ones (`add --held`) that wait for nothing, and sentinels not yet reached whose waits are each landed, dropped or in flight (section 16); clears the hold of a held card, which goes to ready when it waits for nothing else; the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
-| start, stop | set the machine RUNNING or STOPPED (section 14) |
+| start, stop | set the machine RUNNING or STOPPED (section 14); `stop --reason <text> --until <time or duration>`, both wanted (`sprint.StopArgs`), names who stopped it, why, and when the tick starts it again |
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up); a card on a route that rests is never taken: refused by id, naming the rest, and passed over by count (the tick withdraws it) |
@@ -3158,7 +3158,7 @@ moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
 wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
-and nothing after the word but a late tick: when the state is RUNNING and
+and nothing after the word but a late tick or a STOPPED machine's why (below): when the state is RUNNING and
 nothing has ticked for 15 s (MachineSilence), on a store a run loop ticks, it
 says `machine: running (tick late 16s)`, the whole seconds since the last
 tick; a late tick is never `machine: STOPPED`, which is a stop's alone, the
@@ -3177,6 +3177,22 @@ inbox judges it (the line carries no suffix). A tick that did nothing writes the
 5 s (HeartbeatIdleEvery); a STOPPED machine's tick only records that it
 looked. `where` shows the same
 state as the one line under its title (section 1).
+
+A stop by hand carries why and until when: `stop --reason <text> --until <time
+or duration>`, both wanted, a stop missing either refused (exit 2) naming each
+missing one; `--until` is a duration from now (`90m`), a clock time (`2:04 PM`,
+`14:04`: today's, or tomorrow's once today's has passed) or an RFC 3339 time,
+after now (`sprint.StopArgs`). The record keeps the stop's actor, reason and
+time, and the machine line says them: `machine: STOPPED by <actor>: <reason>,
+back by 2:04 PM` (a time on another day with its date), in `inbox`, the header
+of `where`, its JSON (the dashboard's machine line) and every verb's sprint
+line (`sprint.StoppedText`). At `--until` the next tick starts the machine
+itself, recorded as the machine's start with the stop it ends, and runs it
+(`store.backAt`); a stop of the STOPPED machine before then replaces the reason
+and the time, and the span goes on; a clear takes them off, so nothing starts
+a cleared sprint; when every provider is out of credit at `--until` the
+machine stays STOPPED for that cause, as a start is refused then. The
+machine's own stops carry their cause instead (below).
 
 The machine stops itself when the sprint is done (section 8): the tick's last
 part, done, says so to the coordinator and, in the same step, sets the record
@@ -3582,4 +3598,3 @@ no line of its own; `log --card <id>` and `log --json` keep each record whole. A
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
-

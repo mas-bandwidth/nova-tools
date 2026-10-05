@@ -49,7 +49,7 @@ func init() {
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
-		{"stop", "", "stop", (*app).cmdMachineStop},
+		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
 		{"tick", "[--answer-rules] [--idle-alarm]", "tick", (*app).cmdTick},
 		{"selftest", "[--dir <d>] [--keep]", "selftest", (*app).cmdSelftest},
