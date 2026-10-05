@@ -41,7 +41,7 @@ func (q *heldQueue) hold(branch string, held bool) {
 func TestLandPausesWhileTheBasesMergeQueueHoldsAGroup(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "s1-1\n")}, "s1-1")
 	land := "land --repo-dir " + r.clone + " --base main"
 
@@ -80,7 +80,7 @@ func TestLandPausesWhileTheBasesMergeQueueHoldsAGroup(t *testing.T) {
 func TestMergeWindowOpenPausesLandingForItsDurationWithTheReason(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "s1-1\n")}, "s1-1")
 	land := "land --repo-dir " + r.clone + " --base main"
 
