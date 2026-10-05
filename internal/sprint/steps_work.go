@@ -1207,6 +1207,10 @@ type FinishReq struct {
 	Reported time.Time `json:",omitzero"`
 	Who      string
 	Friends  []FriendSeat
+	// AnswerRules says a failed finish the failed rule answers (ruleFailed) is answered in
+	// this step, never raised: its next attempt is made here and a decided note records it
+	// with no wait (answerAtRaise; docs/SPEC-SPRINT.md, judgment-answer-latencyb.w1).
+	AnswerRules bool `json:",omitempty"`
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -1270,6 +1274,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		return p
 	}
+	var raised []raisedFailure
 	for _, c := range chosen {
 		// a finish is routed only by a decision of its own take (decide.go, decidedFor)
 		if why := decidedFor(c, r.Decided); why != "" {
@@ -1416,6 +1421,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				n.What = "route=" + c.F(FieldRoute) + " model=" + c.F(FieldModel) + ": " + r.Report
 			}
 			u.Notes = append(u.Notes, n)
+			if r.AnswerRules {
+				raised = append(raised, raisedFailure{unit: len(p.Units), c: c, pr: pr, set: set, cardSet: cardSet, who: who})
+			}
 		}
 		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Review, set)))
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
@@ -1424,6 +1432,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		friendNext(s, c, &u, p.Units)
 		p.Units = append(p.Units, u)
 	}
+	answerAtRaise(s, &p, raised, r.Who)
 	return p
 }
 
