@@ -1225,9 +1225,8 @@ carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted
 deal over the live packages (`go run ./tools/ci deal`), with the measured heavy list
 (`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
 `cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`,
-`cmd/nova-sprint`, `internal/sprint/store`, `cmd/nova-swarm`,
-`internal/sprint/refmodel`, `internal/docs`, `internal/sprint`,
-`internal/redisconn`, `internal/config`, `internal/secrets`) dealt
+`cmd/nova-swarm`, `internal/docs`, `internal/redisconn`,
+`internal/config`, `internal/secrets`; the sprint packages left with nova-sprint on 2026-10-04) dealt
 first, one per shard. Every shard
 restores the `<os>-gorace-` cache (the race build cache, the module cache and the
 Go toolchain's tool-cache directory, so setup-go finds the toolchain rather than
@@ -2865,15 +2864,6 @@ the original failed measurement.
 **Its allowlist.** None.
 **Its remedy line.** the assertion names the play, the task and its `until`.
 **Its narrowings.** Only an `until` spelled `.rc != 0` is read; a wait spelled another way is not checked.
-
-### `sprint-tables-locked` — the four sprint tables change only with their lock file
-
-**The rule.** `internal/sprint/TABLES.lock` pins the work, readers, merge and fleet tables as `schema.go` defines them (one line per column: `table.column projection fold hidden`, with `label=` where the column has a header label, in table order) and the order the sprint view shows the tables in. A PR that changes any table's shape turns the test red until the lock file changes in the same PR, where a read sees it.
-**The mistake it prevents.** A `provider` column added to the fleet table that nobody asked for (PR 4986); the installed build then failed every tick on the real store. The maintainer, 2026-10-01: "i never want new things unless i ask for them" and "i dislike this drift from the design of nova sprint tables that is *complete and locked*."
-**The test.** `TestSprintTablesAreLocked` (`internal/ci/sprint_tables_lock_class_test.go`): renders the lock's text from `sprint.Names{}.Definitions()` and `sprint.ViewOrder` and compares it, line by line, to the lock file's lines (comments and blanks aside).
-**Its allowlist.** None.
-**Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
-**Its narrowings.** Column width (always 0 here) is not in the lock; a change to what a table holds that is not in its definition (a card's fields, a hidden column's contents) is not seen.
 
 ### `onewriter` — a worker is a client and does not open the store
 

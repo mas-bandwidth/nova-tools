@@ -1,2 +1,0 @@
-# The staticcheck findings in this package when the rule landed, one row per check; shrink-only (docs/SPEC-CI.md, staticcheck).
-# ceiling: 0

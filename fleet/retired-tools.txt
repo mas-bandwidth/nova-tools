@@ -15,3 +15,8 @@ nova-test
 nova-wake
 # nova-bus (git) retired 2026-10-04, replaced by the Redis bus, which takes the name:
 # the line is a comment because nova-bus is a cmd/ directory again.
+# 2026-10-04: nova-sprint moved to its own repository, nova-sprint, and nova-work
+# with it (ideas#850). Neither name is listed as a retired tool: this
+# play would remove the installed nova-sprint from every bin directory while the
+# fleet still runs it. nova-sprint and nova-work are installed from their own
+# repository; nova-update builds them no more from nova-tools (cmd/ has neither).
