@@ -76,21 +76,6 @@ func (k Kind) Budget() time.Duration {
 	}
 }
 
-func (k Kind) String() string {
-	switch k {
-	case Git:
-		return "git"
-	case GH:
-		return "gh"
-	case SSH:
-		return "ssh"
-	case Go:
-		return "go"
-	default:
-		return "tool"
-	}
-}
-
 // GitBudgetFor is the budget of one git command line: GitLongBudget for a subcommand
 // that goes to the network (clone, fetch, pull, push, ls-remote, submodule), GitBudget
 // for the rest. Leading options are skipped, and one that takes a path or a config

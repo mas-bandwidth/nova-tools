@@ -50,7 +50,7 @@ func TestSopsCoverAgeKeygenVersionParsesProbeOutput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ver, err := CheckAgeKeygenVersion(sopsCoverFakeAgeKeygen(t, tc.output))
+			ver, err := CheckAgeKeygenVersion(realExecCommand, sopsCoverFakeAgeKeygen(t, tc.output))
 			if tc.wantErr == "" {
 				require.NoError(t, err)
 			} else {
@@ -85,7 +85,7 @@ func TestSopsCoverAgeKeygenVersionRefusesABinaryItCannotExecute(t *testing.T) {
 	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := CheckAgeKeygenVersion(tc.path)
+			_, err := CheckAgeKeygenVersion(realExecCommand, tc.path)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "is absent or not executable; run: brew install age")
 		})

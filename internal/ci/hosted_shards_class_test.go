@@ -31,12 +31,11 @@ var hostedMinShards = map[string]int{
 const hostedDealStep = "deal this shard's packages"
 
 // hostedHeavy are the packages the deal places first, one per shard, before the
-// round-robin: cmd/nova-bus (46.4 s -short on the Studio) and cmd/nova-merge
-// (28.6 s) held shard 3 of 4 together, the ubuntu leg cancelled at 123 s
-// (reader measurement, #4421 round 2); cmd/nova-swarm is the reader's other named heavy
-// command. cmd/nova-merge is deleted and in no deal. ci.yml's deal step spells
-// the same list.
-var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-swarm"}
+// round-robin: two heavy packages once held shard 3 of 4 together and the ubuntu
+// leg was cancelled at 123 s (reader measurement, #4421 round 2); cmd/nova-swarm
+// is the one heavy command left (the git bus, 46.4 s -short, is removed).
+// ci.yml's deal step spells the same list.
+var hostedHeavy = []string{"cmd/nova-swarm"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`
@@ -143,7 +142,8 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 			test = i
 		}
 	}
-	require.True(t, vet >= deal && test >= deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
+	require.GreaterOrEqual(t, vet, deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
+	require.GreaterOrEqual(t, test, deal, "test-hosted's vet (%d) and test (%d) steps must follow the deal (%d)", vet, test, deal)
 	for _, i := range []int{vet, test} {
 		assert.Contains(t, job.Steps[i].Run, `PKGS="$HOSTED_PKGS"`, "test-hosted step %q does not read the deal's HOSTED_PKGS", job.Steps[i].Name)
 	}

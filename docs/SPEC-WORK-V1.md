@@ -77,7 +77,10 @@ the tree.
   kind, records out of order, a comment id repeated within an issue, and an issue whose `:url`
   is not the one its path gives. A refused file is refused whole.
 - `workfile.Limits(maxBytes)` bounds a read: the byte bound binds (depth 16, at most one atom per
-  byte). `verify --max-bytes` sets it.
+  byte). `verify --max-bytes` sets it. The default is 128 MiB (134217728 bytes), about five times
+  the current 24.9 MB tree. A hostile tree of short atoms can use roughly 100 times its file size
+  in parse memory, so the byte limit is chosen from the available memory divided by that
+  approximate multiplier; raise `--max-bytes` only with that memory cost in mind.
 
 ## 1.3 What an issue carries
 

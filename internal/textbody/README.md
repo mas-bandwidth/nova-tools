@@ -3,7 +3,7 @@
 `StripQuotedAndCode` is the shared line filter used before reading typed
 records in comments. It uses only the standard library and performs no I/O.
 
-It normalizes CRLF, omits lines whose first non-space character is `>`, and
+It normalizes CRLF, omits lines whose first non-whitespace character is `>`, and
 omits spans between lines starting with three backticks after whitespace.
 An unmatched opening backtick fence hides the remainder. It preserves all
 other line bytes and their order. Tilde fences and inline Markdown are not
@@ -41,7 +41,7 @@ These examples use `\n` for a newline and `RECORD` for an otherwise parseable li
 | Three backticks followed by ` a` then a backtick and `b` | Opens the filter's fence despite the backtick in the info text. |
 | An indented fence, including one inside an indented code block | Still toggles, so following records can be dropped. |
 | A backtick fence inside a tilde fence | Still toggles; tilde closing lines do not close it. |
-| A fence preceded by NBSP, EM SPACE, or U+2028 | Unicode whitespace is trimmed for recognition, so it still toggles. |
+| A fence preceded by NBSP, U+2003, or U+2028 | Unicode whitespace is trimmed for recognition, so it still toggles. |
 | `> quoted\r\rRECORD` | Only LF splits lines: the entire CR-only sequence is one quoted line and is dropped. |
 | A closing fence preceded by text and only CR | It is not a new line, so it does not close the filter's fence. |
 

@@ -49,15 +49,16 @@ func TestFailureCoverLiftSpent(t *testing.T) {
 }
 
 // dealtAbove is the tiers of the ladder above tier a deal draws from: frontier is never
-// dealt, so it is dropped from every list and only flash deals a tier above.
+// dealt, so it is dropped from every list, and heavy is the last tier dealt.
 func TestFailureCoverDealtAbove(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, tier string
 		want       []string
 	}{
-		{"flash deals pro", cardhdr.RouteFlash, []string{cardhdr.RoutePro}},
-		{"pro deals nothing (frontier is never dealt)", cardhdr.RoutePro, []string{}},
+		{"flash deals pro and heavy", cardhdr.RouteFlash, []string{cardhdr.RoutePro, cardhdr.RouteHeavy}},
+		{"pro deals heavy", cardhdr.RoutePro, []string{cardhdr.RouteHeavy}},
+		{"heavy deals nothing (frontier is never dealt)", cardhdr.RouteHeavy, []string{}},
 		{"frontier deals nothing", cardhdr.RouteFrontier, []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

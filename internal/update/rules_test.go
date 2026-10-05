@@ -186,8 +186,8 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	// A missing call log is the strongest form of the answer: the fake bus never
 	// ran at all, so it never even opened the file it logs to.
 	if _, err := os.Stat(log); err == nil {
-		if nprep, nsend := calls(t, log); nprep != 0 || nsend != 0 {
-			require.Failf(t, "", "a plain report invoked the bus: %d prepares, %d sends", nprep, nsend)
+		if nsend := calls(t, log); nsend != 0 {
+			require.Failf(t, "", "a plain report invoked the bus: %d sends", nsend)
 		}
 	} else if !os.IsNotExist(err) {
 		require.Fail(t, fmt.Sprintln(err))
@@ -274,7 +274,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 			assert.Failf(t, "", "nova-version's report line does not carry %s", flag)
 		}
 	}
-	for _, flag := range []string{"--bus <path>", "--remote <r>", "--branch <b>", "--as <friend>", "--to <who,who>"} {
+	for _, flag := range []string{"--as <friend>", "--to <who,who>"} {
 		if !strings.Contains(lines["send"], flag) {
 			assert.Failf(t, "", "nova-version's send line does not carry %s", flag)
 		}
@@ -356,11 +356,11 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	want := []struct{ name, kind, owner string }{
-		{"gh", "tool", "rowan"},
-		{"sops", "tool", "rowan"},
-		{"opencode", "harness", "freddy"},
-		{"qwen3-coder:30b", "model", "stella"},
-		{"nova-wake-pin-nova-bus", "pin", "rowan"},
+		{"gh", "tool", "ada"},
+		{"sops", "tool", "ada"},
+		{"opencode", "harness", "lin"},
+		{"qwen3-coder:30b", "model", "kit"},
+		{"nova-wake-pin-nova-bus", "pin", "ada"},
 	}
 	if len(entries) != len(want) {
 		require.Lenf(t, entries, len(want), "the fixture should carry %d entries, it carries %d", len(want), len(entries))

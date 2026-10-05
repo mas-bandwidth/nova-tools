@@ -91,17 +91,20 @@ func TestScaffoldRefusesASymlinkedParentDirectory(t *testing.T) {
 }
 
 func TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight(t *testing.T) {
+	t.Parallel()
+
 	tree := t.TempDir()
 	outs := []Planned{
 		{Rel: "pkg/raced.txt", Data: []byte("new content")},
 	}
-	BeforeCreate = func(rel string) {
+	// The hook is this test's own parameter of WriteWith, so the test runs in
+	// parallel without assigning the package-level BeforeCreate.
+	beforeCreate := func(rel string) {
 		p := filepath.Join(tree, filepath.FromSlash(rel))
 		_ = os.WriteFile(p, []byte("pre-existing content"), 0o644)
 	}
-	defer func() { BeforeCreate = nil }()
 
-	_, err := Write(tree, outs)
+	_, err := WriteWith(tree, outs, beforeCreate)
 	require.ErrorContains(t, err, "appeared while scaffold was writing", "expected raced collision refusal, got %v", err)
 	data, _ := os.ReadFile(filepath.Join(tree, "pkg", "raced.txt"))
 	require.Equal(t, "pre-existing content", string(data), "file overwritten despite race: %s", data)

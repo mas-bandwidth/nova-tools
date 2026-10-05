@@ -47,10 +47,10 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
-| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode` |
+| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
-| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
+| route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
@@ -117,9 +117,9 @@ opened (exit 2), and every store runs it on the row a `set` would leave and
 refuses the set (exit 1, `ErrInvalid`), writing nothing. `add` refuses a row missing
 a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
-other. A `ref` field naming no row is refused (`--store space names no
+other. A `ref` field naming no row is refused (`--store <machine> names no
 machine row`), and a row a `ref` field of another kind names cannot be
-removed (`machine studio is the --coordinator of the fleet`, `friend rowan
+removed (`machine <name> is the --coordinator of the fleet`, `friend <name>
 is the --coordinator of the sprint`): the structure enforces it (a foreign
 key), the tool names it.
 
@@ -134,7 +134,7 @@ nothing invented.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
-| `seat` | text | yes | nova-secrets: the seat on that machine (studio, swarm-hulk, ...) | `machine:<m>` |
+| `seat` | text | yes | nova-secrets: the seat on that machine (a seat, another seat, ...) | `machine:<m>` |
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
@@ -198,6 +198,7 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+| `bus` | text | | nova-bus: the bus store's address, host:port, read from the applied key when `NOVA_BUS_REDIS` is unset so no friend types it (SPEC-BUS.md, the config); empty until set | `fleet:bus` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
@@ -216,9 +217,10 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `slots` | int | yes | apply: her desired slots, under the ceiling of the machine she is charged to; no machine's width | `friend:<f>:desired` slots (`ns_capacity_desired`) |
-| `tiers` | list: flash, frontier, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
+| `tiers` | list: flash, frontier, heavy, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
 | `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
+| `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -236,6 +238,7 @@ facts.
 | `decide_gate_preexisting` | decimal, default empty | | the deal: a work card's failing test whose p(pre-existing) is at or above this bar is reported `pre-existing: <test>`, the base's or the member's, never the card's failure; empty (the default) reclassifies nothing; 0.8 is the starting point, not set yet because at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing | `sprint:decide_gate_preexisting` |
 | `decide_judgment_bar` | decimal, default empty | | the ask: `nova-sprint answer` applies the verb the judgment decision chose at or above this bar and lists it for the coordinator below it (docs/SPEC-SPRINT.md section 8, answered by nova-decide); a probability; empty applies nothing (every decision recorded, what a bar would apply listed); 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration | `sprint:decide_judgment_bar` |
 | `decide_brief_bar` | decimal, default empty | | `nova-sprint add`: it asks the brief decision of each card (docs/SPEC-NOVA-DECIDE.md section 14) and refuses a card whose p(converges) is under this bar, naming the questions it failed; empty asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels): it stays empty until `calibrate` on the brief record's own outcomes supports a bar | `sprint:decide_brief_bar` |
+| `answer_rules_off` | list of base-gate, bound, brief-defect, conflict, failed, late; default empty | | the tick (`run`, `tick`) and the lander: each rule listed does not answer its judgments; empty (the default) answers by every rule (docs/SPEC-SPRINT.md section 8, answered by rule); `run --answer-rules=false` turns every rule off for that loop | `sprint:answer_rules_off` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -275,18 +278,21 @@ and model a card of that tier runs on, its token and dollar budgets and deadline
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
 `model:` header pins it instead. Frontier cards are never dealt from
-routes: they escalate to the coordinator, so `frontier` is no route's tier. Every value is data in the
-row: the code names no provider or model.
+routes: they escalate to the coordinator, so `frontier` is no route's tier. A heavy route
+names a headless harness (`harness`), the class of the owner's 2026-10-04 "the tier is a
+class, never a model name". Every value is data in the row: the code names no provider or model.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `tier` | enum `flash`, `pro` | yes | the deal: the cards of this tier are dealt on it | `route:<r>` |
+| `tier` | enum `flash`, `pro`, `heavy` | yes | the deal: the cards of this tier are dealt on it; `heavy` is the headless subscription harnesses of one machine (docs/SPEC-SWARM.md, the headless harnesses) | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
+| `harness` | enum `opencode`, `claude`, `codex`, `grok` | (opencode) | the member: the harness a card on the route runs under; `opencode` launches through the providers table with the provider's key, a headless one is the machine's own program and subscription login (the heavy tier) and its route's provider is `subscription-<harness>` (`subscription-claude`, `subscription-codex`, `subscription-grok`; refused otherwise), so a provider's rest never spans two harnesses | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
 | `usd` | decimal | (empty) | the deal: the dollar budget per card, the harness's reported cost at which native stops the card (`stopped=usd`), beside the token budget; above 0 when set (a 0 is refused at `add` and `set`), empty is no cap | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal, and needs a `note` | `route:<r>` |
+| `first` | bool | (false) | the deal: true draws this route before the others of its tier; false leaves the walk as it is | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
 | `price_cache_read` | decimal | (empty) | a card's cost: USD per million cached input tokens read | `route:<r>` |
 | `price_cache_write` | decimal | (empty) | a card's cost: USD per million tokens written to the cache | `route:<r>` |
@@ -351,7 +357,7 @@ every route verb on one older than 0007 (`behindSchema`).
 
 **`tier`** (`config.tiers`): a model tier's route array (the owner,
 2026-10-01: "the per-tier provider/model array should be specified in
-nova-config"). It has two rows, `flash` and `pro`, made by migrate, so `set`
+nova-config"). It has three rows, `flash`, `pro` and `heavy`, made by migrate, so `set`
 takes them on a new store and there is nothing to add. The deal takes
 `routes[index mod len]` for each card of the tier, the index a uint64
 counter on the fleet table (`route_index_flash`, `route_index_pro`), moved
@@ -425,7 +431,9 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           decide_judgment_bar added by 0025, text NOT NULL
                           DEFAULT '', a decimal or '': no bar;
                           decide_brief_bar added by 0026, text NOT NULL
-                          DEFAULT '', a decimal or '')
+                          DEFAULT '', a decimal or '';
+                          answer_rules_off added by 0031, text NOT NULL
+                          DEFAULT '', a list of rule names)
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of
@@ -448,7 +456,7 @@ config.tiers             (name PK flash|pro, routes, created_at, updated_at;
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
-first shape (the fleet Postgres on space is not migrated yet), so this cut
+first shape (the fleet Postgres on the store machine is not migrated yet), so this cut
 rewrote both in place rather than adding an alter.
 
 ## History
@@ -533,7 +541,8 @@ The machine is the one her slots are charged to: the `host` her own beat
 else the fleet's coordinator machine (`fleet:coordinator`, written a moment
 before) as the default charge; neither is a refusal naming `nova-config
 fleet set --coordinator <machine>`. Her width, when it differs, is a plain
-`HSET friend:<f>:desired width <n>`, a field no function reads or writes.
+`HSET friend:<f>:desired width <n>`, a field no function reads or writes, and
+her mode the same way, `HSET friend:<f>:desired mode <m>`.
 `ns_friend_roles(f, roles)` when the
 roles differ (the actor must hold the coordinator role in Redis, or nobody
 does yet and this row makes the first): the roles written are the row's
@@ -546,8 +555,8 @@ and wake path stay, they are hers.
 
 **sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
 Never removed. The handover is `nova-config sprint set --coordinator
-stella --as rowan` then `apply`: the sprint kind's own revision moves and
-the friend kind's plan is two `SET ... changed=roles`, stella's first.
+<friend> --as <friend>` then `apply`: the sprint kind's own revision moves and
+the friend kind's plan is two `SET ... changed=roles`, the new coordinator's first.
 
 **loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
 (the derived path), `rev` and `at`, written whole in one transaction with
@@ -623,13 +632,21 @@ a named variable that is empty is refused with its name, the shape
 `NOVA_SPRINT_REDIS_PASSWORD_ENV` keeps for Redis. A DSN with no password
 anywhere connects with none (a throwaway database trusts).
 
+`--seat <name>` (env `NOVA_SEAT`) supplies the PostgreSQL DSN and the name
+of the password environment variable from the seat's profile row in
+`seats.tsv` (`$XDG_CONFIG_HOME/nova-config/seats.tsv`, else
+`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes accept
+`--seat <name>` so that commands like `nova-config machine set m1 --width 8 --seat <name>`
+need no explicit DSN or secrets wrapper; an unknown seat is a one-line
+refusal naming the known seats.
+
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the
 one `internal/nsprint/store.Open` makes. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
-open no store. `--as` is the flag, else `NOVA_FRIEND`, required on every
-write.
+open no store. `--as` is the flag, else `NOVA_FRIEND`, else the seat name,
+required on every write.
 
 ## Deliberately not configuration
 

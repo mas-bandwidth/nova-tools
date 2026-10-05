@@ -52,7 +52,8 @@ func foldedTuples(t *testing.T, out, month string) []string {
 	sums := map[[3]string]*acc{}
 	for _, p := range paths {
 		d, findings, err := tokens.ReadDayFile(p)
-		require.True(t, err == nil && len(findings) == 0, "day file %s: %v %v", p, err, findings)
+		require.True(t, err == nil, "day file %s: %v %v", p, err, findings)
+		require.True(t, len(findings) == 0, "day file %s: %v %v", p, err, findings)
 		for _, r := range d.Rows {
 			k := [3]string{r.Date, r.Model, r.Repo}
 			a := sums[k]
@@ -359,7 +360,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 
 	sawEval := false
 	for _, cmd := range cmds {
-		require.False(t, cmd == "PING", "ledger --month sent superfluous PING: saw %v", cmds)
+		require.NotEqual(t, "PING", cmd, "ledger --month sent superfluous PING: saw %v", cmds)
 		if cmd == "EVAL" {
 			sawEval = true
 		}
@@ -377,7 +378,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	mu.Unlock()
 
 	for _, cmd := range cmds {
-		require.False(t, cmd == "PING", "report --redis sent superfluous PING: saw %v", cmds)
+		require.NotEqual(t, "PING", cmd, "report --redis sent superfluous PING: saw %v", cmds)
 	}
 
 	// 3. ledger --day sends no PING.
@@ -392,7 +393,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 
 	sawEval = false
 	for _, cmd := range cmds {
-		require.False(t, cmd == "PING", "ledger --day sent superfluous PING: saw %v", cmds)
+		require.NotEqual(t, "PING", cmd, "ledger --day sent superfluous PING: saw %v", cmds)
 		if cmd == "EVAL" {
 			sawEval = true
 		}

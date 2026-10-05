@@ -83,11 +83,25 @@ func (s *scriptSprint) reset() {
 	s.calls = nil
 }
 
-// fakeChild is a child the test ends by hand.
+// fakeChild is a child the test ends by hand, and says it printed when the test says so
+// (Printer; zero: it never printed).
 type fakeChild struct {
-	mu   sync.Mutex
-	done bool
-	res  Result
+	mu      sync.Mutex
+	done    bool
+	res     Result
+	printed time.Time
+}
+
+func (c *fakeChild) Printed() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.printed
+}
+
+func (c *fakeChild) print(at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.printed = at
 }
 
 func (c *fakeChild) Done() bool {

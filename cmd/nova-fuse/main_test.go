@@ -31,8 +31,17 @@ import (
 // capture runs the tool and returns the exit code plus both streams.
 func capture(t *testing.T, args []string, now time.Time) (int, string, string) {
 	t.Helper()
+	return captureWith(t, args, now, getenvNone, "")
+}
+
+// getenvNone is a test's own environment: nothing set. The process environment
+// is not this test's (docs/STANDARD.md section 8).
+func getenvNone(string) string { return "" }
+
+func captureWith(t *testing.T, args []string, now time.Time, getenv func(string) string, wd string) (int, string, string) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := run(args, &stdout, &stderr, now)
+	code := run(args, &stdout, &stderr, now, invocation{getenv: getenv, wd: wd, stamp: version})
 	return code, stdout.String(), stderr.String()
 }
 
@@ -134,6 +143,7 @@ func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
 // takes it from --box; a missing flag is a refusal, never a fallback -- and NOVA_FUSE_BOX
 // or any other environment variable is NOT honoured as a substitute.
 func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
+	t.Parallel()
 	decoy := boxIn(t) // a clear, readable box the env var points at
 	mustRunnable := [][]string{
 		{"status"},
@@ -144,9 +154,14 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 		{"lift", "quarantine", "discord"},
 		{"path"},
 	}
-	t.Setenv("NOVA_FUSE_BOX", decoy)
+	getenv := func(k string) string {
+		if k == "NOVA_FUSE_BOX" {
+			return decoy
+		}
+		return ""
+	}
 	for _, args := range mustRunnable {
-		code, out, errOut := capture(t, args, nowish())
+		code, out, errOut := captureWith(t, args, nowish(), getenv, "")
 		assert.Equal(t, 2, code, "%v: exit = %d, want 2 -- no flag and no env is a refusal", args, code)
 		assert.Contains(t, errOut, "refusing to guess", "%v: stderr = %q, want it to contain %q", args, errOut, "refusing to guess")
 		assert.Empty(t, out, "%v: a refusal must not print an OK line, got %q", args, out)
@@ -158,12 +173,19 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 // the caller's statement, not the environment's -- an env lever that could redirect the
 // check to a decoy would be a lift by another name.
 func TestEnvironmentCannotRedirectOrLiftAnything(t *testing.T) {
+	t.Parallel()
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
 
-	t.Setenv("NOVA_FUSE_BOX", boxIn(t)) // absent, i.e. clear
-	code, _, errOut := capture(t, []string{"check", "--box", box}, now)
+	decoy := boxIn(t) // absent, i.e. clear
+	getenv := func(k string) string {
+		if k == "NOVA_FUSE_BOX" {
+			return decoy
+		}
+		return ""
+	}
+	code, _, errOut := captureWith(t, []string{"check", "--box", box}, now, getenv, "")
 	require.Equal(t, 1, code, "exit = %d, want 1 -- the env var must not redirect the check to a clear box", code)
 	assert.Contains(t, errOut, "FUSE FAILED lockdown", "stderr = %q, want the lockdown failure", errOut)
 }
@@ -1163,6 +1185,10 @@ var fuseAudit = audit.Config{
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
+		// path/filepath joins a relative --box onto the injected working directory
+		// and reports whether a path is already absolute. It holds no writer and
+		// prints nothing, so it cannot write past the escape.
+		`"path/filepath"`,
 		// maps and slices sort the lifted surfaces' names (slices.Sorted(maps.Keys)):
 		// they return values and hold no writer.
 		`"maps"`, `"slices"`,
@@ -1451,7 +1477,7 @@ func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
 	code, out, _ := capture(t, []string{"check", "--box", box, "other"}, nowish())
 	assert.Equal(t, 0, code, "check other: exit %d, %q", code, out)
 	assert.Contains(t, out, "surface=other\n", "check other: exit %d, %q", code, out)
-	_, out, errOut := capture(t, []string{"check", "--box", box, "my surface"}, nowish())
+	_, _, errOut := capture(t, []string{"check", "--box", box, "my surface"}, nowish())
 	assert.Contains(t, errOut, `FUSE FAILED quarantine=my\x20surface since=`, "FUSE FAILED must name the surface as one token, got %q", errOut)
 	_, out, _ = capture(t, []string{"status", "--box", box}, nowish())
 	assert.Contains(t, out, `STATUS OK quarantine=my\x20surface since=`, "STATUS must name the surface as one token, got %q", out)
@@ -1459,12 +1485,15 @@ func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
 	assert.Contains(t, out, `LIFT OK quarantine=my\x20surface was since=`, "LIFT must name the surface as one token, got %q", out)
 }
 
-// TestQuarantineOKNamesTheEntryItVerified. When the box already held a key folding to the
-// surface being quarantined, the verification asked Quarantined, which answers with the
-// sorted-first stored spelling -- so `quarantine discord` over a box holding `Discord`
+// TestQuarantineOKNamesTheEntryItVerified. When the box already held a key folding to
+// the surface being quarantined, the verification asked Quarantined, which answers with
+// the sorted-first stored spelling -- so `quarantine discord` over a box holding `Discord`
 // announced `QUARANTINE OK Discord since=<the old stamp>` with the new reason: a true
-// claim about a sibling entry, under the wrong name and the wrong time. The verification
-// now reads back the exact key it wrote, and the line names that entry.
+// claim about a sibling entry, under the wrong name and the wrong time. A blow onto a
+// standing fuse now keeps the standing record (see TestAReBlowKeepsTheStandingRecordAndSaysSo),
+// so the line names the STORED spelling with the STORED time and reason, and the new
+// reason only as not recorded: a true claim about the one entry, and the box is not
+// rewritten.
 func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
 	t.Parallel()
 
@@ -1475,8 +1504,82 @@ func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
 	now := nowish()
 	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "new"}, now)
 	require.Equal(t, 0, code, "exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
-	want := "QUARANTINE OK discord since=" + stamp(now) + ": new ("
-	assert.True(t, strings.HasPrefix(out, want), "stdout = %q, want it to open with %q -- the entry that was written and read back, not its sibling", out, want)
+	want := "QUARANTINE OK Discord already=quarantined since=2020-01-01T00:00:00Z: old (standing record kept; the new reason was not recorded: new)\n"
+	assert.Equal(t, want, out, "the entry that stands, not its sibling nor a rewrite")
+}
+
+// TestAReBlowKeepsTheStandingRecordAndSaysSo. A second blow onto a fuse already
+// standing rewrote the box with no check for one, so the first at and reason of the
+// blow were gone without a word (security#74 finding 1). Both verbs now keep the
+// standing record and say so: exit 0 (the state sought holds), one OK line naming
+// already= with the stored at and reason, and the new reason only as not recorded.
+// A dry run reports the same line and writes nothing.
+func TestAReBlowKeepsTheStandingRecordAndSaysSo(t *testing.T) {
+	t.Parallel()
+
+	t.Run("quarantine keeps the first at and reason", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"quarantine", "--box", box, "a-forum", "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "a-forum", "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "re-blow: exit = %d, want 0, the state sought holds\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=quarantined", "stdout = %q, want the OK line to name already", out)
+		assert.Contains(t, out, stamp(first)+": first reason", "stdout = %q, want the standing record's at and reason, not the new ones", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		_, standing, ok := b.Quarantined("a-forum")
+		require.True(t, ok, "a-forum must still be quarantined after the re-blow")
+		assert.Equal(t, stamp(first), standing.At, "the box must hold the FIRST at, got %q", standing.At)
+		assert.Equal(t, "first reason", standing.Reason, "the box must hold the FIRST reason, got %q", standing.Reason)
+	})
+
+	t.Run("lockdown keeps the first at and reason", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"lockdown", "--box", box, "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"lockdown", "--box", box, "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "re-blow: exit = %d, want 0, the state sought holds\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=blown", "stdout = %q, want the OK line to name already", out)
+		assert.Contains(t, out, stamp(first)+": first reason", "stdout = %q, want the standing record's at and reason, not the new ones", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		require.NotNil(t, b.Lockdown, "the lockdown must still be blown after the re-blow")
+		assert.Equal(t, stamp(first), b.Lockdown.At, "the box must hold the FIRST at, got %q", b.Lockdown.At)
+		assert.Equal(t, "first reason", b.Lockdown.Reason, "the box must hold the FIRST reason, got %q", b.Lockdown.Reason)
+	})
+
+	t.Run("dry runs report the same and write nothing", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"quarantine", "--box", box, "a-forum", "first reason"}, first)
+		mustRun(t, []string{"lockdown", "--box", box, "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "--dry-run", "a-forum", "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "dry re-blow: exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=quarantined", "dry quarantine stdout = %q, want the same already line", out)
+
+		code, out, errOut = capture(t, []string{"lockdown", "--box", box, "--dry-run", "second reason"}, first.Add(2*time.Second))
+		require.Equal(t, 0, code, "dry re-blow: exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=blown", "dry lockdown stdout = %q, want the same already line", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		require.NotNil(t, b.Lockdown, "the lockdown must still stand, a dry run writes nothing")
+		assert.Equal(t, stamp(first), b.Lockdown.At, "a dry run must not move the standing at, got %q", b.Lockdown.At)
+		_, standing, ok := b.Quarantined("a-forum")
+		require.True(t, ok, "a-forum must still be quarantined, a dry run writes nothing")
+		assert.Equal(t, stamp(first), standing.At, "a dry run must not move the standing at, got %q", standing.At)
+	})
 }
 
 func TestLeadingDashSurfaceWithDelimiter(t *testing.T) {

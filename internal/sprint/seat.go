@@ -13,9 +13,13 @@ import (
 // taking it with the owner's name; each is a happened note and its log line,
 // written with the change of the coordinator in one commit.
 
-// SeatChange is one change of the seat, as the seat's record keeps it.
+// SeatChange is one change of the seat, as the seat's record keeps it. Generation
+// is the seat's generation after the change (FirstSeatGeneration is the seat
+// no change has moved; every accepted change takes the next): the fence of
+// the coordinator's observations of the friends (ObserveFriend).
 type SeatChange struct {
 	Holder     string    `json:"holder"`
+	Generation uint64    `json:"generation"`
 	From       string    `json:"from"`
 	At         time.Time `json:"at"`
 	By         string    `json:"by"`
@@ -76,7 +80,7 @@ func MoveSeat(s *Snapshot, r SeatReq) Plan {
 		p.refuse(r.To, why)
 		return p
 	}
-	c := &SeatChange{Holder: r.To, From: s.Coordinator, At: s.Now, By: r.Who, Taken: r.Take, ApprovedBy: r.ApprovedBy, Reason: strings.TrimSpace(r.Reason)}
+	c := &SeatChange{Holder: r.To, Generation: max(s.SeatGeneration, FirstSeatGeneration) + 1, From: s.Coordinator, At: s.Now, By: r.Who, Taken: r.Take, ApprovedBy: r.ApprovedBy, Reason: strings.TrimSpace(r.Reason)}
 	n := Note{Kind: Happened, Type: NSeat, At: s.Now, Who: r.Who, To: c.Holder,
 		What: c.From + " -> " + c.Holder + ": " + c.Reason + ", by " + c.By}
 	if c.Taken {

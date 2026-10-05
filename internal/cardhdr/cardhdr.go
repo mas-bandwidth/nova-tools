@@ -10,8 +10,10 @@ import (
 	"strings"
 )
 
-// The routes a card may carry: the three model types.
-// frontier is the most recent Astra or Fable model only; pro and flash are
+// The routes a card may carry: the four model classes.
+// frontier is the most recent Astra or Fable model only; heavy is the headless
+// subscription harnesses of one machine (claude, codex, grok; a class, never a
+// model name: the owner, 2026-10-04); pro and flash are
 // the rungs the bench harness picks its model from (nova-sprint routes --tier <route>, first allowed route). A
 // card with no ROUTE line is flash. Every worker (a friend or a bench)
 // advertises the types it runs on its desired record's tiers field
@@ -20,18 +22,19 @@ import (
 // Nothing in code names a worker.
 const (
 	RouteFrontier = "frontier"
+	RouteHeavy    = "heavy"
 	RoutePro      = "pro"
 	RouteFlash    = "flash"
 )
 
-// Routes is the three model types in rank order, the set every ROUTE parse
+// Routes is the four model classes in rank order, the set every ROUTE parse
 // and list draws on.
-var Routes = []string{RouteFrontier, RoutePro, RouteFlash}
+var Routes = []string{RouteFrontier, RouteHeavy, RoutePro, RouteFlash}
 
-// RouteList is the three types as a refusal names them.
-const RouteList = "frontier, pro or flash"
+// RouteList is the four classes as a refusal names them.
+const RouteList = "frontier, heavy, pro or flash"
 
-// IsRoute reports whether s is one of the three model types.
+// IsRoute reports whether s is one of the four model classes.
 func IsRoute(s string) bool {
 	return slices.Contains(Routes, s)
 }

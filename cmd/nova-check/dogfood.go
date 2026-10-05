@@ -45,7 +45,7 @@ const (
 )
 
 // gitTimeoutDefault is the budget one `--repo` authorship read gets before it
-// is killed and named. It is the same minute nova-bus gives one git
+// is killed and named. It is one minute, the budget a git
 // subprocess: long enough for a cold repository, short enough that a wait has
 // an end somebody can see. toolsTimeoutDefault is that budget for the whole
 // `--tools` read, which is one `help` per binary.
@@ -324,7 +324,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	// The token is one word: bounded escapes what it is given, and a token with
-	// a space in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
+	// a blank in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
 	// was run against this repository's own reference.
 	list := bounded.Capped(stderr, *maxFlag, "DOGFOOD", "verb", maxRemedy)
 	for _, f := range findings {
