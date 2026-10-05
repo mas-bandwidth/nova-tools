@@ -2535,6 +2535,29 @@ is recorded; `promoted --answers <note>` is held as every answer is (`answered`)
 naming no open judgment refuses the whole step, nothing written
 (`TestTheTickRaisesDevBehindAtTwentyFiveLandingsOrThirtyMinutes`, `TestPromotedHoldsItsAnswers`).
 
+**Dev sync every cycle.** On 2026-10-04 the base and the development branch drifted for an
+afternoon while hundreds of cards landed on each; folding them took 105 conflicts and an evening
+(the owner: "promote every cycle or drift causes a big fuckup"). Each land cycle in which a sync
+is due (`sprint.DevSyncDue`: `sprint.DevSyncEveryLandings` landed since the last sync, counted
+from the store by `sprint.LandedSinceSync`; `sprint.DevSyncAge` since it with nothing landed, as
+dev moves on its own; none recorded; or a conflict open), the land round merges the development
+branch into the base in its clone (`sprint.LandCycleSync`, `sprint.RunDevSync`): fetched, the
+drift counted, merged on a detached base so no local branch ever holds an ungated merge; a clean
+merge goes through the round's own tree gate (`DevSyncReq.Check`, required: a sync with no gate
+refuses) and is pushed onto the base like a batch; a red gate or a refused push pushes nothing.
+The facts are recorded by one pure step, `sprint.DevSynced`, on the step's own snapshot (git runs
+once, outside the plan, which a retry runs again): the drift (commits each side lacks, the last
+sync and its sha) on the merge table's properties and on every stream's control card, the
+dashboard's merge row, and `sprint.DevDriftOf` reads it with the minutes since. A conflict stops
+every stream (cause `dev sync conflict`, its files in `conflict_paths`) with ONE judgment naming
+the files while they are few (`sprint.NDevSyncConflict`); each cycle tries again while it is open,
+bringing its text up to date and raising no second one; the cycle that finds the base holding dev
+(merged by hand, or cleanly) closes it and resumes only the streams it stopped; `sprint.CanLand`
+is false meanwhile (`TestTheBaseTakesTheDevelopmentBranchEveryCycle`, on the twin store and a twin
+repository; `TestADevSyncConflictStopsEveryStreamWithOneJudgment`). Owed, outside this card's
+paths: the call in the land round itself (`nova-sprint land`, before its first batch, with the
+round's tree gate as `Check`), and the drift on `where --json`.
+
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
 read's calibration of 2026-10-02 found a model read does not make: the merge's
