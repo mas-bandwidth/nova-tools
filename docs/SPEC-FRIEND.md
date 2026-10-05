@@ -392,8 +392,30 @@ late), so the late rule never returns a printing card for want of a stamp.
 Only a harness that can open a session and deliver into a named one has
 lanes (`LaneHarness`; OpenCode today: `opencode run --dir <dir> <seed>` with no
 `--session` opens one, found as the session the listing of the directory
-gained, and `opencode run --session <id>` takes each card). On any other
-harness a one-shot row is delivered in batch, said once in the record.
+gained, and `opencode run --session <id>` takes each card), or a harness
+that runs each card as a process of its own (`CardRunner`; Claude). On any
+other harness a one-shot row is delivered in batch, said once in the record.
+
+A claude lane opens no session: each card is one headless run in the
+friend's directory, `env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the
+brief> --output-format stream-json --verbose`, stdin from `/dev/null`, the
+card's `BRIEF.md` the whole prompt (no bus message, pong line or notice rides
+with it; messages stay pending, the daemon reading nothing for a claude
+session, and pings are answered by the daemon as ever). `config_dir` is the
+friend row's (nova-config, docs/SPEC-CONFIG.md), so each friend is her own
+account: its login and its settings, the permission mode a headless run
+works under among them; `run --config-dir` overrides the row. The run's
+output goes to the record and is never read for the result: the card's
+`REPORT.md` and `RESULT.md` in its outbox are. A run that leaves either out
+is a failed attempt whatever its exit (`claude -p exited <n> and <outbox>
+holds no ...`), handed again and set aside as above. stream-json prints as
+the run works, so the silence watch stops only a run that has stalled. A
+claude row in one-shot mode with no `config_dir` runs no lane: the daemon
+records `mode: one-shot REFUSED: friend <name> is a claude friend in
+one-shot mode with no config_dir ...; run: nova-config friend set <name>
+--config_dir <her account's absolute config directory>, or nova-friend run
+--config-dir <dir>` once, and stays in batch, which for claude delivers
+nothing.
 
 OpenCode's headless run auto-rejects any tool call that would prompt (measured
 2026-10-04, twice on one friend: `external_directory` for a path through the

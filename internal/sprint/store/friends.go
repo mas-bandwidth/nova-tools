@@ -48,6 +48,9 @@ type friendEntry struct {
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
 	Mode string `json:"mode,omitempty"`
+	// ConfigDir is her row's config_dir (the directory her claude lanes run
+	// with as CLAUDE_CONFIG_DIR); empty when the row has none.
+	ConfigDir string `json:"config_dir,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -63,6 +66,8 @@ type FriendSpec struct {
 	Width int
 	Class string
 	Mode  string // her delivery mode, config.FriendMode of her row
+	// ConfigDir is her row's config_dir, empty when unset.
+	ConfigDir string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -147,11 +152,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode = s.Width, s.Class, s.Mode
+		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -433,7 +438,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
 }
 
 // FriendBeats is every friend of the roster with her last beat (a zero beat
