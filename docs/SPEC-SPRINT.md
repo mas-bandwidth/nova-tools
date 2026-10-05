@@ -1171,20 +1171,22 @@ because its claim moved (the card redealt or dropped under it) reports nothing, 
 spend reaches the dashboard only on the unreconciled line below; so does the record of a
 card that leaves the work table.
 
-**The reconciliation** (`internal/sprint/cost_reconcile.go`; `cmd/nova-sprint`
-`cost_reconcile.go`). The run loop reads each provider's own count of the dollars its key
-used this UTC day when it begins and every hour after (openrouter: `GET /api/v1/key`,
-`data.usage_daily`), through the seat's key in its own environment and outside every tick,
-and sets it beside the sprint's records of that provider for the same UTC day: every
-consumer record on every primary whose route (else reported provider/model) is that
-provider's and whose end stamp falls on that day, at its charged figure. A day is compared
-with the same day, never with all time. The read is written to the fleet table's property
-`cost_reconcile_<provider>`, the last read of each day kept for 62 days. A gap over 5% of the
-provider's figure, and of at least $1.00, opens ONE judgment on the provider (`a provider's
-usage and the sprint's cost records disagree`, filed under `provider:<p>`, decisions ack and
-wait), never a second while it is open; a read back within the bound closes it. A provider
-with no usage endpoint (opencode) or no key is recorded unknown with why, and changes
-nothing.
+**The reconciliation** (`internal/sprint/cost_reconcile.go`, `sprint.CostReconcile`). Its
+step takes each provider's own count of the dollars its key used on a UTC day (openrouter:
+`GET /api/v1/key`, `data.usage_daily`) and sets it beside the sprint's records of that
+provider for the same UTC day: every consumer record on every primary whose route (else
+reported provider/model) is that provider's and whose end stamp falls on that day, at its
+charged figure. A day is compared with the same day, never with all time. The read is written
+to the fleet table's property `cost_reconcile_<provider>`, the last read of each day kept for
+62 days. A gap over 5% of the provider's figure, and of at least $1.00, opens ONE judgment on
+the provider (`a provider's usage and the sprint's cost records disagree`, filed under
+`provider:<p>`, decisions ack and wait), never a second while it is open; a read back within
+the bound closes it. A provider with no usage endpoint (opencode) or no key is recorded
+unknown with why, and changes nothing. **Not yet run:** the loop that reads each provider
+when `nova-sprint run` begins and every hour after (through the seat's key in its own
+environment, outside every tick, as the balance poll does), with the judgment's entry in
+`Decisions` and its line in the help, lives in `cmd/nova-sprint` and is owed; until it lands
+no read is written, no judgment opens, and the unreconciled line below reads $0.00.
 
 **The dashboard's cost** is the complete total: every take and read of every card on the
 work table in any column, landed or not (`total_cost` on each stream's `stream_costs`), plus

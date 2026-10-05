@@ -14,9 +14,10 @@ import (
 
 // THE COST RECONCILIATION (docs/SPEC-SPRINT.md, "What a card cost", the reconciliation; the
 // owner, 2026-10-04: "this is a tragedy. we MUST track the complete cost of what we do on the
-// fleet and friends on API plans."). Once every CostReconcileEvery the run loop reads each
-// provider's own count of the dollars its key used today (cmd/nova-sprint cost_reconcile.go:
-// openrouter's GET /api/v1/key, data.usage_daily, the UTC day), and this step sets it beside
+// fleet and friends on API plans."). Once every CostReconcileEvery the run loop is to read
+// each provider's own count of the dollars its key used today (openrouter's GET
+// /api/v1/key, data.usage_daily, the UTC day; that loop, in cmd/nova-sprint, is owed and
+// not yet built, so nothing calls this step yet), and this step sets it beside
 // the sprint's own records of that provider for the same UTC day: every consumer record on
 // every primary (a work card's take or a read's run, whatever its end) whose provider is
 // that one and whose end stamp falls on that day, at its charged figure (the harness's cost,
@@ -37,7 +38,7 @@ import (
 // A provider with no usage endpoint, no key, or an answer not of the shape is recorded
 // unknown with why; it changes no judgment and no day.
 
-// CostReconcileEvery is how often the run loop reconciles the providers' usage.
+// CostReconcileEvery is how often the run loop is to reconcile the providers' usage.
 const CostReconcileEvery = time.Hour
 
 // CostGapOver is the share of the provider's figure a gap must pass to open the judgment.
@@ -57,10 +58,12 @@ const NCostGap = "a provider's usage and the sprint's cost records disagree"
 // PropCostReconcilePrefix is the fleet table property prefix of a provider's reconciliation.
 const PropCostReconcilePrefix = "cost_reconcile_"
 
-func init() {
-	// the owner's: the cause is a cost not recorded, which no rework of a card fixes
-	Decisions[NCostGap] = []string{"ack", "wait"}
-}
+// CostGapDecisions are NCostGap's decisions, the owner's: the cause is a cost not recorded,
+// which no rework of a card fixes. They join Decisions, with the judgment's line in
+// nova-sprint's help, in the change that starts the run loop's reconciliation
+// (cmd/nova-sprint, owed: docs/SPEC-SPRINT.md, "What a card cost"); until then no judgment
+// of the type is opened.
+var CostGapDecisions = []string{"ack", "wait"}
 
 // PropCostReconcile is the fleet table property of a provider's reconciliation.
 func PropCostReconcile(provider string) string { return PropCostReconcilePrefix + provider }
@@ -207,6 +210,7 @@ func CostReconcile(s *Snapshot, r CostReconcileReq) Plan {
 		switch {
 		case over && len(open) == 0:
 			n := judgment(NCostGap, ProviderSubject(rd.Provider), s.Now, 0)
+			n.Decisions = append([]string(nil), CostGapDecisions...)
 			n.StreamLevel, n.To, n.Who = true, s.Coordinator, r.Who
 			n.What = fmt.Sprintf("provider %s counted %s on %s and the sprint's cost records of it hold %s: a gap of %s, %.1f%% (over %.0f%%); a paid call is going unrecorded, or the key is spent outside the sprint; nova-sprint routes and card <id> show the records",
 				rd.Provider, Dollars(rec.Used), rd.Day, Dollars(rec.Internal), Dollars(math.Abs(rec.Gap)), rec.Share*100, CostGapOver*100)
