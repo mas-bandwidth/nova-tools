@@ -4,6 +4,7 @@ package main
 // CardUsageColumns): `profiles` walks them under a swarm root.
 
 import (
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -43,7 +44,7 @@ func parseCardUsd(v string) (float64, bool) {
 // receipt names (unattributed when it names none), the tool, the rc, and the three numbers
 // the ledger keeps, and reports whether the file held a row at all.
 func readCardFile(path string) (started, model, repo, tool, rc string, in, out int64, usd float64, inKnown, outKnown, usdKnown, ok bool) {
-	raw, err := os.ReadFile(path)
+	raw, err := boundedReadFile(path, 1<<20) // 1 MiB cap for usage.tsv
 	if err != nil {
 		return "", "", "", "", "", 0, 0, 0, false, false, false, false
 	}
@@ -84,4 +85,26 @@ func readCardFile(path string) (started, model, repo, tool, rc string, in, out i
 		return s, m, repo, get(row, "tool"), get(row, "rc"), in, out, usd, inKnown, outKnown, usdKnown, true
 	}
 	return "", "", "", "", "", 0, 0, 0, false, false, false, false
+}
+
+// boundedReadFile reads a file with a size cap, returning an error if the file exceeds
+// the cap or is not a regular file. This prevents reading arbitrarily large files
+// that could exhaust memory.
+func boundedReadFile(path string, cap int64) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, os.ErrNotExist
+	}
+	if fi.Size() > cap {
+		return nil, os.ErrNotExist
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, cap+1))
 }
