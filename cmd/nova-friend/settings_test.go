@@ -64,7 +64,7 @@ func TestInstallNamesTheGrokWakeFileAndTheClaudeConfigDirInTheAgent(t *testing.T
 	// An environment default is used for harness settings, but does not turn a
 	// passive installed Claude friend into a headless one.
 	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob").
-		Out("INSTALL OK label=com.nova.friend-bob", "INSTALL WROTE harness=claude file=/env/claude name=CLAUDE_CONFIG_DIR value="directory"")
+		Out("INSTALL OK label=com.nova.friend-bob", `INSTALL WROTE harness=claude file=/env/claude name=CLAUDE_CONFIG_DIR value="directory"`)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "<string>--config-dir</string>")
