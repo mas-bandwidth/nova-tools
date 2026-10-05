@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -28,7 +29,7 @@ const (
 	RuleBaseGate    = "base-gate"    // the lander's base tree gate, retried before a stream stops (cmd/nova-sprint, landgo.go)
 	RuleBound       = "bound"        // a card reached its bound: a new attempt a tier up, heavy to a friend
 	RuleBriefDefect = "brief-defect" // the same finding twice: the card marked a brief defect, held
-	RuleConflict    = "conflict"     // a conflict in a file no ledger owns: returned, redone on the tip, resumed
+	RuleConflict    = "conflict"     // a head the lander refused (a file conflict, its PATHS, the tree gate): returned, redone on the tip at flash, resumed; the same refusal twice a brief defect
 	RuleFailed      = "failed"       // work came back failed or with no result: redealt, then a tier up
 	RuleLate        = "late"         // a work card past its deadline: a wait once with progress; returned and redealt only once its holder stamped and went silent
 )
@@ -46,6 +47,11 @@ const (
 	FieldRuleFails = "rule_fails"
 	// FieldRuleRedo is the attempt the conflict rule returned to be redone on the tip.
 	FieldRuleRedo = "rule_redo"
+	// FieldRuleRefused and FieldRuleRefusal are the last refusal the conflict rule returned
+	// the card on: its way (RefusalWay) and the lander's words. A second refusal of the same
+	// way is a brief defect.
+	FieldRuleRefused = "rule_refused"
+	FieldRuleRefusal = "rule_refusal"
 	// FieldRuleWaited is the work card's generation the late rule waited on, once.
 	FieldRuleWaited = "rule_waited"
 	// FieldBriefDefect is the stamp the brief-defect rule marked the primary with.
@@ -83,6 +89,36 @@ const (
 // RuleConflictFix is the conflict rule's fix: the attempt's change made again where the
 // stream is now.
 const RuleConflictFix = "redo the same change on the current tip"
+
+// The ways a head is refused at its landing, as the lander says them (cmd/nova-sprint,
+// land.go and landgo.go: mergeHead, checkCard, gateCard): the conflict rule's "the same
+// way" (RefusalWay).
+const (
+	RefusedConflict = "conflict" // the head does not merge: a file no ledger owns conflicts
+	RefusedPaths    = "paths"    // the lander's checks: it changes files outside its PATHS (E12)
+	RefusedChecks   = "checks"   // the lander's other checks: a stranded fragment (E4)
+	RefusedGate     = "gate"     // the merged tree fails the tree gate
+)
+
+// RefusalWay is the way the lander refused a head, from the conflict fact it recorded
+// (the stream's control card's conflict kind, and the stop's words): "" when the rule
+// cannot place it (a conflict in a generated ledger, a head that is no commit or that
+// origin does not hold, a conflict the lander did not place), which needs a mind.
+func RefusalWay(kind, what string) string {
+	switch {
+	case kind == "file":
+		return RefusedConflict
+	case kind != "":
+		return ""
+	case strings.Contains(what, " fails the lander's checks: ") && strings.Contains(what, "(E12)"):
+		return RefusedPaths
+	case strings.Contains(what, " fails the lander's checks: "):
+		return RefusedChecks
+	case strings.Contains(what, " fails the tree gate: "):
+		return RefusedGate
+	}
+	return ""
+}
 
 // NRuleAnswered is the happened note of a move a rule made that no judgment's close says (a
 // late card returned to be dealt again).
@@ -365,10 +401,14 @@ func stampOrEmpty(t time.Time) string {
 	return stamp(t)
 }
 
-// ruleConflict: a stream stopped on a conflict in a file no generated ledger owns (the
-// lander said so: FieldConflictKind file). The card is returned, then the stream resumed,
-// then the card redone on the tip (ruleRedo); a conflict in a ledger, or one the lander did
-// not place, needs a mind.
+// ruleConflict: a stream stopped on a head the lander refused (docs/SPEC-SPRINT.md section
+// 8, the rules table's row conflict): a conflict in a file no generated ledger owns
+// (FieldConflictKind file), files outside its PATHS or another of the lander's checks, or
+// the merged tree failing the tree gate. The card is returned, then the stream resumed, so
+// it lands the rest of its batch, then the card redone on the tip at flash (ruleRedo), all
+// in one tick. The same card refused the same way again is a brief defect: marked, the
+// stream left stopped and its judgment kept for a mind. A conflict in a ledger, or a
+// refusal the rule cannot place (RefusalWay ""), needs a mind.
 func ruleConflict(s *Snapshot, a *RuleAnswer) {
 	a.Rule = RuleConflict
 	ctl := s.StreamCtl(a.open.Note.Stream)
@@ -378,28 +418,49 @@ func ruleConflict(s *Snapshot, a *RuleAnswer) {
 	}
 	card := ctl.F("card")
 	a.Card = card
-	switch kind := ctl.F(FieldConflictKind); kind {
-	case "file":
-	case "":
+	what := a.open.Note.What
+	way := RefusalWay(ctl.F(FieldConflictKind), what)
+	pr, m := s.Work.Placed(card), s.Merge.Placed(card)
+	stuck := pr != nil && pr.Col == Merging && m != nil && m.Col == Stuck
+	switch kind := ctl.F(FieldConflictKind); {
+	case stuck && way == "" && kind == "":
 		left(a, "the lander did not say which files conflicted: a mind's")
 		return
-	default:
+	case stuck && way == "":
 		left(a, "the conflict is in a "+kind+" ("+orDash(ctl.F(FieldConflictPaths))+"): a mind's")
 		return
 	}
-	pr, m := s.Work.Placed(card), s.Merge.Placed(card)
 	switch {
-	case pr != nil && pr.Col == Merging && m != nil && m.Col == Stuck:
+	case stuck:
 		if why := mindCard(pr); why != "" {
 			left(a, why)
 			return
 		}
-		a.Act, a.Why = ActReturn, "a conflict in "+orDash(ctl.F(FieldConflictPaths))+", no ledger: "+card+" returned to be redone on the current tip"
+		if pr.F(FieldRuleRefused) == way {
+			a.Rule, a.Act = RuleBriefDefect, ActMark
+			a.Why = card + " refused the same way twice (" + way + "): the brief is wrong, not the worker; marked a brief defect, the stream held for a mind"
+			return
+		}
+		a.Act, a.Why = ActReturn, refusalSaid(way, ctl)+": "+card+" returned to be redone on the current tip at flash"
+		a.set = map[string]string{FieldRuleRefused: way, FieldRuleRefusal: cutText(what, MaxCardTextBytes), FieldTierNow: cardhdr.RouteFlash}
 	case pr != nil && pr.F(FieldRuleRedo) != "" && (m == nil || m.Col != Stuck):
 		a.Act, a.Why = ActResume, card+" is out of the stream to be redone on the tip: the stream goes on"
 	default:
 		left(a, "the conflict card is not where the rule left it")
 	}
+}
+
+// refusalSaid is a refusal of the way, in the rule's answer.
+func refusalSaid(way string, ctl *Card) string {
+	switch way {
+	case RefusedConflict:
+		return "a conflict in " + orDash(ctl.F(FieldConflictPaths)) + ", no ledger"
+	case RefusedPaths:
+		return "files outside its PATHS"
+	case RefusedChecks:
+		return "the lander's checks failed"
+	}
+	return "the merged tree fails the tree gate"
 }
 
 // ruleRedo: a card the conflict rule returned, in review at that attempt: reworked with the
@@ -411,7 +472,17 @@ func ruleRedo(s *Snapshot, a *RuleAnswer) {
 		return
 	}
 	a.Rule, a.Card = RuleConflict, pr.ID
-	a.Act, a.fix, a.Why = ActRework, RuleConflictFix, "returned by the conflict rule: "+RuleConflictFix
+	a.Act, a.fix, a.Why = ActRework, redoFix(pr), "returned by the conflict rule: "+RuleConflictFix
+}
+
+// redoFix is the fix of a card the conflict rule returned: the change made again on the
+// current tip, and the refusal it answers when the tip alone does not (its PATHS, the
+// lander's checks, the tree gate); a file conflict is the tip's to answer.
+func redoFix(pr *Card) string {
+	if way := pr.F(FieldRuleRefused); way == "" || way == RefusedConflict {
+		return RuleConflictFix
+	}
+	return cutText(RuleConflictFix+"; the lander refused attempt "+pr.F(FieldRuleRedo)+": "+pr.F(FieldRuleRefusal), MaxCardTextBytes)
 }
 
 // ruleBrief: the same finding twice, or too many attempts on one brief (the brief is wrong,
@@ -470,18 +541,34 @@ func acting(s *Snapshot, r TickReq, acts ...string) []RuleAnswer {
 	return out
 }
 
-// TickRuleReturn returns the conflict cards the conflict rule answers.
+// TickRuleReturn returns the conflict cards the conflict rule answers, each marked with the
+// refusal it was returned on (FieldRuleRefused, FieldRuleRefusal) and its next attempt's
+// tier, flash (FieldTierNow).
 func TickRuleReturn(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
+	sets := map[string]map[string]string{}
 	for _, a := range acting(s, r, ActReturn) {
 		if !slices.Contains(ids, a.Card) {
 			ids = append(ids, a.Card)
+			sets[a.Card] = a.set
 		}
 	}
 	if len(ids) == 0 {
 		return Plan{}, 0
 	}
-	return Return(s, ReturnReq{Sel: Sel{Only: ids}, Reason: RuleSaid(RuleConflict, RuleConflictFix), Rule: RuleConflict, Who: r.who()}), 0
+	p := Return(s, ReturnReq{Sel: Sel{Only: ids}, Reason: RuleSaid(RuleConflict, RuleConflictFix), Rule: RuleConflict, Who: r.who()})
+	for i := range p.Units {
+		for j := range p.Units[i].Changes {
+			c := &p.Units[i].Changes[j]
+			if set := sets[c.Entry.ID]; c.Table == Work && len(set) > 0 {
+				if c.Entry.Set == nil {
+					c.Entry.Set = map[string]string{}
+				}
+				maps.Copy(c.Entry.Set, set)
+			}
+		}
+	}
+	return p, 0
 }
 
 // TickRuleResume resumes the streams whose conflict card the conflict rule took out.
