@@ -11,7 +11,7 @@ import (
 // (os.Executable) ran the TEST BINARY with CLI words. A Go test binary takes
 // words it does not know as no flags at all and runs the whole suite again,
 // which reached the same test, which ran the binary again: a chain 289
-// processes deep. docs/TESTS.md, tests-reexec-guard-everywhere.w1.
+// processes deep. docs/TESTS.md, tests-reexec-guard-everywhere.w2.
 //
 // THE GUARD. A start of a test binary is one of three things, decided by Mode
 // before any test runs:

@@ -7,4 +7,4 @@ import "github.com/mas-bandwidth/nova-tools/internal/testbin"
 // does not answer, or a chain of test binaries too deep, is refused loudly
 // (exit 3) instead of running the whole suite again, as 289 nested processes did.
 // A package-level var runs before TestMain, so the guard stands before any dispatch.
-var _ = testbin.Guard("nova-table", nil)
+var _ = testbin.Guard("nova-sprint", nil)

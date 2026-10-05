@@ -15,7 +15,7 @@ import (
 )
 
 // THE CLASS RULE: A TEST BINARY THAT RE-EXECS ITSELF HAS THE GUARD
-// (docs/TESTS.md, tests-reexec-guard-everywhere.w1).
+// (docs/TESTS.md, tests-reexec-guard-everywhere.w2).
 //
 // A test that runs "this binary" (os.Executable, os.Args[0]) runs the TEST
 // binary. Given CLI words it does not know as flags, a Go test binary runs the
@@ -99,7 +99,7 @@ func unguardedReexecs(files map[string]string) []string {
 			continue
 		}
 		for _, s := range f.sites {
-			out = append(out, fmt.Sprintf("%s:%d: execs the test binary and %s has no testbin.Guard (add reexec_test.go with `var _ = testbin.Guard(\"<tool>\", nil)`; docs/TESTS.md, tests-reexec-guard-everywhere.w1)", f.path, s.Line, filepath.ToSlash(filepath.Dir(f.path))))
+			out = append(out, fmt.Sprintf("%s:%d: execs the test binary and %s has no testbin.Guard (add reexec_test.go with `var _ = testbin.Guard(\"<tool>\", nil)`; docs/TESTS.md, tests-reexec-guard-everywhere.w2)", f.path, s.Line, filepath.ToSlash(filepath.Dir(f.path))))
 		}
 	}
 	sort.Strings(out)

@@ -14,7 +14,7 @@ import (
 )
 
 // the guard on this package's own test binary, so its re-exec children below
-// are counted and a chain stops (docs/TESTS.md, tests-reexec-guard-everywhere.w1)
+// are counted and a chain stops (docs/TESTS.md, tests-reexec-guard-everywhere.w2)
 var _ = Guard("testbin", nil)
 
 func TestModeRunsTheSuiteHandlesItsOwnOrRefuses(t *testing.T) {
