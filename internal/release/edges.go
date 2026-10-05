@@ -465,7 +465,8 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	go func() {
 		pw.CloseWithError(writeTar(pw, dir, base, allowed))
 	}()
-	defer pr.Close()
+	// ignored: the read end of a pipe the child has drained; the command's error is the one returned
+	defer func() { _ = pr.Close() }()
 	args := append(remoteArgv(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
 	if s.Guard != nil {
 		s.Guard.RefuseHosts(s.Path, args...)

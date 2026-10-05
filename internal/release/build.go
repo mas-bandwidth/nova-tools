@@ -321,7 +321,8 @@ func fileSum(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	// ignored: the file was opened only for reading; the copy's error is the one returned
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err
