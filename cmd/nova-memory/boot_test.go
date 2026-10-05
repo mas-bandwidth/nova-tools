@@ -66,3 +66,18 @@ func TestBootRefusesAPinEntryThroughADirectorySymlinkOutOfRoot(t *testing.T) {
 	assert.NotContains(t, stdout, "BOOT OK", "no success line when the entry leaves --root")
 	assert.Contains(t, stderr, "dir/outside.md", "the refusal names the offending entry")
 }
+
+func TestBootRefusesAnEmptyRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "in.md"), []byte("corpus body\n"), 0o644))
+	pinPath := filepath.Join(dir, "pin")
+	require.NoError(t, os.WriteFile(pinPath, []byte("in.md\n"), 0o644))
+
+	exit, stdout, stderr := runCLI(t, "", "boot", "--root", "", "--pin", pinPath)
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stdout: %s stderr: %s", exit, stdout, stderr)
+	assert.NotContains(t, stdout, "BOOT OK", "empty --root must not succeed")
+	assert.Contains(t, stderr, "--root")
+	assert.Contains(t, stderr, "--root names the memory directory and is never guessed from the working directory")
+}
