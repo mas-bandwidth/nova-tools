@@ -20,7 +20,7 @@ var noticeSubjects = []string{"coordinator silent", "coordinator back"}
 // limit bytes (at least one always goes in) and names the rest by id, with
 // the command that reads them. carried is how many messages are in the text;
 // they are acked together when the turn is accepted (docs/SPEC-FRIEND.md,
-// "The loop"; tla/Delivery.tla, Take). It is a pure function of the list, the
+// "The loop"). It is a pure function of the list, the
 // clock and the limit.
 func Envelope(msgs []bus.Message, now time.Time, me string, limit int) (text string, carried int) {
 	section := func(i, n int, m bus.Message) string {
