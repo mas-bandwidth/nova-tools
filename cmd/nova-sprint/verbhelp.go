@@ -25,14 +25,18 @@ const exitLine = "exit codes: 0 done, 1 failed or incomplete (including refused)
 
 // verbExit is a verb's own exit codes where they are not the common three.
 var verbExit = map[string]string{
-	"run":         "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
-	"fleet sync":  "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
-	"friend sync": "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
-	"land":        "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
-	"check":       "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
-	"selftest":    "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
-	"answer":      "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
-	"dashboard":   "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"run":           "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"fleet sync":    "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
+	"friend sync":   "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
+	"land":          "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
+	"check":         "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
+	"selftest":      "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
+	"seat check":    "exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer",
+	"machinery":     "exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer",
+	"answer":        "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
+	"dashboard":     "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"selftest land": "exit codes: 0 done, 1 failed (lander broken or card did not land), 2 usage",
+	"server switch": "exit codes: 0 done, 1 failed, 2 usage",
 }
 
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
@@ -50,8 +54,10 @@ var verbEffect = map[string]string{
 	"stats":            "inspection: reads the sprint's counts and rates, writes nothing",
 	"queue":            "inspection: reads a worker's or a stream's cards, writes nothing",
 	"handover":         "inspection: reads the store, writes nothing",
+	"seat check":       "inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing",
 	"seat install":     "local write: writes the push loop's unit (inbox --wait --push seat) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing",
 	"seat uninstall":   "local write: unloads the push loop's unit and removes its file from --dir",
+	"machinery":        "inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing",
 	"needs":            "inspection: reads the waiting cards, writes nothing",
 	"held":             "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":        "inspection: reads the sentinels and what each waits on, writes nothing",
@@ -70,6 +76,8 @@ var verbEffect = map[string]string{
 	"dashboard":        "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator":      "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 	"answer":           "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
+	"selftest land":    "inspection: lands a canned card on a scratch clone with this binary, writes nothing to the sprint",
+	"server switch":    "local write: switches the server binary on disk, keeping the previous binary and rolling back on land failure in the window",
 }
 
 // commonExit is the codes of every other verb.

@@ -293,7 +293,7 @@ func TestOptionsString(t *testing.T) {
 		{Options{Addr: "store.test:6379", User: "bench", PasswordEnv: "NOVA_TEST_PW"}, "addr=store.test:6379 user=bench password-env=NOVA_TEST_PW"},
 		{Options{Addr: "/a b/s.sock", User: "u=1\nuser=root", PasswordEnv: "P W"}, `addr=/a\x20b/s.sock user=u\x3d1\x0auser\x3droot password-env=P\x20W`},
 	} {
-		for _, got := range []string{c.o.String(), fmt.Sprint(c.o), fmt.Sprintf("%v", c.o), fmt.Sprintf("%+v", c.o), fmt.Sprintf("%s", c.o)} {
+		for _, got := range []string{c.o.String(), fmt.Sprint(c.o), fmt.Sprintf("%v", c.o), fmt.Sprintf("%+v", c.o), c.o.String()} {
 			if got != c.want {
 				assert.EqualValues(t, c.want, got, "%#v renders %q; want %q", c.o, got, c.want)
 			}

@@ -120,7 +120,7 @@ func TestHelpIsOnStdoutAtExitZeroForTheToolAndEveryVerb(t *testing.T) {
 			if r.code != 0 || r.stderr != "" || r.stdout != v.help || !strings.HasPrefix(r.stdout, "tlacheck "+v.name+":") {
 				t.Errorf("%v: code=%d stderr=%q", args, r.code, r.stderr)
 			}
-			if !strings.Contains(r.stdout, "first run:") || !(strings.Contains(r.stdout, "output:") || strings.Contains(r.stdout, "Payload:")) {
+			if !strings.Contains(r.stdout, "first run:") || (!strings.Contains(r.stdout, "output:") && !strings.Contains(r.stdout, "Payload:")) {
 				t.Errorf("%v: the help has no output line or first run", args)
 			}
 		}
@@ -622,9 +622,7 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 		}
 		for _, m := range invocation.FindAllStringSubmatch(line, -1) {
 			args := []string{m[1]}
-			for _, a := range strings.Fields(strings.ReplaceAll(m[2], `"`, "")) {
-				args = append(args, a)
-			}
+			args = append(args, strings.Fields(strings.ReplaceAll(m[2], `"`, ""))...)
 			commands = append(commands, args)
 		}
 	}

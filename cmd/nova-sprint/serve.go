@@ -147,7 +147,7 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // serves a page until it is interrupted and reads through the server, and seat install
 // and seat uninstall, which install the push loop as a service of the machine they are
 // typed on.
-var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend clean", "dashboard", "answer", "seat install", "seat uninstall"}
+var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend clean", "dashboard", "answer", "seat install", "seat uninstall", "selftest land", "server switch"}
 
 // serveCtx is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
@@ -416,7 +416,7 @@ func runningIDs(v string) bool {
 		return false
 	}
 	for _, r := range v {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-~,", r)) {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("._-~,", r) {
 			return false
 		}
 	}

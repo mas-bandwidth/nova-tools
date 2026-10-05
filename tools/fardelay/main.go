@@ -174,22 +174,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg, err := parse(args)
 	switch {
 	case errors.Is(err, errHelp):
-		fmt.Fprint(stdout, usage)
+		_, _ = fmt.Fprint(stdout, usage) // ignored: a reader that closed stdout cannot be told the help failed
 		return exitOK
 	case err != nil:
-		fmt.Fprintf(stderr, "fardelay: %v; run: fardelay -h\n", err)
+		_, _ = fmt.Fprintf(stderr, "fardelay: %v; run: fardelay -h\n", err) // ignored: the refusal is the report; a failed write to stderr has no other channel
 		return exitCannotRun
 	}
 	p, err := delayproxy.Listen(cfg.listen, cfg.target, cfg.delay, delayproxy.Options{
-		Logf: func(format string, args ...any) { fmt.Fprintf(stderr, "fardelay: "+format+"\n", args...) },
+		// ignored: the log line is the report; a failed write to stderr has no other channel
+		Logf: func(format string, args ...any) { _, _ = fmt.Fprintf(stderr, "fardelay: "+format+"\n", args...) },
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "fardelay: %v; run: fardelay -h\n", err)
+		_, _ = fmt.Fprintf(stderr, "fardelay: %v; run: fardelay -h\n", err) // ignored: the refusal is the report; a failed write to stderr has no other channel
 		return exitCannotRun
 	}
-	fmt.Fprintf(stdout, "LISTEN OK addr=%s target=%s delay=%v\n", p.Addr(), cfg.target, cfg.delay)
+	_, _ = fmt.Fprintf(stdout, "LISTEN OK addr=%s target=%s delay=%v\n", p.Addr(), cfg.target, cfg.delay) // ignored: the LISTEN line is the answer; a failed write to stdout has no other channel
 	<-ctx.Done()
 	p.Stop()
-	fmt.Fprintf(stdout, "STOP OK writes=%d shortest=%v\n", p.Writes(), p.Shortest())
+	_, _ = fmt.Fprintf(stdout, "STOP OK writes=%d shortest=%v\n", p.Writes(), p.Shortest()) // ignored: the STOP line is the answer; a failed write to stdout has no other channel
 	return exitOK
 }

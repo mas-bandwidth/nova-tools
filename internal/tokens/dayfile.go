@@ -403,11 +403,11 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 		bad := false
 		for t := Type(0); t < NTypes; t++ {
 			cell := cells[3+int(t)]
-			switch {
-			case cell == "":
+			switch cell {
+			case "":
 				f = append(f, Finding{Line: n, Reason: "the " + TypeNames[t] + " cell is empty; a type a source did not report is `-`, never empty"})
 				bad = true
-			case cell == Dash:
+			case Dash:
 			default:
 				v, err := strconv.ParseInt(cell, 10, 64)
 				if err != nil || v < 0 {

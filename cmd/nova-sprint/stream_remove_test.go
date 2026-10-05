@@ -52,7 +52,7 @@ func TestStreamRemoveTakesStreamsOffAStoppedSprint(t *testing.T) {
 	assert.Contains(t, errs, "the machine is RUNNING")
 	assert.Contains(t, errs, "run: nova-sprint stop")
 	assert.Equal(t, all, ta.streamRows(), "refused on RUNNING: nothing changed")
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 
 	ta.ok("add --stream c --count 1 --one")
 	before := ta.applies()

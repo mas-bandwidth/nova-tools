@@ -239,7 +239,7 @@ func TestAnswerDecideLoopEndsWhenTheMachineStops(t *testing.T) {
 			ta.ok("take --as m1 s1-2.w1@1")
 			ta.ok("finish --as m1 s1-2.w1@1 --failed --report red")
 		case 2:
-			ta.ok("stop")
+			ta.ok("stop --reason r --until 9999h")
 		}
 	})
 	start := ta.a.now()
@@ -247,7 +247,8 @@ func TestAnswerDecideLoopEndsWhenTheMachineStops(t *testing.T) {
 	assert.Equal(t, 3, strings.Count(out, "ANSWER OK "), out)
 	assert.Contains(t, out, "s1-1  failed  rework  0.90  applied")
 	assert.Contains(t, out, "s1-2  failed  rework  0.90  applied")
-	assert.True(t, strings.HasSuffix(out, "ANSWER STOPPED STOPPED: the loop ends\n"), out)
+	assert.Contains(t, out, "ANSWER STOPPED STOPPED by coordinator: r, back by ", out)
+	assert.True(t, strings.HasSuffix(out, ": the loop ends\n"), out)
 	assert.Equal(t, 2, j.asks())
 	assert.GreaterOrEqual(t, ta.a.now().Sub(start), 2*time.Minute, "two sleeps of the injected clock")
 }

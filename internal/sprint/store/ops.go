@@ -400,12 +400,12 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: a twin ticks only by hand", int(gap/time.Second)),
 				sprint.Command{Decision: "tick by hand", Lines: []string{"nova-sprint tick"}},
-				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop"}}))
+				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop --reason 'the machine is not ticking' --until 1h"}}))
 		default:
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: its run loop is not running", int(gap/time.Second)),
 				sprint.Command{Decision: "run the loop", Lines: []string{"nova-sprint run"}},
-				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop"}}))
+				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop --reason 'the machine is not ticking' --until 1h"}}))
 		}
 		if hb.Failures >= 3 && hb.Error != "" {
 			out = append(out, group("machine:failing", sprint.NTickFailing,

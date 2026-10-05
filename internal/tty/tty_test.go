@@ -16,10 +16,14 @@ func TestNothingButATerminalIsOneOrHasASize(t *testing.T) {
 	t.Parallel()
 	regular, err := os.Create(filepath.Join(t.TempDir(), "plain"))
 	require.NoError(t, err)
-	defer regular.Close()
+	defer func() {
+		_ = regular.Close() // ignored: test cleanup of temporary file
+	}()
 	null, err := os.Open(os.DevNull)
 	require.NoError(t, err)
-	defer null.Close()
+	defer func() {
+		_ = null.Close() // ignored: test cleanup of file handle
+	}()
 	closed, err := os.Create(filepath.Join(t.TempDir(), "closed"))
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())

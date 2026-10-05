@@ -83,7 +83,7 @@ func doControls(e env, args []string) int {
 		fmt.Fprintf(e.stderr, "%s controls: no scratch directory: %v\n", tool, err)
 		return 2
 	}
-	defer os.RemoveAll(scratch)
+	defer func() { _ = os.RemoveAll(scratch) }() // ignored: a temporary directory that may already be gone
 
 	// fail reports a control that did not hold.
 	fail := func(format string, a ...any) int {
