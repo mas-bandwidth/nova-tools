@@ -119,6 +119,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"play":              "play --ticks 1",
 		"init":              "init",
 		"merge-window open": "merge-window open --for 1m --reason r",
+		// the friends' directories are read only after the store refuses the intruder
+		"friend reconcile": "friend reconcile friend-a",
 	}
 	for _, v := range verbs {
 		if verbClasses[v.name] != classCoordinator {

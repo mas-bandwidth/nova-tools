@@ -83,7 +83,20 @@ when origin has no branch of that name, when the tip cannot be read, or when
 the card names no REPO: line; Verdict: HOLD, FAIL, FAILED or BROKEN is work
 that came back failed, and a LAND without a full sha, an empty report and any
 other verdict finish the card failed too, each with the report's first
-paragraph. card prints who=; where counts it on her friends row.`) + "\n"
+paragraph. card prints who=; where counts it on her friends row.
+
+friend reconcile <friend> settles her cards when her own account and the table
+disagree: it reads <friend>-working/inbox/QUEUE.json, {"tasks":[{"id":"<card>",
+"state":"queued|working|done"}]} (an id is the card or its job directory), and
+her outbox, and for each card working on her row collects it when
+outbox/<job>/REPORT.md is there (as friend sync does), keeps it while her queue
+says queued or working, and returns it to ready (its work card retired, no
+failed-work judgment, the tick deals it again at its next attempt) when no
+report is there and her queue says done, or does not hold it though it was
+written after the card's deal (a card dealt since is kept: she has not had
+it to account for). An id of her queue that is no card working on her row is
+named and left alone. It exits 1 when a collect or the return was refused.
+--dry-run says each card's settlement and writes nothing.`) + "\n"
 }
 
 // friendVerbWords is what friend beat, friend down, and friend up say on -h.
