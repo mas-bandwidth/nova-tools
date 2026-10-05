@@ -680,7 +680,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	failingSame := hb.Error != "" && !hb.At.Before(m.Since)
 	prevError := hb.Error
 	hb.At, hb.Ticks = now, hb.Ticks+1
-	if err != nil && res.Stale == "" && !(failingSame && prevError == err.Error()) {
+	if err != nil && res.Stale == "" && (!failingSame || prevError != err.Error()) {
 		// a failure with an error text the tick was not already failing with
 		// in this run: one note, and the wake (best effort: the store that
 		// failed the tick may refuse it)
