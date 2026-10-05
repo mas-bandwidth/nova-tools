@@ -51,8 +51,10 @@ func IsFriendRow(row string) bool {
 
 // WhoOfBrief is the who a brief gives its card (FieldWho): "" when its header names no
 // friend (or its WHO line does not read: add refuses that brief), else WhoFriend or
-// FriendRow(<name>), with an only. prefix for a hard pin.
+// FriendRow(<name>), with an only. prefix for a hard pin. The owner mark (`WHO: friend
+// <name> (owner)`, true ownership: friend_pin.go) is a hard pin.
 func WhoOfBrief(brief string) string {
+	brief, owned := cutOwnerMark(brief)
 	w, why := cardhdr.ReadWho(brief)
 	switch {
 	case why != "" || !w.Friend:
@@ -60,7 +62,7 @@ func WhoOfBrief(brief string) string {
 	case w.Name == "":
 		return WhoFriend
 	}
-	if w.Only {
+	if w.Only || owned {
 		return "only." + FriendRow(w.Name)
 	}
 	return FriendRow(w.Name)

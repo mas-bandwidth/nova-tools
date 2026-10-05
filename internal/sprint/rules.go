@@ -505,7 +505,8 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 // The tick's rule parts, in the order they run: the conflict's return, its resume, every
 // rework (failed, bound, the conflict's redo), the late cards, the brief defects. Each is
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
-// tick. With TickReq.AnswerRules false each is empty.
+// tick; then the pin rule (friend_pin.go, PartRulePin). With TickReq.AnswerRules false each
+// is empty but the pin rule's judgments (the tick runs them only with rules on: TickEndWith).
 const (
 	PartRuleReturn = "rule return"
 	PartRuleResume = "rule resume"
@@ -521,6 +522,7 @@ var TickRules = []TickPartDef{
 	{PartRuleRework, TickRuleRework},
 	{PartRuleLate, TickRuleLate},
 	{PartRuleBrief, TickRuleBrief},
+	{PartRulePin, TickRulePin},
 }
 
 // IsRulePart says the tick part is a rule part: it plans with the routes and the rules

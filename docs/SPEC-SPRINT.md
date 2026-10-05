@@ -281,7 +281,9 @@ left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
 parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
 is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
 is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
-`WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
+`WHO: only friend <name>` is the one hard pin and waits for her alone; `WHO: friend <name>
+(owner)` is true ownership, a hard pin the pin rule never unpins (section 8,
+pin-to-a-down-friend-raises-one-judgment.w1). `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). The primary's
 field `who` is `friend`, `friend.<name>`, or `only.friend.<name>`, written with its
@@ -3291,6 +3293,49 @@ the stream with one judgment, `stream stopped: the base fails its tree gate`, it
 the base, the gate, the refusals and the first refusal's time, every card where it is; `resume`
 then moves the stream and clears the count, as do a pass that merges and every other stop
 (`TestBaseGateRefusedThreeTimesStopsTheStreamWithAJudgment`, cmd/nova-sprint/land_basegate_count_test.go).
+
+#### pin-to-a-down-friend-raises-one-judgment.w1
+
+A card pinned to a friend who is not there is the tick's, not the coordinator's (the owner,
+2026-10-05: 31 ready cards sat pinned to friends down for the week, at their Claude weekly
+limit, or held, some for 20 hours, with no judgment, and the coordinator found them by
+reading the rows and unpinned ten by hand; 2026-10-04: pins are the exception, hard-pin only
+true ownership). The pin rule (`pin`, the sixth rule part, `rule pin`, after `rule brief`;
+`sprint.TickRulePin`, internal/sprint/friend_pin.go) reads the friends' roster the tick is
+given and keeps, on the fleet table, the time it first saw each friend not up
+(`pin_down_since.<friend>`, cleared when she is up; a name a pin carries that has no roster
+row is down). Once she has been down or held longer than the `friend_idle` setting (section
+1, 20 minutes by default), in running time, each ready hard pin to her
+(`who=only.friend.<name>`) is answered:
+
+- a generator's preference, a hard pin with no owner mark, is unpinned by the machine
+  (`unpin`, its `WHO unpinned` note the log, its reason `answered by rule pin: friend <f>
+  <down|held> since <time>, past friend_idle <d>: a generator's preference, not ownership`,
+  the card's `rule_answer` `pin: unpinned at <time>`); the next deal offers it to the
+  friends up and then the fleet;
+- true ownership stays pinned: the brief's `WHO: friend <name> (owner)` (the generator writes
+  the mark only for ratings and a friend's own tool; the sprint's core stores it as a hard
+  pin, `only.friend.<name>`, `sprint.WhoOfBrief`, but the `add` and `brief` verbs' WHO check,
+  `cardhdr.ReadWho`, does not read the mark yet and refuses it: until it does the generator
+  writes `WHO: only friend <name>` and a rating card is known by its id), or a rating card,
+  `rate-<name>-*`. Its friend gets one judgment,
+  `ready cards wait pinned to a friend down or held`, its subject her fleet row
+  (`friend.<name>`), naming every such card, with the unpin printed complete among its
+  decisions (`nova-sprint unpin <id>... --reason '<friend> <down|held> since <time>: share
+  her ready cards'`, then `friend up <f>`, `ack`, `wait`).
+
+A preference `unpin` refuses (a card dealt before) is named in her judgment, and with the
+rules off every pin is, so a card never sits ready behind a friend down or held past the
+setting without a judgment. The judgment is written once a friend, rewritten in place when
+her cards change, and closed when she is up or none of hers waits; an ack holds it while it
+holds, and a wait until its time. The rule is not one of nova-config's `answer_rules_off`
+names (its enum is nova-config's); `--answer-rules=false` turns it off with the rest. A soft
+preference (`WHO: friend <name>`) is never stranded: the deal passes it to the friends up and
+the fleet already. `TestACardPinnedToADownFriendRaisesOneJudgment` drives a friend down and
+one held past the setting: the preferences unpinned and logged, one judgment each for the
+owned and rating cards, the printed unpin accepted, nothing raised twice, the judgment closed
+when she is up; `TestAPinnedCardWithTheRulesOffIsJudgedAtTheFriendIdleSetting` holds the
+setting and the rules-off path.
 
 ## 9. What is always true
 
