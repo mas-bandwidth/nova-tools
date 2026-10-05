@@ -116,3 +116,33 @@ func TestARefusalIsAtMostTwoLinesAndNamesTheDoor(t *testing.T) {
 	assert.Equal(t, 0, exit, "`help` did not print the usage: exit %d", exit)
 	assert.Contains(t, stdout, "usage:", "`help` did not print the usage: exit %d", exit)
 }
+
+// One trait sentence of a million bytes is one finding, and a finding is a bounded record in
+// both renderings: the match words and the sentence are each capped, so neither the FAIL line
+// nor the JSON item can be the whole of a reader's context (security#80 finding 1; SPEC
+// section 2, one value two renderings, so the two agree).
+func TestOneGiantTraitSentenceCannotMakeAFindingLineOrJSONItemGiant(t *testing.T) {
+	t.Parallel()
+
+	const bound = 2 << 10
+	journal := "I hoard " + strings.Repeat("word ", 200000) + "and manufacture limits.\n"
+	require.Greater(t, len(journal), 1_000_000)
+	path := filepath.Join(t.TempDir(), "journal.md")
+	require.NoError(t, os.WriteFile(path, []byte(journal), 0o644))
+
+	exit, _, stderr := runSelfTalk(t, path)
+	require.Equal(t, 1, exit, "stderr: %.200s", stderr)
+	fails := 0
+	for _, line := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
+		if strings.HasPrefix(line, "SELFTALK FAIL ") {
+			fails++
+			assert.Less(t, len(line), bound, "a FAIL line is %d bytes", len(line))
+		}
+	}
+	assert.Equal(t, 1, fails, "FAIL lines")
+
+	exit, stdout, _ := runSelfTalk(t, "--json", path)
+	require.Equal(t, 1, exit)
+	assert.Less(t, len(stdout), bound, "the --json object is %d bytes", len(stdout))
+	assert.Contains(t, stdout, `"match"`)
+}

@@ -1734,6 +1734,11 @@ matched. **`--json`** prints the run as one JSON object on stdout (`result`,
 banner, `more`, `notes`), capped by `--max` the same way; a refusal under
 `--json` is the same object with `status` `refused`.
 
+A finding is a bounded record: `match` and `text` are each capped at 500 bytes (with
+the `...+<n>B` mark) when the installation finding is made, so one sentence of a
+million bytes is not a million-byte FAIL line or a two-million-byte JSON item,
+and the two renderings carry the same capped values.
+
 **`--max <n>`, default 20, `0` for all.** At most n finding lines per CLASS —
 `standing` and `installation` capped separately, so six hundred of the first
 cannot eat the one of the second the first class is blind to — then one

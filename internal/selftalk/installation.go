@@ -26,6 +26,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Shape names the grammatical family a finding belongs to. It is reported beside every finding
@@ -64,6 +66,11 @@ type Installation struct {
 
 // ScanInstallation finds standing self-verdicts that carry no date.
 //
+// A finding is a bounded record: Text and Match are each capped at oneline.TailBytes here, at the
+// one place an Installation is made, because traitParallel and traitMarker return the span between
+// their words and one giant sentence would otherwise be a giant finding in both renderings
+// (security#80 finding 1; docs/SPEC.md, one value two renderings).
+//
 // The pipeline is: segment (hard wraps joined, markdown stripped, line numbers kept) -> suppress
 // (dated, instrument, aspiration, imperative) -> classify by shape, first match wins. Suppression
 // runs BEFORE classification on purpose: an instrument that happens to quote a verdict is still an
@@ -75,7 +82,7 @@ func ScanInstallation(text string) []Installation {
 			continue // somebody else's sentence, inside a quotation still open
 		}
 		if shape, match := classify(s.text); match != "" {
-			out = append(out, Installation{Shape: shape, Line: s.line, Text: s.text, Match: match})
+			out = append(out, Installation{Shape: shape, Line: s.line, Text: oneline.Cap(s.text, oneline.TailBytes), Match: oneline.Cap(match, oneline.TailBytes)})
 		}
 	}
 	return out
