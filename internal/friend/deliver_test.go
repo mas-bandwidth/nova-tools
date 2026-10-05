@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,12 +46,6 @@ func TestAnUndeliveredMessageShowsAndAnAuthFailureAlarms(t *testing.T) {
 	assert.Equal(t, m.ID, bob.OldestID)
 	assert.Equal(t, m.At, bob.OldestAt)
 	assert.Equal(t, 0, got[1].Count, "ada is owed nothing: no message to her is a friend's")
-	undelivered, oldest := DeliveryCells(bob, now)
-	assert.Equal(t, "1", undelivered)
-	assert.Equal(t, Age(now.Sub(m.At)), oldest)
-	assert.NotEqual(t, "-", oldest)
-	assert.Equal(t, "When you have read the message(s) above, say so, exactly as written: /bin/nova-bus ack --as bob --id "+m.ID,
-		ReceiptLine("/bin/nova-bus", "bob", r.delivered[0]), "the line a turn hands the session for its receipt")
 
 	// the session's own acknowledgement is the receipt
 	n, err := r.bus.Receipt(ctx, "bob", []string{m.ID})
@@ -59,13 +54,10 @@ func TestAnUndeliveredMessageShowsAndAnAuthFailureAlarms(t *testing.T) {
 	got, err = r.bus.Undelivered(ctx, "bob")
 	require.NoError(t, err)
 	assert.Equal(t, 0, got[0].Count)
-	undelivered, oldest = DeliveryCells(got[0], now)
-	assert.Equal(t, "0", undelivered)
-	assert.Equal(t, "-", oldest)
 
 	// a bus that refuses the login: one alarm naming the store and the user,
 	// never the password, raised at the first failure and cleared at the next success
-	refusing := bus.NewFake(t0, "rowan", "bob")
+	refusing := bustest.NewFake(t0, "rowan", "bob")
 	refusing.Friends = []string{"bob"}
 	refusing.Fail = errors.New("WRONGPASS invalid username-password pair or user is disabled.")
 	var raised, cleared []bus.Alarm

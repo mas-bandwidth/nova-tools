@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -103,6 +104,8 @@ type app struct {
 	// (store/twin.go). It is not the mem twin above, which is a store.
 	readTwinsMu sync.Mutex
 	readTwins   map[string]*store.Twin
+	busWatchesMu sync.Mutex
+	busWatches   map[string]*bus.Watch
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
@@ -278,6 +281,7 @@ func newApp(getenv func(string) string) *app {
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
 	a.briefBar = a.readBriefBar
 	a.mergeQueue = &keptQueue{ask: ghMergeQueue{host: githubHost}, now: func() time.Time { return a.now() }, kept: map[string]keptAnswer{}}
+	a.busWatches = map[string]*bus.Watch{}
 	return a
 }
 

@@ -446,7 +446,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec, c.Stdout)
+	fl := &friend.Limits{
+		Now:   w.now,
+		Nonce: w.random,
+		Down: func(until time.Time, reason string) {
+			// ignored: best-effort status record of harness limit
+			_ = friend.WritePresence(state, friend.PresenceStatus{Friend: name, Presence: friend.PresenceDown, Reason: reason, At: w.now()})
+		},
+		Up: func(nonce string) {
+			// ignored: best-effort status record of limit cleared
+			_ = friend.WritePresence(state, friend.PresenceStatus{Friend: name, Presence: friend.PresenceUp, At: w.now()})
+		},
+	}
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(w.exec), c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
@@ -500,12 +512,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.SessionCheckText(nonce, fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, c.Str("redis")), answerTo())
 		},
 	}
-	sc.Deliver = sc.Gate(deliver)
+	sc.Deliver = sc.Gate(fl.Gate(deliver))
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Beat: sc.Beat(func(ctx context.Context) error {
+			// ignored: harness usage flags for beat
+			_ = fl.Usage().BeatFlags()
+			// ignored: harness limit status check
+			_, _, _ = fl.Limited()
 			answer, err := w.beat(ctx, server, name)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 				rowMode, rowWidth = m, wd

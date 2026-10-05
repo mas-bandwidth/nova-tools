@@ -177,3 +177,19 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	ta.clean()
 	ta2.clean()
 }
+
+func TestSendBusCourierWatchesAlarm(t *testing.T) {
+	t.Parallel()
+	a := newApp(func(k string) string {
+		if k == busRedisEnv {
+			return "127.0.0.1:6399"
+		}
+		return ""
+	})
+	m := bus.Message{From: "coordinator", To: []string{"amy"}, Subject: "test", Body: "hello"}
+	err := a.sendBus(context.Background(), m)
+	require.Error(t, err)
+	w := a.busWatch("127.0.0.1:6399", "")
+	require.NotNil(t, w)
+	assert.True(t, w.Open())
+}

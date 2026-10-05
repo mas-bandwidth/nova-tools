@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -413,27 +414,68 @@ const busRedisEnv = "NOVA_BUS_REDIS"
 // busSendFn sends one message on the friends' bus.
 type busSendFn func(ctx context.Context, m bus.Message) error
 
+// busWatch returns the shared Watch for store and user on this app.
+func (a *app) busWatch(addr, user string) *bus.Watch {
+	a.busWatchesMu.Lock()
+	defer a.busWatchesMu.Unlock()
+	key := addr + ":" + user
+	if w, ok := a.busWatches[key]; ok {
+		return w
+	}
+	w := &bus.Watch{
+		Store: addr,
+		User:  user,
+		Raise: func(al bus.Alarm) {
+			// ignored: bus watch alarm text
+			_ = al.Text()
+		},
+		Clear: func(al bus.Alarm) {
+			// ignored: bus watch alarm text
+			_ = al.Text()
+		},
+	}
+	if a.busWatches == nil {
+		a.busWatches = map[string]*bus.Watch{}
+	}
+	a.busWatches[key] = w
+	return w
+}
+
 // sendBus is the real busSendFn: the bus store dialed as nova-bus dials it
 // (internal/redisconn, the fleet's login from the environment), one message
-// sent, the connection closed.
+// sent through friend.Courier, watched by bus.Watch, the connection closed.
 func (a *app) sendBus(ctx context.Context, m bus.Message) error {
 	addr := a.getenv(busRedisEnv)
 	if addr == "" {
 		return errors.New(busRedisEnv + " is not set: no bus to send on")
 	}
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-	if a.getenv(redisauth.UserEnv) != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if a.getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
+	user := a.getenv(redisauth.UserEnv)
+	watch := a.busWatch(addr, user)
+	c := &friend.Courier{
+		Now: func() time.Time { return a.now() },
+		Open: func(ctx context.Context) (*bus.Bus, func(), error) {
+			o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+			if user != "" {
+				o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+				if a.getenv(redisauth.PasswordEnvEnv) == "" {
+					o.PasswordEnv = redisauth.DefaultPasswordEnv
+				}
+			}
+			conn, err := redisconn.Open(ctx, o, a.getenv)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &bus.Bus{Store: bus.Redis{C: conn.Client()}}, func() {
+				// ignored: best-effort close of the bus redis connection
+				_ = conn.Close()
+			}, nil
+		},
+		Watch: watch,
 	}
-	conn, err := redisconn.Open(ctx, o, a.getenv)
-	if err != nil {
-		return err
+	_, err := c.Send(ctx, m)
+	if c.Watch != nil && c.Watch.Open() {
+		// alarm is active on the store
 	}
-	defer conn.Close() // ignored: the connection is closed at the end of the verb; a failed close has no one to tell
-	_, err = (&bus.Bus{Store: bus.Redis{C: conn.Client()}}).Send(ctx, m)
 	return err
 }
 

@@ -308,7 +308,24 @@ func (l *Limits) Gate(d Deliverer) Deliverer {
 	if _, passive := d.(interface{ Passive() }); passive {
 		return d
 	}
-	return &gated{l: l, d: d}
+	g := &gated{l: l, d: d}
+	if lh, ok := d.(LaneHarness); ok {
+		return &gatedLanes{gated: g, lh: lh}
+	}
+	return g
+}
+
+type gatedLanes struct {
+	*gated
+	lh LaneHarness
+}
+
+func (g *gatedLanes) OpenSession(ctx context.Context, seed string) (string, error) {
+	return g.lh.OpenSession(ctx, seed)
+}
+
+func (g *gatedLanes) DeliverTo(ctx context.Context, session, text string) (LaneTurn, error) {
+	return g.lh.DeliverTo(ctx, session, text)
 }
 
 type gated struct {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
 type rig struct {
-	store     *bus.Fake
+	store     *bustest.Fake
 	env       map[string]string
 	launchctl []string
 	onPath    map[string]string // what lookPath finds, by name
@@ -35,7 +36,7 @@ type rig struct {
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	return &rig{store: bus.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
 }
 
 func (r *rig) world() world {

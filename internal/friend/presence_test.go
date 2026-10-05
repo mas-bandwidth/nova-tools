@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +37,7 @@ func (c *closedApp) got() []string {
 // presenceRig is one SessionCheck over bus's Fake, the closed app and a
 // clock the test moves by hand; the check's delivery runs inline.
 type presenceRig struct {
-	store          *bus.Fake
+	store          *bustest.Fake
 	app            *closedApp
 	sc             *SessionCheck
 	daemon, direct *bus.Bus // what the daemon sends, and what anyone else (the session, a friend) sends
@@ -48,7 +49,7 @@ type presenceRig struct {
 
 func newPresenceRig(t *testing.T) *presenceRig {
 	t.Helper()
-	r := &presenceRig{store: bus.NewFake(t0, "ada", "bob"), app: &closedApp{}, now: t0}
+	r := &presenceRig{store: bustest.NewFake(t0, "ada", "bob"), app: &closedApp{}, now: t0}
 	r.sc = &SessionCheck{
 		Friend: "bob", Store: r.store, Now: func() time.Time { return r.now },
 		Nonce: func() string { r.nonces++; return "n" + string(rune('0'+r.nonces)) },
