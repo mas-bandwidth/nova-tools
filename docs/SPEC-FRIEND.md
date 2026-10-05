@@ -614,6 +614,45 @@ records them for pacing. Claude has no deliver command, so its
 `Watch`. The state machine (up, down until a reset, waking on a nonce) wants
 its TLA+ module beside `tla/Friend.tla`.
 
+## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
+
+The owner, 2026-10-04: "If your detection that they are down doesn't work
+WHEN THEY ARE DOWN, that seems like a bad design." One functional test,
+`TestEveryFriendFailureShowsWithinItsBound` (`go test -tags functional ./internal/friend`),
+breaks a friend each way he can fail and asserts the
+bound on the friends table and where his cards go. The friend runs the real
+daemon over a scratch bus (bus's Fake behind a store that blocks on an empty
+read and can have the friend's credential revoked) into a fake harness that
+can be closed, silenced or limited, and beats to a twin sprint store
+(`store.Mem`) whose tick deals four cards for any friend, two to him and two
+to a second friend who never fails. Each case runs in a `testing/synctest`
+bubble, so the long bounds are fake time.
+
+| case | bound | cards | landed today | owed by |
+|---|---|---|---|---|
+| harness closed (every delivery Deferred) | down within 1 minute | new cards to the other friend; none left on him | nothing: his daemon beats, so the table says up | fr-harness-alive |
+| session silent (turns taken, nothing said) | down within 15 minutes of his last bus message, pinged once a window | as above | his daemon calls the session `deaf` within the bound; the table says up | fr-session-proof-of-life, fr-status-from-evidence |
+| usage limit (every turn fails with the reset time) | down within 1 minute, until the reset, then up once the session answers a nonce | as above | nothing: the table says up throughout | fr-limits-and-credits |
+| bus credential revoked (every command WRONGPASS) | one alarm to the coordinator on the first failed send | as above | the status names WRONGPASS at the first failed command; the beat stops, so the table says down within 15 seconds and new cards go to the other friend | fr-delivery-receipts (the alarm) |
+| hold (`hold --return`) | held at once | none left on him; his cards dealt to the other friend at the next tick; no new card | all of it | none |
+
+"None left on him" for the down cases is the presence model's invariant (a
+held or down friend holds no card, fr-presence-model); today a down friend
+keeps the cards dealt to him and the deadline judges them (`FriendDownAfter`,
+internal/sprint/presence.go), and no card yet names that withdrawal.
+
+A part the landed code cannot meet is owed: it is checked like the rest, and
+when it fails the case fails, each line
+`OWED <card>: <what was measured>`, the suite
+red until the presence cards land. A landed part that fails always fails. The
+fake harness speaks for a limit only in its own words (exit 1 and the reset
+time in the error); when fr-limits-and-credits gives the adapters a typed
+limit, the fake answers with it.
+
+One finding of the suite: the challenge is reopened by every ping, so a
+coordinator that pings more often than once a window never sees a silent
+session go `deaf`; the case pings once a window, as the contract has it.
+
 ## The harness survey (2026-10-04)
 
 The survey covers all major harnesses. The rule of the
