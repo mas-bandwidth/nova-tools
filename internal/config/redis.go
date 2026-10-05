@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "dir")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -255,6 +255,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"roles": sortedList(roles[i].Val()),
 			"width": intText(str(d, 2)),
 			"mode":  str(d, 3),
+			"dir":   str(d, 4),
 		}
 	}
 	return views, revValue(rev), nil
@@ -432,8 +433,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// both in one round trip, after slots registered her.
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
+	writeDir := prev == nil && row.Fields["dir"] != "" || prev != nil && prev["dir"] != row.Fields["dir"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeRoles {
+	if !writeWidth && !writeMode && !writeDir && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -443,6 +445,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
 		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
+	}
+	if writeDir { // her working directory, a plain field beside mode; unset is no field
+		if row.Fields["dir"] != "" {
+			pipe.HSet(ctx, "friend:"+f+":desired", "dir", row.Fields["dir"])
+		} else {
+			pipe.HDel(ctx, "friend:"+f+":desired", "dir")
+		}
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
