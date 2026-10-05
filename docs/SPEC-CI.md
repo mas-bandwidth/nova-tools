@@ -467,6 +467,17 @@ before any bench is reached), `TestBenchToolHasNoProblems`, and in
 internal/bench `TestRunRemovesTheRunDirectoryWhenTheCopyFails` and
 `TestWriteTreeLeavesGitOutUnlessAsked`.
 
+The run is modelled in `internal/bench/tla/BenchRun.tla`. TLC on a Linux bench
+holds five invariants on two hosts and two exit codes (`MCBenchRun.cfg`):
+`OnlyTheMadeDirIsRemoved`, `AtMostOneHostAnswers`, `FallbackOnlyOnNoAnswer`,
+`ExitIsTheCommands` and `NothingLeftBehind`. Its reversed witness
+(`MCBenchRunBrokenNoRemove.cfg`, a failed copy that returns without the
+deferred remove) must break `NothingLeftBehind`. The model lives beside the
+package because `tla/` and its `CASES.tsv` and `RUNS.tsv` rows were outside the
+card that wrote it; moving it there is part of landing. It does not model an
+interrupt that lands between mktemp and its answer: that directory exists on
+the bench but the run never learnt its name, so it is never removed.
+
 Not yet: the bench, the cache and the fallback default from nova-config's
 machine rows. A machine row today carries no bench cache or fallback field, so
 `--host` is required and the paths have fixed defaults until the rows do.

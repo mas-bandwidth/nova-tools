@@ -25,6 +25,12 @@
 //  4. remove: rm -rf of the run directory step 1 printed and nothing else,
 //     whatever happened in 2 and 3, under a context the caller's cancellation
 //     does not end, so an interrupted run still cleans up after itself.
+//
+// THE MODEL. tla/BenchRun.tla (beside this file) is the run as a state
+// machine: TLC holds OnlyTheMadeDirIsRemoved, AtMostOneHostAnswers,
+// FallbackOnlyOnNoAnswer, ExitIsTheCommands and NothingLeftBehind on two hosts
+// (MCBenchRun.cfg), and its reversed witness MCBenchRunBrokenNoRemove.cfg, a
+// failed copy that skips the deferred remove, must break NothingLeftBehind.
 package bench
 
 import (
