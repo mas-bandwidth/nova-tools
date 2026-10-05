@@ -387,14 +387,17 @@ occupation beyond that offer.
 // card is a constant here and `template --name <kind>` prints it, so a templates dir can
 // be built from the tool. A text-only card (read, text, tone) carries the no-build line,
 // and a writing card (fix, replay, drift) carries the red-then-green row.
-// STEP 1 clones with the bench mirror as --reference: GitHub is a git
-// remote only, and a brief never carries gh; internal/ci refuses a brief clone without it.
+// STEP 1 clones with the bench mirror as --reference-if-able: the card names the
+// mirror's directory under $HOME (a member rewrites that prefix to its bench home when it
+// writes the card, PointCardAtMirrors), and a bench with no mirror gets a plain clone of the remote. GitHub is a
+// git remote only, and a brief never carries gh; internal/ci refuses a brief clone without
+// --reference.
 
 const pulseRead = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 You are unattended; never ask a question; decide and record the decision in RESULT.md.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && git clone -q --reference ~/nova-bench/mirror/$(basename <source>).git https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Read the named files and write notes.txt in the repo directory.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
@@ -403,7 +406,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 const pulseFix = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 You are unattended; never ask a question; decide and record the decision in RESULT.md.
-STEP 1. mkdir -p scratch && git clone -q --reference ~/nova-bench/mirror/$(basename <source>).git https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Make the fix; report the red line and then the green line, one row per item.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
@@ -413,7 +416,7 @@ const pulseText = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 You are unattended; never ask a question; decide and record the decision in RESULT.md.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && git clone -q --reference ~/nova-bench/mirror/$(basename <source>).git https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Make the text change and write notes.txt in the repo directory.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
@@ -422,7 +425,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 const pulseReplay = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 You are unattended; never ask a question; decide and record the decision in RESULT.md.
-STEP 1. mkdir -p scratch && git clone -q --reference ~/nova-bench/mirror/$(basename <source>).git https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Replay the rule; report the red line and then the green line, one row per item.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
@@ -431,7 +434,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 const pulseDrift = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 You are unattended; never ask a question; decide and record the decision in RESULT.md.
-STEP 1. mkdir -p scratch && git clone -q --reference ~/nova-bench/mirror/$(basename <source>).git https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Close the drift; report the red line and then the green line, one row per item.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
@@ -441,7 +444,7 @@ const pulseTone = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 You are unattended; never ask a question; decide and record the decision in RESULT.md.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && git clone -q --reference ~/nova-bench/mirror/$(basename <source>).git https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Fix the tone of the named page and write notes.txt in the repo directory.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
