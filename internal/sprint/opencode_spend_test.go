@@ -22,11 +22,11 @@ func TestOpencodeSpendReadoutIsDone(t *testing.T) {
 	f := NewTable(Fleet)
 	// opencode balance is unknown (no endpoint) but we have internal records
 	f.SetProp(PropProviderBalance("opencode"), ProviderBalance{
-		Provider:   "opencode",
-		Known:      false,
-		At:         coverT0,
-		Note:       "opencode Zen publishes no balance endpoint",
-		SpendHour:  float64(internalSpend), // spend from internal records
+		Provider:  "opencode",
+		Known:     false,
+		At:        coverT0,
+		Note:      "opencode Zen publishes no balance endpoint",
+		SpendHour: float64(internalSpend), // spend from internal records
 	}.value())
 
 	rows := ProviderRows(routes, f, coverT0)
