@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -784,4 +785,20 @@ func TestReadRefusesAnUnreadableSource(t *testing.T) {
 			assert.ErrorContains(t, err, tc.name, "%s: the refusal does not name the flag: %v", tc.name, err)
 		}
 	}
+}
+
+func TestLoadStateRefusesAFileOverTheReadCap(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	require.NoError(t, os.WriteFile(path, nil, 0o644))
+	require.NoError(t, os.Truncate(path, readregular.DefaultMax+1))
+
+	_, err := LoadState(path)
+	require.Error(t, err, "a state file over the read cap was accepted")
+	require.ErrorContains(t, err, fmt.Sprintf("exceeds limit %d", readregular.DefaultMax))
+
+	st, err := LoadState(filepath.Join(t.TempDir(), "missing-state.json"))
+	require.NoError(t, err)
+	require.Empty(t, st.Streams)
 }
