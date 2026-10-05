@@ -487,6 +487,39 @@ func TestQuarantineMatchingIsNotDefeatedByACapitalLetter(t *testing.T) {
 	}
 }
 
+// TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface: status shows a stored name
+// through oneline.Field, so a quarantined "spaced name" displays as spaced\x20name. The
+// natural copy of that token into check must not answer CLEAR for a blown surface
+// (security#74 finding 2); an unrelated surface still passes.
+func TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "spaced name", "blown"}, now)
+
+	code, out, errOut := capture(t, []string{"status", "--box", box}, now)
+	require.Equal(t, 0, code, "status exit = %d\nstderr: %q", code, errOut)
+	var token string
+	for _, f := range strings.Fields(out) {
+		if v, ok := strings.CutPrefix(f, "quarantine="); ok {
+			token = v
+		}
+	}
+	require.Equal(t, `spaced\x20name`, token, "status stdout = %q", out)
+
+	for _, spelling := range []string{token, "spaced name"} {
+		code, out, errOut = capture(t, []string{"check", "--box", box, spelling}, now)
+		assert.Equal(t, 1, code, "check %q exit = %d, want 1\nstdout: %q", spelling, code, out)
+		assert.Contains(t, errOut, "FUSE FAILED quarantine", "check %q stderr = %q", spelling, errOut)
+		assert.NotContains(t, out, "FUSE OK", "check %q stdout = %q", spelling, out)
+	}
+
+	code, out, errOut = capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "unrelated surface exit = %d\nstdout: %q\nstderr: %q", code, out, errOut)
+	assert.Contains(t, out, "FUSE OK", "stdout = %q", out)
+}
+
 // TestCheckQuotesTheStoredSpelling: a hand-edited box can hold a spelling the tool would
 // not have written, and a refusal quotes the file rather than the caller.
 func TestCheckQuotesTheStoredSpelling(t *testing.T) {
