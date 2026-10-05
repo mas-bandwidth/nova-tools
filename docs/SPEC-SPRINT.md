@@ -2229,6 +2229,15 @@ of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
 module that needs them changed fails the run, which is the card's finding.
 `--check` is the caller's own command on top, once a batch, as before.
 
+**The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
+the doc of the same change is allowed by rule, never by a message to the coordinator
+(`sprint.ScopeAmended`): the change also changes a file of its own (in `PATHS`), and the
+file is a Go test file (`_test.go`) in the directory of one of those files, a file under
+that directory's `testdata/`, or a Markdown file under `docs/` or in that directory. Each
+one is recorded on the batch's line, `scope=<card>:<file>,...` (and `scope` under
+`--json`). Any other file outside `PATHS` is refused as E12 says; a change with no file
+of its own amends nothing.
+
 **The generated ledgers.** A merge that stops only on generated ledgers lands.
 The generated ledgers are the class ledgers the checks above name (a `.txt` shard
 of a counted-ledger directory or a list file, never a directory, a Go file or a
@@ -2982,13 +2991,16 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend level | even the ready queues of the friends up within each class, as fleet level evens the members' |
 | friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer |
 | seat | the seat as the daemons read it every second: `SEAT holder= epoch= generation=`, `--json`; three keys, no table (section 1, a friend's health) |
+| lane take | `lane take go --machine <m> --as <worker> [--wait <duration>]`: a worker's take of one of the machine's Go lanes (section 18); exit 0 granted, exit 1 queued with its place and the next command; --wait asks again every 5 s until granted or the wait is over; through the sprint's server it is `lane take <kind> --machine <m> --as <worker>` and nothing more |
+| lane give | `lane give go --machine <m> --as <worker>`: the worker's lane, or its place in the queue, given back; the head of the queue is granted |
+| lane list | every machine's holders and queue of each lane kind, the timeouts applied; where --json --cards carries the same rows as `lanes` |
 | reader add | declares readers |
 | reader away | `hold <reader>... --return` in the old words, for one release: holds readers whatever they beat (state `held`): no read is asked of them, a read asked and not begun is asked of another at the next tick, and a read begun is taken back where a reader up is free to read it |
 | reader up | `unhold <reader>...` in the old words, for one release: releases the hold; the reader's state is then its beat's |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>]`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
-| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
+| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
@@ -3538,7 +3550,8 @@ holds the bound.
 
 The server runs the workers' verbs only: `take`, `finish`, `progress`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
-nothing more, and `friend beat <friend>` with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
+nothing more, `friend beat <friend>` with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more, and `lane take` or `lane give` `<kind>
+--machine <m> --as <worker>` and nothing more (a take's `--wait` asks again from the worker's side). No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
 `actor`: the server gives the store and the actor, and puts them before the worker's words. A
 `take`, a `finish`, a `progress` and a `read` name the epoch their worker holds (`--epoch`). A `queue`'s
 `--packets` is a count from 0 to 1024 and its `--have` card ids, each given once: a worker asks
@@ -3803,3 +3816,33 @@ no line of its own; `log --card <id>` and `log --json` keep each record whole. A
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
+
+
+## 18. Lanes
+
+The one-Go-test-stream-per-machine rule (docs/STANDARD.md, "one test stream per
+machine") is a lock the machine grants, not the coordinator: a worker about to run a
+Go build or test takes one of the machine's Go lanes, runs, and gives it back. The
+lanes are a per-machine semaphore (`internal/sprint/lane.go`), one record per lane kind
+outside the tables and the fence (`lanes:<kind>`), so a take or a give works while the
+machine is RUNNING or STOPPED and moves no card. The server runs the workers' takes and
+gives one at a time beside the store, so no two steps of the record interleave.
+
+- **The width.** Each machine has as many Go lanes as the sprint's `go_lanes` setting
+  (`set --go-lanes <n|default>`, the work table's property), 1 when none is set.
+- **The grant.** A take is granted while the machine's holders are fewer than the
+  width and nobody waits ahead of it; otherwise it joins the back of the machine's
+  queue and is told its place (exit 1, with the command to wait). The queue is fair:
+  a give, or a release, grants the head, never a later asker. A narrower width takes
+  no lane back and grants none until the holders are under it.
+- **Asking again.** A waiter keeps its place while it asks again within one minute
+  (`lane take --wait` asks every 5 s); a waiter that stops asking for a minute leaves
+  the queue. A holder renews its hold by taking again.
+- **Release.** `lane give` when the run exits, or a timeout: a holder that has not taken
+  again for 20 minutes (past a whole `go test -timeout 600s` gate with its build) is
+  released, and a grant made while its waiter was not asking is released when the
+  waiter has not claimed it within a minute. Each release grants the head of the queue.
+- **Shown.** `lane list` prints every machine with a holder or a queue;
+  `where --json --cards` carries the same rows as `lanes`, which the dashboard's
+  copy of the sprint holds (it reads the sprint that way); the page does not draw
+  them.

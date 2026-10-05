@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +96,7 @@ type SetReq struct {
 	AlarmMerging string `json:",omitempty"`
 	AlarmFleet   string `json:",omitempty"`
 	AlarmReady   string `json:",omitempty"`
+	GoLanes      string `json:",omitempty"` // the Go lanes of every machine (PropGoLanes, section 18)
 	Who          string
 }
 
@@ -124,6 +126,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--land-protected is a stream's, not the sprint's: nova-sprint stream set <stream> --land-protected "+r.LandProtected)
 		}
 	}
+	if r.GoLanes != "" && r.GoLanes != ReadTierDefault {
+		if n, err := strconv.Atoi(r.GoLanes); err != nil || n < 1 {
+			why = append(why, "--go-lanes wants a whole number from 1, the Go lanes of every machine, or "+ReadTierDefault+" for "+strconv.Itoa(LaneWidthDefault)+"; found "+r.GoLanes)
+		}
+	}
 	alarms := r.alarms()
 	for _, a := range alarmProps {
 		if v := alarms[a.prop]; v != "" && !alarmValid(a.prop, v) {
@@ -133,8 +140,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, a.flag+" is the sprint's, not a stream's: nova-sprint set "+a.flag+" "+v)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 {
-		why = append(why, "nothing to set: --read-tier, --dealt-max or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 && r.GoLanes == "" {
+		why = append(why, "nothing to set: --read-tier, --dealt-max, --go-lanes or an --alarm-... threshold")
+	}
+	if len(r.Streams) > 0 && r.GoLanes != "" {
+		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
@@ -176,7 +186,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 	// a property is written with its word, default included: the readers take
 	// default for none (DealtMax, readTierSetting)
 	var moved []string
-	kvs := [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}}
+	kvs := [][2]string{{PropReadTier, r.ReadTier}, {PropDealtMax, r.DealtMax}, {PropGoLanes, r.GoLanes}}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
 	}
@@ -199,6 +209,8 @@ func orDefault(v, name string) string {
 		return v
 	case name == PropDealtMax:
 		return fmt.Sprintf("default (%s, 3 times the take deadline)", DealtMaxDefault)
+	case name == PropGoLanes:
+		return fmt.Sprintf("default (%d a machine)", LaneWidthDefault)
 	}
 	return "default (each card's own tier)"
 }

@@ -493,6 +493,10 @@ type whereView struct {
 	// its balance as the run loop's poll last read it, the spend an hour measured, and
 	// whether its routes serve; absent with no route. The text frame does not draw it.
 	Providers []sprint.ProviderRow `json:"providers,omitempty"`
+	// Lanes is where --json --cards's, read for the dashboard: every machine's lanes with a
+	// holder or a queue (lane list; docs/SPEC-SPRINT.md section 18); absent when none is, and
+	// without --cards. The text frame does not draw it.
+	Lanes []sprint.LaneRow `json:"lanes,omitempty"`
 	// Cards and Judgments are where --json --cards's, read for the dashboard's pull routes
 	// (store.Dealt): every work card dealt to a fleet row and not finished, and the open
 	// judgments naming one of their primaries; absent without --cards.
@@ -654,7 +658,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	watch := fs.Bool("watch", false, "redraw in place every --every until interrupted")
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
-	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them")
+	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
@@ -745,6 +749,9 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			// status cells read held, and this says why; read for the dashboard's form only, so
 			// where --json keeps its one read of records
 			if v.Holds, err = st.Holds(ctx); err != nil {
+				return "", a.readFailed("where", err, stderr), false
+			}
+			if v.Lanes, err = st.LaneRows(ctx); err != nil {
 				return "", a.readFailed("where", err, stderr), false
 			}
 		}
