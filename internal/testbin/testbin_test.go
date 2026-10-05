@@ -17,7 +17,7 @@ import (
 // produce something that runs without a second build.
 func TestMain(m *testing.M) {
 	if os.Getenv("TESTBIN_CHILD") == "1" {
-		os.Stdout.WriteString("placed\n")
+		_, _ = os.Stdout.WriteString("placed\n") // ignored: the parent asserts this word in its output, so a lost write fails there
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
