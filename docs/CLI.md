@@ -983,7 +983,7 @@ result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
-are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
+are reports; `tick`, `run`, `friend clean`, `snapshot` and `backup` are the machine's. Reads need no
 actor except `inbox --read`, which moves the coordinator's cursor. A set is
 ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 `--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
@@ -1001,6 +1001,19 @@ on something dropped" judgment, in one step. Where the drop and the add were mad
 `relink lint-pkg-cairn-t lint-pkg-cairn-tb` re-points the edges and answers the blocked
 judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
 card replaced by its twin".
+
+### The sprint backup: `nova-sprint backup`
+
+`nova-sprint backup --out <file>` is the sprint backup as one verb, the restore test and the
+secrets scan in one run: it writes the store to `<file>` (mode 0600, its SHA-256 in `<file>.sha256`),
+reads the file back and restores it into a twin, compares the twin's counts with the store's at the
+save, and scans the file for secret-shaped values. It prints `BACKUP OK file=<f> sha256=<h> bytes=<n>
+keys=<k> cards=<c> restored=twin compared=counts secrets=0` (`--json`: one object of the same
+values), or `BACKUP FAILED: <why>` at exit 1 with the file and its checksum removed. An existing
+`--out` is refused and never overwritten; the scan names how many values it found, never a value.
+It needs no actor. On a Redis it copies the RDB from the path the server names, so it runs on the
+store's host; on a twin (`--redis mem:<file>`) it backs up the twin's document. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md), `sprint-backup-verb`.
 
 ### Role views: what a model reads instead of the dashboard
 

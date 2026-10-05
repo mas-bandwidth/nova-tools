@@ -10,6 +10,9 @@
 // drift). Exit 3 means an unreadable config (fleet sync, friend sync, friend
 // clean), missing friend rows (friend sync, friend clean), or a replaced
 // binary (run, dashboard).
+//
+// backup is the sprint backup as one verb: the store written to a file,
+// restored into a twin and compared, and the file scanned for secrets (backup.go).
 package main
 
 import (
