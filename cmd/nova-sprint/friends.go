@@ -266,6 +266,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	width := fs.String("width", "", "her width as her daemon has it (the deal's is the roster's: friend up --width)")
 	load := fs.String("load", "", "her load as a percent, as fleet beat --load gives a machine's")
 	active := fs.String("active", "", "the newest write under her working directory and outbox, as her daemon found it, RFC3339: her session's last activity")
+	pong := fs.String("pong", "", "her session's last pong, as her daemon has it (status last_pong), RFC3339: the coordinator's pass judges her session deaf when it is older than "+sprint.FriendDeafAfter.String())
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -277,6 +278,14 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 			return refuse(stderr, name, "--active wants an RFC3339 time, found "+oneline.Escape(*active))
 		}
 		rep.Active = at.UTC().Truncate(time.Second)
+	}
+	var ponged time.Time
+	if *pong != "" {
+		at, err := time.Parse(time.RFC3339, *pong)
+		if err != nil {
+			return refuse(stderr, name, "--pong wants an RFC3339 time, found "+oneline.Escape(*pong))
+		}
+		ponged = at.UTC().Truncate(time.Second)
 	}
 	for _, n := range []struct {
 		flag, text string
@@ -305,12 +314,16 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, err := st.FriendBeatReport(ctx, friend, rep, given)
+	b, err := st.FriendBeatPong(ctx, friend, rep, given, ponged)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
 	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
+	if !ponged.IsZero() {
+		line += " pong=" + ponged.Format(time.RFC3339)
+		facts["pong"] = ponged
+	}
 	// her row as friend sync last wrote it, so her daemon reads her mode and width from its beat
 	if spec, err := st.FriendSpecOf(ctx, friend); err == nil {
 		mode := spec.Mode

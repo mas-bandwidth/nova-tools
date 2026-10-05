@@ -199,6 +199,21 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 // down keep with her, and her own counts) and her load (nil: none), kept on the
 // beat until the next replaces it.
 func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64) (sprint.Beat, error) {
+	return st.FriendBeatPong(ctx, friend, rep, load, time.Time{})
+}
+
+// friendBeatRecord is a friend's beat as kept: the beat, and her session's last pong as
+// her daemon reports it (friend beat --pong; zero: none reported), which the coordinator's
+// pass reads (sprint.TickCoordinatorPass). A reader of the beat alone reads the record as
+// a sprint.Beat and never sees the pong.
+type friendBeatRecord struct {
+	sprint.Beat
+	Pong time.Time `json:"pong,omitzero"`
+}
+
+// FriendBeatPong is FriendBeatReport with her session's last pong kept on the beat (zero:
+// none), until the next beat replaces it.
+func (st *Store) FriendBeatPong(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, pong time.Time) (sprint.Beat, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return sprint.Beat{}, err
@@ -213,7 +228,11 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
-	out, err := json.Marshal(b)
+	rec := friendBeatRecord{Beat: b}
+	if !pong.IsZero() {
+		rec.Pong = pong.UTC().Truncate(time.Second)
+	}
+	out, err := json.Marshal(rec)
 	if err != nil {
 		return b, err
 	}
@@ -449,6 +468,34 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 		return FriendSpec{}, noFriend(r, friend)
 	}
 	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode}, nil
+}
+
+// FriendSessions is every friend of the roster with her session's last pong as her last
+// beat carries it (zero: none) and whether the coordinator holds her, for the coordinator's
+// pass (sprint.TickReq.Sessions); none when the store keeps no records.
+func (st *Store) FriendSessions(ctx context.Context) (map[string]sprint.FriendSession, error) {
+	r, kv, err := st.roster(ctx)
+	if kv == nil || err != nil || len(r) == 0 {
+		return nil, err
+	}
+	names := slices.Sorted(maps.Keys(r))
+	keys := make([]string, 0, len(names))
+	for _, n := range names {
+		keys = append(keys, friendBeatKey(n))
+	}
+	vals, oks, err := getKeys(ctx, kv, keys)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]sprint.FriendSession, len(names))
+	for i, n := range names {
+		var rec friendBeatRecord
+		if i < len(oks) && oks[i] {
+			_ = json.Unmarshal([]byte(vals[i]), &rec) // ignored: an unreadable record is no beat
+		}
+		out[n] = sprint.FriendSession{Pong: rec.Pong, Held: r[n].Held}
+	}
+	return out, nil
 }
 
 // FriendBeats is every friend of the roster with her last beat (a zero beat
