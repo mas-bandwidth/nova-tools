@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -78,4 +79,64 @@ func TestALandFailureIsSaidOnceUntilItChangesOrClears(t *testing.T) {
 	assert.Empty(t, out.String(), "the store is back and nothing is queued: nothing is said")
 	a.backend = down
 	assert.Equal(t, 1, rounds(3), "the failure came back after it cleared: said again")
+}
+
+// A stream stopped by a push the origin refused twice (the base moved under both
+// attempts) resumes by itself on the loop's next round, and lands once the push
+// succeeds; a push that refuses again after that one retry leaves the stream
+// stopped with exactly one judgment, not retried round after round
+// (docs/SPEC-SPRINT.md, a stopped stream).
+func TestAStreamStoppedByATransientPushRefusalResumesWhenThePushSucceeds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		refusals  int // pushes the origin refuses, over the rounds
+		wantState string
+		wantCards string
+		wantOpen  int
+		wantPush  int
+	}{
+		{"refused once then succeeds", 2, "landed", "landed/merged", 0, 3},
+		{"refused again after the retry", 100, "stopped rejected", "merging/queued", 1, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			r.ok("add --stream s1 --count 2")
+			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
+			more := []string{"--repo-dir", r.clone, "--base", "main"}
+			pushes := 0
+			r.a.beforePush = func(int) {
+				pushes++
+				if pushes <= tc.refusals {
+					r.moveBase("main", "moved"+strconv.Itoa(pushes)+".txt")
+				}
+			}
+			var out bytes.Buffer
+			ctx := context.Background()
+			assert.Equal(t, 1, r.a.landRound(ctx, "mem:0", more, &out), out.String())
+			assert.Equal(t, "stopped rejected", r.streamState("s1"), "the first round's push was refused twice")
+			for range 3 {
+				out.Reset()
+				r.a.landRound(ctx, "mem:0", more, &out)
+			}
+			assert.Equal(t, tc.wantState, r.streamState("s1"), out.String())
+			assert.Equal(t, map[string]string{"s1-1": tc.wantCards, "s1-2": tc.wantCards}, r.places("s1-1", "s1-2"))
+			snap, err := func() (*sprint.Snapshot, error) {
+				st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+				require.NoError(t, err)
+				return st.Load(ctx, []string{sprint.Merge}, nil)
+			}()
+			require.NoError(t, err)
+			open := 0
+			for _, o := range snap.Open {
+				if o.Subject() == sprint.StreamSubject("s1") && o.Note.Type == sprint.NRejected {
+					open++
+				}
+			}
+			assert.Equal(t, tc.wantOpen, open, "open rejected judgments")
+			assert.Equal(t, tc.wantPush, pushes)
+			r.clean()
+		})
+	}
 }

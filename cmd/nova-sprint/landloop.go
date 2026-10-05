@@ -69,6 +69,9 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 	idle := err == nil && !queued
 	var lines []string
 	code := 0
+	if err == nil && queued && coordinator != "" {
+		lines = a.resumeRefused(ctx, addr, coordinator)
+	}
 	switch {
 	case err != nil:
 		lines, code = []string{"LAND FAILED the merge queue could not be read: " + oneline.Err(err) + "; nothing was landed, and the next round tries again; run: nova-sprint where"}, 2
@@ -104,6 +107,41 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 		fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(line))
 	}
 	return code, idle
+}
+
+// pushRetryDid is what the loop's resume records on the stream (its did field): a
+// stream stopped by a refused push again, with this still on it, was already retried.
+const pushRetryDid = "the loop retries a push the origin refused, once"
+
+// resumeRefused resumes, once, each stream a refused push stopped (cause rejected: land
+// rebuilt on the moved base and the origin refused again), so the stream lands as soon as
+// a push succeeds and a transient refusal waits for no person; the lines say what it
+// resumed. A stream resumed and stopped again by the refusal stays stopped, its one
+// judgment open, until a person answers it: the stream still carries pushRetryDid, which
+// the merge step clears when a batch lands (docs/SPEC-SPRINT.md, a stopped stream).
+func (a *app) resumeRefused(ctx context.Context, addr, coordinator string) []string {
+	st, err := a.storeCtx(ctx, common{verb: "where", redis: addr})
+	if err != nil {
+		return nil
+	}
+	s, err := st.Load(ctx, []string{sprint.Merge}, nil)
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, stream := range s.Merge.Rows() {
+		ctl := s.StreamCtl(stream)
+		if ctl == nil || ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "rejected" || ctl.F("did") == pushRetryDid {
+			continue
+		}
+		var out, errb bytes.Buffer
+		if code := a.cmdResume([]string{"--redis", addr, "--actor", coordinator, "--stream", stream, "--did", pushRetryDid}, &out, &errb); code != 0 {
+			lines = append(lines, strings.TrimSpace(errb.String()))
+			continue
+		}
+		lines = append(lines, "LAND RESUMED stream="+oneline.Field(stream)+" the push was refused; trying it once more")
+	}
+	return lines
 }
 
 // queuedToMerge says a stream has a card queued to merge, and names the sprint's

@@ -375,7 +375,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
-				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
+				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, "did")))
 				u.Notes = notes
 			}
 			merged := map[string]string{"merged": now}
