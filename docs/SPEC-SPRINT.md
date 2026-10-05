@@ -2302,8 +2302,9 @@ work, then nova-sprint start". In the same step the machine stops itself
 (section 14): its record STOPPED with the cause done, the view's state DONE.
 The inbox shows a note addressed to the coordinator first, above the
 judgments; the note is on the notes stream, and the coordinator's goal route,
-when there is one, is pushed it. add with a need on a
-dropped primary writes the blocked judgment in the same step. The blocked
+when there is one, is pushed it. A need on a dropped primary refuses at add
+(section 11); a dropped sentinel is the one exception, and add with a need on
+one writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
 whom and when. The ack is how a chain behind a dropped card is mended: the
