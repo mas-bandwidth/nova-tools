@@ -87,7 +87,8 @@ func readRecord(path string) (buildRecord, error) {
 	if err != nil {
 		return buildRecord{}, err
 	}
-	defer f.Close()
+	// ignored: the record file was opened only for reading; the scanner's error is the one returned
+	defer func() { _ = f.Close() }()
 	var r buildRecord
 	s := bufio.NewScanner(f)
 	for s.Scan() {

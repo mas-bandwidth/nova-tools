@@ -228,7 +228,8 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	removeStaged := func() {
 		for _, s := range staged {
 			if s.tmp != "" {
-				os.Remove(s.tmp)
+				// ignored: the staged temporary is cleanup on the failure path; the error that stopped the install is the one reported
+				_ = os.Remove(s.tmp)
 			}
 		}
 	}
@@ -321,7 +322,8 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	}
 	for _, p := range placed {
 		if p.aside != "" {
-			os.Remove(p.aside)
+			// ignored: the install has already succeeded; a kept-aside copy the remove leaves is hidden and inert
+			_ = os.Remove(p.aside)
 		}
 	}
 	retired := 0
@@ -454,14 +456,16 @@ func writeTemp(dir, pattern string, body []byte, mode os.FileMode) (string, erro
 	_, werr := f.Write(body)
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
-		os.Remove(path)
+		// ignored: the temporary is removed on the error path; the write's or the close's error is the one returned
+		_ = os.Remove(path)
 		if werr != nil {
 			return "", werr
 		}
 		return "", cerr
 	}
 	if err := os.Chmod(path, mode); err != nil {
-		os.Remove(path)
+		// ignored: the temporary is removed on the error path; the chmod error is the one returned
+		_ = os.Remove(path)
 		return "", err
 	}
 	return path, nil
