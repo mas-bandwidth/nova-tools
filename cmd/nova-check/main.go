@@ -18,6 +18,8 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -281,11 +283,73 @@ func refuseRan(stderr io.Writer, where, what string) int {
 	return 1
 }
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+// env is the process state one invocation reads: the directory its relative
+// paths resolve against, and the lookup that finds a program by name. Both
+// belong to the invocation and not to the process, so every test drives an
+// invocation of its own and opens with t.Parallel() (docs/STANDARD.md section
+// 8: the environment and the working directory are injected through the code's
+// config, never set with t.Setenv or a Chdir).
+type env struct {
+	// wd is the directory a relative path resolves against. Empty is the
+	// process's own working directory, which is what a run from a shell reads:
+	// os.ReadFile and filepath.Abs resolve a relative path against it already.
+	wd string
+	// lookPath finds a program by name; nil leaves the program to gitrun's own
+	// default, its name on the process's PATH.
+	lookPath func(string) (string, error)
 }
 
+// newEnv is the environment of a run from a shell: relative paths resolve
+// against the process's own working directory, and a program is found on the
+// process's own PATH.
+func newEnv() env { return env{lookPath: exec.LookPath} }
+
+// path resolves one path a caller gave against this invocation's directory. An
+// absolute path is the caller's own; the spelling is kept for every line the
+// verb prints, and only the read resolves (a --dir of ./self prints as ./self).
+func (e env) path(p string) string {
+	if e.wd == "" || p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(e.wd, p)
+}
+
+// workdir is the directory this invocation runs in: the one it was given, or
+// the process's own.
+func (e env) workdir() (string, error) {
+	if e.wd != "" {
+		return e.wd, nil
+	}
+	return os.Getwd()
+}
+
+// git is the git program this invocation runs: the one its lookup names, or
+// gitrun's own default when the invocation named no lookup or the lookup
+// failed, which is "git" on the process's PATH and gitrun's own error line.
+func (e env) git() string {
+	if e.lookPath == nil {
+		return ""
+	}
+	bin, err := e.lookPath("git")
+	if err != nil {
+		return "" // ignored: gitrun runs "git" on PATH and its error names the lookup that failed
+	}
+	return bin
+}
+
+func main() {
+	os.Exit(runWith(newEnv(), os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run is one invocation in the process's own environment: the entry point of
+// every test that drives the tool as a shell would.
 func run(args []string, stdout, stderr io.Writer) (code int) {
+	return runWith(newEnv(), args, stdout, stderr)
+}
+
+// runWith is the whole tool with the environment it reads handed in, so a test
+// drives one invocation with a directory and a program lookup of its own.
+func runWith(e env, args []string, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, with its effect, on
 	// stdout at exit 0, before anything is read or written.
 	defer verbflag.RecoverWith(stdout, "nova-check", usage, &code, verbHelp)
@@ -294,19 +358,19 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	}
 	switch args[0] {
 	case "quickstart":
-		return cmdQuickstart(args[1:], stdout, stderr)
+		return cmdQuickstart(e, args[1:], stdout, stderr)
 	case "attest":
-		return cmdAttest(args[1:], stdout, stderr)
+		return cmdAttest(e, args[1:], stdout, stderr)
 	case "links":
-		return cmdLinks(args[1:], stdout, stderr)
+		return cmdLinks(e, args[1:], stdout, stderr)
 	case "kernel":
-		return cmdKernel(args[1:], stdout, stderr)
+		return cmdKernel(e, args[1:], stdout, stderr)
 	case "nocode":
-		return cmdNoCode(args[1:], stdout, stderr)
+		return cmdNoCode(e, args[1:], stdout, stderr)
 	case "floors":
-		return cmdFloors(args[1:], stdout, stderr)
+		return cmdFloors(e, args[1:], stdout, stderr)
 	case "corpus":
-		return cmdCorpus(args[1:], stdout, stderr)
+		return cmdCorpus(e, args[1:], stdout, stderr)
 	case "hygiene":
 		return cmdHygiene(args[1:], stdout, stderr)
 	case "dogfood":
@@ -314,12 +378,12 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	case "convergence":
 		return cmdConvergence(args[1:], stdout, stderr)
 	case "spelling":
-		return cmdSpelling(args[1:], stdout, stderr)
+		return cmdSpelling(e, args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdout, stderr)
+			return runWith(e, append(args[1:], "--help"), stdout, stderr)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -419,7 +483,7 @@ func checkMax(fs *flag.FlagSet, max int, stderr io.Writer) bool {
 // and the flags each of them wants. It adds no check of its own — it runs
 // links and then nocode, and both run even when the first says NO, because a
 // first run should learn everything this pair can tell it in one go.
-func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
+func cmdQuickstart(e env, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to check (required)")
 	maxFlag := addMax(fs)
@@ -436,8 +500,8 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// thousand.
 	ceiling := fmt.Sprintf("%d", *maxFlag)
 	fmt.Fprintf(stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
-	linksCode := cmdLinks(append([]string{"--dir", *dir, "--max", ceiling}, excludeFlags(exclude)...), stdout, stderr)
-	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--max", ceiling}, stdout, stderr)
+	linksCode := cmdLinks(e, append([]string{"--dir", *dir, "--max", ceiling}, excludeFlags(exclude)...), stdout, stderr)
+	nocodeCode := cmdNoCode(e, []string{"--dir", *dir, "--max", ceiling}, stdout, stderr)
 	worst := max(linksCode, nocodeCode)
 	var failed []string
 	for _, c := range []struct {
@@ -462,7 +526,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	return worst
 }
 
-func cmdAttest(args []string, stdout, stderr io.Writer) int {
+func cmdAttest(e env, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -477,7 +541,7 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	if !checkMax(fs, *maxFlag, stderr) {
 		return 2
 	}
-	att, failures, err := check.Attest(*home, *manifest)
+	att, failures, err := check.Attest(e.path(*home), e.path(*manifest))
 	if err != nil {
 		return refuse(stderr, " attest", oneline.Err(err))
 	}
@@ -497,7 +561,7 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdLinks(args []string, stdout, stderr io.Writer) int {
+func cmdLinks(e env, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -520,9 +584,9 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 		err error
 	)
 	if len(files) > 0 {
-		res, err = check.LinksFiles(*dir, files, exclude)
+		res, err = check.LinksFiles(e.path(*dir), files, exclude)
 	} else {
-		res, err = check.LinksExcluding(*dir, exclude)
+		res, err = check.LinksExcluding(e.path(*dir), exclude)
 	}
 	if err != nil {
 		return refuse(stderr, " links", oneline.Err(err))
@@ -554,7 +618,7 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdKernel(args []string, stdout, stderr io.Writer) int {
+func cmdKernel(e env, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -616,7 +680,7 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		if !unit {
 			return 2
 		}
-		measured, tokens, failures, err := check.KernelTokens(*file, *maxTokens, *bytesPerToken)
+		measured, tokens, failures, err := check.KernelTokens(e.path(*file), *maxTokens, *bytesPerToken)
 		if err != nil {
 			return refuse(stderr, " kernel", oneline.Err(err))
 		}
@@ -639,7 +703,7 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	if *maxBytes <= 0 {
 		return refuse(stderr, " kernel", fmt.Sprintf("--max-bytes must be a positive byte budget (got %d); refusing to guess", *maxBytes))
 	}
-	measured, failures, err := check.Kernel(*file, *maxBytes)
+	measured, failures, err := check.Kernel(e.path(*file), *maxBytes)
 	if err != nil {
 		return refuse(stderr, " kernel", oneline.Err(err))
 	}
@@ -673,15 +737,7 @@ func excludeFlags(exclude repeatable) []string {
 	return out
 }
 
-func cmdNoCode(args []string, stdout, stderr io.Writer) int {
-	return cmdNoCodeIn(stagedSeams{}, args, stdout, stderr)
-}
-
-// cmdNoCodeIn is the audit and the --staged advisory with the git program
-// injected: the production entry point passes the zero value (git on PATH) and
-// a test passes a fake git so it needs no process PATH. Every refusal and every
-// output line is the same as cmdNoCode's.
-func cmdNoCodeIn(seams stagedSeams, args []string, stdout, stderr io.Writer) int {
+func cmdNoCode(e env, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -715,7 +771,7 @@ func cmdNoCodeIn(seams stagedSeams, args []string, stdout, stderr io.Writer) int
 
 	// Resolve the effective deny-list and its provenance before anything else:
 	// a guard that cannot say what it forbids must refuse, not pass.
-	deny, source, err := effectiveDenyList(*denyExt, *denyExtAdd)
+	deny, source, err := effectiveDenyList(denyListArg(e, *denyExt), denyListArg(e, *denyExtAdd))
 	if err != nil {
 		return refuse(stderr, " nocode", oneline.Err(err))
 	}
@@ -733,8 +789,8 @@ func cmdNoCodeIn(seams stagedSeams, args []string, stdout, stderr io.Writer) int
 			return renderNoCodeList(stdout, source, deny, names, prefixes)
 		}
 		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", oneline.Field(source), len(deny))
-		for _, e := range deny {
-			fmt.Fprintf(stdout, "%s\n", oneline.Escape(e))
+		for _, ext := range deny { // ext, not e: e is this invocation's environment
+			fmt.Fprintf(stdout, "%s\n", oneline.Escape(ext))
 		}
 		fmt.Fprintf(stdout, "NOCODE NAME-LIST source=%s names=%d paths=%d\n", oneline.Field(check.DenyFloor), len(names), len(prefixes))
 		for _, n := range sortedNames(names) {
@@ -757,10 +813,10 @@ func cmdNoCodeIn(seams stagedSeams, args []string, stdout, stderr io.Writer) int
 	// refusal the audit already makes, and it never sees a --dir it was
 	// willing to guess. The verb's own wiring is staged.go.
 	if *staged {
-		return stagedRun(seams, *dir, allow, deny, source, *maxFlag, stdout, stderr)
+		return stagedRun(e, *dir, allow, deny, source, *maxFlag, stdout, stderr)
 	}
 
-	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}
+	opts := check.NoCodeOptions{Dir: e.path(*dir), Allow: allow, DenyExt: deny, DenySource: source}
 
 	scanned, findings, err := check.NoCode(opts)
 	if err != nil {
@@ -787,6 +843,16 @@ func cmdNoCodeIn(seams stagedSeams, args []string, stdout, stderr io.Writer) int
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, oneline.Field(source))
 	return 0
+}
+
+// denyListArg resolves the @file form of a deny-list flag against the
+// invocation's directory. A comma list is data and not a path, so it is handed
+// on exactly as the caller wrote it.
+func denyListArg(e env, v string) string {
+	if rest, ok := strings.CutPrefix(v, "@"); ok {
+		return "@" + e.path(rest)
+	}
+	return v
 }
 
 // effectiveDenyList resolves the floor list, a replacement, or an extension,
@@ -820,7 +886,7 @@ func effectiveDenyList(replace, add string) ([]string, string, error) {
 	return slices.Sorted(maps.Keys(seen)), check.DenyExtended, nil
 }
 
-func cmdFloors(args []string, stdout, stderr io.Writer) int {
+func cmdFloors(e env, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -831,7 +897,7 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	if !parse(fs, args, stderr, map[string]*string{"core": core, "source": source}) {
 		return 2
 	}
-	floors, failures, err := check.Floors(*core, *source)
+	floors, failures, err := check.Floors(e.path(*core), e.path(*source))
 	if err != nil {
 		return refuse(stderr, " floors", oneline.Err(err))
 	}
@@ -848,7 +914,7 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdCorpus(args []string, stdout, stderr io.Writer) int {
+func cmdCorpus(e env, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -884,10 +950,10 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	}
 	// --root is validated BEFORE any finding is printed: a FAILED line from a
 	// run that then exits 2 reports findings from a run that did not happen.
-	if _, _, rootErr := check.ResolveRoot(*root); rootErr != nil {
+	if _, _, rootErr := check.ResolveRoot(e.path(*root)); rootErr != nil {
 		return refuse(stderr, " corpus", oneline.Err(rootErr))
 	}
-	raw, err := os.ReadFile(*ledger)
+	raw, err := os.ReadFile(e.path(*ledger))
 	if err != nil {
 		// Nothing was checked, so this is a refusal rather than a pass —
 		// the one outcome a protection check must never confuse.
@@ -917,7 +983,7 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		}
 		return refuse(stderr, " corpus", fmt.Sprintf("%s: %s", oneline.Escape(*ledger), oneline.Err(parseErr)))
 	}
-	failures, err := check.Corpus(*root, *ledger, *minAnchors, anchors)
+	failures, err := check.Corpus(e.path(*root), e.path(*ledger), *minAnchors, anchors)
 	if err != nil {
 		return refuse(stderr, " corpus", oneline.Err(err))
 	}
