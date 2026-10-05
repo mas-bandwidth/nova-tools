@@ -13,7 +13,7 @@ import (
 // slowtests_test.go is the red-test contract of the `slowtests` verb the CI
 // test step runs (docs/SPEC-CI.md, "The per-package test time budget"). Every
 // case below feeds canned `go test -json` TestEvent lines through Parse and
-// Sum; no test here runs `go test`, touches the network, or reads a real
+// Judge; no test here runs `go test`, touches the network, or reads a real
 // timing. The fixtures use fractional seconds so the rendering is pinned down
 // to the printed shape.
 
@@ -38,11 +38,7 @@ func TestSlowTestsUnderBudgetIsOK(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
 `
-	report := Sum(slowEvents(t, fixture), slowBudget)
-	{
-		got := report.ExitCode()
-		assert.Equal(t, 0, got, "ExitCode = %d, want %d (nothing is over budget)", got, 0)
-	}
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
 	assert.Equal(t, 0, len(report.Over), "Over = %d packages, want %d", len(report.Over), 0)
 	want := "CI-SLOW OK packages=1 slowest=example.com/pkg:3.2s"
 	{
@@ -60,11 +56,7 @@ func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":75.3}
 `
-	report := Sum(slowEvents(t, fixture), slowBudget)
-	{
-		got := report.ExitCode()
-		assert.Equal(t, 1, got, "ExitCode = %d, want %d (a package is over budget: the check said no)", got, 1)
-	}
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
 	lines := report.OverLines()
 	require.Len(t, lines, 1, "OverLines = %d lines, want 1: %v", len(lines), lines)
 	want := "CI-SLOW package=example.com/pkg seconds=75.3s budget=60s slowest=TestA:3.2s,TestB:2.9s"
@@ -76,12 +68,8 @@ func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
 func TestSlowTestsEmptyInputIsOKWithZeroPackages(t *testing.T) {
 	t.Parallel()
 
-	report := Sum(nil, slowBudget)
+	report := Judge(nil, Budgets{Package: slowBudget.Seconds()})
 	assert.Equal(t, 0, report.Packages, "Packages = %d, want 0", report.Packages)
-	{
-		got := report.ExitCode()
-		assert.Equal(t, 0, got, "ExitCode = %d, want %d", got, 0)
-	}
 	want := "CI-SLOW OK packages=0 slowest=none"
 	{
 		got := report.OKLine()
@@ -113,7 +101,7 @@ func TestSlowTestsSlowestListIsSortedAndCapped(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":9.0}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":70.0}
 `
-	report := Sum(slowEvents(t, fixture), slowBudget)
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
 	require.Len(t, report.Over, 1, "Over = %d packages, want 1", len(report.Over))
 	slowest := report.Over[0].Slowest
 	require.Len(t, slowest, 3, "slowest tests kept = %d, want the cap of 3: %v", len(slowest), slowest)
@@ -131,7 +119,7 @@ func TestSlowTestsOverPackagesAreOrderedWorstFirst(t *testing.T) {
 {"Action":"pass","Package":"example.com/big","Elapsed":90.0}
 {"Action":"pass","Package":"example.com/under","Elapsed":5.0}
 `
-	report := Sum(slowEvents(t, fixture), slowBudget)
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
 	lines := report.OverLines()
 	require.Len(t, lines, 2, "OverLines = %d lines, want 2: %v", len(lines), lines)
 	assert.Contains(t, lines[0], "package=example.com/big", "first over line = %q, want the worst package first", lines[0])
@@ -154,10 +142,6 @@ func TestSlowTestsJudgesPackagesAndTestsAgainstTheirRows(t *testing.T) {
 {"Action":"pass","Package":"example.com/m/cmd/fast","Elapsed":2.5}
 `
 	report := Judge(slowEvents(t, fixture), Budgets{Package: 2, Test: 1, Rows: rows})
-	{
-		got := report.ExitCode()
-		assert.Equal(t, 1, got, "ExitCode = %d, want %d", got, 1)
-	}
 	want := []string{
 		"CI-SLOW package=example.com/m/cmd/fast seconds=2.5s budget=2s slowest=TestA:0.4s",
 		"CI-SLOW test=TestSmall package=example.com/m/internal/ci seconds=1.2s budget=1s",
@@ -285,8 +269,6 @@ func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 	if assert.Len(t, got, 1, "OverLines = %q, want only %q", got, want) {
 		assert.Equal(t, want, got[0], "OverLines = %q, want only %q", got, want)
 	}
-	exitCode := report.ExitCode()
-	assert.Equal(t, 1, exitCode, "ExitCode = %d, want 1", exitCode)
 }
 
 // PROBE 1 and 6 at the verdict (the #4413 ruling: a budget verdict is the
