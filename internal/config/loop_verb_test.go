@@ -31,7 +31,7 @@ func fakeVerbs(have map[string][]string) VerbProbe {
 // the coordinator machine's loop of 2026-10-04: nova-sprint table under nova-loop and nova-secrets exec
 var tableLive = `["/Users/u/.local/bin/nova-loop","sprint-table-live","nova-secrets","exec","--as","s","--only","K","--","/usr/local/bin/nova-sprint","table","--layout","live","--loop","1"]`
 
-var installed = map[string][]string{"nova-sprint": {"where", "run", "friend"}, "nova-secrets": {"exec"}, "nova-swarm": {"member", "disk-guard"}}
+var installed = map[string][]string{"nova-sprint": {"where", "run", "friend", "inbox"}, "nova-secrets": {"exec"}, "nova-swarm": {"member", "disk-guard"}}
 
 func TestALoopWhoseVerbIsGoneIsFlagged(t *testing.T) {
 	t.Parallel()
@@ -81,6 +81,7 @@ func TestALoopWhoseVerbIsGoneIsRefusedAtAdd(t *testing.T) {
 	assert.NoError(t, CheckLoopVerb(ctx, row("off", map[string]string{"machine": "m1", "argv": tableLive, "keepalive": "true", "seat": "s", "keys": "K", "enabled": "false"}), probe),
 		"a disabled loop starts no unit: --enabled false is a way out")
 	assert.NoError(t, CheckLoopVerb(ctx, row("live", map[string]string{"machine": "m1", "argv": `["nova-sprint","where","--watch"]`, "keepalive": "true"}), probe))
+	assert.NoError(t, CheckLoopVerb(ctx, row("seat-push", map[string]string{"machine": "m1", "argv": `["/usr/bin/env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","inbox","--wait","--push","seat"]`, "keepalive": "true"}), probe))
 	assert.NoError(t, CheckLoopVerb(ctx, row("table-live", map[string]string{"machine": "m1", "argv": tableLive, "keepalive": "true", "seat": "s", "keys": "K"}), fakeVerbs(nil)),
 		"a probe that cannot answer refuses nothing")
 }

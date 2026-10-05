@@ -180,3 +180,43 @@ nova-config loop add friend-clean-bench-a --machine bench-a --argv '["/usr/bin/e
 ```
 
 Its log is the loop's, `~/nova-bench/loops/friend-clean-bench-a.log`.
+
+## The coordinator's loops
+
+A cold coordinator, AI or person, needs only `nova-sprint` and `nova-friend`
+and the install lines on this page (the owner, 2026-10-04: "no bash scripts";
+"anything you rely on that is a bespoke tool as coordinator, that has to,
+absolutely go"; "You should have setup children so you get notified when
+nova-sprint sends messages to you."). The coordinator's three earlier scripts
+are replaced with verbs:
+
+1. **The seat push loop**: `nova-sprint inbox --wait --push seat` is installed as
+   a `nova-config` loop record kept alive on the coordinator machine:
+
+```
+nova-config loop add seat-push --machine bench-a --argv '["/usr/bin/env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","inbox","--wait","--push","seat"]' --keepalive true --as ada
+```
+
+   Its log is the loop's, `~/nova-bench/loops/seat-push.log`. It writes each new
+   judgment and note into the holder's inbox directory,
+   `~/<holder>-working/inbox/sprint-judgments/`, and follows the seat when it
+   moves. It replaces the hand-written launch agent `com.nova.loop.seat-push-<seat>`
+   (a zsh script under `nova-secrets exec`).
+
+2. **The receive thread**: The coordinator is a friend row like any other (the
+   sprint row's `coordinator` names her). Her receive thread is her own
+   `nova-friend` daemon, installed once:
+
+```
+nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127.0.0.1:6390
+```
+
+   It parks on her bus stream, pushes incoming messages into the session, and
+   beats to the sprint server. It replaces `com.nova.loop.wake-serve-<seat>` and
+   `nova-wake`.
+
+3. **Session proof of life**: The 10-minute ping loop
+   (`com.nova.loop.friend-ping-<seat>`) is retired in favour of the friends'
+   session proof of life (card fr-session-proof-of-life): `nova-friend` tracks
+   presence via nonces answered by each friend's session, so no background ping
+   script is run.
