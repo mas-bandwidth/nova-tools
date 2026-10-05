@@ -367,8 +367,9 @@ wires it just before `d.Run`: `friend.WatchHarness(d, deliver)`
 `WatchHarness` puts the check in front of the daemon's beat. Every thirty
 seconds (`AliveEvery`) it asks; a harness not running makes the friend down
 at once, independent of the challenge: no beat goes to the sprint server
-(down after fifteen seconds without one, so within three quarters of a
-minute of the close), the beat's error, so the status, says `harness not
+(a beat is no evidence in the sprint either way: her row is down once her
+session's evidence is out of its window, Presence is her session's evidence),
+the beat's error, so the status, says `harness not
 running`, and the record says `down:` with what was read. It is up again only
 when the harness runs (or cannot be told) and the session has answered the
 daemon's current nonce, one the pong file did not hold when the harness
@@ -586,10 +587,51 @@ A friend's beat is the daemon's alone: the loop above beats once a second
 while it runs, and nothing else beats for her (the owner, 2026-10-04: "Golang
 nova-tools and nova-sprint verbs only"; "Make the ping loop mechanical!!!!").
 The per-friend shell loops that beat for a friend every second whether or not
-her session was there, part of why a closed app read up, are retired
-(docs/FRIENDS.md, "A friend's beat comes only from her daemon"). The beat
-proves the daemon; whether her session answers is the coordinator's
-observation (`friend health`). The roster and her cards are moved by the
+her session was there are retired with no replacement (docs/FRIENDS.md, "The
+beat loops are retired, with no replacement"). The beat proves the daemon and
+nothing more: it is recorded and shown, and it never makes her up (below).
+
+## Presence is her session's evidence (internal/sprint/presence.go)
+
+The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things
+that are answered just by the daemon"; "The daemon stays up even while the
+harness is closed."; "remove the proof of life bits that don't work, and keep
+the good bits that do work". On 2026-10-04 friends' rows read up for hours on
+beats sent for them while their sessions took no turn: one for four hours under
+a refusing harness, another working 8 for an hour while running nothing.
+
+A friend's row in the sprint (`sprint.FriendStatus`, `sprint.FriendEvidence`)
+is `held` while the coordinator holds her; else `up` only on evidence from her
+own session, within its window:
+
+- a wake ping her session answered under `FriendPongWindow` (ten minutes) old:
+  the coordinator's ping loop sends `nova-friend ping --wake`, her daemon
+  pushes the pong line into her free session as its own turn
+  (session-pong.w1), her session runs it, and the coordinator writes what it
+  saw as `friend health <friend> --state up --seen <t>`, fenced by the seat's
+  generation; or
+- a card of hers finished (working to done, ok or failed) under
+  `FriendFinishWindow` (thirty minutes) old: friend sync's collect of the
+  `REPORT.md` her session wrote records it (`friend-finish:<friend>`,
+  `store.FriendFinished`).
+
+Else she is `down`. Nothing else is evidence: not her beat, whoever sends it
+(her daemon, or any loop that beats for her), not `daemon-pong` (`friend health
+--state asleep`, shown as down), not a hold released (`friend up`), not a
+coordinator's down. Her row names the evidence and its age (`where --json`,
+`friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
+what is missing and the age of the last of each, with her beat's age said to be
+no evidence. A friend down has her unstarted cards taken back to the pool.
+
+What stays: the daemon as the mailman (bus messages and dealt cards pushed
+into her session as turns), the session-answered wake ping, `HarnessWatch`
+(`WatchHarness`, below), and finishes as evidence. Tested on the twin store
+with an injected clock: `TestFriendIsUpOnlyOnEvidenceFromHerSession` (a friend
+beaten every second with no pong and no card reads down past the window,
+naming the missing evidence; one answered pong makes her up, then down again
+after the window without another; a finish the same for its window),
+`TestFriendEvidenceRule`, and through the command
+`TestAFinishFromHerReportIsHerSessionsEvidence`. The roster and her cards are moved by the
 friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
 loop"; cmd/nova-sprint/friend_loop.go).
@@ -835,12 +877,12 @@ bubble, so the long bounds are fake time.
 | harness closed (every delivery Deferred) | down within 1 minute | new cards to the other friend; none left on him | nothing: his daemon beats, so the table says up | fr-harness-alive |
 | session silent (turns taken, nothing said) | down within 15 minutes of his last bus message, pinged once a window | as above | his daemon calls the session `deaf` within the bound; the table says up | fr-session-proof-of-life, fr-status-from-evidence |
 | usage limit (every turn fails with the reset time) | down within 1 minute, until the reset, then up once the session answers a nonce | as above | nothing: the table says up throughout | fr-limits-and-credits |
-| bus credential revoked (every command WRONGPASS) | one alarm to the coordinator on the first failed send | as above | the status names WRONGPASS at the first failed command; the beat stops, so the table says down within 15 seconds and new cards go to the other friend | fr-delivery-receipts (the alarm) |
+| bus credential revoked (every command WRONGPASS) | one alarm to the coordinator on the first failed send | as above | the status names WRONGPASS at the first failed command; the beat stops; the table says down once his session's last pong or finish is out of its window (ten and thirty minutes), and new cards go to the other friend | fr-delivery-receipts (the alarm) |
 | hold (`hold --return`) | held at once | none left on him; his cards dealt to the other friend at the next tick; no new card | all of it | none |
 
 "None left on him" for the down cases is the presence model's invariant (a
 held or down friend holds no card, fr-presence-model); today a down friend
-keeps the cards dealt to him and the deadline judges them (`FriendDownAfter`,
+keeps the cards dealt to him and the deadline judges them (`FriendStatus`,
 internal/sprint/presence.go), and no card yet names that withdrawal.
 
 A part the landed code cannot meet is owed: it is checked like the rest, and

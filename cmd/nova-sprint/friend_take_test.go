@@ -57,7 +57,7 @@ func TestFriendTakeTakesBackAnUnstartedCardAndTheTickDealsItToAnother(t *testing
 	require.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row)
 	ta.ok("friend sync --root " + root)
 	ta.ok("friend up bob")
-	ta.ok("friend beat bob")
+	ta.beatUp("bob")
 
 	assert.Contains(t, ta.dry("friend take amy s1-1 --dry-run"), "FRIEND-TAKE DRY-RUN friend=amy cards=s1-1 all-unstarted=false; nothing was changed")
 	out := ta.ok("friend take amy s1-1 --reason 'she is on another job'")
@@ -133,7 +133,7 @@ func TestFriendDownGivesBackEveryCardStartedOrNot(t *testing.T) {
 
 	// released and beating, her cards come back to her
 	ta.ok("friend up amy")
-	ta.ok("friend beat amy")
+	ta.beatUp("amy")
 	ta.ok("tick")
 	ta.json("card s1-2", &c)
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row)

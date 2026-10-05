@@ -86,7 +86,7 @@ func TestFriendHealthIsTheSeatsAndFencedByItsGeneration(t *testing.T) {
 	assert.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "after the server's clock", "a proof dated after the server's clock is refused")
 
-	ta.a.sleep(sprint.FriendObservedDownAfter + time.Second)
+	ta.a.sleep(sprint.FriendPongWindow + time.Second)
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "ten seconds without a newer proof")
 	ta.ok("friend beat amy")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "her own beat never makes an observed friend up again")

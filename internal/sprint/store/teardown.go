@@ -100,7 +100,7 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 		keys = append(keys, names.Key(readerBeatKey(r)), names.Key(readerAwayKey(r)))
 	}
 	for _, f := range epochs.Friends {
-		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendHealthKey(f)))
+		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendHealthKey(f)), names.Key(friendFinishKey(f)))
 	}
 	return append(keys, names.EpochKey())
 }

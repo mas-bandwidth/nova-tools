@@ -65,7 +65,8 @@ func newHoldRig(t *testing.T, s1, f1 int) *holdRig {
 	return r
 }
 
-// beat is one beat of every member, reader and friend: each of them is there.
+// beat is one beat of every member, reader and friend, and a wake ping each friend's
+// session answered (a friend's beat is no evidence): each of them is there.
 func (r *holdRig) beat() {
 	r.t.Helper()
 	require.NoError(r.t, r.st.BeatReaders(r.ctx))
@@ -76,6 +77,8 @@ func (r *holdRig) beat() {
 	}
 	for _, f := range []string{"amy", "bob"} {
 		_, err := r.st.FriendBeat(r.ctx, f)
+		require.NoError(r.t, err)
+		_, _, _, err = r.st.FriendHealth(r.ctx, f, "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: r.st.Now(), Generation: sprint.FirstSeatGeneration}, "")
 		require.NoError(r.t, err)
 	}
 }
