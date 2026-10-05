@@ -34,6 +34,13 @@ func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d; run: nova-swarm version -h", len(args)))
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-swarm", version))
+	return cmdVersionStamp(version, stdout, stderr)
+}
+
+// cmdVersionStamp prints the one line for a named build identity. The package var
+// `version` reaches it only as the production default at cmdVersion; a test names its
+// own stamp here instead of swapping the var under every other parallel test.
+func cmdVersionStamp(stamp string, stdout, stderr io.Writer) int {
+	fmt.Fprintln(stdout, buildinfo.Line("nova-swarm", stamp))
 	return 0
 }
