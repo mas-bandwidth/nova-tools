@@ -2,20 +2,12 @@ package sprint
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// opencodeSpendRecord is the internal cost record for opencode spend since last top-up.
-type opencodeSpendRecord struct {
-	TotalSpend float64   `json:"total_spend"`
-	LastTopUp  time.Time `json:"last_top_up"`
-}
-
-// The test for opencode spend readout: when opencode's balance is unknown
-// (no endpoint), show the spend since last top-up from internal cost records.
+// TestOpencodeSpendReadoutIsDone verifies opencode spend readout from internal records.
 func TestOpencodeSpendReadoutIsDone(t *testing.T) {
 	t.Parallel()
 	// Setup: opencode has no balance endpoint (Known=false)
@@ -28,12 +20,13 @@ func TestOpencodeSpendReadoutIsDone(t *testing.T) {
 		{Name: "flash-oc", Tier: "flash", Provider: "opencode", Model: "m", Enabled: true},
 	}
 	f := NewTable(Fleet)
-	// opencode balance is unknown (no endpoint)
+	// opencode balance is unknown (no endpoint) but we have internal records
 	f.SetProp(PropProviderBalance("opencode"), ProviderBalance{
-		Provider:  "opencode",
-		Known:     false,
-		Note:      "opencode Zen publishes no balance endpoint",
-		SpendHour: float64(internalSpend), // spend from internal records
+		Provider:   "opencode",
+		Known:      false,
+		At:         coverT0,
+		Note:       "opencode Zen publishes no balance endpoint",
+		SpendHour:  float64(internalSpend), // spend from internal records
 	}.value())
 
 	rows := ProviderRows(routes, f, coverT0)
