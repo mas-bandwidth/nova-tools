@@ -239,7 +239,7 @@ func TestTheAttributionLadder(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
-	os.WriteFile(path, []byte("# a comment\n\nschema\t(^|/)schema($|/)\n"), 0o644)
+	require.NoError(t, os.WriteFile(path, []byte("# a comment\n\nschema\t(^|/)schema($|/)\n"), 0o644))
 	rules, err := LoadRules(path)
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -378,7 +378,7 @@ func TestAMalformedRulesLineIsNamed(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
-	os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\nthis line has no tab\n"), 0o644)
+	require.NoError(t, os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\nthis line has no tab\n"), 0o644))
 	_, err := LoadRules(path)
 	assert.Falsef(t, err == nil || !strings.Contains(err.Error(), "line 2"), "a malformed rules line gives %v; it wants the line number", err)
 }
