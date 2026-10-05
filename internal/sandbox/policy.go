@@ -1092,9 +1092,12 @@ func (p *Policy) Over(u Usage) (string, bool) {
 }
 
 // Watch counts the tree on every tick (every second when tick is nil) and, the first time
-// it is past a cap, calls kill and stops. It returns stop, which ends the watch and
-// answers the runaway line, or "" when the tree never passed a cap. A count that fails is
-// skipped: a watch that cannot look must not kill what it cannot see.
+// it is past a cap, calls kill and stops. It returns stop, which ends the watch with one
+// last count and answers the runaway line, or "" when the tree never passed a cap. The
+// last count is for a tree whose leader exited between two ticks and left its children:
+// a fork bomb refused by RLIMIT_NPROC ends its own shell, and the children are still the
+// group. A count that fails is skipped: a watch that cannot look must not kill what it
+// cannot see.
 func (p *Policy) Watch(tick <-chan time.Time, usage func() (Usage, error), kill func()) (stop func() string) {
 	release := func() {}
 	if tick == nil {
@@ -1130,7 +1133,20 @@ func (p *Policy) watch(tick <-chan time.Time, usage func() (Usage, error), kill 
 	}()
 	var once sync.Once
 	return func() string {
-		once.Do(func() { close(quit); wg.Wait(); release() })
+		once.Do(func() {
+			close(quit)
+			wg.Wait()
+			release()
+			if line != "" {
+				return
+			}
+			if u, err := usage(); err == nil {
+				if l, hit := p.Over(u); hit {
+					line = l
+					kill()
+				}
+			}
+		})
 		return line
 	}
 }

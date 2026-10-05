@@ -6,12 +6,16 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/stretchr/testify/assert"
@@ -43,28 +47,121 @@ func liveInGroup(t *testing.T, pgid int) []int {
 	return live
 }
 
+// capWait is the fork-bomb tests' own deadline: NOVA_TEST_WAIT when set, thirty seconds
+// otherwise. A wall that enforces its cap answers in about a second; this bounds a wall
+// that does not, inside the package's alarm, so the failure is this test's and named.
+func capWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+// needProcCount skips BY NAME on a host where the wall cannot enforce its cap at all: the
+// cap is a count of the group's live processes read from /proc, and no count is no cap.
+func needProcCount(t *testing.T) {
+	t.Helper()
+	if u, err := sandbox.GroupUsage(syscall.Getpgrp()); err != nil || u.Procs == 0 {
+		t.Skipf("skipped: the process cap counts the group in /proc and this host's /proc gives no count (%d processes, %v)", u.Procs, err)
+	}
+}
+
+// groupIn is the process group the walled shell wrote to file: the shell's own pid, which
+// the wall made the leader of a group of its own. 0 until the shell has written it.
+func groupIn(file string) int {
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return 0
+	}
+	pgid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+	return pgid
+}
+
+// endGroup sends SIGKILL to the group the test's own walled shell leads, if any of it is
+// still running. Never a group the test did not start: the id is the one its shell wrote.
+// It takes no t: the deadline calls it from exec's own goroutine.
+func endGroup(pidFile string) {
+	if pgid := groupIn(pidFile); pgid > 1 {
+		if u, err := sandbox.GroupUsage(pgid); err != nil || u.Procs == 0 {
+			return
+		}
+		// ignored: the group may be gone between the count and the kill; the count after is the check
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+}
+
+// wallBomb runs script in the wall under the test's own deadline. The script writes its
+// pid to pidFile first. When the deadline fires the test ends what it started: its
+// shell's group and the tool. Whatever of the group is left when the test ends is ended
+// too, so a failure here leaves nothing running. It answers the status, stderr, the group
+// and whether the deadline fired; the pass condition is never the bomb's own end.
+func (j job) wallBomb(t *testing.T, pidFile, script string) (int, string, int, bool) {
+	t.Helper()
+	tool := walledTool(t) // built before the deadline starts: the build is not the run
+	t.Cleanup(func() { endGroup(pidFile) })
+	ctx, cancel := context.WithTimeout(context.Background(), capWait())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, tool, "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", script)
+	cmd.Env = j.env()
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	cmd.Cancel = func() error {
+		endGroup(pidFile)
+		return cmd.Process.Kill()
+	}
+	// The group's processes hold stderr; past the kill above, nothing the test started
+	// does, so the copy is not waited on for long.
+	cmd.WaitDelay = time.Second
+	err := cmd.Run()
+	code := 0
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	} else {
+		require.NoError(t, err, "nova-sandbox did not run at all: %v", err)
+	}
+	return code, errb.String(), groupIn(pidFile), ctx.Err() != nil
+}
+
+// assertCapped is the cap's effect, read after the wall has answered: the run ended with
+// the runaway status and line, inside the test's deadline, and no process of the group
+// is running. The bombs below run sleep 60, so a run that ended in time did not end by
+// itself.
+func assertCapped(t *testing.T, code int, errOut string, pgid int, timedOut bool) {
+	t.Helper()
+	require.Positive(t, pgid, "the leader never ran: %s", errOut)
+	require.False(t, timedOut, "the wall did not end the bomb inside the test's %s; the test ended group %d itself: %s", capWait(), pgid, errOut)
+	assert.Regexp(t, `runaway: \d+ processes \(cap `+strconv.Itoa(sandbox.DefaultMaxProcs)+`\)`, errOut, "the run names the cap it passed")
+	assert.Equal(t, sandbox.ExitRunaway, code, "the run ends with the runaway status: %s", errOut)
+	assert.Empty(t, liveInGroup(t, pgid), "a process of the killed tree survives")
+}
+
 // TestWallCapsAForkBomb: a shell loop that forks until refused, itself capped at 1,000,
-// runs under the wall; the run ends reporting runaway: <n> processes with n over the
-// default cap of 256, and no process of the tree is left.
+// runs under the wall; the wall kills its group past the default cap of 256, and no
+// process of the tree is left. Where RLIMIT_NPROC refuses a fork first, the shell exits
+// and leaves its children, and that is the wall's to end as well.
 func TestWallCapsAForkBomb(t *testing.T) {
 	t.Parallel()
 	needLandlock(t)
+	needProcCount(t)
 	j := newJob(t)
 	pidFile := filepath.Join(j.write, "leader")
-	script := `echo $$ > ` + pidFile + `; i=0; while [ $i -lt 1000 ]; do sleep 60 & i=$((i+1)); done; wait`
-	code, _, errOut := j.wall(t, script)
+	code, errOut, pgid, timedOut := j.wallBomb(t, pidFile, `echo $$ > `+pidFile+`; i=0; while [ $i -lt 1000 ]; do sleep 60 & i=$((i+1)); done; wait`)
+	assertCapped(t, code, errOut, pgid, timedOut)
+}
 
-	m := regexp.MustCompile(`runaway: (\d+) processes`).FindStringSubmatch(errOut)
-	require.NotNil(t, m, "no runaway line; the bomb was not bounded (exit %d): %s", code, errOut)
-	n, _ := strconv.Atoi(m[1])
-	assert.Greater(t, n, sandbox.DefaultMaxProcs, "the line names a count over the cap")
-	assert.Equal(t, sandbox.ExitRunaway, code, "the run ends with the runaway status")
-
-	raw, err := os.ReadFile(pidFile)
-	require.NoError(t, err, "the leader never ran: %s", errOut)
-	pgid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	require.NoError(t, err)
-	assert.Empty(t, liveInGroup(t, pgid), "a process of the killed tree survives")
+// TestWallCapsATreeWhoseLeaderExits: the shape ubuntu-latest hosted ran into (run
+// 37344601638). The leader forks past the cap and exits before the watch's first count;
+// its children are still the group, past the cap, and the wall kills them.
+func TestWallCapsATreeWhoseLeaderExits(t *testing.T) {
+	t.Parallel()
+	needLandlock(t)
+	needProcCount(t)
+	j := newJob(t)
+	pidFile := filepath.Join(j.write, "leader")
+	code, errOut, pgid, timedOut := j.wallBomb(t, pidFile, `echo $$ > `+pidFile+`; i=0; while [ $i -lt 300 ]; do sleep 60 & i=$((i+1)); done; exit 3`)
+	assertCapped(t, code, errOut, pgid, timedOut)
 }
 
 // TestWallCapsLeaveANormalRunAlone: a run under the cap is not touched, and says nothing.
