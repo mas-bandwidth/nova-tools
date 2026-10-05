@@ -426,6 +426,66 @@ unit as red, failing CI legs on a tool that is working.
 5. A row holds one offender of its kind in its file wherever it now stands.
 6. The rule holds over this repository with an empty allowlist.
 
+## The bench run verb
+
+`nova-ci bench run` (cmd/nova-ci/bench.go, internal/bench) is the one way a
+card, a read or the coordinator runs Go on a Linux bench against a local tree:
+the recipe `ssh <bench> 'mkdir -p <d>' && rsync -a --delete <repo>/
+<bench>:<d>/repo/ && ssh <bench> 'cd <d>/repo && export GOCACHE=...
+GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...'`, a second
+bench by hand, then `ssh <bench> 'rm -rf <d>'`, typed into every brief, is the
+verb's job (the owner, 2026-10-05: "We need to get away from these one shot
+shell scripts.").
+
+The run, per host, in order, each step behind internal/bench's `Transport` (the
+system ssh alone, through internal/subproc in one function, `sshLine`, guarded
+by `testguard.RefuseHosts`; a fake in the tests):
+
+1. **make**: one ssh, `mkdir -p <root> && mktemp -d <root>/run.XXXXXXXX`. ssh's
+   own exit 255 (or ssh not starting) is a host that did not answer: the run
+   moves to `--fallback` and asks nothing more of it. Any other non-zero status
+   is a host that answered and refused, the end of the run. A directory mktemp
+   prints that is not `<root>/run.<x>` is refused and nothing is removed.
+2. **copy**: the tree into `<run>/repo`, `.git` left out unless `--with-git`:
+   `mkdir -p <run>/repo && tar -C <run>/repo -xf -` with a tar stream written in
+   Go (`bench.WriteTree`: directories, regular files and symlinks with their
+   modes; anything else refused) on ssh's stdin, so no rsync and no local tar.
+3. **exec**: `cd <run>/repo && GOCACHE=<cache> GOFLAGS=-mod=readonly
+   NOVA_TEST_NO_HOST=1 nice -n 19 <command>`, every word shell-quoted, its
+   output streamed; its exit status is the verb's.
+4. **remove**: `rm -rf -- <run>`, the directory step 1 printed and nothing else,
+   after step 2 or 3 whatever their outcome, under a context the caller's
+   cancellation (an interrupt) does not end.
+
+Held by `TestBenchRunCopiesRunsAndCleansUp` (the four calls in order with the
+environment and nice; a red command's status is the verb's and still cleans
+up; an unanswering host falls back and is asked nothing more; no host
+answering is a refusal that removes nothing; a mktemp answer that is not a run
+directory is never removed), `TestBenchRunRefusesUsage` (a host ssh could read
+as an option, a `~`, `..`, home or root path, and a missing tree are refused
+before any bench is reached), `TestBenchToolHasNoProblems`, and in
+internal/bench `TestRunRemovesTheRunDirectoryWhenTheCopyFails` and
+`TestWriteTreeLeavesGitOutUnlessAsked`.
+
+The run is modelled in `tla/BenchRun.tla`. TLC on a Linux bench
+holds five invariants on two hosts and two exit codes (`MCBenchRun.cfg`):
+`OnlyTheMadeDirIsRemoved`, `AtMostOneHostAnswers`, `FallbackOnlyOnNoAnswer`,
+`ExitIsTheCommands` and `NothingLeftBehind`. Its reversed witness
+(`MCBenchRunBrokenNoRemove.cfg`, a failed copy that returns without the
+deferred remove) must break `NothingLeftBehind`. It does not model an
+interrupt that lands between mktemp and its answer: that directory exists on
+the bench but the run never learnt its name, so it is never removed.
+
+Not yet: the bench, the cache and the fallback default from nova-config's
+machine rows. A machine row today carries no bench cache or fallback field, so
+`--host` is required and the paths have fixed defaults until the rows do.
+
+internal/bench is the one sanctioned bench runner:
+`internal/bench/` is in `benchRunnerSkipDirs` in `internal/ci/ci_benchrunner.go`
+and `testdata/bench-runners.allow` still only shrinks. The verb itself is on
+`internal/tool`, so it adds no `flag.FlagSet` to nova-ci, and it runs nothing but
+ssh, so the functional image needs no new row.
+
 ## The class tests
 
 The sections above are the class tests written out in full. This section is

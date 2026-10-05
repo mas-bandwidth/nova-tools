@@ -10,14 +10,13 @@ import (
 	"strings"
 )
 
-// ci_benchrunner.go is the machine behind TestCIOneBenchRunner: the fleet plays
-// are the one way this tree runs a script
-// on a bench, and every ssh exec site left in Go is a row of
-// testdata/bench-runners.allow with its
+// ci_benchrunner.go is the machine behind TestCIOneBenchRunner: internal/bench
+// is the one way this tree runs a command on a bench, and every other ssh exec
+// site left in Go is a row of testdata/bench-runners.allow with its
 // shape and retiring issue. The list may only shrink.
 //
 // A SITE is a function (go/ast, every non-test .go file under cmd/ and
-// internal/ outside internal/testguard) that calls
+// internal/ outside internal/bench and internal/testguard) that calls
 // exec.Command, exec.CommandContext or testguard.RefuseHosts with a program
 // argument that is ssh:
 //
@@ -41,7 +40,7 @@ import (
 const BenchRunnerAllowPath = "testdata/bench-runners.allow"
 
 // benchRunnerSkipDirs are read against themselves: the runner and the guard.
-var benchRunnerSkipDirs = []string{"internal/testguard/"}
+var benchRunnerSkipDirs = []string{"internal/bench/", "internal/testguard/"}
 
 // BenchRunnerSite is one ssh exec site: its file (slash, from the repo root)
 // and its function key (Recv.Name or Name).
