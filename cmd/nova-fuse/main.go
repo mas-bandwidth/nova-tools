@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -607,32 +606,43 @@ func quarantinedEitherSpelling(b fuse.Box, surface string) (string, fuse.Fuse, b
 // unescapeField is the inverse of oneline.Field: \xNN is one byte and \uNNNN one rune.
 // Any other backslash, and any malformed escape, stays literal.
 func unescapeField(s string) string {
-	var b strings.Builder
+	var out []byte
 	for i := 0; i < len(s); {
-		if s[i] == '\\' && i+1 < len(s) {
-			n := 0
-			switch s[i+1] {
-			case 'x':
-				n = 2
-			case 'u':
+		if s[i] == '\\' && i+1 < len(s) && (s[i+1] == 'x' || s[i+1] == 'u') {
+			n := 2
+			if s[i+1] == 'u' {
 				n = 4
 			}
-			if n > 0 && i+2+n <= len(s) {
-				if v, err := strconv.ParseUint(s[i+2:i+2+n], 16, 32); err == nil {
-					if n == 2 {
-						b.WriteByte(byte(v))
-					} else {
-						b.WriteRune(rune(v))
-					}
-					i += 2 + n
-					continue
+			if v, ok := hexValue(s[i+2:min(i+2+n, len(s))], n); ok {
+				if n == 2 {
+					out = append(out, byte(v))
+				} else {
+					out = append(out, string(rune(v))...)
 				}
+				i += 2 + n
+				continue
 			}
 		}
-		b.WriteByte(s[i])
+		out = append(out, s[i])
 		i++
 	}
-	return b.String()
+	return string(out)
+}
+
+// hexValue reads exactly n hex digits, and reports false for anything shorter or other.
+func hexValue(h string, n int) (int, bool) {
+	if len(h) != n {
+		return 0, false
+	}
+	v := 0
+	for i := 0; i < n; i++ {
+		d := strings.IndexByte("0123456789abcdef", h[i]|0x20)
+		if d < 0 {
+			return 0, false
+		}
+		v = v<<4 | d
+	}
+	return v, true
 }
 
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
