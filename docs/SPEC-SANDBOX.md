@@ -508,7 +508,10 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
   Landlock and seatbelt walls still bound what it can touch.
 - **The count.** Every second the tool counts the live processes of the group (zombies
   are dead and not counted) and sums their resident bytes: `/proc` on linux, no fork;
-  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped.
+  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped. The group is
+  counted once more when the command exits: a leader that exits between two counts (a
+  fork bomb refused by `RLIMIT_NPROC` ends its own shell) leaves its children in the
+  group, and past a cap they are killed like a tree seen on a tick.
 - **Past a cap.** More processes than the cap, or more resident bytes than the cap: the
   tool sends SIGKILL to the group, waits (bounded) until no live process of it remains,
   prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the process group was killed`
