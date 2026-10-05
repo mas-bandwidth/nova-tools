@@ -30,6 +30,7 @@ MCFuseBoxBrokenAbsentClear.cfg	MCFuseBox.tla	invariant	GateAnswersOnlyFromEveryN
 MCFuseBoxBrokenInitReplaces.cfg	MCFuseBox.tla	invariant	InitOnlyWhereNoBox	ignore-terminal	fusebox	required	-
 MCFuseBoxBrokenLastWins.cfg	MCFuseBox.tla	invariant	GateAnswersOnlyFromEveryNamedBox	ignore-terminal	fusebox	required	-
 MCFuseBoxBrokenLockdownNeedsBox.cfg	MCFuseBox.tla	invariant	LockdownAlwaysBlows	ignore-terminal	fusebox	required	-
+MCFuseBoxBrokenLostUpdate.cfg	MCFuseBox.tla	invariant	LockdownMonotone	ignore-terminal	fusebox	required	-
 MCFuseBoxBrokenQuarantineMakes.cfg	MCFuseBox.tla	invariant	OnlyALiftInitOrHandClears	ignore-terminal	fusebox	required	-
 MCMemberBrokenAlias.cfg	MCMemberTable.tla	invariant	NoOwnedAlias	ignore-terminal	membertable	required	-
 MCMemberBrokenMove.cfg	MCMemberTable.tla	invariant	RecordSetLink	ignore-terminal	membertable	required	-
