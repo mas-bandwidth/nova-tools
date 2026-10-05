@@ -106,7 +106,7 @@ func TestAuthorsFromGitRefusesWithNoRepo(t *testing.T) {
 func TestAuthorsFromGitStopsOnADeadline(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	run := func(ctx context.Context, dir string, args ...string) (string, error) { return "Rowan\n", nil }
 	_, err := AuthorsFromGit(ctx, "/repo", verbs("nova-check links"), run, nil)
@@ -176,7 +176,7 @@ func TestAuthorsFromGitAgainstARealRepository(t *testing.T) {
 	gitNoAuthorEnv("config", "user.email", "later@example.com")
 	gitNoAuthorEnv("commit", "-qam", "a second verb, by somebody else")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	authors, err := AuthorsFromGit(ctx, repo, verbs("nova-check links", "nova-check nocode"), nil, nil)
 	require.NoError(t, err, "AuthorsFromGit: %v", err)
@@ -314,7 +314,7 @@ func TestAuthorsFromGitDoesNotRunATextconvNamedInRepoConfig(t *testing.T) {
 	gitNoAuthorEnv("config", "user.email", "later@example.com")
 	gitNoAuthorEnv("commit", "-qam", "a second verb, by somebody else")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	authors, err := AuthorsFromGit(ctx, repo, verbs("nova-fake links", "nova-fake nocode"), GitRunner, nil)
 	require.NoError(t, err, "AuthorsFromGit: %v", err)

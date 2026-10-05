@@ -28,7 +28,7 @@ func TestAnOldReportsSnapshotLockKeepsTheNewOneOut(t *testing.T) {
 	defer old.Close()
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "stage the old binary's flock")
 
-	done, cancel := context.WithCancel(context.Background())
+	done, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = lockSnapshot(done, snap)
 	require.Error(t, err, "the new report took the snapshot while an old one held the same lock file")

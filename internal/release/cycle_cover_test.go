@@ -61,7 +61,7 @@ func TestCycleCoverPlayRefusesACancelledContext(t *testing.T) {
 func TestCycleCoverPlayRefusesAPastDeadline(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(1, 0).UTC())
+	ctx, cancel := context.WithDeadline(t.Context(), time.Unix(1, 0).UTC())
 	t.Cleanup(cancel)
 	got, err := ExecAnsible{Path: cycleCoverFakeProgram(t)}.
 		Play(ctx, []string{"-i", "/fleet/nova-inventory", "/src/fleet/tools.yml"})

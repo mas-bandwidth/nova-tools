@@ -24,7 +24,7 @@ func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "grandchild.ready")
 	p := manifest(t, row("x", "tool", command(t, "escaped", "30s", ready), "npm:unused", "none"))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	readyCh := make(chan struct{})
