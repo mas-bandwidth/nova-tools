@@ -85,6 +85,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the git push refspec HEAD:main, not a RESULT parser"},
 	{file: "cmd/nova-sprint/landprune.go", fn: "tidyRefs", record: "git-HEAD", since: "c6e85c5e",
 		reason: "skips origin/HEAD, the clone's symbolic ref, in a for-each-ref listing; not a RESULT parser"},
+	{file: "cmd/nova-sprint/selftest.go", fn: "selftestFlow", record: "git-refspec", since: "b45240fab",
+		reason: "the git push refspecs HEAD:main and HEAD:sprint/<card> of the selftest's throwaway clone, not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)

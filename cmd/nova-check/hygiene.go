@@ -143,7 +143,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// and --kind decide WHICH findings there are, so a remedy without them would have
 	// answered a different question even had it run.
 	//
-	// Quote and not Field for the values: Field escapes every space to \x20, which is
+	// Quote and not Field for the values: Field escapes every blank to \x20, which is
 	// right for a scanner reading one token and wrong for a line a person is meant to
 	// copy -- `Name <email>` remains readable instead of printing escaped spaces,
 	// and an unquoted `<` is a shell redirect besides. Quote is the form for a value

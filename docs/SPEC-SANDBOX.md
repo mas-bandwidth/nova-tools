@@ -171,8 +171,17 @@ The test requirements are listed under **Tests this spec demands**.
    (allow mach-lookup
      (global-name "com.apple.system.opendirectoryd.libinfo")   ; getpwuid, getaddrinfo
      (global-name "com.apple.SecurityServer")                  ; TLS trust evaluation
-     (global-name "com.apple.system.logger"))                  ; os_log
+     (global-name "com.apple.system.logger")                   ; os_log
+     (global-name "com.apple.trustd.agent"))                   ; SecTrustEvaluateWithError: Go's TLS
    ```
+
+   The fourth name is the Go toolchain's (measured 2026-10-04 on a darwin/amd64
+   bench): Go's crypto/x509 verifies a server certificate through
+   `SecTrustEvaluateWithError`, which talks to `com.apple.trustd.agent`, while curl
+   verifies through `SecurityServer`. Under the three-name set `go mod download`
+   failed every fetch with `tls: failed to verify certificate: x509: OSStatus -26276`
+   and the same fetch passed with this name added; `com.apple.trustd` alone did not
+   help, and `pbpaste` stays `rc=1` under the four.
 
    All five pass under it and `pbpaste` is `rc=1`
    (`tools/sandboxcheck`, check `clipboard_denied`). **Accepted width,
@@ -449,6 +458,39 @@ prints one `POLICY NOTE` per flag saying it changed nothing. `<verb> -h` lists
 each verb's flags with what each wants, and that verb's own exit codes.
 
 The binary is `nova-sandbox`.
+
+### wall-caps-processes.w1 — the wall caps the tree it runs
+
+The wall bounds the process count and the resident memory of the tree it runs, so one
+runaway command cannot take the machine (289 test processes ran unbounded under one
+`go test`). Defaults: **256 processes** and **8 GiB**.
+
+- **The tree is a process group.** When the command's stdin is not a terminal, the wall
+  starts it as the leader of a process group of its own; the group is counted and the
+  group is killed by its id, never by a pattern. A terminal stdin keeps the caller's
+  group (a child in a background group is stopped by SIGTTIN when it reads the keyboard)
+  and has no caps. A process that leaves the group (`setsid`) leaves the count; the
+  Landlock and seatbelt walls still bound what it can touch.
+- **The count.** Every second the tool counts the live processes of the group (zombies
+  are dead and not counted) and sums their resident bytes: `/proc` on linux, no fork;
+  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped.
+- **Past a cap.** More processes than the cap, or more resident bytes than the cap: the
+  tool sends SIGKILL to the group, waits (bounded) until no live process of it remains,
+  prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the process group was killed`
+  (or `runaway: <n> bytes of memory (cap <c>)`) and exits **137**. Signals the tool
+  receives (SIGINT, SIGTERM) go to the whole group.
+- **Linux, as well.** `RLIMIT_NPROC` is per user, not per tree, so it is a floor under the
+  line and not the line: while the child is forked it is set to the machine's task total
+  plus twice the cap, so a bomb is stopped between two counts, and the tool's own limit is
+  put back at once. `RLIMIT_AS` is not used: it is per process and refuses ordinary
+  programs that reserve a large virtual range. The memory cap is the resident sum above.
+- **Flags.** `run` takes `--max-procs <n>` and `--max-mem <size>` (accepted everywhere,
+  enforced where the tool can count); the bare form carries the defaults. The flags on the
+  bare form are owed in `cmd/nova-sandbox/main.go`, which this card does not edit.
+- **Checked by** `TestWallCapsAForkBomb` (a shell loop that forks until refused, itself
+  capped at 1,000, ends `runaway: <n> processes` with `n` over 256 and no live process of
+  its group), `TestWallCapsLeaveANormalRunAlone` and `TestPolicyOverNamesTheCapPast`
+  (`cmd/nova-sandbox/nproc_cap_test.go`).
 
 ## The run verb — a disposable place, on darwin
 
@@ -1046,7 +1088,9 @@ range. This departure from the conventions preserves the child's exit status.
 
 The reservation is ambiguous, as it is in `env(1)`: a wrapped command that
 itself exits 125, 126 or 127 — **and on darwin 71** — is indistinguishable from
-the tool's own refusal by exit status alone. The tool's refusals always print a
+the tool's own refusal by exit status alone. A wrapped command that itself
+exits 128+N (for example 143) is likewise indistinguishable from one killed by
+signal N. The tool's refusals always print a
 `SANDBOX REFUSED` line to stderr and the command's do not, and a status the
 command returned is announced after it ends by `SANDBOX DONE exit=<n>`, the last
 line the tool writes; so a caller that needs to tell them apart reads the line,
@@ -1893,9 +1937,10 @@ Each item is a claim in this document that was written from documentation and
 must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
-1. That the measured three-service `mach-lookup` set
+1. That the measured `mach-lookup` set
    (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
-   `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
+   `com.apple.system.logger`, and `com.apple.trustd.agent` for Go's TLS, measured
+   2026-10-04), with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
    `(allow mach-lookup)` is forbidden and is not the fallback, while

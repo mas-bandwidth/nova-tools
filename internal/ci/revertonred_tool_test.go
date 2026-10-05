@@ -58,7 +58,7 @@ func TestRevertOnRedRunsAToolBuiltFromDevNotFromTheRedTree(t *testing.T) {
 			built = true
 		}
 	}
-	require.True(t, toolDir != "", "revert-on-red.yml: tool checkout %q, Go set up %t, tool built from it %t; all three are required", toolDir, goSetup, built)
+	require.NotEmpty(t, toolDir, "revert-on-red.yml: tool checkout %q, Go set up %t, tool built from it %t; all three are required", toolDir, goSetup, built)
 	require.True(t, goSetup, "revert-on-red.yml: tool checkout %q, Go set up %t, tool built from it %t; all three are required", toolDir, goSetup, built)
 	require.True(t, built, "revert-on-red.yml: tool checkout %q, Go set up %t, tool built from it %t; all three are required", toolDir, goSetup, built)
 }

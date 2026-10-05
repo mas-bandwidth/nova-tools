@@ -21,23 +21,22 @@ func TestProperty_StampRoundtrip(t *testing.T) {
 	labelCharset := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. =+/:αβγδε日本語🚀")
 
 	randomString := func(chars []rune, maxLen int) string {
-		n := rng.Intn(maxLen) + 1
 		var b strings.Builder
-		for i := 0; i < n; i++ {
+		for range rng.Intn(maxLen) + 1 {
 			b.WriteRune(chars[rng.Intn(len(chars))])
 		}
 		return b.String()
 	}
 
 	const iterations = 5000
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		pid := rng.Intn(10_000_000) + 1
 		host := randomString(hostCharset, 20)
 		offsetSec := rng.Int63n(365 * 24 * 3600 * 5)
 		offsetNano := rng.Int63n(1_000_000_000)
 		started := baseTime.Add(time.Duration(offsetSec)*time.Second + time.Duration(offsetNano)).UTC()
 		text, err := started.MarshalText()
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 		var cleanTime time.Time
 		require.NoError(t, cleanTime.UnmarshalText(text))
 
@@ -67,11 +66,9 @@ func TestProperty_JitterBounds(t *testing.T) {
 	rng := rand.New(rand.NewSource(43))
 	const iterations = 10000
 
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		d := time.Duration(rng.Int63n(int64(time.Hour))) + time.Millisecond
 		jittered := defaultJitter(d)
-		min := d
-		max := d + d/2 + 1
-		require.True(t, jittered >= min && jittered <= max, "iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max)
+		require.True(t, jittered >= d && jittered <= d+d/2+1, "iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, d, d+d/2+1)
 	}
 }

@@ -17,7 +17,7 @@ func TestAWorkersVerbIsRecordedAsTheWorker(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t) // NOVA_SPRINT_ACTOR is the coordinator
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("take --as m1")

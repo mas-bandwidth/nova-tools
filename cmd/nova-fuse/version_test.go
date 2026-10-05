@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"runtime"
 	"strings"
 	"testing"
@@ -42,12 +43,10 @@ func TestVersionLineShape(t *testing.T) {
 // The stamp is the ONE field of this line that comes from outside the toolchain, and a
 // release workflow's ${TAG} is a shell variable.
 func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v1.2.3\nnova-fuse v9.9.9 linux/amd64 go1.0 extra"
+	t.Parallel()
 
 	var out, errOut bytes.Buffer
-	require.Equal(t, 0, cmdVersion(nil, &out, &errOut), "stderr: %s", errOut.String())
+	require.Equal(t, 0, cmdVersionWith(nil, &out, &errOut, "v1.2.3\nnova-fuse v9.9.9 linux/amd64 go1.0 extra"), "stderr: %s", errOut.String())
 	line := out.String()
 	require.Equal(t, 1, strings.Count(line, "\n"), "a stamped newline broke the line in two: %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
@@ -58,11 +57,9 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 // A stamped build says the tag and an unstamped one says what the toolchain recorded:
 // either way field two is an identity, never a dotted number this file made up.
 func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v9.9.9"
+	t.Parallel()
 	var out, errOut bytes.Buffer
-	require.Equal(t, 0, cmdVersion(nil, &out, &errOut), "stderr: %s", errOut.String())
+	require.Equal(t, 0, cmdVersionWith(nil, &out, &errOut, "v9.9.9"), "stderr: %s", errOut.String())
 	got := strings.Fields(out.String())[1]
 	assert.Equal(t, "v9.9.9", got, "field 2 is the stamp: got %q", got)
 }
@@ -84,10 +81,16 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"version", "--version"} {
 		var out, errOut bytes.Buffer
-		if !assert.Equal(t, 0, run([]string{verb}, &out, &errOut, nowish()), "%s: want exit 0\nstderr: %s", verb, errOut.String()) {
+		if !assert.Equal(t, 0, run([]string{verb}, &out, &errOut, nowish(), invocation{getenv: getenvNone, wd: "", stamp: version}), "%s: want exit 0\nstderr: %s", verb, errOut.String()) {
 			continue
 		}
 		assert.True(t, strings.HasPrefix(out.String(), "nova-fuse "), "%s: not the version line: %q", verb, out.String())
 		assert.Equal(t, 1, strings.Count(out.String(), "\n"), "%s: not the version line: %q", verb, out.String())
 	}
+}
+
+// cmdVersion is the verb with the package's own stamp, as main runs it through
+// cmdVersionWith (docs/STANDARD.md section 8); only the tests call it by this name.
+func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	return cmdVersionWith(args, stdout, stderr, version)
 }

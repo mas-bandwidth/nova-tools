@@ -441,7 +441,7 @@ func TestNoCodeAllowDoesNotOverMatchSiblings(t *testing.T) {
 func TestParseDenyListRefusesZeroWidthSpace(t *testing.T) {
 	t.Parallel()
 
-	_, err := ParseDenyList(".py​")
+	_, err := ParseDenyList(".py\u200b")
 	assert.Error(t, err, "accepted a zero-width space: a one-entry list that forbids nothing")
 }
 

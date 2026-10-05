@@ -158,8 +158,8 @@ func TestAForsLocalsAreNotTakenByADoInsideItsExpressions(t *testing.T) {
 			assert.Failf(t, "", "depth %d: the count is %d (%v), want %d", depth, read.peak, bad, want)
 		}
 		lib := Library{Name: "scope_probe", Files: tree(map[string]string{"scope.lua": text}), Glob: "*.lua"}
-		if _, err := lib.Source(); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), fmt.Sprintf("would hold %d local variables", want)) {
-			assert.Failf(t, "", "depth %d: Source = %v, want the refusal of %d locals over MaxLocals", depth, err, want)
+		if _, err := lib.Digest(); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), fmt.Sprintf("would hold %d local variables", want)) {
+			assert.Failf(t, "", "depth %d: the library = %v, want the refusal of %d locals over MaxLocals", depth, err, want)
 		}
 	}
 }

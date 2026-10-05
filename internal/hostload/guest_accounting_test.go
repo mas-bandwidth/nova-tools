@@ -76,10 +76,10 @@ func TestProcStatCountsGuestTimeOnce(t *testing.T) {
 		Load1: func() (float64, bool) { return 2, true }}
 	_, how, st, ok := Measure(src, State{}, t0)
 	require.True(t, ok, "first reading has no interval: how=%q ok=%v", how, ok)
-	require.True(t, how == HowLoad1, "first reading has no interval: how=%q ok=%v", how, ok)
+	require.Equal(t, HowLoad1, how, "first reading has no interval: how=%q ok=%v", how, ok)
 	require.Equal(t, Ticks{Busy: 100, Total: 200}, *st.Ticks, "first reading keeps the corrected counters")
 	pct, how, _, ok = Measure(src, st, t0.Add(time.Second))
 	require.True(t, ok, "second reading: pct=%v how=%q ok=%v", pct, how, ok)
-	require.True(t, how == HowCPU, "second reading: pct=%v how=%q ok=%v", pct, how, ok)
+	require.Equal(t, HowCPU, how, "second reading: pct=%v how=%q ok=%v", pct, how, ok)
 	require.True(t, near(pct, 50.0), "measure percent = %v, want 50", pct)
 }

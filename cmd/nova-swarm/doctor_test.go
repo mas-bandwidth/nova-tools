@@ -758,3 +758,22 @@ func checkDoctorCausesAgainstDocs(t *testing.T) {
 		}
 	}
 }
+
+// TestSpecSwarmSaysTheTokenBudgetIsAdvisoryUnderAHostileHarness pins
+// security#66 finding 4: the token and usd budgets are read from the child's
+// writable data home, so under a hostile harness they are advisory and the
+// deadline is the enforced bound; rule 11 must say so.
+func TestSpecSwarmSaysTheTokenBudgetIsAdvisoryUnderAHostileHarness(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	require.NoError(t, err)
+	spec := string(raw)
+	_, after, ok := strings.Cut(spec, "11. **The swarm's own tokens are budgeted per job.**")
+	require.True(t, ok, "docs/SPEC-SWARM.md has no rule 11 paragraph")
+	if i := strings.Index(after, "\n\n"); i >= 0 {
+		after = after[:i]
+	}
+	for _, word := range []string{"advisory", "deadline", "hostile"} {
+		assert.Contains(t, after, word, "rule 11 does not say %q", word)
+	}
+}

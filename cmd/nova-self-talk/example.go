@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -19,6 +20,7 @@ import (
 // cmdExample writes the example pages into a directory of the caller's: a local write and the
 // only write this tool makes. A page already there with the same bytes is kept; one with other
 // bytes is never replaced, and the run refuses before writing anything.
+// It implements SPEC.md's nova-self-talk example contract; NoReplace publishes whole pages.
 func cmdExample(args []string, stdout, stderr io.Writer) int {
 	asJSON := verbflag.BoolAsked(args, "json")
 	fset := verbflag.New("example")
@@ -69,7 +71,7 @@ func cmdExample(args []string, stdout, stderr io.Writer) int {
 			return refuse(stdout, stderr, asJSON, "example", "", "cannot make "+oneline.Quote(dir)+": "+reason(err))
 		}
 		for _, name := range write {
-			if err := os.WriteFile(filepath.Join(dir, name), bodies[name], 0o644); err != nil {
+			if err := atomicfile.WriteFile(filepath.Join(dir, name), bodies[name], 0o644, atomicfile.NoReplace()); err != nil {
 				return refuse(stdout, stderr, asJSON, "example", "", "cannot write "+oneline.Quote(filepath.Join(dir, name))+": "+reason(err))
 			}
 		}
@@ -100,26 +102,7 @@ func exampleNext(verb, file string) string {
 	if strings.HasPrefix(file, "-") {
 		command += " --"
 	}
-	return command + " " + shellQuote(file)
-}
-
-// shellQuote renders one path for exampleNext (SPEC.md §2). Ordinary paths stay unchanged;
-// adjacent quote segments preserve shell syntax and apostrophes literally.
-func shellQuote(s string) string {
-	if s != "" {
-		safe := true
-		for _, c := range s {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-				c == '/' || c == '.' || c == '_' || c == '-' || c == ':') {
-				safe = false
-				break
-			}
-		}
-		if safe {
-			return s
-		}
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+	return command + " " + oneline.ShellWord(file)
 }
 
 // dash is a field's empty value as the typed line spells it.

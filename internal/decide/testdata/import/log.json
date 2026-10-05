@@ -1,0 +1,5 @@
+{"lines":[
+{"kind":"move","at":"2026-10-04T19:10:00Z","card":"card-a","verb":"ack","answers":["j-one"]},
+{"kind":"move","at":"2026-10-04T19:11:00Z","card":"card-b","verb":"rework","answers":["j-two"]},
+{"kind":"move","at":"2026-10-04T19:12:00Z","card":"card-c","verb":"add"}
+]}
