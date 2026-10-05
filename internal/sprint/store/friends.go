@@ -361,7 +361,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 }
 
 // friendSeats is every friend of the roster as the tick's deal and level see her
-// (sprint.FriendDeal, sprint.FriendLevel): her name, width and status at now and what her
+// (sprint.FriendDeal, sprint.FriendLevel, and the attempt cap's deal, sprint.AttemptCapDeal): her name, width and status at now and what her
 // beat names running, read every tick while the roster has a friend, whether or not a
 // friend's card is ready, so a friend coming up is levelled on the same tick
 // (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1); nil when it has none.

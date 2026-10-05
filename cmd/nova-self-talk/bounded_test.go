@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,4 +116,55 @@ func TestARefusalIsAtMostTwoLinesAndNamesTheDoor(t *testing.T) {
 	exit, stdout, _ := runSelfTalk(t, "help")
 	assert.Equal(t, 0, exit, "`help` did not print the usage: exit %d", exit)
 	assert.Contains(t, stdout, "usage:", "`help` did not print the usage: exit %d", exit)
+}
+
+func TestOneGiantTraitSentenceCannotMakeAFindingLineOrJSONItemGiant(t *testing.T) {
+	t.Parallel()
+
+	giant := "I hoard " + strings.Repeat("word ", 200000) + "and manufacture limits.\n"
+	path := filepath.Join(t.TempDir(), "giant.md")
+	require.NoError(t, os.WriteFile(path, []byte(giant), 0o644))
+
+	// 1. Lines mode
+	exit, _, stderr := runSelfTalk(t, path)
+	require.Equal(t, 1, exit, "stderr: %s", stderr)
+	require.Contains(t, stderr, "TRAIT")
+	require.Contains(t, stderr, "match=")
+	foundFail := false
+	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
+		if strings.HasPrefix(line, "SELFTALK FAIL") {
+			foundFail = true
+			assert.Less(t, len(line), 2048, "line length %d >= 2048: %s", len(line), line)
+		}
+	}
+	assert.True(t, foundFail, "expected at least one SELFTALK FAIL line")
+
+	// 2. JSON mode
+	exit, stdout, stderr := runSelfTalk(t, "--json", path)
+	require.Equal(t, 1, exit, "stderr: %s", stderr)
+	assert.Empty(t, stderr)
+	var got struct {
+		Result struct {
+			Status string
+			Exit   int
+		}
+		Items []struct {
+			Kind   string
+			Fields map[string]any
+		}
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &got), stdout)
+	assert.Equal(t, 1, got.Result.Exit)
+	require.NotEmpty(t, got.Items)
+	for _, it := range got.Items {
+		itemBytes, err := json.Marshal(it)
+		require.NoError(t, err)
+		assert.Less(t, len(itemBytes), 2048, "JSON item length %d >= 2048: %s", len(itemBytes), string(itemBytes))
+		if match, ok := it.Fields["match"].(string); ok {
+			assert.Less(t, len(match), 2048, "match length %d >= 2048", len(match))
+		}
+		if text, ok := it.Fields["text"].(string); ok {
+			assert.Less(t, len(text), 2048, "text length %d >= 2048", len(text))
+		}
+	}
 }

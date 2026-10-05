@@ -26,6 +26,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Shape names the grammatical family a finding belongs to. It is reported beside every finding
@@ -75,7 +77,7 @@ func ScanInstallation(text string) []Installation {
 			continue // somebody else's sentence, inside a quotation still open
 		}
 		if shape, match := classify(s.text); match != "" {
-			out = append(out, Installation{Shape: shape, Line: s.line, Text: s.text, Match: match})
+			out = append(out, Installation{Shape: shape, Line: s.line, Text: oneline.Cap(s.text, oneline.TailBytes), Match: oneline.Cap(match, oneline.TailBytes)})
 		}
 	}
 	return out
@@ -616,7 +618,7 @@ func traitHead(s string) []int {
 	return m
 }
 
-// traitParallel matches "I <verb> ... and <verb>" and returns that span.
+// traitParallel matches "I <verb> ... and <verb>" and returns that span, capped at oneline.TailBytes.
 func traitParallel(s string) string {
 	m := traitHead(s)
 	if m == nil {
@@ -625,21 +627,21 @@ func traitParallel(s string) string {
 	rest := s[m[4]:m[5]]
 	for _, c := range conjunctVerb.FindAllStringSubmatchIndex(rest, -1) {
 		if habitualVerb(strings.ToLower(rest[c[2]:c[3]])) {
-			return s[m[2]-2 : m[4]+c[1]]
+			return oneline.Cap(s[m[2]-2:m[4]+c[1]], oneline.TailBytes)
 		}
 	}
 	return ""
 }
 
 // traitMarker matches "I <verb>" in a sentence carrying a habituality word and returns the span
-// from the subject to the marker.
+// from the subject to the marker, capped at oneline.TailBytes.
 func traitMarker(s string) string {
 	m := traitHead(s)
 	loc := habitual.FindStringIndex(s)
 	if m == nil || loc == nil {
 		return ""
 	}
-	return s[min(m[2]-2, loc[0]):max(m[3], loc[1])]
+	return oneline.Cap(s[min(m[2]-2, loc[0]):max(m[3], loc[1])], oneline.TailBytes)
 }
 
 // habitualVerb reports whether a word can be a bare present-tense verb of disposition.

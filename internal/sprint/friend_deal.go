@@ -305,14 +305,36 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			p.Units = append(p.Units, friendRedealUnit(s, c, wc, row, col))
 			continue
 		}
-		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col))
+		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col, nil))
 	}
 	return Lawful(p), dealt, dealtWorking
 }
 
+// friendWithFree is the up friend of one of the classes with the most free width in
+// free, the first by name among equals; "" when none has room. AttemptCapDeal passes
+// the free width it has left in this plan, decremented after each deal.
+func friendWithFree(seats []FriendSeat, free map[string]int, classes ...string) string {
+	var up []string
+	for _, f := range seats {
+		if f.Status == Up && slices.Contains(classes, f.Class) {
+			up = append(up, f.Name)
+		}
+	}
+	slices.Sort(up)
+	name := ""
+	for _, n := range up {
+		if free[n] > 0 && (name == "" || free[n] > free[name]) {
+			name = n
+		}
+	}
+	return name
+}
+
 // friendDealUnit is one friend's card dealt: its work card on her row, in working (taken
-// now) or ready behind her working cards, and its primary ready -> working on it.
-func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
+// now) or ready behind her working cards, and its primary ready -> working on it. set
+// rides the primary's move beside the deal's own fields (the attempt cap's default
+// answer writes the WHO line and the count reset, brief_bound.go).
+func friendDealUnit(s *Snapshot, c *Card, card, row, col string, set map[string]string) Unit {
 	attempt := c.Int("attempt") + 1
 	now := stamp(s.Now)
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": row,
@@ -332,9 +354,13 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
 		dl, _ := friendDeadline(s, name)
 		maps.Copy(fields, dl)
 	}
+	prim := map[string]string{"attempt": itoa(attempt), "work": card}
+	for k, v := range set {
+		prim[k] = v
+	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, row, col, c.Score, fields)),
-		change(Work, moveEntry(c, c.Row, Working, map[string]string{"attempt": itoa(attempt), "work": card}, "result")),
+		change(Work, moveEntry(c, c.Row, Working, prim, "result")),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s %s (a friend's card: friend sync delivers it to her inbox)", c.ID, c.Col, card, row, col)}
 }
 

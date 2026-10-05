@@ -187,10 +187,11 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// device grant here: the minimum Metal mechanisms are still unmeasured, so
 	// the profile stays closed and the GPU probe classifies the outcome.
 	text = out.String()
-	// Deletes only in the job dir and its tmp: a --write outside both may be written and
-	// never deleted from. SBPL's last matching rule wins, so the denies come after every
-	// write grant in the template (HOME's included) and the job dir and the tmp are given
-	// their unlink back after the denies, for a job dir nested inside a denied write.
+	// Deletes only in the job dir, its tmp and the working directory: a --write outside
+	// them may be written and never deleted from. SBPL's last matching rule wins, so the
+	// denies come after every write grant in the template (HOME's included) and the job
+	// dir, the tmp and the cwd are given their unlink back after the denies, for one
+	// nested inside a denied write.
 	var nodelete []string
 	for i, w := range p.Writes {
 		if !p.DeletesIn(w) {
@@ -198,12 +199,17 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		}
 	}
 	if len(nodelete) > 0 {
-		text += ";; deletes only in the job dir and its tmp (docs/SPEC-SANDBOX.md, deletes-only-in-the-job-dir-p.w1)\n"
+		text += ";; deletes only in the job dir, its tmp and the cwd (docs/SPEC-SANDBOX.md, deletes-only-in-the-job-dir-p.w1)\n"
 		text += strings.Join(nodelete, "\n") + "\n"
 		text += `(allow file-write-unlink (subpath (param "WRITE0")))` + "\n"
 		if p.Tmp != "" && !Inside(p.Tmp, p.Writes[0]) {
 			text += `(allow file-write-unlink (subpath (param "JOBTMP")))` + "\n"
 			params = append(params, "JOBTMP="+p.Tmp)
+		}
+		if p.Cwd != "" && !Inside(p.Cwd, p.Writes[0]) && (p.Tmp == "" || !Inside(p.Cwd, p.Tmp)) {
+			// the working directory a step was given to write (its checkout): its own
+			text += `(allow file-write-unlink (subpath (param "JOBCWD")))` + "\n"
+			params = append(params, "JOBCWD="+p.Cwd)
 		}
 	}
 	if p.GPUMode == GPUMetal {

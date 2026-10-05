@@ -2360,7 +2360,7 @@ score decisions since `--since` give a p at or above `--bar`, most cards first;
 `unnamed` is p(defect) at the bar with no class there. What a first run gets
 wrong:
 
-- `--backend jev` with no key: `JEV_API_KEY is absent from this environment`.
+- `--backend jev` with no key: `JEV_API_KEY is absent from this environment`, with the stable code `reason=key_absent` on the refusal line (and `"reasons"` in the JSON result).
   The key reaches the tool only through `nova-secrets exec --only JEV_API_KEY --
   nova-decide ...`; it is never a flag or a file.
 - `--backend fixed` with no `--answers`: the fixed backend answers from a file.

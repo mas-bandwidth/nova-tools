@@ -491,3 +491,23 @@ func TestWakeCheckIsAnsweredOnlyByTheSession(t *testing.T) {
 		assert.Equal(t, []string{"daemon-pong: daemon-pong n1"}, r.adaGot(t))
 	})
 }
+
+// TestStatusSaysTheChallengeIsAnsweredTheSecondAfterAPongIsWritten verifies that when
+// the session writes a pong file, the daemon reads it on the next tick and the
+// status file shows the challenge as answered with pongs incremented.
+func TestStatusSaysTheChallengeIsAnsweredTheSecondAfterAPongIsWritten(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	// Send a ping to start a challenge
+	r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	// On the next beat (step 2), set up the pong so it gets read
+	r.at[2] = func() {
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.now, To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.run(t, 5)
+	s := r.last()
+	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce should end the challenge")
+	assert.Equal(t, 1, s.Pongs, "the pongs count should be incremented")
+}

@@ -440,7 +440,7 @@ func awaitGroupGone(pgid int) {
 
 // addRules is steps 2 and 3 of the spec's linux body: the roots and every --read get the
 // read subset, and every --write gets the whole handled set, less the remove rights
-// outside the job dir and its tmp (writeRuleMask, "deletes-only-in-the-job-dir-p.w1").
+// outside the job dir, its tmp and the cwd (writeRuleMask, "deletes-only-in-the-job-dir-p.w1").
 func addRules(rulesetFd int, p *Policy, abi int) error {
 	read := uint64(fsReadSubset)
 

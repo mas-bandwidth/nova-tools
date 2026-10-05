@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -518,6 +519,14 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 		err = errors.New(res.Refused[0].Why)
 	}
 	return err
+}
+
+// stallWaker is the store's WakeFriend for the machine (tick and run): the friend stall
+// part's wake turn sent on the bus (wakeFriendStall), a message not sent said on out.
+func (a *app) stallWaker(st *store.Store, out io.Writer) func(string, int, time.Duration) error {
+	return func(name string, rung int, d time.Duration) error {
+		return a.wakeFriendStall(context.Background(), st, name, rung, d, func(l string) { fmt.Fprintln(out, l) })
+	}
 }
 
 // wakeFriendStall wakes a friend whose stall ladder has climbed to a wake rung (1 or 2;
