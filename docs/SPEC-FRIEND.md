@@ -907,6 +907,49 @@ facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `w
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
 internal/friend/check.go; each cites this section.
 
+## Reach (internal/friend/reach.go, cmd/nova-friend/reach.go; tla/Reach.tla)
+
+`nova-friend reach --as <coordinator> --to <friend>` is the escalation ladder that gets a silent
+friend's attention, as a verb any coordinator of friends runs. It is not `wake`: that name is the
+friend's own end of a recorded sleep, and one verb doing two things fails the one-thing rule.
+
+**The steps**, each more direct than the last, each carrying the one-line message
+`REACH <nonce>: <coordinator> is trying to reach this session ...` with the exact pong command that
+answers it:
+
+1. `bus`: the message on the friend's stream.
+2. `push`: the message again, for the friend's daemon to push into the session as a turn: a real
+   message, never a PING, which is the daemon's own. The step is taken only when the daemon is up by
+   its status file (written under `DaemonStale` ago); otherwise it is skipped with the reason.
+3. `window`: the friend's own window. A TUI in tmux (`--tmux <pane>`): the message typed into the pane
+   with `send-keys -l` and submitted with `Enter`. A GUI harness on macOS (`--app <bundle id>`): the
+   app found by its bundle, brought to the front, the message typed into its composer and submitted,
+   through the accessibility API. The permission is a person's to grant to the program that runs
+   nova-friend; the tool reads it without prompting (`AXIsProcessTrusted`) and, absent, refuses with
+   that remedy (`ErrNoAccessibility`, exit 2). With neither flag the step is skipped with the reason.
+
+**Proof** is a bus message from the friend's own stream after the ladder began: the pong carrying the
+nonce (`by=pong`) or any real message (`by=message`); a pong for another nonce, the daemon's
+daemon-pong, keepalive, pings and session checks never count (`ReachProof`).
+
+**The machine** (`friend.Reach`) is a function of the step, whether proof was seen and the clock; every
+side effect (the step's effect, the proof read, the clock and the sleep, each line) is an injected
+func, so the tests run it over a fake bus, a fake window and a fake clock. For each step: take its
+effect, or skip it with the reason; print `REACH STEP`; read the bus every `ReachPoll` up to
+`--step-timeout`; proof prints `REACH PROOF` and ends the ladder, so no step's effect follows a proof;
+no proof prints `REACH NONE` and climbs. Each line is printed before the next step starts. Once every
+step was tried or skipped with no proof the ladder has failed: `REACH FAILED friend= tried= skipped=`,
+exit 1, and one message, subject `REACH FAILED <friend>`, on the coordinator's own stream. An effect
+that could not run (the store, tmux, the app, the permission) ends the verb at exit 2. `--from` starts
+the ladder at a later step; `--dry-run` prints the plan per step and opens no store.
+
+**The model**, `tla/Reach.tla` (`MCReach`): the steps bus, push and window and the ends ok and failed;
+proof arriving at any time as an outside event; a step that may be skipped. It proves no step's effect
+after proof was seen (`NoStepAfterProof`), every step's wait bounded (`EveryStepBounded`), failed only
+after all three steps (`FailedOnlyAfterAllThree`), and that the ladder ends (`Ends`). The reversed
+witness `MCReachBrokenStepAfterProof` climbs without reading the proof first and breaks
+`NoStepAfterProof`.
+
 ## Harness settings (internal/friend/settings.go)
 
 The finding of 2026-10-05: each friend's harness was set up by hand-editing

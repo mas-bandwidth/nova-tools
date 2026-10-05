@@ -656,6 +656,57 @@ the check once after loading the agent (its `--within`) and says the line in a
 NOTE; a fail never undoes the install. It runs once a night on each friend's
 machine as a nova-config loop record ([TESTING.md](TESTING.md)).
 
+### Reaching a silent friend
+
+`nova-friend reach --as <coordinator> --to <friend> [--step-timeout <d>]
+[--from <bus|push|window>] [--tmux <pane>] [--app <bundle id>] [--state-dir <d>]
+[--redis <addr>] [--dry-run] [--json]` is the ladder a coordinator climbs when a
+friend is silent. The help of `nova-friend reach -h` says, and this is the same
+text:
+
+```
+The ladder that gets a silent friend's attention, each step more direct than the last. Every step
+carries one message from --as, REACH <nonce>: ... with the exact command that answers it (nova-friend
+pong --as <friend> --nonce <nonce> --to <coordinator>), and waits up to --step-timeout (default 60s)
+for proof: a bus message from the friend's own stream after the ladder began, the pong carrying the
+nonce or any real message (the daemon's daemon-pong, keepalive, pings and session checks never count).
+  1. bus: the message on the friend's stream;
+  2. push: the message again, for the friend's daemon to push into the session as a turn (never a
+     PING, which is the daemon's own); skipped with the reason when the daemon is not up by its status
+     file in --state-dir (written under 30s ago);
+  3. window: the friend's own window: --tmux <pane>, the message typed into the TUI's pane by tmux
+     send-keys and submitted with Enter; --app <bundle id>, a GUI harness on macOS, the app found by its
+     bundle, brought to the front, the message typed into its composer and submitted, through the
+     accessibility API, which needs the permission a person grants to the program that runs
+     nova-friend (System Settings > Privacy & Security > Accessibility): without it the verb is
+     refused with that remedy, and never asks for it; skipped with the reason when neither is given.
+--from starts the ladder at a later step. Each step prints its lines before the next starts:
+REACH STEP step=<bus|push|window> sent=<bus id|tmux:<pane>|app:<bundle id>> nonce=<nonce>
+REACH SKIP step=<push|window> reason=<why>
+REACH PROOF step=<step> after=<seconds>s by=<pong|message>   (the ladder stops: no step after a proof)
+REACH NONE step=<step> waited=<step timeout>   (no proof in time: the next step)
+then the last line:
+REACH OK friend=<friend> step=<step>   exit 0
+REACH FAILED friend=<friend> tried=<steps|-> skipped=<steps|-> id=<bus id>   exit 1, after every step
+  was tried or skipped; one message, subject REACH FAILED <friend>, is sent to your own stream.
+--json prints one object instead: result{verb, status, exit, remedy, why}, facts{friend, step} (OK) or
+facts{friend, tried, skipped, id} (FAILED), and items[] of kind step{step, sent, nonce},
+skip{step, reason}, proof{step, after, by} and none{step, waited}, in order.
+--dry-run opens no store and sends nothing: REACH OK friend= nonce= dry_run=true and one
+REACH PLAN step=<step>: <what it would do> per step (the push step reads the daemon's status file to
+say whether it would be skipped), then a NOTE with the message.
+see also: nova-friend ping --wake (one wake check), nova-friend check (is each friend's row true).
+example: nova-friend reach --as ada --to bob --tmux bob:0 --step-timeout 30s
+```
+
+Exit codes: 0 the session answered (REACH OK), 1 no step was answered (REACH FAILED), 2 could not run (a flag, a store that did not answer, a window that could not be typed into, the accessibility permission not granted).
+
+Example, as written (with `--dry-run` it opens no store and sends nothing):
+
+```
+nova-friend reach --as ada --to bob --tmux bob:0 --step-timeout 30s
+```
+
 ### The coordinator's ping loop
 
 ```sh

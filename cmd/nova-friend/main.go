@@ -5,8 +5,9 @@
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, install, uninstall, check, status, pong, ping,
-// wait-pong and serve; the
+// second, and the ladder that gets a silent friend's attention (reach). The
+// verbs are run, install, uninstall, check, status, pong, ping, wait-pong,
+// reach and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -78,6 +79,7 @@ type world struct {
 	random    func() string
 	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+	app       appWindow         // reach's window step into a GUI harness (friend.WindowApp)
 }
 
 // sprintVerb sends one worker verb (progress, finish) to the sprint server and answers its
@@ -139,6 +141,7 @@ func realWorld() world {
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
 		settings: friend.OSFS{},
+		app:      friend.WindowApp,
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -522,6 +525,37 @@ or WAIT-PONG NONE at exit 1.`,
 					redis(f)
 				},
 				Run: w.waitPong,
+			},
+			{
+				Name:      "reach",
+				Usage:     "reach --as <coordinator> --to <friend> [--step-timeout <d>] [--from <bus|push|window>] [--tmux <pane>] [--app <bundle id>] [--state-dir <d>] [--redis <addr>] [--dry-run] [--json]",
+				Example:   "", // the banner's example block sends nothing; -h carries the example
+				Effect:    tool.Delivery + ": up to three messages to the friend (the bus, the daemon's push, the friend's window) and, when none is answered, one to your own stream",
+				DryRun:    true,
+				Detail:    reachHelp,
+				ExitTable: reachExits,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator: the messages are from you, and a failure is said on your own stream")
+					f.Required("to", "the friend to reach")
+					f.Duration("step-timeout", friend.DefaultStepTimeout, "how long each step waits for the session's answer before the next")
+					f.String("from", string(friend.ReachBus), "the step the ladder starts at: bus, push or window")
+					f.String("tmux", "", "the window step: the friend's tmux pane (session:window.pane) its TUI runs in")
+					f.String("app", "", "the window step: the bundle id of the friend's GUI harness app (macOS, needs the accessibility permission)")
+					f.String("state-dir", "", "the friend's daemon state directory, where the push step reads whether the daemon is up (default: ~/.nova-friend/<friend>)")
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						if _, ok := friend.ReachFrom(c.Str("from")); !ok {
+							c.Problem(fmt.Sprintf("--from %q is no step; it wants bus, push or window", c.Str("from")))
+						}
+						if c.Dur("step-timeout") <= 0 {
+							c.Problem("--step-timeout wants a positive duration, such as 60s")
+						}
+						if c.Str("tmux") != "" && c.Str("app") != "" {
+							c.Problem("--tmux and --app each name the friend's window; give one")
+						}
+					})
+				},
+				Run: w.reach,
 			},
 			{
 				Name:    "status",

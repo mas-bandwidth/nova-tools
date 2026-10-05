@@ -25,10 +25,11 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "ping", Flags: store},
 		{Verb: "pong", Flags: store},
 		{Verb: "wait-pong", Flags: store},
+		{Verb: "reach", Flags: store},
 		{Verb: "status"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "reach", "status", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -78,5 +79,25 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 	} {
 		require.Contains(t, help, text)
 		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))
+	}
+}
+
+// The reach verb's help names every flag, every output line and JSON field,
+// every exit code and an example that runs as written, and docs/CLI.md
+// carries the same text.
+func TestReachHelpAndCommandReferenceAreTheSameText(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "reach", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	require.Contains(t, string(raw), reachHelp, "docs/CLI.md carries the help word for word")
+	require.Contains(t, string(raw), reachExits)
+	for _, text := range []string{
+		"--as", "--to", "--step-timeout", "--from", "--tmux", "--app", "--state-dir", "--redis", "--dry-run", "--json",
+		"REACH STEP step=", "REACH SKIP step=", "REACH PROOF step=", "REACH NONE step=", "REACH OK friend=", "REACH FAILED friend=", "REACH PLAN step=",
+		"facts{friend, step}", "facts{friend, tried, skipped, id}", "step{step, sent, nonce}", "skip{step, reason}", "proof{step, after, by}", "none{step, waited}",
+		reachExits, "example: nova-friend reach --as ada --to bob --tmux bob:0 --step-timeout 30s", "see also:",
+	} {
+		require.Contains(t, help, text)
 	}
 }
