@@ -117,3 +117,6 @@ cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend status --as bob --dir ./bob
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local status
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
