@@ -48,8 +48,12 @@ type MergeReq struct {
 	// naming the base, the gate and the first refusal. No card moves.
 	BaseRefused string `json:",omitempty"`
 	Base        string `json:",omitempty"`
-	Note        string
-	Who         string
+	// BaseGreen is a land pass's re-check of a base that stopped streams (land_base.go): the
+	// base Base passes its tree gate at this commit. Every stream stopped on its red is marked
+	// (FieldBaseGatePassed) for the base-gate rule to resume; no card moves.
+	BaseGreen string `json:",omitempty"`
+	Note      string
+	Who       string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
@@ -105,7 +109,7 @@ const (
 	FieldBaseGateFirst   = "base_gate_first"
 )
 
-var baseGateCount = []string{FieldBaseGateRefused, FieldBaseGateBase, FieldBaseGateFirst}
+var baseGateCount = []string{FieldBaseGateRefused, FieldBaseGateBase, FieldBaseGateFirst, FieldBaseGatePassed}
 
 // BaseGateStops is the refusals on one base that stop its stream: the first failure of its
 // tree gate and one at each retry (BaseGateRetries).
@@ -115,6 +119,9 @@ var BaseGateStops = len(BaseGateRetries) + 1
 // the stream with the judgment NBaseRed at the BaseGateStops-th, or at once on BaseRed. A
 // count on another base starts again at one.
 func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
+	if holder := baseRedHolder(s, r.Base, r.Stream); holder != "" {
+		return baseRedRefused(p, s, ctl, r, holder)
+	}
 	n, first := 1, stamp(s.Now)
 	if m := ctl.Int(FieldBaseGateRefused); m > 0 && ctl.F(FieldBaseGateBase) == r.Base {
 		n = m + 1
@@ -137,10 +144,18 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 		at, _ := time.Parse(time.RFC3339, first)
 		what = fmt.Sprintf("the base %s fails its tree gate, refused %d times, first refused at %s: %s", r.Base, n, at.UTC().Format("15:04:05 MST"), what)
 	}
+	// the base is kept on the stop: the land pass re-checks its tip, and the streams that
+	// meet it red after this one are refused under this judgment (land_base.go)
 	set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
+	unset := append([]string{"card", "other"}, baseGateCount...)
+	if r.Base != "" {
+		set[FieldBaseGateBase] = r.Base
+		unset = []string{"card", "other", FieldBaseGateRefused, FieldBaseGateFirst, FieldBaseGatePassed}
+		what = baseRedSaid(r.Base, what, r.BaseRed+" "+r.BaseRefused)
+	}
 	j := judgment(NBaseRed, r.Stream, s.Now, 0)
 	j.StreamLevel, j.Who, j.What = true, r.Who, cutText(what, MaxCardTextBytes)
-	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"card", "other"}, baseGateCount...)...))}, Notes: []Note{j},
+	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Notes: []Note{j},
 		Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"})
 	return p
 }
@@ -199,6 +214,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	if ctl == nil {
 		p.refuse(r.Stream, "no such stream")
 		return p
+	}
+	if r.BaseGreen != "" {
+		return baseGreenStep(p, s, r)
 	}
 	state := ctl.F("state")
 	switch state {
