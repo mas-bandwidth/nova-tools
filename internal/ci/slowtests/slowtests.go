@@ -189,10 +189,10 @@ func Parse(r io.Reader) ([]Event, error) {
 // lines and lines starting with # are skipped; `-` in the test column is the
 // package's own row. The measured column is `<seconds>s@<where>`: the time the
 // row was cut from and where it was measured, a CI run or a runner label
-// ciBenches reads from ci.yml. A malformed row, a budget that is not a
-// positive number, a row with no measurement, a budget under its measurement
-// or over MaxHeadroom times it, or a row written twice is an error naming its
-// 1-based line.
+// ciBenches reads from ci.yml. A malformed row, a package that is not the full
+// module-relative path, a budget that is not a positive number, a row with no
+// measurement, a budget under its measurement or over MaxHeadroom times it, or
+// a row written twice is an error naming its 1-based line.
 func ParseAllowlist(r io.Reader) ([]Row, error) {
 	benches, err := ciBenches()
 	if err != nil {
@@ -219,6 +219,9 @@ func parseAllowlist(r io.Reader, benches []string) ([]Row, error) {
 		f := strings.Split(text, "\t")
 		if len(f) != 4 || f[0] == "" || f[1] == "" {
 			return nil, fmt.Errorf("line %d: want pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>, got %q", line, text)
+		}
+		if !moduleRelativePackage(f[0]) {
+			return nil, fmt.Errorf("line %d: package %q must be the full module-relative path", line, f[0])
 		}
 		secs, err := strconv.ParseFloat(f[2], 64)
 		if err != nil || secs <= 0 {
@@ -358,8 +361,9 @@ func measuredWhere(where string, benches []string) bool {
 }
 
 // ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
-// lines and # comments skipped. A malformed row or a row written twice is an
-// error naming its 1-based line.
+// lines and # comments skipped. A malformed row, a package that is not the
+// full module-relative path, or a row written twice is an error naming its
+// 1-based line.
 func ParseSleeps(r io.Reader) ([]SleepRow, error) {
 	sc := bufio.NewScanner(r)
 	var rows []SleepRow
@@ -375,6 +379,9 @@ func ParseSleeps(r io.Reader) ([]SleepRow, error) {
 		if len(f) != 3 || f[0] == "" || f[1] == "" || f[2] == "" || strings.Contains(f[1], "/") {
 			return nil, fmt.Errorf("line %d: want pkg<TAB>TopLevelTest<TAB>where, got %q", line, text)
 		}
+		if !moduleRelativePackage(f[0]) {
+			return nil, fmt.Errorf("line %d: package %q must be the full module-relative path", line, f[0])
+		}
 		key := f[0] + "\t" + f[1]
 		if first, dup := seen[key]; dup {
 			return nil, fmt.Errorf("line %d: %s %s is already on line %d", line, f[0], f[1], first)
@@ -386,6 +393,13 @@ func ParseSleeps(r io.Reader) ([]SleepRow, error) {
 		return nil, err
 	}
 	return rows, nil
+}
+
+// moduleRelativePackage reports whether pkg is a full module-relative path.
+// matches treats a shorter name as a suffix of any import path, so a row
+// "auditpoc" would silence every package whose path ends in that suffix.
+func moduleRelativePackage(pkg string) bool {
+	return strings.HasPrefix(pkg, "cmd/") || strings.HasPrefix(pkg, "internal/") || strings.HasPrefix(pkg, "tools/")
 }
 
 // matches reports whether a module-relative allowlist package names an event's
