@@ -99,7 +99,8 @@ func init() {
 		{"lane take", "<kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]", "lane take go --machine m1 --as m1", (*app).cmdLaneTake},
 		{"lane give", "<kind> --machine <m> --as <worker> [--dry-run]", "lane give go --machine m1 --as m1", (*app).cmdLaneGive},
 		{"lane list", "", "lane list", (*app).cmdLaneList},
-		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
+		{"reader add", "<reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]", "reader add reader-d", (*app).cmdReaderAdd},
+		{"reader set", "<reader>... --tiers <flash[,pro,heavy,frontier]|all|default>", "reader set reader-a --tiers flash", (*app).cmdReaderSet},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
@@ -1003,6 +1004,10 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	if !sprint.ValidID(*coordinator) {
 		return refuse(stderr, "init", "--coordinator wants letters, digits, _ and -: "+*coordinator)
+	}
+	if err := st.EnsureReaderTiers(ctx); err != nil {
+		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
 	}
 	if err := st.Init(ctx); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
@@ -2634,6 +2639,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("reader add")
+	tiersFlag := fs.String("tiers", "", "the tiers this reader reads, comma separated ("+cardhdr.RouteList+"); all or default, or omitted, is every tier")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "reader add", err.Error())
@@ -2646,16 +2652,112 @@ func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "reader add", "a reader name wants letters, digits, _ and -: "+n)
 		}
 	}
+	tiers, tiersSet, code := readerTiersArg("reader add", fs, *tiersFlag, false, stderr)
+	if code != 0 {
+		return code
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "reader add", err.Error())
 	}
-	if err := st.B.RowsAdd(context.Background(), st.Names.Table(sprint.Readers), names); err != nil {
+	ctx := context.Background()
+	if tiersSet {
+		if err := st.EnsureReaderTiers(ctx); err != nil {
+			return refuse(stderr, "reader add", err.Error())
+		}
+	}
+	if err := st.B.RowsAdd(ctx, st.Names.Table(sprint.Readers), names); err != nil {
 		fmt.Fprintf(stderr, "%s reader add: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
-	sayOK(stdout, c.json, "reader add", "READER-ADD OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
+	if tiersSet {
+		if err := writeReaderTiers(ctx, st, names, tiers); err != nil {
+			fmt.Fprintf(stderr, "%s reader add: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
+	line := "READER-ADD OK readers=" + strings.Join(names, ",")
+	facts := map[string]any{"readers": names}
+	if tiersSet {
+		word := sprint.ReaderTiersShown(tiers)
+		line += " tiers=" + word
+		facts["tiers"] = word
+	}
+	sayOK(stdout, c.json, "reader add", line, facts)
 	return 0
+}
+
+// cmdReaderSet writes the tiers the named readers read. --tiers is required.
+// all and default store an empty cell, which means every tier. A tier that is
+// not a route, or a reader with no row, refuses the whole call and writes
+// nothing.
+func (a *app) cmdReaderSet(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("reader set")
+	tiersFlag := fs.String("tiers", "", "the tiers these readers read, comma separated ("+cardhdr.RouteList+"); all or default is every tier")
+	names, code := readerNames("reader set", args, stderr, fs)
+	if code != 0 {
+		return code
+	}
+	tiers, _, code := readerTiersArg("reader set", fs, *tiersFlag, true, stderr)
+	if code != 0 {
+		return code
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "reader set", err.Error())
+	}
+	ctx := context.Background()
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return a.readFailed("reader set", err, stderr)
+	}
+	if bad := unknownReaders(rows, names); len(bad) > 0 {
+		fmt.Fprintf(stderr, "%s reader set: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, strings.Join(bad, ","), strings.Join(rows, ","))
+		return 1
+	}
+	if err := st.EnsureReaderTiers(ctx); err != nil {
+		return refuse(stderr, "reader set", err.Error())
+	}
+	if err := writeReaderTiers(ctx, st, names, tiers); err != nil {
+		fmt.Fprintf(stderr, "%s reader set: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	word := sprint.ReaderTiersShown(tiers)
+	sayOK(stdout, c.json, "reader set", "READER-SET OK readers="+strings.Join(names, ",")+" tiers="+word, map[string]any{"readers": names, "tiers": word})
+	return 0
+}
+
+// readerTiersArg parses --tiers. required refuses a call that omitted it.
+// The stored value is "" for every tier. Nothing is written here.
+func readerTiersArg(verbName string, fs *flag.FlagSet, raw string, required bool, stderr io.Writer) (string, bool, int) {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "tiers" {
+			set = true
+		}
+	})
+	if !set {
+		if required {
+			return "", false, refuse(stderr, verbName, "wants --tiers ("+cardhdr.RouteList+", or all, or default)")
+		}
+		return "", false, 0
+	}
+	stored, err := sprint.ParseReaderTiers(raw)
+	if err != nil {
+		return "", true, refuse(stderr, verbName, err.Error())
+	}
+	return stored, true, 0
+}
+
+// writeReaderTiers sets the tiers cell on each named row. "" is every tier.
+func writeReaderTiers(ctx context.Context, st *store.Store, names []string, tiers string) error {
+	table := st.Names.Table(sprint.Readers)
+	for _, n := range names {
+		if err := st.B.RowSet(ctx, table, n, map[string]string{sprint.ReaderTiers: tiers}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // readerNames are the readers a reader verb names: at least one, each a name

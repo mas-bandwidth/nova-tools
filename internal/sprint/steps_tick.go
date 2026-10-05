@@ -918,7 +918,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range cards {
 		attempt := c.Int("attempt")
 		if len(askNow) < TickMaxMoves && enoughReadersUp(s, c) &&
-			len(s.freeReaders(c, attempt))+len(returnedReadsAt(s, c, attempt)) >= ReadsNeeded(c)-len(liveReadsAt(s, c, attempt)) {
+			len(s.freeReaders(c, attempt))+len(returnedInTier(s, c, attempt)) >= ReadsNeeded(c)-len(liveReadsAt(s, c, attempt)) {
 			askNow = append(askNow, c)
 		}
 	}
@@ -930,7 +930,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		need := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
 		want := ReadsWanted(s, c)
 		free := s.freeReaders(c, attempt)
-		returned := len(returnedReadsAt(s, c, attempt))
+		returned := len(returnedInTier(s, c, attempt))
 		switch {
 		case !enoughReadersUp(s, c):
 			// an absent reader is never asked: the sprint's one judgment says so
