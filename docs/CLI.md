@@ -976,6 +976,13 @@ nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
 
+`nova-sprint backup --file <path>` writes the store to a new file (a file already there
+is refused, never overwritten), restores it into a twin, compares the twin with the store,
+and scans the file for key shapes (the hygiene gate's). It prints `BACKUP OK file= sha256=
+bytes= keys= cards= restored=equal|checked secrets=none`; a file that fails either check
+is removed and the line is `nova-sprint backup FAILED: <why>`, exit 1, naming each shape and line and
+never the text. Run it on the store's host; it reads the store and never writes it.
+
 Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
 verb that writes wants one), `--op <id>` (the same id again returns the recorded
@@ -983,7 +990,7 @@ result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
-are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
+are reports; `tick`, `run`, `backup` and `friend clean` are the machine's. Reads need no
 actor except `inbox --read`, which moves the coordinator's cursor. A set is
 ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 `--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
