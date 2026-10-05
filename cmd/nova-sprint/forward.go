@@ -36,10 +36,10 @@ const ServerEnv = "NOVA_SPRINT_SERVER"
 // directory: the server runs in another directory, so a path sent to it is absolute.
 var fileFlags = []string{"rules", "brief-file", "brief-dir", "file", "decide-record"}
 
-// waits are the flags that make a read wait for the sprint to move (where --watch,
-// inbox --wait). The server moves the sprint on the one line of control a verb it runs
+// waits are the flags that make a verb wait for the sprint to move (where --watch,
+// inbox --wait, lane take --wait: its asks are each sent as a plain take). The server moves the sprint on the one line of control a verb it runs
 // holds, so such a verb is never run by the server: it runs where it is typed.
-var waits = map[string]string{"where": "watch", "inbox": "wait"}
+var waits = map[string]string{"where": "watch", "inbox": "wait", "lane take": "wait"}
 
 // verbArgs is an argument list as its verb's own flags read it.
 type verbArgs struct {
@@ -127,7 +127,7 @@ func (v verbArgs) unserved() string {
 		return v.name + " is not run by the server; run it by itself"
 	case v.given("redis"):
 		return "--redis is not given to the server: its store is the sprint's"
-	case v.on(waits[v.name]):
+	case waits[v.name] != "" && v.given(waits[v.name]) && !slices.Contains([]string{"false", "0s"}, v.fs.Lookup(waits[v.name]).Value.String()):
 		return v.name + " --" + waits[v.name] + " waits for the sprint to move, and the server moves it: it is a read, run where it is typed"
 	}
 	return ""

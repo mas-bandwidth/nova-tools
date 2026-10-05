@@ -134,7 +134,10 @@ type landBatch struct {
 	Reason      string `json:"reason,omitempty"`
 	// Also is every cause of the refusal after the first, each with its one next command,
 	// and on a twin the verb that stands in for land: one NOTE line each.
-	Also   []string `json:"also,omitempty"`
+	Also []string `json:"also,omitempty"`
+	// Scope is each merged card's scope amendments, card:file: the files outside its PATHS
+	// the rule allows as the test, fixture or doc of the same change (sprint.ScopeAmended).
+	Scope  []string `json:"scope,omitempty"`
 	DryRun bool     `json:"dry_run,omitempty"`
 	// Times is how long each of the batch's steps took; nil for a batch refused before
 	// its git ran, and for a dry run.
@@ -197,6 +200,9 @@ func (b landBatch) line() string {
 			l += " judged=yes"
 		}
 	}
+	if len(b.Scope) > 0 {
+		l += " scope=" + oneline.Field(strings.Join(b.Scope, ","))
+	}
 	if b.Fact != "" {
 		l += " fact=" + b.Fact
 	}
@@ -256,9 +262,10 @@ type lander struct {
 	conflictKind  string
 	conflictPaths []string
 	out           []landBatch
-	epoch         uint64            // the epoch land read: every report is fenced to it
-	diffs         map[string]string // each card's merge diff, as checkCard read it, for its score
-	toScore       []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	epoch         uint64              // the epoch land read: every report is fenced to it
+	diffs         map[string]string   // each card's merge diff, as checkCard read it, for its score
+	scope         map[string][]string // each card's scope amendments, as checkCard allowed them (sprint.ScopeAmended)
+	toScore       []scoreJob          // the landed batches, scored after the whole pass (landscore.go)
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
@@ -326,7 +333,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if a.baseGateFails == nil {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -575,6 +582,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	if why != "" {
 		return refuse(why)
 	}
+	b.Scope = l.scopeOf(merged)
 	for attempt := 1; len(merged) > 0; attempt++ {
 		// the batch as built: this commit is what is pushed and reported, whatever the
 		// clone's checkout becomes after (another landing sharing the clone cuts its own
@@ -629,6 +637,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		if why != "" {
 			return refuse(why)
 		}
+		b.Scope = l.scopeOf(merged)
 	}
 	l.conflict(stream, failed)
 	return false, true
@@ -1155,7 +1164,14 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 		beforePaths = strings.Split(tracked, "\n")
 	}
 	var why []string
-	if out := diffcheck.Outside(c.paths, diff, beforePaths); len(out) > 0 {
+	// a test, fixture or doc of the same change outside PATHS is a scope amendment, allowed
+	// by rule and recorded on the batch's line (sprint.ScopeAmended; section 7)
+	var changed []string
+	for _, f := range diffcheck.Parse(diff) {
+		changed = append(changed, f.New)
+	}
+	amended, out := sprint.ScopeAmended(changed, diffcheck.Outside(c.paths, diff, beforePaths))
+	if len(out) > 0 {
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}
 	for _, f := range diffcheck.Fragments(diff) {
@@ -1163,6 +1179,7 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 	}
 	if len(why) == 0 {
 		l.diffs[c.id] = diff
+		l.scope[c.id] = amended
 		return "", ""
 	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
@@ -1368,4 +1385,16 @@ func allLedgers(paths []string, ledgers []landLedger) bool {
 	_, rest := unionPaths(paths, ledgers)
 	_, outside := ledgerOwners(rest, ledgers)
 	return len(outside) == 0
+}
+
+// scopeOf is the merged cards' scope amendments as the batch's line names them,
+// card:file, in merge order.
+func (l *lander) scopeOf(merged []string) []string {
+	var out []string
+	for _, id := range merged {
+		for _, f := range l.scope[id] {
+			out = append(out, id+":"+f)
+		}
+	}
+	return out
 }
