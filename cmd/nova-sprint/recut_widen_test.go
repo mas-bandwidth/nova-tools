@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,7 +23,14 @@ import (
 func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go")
+	// add reads the brief's tree at main in the lander's clone: a.go is there
+	r.commit("a.go", "package a\n", "a")
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	root, err := r.a.landRoot()
+	require.NoError(t, err)
+	r.git("", "clone", "-q", "--no-tags", "--single-branch", r.remote, filepath.Join(root, repoDirName(r.remote)))
+	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none the widen is the subject")
 	// held runs one card of stream s to a held finish: its attempt pushed b.go, a file the
 	// base has not, and the report says report
 	held := func(s, report string) (id, head string) {

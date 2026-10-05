@@ -13,16 +13,19 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
-// writeBaseBrief writes a passing brief whose header block names its repository and,
-// unless base is "", its BASE: line, as a card the coordinator cuts does, and returns
-// its path.
-func writeBaseBrief(t *testing.T, dir, id, base string) string {
+// writeBaseBrief writes a passing brief whose header block names its repository (repo,
+// from briefRepo, whose tree add's brief checks read) and, unless base is "", its BASE:
+// line, as a card the coordinator cuts does, and returns its path. A card naming no BASE
+// also names no PATHS: the brief checks hold a coding brief (REPO and PATHS) that names
+// none, and the rule this fixture is for is that a card naming no BASE is admitted onto
+// the lander's --base.
+func writeBaseBrief(t *testing.T, repo, dir, id, base string) string {
 	t.Helper()
-	lead := "RESULT: " + id + " sha=000000000000\nKIND: fix\nREPO: mas-bandwidth/nova-tools\n"
+	lead := "RESULT: " + id + " sha=000000000000, tier: flash\nKIND: fix\nREPO: " + repo + "\nTEST: none the base is the subject\n"
 	if base != "" {
-		lead += "BASE: " + base + "\n"
+		lead += "BASE: " + base + "\nPATHS: internal/" + id + ".go\n"
 	}
-	lead += "PATHS: internal/" + id + ".go\n\nFix " + id + "."
+	lead += "\nFix " + id + "."
 	path := filepath.Join(dir, id+".md")
 	require.NoError(t, os.WriteFile(path, []byte(passingBrief(lead)), 0o600))
 	return path
@@ -46,10 +49,11 @@ func TestEveryStreamLandsOnTheSprintBranchAndOnlyPromotionReachesDev(t *testing.
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
-	onDev := writeBaseBrief(t, dir, "d1", "dev")
-	pinned := writeBaseBrief(t, dir, "d2", "dev@0123456789012345678901234567890123456789")
-	onSprint := writeBaseBrief(t, dir, "k1", "sprint/mechanical-2026-10-02")
-	noBase := writeBaseBrief(t, dir, "n1", "")
+	repo := briefRepo(t, ta.a, []string{"internal/d1.go", "internal/d2.go", "internal/k1.go", "internal/m1.go", "internal/m2.go"}, "dev", "sprint/mechanical-2026-10-02")
+	onDev := writeBaseBrief(t, repo, dir, "d1", "dev")
+	pinned := writeBaseBrief(t, repo, dir, "d2", "dev@0123456789012345678901234567890123456789")
+	onSprint := writeBaseBrief(t, repo, dir, "k1", "sprint/mechanical-2026-10-02")
+	noBase := writeBaseBrief(t, repo, dir, "n1", "")
 
 	for _, c := range []struct{ name, line, card string }{
 		{"one brief", "add --stream s1 d1 --one --brief-file " + onDev, "d1"},
@@ -69,8 +73,8 @@ func TestEveryStreamLandsOnTheSprintBranchAndOnlyPromotionReachesDev(t *testing.
 	}
 
 	many := t.TempDir()
-	writeBaseBrief(t, many, "m1", "sprint/mechanical-2026-10-02")
-	writeBaseBrief(t, many, "m2", "dev")
+	writeBaseBrief(t, repo, many, "m1", "sprint/mechanical-2026-10-02")
+	writeBaseBrief(t, repo, many, "m2", "dev")
 	code, out, errs := ta.do("add --stream s2 --brief-dir " + many)
 	assert.NotEqual(t, 0, code, "many-brief add with a dev card: %s%s", out, errs)
 	assert.Contains(t, out+errs, "card m2 is cut on dev, and stream s2 is not the promotion stream")

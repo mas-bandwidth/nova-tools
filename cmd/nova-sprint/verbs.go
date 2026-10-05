@@ -1208,6 +1208,11 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		rs = append(rs, r)
 	}
+	if *sentinel == "" && *brief != "" { // the brief checks at its BASE (addlint.go), once: every card has the one brief
+		if code := a.holdBriefChecks("add", []sprint.CardAdd{{ID: "brief", Brief: *brief}}, rs0, c, &st, stderr); code != 0 {
+			return code
+		}
+	}
 	if *sentinel == "" && *brief != "" && len(ids) > 0 { // the cards named, each with the brief (briefdecide.go)
 		cards := map[string]string{}
 		for _, id := range ids {
@@ -1292,6 +1297,10 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	// Every brief is linted first: one failing brief refuses the whole call,
 	// nothing written, every failing file named with its findings.
 	if code := lintBriefFiles("add", cards, rs, c.max, stderr); code != 0 {
+		return code
+	}
+	// then the brief checks at each brief's BASE tip (addlint.go)
+	if code := a.holdBriefChecks("add", cards, rs, c, &st, stderr); code != 0 {
 		return code
 	}
 	for i := range cards {
