@@ -56,6 +56,16 @@ those two apart is the whole value of writing the line down.
 The `nova-secrets` fixture invokes `nova-check` in its child-command examples;
 those steps need that binary on PATH.
 
+### tests-reexec-guard-everywhere
+
+A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it does not answer runs the whole suite again in the child, which reaches the same test, which runs the binary again: 289 processes deep on one machine in one afternoon. Every `cmd/<tool>` whose tests run their own binary calls `testbin.Enter(tool, handled)` from an `init` in `cmd/<tool>/reexec_test.go` (`cmd/nova-sprint` from its `TestMain`), and a start of the binary is one of three things:
+
+- **the suite**: a `go test` run, a child a test started with `-test.run`, or CLI words typed by hand with no test binary above;
+- **handled**: CLI words the package's own dispatch answers (a helper process, a marked CLI child), which that dispatch runs and exits;
+- **refused**, exit 3 and one line ending `refusing to recurse`: CLI words from a test binary nothing in the package answers, or a chain of test binaries `testbin.MaxDepth` deep. `testbin.DepthEnv(tool)` counts the starts of one tool, so a chain of one tool's binaries is never counted against another's.
+
+`TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`internal/testbin`).
+
 ## nova-bus
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose

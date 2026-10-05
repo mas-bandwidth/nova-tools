@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // THE HURT (2026-10-04, 3:21 to 3:37 PM ET, the Studio): a verb under test that
@@ -27,8 +27,8 @@ import (
 // whole suite again, which reached the same verb, which ran the binary again: a
 // chain 289 processes deep, each the parent of the next, until it was killed.
 //
-// THE GUARD. A start of this test binary is one of three things, decided by
-// reexecMode before any test runs:
+// THE GUARD is internal/testbin.Enter (docs/TESTS.md, "tests-reexec-guard-everywhere"),
+// which decides every start of this test binary before any test runs:
 //
 //   - the suite: a `go test` run (its words are -test.* flags), or a child a test
 //     started on purpose with -test.run;
@@ -39,61 +39,23 @@ import (
 //     reach a live sprint (127.0.0.1:6380 or any other);
 //   - a refusal, exit 3 and one loud line: CLI words from a test binary with no CLI
 //     mark (the suite would run again, the recursion above), or a chain of test
-//     binaries reexecMaxDepth deep (reexecDepthEnv counts every start).
+//     binaries testbin.MaxDepth deep (testbin.DepthEnv counts every start).
 const (
 	reexecCLIEnv     = "NOVA_SPRINT_TEST_CLI"
-	reexecDepthEnv   = "NOVA_SPRINT_TEST_DEPTH"
-	reexecMaxDepth   = 2
-	exitReexecRefuse = 3
-)
-
-type reexecStart int
-
-const (
-	startSuite reexecStart = iota
-	startCLI
-	startRefused
+	reexecTool       = "nova-sprint"
+	exitReexecRefuse = testbin.ExitRefuse
 )
 
 func TestMain(m *testing.M) {
-	mode, depth, why := reexecMode(os.Args[1:], os.Getenv)
-	// ignored, both: os.Setenv fails only on a name with '=' or NUL, and these are constants
-	_ = os.Setenv(reexecDepthEnv, strconv.Itoa(depth+1))
-	switch mode {
-	case startRefused:
-		fmt.Fprintf(os.Stderr, "nova-sprint test binary REFUSED: %s; refusing to recurse (exit %d)\n", why, exitReexecRefuse)
-		os.Exit(exitReexecRefuse)
-	case startCLI:
+	start := testbin.Enter(reexecTool, func(_ []string, getenv func(string) string) bool {
+		return getenv(reexecCLIEnv) == "1"
+	})
+	if start == testbin.Handled {
 		os.Exit(runTestCLI(os.Args[1:], os.Getenv))
 	}
+	// ignored: os.Setenv fails only on a name with '=' or NUL, and this is a constant
 	_ = os.Setenv(reexecCLIEnv, "1")
 	os.Exit(m.Run())
-}
-
-// reexecMode is what this start of the test binary is, given its words and its
-// environment: the suite, the CLI, or a refusal with its reason. depth is how
-// many test binaries of this package stand above this one.
-func reexecMode(args []string, getenv func(string) string) (mode reexecStart, depth int, why string) {
-	if d := getenv(reexecDepthEnv); d != "" {
-		n, err := strconv.Atoi(d)
-		if err != nil || n < 0 {
-			return startRefused, 0, fmt.Sprintf("%s=%q is not a depth", reexecDepthEnv, d)
-		}
-		depth = n
-	}
-	if depth >= reexecMaxDepth {
-		return startRefused, depth, fmt.Sprintf("%d test binaries of nova-sprint already stand above this one (%s), at most %d may", depth, reexecDepthEnv, reexecMaxDepth-1)
-	}
-	suite := len(args) == 0 || strings.HasPrefix(args[0], "-test.")
-	switch {
-	case suite:
-		return startSuite, depth, ""
-	case getenv(reexecCLIEnv) == "1":
-		return startCLI, depth, ""
-	case depth > 0:
-		return startRefused, depth, fmt.Sprintf("started by a test binary with the words %q and no %s mark: the suite would run again", strings.Join(args, " "), reexecCLIEnv)
-	}
-	return startSuite, depth, ""
 }
 
 // runTestCLI is main, as a test binary's child runs it: on a twin only.
@@ -127,39 +89,6 @@ func twinOnly(addr string) error {
 		return nil
 	}
 	return errors.New("a nova-sprint test binary runs its CLI on a twin (--redis mem:<file>) only, never on " + addr)
-}
-
-func TestReexecModeRunsTheSuiteTheCLIOrRefuses(t *testing.T) {
-	t.Parallel()
-	incident := []string{"init", "--readers", "reader-a", "--members", "m1:1", "--redis", "mem:/tmp/x.twin"}
-	cases := []struct {
-		name  string
-		args  []string
-		env   map[string]string
-		mode  reexecStart
-		depth int
-		why   string
-	}{
-		{"go test", []string{"-test.paniconexit0", "-test.timeout=10m0s"}, nil, startSuite, 0, ""},
-		{"no words", nil, nil, startSuite, 0, ""},
-		{"CLI words by hand, no test binary above", incident, nil, startSuite, 0, ""},
-		{"a marked child with CLI words", incident, map[string]string{reexecCLIEnv: "1", reexecDepthEnv: "1"}, startCLI, 1, ""},
-		{"a marked child a test asked for the suite", []string{"-test.run=^TestX$"}, map[string]string{reexecCLIEnv: "1", reexecDepthEnv: "1"}, startSuite, 1, ""},
-		{"the recursion: CLI words, no mark", incident, map[string]string{reexecDepthEnv: "1"}, startRefused, 1, "the suite would run again"},
-		{"a chain too deep, CLI", incident, map[string]string{reexecCLIEnv: "1", reexecDepthEnv: "2"}, startRefused, 2, "already stand above"},
-		{"a chain too deep, suite", []string{"-test.run=^TestX$"}, map[string]string{reexecDepthEnv: "2"}, startRefused, 2, "already stand above"},
-		{"a depth that is not one", incident, map[string]string{reexecDepthEnv: "x"}, startRefused, 0, "is not a depth"},
-	}
-	for _, c := range cases {
-		mode, depth, why := reexecMode(c.args, func(k string) string { return c.env[k] })
-		assert.Equal(t, c.mode, mode, c.name)
-		assert.Equal(t, c.depth, depth, c.name)
-		if c.why == "" {
-			assert.Empty(t, why, c.name)
-		} else {
-			assert.Contains(t, why, c.why, c.name)
-		}
-	}
 }
 
 func TestTheTestCLISeesNoNovaEnvironmentAndOpensATwinOnly(t *testing.T) {
@@ -220,26 +149,27 @@ func TestTheIncidentWordsRunTheCLIAndNeverTheSuite(t *testing.T) {
 	t.Parallel()
 	twin := "mem:" + filepath.Join(t.TempDir(), "sprint.twin")
 	words := []string{"init", "--readers", "reader-a", "--members", "m1:1", "--redis", twin, "--actor", "boss"}
-	marks := []string{reexecCLIEnv, reexecDepthEnv}
+	depthEnv := testbin.DepthEnv(reexecTool)
+	marks := []string{reexecCLIEnv, depthEnv}
 	base := envWithout(os.Environ(), marks)
 
-	code, out := runChild(t, append(base, reexecCLIEnv+"=1", reexecDepthEnv+"=1"), words...)
+	code, out := runChild(t, append(base, reexecCLIEnv+"=1", depthEnv+"=1"), words...)
 	assert.Equal(t, 0, code, out)
 	assert.Contains(t, out, "INIT OK")
 	assert.NotContains(t, out, "=== RUN")
 	assert.NotContains(t, out, "PASS")
 
 	live := append(append([]string(nil), words[:6]...), "127.0.0.1:6380", "--actor", "stella")
-	code, out = runChild(t, append(base, reexecCLIEnv+"=1", reexecDepthEnv+"=1"), live...)
+	code, out = runChild(t, append(base, reexecCLIEnv+"=1", depthEnv+"=1"), live...)
 	assert.NotEqual(t, 0, code, out)
 	assert.Contains(t, out, "twin (--redis mem:<file>) only")
 
-	code, out = runChild(t, append(base, reexecDepthEnv+"=1"), words...)
+	code, out = runChild(t, append(base, depthEnv+"=1"), words...)
 	assert.Equal(t, exitReexecRefuse, code, out)
 	assert.Contains(t, out, "refusing to recurse")
 	assert.NotContains(t, out, "PASS")
 
-	code, out = runChild(t, append(base, reexecCLIEnv+"=1", reexecDepthEnv+"="+strconv.Itoa(reexecMaxDepth)), words...)
+	code, out = runChild(t, append(base, reexecCLIEnv+"=1", depthEnv+"="+strconv.Itoa(testbin.MaxDepth)), words...)
 	assert.Equal(t, exitReexecRefuse, code, out)
 	assert.Contains(t, out, "refusing to recurse")
 }
