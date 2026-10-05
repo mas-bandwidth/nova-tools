@@ -21,13 +21,13 @@ func TestEveryMistakeIsRefusedWithTheWayForward(t *testing.T) {
 		args []string
 		want string
 	}{
-		{nil, "nova-check REFUSED: no verb given; quickstart is the first run; the verbs are quickstart, attest, links"},
-		{[]string{"linsk"}, `nova-check REFUSED: unknown verb "linsk"; did you mean links? the verbs are quickstart`},
-		{[]string{"links", "--dri", "x"}, "nova-check links REFUSED: unknown flag --dri; the flags of links are"},
-		{[]string{"hygiene", "--rep", "."}, "nova-check hygiene REFUSED: unknown flag --rep;"},
-		{[]string{"hygiene", "stray"}, `nova-check hygiene REFUSED: unexpected argument "stray"`},
-		{[]string{"version", "x"}, "nova-check version REFUSED: takes no flags and no arguments"},
-		{[]string{"version", "--zz"}, "nova-check version REFUSED: takes no flags and no arguments except --json: unknown flag --zz"},
+		{nil, "CHECK REFUSED: no verb given; the verbs are quickstart, attest, links"},
+		{[]string{"linsk"}, `CHECK REFUSED: unknown verb "linsk"; did you mean links? the verbs are quickstart`},
+		{[]string{"links", "--dri", "x"}, "LINKS REFUSED: unknown flag --dri; the flags of links are"},
+		{[]string{"hygiene", "--rep", "."}, "HYGIENE REFUSED: unknown flag --rep;"},
+		{[]string{"hygiene", "stray"}, `HYGIENE REFUSED: takes no positional arguments, got "stray"`},
+		{[]string{"version", "x"}, `VERSION REFUSED: takes no positional arguments, got "x"`},
+		{[]string{"version", "--zz"}, "VERSION REFUSED: unknown flag --zz; the flags of version are"},
 	} {
 		exit, stdout, stderr := runCheck(t, tc.args...)
 		assert.Equal(t, 2, exit, "%v", tc.args)
@@ -171,11 +171,11 @@ func TestTheBannerQuickstartAndKernelExamplesMatchOutput(t *testing.T) {
 	}{
 		{"nova-check quickstart --dir ./self", []string{
 			"QUICKSTART RUN dir=./self checks=2: links, then nocode",
-			"LINKS OK files=1 links=0 excluded=0",
-			"NOCODE OK files=1 clean deny-list=floor-list",
+			"LINKS OK dir=./self files=1 links=0 excluded=0 broken=0",
+			"NOCODE OK dir=./self files=1 deny-list=floor-list findings=0",
 			"QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)",
 		}},
-		{"nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000", []string{"KERNEL OK bytes=9 budget=4000"}},
+		{"nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000", []string{"KERNEL OK file=./self/docs/SEED-CORE.md bytes=9 budget=4000 findings=0"}},
 	} {
 		require.Contains(t, help, "  "+tc.command+"\n")
 		args := strings.Fields(strings.ReplaceAll(tc.command, "./self", self))[1:]

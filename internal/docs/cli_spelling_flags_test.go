@@ -10,7 +10,7 @@ import (
 )
 
 // cli_spelling_flags_test.go pins the reference line in docs/CLI.md against the flag set
-// cmdSpelling actually registers in cmd/nova-check/spelling.go.
+// spellingFlags actually registers in cmd/nova-check/spelling.go.
 func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 	t.Parallel()
 
@@ -20,12 +20,12 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 
 	start := -1
 	for i, line := range lines {
-		if strings.HasPrefix(line, "func cmdSpelling(") {
+		if strings.HasPrefix(line, "func spellingFlags(") {
 			start = i
 			break
 		}
 	}
-	require.GreaterOrEqual(t, start, 0, "cmd/nova-check/spelling.go: func cmdSpelling not found")
+	require.GreaterOrEqual(t, start, 0, "cmd/nova-check/spelling.go: func spellingFlags not found")
 	end := -1
 	for i := start + 1; i < len(lines); i++ {
 		if lines[i] == "}" {
@@ -33,7 +33,7 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 			break
 		}
 	}
-	require.GreaterOrEqual(t, end, 0, "cmd/nova-check/spelling.go: closing brace of func cmdSpelling not found")
+	require.GreaterOrEqual(t, end, 0, "cmd/nova-check/spelling.go: closing brace of func spellingFlags not found")
 
 	type registration struct {
 		name string
@@ -42,8 +42,8 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 	var regs []registration
 	for i, line := range lines[start:end] {
 		lineNo := start + i + 1
-		for _, form := range []string{"Bool", "String", "Int", "Duration"} {
-			needle := "fs." + form + "("
+		for _, form := range []string{"Bool", "String", "Int", "Duration", "Required"} {
+			needle := "f." + form + "("
 			rest := line
 			for {
 				idx := strings.Index(rest, needle)
@@ -55,16 +55,18 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 				if !ok {
 					break
 				}
-				regs = append(regs, registration{name: name, line: lineNo})
+				if name != "json" {
+					regs = append(regs, registration{name: name, line: lineNo})
+				}
 			}
 		}
 		rest := line
 		for {
-			idx := strings.Index(rest, "fs.Var(")
+			idx := strings.Index(rest, "f.Var(")
 			if idx < 0 {
 				break
 			}
-			rest = rest[idx+len("fs.Var("):]
+			rest = rest[idx+len("f.Var("):]
 			comma := strings.Index(rest, ",")
 			if comma < 0 {
 				break
@@ -77,7 +79,7 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 		}
 	}
 
-	require.GreaterOrEqual(t, len(regs), 6, "cmd/nova-check/spelling.go: found %d registered flags in cmdSpelling, want at least 6; the scan has missed a registration form", len(regs))
+	require.GreaterOrEqual(t, len(regs), 6, "cmd/nova-check/spelling.go: found %d registered flags in spellingFlags, want at least 6; the scan has missed a registration form", len(regs))
 
 	cli, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err, "docs/CLI.md: %v", err)

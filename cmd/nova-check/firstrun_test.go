@@ -96,7 +96,7 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 
 	exs := examples(t)
 	assert.True(t, strings.HasPrefix(exs[0], "nova-check quickstart "), "the first example is %q; a first run should be offered quickstart first", exs[0])
-	assert.Contains(t, usage, "nova-check quickstart --dir <dir>", "the usage block does not list the quickstart verb")
+	assert.Contains(t, novaCheck(seams{}).Banner(), "nova-check quickstart --dir <dir>", "the usage block does not list the quickstart verb")
 }
 
 // The seed has kept SEED-CORE.md and SEED.md under docs/ since nova#141. The
