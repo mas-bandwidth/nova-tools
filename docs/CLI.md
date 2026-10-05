@@ -581,6 +581,25 @@ answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
 
+### The harness's settings
+
+`install` first writes the settings the friend's harness needs in its own
+config, and `check --settings` names what drifted (docs/SPEC-FRIEND.md,
+"Harness settings"):
+
+```sh
+nova-friend install --as <me> --harness codex --dir <real dir> --dry-run   # INSTALL PLAN command="write ~/.codex/config.toml sandbox_workspace_write.writable_roots=<dir>"
+nova-friend install --as <me> --harness claude --dir <d> --config-dir <d>  # the config dir made, and named in the agent
+nova-friend install --as <me> --harness opencode --dir <d> --model <provider/model>
+nova-friend check --settings --as <me> --harness <h> --dir <d>            # CHECK OK ... drift=0, or CHECK DRIFT ... at exit 1
+```
+
+These are codex's writable root, the DeepSeek Harness agent preset
+(`standard`), grok's wake file (`--session`, else `~/.nova-friend/<me>/<me>.wake`),
+claude's config directory, and opencode's directory allow-list and model.
+A friend's directory, writable root, wake directory or config directory that
+is a symlink is refused, and nothing is written or loaded.
+
 ### The friend health check
 
 The help of `nova-friend check -h` says, and this is the same text:

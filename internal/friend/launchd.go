@@ -34,6 +34,9 @@ type Agent struct {
 	Coordinator string
 	SilentStop  time.Duration
 	BrokenAfter int
+	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
+	// the daemon's --config-dir, written only when set.
+	ConfigDir string
 }
 
 // Label is the agent's launchd label.
@@ -66,6 +69,9 @@ func (a Agent) Args() []string {
 	}
 	if a.Coordinator != "" {
 		args = append(args, "--coordinator", a.Coordinator)
+	}
+	if a.ConfigDir != "" {
+		args = append(args, "--config-dir", a.ConfigDir)
 	}
 	if a.SilentStop > 0 && a.SilentStop != DefaultSilentStop {
 		args = append(args, "--silent-stop", a.SilentStop.String())
