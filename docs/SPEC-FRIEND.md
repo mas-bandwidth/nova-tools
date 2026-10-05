@@ -155,8 +155,12 @@ during one process lifetime; because the message remains unconsumed, it may be
 observed again after restart.
 
 The separate `tla/MCFriendSleep.tla` model is a finite safety projection. Its
-new cases are drafts awaiting Zhi's parse/TLC review; no run record is claimed
-here. It abstracts store/file failures, locking and cross-layer refinement,
+eight cases are measured with TLC on a Linux bench and recorded in
+`tla/RUNS.tsv` (the positive run passes over 2,416,452 distinct states, each
+broken run finds a counterexample to the invariant `tla/CASES.tsv` names;
+running them found that three guards written as `x' = x /\ guard` were read as
+guards, not as the recorded flag, so no witness could break, and they are
+fixed). It abstracts store/file failures, locking and cross-layer refinement,
 and does not cover pagination beyond 1,000 entries, authorization, native
 delivery, or liveness. Selected Go tests cover ACK-failure and state-error
 cases, but this projection does not prove those paths executed or establish

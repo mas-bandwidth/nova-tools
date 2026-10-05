@@ -71,7 +71,7 @@ ReceiveBatch(k) ==
      /\ received' = received \cup incoming
      /\ asleep' = IF wakes THEN FALSE ELSE asleep
      /\ priority' = IF wakes /\ authorized THEN FirstID(coordinators) ELSE priority
-     /\ wakeAuthorityOK' = wakeAuthorityOK /\ (~wakes \/ authorized)
+     /\ wakeAuthorityOK' = (wakeAuthorityOK /\ (~wakes \/ authorized))
      /\ failures' = IF asleep /\ ~authorized /\ Broken = "holdcounts"
                      THEN [failures EXCEPT ![next] = @ + 1] ELSE failures
      /\ UNCHANGED <<running, deferred, coordIDs, starts, failedEnds, done,
@@ -90,7 +90,7 @@ StartTurn(i) ==
   /\ deferred' = IF deferred = i THEN NoJob ELSE deferred
   /\ starts' = Append(starts, i)
   /\ asleepStarts' = asleepStarts + (IF asleep THEN 1 ELSE 0)
-  /\ selectionOK' = selectionOK /\ (i = ExpectedJob)
+  /\ selectionOK' = (selectionOK /\ (i = ExpectedJob))
   /\ UNCHANGED <<asleep, pending, available, received, priority, coordIDs, failures,
                  failedEnds, done, restartCount, sleepConn, eventCount,
                  syntheticPushes, asleepPushes, wakeAuthorityOK>>
@@ -143,7 +143,7 @@ RecoverCoordinator ==
       selected == FirstID(candidates)
   IN /\ asleep /\ candidates # {}
      /\ asleep' = FALSE /\ priority' = selected
-     /\ wakeAuthorityOK' = wakeAuthorityOK /\ (selected # priority)
+     /\ wakeAuthorityOK' = (wakeAuthorityOK /\ (selected # priority))
      /\ UNCHANGED <<pending, available, received, running, deferred, coordIDs, starts,
                     failures, failedEnds, done, restartCount, sleepConn,
                     eventCount, syntheticPushes, asleepStarts, asleepPushes,
