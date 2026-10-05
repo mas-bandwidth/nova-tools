@@ -19,8 +19,8 @@ import (
 // what the dogfood ledger reads, so a verb missing from it is a verb nothing
 // asks to have been run by a non-author.
 //
-// The five are held against internal/release.Verbs rather than against a list
-// written here, so a sixth release verb is a test failure on the day it is
+// The six are held against internal/release.Verbs rather than against a list
+// written here, so a seventh verb is a test failure on the day it is
 // added rather than on the day somebody notices the reference is short.
 func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 	t.Parallel()
@@ -34,14 +34,14 @@ func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 	}
 	for _, line := range strings.Split(release.Verbs, "\n") {
 		fields := strings.Fields(line)
-		require.GreaterOrEqualf(t, len(fields), 3, "a usage line is not `nova-update release <verb> ...`: %q", line)
-		key := fields[0] + " " + fields[1] + " " + fields[2]
+		require.GreaterOrEqualf(t, len(fields), 2, "a usage line is not `nova-release <verb> ...`: %q", line)
+		key := fields[0] + " " + fields[1]
 		assert.Truef(t, have[key], "docs/CLI.md declares no %q; the release verbs are the last mile and the reference is where a person looks for them", key)
 	}
 	// And the section is found by its heading, so a reader scanning the
 	// reference for the release verbs has something to scan for.
 	text := readFile(t, path)
-	assert.Contains(t, text, "### The release verb", "docs/CLI.md has no `### The release verb` heading under nova-update")
+	assert.Contains(t, text, "## nova-release", "docs/CLI.md has no `## nova-release` section")
 	// The flags a person cannot get through a release without, named where
 	// they will meet them.
 	for _, want := range []string{"--security-read", "--paths-from", "--local-diff", "--expect-sums-from", "--platform", "--receipts", "--no-dogfood-gate"} {

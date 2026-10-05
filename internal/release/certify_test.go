@@ -88,7 +88,7 @@ func certifyPaths(t *testing.T) (registry, certs, standard string) {
 func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJustInstalled(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	registry, certs, standard := certifyPaths(t)
 	s := &certifySSH{
 		fakeSSH: fakeSSH{answer: map[string]string{
@@ -160,7 +160,7 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 func TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	registry, certs, standard := certifyPaths(t)
 	s := &certifySSH{
 		fakeSSH:  fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"}},
@@ -192,7 +192,7 @@ func TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed(t *testing.T) {
 func TestAdoptRefusesHalfOfTheCertifyFlags(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	registry, _, _ := certifyPaths(t)
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{
@@ -218,7 +218,7 @@ func TestAdoptRefusesHalfOfTheCertifyFlags(t *testing.T) {
 func TestAdoptWaivedByNoCertifyCertifiesNothingAndSaysSo(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	s := &certifySSH{fakeSSH: fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"}}}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{
@@ -245,7 +245,7 @@ func TestAdoptWaivedByNoCertifyCertifiesNothingAndSaysSo(t *testing.T) {
 func TestAdoptRefusesWhenNeitherCertifiedNorWaived(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{
 		"adopt", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
@@ -266,7 +266,7 @@ func TestAdoptRefusesWhenNeitherCertifiedNorWaived(t *testing.T) {
 func TestNoCertifyAndCertifyTogetherIsARefusal(t *testing.T) {
 	t.Parallel()
 
-	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-release")
 	registry, certs, standard := certifyPaths(t)
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{

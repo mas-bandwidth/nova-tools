@@ -9,7 +9,7 @@ and its whole setup is one script, `tools/bench-wsl2.ps1`, run once.
 **Scope.** This page is the standard for Windows hardware that does fleet work.
 [BENCH-WINDOWS.md](BENCH-WINDOWS.md) is a different thing: the contract of a
 **native** Windows machine as an install target of
-`nova-update release adopt --platform windows-amd64` (its paths, its ssh shell,
+`nova-release adopt --platform windows-amd64` (its paths, its ssh shell,
 its checks). No fleet bench runs native Windows.
 
 ## The host half: `tools/bench-wsl2.ps1`
@@ -73,7 +73,7 @@ refusal, never a green half-run.
 
 From there the bench is a Linux bench, reached over ssh on the tailnet: its
 machine row goes in with `nova-config machine add`, its tools arrive with
-`nova-update release adopt --platform linux-amd64`, and `tools/benchstandard`
+`nova-release adopt --platform linux-amd64`, and `tools/benchstandard`
 is its witness: run it as a static binary built elsewhere
 (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/benchstandard ./tools/benchstandard`),
 or with `go run ./tools/benchstandard` where the distro's Go is good.

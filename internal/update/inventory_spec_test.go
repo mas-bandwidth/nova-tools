@@ -141,7 +141,7 @@ func TestSnapshotRefusesAMixedSetNamingThePair(t *testing.T) {
 	if code != 2 {
 		require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 	}
-	need(t, stderr, "nova-a", "nova-b", "v1.0.0", "v2.0.0", "nova-update release build --version", "nova-update release install --from")
+	need(t, stderr, "nova-a", "nova-b", "v1.0.0", "v2.0.0", "nova-release build --version", "nova-release install --from")
 	if strings.Contains(stderr, "--sha") {
 		require.NotContainsf(t, stderr, "--sha", "the remedy names a flag apply does not take: %s", stderr)
 	}

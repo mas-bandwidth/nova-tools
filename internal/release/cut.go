@@ -292,7 +292,7 @@ func classify(files []string, complete bool, rangeName, securityRead string, out
 // a gate whose answer is whatever somebody remembered. The line also names the
 // RANGE, so a list left over from a different pair of commits is refused rather
 // than quietly classifying a release that is not this one.
-const PathsHeaderPrefix = "# nova-update release cut --local-diff "
+const PathsHeaderPrefix = "# nova-release cut --local-diff "
 
 // pathsDigestPrefix opens the SECOND header line, the sha256 of the list body
 // (the files joined by newlines, in order) as this verb wrote it. The first
