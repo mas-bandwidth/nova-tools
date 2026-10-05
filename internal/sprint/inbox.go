@@ -78,15 +78,14 @@ func (r InboxReq) due(n Note) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	if !n.Review.IsZero() {
-		if n.ReviewSet.IsZero() {
-			return n.Review, r.Now.After(n.Review)
-		}
-		// The review time counts running time from when wait set it.
+		// The review time counts running time from when wait set it, by the
+		// tree's one clock comparison, the same one a timer is due by
+		// (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers").
 		due := n.Review
-		if r.Stopped != nil {
+		if r.Stopped != nil && !n.ReviewSet.IsZero() {
 			due = due.Add(r.Stopped(n.ReviewSet, r.Now))
 		}
-		return due, r.running(n.ReviewSet) >= n.Review.Sub(n.ReviewSet)
+		return due, DueNow(r.Now, n.Review, n.ReviewSet, r.Stopped)
 	}
 	due := n.At.Add(r.Deadline)
 	if r.Stopped != nil {
@@ -135,8 +134,11 @@ type Group struct {
 	// name, in the order the notes name them, unbounded: what What
 	// previews, listed whole by inbox --open.
 	Needs []string `json:"-"`
-	// To is who the group's happened notes are addressed to (Note.To), and
-	// Hint what to do next: a group addressed to someone is shown first.
+	// To is who the group's notes are addressed to (Note.To): its happened
+	// notes, and a timer's judgment, which the tick raises addressed to the
+	// actor it wakes (docs/SPEC-SPRINT.md, "Timers"); Hint is what to do
+	// next. A group addressed to someone is shown first, and the seat push
+	// writes it to that actor's inbox.
 	To   string `json:"to,omitempty"`
 	Hint string `json:"hint,omitempty"`
 }
@@ -187,12 +189,13 @@ func Inbox(r InboxReq) []Group {
 		due, overdue := r.due(n)
 		// Overdue marks a group; it does not split one, so the grouping (and
 		// every group's members) is the same whatever deadline is read with.
-		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked)
+		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked) + "\x00" + n.To
 		i, ok := at[k]
 		if !ok {
 			i = len(judg)
 			at[k] = i
-			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Due: due, Decisions: n.Decisions})
+			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Due: due,
+				Decisions: n.Decisions, To: n.To, Hint: n.Hint})
 		}
 		if f, ok := first[i]; !ok || n.At.Before(f.At) || n.At.Equal(f.At) && n.ID < f.ID {
 			first[i] = n

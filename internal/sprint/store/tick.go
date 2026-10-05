@@ -723,6 +723,19 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		}
 		res.Times = append(res.Times, mt.part("", "remind"))
 	}
+	if err == nil && res.Halted == "" && res.Done == "" {
+		// The timer duty is a part too: it begins only while RUNNING, and a
+		// timer counts running time (timers.go).
+		mt := st.meter()
+		if halted, herr := st.halted(ctx, &res, "timers"); herr != nil {
+			err = herr
+		} else if !halted {
+			if terr := st.timers(ctx, m, &res); terr != nil {
+				err = fmt.Errorf("timers: %w", terr)
+			}
+		}
+		res.Times = append(res.Times, mt.part("", "timers"))
+	}
 	if err == nil && res.Stale == "" && hb.Failures > 0 {
 		// the tick works again after failing: one note, with the count
 		if nerr := st.tellTick(ctx, "tick recovered", sprint.NTickRecovered, fmt.Sprintf("failed=%d; the last error: %s", hb.Failures, hb.Error), ""); nerr != nil {

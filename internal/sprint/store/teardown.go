@@ -21,9 +21,9 @@ import (
 // progress and the callers' results. Each epoch has its own.
 var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue, keyAliases, keyAnswered}
 
-// machineKeys are the machine's records and the people's goals: one for the
+// machineKeys are the machine's records, the people's goals and the timers: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyTimers, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // revision, definition record and change log; and its operation records,

@@ -67,6 +67,7 @@ var verbEffect = map[string]string{
 	"view worker":       "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
 	"seat":              "inspection: reads the seat (holder, epoch, generation), writes nothing",
 	"rules":             "inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing",
+	"remind":            "store write: writes one timer to the sprint's timer record, which the tick of a RUNNING machine raises as one judgment of kind \"timer\" addressed to its actor at its due time, once (--list reads the open timers, --cancel takes one off); --dry-run writes nothing",
 	"relink":            "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
 	"friend take":       "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
 	"friend level":      "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",

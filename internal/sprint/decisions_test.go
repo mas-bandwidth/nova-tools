@@ -579,7 +579,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 		all[typ] = ds
 	}
 	all[NRemindFailed] = []string{"goal set friend-a --to <route>", "goal drop friend-a", "ack"}
-	ackable := map[string]bool{NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true, NProviderFunds: true, NProviderLow: true, NProviderKey: true, NAllOutOfCredit: true, NScoredLow: true, NRaiseReadTier: true,
+	ackable := map[string]bool{NTimer: true, NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true, NProviderFunds: true, NProviderLow: true, NProviderKey: true, NAllOutOfCredit: true, NScoredLow: true, NRaiseReadTier: true,
 		NAlarmReview: true, NAlarmMerging: true, NAlarmReady: true, NAlarmFleet: true, NFriendDeaf: true, NFriendIdle: true}
 	for typ, ds := range all {
 		w := setup(t, 1)
