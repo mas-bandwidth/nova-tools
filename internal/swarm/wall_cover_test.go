@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // Unit coverage for wall.go's capture and commit-count seam, untagged and store-free: each
@@ -16,10 +18,12 @@ import (
 // plain files. WallCommits and wallBaseRef take the repository's own remote refs as their
 // input; no Redis, no host.
 
-// coverGit runs one git command in dir and requires success.
+// coverGit runs one git command in dir and requires success, with the test's own git
+// identity and config (testgit.Env), never the runner's.
 func coverGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testgit.Env(t, os.Environ())
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))

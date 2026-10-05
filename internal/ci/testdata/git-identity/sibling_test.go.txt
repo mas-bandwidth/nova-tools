@@ -1,0 +1,9 @@
+package fixture
+
+import "testing"
+
+// TestCommitsThroughTheSiblingsHelper commits through a helper another file of the
+// directory declares; it imports nothing of testgit itself.
+func TestCommitsThroughTheSiblingsHelper(t *testing.T) {
+	coverGit(t, t.TempDir(), "commit", "-q", "-m", "work")
+}

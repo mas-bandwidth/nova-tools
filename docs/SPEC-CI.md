@@ -942,6 +942,46 @@ shape that hurt is written inline. And only LISTINGS are read: `os.Stat`,
 `os.Open` and `os.RemoveAll` over one named path in the shared directory are
 questions about that path, which no sibling job can answer wrongly.
 
+### `git-identity` — every scratch-repository commit in a test carries the test's own identity
+
+**The rule.** Every commit site in a `_test.go` under `cmd/`, `internal/` or
+`tools/` — a call handed the literal argument `"commit"` or `"commit-tree"`, or a
+string literal holding a `git commit` command line — stands in a file that
+imports `internal/testgit`, or calls a helper declared in a test file of the same
+directory that does. `testgit.Env(t, base)` is the one helper: `base` without its
+`GIT_` variables, a fixed author and committer, the system config off and the
+global config at a file of the test's own that sets `user.useConfigOnly`, so a
+commit with no identity fails on every machine as it fails on a runner with none.
+**The mistake it prevents.** `TestWallCoverWallCommitsCountsPastBaseRef` ran a
+bare `git commit` in a clone of a scratch origin. Every self-hosted bench has a
+global identity, so the lander never saw it; the hosted ubuntu-latest runner has
+none, and dev went red there with `Author identity unknown` (run 37344601638,
+shard 6).
+**The test.** `TestNoTestCommitsWithoutItsOwnGitIdentity`
+(`internal/ci/git_identity_class_test.go`), with its witness
+`TestGitIdentityScannerReadsTheFixtures` (the fixtures under
+`internal/ci/testdata/git-identity/`: five bare sites are found, the near misses
+are not, and a helper is trusted only in its own directory); the helper's own
+witness is `TestEnvCommitsWithItsOwnIdentityWhereTheMachineHasNone`
+(`internal/testgit/testgit_test.go`: the isolation alone is refused with
+`Author identity unknown`, the same commit through `Env` lands).
+**Its allowlist.** `internal/ci/testdata/git_identity_allowlist.txt`, `file sites
+reason`, counted and shrink-only: a new site in a listed file is red, and
+`NOVA_CI_UPDATE=1 go test -count=1 -timeout 600s -run '^TestNoTestCommitsWithoutItsOwnGitIdentity$' ./internal/ci/`
+lowers a count and drops a row at zero, never adding one.
+**Its remedy line.** `run the git command with cmd.Env = testgit.Env(t,
+os.Environ()) (internal/testgit), so the commit carries the test's own author and
+committer and never the runner's global git config`.
+**Its narrowings.** It reads syntax, file by file. A file that imports
+`internal/testgit` is trusted for every site in it; a call is trusted when the
+name it calls (its last identifier) is declared in a test file of the same
+directory that imports it, and a name reached through a variable, a field or
+another package is not resolved. A `"commit"` in a call's last place, or handed
+to a testify assertion, is a word looked for, not a command. A `"commit"` built
+at run time, a `git commit` line with no option after it, and a command line
+split across literals are not seen. `internal/testgit` itself, whose witness
+commits bare on purpose, and `testdata/` are not read.
+
 ### `outputs` — no multi-line value written to a step output
 
 **The rule.** `$GITHUB_OUTPUT` and `$GITHUB_ENV` are `key=value` FILES, one pair

@@ -1,0 +1,21 @@
+package fixture
+
+import (
+	"os"
+	"os/exec"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+)
+
+// coverGit runs one git command with the test's own identity.
+func coverGit(t *testing.T, dir string, args ...string) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testgit.Env(t, os.Environ())
+	_ = cmd.Run()
+}
+
+// TestCommitsWithItsOwnIdentity commits through the helper.
+func TestCommitsWithItsOwnIdentity(t *testing.T) {
+	coverGit(t, t.TempDir(), "commit", "-q", "-m", "base")
+}

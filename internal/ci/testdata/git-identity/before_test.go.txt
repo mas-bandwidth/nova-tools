@@ -1,0 +1,25 @@
+package fixture
+
+import (
+	"os/exec"
+	"testing"
+)
+
+// TestBareCommits commits five ways, none with an identity of its own.
+func TestBareCommits(t *testing.T) {
+	git := func(args ...string) {}
+	git("commit", "-q", "-m", "base")
+	_ = exec.Command("git", "commit", "-q", "-m", "work")
+	_ = r.git("commit-tree", tree, "-m", "a merge")
+	_ = `cd repo && echo two >> f && git commit -q -am two && git push`
+	_ = "git -C repo commit -q -m three"
+
+	// Not commit sites: a ref spelling, words in prose, a commit named in a comment
+	// (git commit -m four), a word looked for, and an option value.
+	_ = "git cat-file -e base^{commit}"
+	_ = "Commit refuses before git ever runs"
+	_ = "git commit in the step's checkout was refused"
+	assert.Contains(t, out, "commit")
+	assert.Contains(t, out, "commit", "the tool did not commit: %s", out)
+	git("log", "--format=commit %H")
+}

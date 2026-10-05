@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -30,7 +32,7 @@ func baseRepo(t *testing.T) (dir, sha string) {
 	git := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		cmd.Env = testgit.Env(t, os.Environ())
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 		return strings.TrimSpace(string(out))
@@ -39,7 +41,7 @@ func baseRepo(t *testing.T) (dir, sha string) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "decide"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal", "decide", "decide.go"), []byte("package decide\n"), 0o644))
 	git("add", ".")
-	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
+	git("commit", "-q", "-m", "base")
 	return dir, git("rev-parse", "HEAD")
 }
 
