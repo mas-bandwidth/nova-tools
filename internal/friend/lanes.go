@@ -35,17 +35,21 @@ const LaneOpenRetry = time.Minute
 
 // LaneState is what the lanes keep across restarts, in the state directory
 // (lanes.json): each lane's session, so a lane is the same friend's session
-// for its life, and the cards set aside after CardTurns, so a restart does
-// not hand them again.
+// for its life, the cards set aside after CardTurns, so a restart does
+// not hand them again, and the cards a lane has begun and not ended, so a
+// restart finishes each (a lane's end, lane_end.go).
 type LaneState struct {
-	Sessions map[int]string `json:"sessions"`
-	GivenUp  []string       `json:"given_up,omitempty"`
+	Sessions map[int]string     `json:"sessions"`
+	GivenUp  []string           `json:"given_up,omitempty"`
+	Started  map[string]Started `json:"started,omitempty"`
 }
 
 // Card is one card a lane hands: its id (the queue file's), its brief, and
 // the outbox directory its REPORT.md and RESULT.md go to.
 type Card struct {
-	ID, Brief, Outbox string
+	ID     string `json:"id"`
+	Brief  string `json:"brief"`
+	Outbox string `json:"outbox"`
 }
 
 // Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md).
@@ -56,6 +60,40 @@ func (c Card) Epoch() string {
 	}
 	epoch, _, _ = strings.Cut(epoch, ".g")
 	return epoch
+}
+
+// Gen is the card's generation, its directory's .g<gen> (friend sync names a card dealt
+// again to the same friend <id>~<epoch>.g<gen>); 1 when it has none.
+func (c Card) Gen() int {
+	base := filepath.Base(c.Outbox)
+	if i := strings.LastIndex(base, ".g"); i >= 0 && strings.Contains(base[:i], "~") {
+		if n, err := strconv.Atoi(base[i+2:]); err == nil && n > 1 {
+			return n
+		}
+	}
+	return 1
+}
+
+// ParseJob reads a friend's job directory name, <id>~<epoch> with .g<gen> after it from
+// the card's second generation (nova-sprint friendJobOf); gen is 1 when it has none.
+func ParseJob(job string) (id string, epoch, gen int, ok bool) {
+	id, rest, found := strings.Cut(job, "~")
+	if !found || id == "" {
+		return "", 0, 0, false
+	}
+	gen = 1
+	if e, g, dotted := strings.Cut(rest, ".g"); dotted {
+		n, err := strconv.Atoi(g)
+		if err != nil || n < 1 {
+			return "", 0, 0, false
+		}
+		rest, gen = e, n
+	}
+	epoch, err := strconv.Atoi(rest)
+	if err != nil || epoch < 0 {
+		return "", 0, 0, false
+	}
+	return id, epoch, gen, true
 }
 
 // ProgressEvery is how often the daemon stamps progress on a card whose lane turn prints:
@@ -82,6 +120,9 @@ func ProgressArgv(friend string, cards []Card) [][]string {
 
 // Result is the card's RESULT.md, whose presence after a turn is the card done.
 func (c Card) Result() string { return filepath.Join(c.Outbox, "RESULT.md") }
+
+// Report is the card's REPORT.md, the one friend sync finishes the card from.
+func (c Card) Report() string { return filepath.Join(c.Outbox, "REPORT.md") }
 
 // cardDir selects the exact generation and recorded job when present, otherwise
 // its highest epoch (docs/FRIENDS.md, generation-specific jobs).
@@ -132,8 +173,9 @@ func cardDir(root string, task Task) (string, bool) {
 
 // NextCard is the first card of dir's queue file (inbox/QUEUE.json, in its
 // order) that is queued, delivered (inbox/<id>~<epoch>/BRIEF.md), not done
-// (no outbox/<id>~<epoch>/RESULT.md) and not skipped (held by another lane,
-// or set aside); found is false when there is none.
+// (no outbox/<id>~<epoch>/RESULT.md, and no REPORT.md: a card with a report
+// is friend sync's to finish) and not skipped (held by another lane, or set
+// aside); found is false when there is none.
 func NextCard(dir string, skip func(Card) bool) (c Card, found bool, err error) {
 	var q Queue
 	path := filepath.Join(dir, filepath.FromSlash(QueueFile))
@@ -151,7 +193,7 @@ func NextCard(dir string, skip func(Card) bool) (c Card, found bool, err error) 
 			continue
 		}
 		c := Card{ID: t.ID, Brief: filepath.Join(dir, "inbox", base, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", base)}
-		if skip(c) || !exists(c.Brief) || exists(c.Result()) {
+		if skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) {
 			continue
 		}
 		return c, true, nil
@@ -315,6 +357,12 @@ func (l *loop) laneStep(now time.Time, width int) {
 		for _, id := range s.state.GivenUp {
 			s.given[id] = true
 		}
+		if len(s.state.Started) > 0 {
+			l.endStarted(now)
+		}
+		if s.state.Started == nil {
+			s.state.Started = map[string]Started{}
+		}
 	}
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
@@ -366,6 +414,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue // messages wait: they ride only with a card
 			}
 			ln.card, ln.attempts = &c, 0
+			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
+			l.saveLanes(now)
 		}
 		t := &turn{}
 		t.entries, t.msgs = l.take()
@@ -441,8 +491,22 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	line += l.settle(t, ok, r.err, now)
 	card := *ln.card
-	if exists(card.Result()) {
-		line += " card=done"
+	end := LaneEnd{Exit: r.turn.Exit, Wall: now.Sub(t.started), Rejected: r.turn.Rejected, Turns: ln.attempts + 1, Started: s.state.Started[filepath.Base(card.Outbox)].At}
+	if r.err != nil {
+		end.Err = oneLine(r.err.Error(), 300)
+	}
+	if t.stopped {
+		end.Cap = "no output for " + l.silentStop.String()
+	}
+	if l.ctx.Err() != nil {
+		// the daemon is stopping: the card stays started, and the next daemon to start finishes it
+		d.Record(line + " card=started reason=\"the daemon stopped\"")
+		ln.card, ln.attempts = nil, 0
+		return
+	}
+	if exists(card.Result()) || exists(card.Report()) {
+		end.NoReport = true
+		line += " card=done " + l.endCard(ln.n, card, end, now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
 		return
@@ -463,14 +527,14 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		d.Record(line + fmt.Sprintf(" card=again turn=%d/%d reason=%q", ln.attempts, CardTurns, why))
 		return
 	}
-	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q", ln.attempts, CardTurns, why))
+	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
 	job := filepath.Base(card.Outbox)
 	s.given[job] = true
 	s.state.GivenUp = append(s.state.GivenUp, job)
 	l.saveLanes(now)
 	ln.card, ln.attempts = nil, 0
 	l.tell(fmt.Sprintf("friend %s: card %s not finished after %d turns (lane %d): %s", d.Friend, card.ID, CardTurns, ln.n, oneLine(why, 200)),
-		fmt.Sprintf("Lane %d of %s handed card %s (%s) %d times and no RESULT.md appeared in %s. The last turn: %s. The lane has set the card aside and takes the next; hand it again by removing it from given_up in the lane state (lanes.json), or deal it elsewhere.\n", ln.n, d.Friend, card.ID, card.Brief, CardTurns, card.Outbox, why), now)
+		fmt.Sprintf("Lane %d of %s handed card %s (%s) %d times and no RESULT.md appeared in %s. The last turn: %s. The lane has set the card aside, finished it failed in the sprint (its REPORT.md says how the run ended) and takes the next.\n", ln.n, d.Friend, card.ID, card.Brief, CardTurns, card.Outbox, why), now)
 }
 
 // limitedTurn is a lane's turn the provider rate-limited or refused out of
