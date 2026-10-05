@@ -36,7 +36,8 @@ var tailnetRange = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10
 // cmdDashboard serves the sprint dashboard (docs/SPEC-SPRINT-DASHBOARD.md) until it is
 // interrupted: the page from the files embedded in the binary, and /api/sprint, the
 // sprint as where --json --cards prints it, read in this process once per --every whoever
-// is looking, with one freshness check on it; on the --pull listeners, the pull routes a
+// is looking, with one freshness check on it; /table, the live table as where prints it
+// (dashboard_table.go); on the --pull listeners, the pull routes a
 // worker reads its own view from (docs/SPEC-SPRINT.md, the dashboard). Given --pull <url>,
 // it is a puller: it reads that dashboard's copy in place of the sprint, and serves the
 // page only.
@@ -87,9 +88,14 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	runCtx, endRun := context.WithCancel(ctx)
 	defer endRun()
 	go srv.Run(runCtx, tick.C)
+	var page http.Handler = srv
+	if from == "" {
+		// the live table, read here; a puller has no store to read it from
+		page = &tableView{page: srv, read: func() ([]byte, error) { return a.whereText(c.redis, redis) }, now: a.now, every: *every}
+	}
 	var ls []listener
 	for _, addr := range pages {
-		ls = append(ls, listener{"--listen", addr, srv, "DASHBOARD listening on http://%s/\n"})
+		ls = append(ls, listener{"--listen", addr, page, "DASHBOARD listening on http://%s/ (the live table at /table)\n"})
 	}
 	for _, addr := range pulls {
 		ls = append(ls, listener{"--pull", addr, srv.Pull(), "DASHBOARD pull routes on http://%s/ (friend/<name>, machine/<name>, team, api/..., events/...)\n"})

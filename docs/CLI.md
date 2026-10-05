@@ -678,6 +678,24 @@ daemon `--server <host:port>` (else `NOVA_SPRINT_SERVER`, else
 `127.0.0.1:6390`). Exit codes: 0 done; 1 the verb ran and said no; 2 could
 not run.
 
+## nova-loop
+
+Runs one loop's command as the only copy of that loop on the machine, in front of the command in the
+loop's launchd or systemd unit; it replaces a bash wrapper one coordinator installed from its own tool
+repository (docs/COORDINATOR-TOOLS.md).
+
+```
+nova-loop run --name <loop> [--run-dir <dir>] [--metrics <dir>] -- <command> [args...]
+```
+
+It takes the lock `<run-dir>/<loop>.lock` (default `~/nova-bench/run`), writing its own pid: a lock whose
+pid is alive refuses the start with `RUN HELD loop=<loop> pid=<holder>` at exit 3, and a lock whose pid is
+dead, or holds none, is taken, under an flock on `<loop>.lock.guard` so two starts cannot both take it.
+With `--metrics <dir>` it counts the start in `<dir>/nova_loop_<loop>.prom` (`nova_loop_starts_total`,
+`nova_loop_last_start_seconds`) for node_exporter's textfile collector. It says `RUN OK loop=<loop>
+pid=<pid> lock=<file>` and execs the command, which keeps the pid the lock holds. A Windows machine runs
+no loop and is refused.
+
 ## Build
 
 Go 1.26 or newer. The standard library, plus the Redis client (`github.com/redis/go-redis/v9`),
@@ -761,8 +779,10 @@ usage:
                         Completed launches leave no checkout; each pool keeps its newest five failed launches.
                         No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
                         A staging refusal reports why so the sprint can deal the card to another member.)
-  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
-                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
+  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
+                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10; under --stop-floor, below --disk-floor and default 0 (off), one DISK-GUARD STOPPED unit=<unit> line per loop unit of the login it stops (com.nova.loop.* on a Mac, nova-loop-* services and timers elsewhere), the disk-guard ones kept; and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
+  nova-swarm mirror    --repos <a,b,...> --url <template> [--dir <dir>] [--every <duration>] [--dry-run]
+                       (clone each repository as a bare mirror into --dir, default ~/nova-bench/mirror, or fetch the mirror there with --prune, so a card's clone --reference finds it; --url has {repo} where the name goes, so each repository may have its own deploy key's ssh alias, and the verb holds no credential; one MIRROR CLONED, FETCHED or FAILED line per repository and MIRROR OK|FAILED repos=<n> failed=<n> per pass, exit 1 when one failed; --every runs a pass each time it passes, until interrupted; --dry-run says WOULD-CLONE or WOULD-FETCH and runs no git)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -1048,6 +1068,7 @@ nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
+                        (the page's listeners also serve /table: the live table as where prints it, text, read at most once per --every)
 nova-sprint seat
 nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
 nova-sprint seat login --check

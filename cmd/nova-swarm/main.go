@@ -71,13 +71,17 @@ usage:
                          fleet row's width; --width overrides it, and --pass names environment secrets to
                          hand to children. A reader runs the reads of the readers table; this machine opens
                          no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
-  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
+  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row
                         fleet/loops.yml adds to every machine: it trims every Go build cache over
                         --cache-max-gb, empties a module cache over --modcache-max-gb, rotates loop logs
                         over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
                         removes anything with uncommitted work or a live process, and prints one REMOVED,
                         TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
+  nova-swarm mirror    --repos <a,b,...> --url <template> [--dir <dir>] [--every <duration>] [--dry-run]
+                       (clone each repository as a bare mirror into --dir, or fetch the mirror there, so a
+                        card's clone --reference finds it; --url has {repo} where the name goes. One MIRROR
+                        line per repository; --every runs a pass each time it passes, until interrupted.)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -139,6 +143,7 @@ var verbExamples = map[string]string{
 	"step":       "nova-swarm step --card card.md --dir repo",
 	"member":     "nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once",
 	"disk-guard": "nova-swarm disk-guard --root ~/nova-bench/run/member --scan ~/nova-bench/run --cache-max-gb 20",
+	"mirror":     "nova-swarm mirror --repos nova-tools --url https://github.com/example/{repo}.git --dry-run",
 }
 
 // cardLines is what `template -h` lists: the lines a card needs, in the order
@@ -175,6 +180,9 @@ func verbHelpLines(verb string) string {
 	if verb == "disk-guard" {
 		add += "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
 	}
+	if verb == "mirror" {
+		add += "effect: local write: clones and fetches the mirrors in --dir; --dry-run runs no git\n"
+	}
 	if ex, ok := verbExamples[verb]; ok {
 		add = "example:\n  " + ex + "\n" + add
 	}
@@ -183,14 +191,14 @@ func verbHelpLines(verb string) string {
 
 // verbNames are the verbs, in the usage's order: what a bare command and an unknown verb
 // are answered with (the tool-answers rule).
-var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "worker", "verify", "doctor", "profile", "slots", "version"}
+var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "mirror", "worker", "verify", "doctor", "profile", "slots", "version"}
 
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
 var helpVerbs = map[string]bool{
 	"version": true, "doctor": true, "verify": true, "lint": true,
 	"template": true, "profile": true, "native": true, "member": true, "slots": true, "worker": true,
-	"step": true, "disk-guard": true,
+	"step": true, "disk-guard": true, "mirror": true,
 }
 
 // refuse is what an unusable invocation costs: ONE line, `nova-swarm[ <verb>] REFUSED:
@@ -266,6 +274,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdSlots(rest, stdout, stderr)
 	case "disk-guard":
 		return cmdDiskGuard(rest, stdout, stderr)
+	case "mirror":
+		return cmdMirror(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
 	case "worker":
