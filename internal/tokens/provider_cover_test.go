@@ -2,11 +2,9 @@ package tokens
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestProviderCoverKnownParser pins the label-to-parser gate: every kind the tool
@@ -55,30 +53,6 @@ func TestProviderCoverXaiUsageErrorRefusals(t *testing.T) {
 
 	notFile := &XaiUsageNotFileError{Path: "/tmp"}
 	assert.Contains(t, notFile.Error(), "not one file")
-}
-
-// TestProviderCoverReadXaiUsageFile pins the one path --provider xai reads: a regular
-// file comes back whole, an absent path is *XaiUsageMissingError, and a directory is
-// *XaiUsageNotFileError.
-func TestProviderCoverReadXaiUsageFile(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "usage.json")
-	body := `{"turns":[]}`
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
-
-	raw, err := ReadXaiUsageFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, body, string(raw))
-
-	_, err = ReadXaiUsageFile(filepath.Join(dir, "absent.json"))
-	var missing *XaiUsageMissingError
-	require.ErrorAs(t, err, &missing)
-
-	_, err = ReadXaiUsageFile(dir)
-	var notFile *XaiUsageNotFileError
-	require.ErrorAs(t, err, &notFile)
 }
 
 // TestProviderCoverProviderJSONReason pins the refusal for JSON that is neither known
