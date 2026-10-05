@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -10,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -119,7 +123,7 @@ func friendVerbWords(name string) string {
 	case "friend beat":
 		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. Her nova-friend daemon runs it every " + every + " while it runs, and nothing else beats for her: no loop beside the daemon. The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. Once the coordinator observes her (friend health), the observation decides her status and her beat no longer does. " + sync + "\n"
 	case "friend down":
-		return "friend down holds the named friend, as fleet down holds a machine: held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes; the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. --reason <text> and --until <RFC3339> say why and when you expect her back, shown in her status cell. friend up releases the hold. friend down is hold <friend> in the old words, kept for one release: run nova-sprint hold <friend> --reason <text> (her cards finish; --return withdraws them), and unhold <friend>. " + sync + "\n"
+		return "friend down holds the named friend, as fleet down holds a machine: held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes; the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. --reason <text> and --until <RFC3339> say why and when you expect her back, shown in her status cell. A hold whose reason names a cause that ends (out of credit, a usage limit, deaf) or that has --until is probed by the machine (a wake ping her session must answer, in friend sync's pass) at --until, else on a backoff, and released at her row's width when the probe passes, with one note to the coordinator; a hold with neither is released only by friend up (docs/SPEC-SPRINT.md, \"A friend back up\"). friend up releases the hold. friend down is hold <friend> in the old words, kept for one release: run nova-sprint hold <friend> --reason <text> (her cards finish; --return withdraws them), and unhold <friend>. " + sync + "\n"
 	case "friend up":
 		return "friend up releases a hold that friend down set. --width sets her width, the jobs she works at once (the deal holds her at twice that), as fleet up --width sets a machine's, until friend sync sets her nova-config row's again. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. friend up is unhold <friend> in the old words, kept for one release. " + sync + "\n"
 	case "friend health":
@@ -249,6 +253,22 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 		delivered, finished = delivered+d, finished+f
 		if err != nil {
 			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be delivered or collected: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))
+			return 1, false
+		}
+	}
+	// the friends held or down for a cause that ends, probed and brought back up
+	// (docs/SPEC-SPRINT.md section 1, "A friend back up"): the loop that delivers her
+	// cards is the coordinator's one beat over every friend
+	if !a.twinOpen(c.redis) && a.getenv(busRedisEnv) != "" {
+		back, kept, err := st.FriendsBack(ctx, a.friendWakeProbe(ctx, st.Actor))
+		for _, b := range back {
+			say(fmt.Sprintf("FRIEND-BACK OK %s cause=%s: %s", b.Friend, oneline.Field(b.Cause), sprint.FriendBackWhat(b.Friend, b.Cause, b.Reason)))
+		}
+		for _, f := range kept {
+			say("FRIEND-BACK KEPT " + f + ": the probe did not pass; probed again after the backoff")
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "%s %s: the friends back up were not all brought back: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, oneline.Escape(err.Error()))
 			return 1, false
 		}
 	}
@@ -567,4 +587,60 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 	sayOK(stdout, c.json, name, line, map[string]any{"friend": friend, "state": h.State, "seen": h.Seen, "generation": h.Generation,
 		"queue": h.Queue, "working": h.Working, "width": h.Width, "status": status, "replayed": replayed})
 	return 0
+}
+
+// friendProbeWait is how long the machine's wake probe waits for her session's pong.
+const friendProbeWait = 20 * time.Second
+
+// friendWakeProbe is the machine's probe of a friend held or down for a cause that ends
+// (store.FriendsBack; docs/SPEC-SPRINT.md section 1, "A friend back up"): one wake ping
+// from the coordinator on the bus (nova-friend ping --wake), passed only by her session's
+// pong within friendProbeWait (nova-friend wait-pong); her daemon's daemon-pong alone is
+// deaf and fails it. Her session answering the wake turn is a run of her harness, so a
+// harness still out of credit or at its usage limit cannot pass it.
+func (a *app) friendWakeProbe(ctx context.Context, coordinator string) sprint.FriendProbeFn {
+	return func(name, cause string) sprint.FriendProbeResult {
+		addr := a.getenv(busRedisEnv)
+		b, closeBus, err := a.busOpen(ctx, addr, a.getenv(busUserEnv))
+		if err != nil {
+			return sprint.FriendProbeResult{Why: "the bus did not open: " + err.Error()}
+		}
+		defer closeBus()
+		raw := make([]byte, 3)
+		_, _ = rand.Read(raw) // ignored: crypto/rand.Read never fails (it panics instead)
+		nonce := hex.EncodeToString(raw)
+		sent, err := b.Send(ctx, bus.Message{From: coordinator, To: []string{name}, Subject: friend.PingPrefix + nonce,
+			Body: friend.WakePingText(coordinator, a.now(), nonce) + "\n"})
+		if err != nil {
+			return sprint.FriendProbeResult{Why: "the wake ping was not sent: " + err.Error()}
+		}
+		floor := bus.IDAt(sent.At.Add(-time.Second))
+		daemon := false
+		for start := a.now(); ; {
+			got, err := b.Log(ctx, floor)
+			if err != nil {
+				return sprint.FriendProbeResult{Why: "the bus log was not read: " + err.Error()}
+			}
+			for _, e := range got {
+				m := e.Message()
+				if m.From != name { // her own stream, never the body
+					continue
+				}
+				body := strings.TrimSpace(m.Body)
+				if m.Subject == friend.DaemonPongSubject && body == "daemon-pong "+nonce {
+					daemon = true
+				}
+				if n, _, _, _, ok := friend.ParsePong(body); ok && n == nonce {
+					return sprint.FriendProbeResult{Answered: true}
+				}
+			}
+			if a.now().Sub(start) >= friendProbeWait {
+				if daemon {
+					return sprint.FriendProbeResult{Why: "her daemon answered and her session did not: deaf"}
+				}
+				return sprint.FriendProbeResult{Why: "no pong within " + friendProbeWait.String()}
+			}
+			a.sleep(time.Second)
+		}
+	}
 }

@@ -179,6 +179,40 @@ layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
 and a blank status cell, as the fleet table's; an empty friends table is its
 header, its one rule and that footer at zero, as every empty table is.
 
+**A friend back up** (the owner, 2026-10-05 9:35 AM ET: "Just like you notice that
+friends are down, you should notice they are back up automatically"; a friend was held
+`out of credit` at 8:40 AM and stayed held after her plan had credit again, until the
+owner said so). A hold or a down carries its cause and, when known, when it ends: a
+hold's `friend down --reason --until`, a down observed by the coordinator's daemon its
+`friend health --reason --until` (a usage limit's reset). The cause is read from those
+words (`sprint.FriendBackCause`): `out of credit` (credits, funds, billing), `usage
+limit` (a usage or rate limit, a quota, an allowance), `deaf` (her daemon answers and
+her session does not), and any other reason with an `--until` ends at that time. A hold
+with no reason and no `--until`, or a reason none of those and no `--until`, is a hold by
+hand: the machine never probes it and never releases it; only `friend up` does. A
+friend with a cause that ends is probed (`sprint.FriendBackDue`): at its known end, at
+once when none is known, and after each probe that fails again after a backoff of one
+minute doubling to 30 (`FriendBackFirst`, `FriendBackMax`; a probe that failed before a
+known end does not delay the probe at it). The probe is a wake ping on the bus that her
+session must answer (`nova-friend ping --wake`, `wait-pong`, 20 s): her daemon's own
+daemon-pong does not count, and for out of credit her run must not refuse for funds
+(her session answering the wake turn is a run of her harness, which a harness still out
+of credit cannot do). When it passes she is brought up: a hold released, a down
+observed up at the server's clock, at her row's width (nova-config's, as `friend sync`
+last wrote it, whatever `friend up --width` set since), the friends up levelled at once
+(`friend level`), and one happened note to the coordinator, `<friend> is back up:
+<cause> ended` (`NFriendBack`; for a hold ended by its `--until`, `the hold (<reason>)
+ended`); one note per return, none per probe. It runs in `friend sync`'s pass (the
+friend sync loop row, every 15 s), which says `FRIEND-BACK OK <friend> cause=<cause>`
+for each return and `FRIEND-BACK KEPT <friend>` for each probe that failed; a pass on the
+twin, or with no bus (`NOVA_BUS_REDIS` unset), probes no one. The pass reads the roster and
+who is due (her name, her cause, and the hold's at, reason, until and held), runs the probes
+with that roster not in hand, then reads the roster again and applies a result only when her
+entry is still the one it read. A hold set by hand during a probe, on her or on another
+friend, is left as written and she is skipped this pass: the machine does not write the roster
+it read before the probes back over it. `store.FriendsBack`,
+`internal/sprint/friend_back.go`; `TestAFriendHeldForACauseThatEndedIsBroughtBackUp`.
+
 **Last session activity** (the finding of 2026-10-04: the table said up with 8
 working for a friend whose session sat idle from 2:40 to 4:34 PM, and another read
 working=0 while she was busy; a daemon pong shows the daemon answers, not that her

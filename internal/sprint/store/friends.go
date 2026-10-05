@@ -54,6 +54,13 @@ type friendEntry struct {
 	Reason string    `json:"reason,omitempty"`
 	Until  time.Time `json:"until,omitzero"`
 	Return bool      `json:"return,omitempty"`
+	// RowWidth is her nova-config row's width as friend sync last wrote it: the
+	// width the machine brings her back up at (FriendsBack), whatever friend up
+	// --width set since.
+	RowWidth int `json:"row_width,omitempty"`
+	// Probe is the machine's probes of a hold or a down with a cause that ends
+	// (sprint.FriendBackProbe), cleared when she is back up or held again.
+	Probe sprint.FriendBackProbe `json:"probe,omitzero"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
@@ -155,8 +162,10 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode:
 			updated = append(updated, s.Name)
 			rosterChanged = true
+		case e.RowWidth != s.Width:
+			rosterChanged = true // the row's width kept for FriendsBack, nothing shown changed
 		}
-		e.Width, e.Class, e.Mode = s.Width, s.Class, s.Mode
+		e.Width, e.Class, e.Mode, e.RowWidth = s.Width, s.Class, s.Mode, s.Width
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -253,7 +262,7 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 	if !ok {
 		return noFriend(r, friend)
 	}
-	e.Held, e.At, e.By, e.Reason, e.Until = false, time.Time{}, "", "", time.Time{}
+	e.Held, e.At, e.By, e.Reason, e.Until, e.Probe = false, time.Time{}, "", "", time.Time{}, sprint.FriendBackProbe{}
 	if held {
 		e.Held, e.At, e.By, e.Reason, e.Until = true, st.now().UTC().Truncate(time.Second), who, reason, until.UTC().Truncate(time.Second)
 	}
@@ -578,4 +587,189 @@ func (st *Store) FriendBeats(ctx context.Context) (map[string]sprint.Beat, error
 		out[n] = b
 	}
 	return out, nil
+}
+
+// FriendBack is one friend the machine brought back up (FriendsBack): her
+// name, the cause that ended, and the reason her hold or down gave.
+type FriendBack struct {
+	Friend, Cause, Reason string
+}
+
+// friendEntrySame reports whether now is still the roster entry read: every field,
+// with times by instant. FriendsBack applies a probe only when this holds, so a
+// hold written during the probes is not replaced by the entry it read.
+func friendEntrySame(read, now friendEntry) bool {
+	return read.Held == now.Held && read.At.Equal(now.At) && read.By == now.By &&
+		read.Width == now.Width && read.Class == now.Class && read.Mode == now.Mode &&
+		read.Reason == now.Reason && read.Until.Equal(now.Until) && read.Return == now.Return &&
+		read.RowWidth == now.RowWidth && read.Probe.At.Equal(now.Probe.At) && read.Probe.Failed == now.Probe.Failed
+}
+
+// FriendsBack is the machine's return of the friends held or down for a cause
+// that ends (docs/SPEC-SPRINT.md section 1, "A friend back up"; sprint.FriendBackCause):
+// each one due (sprint.FriendBackDue: at her known end, else on the backoff) is
+// probed by probe; one that passes is brought up at her row's width (a hold is
+// released, a down observed by the coordinator's daemon is observed up at the
+// store's clock) with one note to the coordinator, "<friend> is back up: <cause>
+// ended", and the friends up are levelled in the same pass (sprint.FriendLevel);
+// one that fails is probed again after the backoff. A hold with no ending cause
+// (a hold by hand) is never probed and never released here. The roster is read
+// to name who is due, the probes run with that roster not in hand, and it is
+// read again: a result is applied only when her entry is still the one read, and
+// the fresh roster is what is written, so a hold set by hand during a probe is
+// left as written. A nil probe probes no one. It returns who came back and who
+// was probed and stayed.
+func (st *Store) FriendsBack(ctx context.Context, probe sprint.FriendProbeFn) (back []FriendBack, kept []string, err error) {
+	if probe == nil {
+		return nil, nil, nil
+	}
+	r, kv, err := st.roster(ctx)
+	if kv == nil || err != nil || len(r) == 0 {
+		return nil, nil, err
+	}
+	now := st.now().UTC().Truncate(time.Second)
+	rows, err := st.FriendRows(ctx, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	generation, err := st.seatGeneration(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	// due is one friend to probe, as her entry was read; clear is a probe record
+	// to drop because she is no longer held or down for a cause.
+	type dueFriend struct {
+		name, cause, reason string
+		until               time.Time
+		entry               friendEntry
+		observed            bool
+	}
+	var due []dueFriend
+	var clear []dueFriend
+	for _, row := range rows {
+		e := r[row.Name]
+		// a hold carries its own reason and until; a down not held carries the
+		// observation's, under the seat's generation now (FriendRows)
+		var reason string
+		var until time.Time
+		switch {
+		case e.Held:
+			reason, until = e.Reason, e.Until
+		case row.Status == sprint.Down && row.Health != nil && row.Health.Generation == generation:
+			reason, until = row.Reason, row.Until
+		default:
+			if e.Probe != (sprint.FriendBackProbe{}) {
+				clear = append(clear, dueFriend{name: row.Name, entry: e})
+			}
+			continue
+		}
+		cause := sprint.FriendBackCause(reason, until)
+		if !sprint.FriendBackDue(cause, until, e.Probe, now) {
+			continue
+		}
+		due = append(due, dueFriend{name: row.Name, cause: cause, reason: reason, until: until, entry: e, observed: row.Health != nil})
+	}
+	if len(due) == 0 && len(clear) == 0 {
+		return nil, nil, nil
+	}
+	// the probes, with no roster in hand: each may block, and a hold set by hand
+	// while one blocks must still be there when the results are applied
+	type probed struct {
+		due dueFriend
+		res sprint.FriendProbeResult
+	}
+	results := make([]probed, 0, len(due))
+	for _, d := range due {
+		results = append(results, probed{due: d, res: probe(d.name, d.cause)})
+	}
+	r, kv, err = st.roster(ctx)
+	if kv == nil || err != nil {
+		return nil, nil, err
+	}
+	changed := false
+	for _, c := range clear {
+		e, ok := r[c.name]
+		if !ok || !friendEntrySame(c.entry, e) {
+			continue
+		}
+		e.Probe = sprint.FriendBackProbe{}
+		r[c.name] = e
+		changed = true
+	}
+	observed := map[string]bool{}
+	for _, p := range results {
+		e, ok := r[p.due.name]
+		if !ok || !friendEntrySame(p.due.entry, e) {
+			continue // her entry moved during the probe: skip her this pass
+		}
+		if !p.res.Passes(p.due.cause) {
+			if !p.due.until.IsZero() && e.Probe.At.Before(p.due.until) {
+				e.Probe.Failed = 0 // the known end came: the backoff counts from it
+			}
+			e.Probe = sprint.FriendBackProbe{At: now, Failed: e.Probe.Failed + 1}
+			r[p.due.name] = e
+			kept = append(kept, p.due.name)
+			changed = true
+			continue
+		}
+		if e.Held {
+			e.Held, e.At, e.By, e.Reason, e.Until = false, time.Time{}, "", "", time.Time{}
+		}
+		if e.RowWidth > 0 {
+			e.Width = e.RowWidth
+		}
+		e.Probe = sprint.FriendBackProbe{}
+		r[p.due.name] = e
+		back = append(back, FriendBack{Friend: p.due.name, Cause: p.due.cause, Reason: p.due.reason})
+		observed[p.due.name] = p.due.observed
+		changed = true
+	}
+	if !changed {
+		return nil, nil, nil
+	}
+	if err := putRoster(ctx, kv, r); err != nil {
+		return nil, kept, err
+	}
+	if len(back) == 0 {
+		return nil, kept, nil
+	}
+	to, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return back, kept, err
+	}
+	for _, b := range back {
+		_, err := st.Run(ctx, Step{Verb: "friend back", Actor: sprint.MachineActor, Plan: func(s *sprint.Snapshot) sprint.Plan {
+			p := sprint.Plan{Notes: []sprint.Note{sprint.FriendBackNote(b.Friend, b.Cause, b.Reason, sprint.MachineActor, to, s.Now)}}
+			if observed[b.Friend] {
+				// her probe was her session's answer: observed up at the store's clock, so a
+				// down the daemon observed is not what the table shows of her now
+				p.Health = &sprint.FriendHealthWrite{Friend: b.Friend, Health: sprint.FriendHealth{State: sprint.Up, Seen: s.Now, Generation: generation}}
+			}
+			return p
+		}})
+		if err != nil {
+			return back, kept, err
+		}
+	}
+	// her queue levelled in the same pass: the friends up even their ready queues
+	seats, err := st.FriendSeats(ctx, st.now())
+	if err != nil {
+		return back, kept, err
+	}
+	beats, err := st.FriendBeats(ctx)
+	if err != nil {
+		return back, kept, err
+	}
+	started := map[string]string{}
+	for _, b := range beats {
+		if b.Friend != nil {
+			for _, run := range b.Friend.Running {
+				started[run] = "her beat names it running"
+			}
+		}
+	}
+	level := FriendLevelStep(sprint.FriendLevelReq{Seats: seats, Started: started, Who: sprint.MachineActor})
+	level.Actor = sprint.MachineActor
+	_, err = st.Run(ctx, level)
+	return back, kept, err
 }
