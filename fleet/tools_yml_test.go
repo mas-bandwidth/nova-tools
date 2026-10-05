@@ -51,8 +51,8 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	})
 	copied := taskIndex(install, func(task map[string]any) bool {
 		cp, _ := task["ansible.builtin.copy"].(map[string]any)
-		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/"+sprintFile &&
-			str(cp["dest"]) == "{{ nova_bin_dir }}/"+sprintFile && cp["mode"] == "0755"
+		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}" &&
+			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
 	})
 
 	cases := []struct {
