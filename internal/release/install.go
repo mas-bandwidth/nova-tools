@@ -209,6 +209,29 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	// binaries came from, which the prune below never removes, so a bad build
 	// can be put back by re-installing the one it replaced.
 	var before []string
+	// STAGE EVERY NEW FILE BEFORE THE FIRST RENAME (security#72 finding 4).
+	// The old loop renamed tool by tool, so a planted .<tool>.new failed the
+	// next tool after earlier ones were already replaced. CreateTemp is
+	// exclusive and unpredictable; mode 0755; every error path removes the
+	// temps. Renames run only once every tool is staged. Each rename is
+	// os.Rename of that temp onto the target: installFile would write the
+	// bytes again to the fixed name "."+base+".new", and a directory planted
+	// there would fail mid-loop after earlier tools were already replaced.
+	// installFile itself is unchanged (windows aside, findings 5 and 8).
+	// A rename that fails puts back the tools already replaced.
+	type stagedTool struct {
+		name   string
+		target string
+		tmp    string
+	}
+	var staged []stagedTool
+	removeStaged := func() {
+		for _, s := range staged {
+			if s.tmp != "" {
+				os.Remove(s.tmp)
+			}
+		}
+	}
 	for _, a := range arts {
 		// a.Name is the file name the BUILD chose for the target platform --
 		// ToolFile, so `nova-bus.exe` in a windows release -- read back out of
@@ -235,13 +258,71 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			skipped++
 			continue
 		}
-		progress(errs, "installing %s", a.Name)
-		if err := atomicInstall(filepath.Join(dir, a.Name), target); err != nil {
+		tmp, err := stageArtifact(o.bin, a.Name, filepath.Join(dir, a.Name))
+		if err != nil {
+			removeStaged()
 			fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d were in place)\n",
-				field(a.Name), field(o.bin), oneLine("", err), installed, len(arts))
+				field(a.Name), field(o.bin), oneLine("", err), 0, len(arts))
 			return 1
 		}
+		staged = append(staged, stagedTool{name: a.Name, target: target, tmp: tmp})
+	}
+	type placedTool struct {
+		name    string
+		target  string
+		aside   string
+		existed bool
+	}
+	var placed []placedTool
+	// Last replaced first, so a failure walks back out the way it came in.
+	restorePlaced := func() ([]string, error) {
+		var names []string
+		for i := len(placed) - 1; i >= 0; i-- {
+			p := placed[i]
+			if err := putBack(p.target, p.aside, p.existed); err != nil {
+				return names, fmt.Errorf("%s: %w", p.name, err)
+			}
+			names = append(names, p.name)
+		}
+		return names, nil
+	}
+	failReplaced := func(tool string, err error) int {
+		names, rerr := restorePlaced()
+		removeStaged()
+		// names are the tools put back. The rest of placed are still the
+		// new bytes. Saying 0 whenever restore failed was a false claim.
+		left := len(placed) - len(names)
+		if rerr != nil {
+			err = fmt.Errorf("%w; restore failed: %v", err, rerr)
+		} else if len(names) > 0 {
+			err = fmt.Errorf("%w; restored %s", err, strings.Join(names, ","))
+		}
+		fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d left replaced)\n",
+			field(tool), field(o.bin), oneLine("", err), left, len(arts))
+		return 1
+	}
+	for i, s := range staged {
+		aside, existed, err := copyAside(s.target)
+		if err != nil {
+			return failReplaced(s.name, err)
+		}
+		progress(errs, "installing %s", s.name)
+		// The staged temp is already the exclusive file. Rename it onto
+		// the target. Do not call installFile: that writes "."+base+".new".
+		if err := os.Rename(s.tmp, s.target); err != nil {
+			if backErr := putBack(s.target, aside, existed); backErr != nil {
+				err = fmt.Errorf("%w; %s could not be restored: %v", err, s.name, backErr)
+			}
+			return failReplaced(s.name, err)
+		}
+		staged[i].tmp = ""
+		placed = append(placed, placedTool{name: s.name, target: s.target, aside: aside, existed: existed})
 		installed++
+	}
+	for _, p := range placed {
+		if p.aside != "" {
+			os.Remove(p.aside)
+		}
 	}
 	retired := 0
 	if o.retire != "" {
@@ -325,6 +406,78 @@ func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (i
 // `key=value` extra -- the stamp is field two, alone, in every binary.
 func hasToken(line, version string) bool {
 	return slices.Contains(strings.Fields(strings.ReplaceAll(line, "=", " ")), version)
+}
+
+// stageArtifact copies src into an exclusive temp in bin. Publish renames
+// this file onto the target. The name is not the predictable .<tool>.new
+// installFile still uses: a planted directory there must not be opened.
+func stageArtifact(bin, name, src string) (string, error) {
+	body, err := os.ReadFile(src)
+	if err != nil {
+		return "", err
+	}
+	return writeTemp(bin, "."+name+".new.*", body, 0o755)
+}
+
+// copyAside keeps target's bytes so a later rename failure can put them back.
+// A missing target is nothing to keep.
+func copyAside(target string) (string, bool, error) {
+	info, err := os.Lstat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Errorf("%s is not a regular file", target)
+	}
+	body, err := os.ReadFile(target)
+	if err != nil {
+		return "", false, err
+	}
+	path, err := writeTemp(filepath.Dir(target), "."+filepath.Base(target)+".aside.*", body, info.Mode().Perm())
+	if err != nil {
+		return "", false, err
+	}
+	return path, true, nil
+}
+
+// writeTemp creates an exclusive file, writes body, and sets mode. Any error
+// removes the file.
+func writeTemp(dir, pattern string, body []byte, mode os.FileMode) (string, error) {
+	f, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	_, werr := f.Write(body)
+	cerr := f.Close()
+	if werr != nil || cerr != nil {
+		os.Remove(path)
+		if werr != nil {
+			return "", werr
+		}
+		return "", cerr
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+// putBack undoes one replacement. existed false means the name was absent and
+// must be absent again; otherwise the aside's bytes go back under target.
+func putBack(target, aside string, existed bool) error {
+	if !existed {
+		err := os.Remove(target)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return os.Rename(aside, target)
 }
 
 // atomicInstall writes beside the target and renames over it. The rename is what
