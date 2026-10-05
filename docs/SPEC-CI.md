@@ -2647,6 +2647,31 @@ this rule having run on it, and a main run excuses it all the same.
 `origin/dev` is trusted to be dev's; the workflow's own fetch
 (`+dev:refs/remotes/origin/dev`) makes it so.
 
+### `never-force` — no shared ref is force-pushed or hard-reset
+
+**The rule.** Nothing in nova-tools may rewrite a shared ref. A shared ref is any
+branch under `origin/`, plus `dev` and `main`. Any script, workflow or Go code that
+uses `push --force`, `push -f`, `--force-with-lease`, `push origin +` or `reset --hard origin/`
+against a shared ref is refused. Legitimate uses (a test fixture that asserts the
+refusal, a private clone reset) are listed in the allowlist.
+
+**The mistake it prevents.** A force push to `origin/dev` or `origin/main` that would
+destroy work from other contributors or break downstream integrations.
+
+**The test.** `TestNoForcePushOrHardResetOfASharedRef` (`internal/ci/never_force_class_test.go`),
+which scans the tree for force patterns and refuses any against a shared ref not
+listed in `internal/ci/testdata/never_force/allowlist.txt`.
+
+**Its allowlist.** `internal/ci/testdata/never_force/allowlist.txt`, one path per line
+with a reason; shrink-only.
+
+**Its remedy line.** `remedy="remove the force push or reset; if this is a legitimate
+use (test fixture, private clone), add it to internal/ci/testdata/never_force/allowlist.txt with
+a reason; docs/SPEC-CI.md#never-force"`.
+
+**Its narrowings.** It reads Go files, shell scripts, Makefiles and workflows; `testdata/`
+and `vendor/` are skipped.
+
 ### `tlc` — bounded model evidence
 
 `make tlc` runs one declared `TLC_GROUP` on a Linux bench, using explicit

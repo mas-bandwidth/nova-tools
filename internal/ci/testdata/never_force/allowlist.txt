@@ -1,0 +1,3 @@
+# allowlist for never-force class test
+# path reason
+internal/cardcontract/shims_functional_test.go Test fixture that asserts force push behavior
