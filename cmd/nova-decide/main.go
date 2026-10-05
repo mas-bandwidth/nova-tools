@@ -276,6 +276,28 @@ An id comes from the source path and content, so a second import adds nothing. P
 				Run: w.importRecords,
 			},
 			{
+				Name:   "score-grades",
+				Usage:  "score-grades --record <file> --log <file> [--day <date>]",
+				Effect: tool.Inspection,
+				Detail: `Grades Jev's grades against the sprint log, for the grade decisions made in one UTC day
+(--day; default: the day before now). Each card is scored by its newest grade of the day against its
+cost records in a nova-sprint log --json export: GRADE lines are Jev's grade by the tier the card was
+first dealt on (n, landed by attempt 2, landed, escalated to pro, dropped, open); BUCKET lines are the
+p of a flash or pro grade by whether the flash first attempt failed. A card the log lacks is counted
+as no_log; a card never dealt to the fleet is left out. See docs/SPEC-NOVA-DECIDE.md section 11.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("record", "the record file holding the grade decisions")
+					f.Required("log", "a nova-sprint log --json export, the outcomes")
+					f.String("day", "", "the UTC day scored, 2006-01-02; default: the day before now")
+					f.Check(func(c *tool.Call) {
+						if _, err := time.Parse(time.DateOnly, c.Str("day")); c.Str("day") != "" && err != nil {
+							c.Problem(fmt.Sprintf("--day %q is not a date (2006-01-02)", c.Str("day")))
+						}
+					})
+				},
+				Run: w.scoreGrades,
+			},
+			{
 				Name:    "findings",
 				Usage:   "findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>]",
 				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
@@ -439,6 +461,37 @@ func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, 
 		return nil, nil, tool.Refuse(problems...)
 	}
 	return texts, inputs, nil
+}
+
+// scoreGrades prints the day's grade decisions scored against the sprint log
+// (docs/SPEC-NOVA-DECIDE.md section 11, scoring the grades).
+func (w world) scoreGrades(c *tool.Call) *tool.Out {
+	ds, err := decide.Load(c.Str("record"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	f, err := os.Open(c.Str("log"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	defer f.Close()
+	facts, err := decide.ReadLog(f)
+	if err != nil {
+		return tool.Refuse(c.Str("log") + ": " + err.Error())
+	}
+	day := w.now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	if c.Given("day") {
+		day, _ = time.Parse(time.DateOnly, c.Str("day")) // checked by the verb's flag rule
+	}
+	s := decide.ScoreGrades(ds, facts, day, day.Add(24*time.Hour))
+	o := tool.Done().Fact("day", day.Format(time.DateOnly)).Fact("decisions", s.Decisions).Fact("cards", s.Cards).Fact("no_log", s.NoLog)
+	for _, r := range s.Rows {
+		o.Item("grade", "jev", r.Grade, "dealt", r.Dealt, "n", r.N, "landed2", r.Landed2, "landed", r.Landed, "to_pro", r.ToPro, "dropped", r.Dropped, "open", r.Open)
+	}
+	for _, b := range s.Buckets {
+		o.Item("bucket", "jev", b.Grade, "p", b.Bucket, "n", b.N, "att1_failed", b.FirstFailed, "landed2", b.Landed2)
+	}
+	return o
 }
 
 // findings prints the record's score decisions in the window clustered by class;

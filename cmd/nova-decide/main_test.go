@@ -561,3 +561,55 @@ func TestBriefEndsAtTheBatchDeadline(t *testing.T) {
 		assert.NoFileExists(t, rec, "nothing was recorded")
 	})
 }
+
+// score-grades tables one UTC day's grade decisions against the sprint log: the columns,
+// and the daily window (a grade at 23:59:59 the day before and one at midnight after are
+// out; a card the fleet never dealt is left out of the tables). The record and the log are
+// written here, so the test reads no file beyond its own (docs/SPEC-NOVA-DECIDE.md section 11).
+func TestScoreGradesJevAgainstOutcomes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rec, logf := filepath.Join(dir, "grades.jsonl"), filepath.Join(dir, "sprint-log.json")
+	grades := []string{
+		`{"decision": {"id": "c1@grade.0123456789ab", "decision": "grade", "schema": "s", "backend": "fixed", "at": "2026-10-03T09:00:00Z", "inputs": {}, "state": "x", "answers": {"grade": {"type": "choice", "value": "flash", "p": {"flash": 0.9, "pro": 0.05, "script": 0.05}}}, "usage": {}}}`,
+		`{"decision": {"id": "c2@grade.0123456789ab", "decision": "grade", "schema": "s", "backend": "fixed", "at": "2026-10-03T10:00:00Z", "inputs": {}, "state": "x", "answers": {"grade": {"type": "choice", "value": "flash", "p": {"flash": 0.6, "pro": 0.3, "script": 0.1}}}, "usage": {}}}`,
+		`{"decision": {"id": "c3@grade.0123456789ab", "decision": "grade", "schema": "s", "backend": "fixed", "at": "2026-10-03T11:00:00Z", "inputs": {}, "state": "x", "answers": {"grade": {"type": "choice", "value": "pro", "p": {"flash": 0.1, "pro": 0.8, "script": 0.1}}}, "usage": {}}}`,
+		`{"decision": {"id": "c4@grade.0123456789ab", "decision": "grade", "schema": "s", "backend": "fixed", "at": "2026-10-02T23:59:59Z", "inputs": {}, "state": "x", "answers": {"grade": {"type": "choice", "value": "flash", "p": {"flash": 0.9, "pro": 0.05, "script": 0.05}}}, "usage": {}}}`,
+		`{"decision": {"id": "c5@grade.0123456789ab", "decision": "grade", "schema": "s", "backend": "fixed", "at": "2026-10-04T00:00:00Z", "inputs": {}, "state": "x", "answers": {"grade": {"type": "choice", "value": "flash", "p": {"flash": 0.9, "pro": 0.05, "script": 0.05}}}, "usage": {}}}`,
+		`{"decision": {"id": "c6@grade.0123456789ab", "decision": "grade", "schema": "s", "backend": "fixed", "at": "2026-10-03T12:00:00Z", "inputs": {}, "state": "x", "answers": {"grade": {"type": "choice", "value": "flash", "p": {"flash": 0.9, "pro": 0.05, "script": 0.05}}}, "usage": {}}}`,
+		`{"decision": {"id": "c7@grade.0123456789ab", "decision": "grade", "schema": "s", "backend": "fixed", "at": "2026-10-03T13:00:00Z", "inputs": {}, "state": "x", "answers": {"grade": {"type": "choice", "value": "flash", "p": {"flash": 0.9, "pro": 0.05, "script": 0.05}}}, "usage": {}}}`,
+	}
+	lines := []string{
+		`{"card": "c1", "primary": "c1", "set": {"cost_record:c1#1": "kind=work card=c1 attempt=1 on_route=r on_tier=flash end=ok"}}`,
+		`{"card": "c1", "primary": "c1", "table": "work", "to": "work:landed"}`,
+		`{"card": "c2", "primary": "c2", "set": {"cost_record:c2#1": "kind=work card=c2 attempt=1 on_route=r on_tier=flash end=failed"}}`,
+		`{"card": "c2", "primary": "c2", "set": {"cost_record:c2#2": "kind=work card=c2 attempt=2 on_route=r on_tier=pro end=ok"}}`,
+		`{"card": "c2", "primary": "c2", "set": {"cost_record:c2#3": "kind=work card=c2 attempt=3 on_route=r on_tier=pro end=ok"}}`,
+		`{"card": "c2", "primary": "c2", "table": "work", "to": "work:landed"}`,
+		`{"card": "c3", "primary": "c3", "set": {"cost_record:c3#1": "kind=work card=c3 attempt=1 on_route=r on_tier=pro end=ok"}}`,
+		`{"card": "c3", "primary": "c3", "table": "work", "to": "work:working"}`,
+		`{"card": "c4", "primary": "c4", "set": {"cost_record:c4#1": "kind=work card=c4 attempt=1 on_route=r on_tier=flash end=ok"}}`,
+		`{"card": "c4", "primary": "c4", "table": "work", "to": "work:landed"}`,
+		`{"card": "c5", "primary": "c5", "set": {"cost_record:c5#1": "kind=work card=c5 attempt=1 on_route=r on_tier=flash end=ok"}}`,
+		`{"card": "c5", "primary": "c5", "table": "work", "to": "work:landed"}`,
+		`{"card": "c6", "primary": "c6", "set": {"cost_record:c6#1": "kind=work card=c6 attempt=1 on_route=- on_tier=- end=ok"}}`,
+		`{"card": "c6", "primary": "c6", "table": "work", "to": "work:landed"}`,
+	}
+	require.NoError(t, os.WriteFile(rec, []byte(strings.Join(grades, "\n")+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(logf, []byte(`{"lines": [`+strings.Join(lines, ",")+`]}`), 0o600))
+	args := []string{"score-grades", "--record", rec, "--log", logf}
+	cli.Do(t, append(args, "--day", "2026-10-03")...).Exit(0).Out(
+		"SCORE-GRADES OK day=2026-10-03 decisions=5 cards=5 no_log=1",
+		"GRADE jev=flash dealt=flash n=2 landed2=1 landed=2 to_pro=1 dropped=0 open=0",
+		"GRADE jev=pro dealt=pro n=1 landed2=0 landed=0 to_pro=0 dropped=0 open=1",
+		"BUCKET jev=flash p=<0.7 n=1 att1_failed=1 landed2=0",
+		"BUCKET jev=flash p=0.85-0.95 n=1 att1_failed=0 landed2=1")
+	// the default day is the day before the world's clock (2026-10-02 21:00Z)
+	cli.Do(t, args...).Exit(0).Out("day=2026-10-01 decisions=0 cards=0 no_log=0")
+	cli.Do(t, append(args, "--day", "2026-10-02")...).Exit(0).Out("decisions=1 cards=1 no_log=0")
+	testkit.Refusals(t, cli, []testkit.Refusal{
+		{Args: append(args, "--day", "tuesday"), Code: 2, Says: "--day \"tuesday\" is not a date"},
+		{Args: []string{"score-grades", "--record", rec}, Code: 2, Says: "--log is required"},
+		{Args: []string{"score-grades", "--record", rec, "--log", filepath.Join(dir, "nope.json")}, Code: 2, Says: "nope.json"},
+	})
+}
