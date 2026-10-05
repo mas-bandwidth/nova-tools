@@ -1031,7 +1031,8 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 	}
 	childEnv := nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath)
 	// A headless harness runs from a private home under the data home, seeded with its credential
-	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one.
+	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one. claude
+	// copies no file: its login is the token --pass hands it by name, and a run without one says so.
 	if k := p.cfg.headless(); k != "" {
 		h := swarm.HeadlessHomeOf(k, benchHome(p.cfg), p.dataHome)
 		for _, kv := range h.Env {
@@ -1041,6 +1042,9 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 		if err := seedHeadlessHome(h); err != nil {
 			refuseNative(errOut, fmt.Sprintf("%s the harness's private home could not be made under the data home: %s", oneline.Field(p.cfg.label), oneline.Err(err)))
 			return nil, nativeRunResult{}, 2
+		}
+		if note := swarm.HeadlessTokenNote(h, childEnv); note != "" {
+			fmt.Fprintf(errOut, "NATIVE NOTE login: %s %s\n", oneline.Field(p.cfg.label), oneline.Escape(note))
 		}
 	}
 	if p.cfg.root != "" {
@@ -2270,10 +2274,11 @@ func headlessLaunchUsage(kind string, capture []byte) (usage swarm.ProviderUsage
 
 // seedHeadlessHome makes the harness's private home (swarm.HeadlessHome): emptied of what
 // an earlier card of this slot left, then given a copy of the credential files the harness
-// needs, 0600, and nothing else of the bench's own login. A credential the bench has not got
-// is skipped: the harness then answers logged out, which the run classes as a provider
-// failure of class auth (swarm.HeadlessFailure). The bench's own files are only read, so
-// the card can write its copy and never the login.
+// needs, 0600, and nothing else of the bench's own login (claude needs none: its login is
+// the token the run hands it, h.Token). A credential the bench has not got is skipped: the
+// harness then answers logged out, which the run classes as a provider failure of class
+// auth (swarm.HeadlessFailure). The bench's own files are only read, so the card can write
+// its copy and never the login.
 func seedHeadlessHome(h swarm.HeadlessHome) error {
 	if err := safepath.RemoveUnder(filepath.Dir(h.Dir), h.Dir); err != nil {
 		return err
