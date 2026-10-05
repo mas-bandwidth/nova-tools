@@ -194,6 +194,50 @@ the hold takes back only the cards not yet started
 a card the hold took back may be dealt to the same friend again (only
 `friend take` keeps it off them, `taken_from`). The provider's limit only
 stops answers in the model; limit.go's `Down` until the reset is not in it.
+## A friend's status, from evidence (internal/friend/status.go)
+
+The owner, 2026-10-04: "Once again I look at friends and I wonder, are
+friends actually doing work?" The daemon's beat says only that its loop runs.
+A friend's status is decided by one function, `FriendStatus`, from what the
+friend did, in order, the first rule that holds deciding it:
+
+1. the harness not running is down (`harness not running`);
+2. at a limit is down until the reset (`limit until Mon 1:00 PM`, or
+   `weekly limit until ...` when the limit has a name);
+3. no session answer within the bound, `AnswerBound`, two windows (six
+   minutes: a ping each window and a challenge open for less than one), is
+   down (`no session answer 12m`, `no session answer ever`);
+4. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n>
+   undelivered)`);
+5. otherwise up (`session answer 40s`).
+
+Messages waiting on her stream are work waiting, never down on their own.
+Unknown harness evidence is no evidence and decides nothing; the session
+answer is the proof the harness ran. The beat decides nothing.
+
+The evidence, each piece shown beside the status whatever decided it: the
+harness (`harness running`, `harness not running`, `harness unknown`); the
+age of the session's last answer (the pong file); the limit and its reset
+(`limit.json` in the state directory, `{"reason":..,"until":<RFC3339>}`, the
+daemon its one writer, no file no limit); the messages waiting on her stream,
+pending and new (`bus.Peek`, counted when `--redis` names the store, else
+`undelivered not counted`); and the age and exit of her last result (the
+newest turn line of `deliver.log`, `<RFC3339> subject=... exit=<n>`). A bus
+that cannot deliver is the daemon down (its status file over thirty seconds
+old), the session broken, or the store failing.
+
+`nova-friend status` prints it after the daemon's facts: `status=<up|down>
+why="<the rule that decided it>" evidence="<each piece, ; between>"`.
+
+What is owed, outside this tool: the harness is known running only for Grok (a
+tail under the open window); other harnesses are `unknown` until each has a
+probe. No writer of `limit.json` yet: the daemon reads no limit from a turn.
+The coordinator's `friend health` carries `--reason` and `--until`, but not
+the five pieces of evidence, and the friends table (`nova-sprint where
+--json`, the dashboard) shows the observation's word, not this verdict; the
+coordinator's daemon sending this verdict through `friend health`, and the
+table showing `why` and the evidence beside the status, are the next change,
+in `internal/sprint` and `cmd/nova-sprint`.
 
 ## The loop (internal/friend/daemon.go)
 

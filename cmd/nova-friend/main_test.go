@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -430,7 +431,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z reason="invalid_request_error: bad input"`,
+		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
@@ -768,4 +769,46 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--within", "5s").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob", "INSTALL NOTE check: CHECK FAIL harness=opencode stage=act")
 	assert.FileExists(t, filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
+}
+
+// status decides the friend's status from evidence and shows it beside the
+// status (docs/SPEC-FRIEND.md, "A friend's status, from evidence"): a fresh
+// beat with no session answer is down; a session answer inside the bound is
+// up; the messages waiting on her stream are counted; the last turn's line
+// of the log is shown; a limit is down until its reset; a daemon gone is a
+// bus that cannot deliver.
+func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet, Beats: 40, LastBeat: start}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out(`daemon=up`, `status=down why="no session answer ever" evidence="harness unknown; no session answer ever; no limit; 0 undelivered; no result yet"`)
+
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-time.Minute)}))
+	b := &bus.Bus{Store: r.store}
+	for range 2 {
+		_, err := b.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "work", Body: "x"})
+		require.NoError(t, err)
+	}
+	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 took=3s exit=0 acked=true"))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out(`status=up why="session answer 1m" evidence="harness unknown; session answer 1m; no limit; 2 undelivered; last result 10m exit=0"`)
+
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-12 * time.Minute)}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="no session answer 12m"`)
+
+	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
+	limit, err := json.Marshal(friend.Limit{Reason: "weekly", Until: start.Add(34 * time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(state, friend.LimitFile), limit, 0o644))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="weekly limit until ` + start.Add(34*time.Hour).Local().Format("Mon 3:04 PM") + `"`)
+	require.NoError(t, os.Remove(filepath.Join(state, friend.LimitFile)))
+
+	r.now = start.Add(friend.DaemonStale)
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`daemon=down`, `status=down why="bus cannot deliver: daemon down 31s (2 undelivered)"`)
+
+	cli.Do(t, "status", "--as", "bob", "--dir", dir, "--redis", "").Exit(0).Out(`undelivered not counted`)
 }

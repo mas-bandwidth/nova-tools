@@ -450,18 +450,26 @@ or WAIT-PONG NONE at exit 1.`,
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
-(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
+status=<up|down> why= evidence=, and for harness grok route=<push|defer>,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. STATUS NONE at
+harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
+(known for grok, a tail under the window: running; unknown elsewhere, never down on its own); at a limit (the state directory's
+` + friend.LimitFile + `) is down until the reset; no session answer (the pong file) under ` + friend.AnswerBound.String() + ` is down; a bus that cannot
+deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes it up. why
+is the rule that decided it, as a person reads it ("no session answer 12m", "limit until Mon 1:00 PM"); evidence is every piece,
+"; "-separated: the harness, the session answer, the limit, the messages waiting on the stream (counted with --redis), the last
+turn's end and exit from the log. STATUS NONE at
 exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
 					f.Required("dir", "the friend's working directory, where the queue file lives")
 					stateDir(f)
+					redis(f)
 				},
 				Run: w.status,
 			},
@@ -947,6 +955,12 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
+	var route, routeLine string
+	var routeErr error
+	if s.Harness == "grok" {
+		route, routeLine, routeErr = (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
+	}
+	v := friend.FriendStatus(w.evidence(c, s, p, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
@@ -966,6 +980,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if prErr != nil {
 		o.Note("the presence file: " + prErr.Error())
 	}
+	o.Fact("status", v.Status).Fact("why", tool.Text(v.Reason)).Fact("evidence", tool.Text(strings.Join(v.Evidence, "; ")))
 	if s.BeatError != "" {
 		o.Note("the last beat failed: " + s.BeatError)
 	}
@@ -979,7 +994,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Note("the queue file: " + qerr.Error())
 	}
 	if s.Harness == "grok" {
-		route, line, rerr := (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
+		line, rerr := routeLine, routeErr
 		if route == "" {
 			route = "defer"
 		}
@@ -995,6 +1010,52 @@ func (w world) status(c *tool.Call) *tool.Out {
 		}
 	}
 	return o
+}
+
+// evidence is what the friend's status is decided from (docs/SPEC-FRIEND.md,
+// "A friend's status, from evidence"): the harness, the session's last
+// answer, the limit file, the messages waiting on her stream (counted when
+// --redis names the store), and the last turn's line of the log. A daemon
+// that is down, a broken session and a store that does not answer are a bus
+// that cannot deliver to her. What cannot be read is a NOTE on o.
+func (w world) evidence(c *tool.Call, s friend.Status, p friend.Pong, now time.Time, daemonUp bool, route string, o *tool.Out) friend.Evidence {
+	state := w.stateDir(c)
+	e := friend.Evidence{DaemonUp: daemonUp, LastAnswer: p.At, Undelivered: -1}
+	if route == "push" {
+		e.Harness = friend.HarnessRunning // a tail runs under the open window's pid
+	}
+	l, _, err := friend.ReadLimitFile(state)
+	if err != nil {
+		o.Note("the limit file: " + err.Error())
+	}
+	e.Limit, e.LimitUntil = l.Reason, l.Until
+	if e.LastResult, e.LastExit, err = friend.LastResult(state); err != nil {
+		o.Note("the log: " + err.Error())
+	}
+	switch {
+	case !daemonUp:
+		e.BusBlocked = "daemon down " + friend.Ago(now.Sub(s.At))
+	case s.Session == friend.SessionBroken:
+		e.BusBlocked = "session broken"
+	case s.StoreError != "":
+		e.BusBlocked = "the store: " + s.StoreError
+	}
+	if addr := c.Str("redis"); addr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+		defer cancel()
+		st, closeStore, err := w.open(ctx, addr)
+		if err == nil {
+			defer closeStore()
+			var pending, fresh []bus.Entry
+			if pending, fresh, err = (&bus.Bus{Store: st}).Peek(ctx, c.Str("as")); err == nil {
+				e.Undelivered = len(pending) + len(fresh)
+			}
+		}
+		if err != nil && e.BusBlocked == "" {
+			e.BusBlocked = "the store: " + err.Error()
+		}
+	}
+	return e
 }
 
 func dash(s string) string {
