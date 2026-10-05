@@ -474,7 +474,7 @@ func (w world) scoreGrades(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only log file
 	facts, err := decide.ReadLog(f)
 	if err != nil {
 		return tool.Refuse(c.Str("log") + ": " + err.Error())
