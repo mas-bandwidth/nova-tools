@@ -88,6 +88,7 @@ const (
 	coverList
 	coverZSet
 	coverStream
+	coverSet
 )
 
 type coverVal struct {
@@ -164,6 +165,14 @@ func (db *coverDB) apply(cmd redis.Cmder) error {
 		return db.cmdLLen(cmd, coverStr(args, 1))
 	case "ltrim":
 		return db.cmdLTrim(cmd, coverStr(args, 1), coverInt(args, 2), coverInt(args, 3))
+	case "incrby":
+		return db.cmdIncrBy(cmd, coverStr(args, 1), coverInt(args, 2))
+	case "sadd":
+		return db.cmdSAdd(cmd, coverStr(args, 1), args[2:])
+	case "smembers":
+		return db.cmdSMembers(cmd, coverStr(args, 1))
+	case "xlen":
+		return db.cmdXLen(cmd, coverStr(args, 1))
 	case "xadd":
 		return db.cmdXAdd(cmd, coverStr(args, 1), args[2:])
 	case "xrange":
@@ -363,6 +372,68 @@ func (db *coverDB) cmdLRange(cmd redis.Cmder, key string, start, stop int64) err
 	return coverFill(cmd, append([]string{}, v.list[a:b+1]...))
 }
 
+func (db *coverDB) cmdIncrBy(cmd redis.Cmder, key string, by int64) error {
+	v := db.keys[key]
+	n := int64(0)
+	if v != nil {
+		if v.kind != coverString {
+			return errCoverWrongType
+		}
+		parsed, err := strconv.ParseInt(v.s, 10, 64)
+		if err != nil {
+			return coverRedisErr("ERR value is not an integer or out of range")
+		}
+		n = parsed
+	}
+	n += by
+	db.keys[key] = &coverVal{kind: coverString, s: strconv.FormatInt(n, 10)}
+	return coverFill(cmd, n)
+}
+
+func (db *coverDB) cmdSAdd(cmd redis.Cmder, key string, members []any) error {
+	v, err := db.set(key)
+	if err != nil {
+		return err
+	}
+	var n int64
+	for i := range members {
+		m := coverStr(members, i)
+		if _, ok := v.h[m]; ok {
+			continue
+		}
+		v.h[m] = ""
+		n++
+	}
+	return coverFill(cmd, n)
+}
+
+func (db *coverDB) cmdSMembers(cmd redis.Cmder, key string) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, []string{})
+	}
+	if v.kind != coverSet {
+		return errCoverWrongType
+	}
+	out := make([]string, 0, len(v.h))
+	for m := range v.h {
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return coverFill(cmd, out)
+}
+
+func (db *coverDB) cmdXLen(cmd redis.Cmder, key string) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, int64(0))
+	}
+	if v.kind != coverStream {
+		return errCoverWrongType
+	}
+	return coverFill(cmd, int64(len(v.stream)))
+}
+
 func (db *coverDB) cmdLLen(cmd redis.Cmder, key string) error {
 	v := db.keys[key]
 	if v == nil {
@@ -543,6 +614,22 @@ func (db *coverDB) stream(key string) (*coverVal, error) {
 	}
 	if v.kind != coverStream {
 		return nil, errCoverWrongType
+	}
+	return v, nil
+}
+
+func (db *coverDB) set(key string) (*coverVal, error) {
+	v := db.keys[key]
+	if v == nil {
+		v = &coverVal{kind: coverSet, h: map[string]string{}}
+		db.keys[key] = v
+		return v, nil
+	}
+	if v.kind != coverSet {
+		return nil, errCoverWrongType
+	}
+	if v.h == nil {
+		v.h = map[string]string{}
 	}
 	return v, nil
 }

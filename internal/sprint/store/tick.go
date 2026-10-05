@@ -1654,6 +1654,13 @@ func (r readOnly) SettleEpoch(context.Context, uint64) error { return ErrReadOnl
 func (r readOnly) AtEpoch(epoch uint64, old bool) Backend {
 	return readOnly{b: r.b.AtEpoch(epoch, old)}
 }
+func (r readOnly) LogCard(ctx context.Context, id string) ([]sprint.Line, bool, error) {
+	return r.b.LogCard(ctx, id)
+}
+func (r readOnly) LogIndex(context.Context) error { return ErrReadOnly }
+func (r readOnly) LogCards(ctx context.Context) ([]string, error) {
+	return r.b.LogCards(ctx)
+}
 func (r readOnly) ReadFence(ctx context.Context) (Fence, error) { return r.b.ReadFence(ctx) }
 func (r readOnly) QueueRead(ctx context.Context) ([]sprint.QueuedChange, error) {
 	return r.b.QueueRead(ctx)

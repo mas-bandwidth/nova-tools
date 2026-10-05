@@ -98,6 +98,11 @@ type logSnapshot struct {
 	// Queue is the work table's queue: the changes a verb queued that the
 	// next tick's pump applies (sprint.QueueOf).
 	Queue []sprint.QueuedChange `json:"queue,omitempty"`
+	// ByCard is each card's lines, in log order, when Indexed says it holds
+	// every line of Lines. A restored twin answers LogCard from it. A read
+	// does not write the index back.
+	ByCard  map[string][]sprint.Line `json:"by_card,omitempty"`
+	Indexed bool                     `json:"indexed,omitempty"`
 }
 
 type noteSnapshot struct {
@@ -165,7 +170,14 @@ func (m *Mem) Snapshot() ([]byte, error) {
 		s.Dropped[n] = &residueSnap{Keys: r.keys, Table: snapTable(r.table)}
 	}
 	for e, l := range m.logs {
-		ls := &logSnapshot{Fence: l.fence, Gen: l.gen, Done: l.done, Progress: l.progress, Notes: l.notes, Aliases: l.aliases, Answered: l.answered, Open: l.open, Cursor: l.cursor, Queue: l.queue}
+		ls := &logSnapshot{Fence: l.fence, Gen: l.gen, Done: l.done, Progress: l.progress, Notes: l.notes, Aliases: l.aliases, Answered: l.answered, Open: l.open, Cursor: l.cursor, Queue: l.queue, Indexed: l.indexed}
+		if l.indexed && len(l.byCard) > 0 {
+			cp := make(map[string][]sprint.Line, len(l.byCard))
+			for id, lines := range l.byCard {
+				cp[id] = append([]sprint.Line(nil), lines...)
+			}
+			ls.ByCard = cp
+		}
 		for _, n := range l.inbox {
 			ls.Inbox = append(ls.Inbox, noteSnapshot{ID: n.id, Note: n.note})
 		}
@@ -201,7 +213,13 @@ func (m *Mem) Restore(doc []byte) error {
 		dropped[n] = &memResidue{keys: keys, table: r.Table.table()}
 	}
 	for e, l := range s.Logs {
-		ml := &memLog{fence: l.Fence, gen: l.Gen, done: l.Done, progress: l.Progress, notes: l.Notes, aliases: l.Aliases, answered: l.Answered, open: l.Open, cursor: l.Cursor, queue: l.Queue}
+		ml := &memLog{fence: l.Fence, gen: l.Gen, done: l.Done, progress: l.Progress, notes: l.Notes, aliases: l.Aliases, answered: l.Answered, open: l.Open, cursor: l.Cursor, queue: l.Queue, indexed: l.Indexed}
+		if l.Indexed {
+			ml.byCard = l.ByCard
+			if ml.byCard == nil {
+				ml.byCard = map[string][]sprint.Line{}
+			}
+		}
 		if ml.done == nil {
 			ml.done = map[string]string{}
 		}

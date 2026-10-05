@@ -19,7 +19,7 @@ import (
 // (Names.Key): the fence and its generation, the notification stream, the
 // judgments, the open subjects, the coordinator's cursor, the streams'
 // progress and the callers' results. Each epoch has its own.
-var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue, keyAliases, keyAnswered}
+var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue, keyAliases, keyAnswered, keyLogCards, keyLogIndex}
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
@@ -172,13 +172,23 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 	epochs.Beating = slices.Sorted(maps.Keys(beating))
 	epochs.Readers = slices.Sorted(maps.Keys(reading))
 	epochs.Friends = st.friendNames(ctx)
+	keys := TeardownKeys(st.Names, ids, epochs)
+	for e := uint64(0); e <= es.N; e++ {
+		cardIDs, err := st.B.AtEpoch(e, false).LogCards(ctx)
+		if err != nil {
+			return 0, err
+		}
+		for _, id := range cardIDs {
+			keys = append(keys, st.Names.KeyAt(logCardName(id), e))
+		}
+	}
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {
 		if err := st.B.AtEpoch(es.N, false).DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {
 			return 0, err
 		}
 	}
-	return st.B.DeleteKeys(ctx, TeardownKeys(st.Names, ids, epochs))
+	return st.B.DeleteKeys(ctx, keys)
 }
 
 // recordIDsPage is how many change events one exchange of RecordIDs reads.
@@ -392,6 +402,12 @@ func (m *Mem) deleteKey(k string) bool {
 				return true
 			}
 		}
+		if id := logCardID(k, e); id != "" {
+			if _, ok := l.byCard[id]; ok {
+				delete(l.byCard, id)
+				return true
+			}
+		}
 	}
 	for s := range m.kv {
 		if strings.HasSuffix(k, "sprint:"+s) {
@@ -474,6 +490,16 @@ func sprintKey(l *memLog, s string, del bool) bool {
 		if del {
 			l.done = map[string]string{}
 		}
+	case keyLogCards:
+		held = len(l.byCard) > 0
+		if del {
+			l.byCard = nil
+		}
+	case keyLogIndex:
+		held = l.indexed
+		if del {
+			l.indexed = false
+		}
 	}
 	return held
 }
@@ -519,6 +545,9 @@ func (m *Mem) Keys(names sprint.Names) []string {
 			if sprintKey(l, s, false) {
 				keys = append(keys, names.KeyAt(s, e))
 			}
+		}
+		for id := range l.byCard {
+			keys = append(keys, names.KeyAt(logCardName(id), e))
 		}
 	}
 	for s := range m.kv {
