@@ -25,18 +25,19 @@ const exitLine = "exit codes: 0 done, 1 failed or incomplete (including refused)
 
 // verbExit is a verb's own exit codes where they are not the common three.
 var verbExit = map[string]string{
-	"run":           "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
-	"fleet sync":    "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
-	"friend sync":   "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
-	"land":          "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
-	"check":         "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
-	"selftest":      "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
-	"seat check":    "exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer",
-	"machinery":     "exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer",
-	"answer":        "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
-	"dashboard":     "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
-	"selftest land": "exit codes: 0 done, 1 failed (lander broken or card did not land), 2 usage",
-	"server switch": "exit codes: 0 done, 1 failed or refused (the candidate's shadow tick failed: nothing changed), 2 usage",
+	"run":            "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"fleet sync":     "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
+	"friend sync":    "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
+	"land":           "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
+	"check":          "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
+	"selftest":       "exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage",
+	"seat check":     "exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer",
+	"machinery":      "exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer",
+	"answer":         "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
+	"dashboard":      "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"selftest land":  "exit codes: 0 done, 1 failed (lander broken or card did not land), 2 usage",
+	"server switch":  "exit codes: 0 done, 1 failed or refused (the candidate's shadow tick failed: nothing changed), 2 usage",
+	"server install": "exit codes: 0 done (--dry-run: the plan printed), 1 a unit edited by hand was refused (the diff below the line) or the write or the load failed, 2 usage",
 }
 
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
@@ -83,6 +84,7 @@ var verbEffect = map[string]string{
 	"merge-window open": "local write: the merge window, the merge table's properties in the sprint's store; land pauses while it is open; --dry-run checks --for and --reason and writes nothing",
 	// a store write, the collect's tip read and its directory reads said
 	"friend reconcile": "store write: finishes each card she reported on and returns each she abandoned, in the sprint's store; reads her inbox/QUEUE.json and outbox, writes nothing in her directory, and reads origin's tip (one git ls-remote) for each LAND it collects; --dry-run writes nothing and reads no tip",
+	"server install":   "local write: writes the sprint server's unit (run --listen under nova-secrets exec, no actor) and its hash into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); a unit edited by hand is refused with the diff; --dry-run prints it and writes nothing",
 	"lane list":        "inspection: lists every machine's lanes and holders, writes nothing",
 	"lane take":        "store write: takes one lane on the machine for the worker, or joins the queue; --dry-run checks availability and writes nothing",
 	"lane give":        "store write: gives the worker's lane or queue position back; --dry-run checks whether a lane is held and writes nothing",
