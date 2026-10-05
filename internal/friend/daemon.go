@@ -249,6 +249,7 @@ type loop struct {
 	lanes        *laneSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
+	wake         bool // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -258,8 +259,10 @@ type loop struct {
 // long turn is still answered at once; each running turn's output watched,
 // and a turn silent past SilentStop stopped; the turns' results (exit 0 acks
 // every message a turn carried); then, in batch mode, one turn with every
-// waiting message when the session is free, and in one-shot mode, each free
-// lane handed its next card with the waiting messages riding along (lanes.go);
+// waiting message when the session is free, else an owed wake check pushed
+// in as its own turn holding only the pong line (startWake), and in one-shot
+// mode, each free lane handed its next card with the waiting messages riding
+// along (lanes.go);
 // a beat when the store answered; the session's pong; the status. The
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
@@ -290,6 +293,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.notice = nil
 		}
 		mode, width := l.row(now)
+		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
 		storeOK := l.read(now)
 		if ctx.Err() != nil {
 			return nil
@@ -318,6 +322,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.status.Lanes = l.lanes.said(width)
 		case l.busy == nil && len(l.hand) > 0:
 			l.startBatch(now)
+		case l.busy == nil && l.wake && drained:
+			l.startWake(now)
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
@@ -470,8 +476,30 @@ func (l *loop) head() (notice, pong string) {
 	}
 	if l.d.m.Challenge != Quiet && l.d.PongCommand != nil {
 		pong = l.d.PongCommand(l.d.m.Nonce)
+		l.wake = false // the line rides in this turn: no wake turn of its own
 	}
 	return notice, pong
+}
+
+// WakeTurnText is a wake turn's whole text: the exact pong line, and nothing
+// else (docs/SPEC-FRIEND.md, session-pong.w1).
+func WakeTurnText(pongCommand string) string {
+	return "Run this now, exactly as written: " + pongCommand + "\n"
+}
+
+// startWake pushes the owed wake check into the free session as its own
+// short turn holding only the pong line for the current nonce; it carries no
+// message and no word about the coordinator, and is pushed once per wake
+// ping. A challenge already answered owes nothing (docs/SPEC-FRIEND.md,
+// session-pong.w1; tla/Friend.tla, WakeTurn).
+func (l *loop) startWake(now time.Time) {
+	l.wake = false
+	if l.d.m.Challenge == Quiet || l.d.PongCommand == nil {
+		return
+	}
+	t := &turn{subjects: fmt.Sprintf("%q", "wake "+l.d.m.Nonce), text: WakeTurnText(l.d.PongCommand(l.d.m.Nonce))}
+	l.busy = t
+	l.startTurn(t, now, l.deliverBatch(t))
 }
 
 // coordinator is who the daemon tells: the seat the last ping named, else
@@ -501,14 +529,20 @@ func (l *loop) tellKind(kind, subject, body string, now time.Time) {
 	}
 }
 
+// ping is a ping read or peeked: answered by the daemon at once, stepped
+// into the machine, and, a wake check (IsWake) to a harness that can be
+// pushed into, a wake turn owed (docs/SPEC-FRIEND.md, session-pong.w1).
 func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now time.Time) {
 	if l.answered[e.Entry] {
 		return // the machine saw it when the daemon first did
 	}
-	l.d.daemonPong(l.ctx, l.b, msg, nonce)
+	l.d.daemonPong(l.ctx, l.b, msg, nonce, now)
 	l.answered[e.Entry] = true
 	for _, p := range l.d.m.Ping(now, seatOf(seat, msg), since, nonce) {
 		l.say(p)
+	}
+	if IsWake(msg.Body) && !l.passive {
+		l.wake = true
 	}
 }
 
@@ -816,13 +850,17 @@ func seatOf(seat string, m bus.Message) string {
 	return seat
 }
 
-// daemonPong answers a ping at once, from the daemon: transport is up.
-// A send that fails is the store's error on the status.
-func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string) {
+// daemonPong answers a ping at once, from the daemon: transport is up,
+// kept on the status apart from the session's pong (LastDaemonPong), and it
+// ends no challenge (docs/SPEC-FRIEND.md, session-pong.w1). A send that
+// fails is the store's error on the status.
+func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string, now time.Time) {
 	_, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
 	if err != nil {
 		d.status.StoreError = "daemon pong: " + err.Error()
+		return
 	}
+	d.status.LastDaemonPong = now
 }
 
 // flush writes the status when it changed, and every StatusEvery anyway,

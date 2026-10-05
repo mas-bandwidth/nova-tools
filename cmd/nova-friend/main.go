@@ -340,19 +340,22 @@ environment variable or a wrapper at app start. While no such monitor runs, a de
 			},
 			{
 				Name:    "ping",
-				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]",
+				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--wake] [--redis <addr>] [--dry-run]",
 				Example: "ping --as ada --to bob --nonce abc123",
 				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator",
 				DryRun:  true,
 				Detail: `Sends "PING <nonce>" with the seat line (seat=<me> since=<RFC3339>) and the pong command the
 session runs; the nonce is six random characters unless --nonce names one. Prints PING OK
 nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.
+--wake makes it a wake check (a wake=1 line in the body): the daemon still answers at once, and, the session being free,
+pushes the pong line in as its own turn, so an idle session is asked too; only the session's pong ends it (wait-pong).
 --dry-run checks the PING as send checks it and sends nothing.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the coordinator")
 					f.Required("to", "the friend to ping")
 					f.String("nonce", "", "the nonce to carry (default: six random characters)")
 					f.String("since", "", "since when you hold the seat, RFC3339 (default: now)")
+					f.Bool("wake", false, "a wake check: the session is pushed the pong line as its own turn when it is free")
 					redis(f)
 				},
 				Run: w.ping,
@@ -406,9 +409,11 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
+last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
 (once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
-from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
+from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
+session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
+last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
 harnesses omit route. STATUS NONE at
@@ -815,7 +820,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
-		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("pong_age", age(now, p.At)).Fact("pongs", s.Pongs).
+		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
 		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
@@ -938,6 +943,9 @@ func (w world) ping(c *tool.Call) *tool.Out {
 	defer closeStore()
 	me, to := c.Str("as"), c.Str("to")
 	body := friend.PingText(me, since, nonce)
+	if c.Bool("wake") { // a wake check: answered by the session, never by the daemon (docs/SPEC-FRIEND.md, session-pong.w1)
+		body = friend.WakePingText(me, since, nonce)
+	}
 	ping := bus.Message{From: me, To: []string{to}, Subject: friend.PingPrefix + nonce, Body: body + "\n"}
 	if c.DryRun() {
 		// the PING checked as send checks it; nothing sent

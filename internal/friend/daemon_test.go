@@ -396,3 +396,98 @@ func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
 		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
 	})
 }
+
+// A wake check is answered by the session, never by the daemon
+// (docs/SPEC-FRIEND.md, session-pong.w1; tla/Friend.tla, WakeTurn). A PING
+// carrying wake=1 is answered by the daemon at once as any ping is, and,
+// the session being free, the exact pong line is pushed in as its own short
+// turn; mid-turn it rides at the head of the next turn as today. The
+// daemon's pong alone leaves the friend challenged, then deaf (the finding
+// of 2026-10-04: every daemon ponged while a session sat idle from 2:40 to
+// 4:34 PM).
+func TestWakeCheckIsAnsweredOnlyByTheSession(t *testing.T) {
+	t.Parallel()
+	pongCommand := func(nonce string) string {
+		return "/opt/nova/bin/nova-friend pong --as bob --nonce " + nonce + " --dir /w/bob --redis store:6379"
+	}
+	wakePing := func(nonce string) string {
+		text := WakePingText("ada", t0, nonce)
+		require.True(t, IsWake(text))
+		got, _, _, ok := ParsePing(text)
+		require.True(t, ok && got == nonce, "a wake ping is a ping")
+		return text
+	}
+
+	t.Run("an idle session gets the pong line as its own turn, and a daemon pong alone is deaf", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		r.d.PongCommand = pongCommand
+		r.send(t, "ada", "PING w1", wakePing("w1"))
+		var afterWake Status
+		r.at[4] = func() { afterWake = r.last() }
+		r.run(t, int(Window/BeatEvery)+6)
+		assert.Equal(t, []string{"daemon-pong: daemon-pong w1"}, r.adaGot(t), "the daemon answers at once, as for any ping")
+		require.Len(t, r.delivered, 1, "one wake turn, pushed once: %v", r.delivered)
+		assert.Equal(t, WakeTurnText(pongCommand("w1")), r.delivered[0], "the turn holds only the exact pong line")
+		assert.NotContains(t, r.delivered[0], "PING", "the ping itself is never a turn")
+		assert.Equal(t, Challenged, afterWake.Challenge, "the daemon's pong ends nothing")
+		assert.False(t, afterWake.LastDaemonPong.IsZero(), "status keeps the daemon's pong apart")
+		assert.True(t, afterWake.LastPong.IsZero(), "and the session's: none yet")
+		s := r.last()
+		assert.Equal(t, Deaf, s.Challenge, "no session pong within the window is deaf, whatever the daemon said")
+		assert.Equal(t, 0, s.Pongs)
+		pending, fresh := r.pending(t)
+		assert.Empty(t, pending, "the ping was acked by the daemon")
+		assert.Empty(t, fresh)
+	})
+
+	t.Run("the session's pong ends the wake challenge", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		r.d.PongCommand = pongCommand
+		r.send(t, "ada", "PING w1", wakePing("w1"))
+		r.at[4] = func() { // the session ran the line its wake turn held
+			r.mu.Lock()
+			r.pong, r.pongSet = Pong{Nonce: "w1", At: r.now, To: "ada"}, true
+			r.mu.Unlock()
+		}
+		r.run(t, 8)
+		require.Len(t, r.delivered, 1)
+		s := r.last()
+		assert.Equal(t, Quiet, s.Challenge)
+		assert.Equal(t, 1, s.Pongs)
+		assert.False(t, s.LastPong.IsZero())
+		assert.False(t, s.LastDaemonPong.IsZero())
+	})
+
+	t.Run("mid-turn the line rides at the head of the next turn", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		r.d.PongCommand = pongCommand
+		r.hold, r.releaseAt = make(chan struct{}), 5
+		r.send(t, "ada", "work", "the first thing")
+		var second bus.Message
+		r.at[2] = func() {
+			r.send(t, "ada", "PING w1", wakePing("w1"))
+			second = r.send(t, "ada", "more", "the second thing")
+		}
+		r.run(t, 14)
+		assert.Equal(t, []string{"daemon-pong: daemon-pong w1"}, r.adaGot(t), "answered at once by the daemon, mid-turn")
+		require.Len(t, r.delivered, 2, "no wake turn of its own while the next turn carries the line: %v", r.delivered)
+		assert.NotContains(t, r.delivered[0], "nova-friend pong", "the running turn began before the ping")
+		assert.True(t, strings.HasPrefix(r.delivered[1], "Run this now, first, exactly as written: "+pongCommand("w1")+"\n"), r.delivered[1])
+		assert.Contains(t, r.delivered[1], Text(second))
+		assert.Equal(t, Challenged, r.last().Challenge)
+	})
+
+	t.Run("a plain ping is never pushed in", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		r.d.PongCommand = pongCommand
+		r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+		assert.False(t, IsWake(PingText("ada", t0, "n1")))
+		r.run(t, 6)
+		assert.Empty(t, r.delivered)
+		assert.Equal(t, []string{"daemon-pong: daemon-pong n1"}, r.adaGot(t))
+	})
+}
