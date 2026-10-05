@@ -34,6 +34,18 @@ nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4
 nova-config apply --as ada
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
 chmod +x nova-inventory
+```
+
+`NOVA_SPRINT_REDIS_USER` names the user, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names the
+variable that holds the password, never the password. A store with ACLs needs that login
+in the wrapper's environment, so the wrapper runs under `nova-secrets exec`, for example
+`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_BENCH_PASSWORD
+-- env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD
+nova-config inventory "$@"`, where `NOVA_REDIS_BENCH_PASSWORD` is the secret that holds the
+password. `nova-update release cycle` runs the wrapper with `--list` before any play and
+refuses with the wrapper's own line when it cannot list.
+
+```
 ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
 ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> --check --diff </dev/null 2>&1 | cat
 ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> </dev/null 2>&1 | cat
@@ -255,7 +267,8 @@ One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under `~/nova-bench/loops/`, which the play creates. Every unit
+record's log under the fleet row's `loops_dir` (migration 0027 seeds it to
+`~/nova-bench/loops`), which the play creates. Every unit
 gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
 a `nova-swarm member`, inventory removes an older endpoint assignment from the
 rendered `/usr/bin/env` prefix while preserving its Redis user, password
@@ -301,8 +314,10 @@ under `--check`, which restarts nothing). A member's unit (a record whose argv
 runs `nova-swarm member`, a reader's too) is never killed mid-card
 (nova-tools#5096 items 25, 26): its unit signals the member alone (systemd
 `KillMode=mixed`; launchd signals the job's process and abandons its group)
-and waits `nova_member_stop_timeout` (7260 s, a minute above the member's
-longest drain) before it kills anything, and the member drains on that SIGTERM:
+and waits `nova_member_stop_timeout` (180 s, a minute above the member's
+longest drain, which is bounded at two minutes: a member that drains does no
+new work, so the restart gives the machine back and the cards still running are
+redealt) before it kills anything, and the member drains on that SIGTERM:
 it takes no new card, lets its running cards finish and reports them, then
 exits (at once when it runs none). So the restart is the drain: the play waits
 for it (on darwin until launchd no longer holds the member) and then starts the
@@ -327,7 +342,7 @@ per-machine artifact the fleet writes, and what removes it, when:
 |---|---|
 | a launch's checkout, `<root>/slots/<launch>/` | the member, while its loop runs: at once when the launch is reported ok, a failed one kept (the newest 5 of the pool); swept at the member's start. A pool whose loop stopped (no process names its root or works in it, nothing moved for 30 minutes): the disk guard's next run, by the same rule; a work launch whose checkout holds commits past its staged one is kept and said on a `KEPT slot` line, every run, until a person removes it |
 | a launch's small files and results (`.native.log`, `.card.md`, `.frame.json`, `results/<launch>`) | the member's cleaner, once the sprint's epoch is two past theirs (docs/SPEC-SWARM.md, `member`) |
-| a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under 10 GiB while it runs; the disk guard every run, under `--cache-max-gb` (10), whether or not a loop runs |
+| a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under `--gocache-limit` (20 GiB) while it runs; the disk guard every run, under `--cache-max-gb` (20), whether or not a loop runs |
 | the login's Go build cache (`$GOCACHE`, else the user cache directory's `go-build`) and every `--cache` (the CI runners' `_cache/go-build`) | the disk guard every run, under `--cache-max-gb`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth |
 | a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50), no `go` command runs and no process holds a file in it |
 | a loop log, `~/nova-bench/loops/*.log` | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |

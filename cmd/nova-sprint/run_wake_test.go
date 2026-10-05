@@ -146,14 +146,14 @@ func TestALineWakesTheLoopWithinTheFloor(t *testing.T) {
 		func(time.Duration) {
 			w.a.sleep(30 * time.Millisecond)
 			soon = w.a.now()
-			w.ok("add --stream s1 --count 1")
+			w.ok("add --stream s1 --count 1 --one")
 		},
 		// the add's tick deals the card: its lines wake the next tick, which
 		// finds nothing; then the log is quiet
 		func(time.Duration) {
 			w.a.sleep(500 * time.Millisecond)
 			late = w.a.now()
-			w.ok("add --stream s2 --count 1")
+			w.ok("add --stream s2 --count 1 --one")
 		},
 	}
 	w.run(7)

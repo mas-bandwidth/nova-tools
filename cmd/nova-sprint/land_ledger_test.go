@@ -118,6 +118,7 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 		runs          int    // the update runs counted, when not 0
 	}{
 		{"a ledger-only conflict lands", fakeLedgerRun, debtA, debtB, "", 0},
+		{"the update run reads the module read-only", fakeLedgerRun, debtA, debtB, "", 0},
 		{"a mixed conflict is refused", fakeLedgerRun, with(debtA, "notes.tsv", "first\n"), with(debtB, "notes.tsv", "second\n"), "does not merge", 0},
 		{"a prose conflict is refused", fakeLedgerRun, map[string]string{"notes.tsv": "first\n"}, map[string]string{"notes.tsv": "second\n"}, "does not merge", 0},
 		{"a Go file in a ledger directory is refused", fakeLedgerRun,
@@ -133,6 +134,8 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 			count := filepath.Join(t.TempDir(), "runs")
 			run := tc.run
 			switch {
+			case strings.Contains(tc.name, "read-only"):
+				run = "[ \"$GOFLAGS\" = -mod=readonly ] || { echo \"GOFLAGS=$GOFLAGS\"; exit 1; }\n" + fakeLedgerRun
 			case strings.Contains(tc.name, "tracked file"):
 				run = "echo more >> notes.tsv\n" + fakeLedgerRun
 			case strings.Contains(tc.name, "new file"):
@@ -141,6 +144,9 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 				run = "echo run >> " + count + "\necho x >> " + fakeLedger + "\necho 'updated, rerun'\nexit 1"
 			}
 			r := ledgerRig(t, run)
+			if strings.Contains(tc.name, "read-only") {
+				r.a.gitEnv = append(r.a.gitEnv, "GOFLAGS=-mod=mod") // the caller's, replaced by the run's
+			}
 			r.ok("add --stream s1 --count 2")
 			heads := map[string]string{"s1-1": r.card("s1-1", tc.first), "s1-2": r.card("s1-2", tc.second)}
 			r.queued(heads, "s1-1", "s1-2")

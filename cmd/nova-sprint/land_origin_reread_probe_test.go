@@ -18,7 +18,7 @@ func TestLandRereadRefusesAnotherOriginPushURLBeforeChangingEitherRepository(t *
 	r.git(r.worker, "push", "-q", other, "refs/remotes/origin/main:refs/heads/main")
 	r.git(r.clone, "config", "remote.origin.pushurl", other)
 
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	want, otherWant := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
 

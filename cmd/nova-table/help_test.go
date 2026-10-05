@@ -44,6 +44,41 @@ func TestEveryCommandHasEquivalentDiscoverableHelp(t *testing.T) {
 	_, show, _ := runTable("help", "view", "show")
 	require.NotContains(t, show, "--summary", "%v", "view show advertises view set flags")
 	require.NotContains(t, show, "--title", "%v", "view show advertises view set flags")
+
+	// The banner's three new lines are held to the behaviour they describe.
+	// The dry-run create under example: runs as printed (it dials nothing, so
+	// it runs in this tier; the --redis argument changes what it dials and
+	// nothing it prints). The refusal shape pasted under usage is the line the
+	// stale-epoch refusal prints, byte for byte, held against the store by the
+	// functional tier; show and the receipt are the epoch's two sources.
+	require.Contains(t, banner, "a throwaway store, by hand:", "the throwaway-store commands stand under no heading of their own:\n%s", banner)
+	require.Contains(t, banner,
+		"example: (the lines need the store the first run describes; this one runs with none)\n"+
+			"  nova-table create demo --columns ready,working,done --dry-run\n",
+		"the --dry-run create is not the line under example::\n%s", banner)
+	code, out, errout := runTable("create", "demo", "--columns", "ready,working,done", "--dry-run", "--redis", t.TempDir()+"/no-store.sock")
+	require.EqualValues(t, 0, code, "the example: line does not run as printed: %d %q %q", code, out, errout)
+	require.Empty(t, errout, "the example: line does not run as printed: %d %q %q", code, out, errout)
+	require.Contains(t, out, `TABLE DRY-RUN verb=create arg1=demo columns=ready,working,done sends="FCALL ns_table_create" redis=`,
+		"the example: line does not run as printed: %q", out)
+	require.Contains(t, out, "dialled=0 written=0\n", "the example: line does not run as printed: %q", out)
+	require.Contains(t, banner,
+		"  CELL-ADD REFUSED: table \"stale-help\" row \"build\" column \"ready\" member \"b1\": requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table show 'stale-help'\n",
+		"the stale refusal's shape is not pasted:\n%s", banner)
+	require.Contains(t, banner,
+		"read the epoch off show <table> (it prints epoch=<n>) or off the receipt of every write",
+		"the epoch's two sources are not stated:\n%s", banner)
+	require.Contains(t, banner, "a second cell add of the same member\n", "the retried write is not described:\n%s", banner)
+	require.Contains(t, banner, "and a second row add rewrites the row and keeps its\n", "the retried write is not described:\n%s", banner)
+	// The four usage lines that ran past 100 columns are wrapped.
+	for _, want := range []string{
+		"  nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>]\n      [--width <col=n,...>]\n",
+		"  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]\n      [--hide <cols>] [--show <cols>] [--hidden | --visible]\n",
+		"  nova-table render <table> | --view <name> [--at-epoch <n>]\n      [--width <col=n,...>] [--label-width <n>]\n",
+		"  nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>]\n      [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]\n",
+	} {
+		require.Contains(t, banner, want, "the usage line is not wrapped at 100 columns:\n%s", banner)
+	}
 }
 
 // TestEveryVerbStatesItsEffectAndAWriteTakesADryRun: every verb's help ends

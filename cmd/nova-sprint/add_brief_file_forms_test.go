@@ -17,11 +17,11 @@ func TestOneBriefFileAloneIsACardNamedByItsFile(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
 	a1 := writeNeedsBrief(t, dir, "a1", "Fix a1.", "")
-	out := ta.ok("add --stream alpha --brief-file " + a1)
+	out := ta.ok("add --stream alpha --one --brief-file " + a1)
 	assert.Contains(t, out, "MOVED a1 -> ready")
 	assert.Contains(t, out, "NOTE each card's id is its brief file's name without .md ("+a1+" is a1)")
 	a2 := writeNeedsBrief(t, dir, "a2", "Fix a2.", "")
-	assert.Contains(t, ta.ok("add --stream alpha a2 --brief-file "+a2), "MOVED a2 -> ready", "the id named with the file")
+	assert.Contains(t, ta.ok("add --stream alpha a2 --one --brief-file "+a2), "MOVED a2 -> ready", "the id named with the file")
 	assert.Contains(t, banner(), "--brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md")
 }
 

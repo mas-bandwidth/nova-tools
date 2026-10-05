@@ -161,7 +161,7 @@ func BoundClass(wc *Card) string {
 
 // reworkLadder is the tiers a rework at the bound climbs, lowest first: a card's attempts that
 // end at a bound are bounded by it (reworkAtTheSameBound).
-var reworkLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteFrontier}
+var reworkLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy, cardhdr.RouteFrontier}
 
 // providerOf is the provider of a take or a work card: the part of its model id before the
 // "/", which a deal on a route writes as the route's provider (route.go, FieldModel).

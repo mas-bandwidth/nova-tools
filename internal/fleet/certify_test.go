@@ -154,7 +154,6 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 		"loki-ready":     RoleServices,
 		"redis-ping":     RoleServices,
 		"postgres-ready": RoleServices,
-		"bus-push":       RoleCoordination,
 		"release-path":   RoleCoordination,
 		// what the hand pass of 2026-09-18 found
 		"path-resolves":  RoleBench,  // ~/go/bin shadows and a PATH no ssh reads
@@ -403,7 +402,7 @@ func TestCertifyRunsEveryWorkloadOfTheMachinesRolesAndWritesARowEach(t *testing.
 	for _, s := range remote.scripts() {
 		k := scriptKey(s)
 		assert.NotEqual(t, "loki-ready", k, "a %s workload ran on a bench; workloads follow the machine's roles", k)
-		assert.NotEqual(t, "bus-push", k, "a %s workload ran on a bench; workloads follow the machine's roles", k)
+		assert.NotEqual(t, "release-path", k, "a %s workload ran on a bench; workloads follow the machine's roles", k)
 		assert.NotEqual(t, "runner-path", k, "a %s workload ran on a bench; workloads follow the machine's roles", k)
 	}
 }
@@ -630,7 +629,7 @@ func TestAllRunsEveryMachineInTheRegistryUnderItsOwnRoles(t *testing.T) {
 	all := out + errs
 	assert.Contains(t, all, "machines=5", "--all did not run the whole registry:\n%s", all)
 	assert.Contains(t, all, "CERTIFY loki loki-ready", "--all did not run the services and coordination workloads:\n%s", all)
-	assert.Contains(t, all, "CERTIFY studio bus-push", "--all did not run the services and coordination workloads:\n%s", all)
+	assert.Contains(t, all, "CERTIFY studio release-path", "--all did not run the services and coordination workloads:\n%s", all)
 	_ = code
 }
 

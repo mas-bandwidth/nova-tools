@@ -47,8 +47,8 @@ func TestAGroupIsNamedByItsIDNeverItsPosition(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.deal(2)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	first := ta.group(sprint.NWorkFailed, "s1")
@@ -236,13 +236,13 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 		}
 	}
 	golden = regexp.MustCompile(`due=\d\d:\d\d:\d\d`).ReplaceAllString(golden, "due=HH:MM:SS") // the local zone
-	want := `JUDGMENT N1   work came back failed  stream=s2  size=1  waited=1m2s  due=HH:MM:SS  (s2-1)
+	want := `JUDGMENT N1   work came back failed  alias=j1  stream=s2  size=1  waited=1m2s  due=HH:MM:SS  (s2-1)
   the tests went red
   rework with a fix:
     nova-sprint rework s2-1
   drop:
     nova-sprint drop s2-1 --reason '<why>'
-JUDGMENT N2   a reader found it broken  stream=s2  size=1  waited=1m1s  due=HH:MM:SS  (s2-2)
+JUDGMENT N2   a reader found it broken  alias=j2  stream=s2  size=1  waited=1m1s  due=HH:MM:SS  (s2-2)
   line 3: the empty case is not handled
   rework with the finding:
     nova-sprint rework s2-2
@@ -250,14 +250,14 @@ JUDGMENT N2   a reader found it broken  stream=s2  size=1  waited=1m1s  due=HH:M
     nova-sprint ask s2-2 --another
   drop:
     nova-sprint drop s2-2 --reason '<why>'
-JUDGMENT N3   stream stopped: stream branch red  stream=s1  size=3  waited=1m0s  due=HH:MM:SS  (s1-1,s1-2,s1-3)
+JUDGMENT N3   stream stopped: stream branch red  alias=j4  stream=s1  size=3  waited=1m0s  due=HH:MM:SS  (s1-1,s1-2,s1-3)
   suspects: s1-2 (of the batch of 3)
   take the suspect off and resume:
     nova-sprint return s1-2 --reason 'suspect of the red batch' --answers N3
     nova-sprint resume --stream s1 --did 'returned s1-2' --answers N3
   rework the suspect:
     nova-sprint return s1-2 --reason 'suspect of the red batch' --answers N3
-    nova-sprint rework s1-2 --fix '<fix>'
+    nova-sprint rework s1-2 --fix '<fix>' --one
     nova-sprint resume --stream s1 --did 'returned s1-2 for rework' --answers N3
   resume with what you did:
     nova-sprint resume --stream s1 --did '<what you did>' --answers N3
@@ -292,7 +292,7 @@ func TestInboxPrintsTheReaderFindingInFullUnderTheJudgment(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.ok("take --as m1 --limit 1")
 	ta.ok("finish --as m1 s1-1.w1@1")
@@ -322,7 +322,7 @@ func TestInboxNamesASingleCardJudgmentByItsCard(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.ok("take --as m1 --limit 1")
 	ta.ok("finish --as m1 s1-1.w1@1")

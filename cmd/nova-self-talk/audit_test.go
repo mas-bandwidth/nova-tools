@@ -37,9 +37,12 @@ var selfTalkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|lines|selftalk.RuleDocumentBanner": "a constant in package selftalk",
+		"scan.go|lines|selftalk.RuleDocumentBanner": "a constant in package selftalk",
 	},
 	Imports: []string{
+		// example.go uses atomicfile only to publish embedded page bytes to a file.
+		// It has no stdout or stderr writer; failures return through the escaped refusal.
+		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.

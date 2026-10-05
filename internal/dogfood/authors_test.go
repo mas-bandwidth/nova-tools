@@ -241,7 +241,7 @@ func TestAuthorsFromGitBareKey(t *testing.T) {
 	authors, err := AuthorsFromGit(context.Background(), "/repo", verbs, run, nil)
 	require.NoError(t, err, "AuthorsFromGit: %v", err)
 	require.Len(t, calls, 2, "%d git calls, want 2: %q", len(calls), calls)
-	want := "log --reverse --diff-filter=A --format=%an -- cmd/nova-fix"
+	want := "log --no-textconv --no-ext-diff --reverse --diff-filter=A --format=%an -- cmd/nova-fix"
 	got := strings.Join(calls[0], " ")
 	require.Equal(t, want, got, "bare key read %q, want %q", got, want)
 	for _, a := range calls[0] {
@@ -250,7 +250,88 @@ func TestAuthorsFromGitBareKey(t *testing.T) {
 	got = authors.Author("nova-fix")
 	require.Equal(t, "Ada", got, "Author(nova-fix) = %q, want Ada", got)
 	words := strings.Join(calls[1], " ")
-	require.True(t, strings.Contains(words, "-S") && strings.HasSuffix(words, "-- cmd/nova-fix"), "nova-fix links read %q, want the -S read under cmd/nova-fix", words)
+	require.True(t, strings.Contains(words, "-S"), "nova-fix links read %q, want the -S read under cmd/nova-fix", words)
+	require.True(t, strings.HasSuffix(words, "-- cmd/nova-fix"), "nova-fix links read %q, want the -S read under cmd/nova-fix", words)
 	got = authors.Author("nova-fix links")
 	require.Equal(t, "Ada", got, "Author(nova-fix links) = %q, want Ada", got)
+}
+
+// The authorship read must not run a program the repository's config names:
+// the pickaxe -S diffs file content, a committed .gitattributes can select a
+// diff driver for it, and the repository's local config can give that driver
+// a textconv -- a program run as the invoking user for every file it diffs
+// (security#77 finding 2, re-filed from security#56 finding 2).
+func TestAuthorsFromGitDoesNotRunATextconvNamedInRepoConfig(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git on this machine")
+	}
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_AUTHOR_DATE=2026-09-18T09:00:00Z", "GIT_COMMITTER_DATE=2026-09-18T09:00:00Z",
+			"GIT_AUTHOR_NAME=Rowan Claude", "GIT_AUTHOR_EMAIL=rowan@mas-bandwidth.com",
+			"GIT_COMMITTER_NAME=Rowan Claude", "GIT_COMMITTER_EMAIL=rowan@mas-bandwidth.com",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
+	}
+	git("init", "-q", "-b", "main")
+	git("config", "user.name", "Rowan Claude")
+	git("config", "user.email", "rowan@mas-bandwidth.com")
+	// A diff driver the committed attributes select, whose textconv proves it
+	// ran: both live in local config and the committed tree, exactly the
+	// untrusted position the read must not execute.
+	probe := filepath.Join(t.TempDir(), "probe")
+	script := filepath.Join(t.TempDir(), "textconv.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ncat \"$1\"\necho ran >> "+probe+"\n"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "nova-fake"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("cmd/nova-fake/*.go diff=boom\n"), 0o644))
+	git("config", "diff.boom.textconv", script)
+	write := func(body string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(repo, "cmd", "nova-fake", "main.go"), []byte(body), 0o644))
+	}
+	write("package main\n\nfunc dispatch(v string) {\n\tswitch v {\n\tcase \"links\":\n\t}\n}\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "the verb arrives")
+	write("package main\n\nfunc dispatch(v string) {\n\tswitch v {\n\tcase \"links\":\n\tcase \"nocode\":\n\t}\n}\n")
+	// The second commit is somebody else's, as in the real-repository test.
+	gitNoAuthorEnv := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(withoutGitAuthorEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
+	}
+	gitNoAuthorEnv("config", "user.name", "Somebody Later")
+	gitNoAuthorEnv("config", "user.email", "later@example.com")
+	gitNoAuthorEnv("commit", "-qam", "a second verb, by somebody else")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	authors, err := AuthorsFromGit(ctx, repo, verbs("nova-fake links", "nova-fake nocode"), GitRunner, nil)
+	require.NoError(t, err, "AuthorsFromGit: %v", err)
+	got := authors.Author("nova-fake links")
+	require.Equal(t, "Rowan Claude", got, "links author = %q, want Rowan Claude", got)
+	got = authors.Author("nova-fake nocode")
+	require.Equal(t, "Somebody Later", got, "nocode author = %q, want Somebody Later", got)
+	_, statErr := os.Stat(probe)
+	require.True(t, os.IsNotExist(statErr), "the repository's textconv ran: %s exists", probe)
+
+	// Both argv spellings refuse the diff helpers, whatever the config names.
+	for _, v := range []Verb{
+		{Tool: "nova-fake", Verb: "links nocode", Line: 1},
+		{Tool: "nova-fake", Verb: "", Line: 2},
+	} {
+		args := authorArgs(v)
+		require.Contains(t, args, "--no-textconv", "authorArgs(verb=%q) = %v", v.Verb, args)
+		require.Contains(t, args, "--no-ext-diff", "authorArgs(verb=%q) = %v", v.Verb, args)
+	}
 }

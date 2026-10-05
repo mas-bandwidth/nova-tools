@@ -408,6 +408,8 @@ const (
 	keyInbox    = "inbox"    // STREAM of notifications, field "note"
 	keyLog      = "log"      // STREAM of the log's lines, field "line"
 	keyNotes    = "notes"    // HASH note id -> judgment note
+	keyAliases  = "aliases"  // HASH alias (j<n>) -> note id, and its field "n", the count (sprint.Alias)
+	keyAnswered = "answered" // HASH judgment id -> who answered it (the step's actor), written as it closes
 	keyOpen     = "open"     // HASH <note id>|<subject> -> note id, one per open subject
 	keyCursor   = "cursor"   // STRING, the coordinator's last read stream id
 	keyProgress = "progress" // HASH stream -> RFC3339 time of its last progress
@@ -606,7 +608,31 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		}
 		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(body)}})
 	}
-	for _, n := range append(append([]sprint.Note{}, op.Notes...), op.Decided...) {
+	notes := append(append([]sprint.Note{}, op.Notes...), op.Decided...)
+	// each judgment's and acknowledgement's alias is its place among the epoch's
+	// (sprint.Alias): the count is read here, under the fence this commit holds, and
+	// written back with the notes; one read, only when the commit writes one
+	counted := 0
+	for _, n := range notes {
+		if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
+			counted++
+		}
+	}
+	if counted > 0 {
+		n, err := r.C.HGet(ctx, r.key(keyAliases), "n").Int()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+		for i := range notes {
+			if notes[i].Kind == sprint.Judgment || notes[i].Kind == sprint.Acknowledged {
+				n++
+				notes[i].Alias = sprint.Alias(n)
+				p.HSet(ctx, r.key(keyAliases), notes[i].Alias, notes[i].ID)
+			}
+		}
+		p.HSet(ctx, r.key(keyAliases), "n", n)
+	}
+	for _, n := range notes {
 		body, err := json.Marshal(n.Bound())
 		if err != nil {
 			return err
@@ -640,6 +666,9 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 	}
 	if len(op.Closes) > 0 {
 		p.HDel(ctx, r.key(keyOpen), op.Closes...)
+		for id, who := range answeredBy(op) {
+			p.HSet(ctx, r.key(keyAnswered), id, who)
+		}
 	}
 	if op.Stuck != "" {
 		p.Del(ctx, r.Names.Key(keyStuck))
@@ -657,6 +686,13 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		}
 		p.Set(ctx, r.Names.Key(keyCoordinator), op.Seat.Holder, 0)
 		p.Set(ctx, r.Names.Key(keySeat), rec, 0)
+	}
+	if op.Health != nil {
+		rec, err := json.Marshal(op.Health.Health)
+		if err != nil {
+			return err
+		}
+		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
 	}
 	return nil
 }
@@ -734,6 +770,33 @@ func (r *Redis) Progress(ctx context.Context) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
 	for k, v := range h {
 		out[k], _ = time.Parse(time.RFC3339, v)
+	}
+	return out, nil
+}
+
+func (r *Redis) Answered(ctx context.Context, ids []string) (map[string]string, error) {
+	return r.hmget(ctx, keyAnswered, ids)
+}
+
+func (r *Redis) Aliases(ctx context.Context, aliases []string) (map[string]string, error) {
+	return r.hmget(ctx, keyAliases, aliases)
+}
+
+// hmget is the fields of one of the log's hashes that are set, by name: one read,
+// none for no names.
+func (r *Redis) hmget(ctx context.Context, key string, fields []string) (map[string]string, error) {
+	out := make(map[string]string, len(fields))
+	if len(fields) == 0 {
+		return out, nil
+	}
+	vals, err := r.C.HMGet(ctx, r.key(key), fields...).Result()
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range vals {
+		if s, ok := v.(string); ok {
+			out[fields[i]] = s
+		}
 	}
 	return out, nil
 }
@@ -877,6 +940,7 @@ type changeEvent struct {
 	epoch, verb         string
 	before, after       uint64
 	members, batchDelta string
+	args                string // the write's arguments, a JSON list (the table, then its own)
 }
 
 // changePage is how many events one read of a change stream takes.
@@ -930,6 +994,17 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 			if ev.after != need {
 				return gap(fmt.Sprintf("the event before revision %d leaves revision %d", need, ev.after))
 			}
+			if ev.verb == "set" && orderOnly(ev.args) {
+				// the rows' order alone: no record changed, and the shape read beside the
+				// catch-up carries the order
+				if need = ev.before; need == from {
+					return ids, true, nil
+				}
+				if need < from {
+					return gap(fmt.Sprintf("the events skip revision %d", from))
+				}
+				continue
+			}
 			if !twinVerbs[ev.verb] {
 				return gap(fmt.Sprintf("a write %q at revision %d names no records", ev.verb, ev.after))
 			}
@@ -953,7 +1028,7 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 
 func readChange(v map[string]any) changeEvent {
 	str := func(k string) string { s, _ := v[k].(string); return s }
-	ev := changeEvent{epoch: str("epoch"), verb: str("verb"), members: str("members"), batchDelta: str("batch_delta")}
+	ev := changeEvent{epoch: str("epoch"), verb: str("verb"), members: str("members"), batchDelta: str("batch_delta"), args: str("args")}
 	ev.before, _ = strconv.ParseUint(str("rev_before"), 10, 64)
 	ev.after, _ = strconv.ParseUint(str("rev_after"), 10, 64)
 	return ev
@@ -966,7 +1041,7 @@ func changeIDs(ev changeEvent) ([]string, error) {
 	var moved []struct {
 		ID string `json:"id"`
 	}
-	if ev.members != "" && ev.members != "[]" {
+	if ev.members != "" && ev.members != "[]" && ev.members != "{}" {
 		if err := json.Unmarshal([]byte(ev.members), &moved); err != nil {
 			return nil, err
 		}
@@ -976,14 +1051,22 @@ func changeIDs(ev changeEvent) ([]string, error) {
 	}
 	if ev.batchDelta != "" {
 		var d struct {
-			Members []struct {
-				ID string `json:"id"`
-			} `json:"members"`
+			Members json.RawMessage `json:"members"`
 		}
 		if err := json.Unmarshal([]byte(ev.batchDelta), &d); err != nil {
 			return nil, err
 		}
-		for _, m := range d.Members {
+		// a batch that changed no record (a properties-only apply, such as promoted) is
+		// encoded by the store's cjson with its empty members as {}: it names none
+		var members []struct {
+			ID string `json:"id"`
+		}
+		if m := strings.TrimSpace(string(d.Members)); m != "" && m != "{}" && m != "null" {
+			if err := json.Unmarshal(d.Members, &members); err != nil {
+				return nil, err
+			}
+		}
+		for _, m := range members {
 			out = append(out, m.ID)
 		}
 	} else if ev.verb == "apply" {
@@ -1017,6 +1100,7 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 	}
 	open := p.HGetAll(ctx, r.key(keyOpen))
 	coord := p.Get(ctx, r.Names.Key(keyCoordinator))
+	seat := p.Get(ctx, r.Names.Key(keySeat))
 	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReply(err) {
 		return View{}, err
 	}
@@ -1038,6 +1122,13 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 	if v.Coordinator, err = coord.Result(); err != nil && !errors.Is(err, redis.Nil) {
 		return View{}, err
 	}
+	raw, err := seat.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return View{}, err
+	}
+	if v.SeatGeneration, err = seatGenerationOf(raw, err == nil); err != nil {
+		return View{}, err
+	}
 	if v.Open, err = r.openOf(ctx, idx); err != nil {
 		return View{}, err
 	}
@@ -1055,3 +1146,29 @@ func (r *Redis) RowsOrder(ctx context.Context, table string, rows []string) erro
 }
 
 var _ RowsOrderer = (*Redis)(nil)
+
+// orderOnly says a set's arguments (its event's args: the table, then the change) change
+// the rows' order and nothing else: row_order, row_sort and row_move alone. Such a write
+// names no record because it changes none: the fleet's order by status (orderFleet)
+// moves rows, and the twin, which takes each table's rows from the shape it reads beside
+// its catch-up, read the fleet table whole after every such write (34 times on
+// 2026-10-04, each ~2,800 records). Any other key, or arguments it cannot read, is a
+// write that may change records, and the table is read whole as before.
+func orderOnly(args string) bool {
+	var list []string
+	if json.Unmarshal([]byte(args), &list) != nil || len(list) != 2 {
+		return false
+	}
+	var change map[string]json.RawMessage
+	if json.Unmarshal([]byte(list[1]), &change) != nil || len(change) == 0 {
+		return false
+	}
+	for k := range change {
+		switch k {
+		case "row_order", "row_sort", "row_move":
+		default:
+			return false
+		}
+	}
+	return true
+}

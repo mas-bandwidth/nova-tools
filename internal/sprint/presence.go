@@ -76,6 +76,22 @@ type Beat struct {
 	How     string         `json:"how,omitempty"`
 	Samples []LoadSample   `json:"samples,omitempty"`
 	Meter   hostload.State `json:"meter"`
+	// Friend is what a friend's beat reports of her work (friend beat); nil on a
+	// machine's beat.
+	Friend *FriendReport `json:"friend,omitempty"`
+}
+
+// FriendReport is what a friend's machinery reports with her beat, as a machine's beat
+// reports its load (the beat's Load, given): the cards she is running (work card ids or her
+// job names), which friend take and friend down leave with her (FriendTake), and her own
+// counts as her daemon keeps them (working, queued, her width), each absent when not
+// reported. They are her word, shown beside the table's counts, which stay the sprint's
+// own (her row's cards) and her width the roster's.
+type FriendReport struct {
+	Running []string `json:"running,omitempty"`
+	Working *int     `json:"working,omitempty"`
+	Queue   *int     `json:"queue,omitempty"`
+	Width   *int     `json:"width,omitempty"`
 }
 
 // Beaten says the member has beaten at least once.
@@ -149,15 +165,20 @@ func FriendBeating(b Beat, now time.Time) bool {
 }
 
 // FriendStatus is the one rule of a friend's status at now: held while the
-// coordinator holds her (friend down), else up while her last beat is within
-// FriendDownAfter, else down (never beaten, or silent that long).
+// coordinator holds her (friend down); else, once the coordinator has observed her
+// (friend health), the observation's word under the current seat generation
+// while its proof is fresh and down otherwise (ObservedStatus: her own beat
+// never makes an observed friend up again); else up while her last beat is
+// within FriendDownAfter, else down (never beaten, or silent that long).
 // Releasing a hold (friend up) is not a beat: a friend released with no
 // recent beat is down until she beats.
-func FriendStatus(held bool, b Beat, now time.Time) string {
+func FriendStatus(f FriendPresence, now time.Time) string {
 	switch {
-	case held:
+	case f.Held:
 		return Held
-	case FriendBeating(b, now):
+	case f.Health.Observed():
+		return ObservedStatus(f.Health, f.Generation, now)
+	case FriendBeating(f.Beat, now):
 		return Up
 	}
 	return Down
