@@ -43,6 +43,9 @@ var swarmAudit = audit.Config{
 
 		// the stderr the member's loop and its beat share (memberLoop)
 		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
+
+		// install disk-guard --dry-run prints the unit file itself (install.go)
+		"install.go|installKind|text": "the unit text is the launchd plist or the systemd unit, a document --dry-run prints so a person can read it; escaping it would fold the file into one line. TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh reads the file the real install writes.",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -334,6 +337,13 @@ var swarmAudit = audit.Config{
 		// PANIC under the test guard, which the runtime writes, in a test process, on a
 		// path this binary never takes in production.
 		`"github.com/mas-bandwidth/nova-tools/internal/testguard"`,
+		// units (install.go) is the launchd and systemd text a sprint's disk-guard unit
+		// is. It writes that file and returns the text; it prints nothing on this
+		// binary's streams. Load starts launchctl or systemctl --user through
+		// internal/subproc and returns an error, which this package prints through
+		// oneline.Escape. Under NOVA_TEST_NO_HOST, Load refuses and starts nothing,
+		// and a test passes its own loader, so the import cannot load a unit here.
+		`"github.com/mas-bandwidth/nova-tools/internal/units"`,
 	},
 	MinClassified: 40,
 }

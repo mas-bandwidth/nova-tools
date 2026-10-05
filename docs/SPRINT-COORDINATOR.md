@@ -47,6 +47,12 @@ line the inbox prints for it, filled in; `nova-sprint inbox --open <id>` shows t
   they run under one `nova-secrets exec` wrapper that names variables and never a value;
   [SPRINT-COORDINATOR-SEAT.md](SPRINT-COORDINATOR-SEAT.md) builds it, each value from a command, and shows what
   each command prints. A wrapper that refuses is reported, not worked around.
+- The units the coordinator's machine runs (the store, the bus, the server, its member, the push loop, the
+  friend sync loop, the table) are each installed by a verb, never written by hand: `nova-redis install
+  store|bus` and `nova-sprint install server|member|seat-push|friend-sync|table`, after card
+  every-unit-installed-by-a-verb. `nova-sprint units --check` names each installed, missing or different
+  ([FLEET.md](FLEET.md#the-coordinator-machines-units-installed-by-verbs)); a hand-written unit reads as
+  different until the seat switches it over.
 - The coordinator never starts a second server: `run`, `tick`, `land` and `play` against the store beside the
   running server are a second writer. A server that does not answer is a fault to find (section 8).
 - The coordinator never writes the store by hand: no `redis-cli`, no raw ACL command, no edit of a key; every
@@ -436,6 +442,11 @@ Each is a place this runbook describes a workaround; the change that removes it 
   server has no tick deadline; PR 5127 fixes the rebalance loop that wedged it, and until it is installed the
   verbs that compute holds (`card`, `inbox`, `ack`, `tick`, `fleet level`, `fleet up`) can spin on a fleet
   whose emptiest member refused the card at staging.
+- After card every-unit-installed-by-a-verb: `nova-sprint install`, `uninstall` and `units --check` are in
+  nova-sprint's verb table, and `nova-swarm install disk-guard` writes the disk-guard unit (the unit
+  code is `internal/units`, which a worker may import). `nova-swarm install mirror-refresh` and a
+  `nova-swarm mirror` verb stay owed: there is no mirror verb for the unit to run. The coordinator
+  switches the hand-written units over after this lands; this card does not load them.
 - Where the sources disagree, the help is followed here:
   - the handover notes answer `cannot ask` with a drop and `stalled` with `ask --another`; the help offers
     `reader add`, `rework`, `drop` and `wait` for the first, `card <primary>` then the printed decision for
