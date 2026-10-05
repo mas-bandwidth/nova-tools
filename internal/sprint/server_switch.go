@@ -79,7 +79,9 @@ func copyBinary(src, dst string) error {
 }
 
 // ServerSwitch replaces the server binary with candidate binary, keeping previous binary
-// for rollback (docs/SPEC-SPRINT.md section 14; item 14).
+// for rollback (docs/SPEC-SPRINT.md section 14; item 14). It is the swap alone: the verb that
+// installs the server binary checks the candidate is built from the sprint base first
+// (CheckServerBinary, server_base.go; section 14, "server-from-base-only.w2").
 func ServerSwitch(ctx context.Context, opts ServerSwitchOptions) error {
 	target := opts.Target
 	if target == "" {
