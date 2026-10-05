@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -39,7 +41,14 @@ pin off): a card's deadline is otherwise the larger of its own and three times
 the member's median run wall over its last fifty ok attempts, so a slow
 machine does not time out twice as often. The load cell is the machine's CPU busy percent of all
 its cores (the one-minute load average over the cores where that cannot be
-measured), the highest of the last `+sprint.LoadWindow.String()+`.
+measured), the highest of the last `+sprint.LoadWindow.String()+`. A beat measures the
+machine's open file descriptors beside its load, given or measured: over --fd-warn
+(else NOVA_FD_WARN, else `+fmt.Sprint(hostload.FilesWarnDefault)+`) it says warn and lists the top
+holders, read at most once every `+hostload.HoldersEvery.String()+`; over --fd-alarm (else
+NOVA_FD_ALARM, else `+fmt.Sprint(hostload.FilesAlarmDefault)+`) it says alarm, and the tick writes
+one judgment of the member ("`+sprint.NFilesAlarm+`") naming the count, the top
+holders and its cards that ended on a timeout, closed with one cleared note when
+the count falls under the alarm.
 
 fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
 else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
@@ -112,18 +121,41 @@ func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drai
 
 // beatReport is what fleet beat prints with --json.
 type beatReport struct {
-	Member string    `json:"member"`
-	At     time.Time `json:"at"`
-	Load   float64   `json:"load"`
-	Last   float64   `json:"last"`
-	How    string    `json:"how"`
-	Cores  int       `json:"cores"`
+	Member string          `json:"member"`
+	At     time.Time       `json:"at"`
+	Load   float64         `json:"load"`
+	Last   float64         `json:"last"`
+	How    string          `json:"how"`
+	Cores  int             `json:"cores"`
+	Files  *hostload.Files `json:"files,omitempty"`
+}
+
+// fdBound is one of fleet beat's open-files bounds: the flag's count when given, else the
+// environment's, else 0 (the default); a count under 1 is refused.
+func (a *app) fdBound(flagged int, given bool, flag, env string) (int, string) {
+	if given {
+		if flagged < 1 {
+			return 0, fmt.Sprintf("--%s wants a count of open file descriptors of at least 1, found %d", flag, flagged)
+		}
+		return flagged, ""
+	}
+	v := strings.TrimSpace(a.getenv(env))
+	if v == "" {
+		return 0, ""
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, env + " wants a count of open file descriptors of at least 1, found " + v
+	}
+	return n, ""
 }
 
 func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("fleet beat")
 	load := fs.String("load", "", "the load as a percent of all the machine's cores, instead of measuring it (a test's, or another meter's)")
 	cores := fs.Int("cores", 0, "the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half")
+	fdWarn := fs.Int("fd-warn", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else %d)", hostload.FilesWarnDefault))
+	fdAlarm := fs.Int("fd-alarm", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else %d)", hostload.FilesAlarmDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
@@ -146,12 +178,35 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if *cores > 0 {
 		src.NCPU = *cores
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	var why string
+	if src.FilesWarn, why = a.fdBound(*fdWarn, set["fd-warn"], "fd-warn", "NOVA_FD_WARN"); why != "" {
+		return refuse(stderr, "fleet beat", why)
+	}
+	if src.FilesAlarm, why = a.fdBound(*fdAlarm, set["fd-alarm"], "fd-alarm", "NOVA_FD_ALARM"); why != "" {
+		return refuse(stderr, "fleet beat", why)
+	}
+	if warn, alarm := hostload.FilesBounds(src); alarm < warn {
+		return refuse(stderr, "fleet beat", fmt.Sprintf("--fd-alarm wants a count at or above the warn bound %d, found %d", warn, alarm))
+	}
+	if given != nil {
+		// a load given is the beat's; the machine's open files are measured beside it
+		// (hostload.Source.Given), so a member that gives its one-second samples still
+		// reports them
+		if *given < 0 || *given > hostload.MaxPercent {
+			fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(fmt.Sprintf("a load is a percent from 0 to %v, found %v", hostload.MaxPercent, *given)))
+			return 1
+		}
+		v := *given
+		src.Given = func() (float64, bool) { return v, true }
+	}
 	c.orActor(pos[0])
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
 	}
-	b, err := st.Beat(context.Background(), pos[0], given, src)
+	b, err := st.Beat(context.Background(), pos[0], nil, src)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -160,11 +215,24 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if n := len(b.Samples); n > 0 {
 		last = b.Samples[n-1].Pct
 	}
+	files := b.Meter.Files
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
-	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d\n", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
+	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
+	if files != nil {
+		fmt.Fprintf(stdout, " fds=%d fds-max=%d fds-level=%s", files.Open, files.Max, files.Level())
+	}
+	fmt.Fprintln(stdout)
+	if files != nil && files.Level() != hostload.LevelOK {
+		if files.TopErr != "" {
+			fmt.Fprintf(stdout, "  holders not listed: %s\n", oneline.Escape(files.TopErr))
+		}
+		for _, h := range files.Top {
+			fmt.Fprintf(stdout, "  %s\n", oneline.Escape(h.String()))
+		}
+	}
 	return 0
 }

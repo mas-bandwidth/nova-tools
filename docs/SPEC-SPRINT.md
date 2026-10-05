@@ -1983,6 +1983,23 @@ and it is the coordinator's decision, receipted.
   CPU busy percent of all its cores, measured between beats; where that cannot
   be measured, the one-minute load average over the logical cores, capped at
   1000%. `--load <percent>` gives it instead.
+- Every beat, the load given or measured, also reads the machine's open file
+  descriptors (internal/hostload, files.go): the count and the system's limit
+  (darwin: the sysctl `kern.num_files` and `kern.maxfiles`; Linux:
+  `/proc/sys/fs/file-nr`), against the member's warn and alarm bounds:
+  `--fd-warn <n>` and `--fd-alarm <n>`, else the environment's `NOVA_FD_WARN` and
+  `NOVA_FD_ALARM` (so a member's own beats, which give their load, take them from
+  its environment), else 50000 and 150000, the bounds of the workshop tool this
+  replaces; an alarm under the warn is refused. Over the warn bound the beat lists
+  the top ten holders, most first (darwin: `lsof -n -P -F pcLf`; Linux:
+  `/proc/<pid>/fd`), a walk of every process the beat's user can see, read at most
+  once every 30 s (`HoldersEvery`) and bounded by 10 s (`HoldersTimeout`), a read
+  that runs over or fails saying so with the count standing. The reading rides in
+  the beat record's measuring state (`meter.files`); the beat line adds `fds=<n>
+  fds-max=<limit> fds-level=ok|warn|alarm` and, over the warn bound, one line per
+  holder, and `--json` carries it whole. A machine that cannot count them says
+  nothing of them. The member's files word (`sprint.FilesText`) is the count and
+  warn or alarm while a fresh reading is over its warn bound, else empty.
 - A member's status is derived, never typed: up until it has missed three beat
   windows of 15 s in a row (`MissedBeatsDown`, `BeatDeadline`; one missed beat,
   such as a store round trip that timed out, marks nothing, and a beat resets
@@ -3056,6 +3073,29 @@ pushes, so an episode is pushed once when it starts and once when it ends. `ack`
 it quiet until the episode ends (the next is raised again); `wait --for` until that
 much running time has passed, when one that still stands is raised again; `off` takes
 an alarm off, and an open one clears.
+
+### Open files
+
+A sprint once ran its machine out of file descriptors, and only one coordinator's
+workshop tool watched the count. The tick keeps an alarm of each member (with the
+backlog alarms, in its deadlines part) from the open files its beat reads (section 5):
+while a member's beat is fresh, its reading taken within a beat window, and the count
+above its alarm bound, one judgment of the member, "open files above the alarm",
+filed under `member:<m>`, written when the condition starts and never again while it
+stands, whatever the count does (the episode is keyed by its type and member, and its
+line is updated in place with the latest count and holders). Its
+line names the member, the count, the alarm bound, the system's limit, the top
+holders (or why they are not listed), and, as an alarm is an effect on cards, the
+member's cards that ended on a timeout within the overload window, or that none did.
+Its decisions are `fleet up <m> --width <half>`, `fleet down <m>`, `ack` (seen: the
+acknowledgement holds the episode quiet until the count falls under) and `wait 15m`
+(quiet for that running time; when it runs out on a count still over, the judgment is
+raised again and nothing is cleared). It closes when the count falls to the alarm or
+under, or the beat or the reading goes stale, in the same step as one happened note to
+the coordinator, "an alarm cleared", whose text opens with "open files above the
+alarm:" and says the count now. Over the warn bound only, no judgment is written; the
+fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
+`alarm` above the alarm bound), while the beat and its reading are fresh.
 
 ### The coordinator's pass
 

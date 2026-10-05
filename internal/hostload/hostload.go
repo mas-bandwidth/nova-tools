@@ -17,6 +17,10 @@
 // Every read of the machine is a Source function, so a caller measures with
 // Local and a test with its own inputs; Measure is a pure function of the
 // source, the state the previous measurement left, and the clock.
+//
+// Beside the load, every measurement reads the machine's open file descriptors
+// and, over a warn bound, the processes holding the most (files.go): the fleet
+// beat carries the reading in the state it keeps.
 package hostload
 
 import (
@@ -39,6 +43,7 @@ const TopEvery = 10 * time.Second
 const (
 	HowCPU   = "cpu"   // CPU busy percent over an interval
 	HowLoad1 = "load1" // one-minute load average over the logical cores
+	HowGiven = "given" // a load another meter gave (fleet beat --load)
 )
 
 // Ticks is one reading of the kernel's cumulative CPU counters: busy is every
@@ -50,11 +55,14 @@ type Ticks struct {
 
 // State is what one measurement leaves for the next: the last CPU counters
 // (Linux, where the busy percent is the change between two readings), and
-// the last top reading and when it was taken (darwin).
+// the last top reading and when it was taken (darwin), and the last reading
+// of the machine's open file descriptors (files.go), whose holders stand for
+// HoldersEvery.
 type State struct {
 	Ticks  *Ticks    `json:"ticks,omitempty"`
 	TopAt  time.Time `json:"top_at,omitzero"`
 	TopPct float64   `json:"top_pct,omitempty"`
+	Files  *Files    `json:"files,omitempty"`
 }
 
 // Source is how a machine is read. A nil function is a reading this machine
@@ -71,17 +79,38 @@ type Source struct {
 	CPUSecond func() (float64, error)
 	// Load1 is the one-minute load average.
 	Load1 func() (float64, bool)
+	// Given is a load another meter gave, a percent of all the cores (fleet beat
+	// --load: a member's one-second samples): the measurement's load, HowGiven,
+	// with the open files measured beside it.
+	Given func() (float64, bool)
+	// OpenFiles is the system's open file descriptors and its limit (0 when not
+	// known): darwin's kern.num_files and kern.maxfiles, Linux's
+	// /proc/sys/fs/file-nr.
+	OpenFiles func() (open, limit int, err error)
+	// Holders is every process this user can see with its open descriptors
+	// (darwin: lsof; Linux: /proc/<pid>/fd), bounded by HoldersTimeout; read only
+	// over the warn bound.
+	Holders func() ([]Holder, error)
+	// FilesWarn and FilesAlarm are the bounds of the open descriptors, each zero
+	// or less its default (FilesWarnDefault, FilesAlarmDefault).
+	FilesWarn, FilesAlarm int
 }
 
 // Local is this machine's source.
 func Local() Source { return localSource() }
 
 // Measure is the machine's load as a percent of all its cores at now, how it
-// was measured, and the state for the next measurement. ok is false when
-// nothing could be measured.
+// was measured, and the state for the next measurement, which carries the
+// machine's open file descriptors read at now (MeasureFiles; nil when they
+// cannot be read). ok is false when no load could be measured.
 func Measure(src Source, prev State, now time.Time) (pct float64, how string, next State, ok bool) {
 	next = prev
+	next.Files = MeasureFiles(src, prev.Files, now)
 	switch {
+	case src.Given != nil:
+		if p, good := src.Given(); good {
+			return capped(p), HowGiven, next, true
+		}
 	case src.ProcStat != nil:
 		if text, err := src.ProcStat(); err == nil {
 			if cur, good := ParseProcStat(text); good {
