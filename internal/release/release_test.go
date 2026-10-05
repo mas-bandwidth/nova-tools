@@ -2135,6 +2135,51 @@ func TestBuildRefusesAPlatformListItCannotRead(t *testing.T) {
 	}
 }
 
+// --platform is a goos and a goarch and nothing else. Each half is
+// ^[a-z0-9]+$, so a value carrying a path separator, a second dash or an
+// upper-case letter is refused rather than silently retargeted: a split on the
+// first dash alone lets `q-a/../b` name the goarch `a/../b`, and install then
+// reads a directory the --from tree never named. The install leg says the
+// refusal reaches the verb before --bin is touched.
+func TestPlatformRefusesAValueThatIsNotLowercaseGoosDashGoarch(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		platform string
+		wantErr  bool
+	}{
+		{"linux-amd64", false},
+		{"windows-arm64", false},
+		{"q-a/../b", true},
+		{"linux-amd64/../x", true},
+		{"../a-b", true},
+		{"linux-amd64-extra", true},
+		{"linux-AMD64", true},
+	} {
+		t.Run(tc.platform, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := Platform(tc.platform)
+			if tc.wantErr {
+				assert.Error(t, err, "accepted %q", tc.platform)
+				return
+			}
+			assert.NoError(t, err, "refused %q", tc.platform)
+		})
+	}
+
+	from := built(t, "v0.16.0", "", "nova-bus")
+	bin := t.TempDir()
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
+		"--bin", bin, "--platform", "q-a/../b"}, &o, &e, Deps{})
+	if code != 2 {
+		require.Equal(t, 2, code, "a retargeting --platform was accepted: code=%d out=%s errs=%s", code, o.String(), e.String())
+	}
+	if entries, err := os.ReadDir(bin); err != nil || len(entries) != 0 {
+		require.FailNowf(t, "assertion failed", "a refused install wrote %v (%v)", entries, err)
+	}
+}
+
 // A checksum file nobody has ever checked is a file whose first reader is the
 // person it was supposed to reassure. The build reads its own, in the step that
 // wrote it, and says how many it checked.
