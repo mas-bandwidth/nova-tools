@@ -5,6 +5,7 @@ package update
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -98,4 +99,44 @@ func TestSnapshotNotesASymlinkedNovaEntryItSkips(t *testing.T) {
 	assert.NotContains(t, stdout, "symlink, not a regular file; not snapshotted")
 	assert.NotContains(t, stdout, "NOTE")
 	assert.FileExists(t, cleanOut)
+}
+
+// Snapshot notes a row whose source metadata is partial or contradictory (it names
+// source but FindSource refuses it) and ignores it rather than refusing; a stub with
+// none of the four keys gets no note (SPEC-VERSION item 6).
+func TestSnapshotNotesARowWhoseSourceMetadataIsPartial(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	stub := func(name, line string) {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '"+line+"\\n'\n"), 0o755))
+	}
+	// repo and revision only: dirty and build_host are missing.
+	stub("nova-partial", "nova-partial v1.0.0 linux/amd64 go1.0 repo=my/repo revision=abcdef123456")
+	// all four keys, but a dirty token that is neither true nor false.
+	stub("nova-maybe", "nova-maybe v1.0.0 linux/amd64 go1.0 repo=my/repo revision=abcdef123456 dirty=maybe build_host=h")
+	// none of the four keys.
+	stub("nova-none", "nova-none v1.0.0 linux/amd64 go1.0")
+	out := filepath.Join(t.TempDir(), "s.tsv")
+
+	code, stdout, stderr := runTool(t, "nova-version", "snapshot", "--bin", bin, "--out", out)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "SNAPSHOT OK")
+	assert.Contains(t, stdout, "NOTE "+"partial source metadata: "+oneline.Quote("nova-partial"))
+	assert.Contains(t, stdout, "NOTE "+"partial source metadata: "+oneline.Quote("nova-maybe"))
+	assert.Equal(t, 2, strings.Count(stdout, "partial source metadata"), stdout)
+	assert.NotContains(t, stdout, oneline.Quote("nova-none"))
+	assert.Contains(t, stdout, "SNAPSHOT ROW name=nova-none")
+}
+
+// A line repeating a source key is not a version line at all (buildinfo.Parse refuses
+// the repeat), so the snapshot refuses it rather than treating it as source-less.
+func TestSnapshotRefusesARowRepeatingASourceKey(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "nova-dup"), []byte("#!/bin/sh\nprintf 'nova-dup v1.0.0 linux/amd64 go1.0 repo=a repo=b revision=abcdef123456 dirty=false build_host=h\\n'\n"), 0o755))
+	out := filepath.Join(t.TempDir(), "s.tsv")
+
+	code, stdout, _ := runTool(t, "nova-version", "snapshot", "--bin", bin, "--out", out)
+	assert.Equal(t, 2, code, stdout)
+	assert.NoFileExists(t, out)
 }

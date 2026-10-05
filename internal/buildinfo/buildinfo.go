@@ -208,17 +208,15 @@ func Parse(s string) (Fields, bool) {
 
 // Source is the structured view of WHERE a binary was built from. The version line has
 // always carried an unstructured "the stamp this build reports"; Source is what the stamp
-// is verified against: every stamp read at the gate -- apply --sha's postflight, the
-// snapshot, `moved`'s per-revision readback -- also reads this four-field shape and
-// refuses a binary that names a different checkout, a different revision, a dirty tree,
-// or a different build host than the manifest recorded. A build from the wrong
-// repository that happens to carry the requested linker stamp cannot pass (#2291,
-// SPEC-VERSION item 6).
+// is checked against. Today only the snapshot reads it: the gate there checks that the
+// binaries which name a source agree with one another, which is consistency across the
+// binaries' own claims and not a check of the build -- a lone binary from the wrong
+// repository passes (SPEC-VERSION item 4).
 //
 // All four fields are always written together, so the round-trip is unambiguous: a Source
-// the reader can extract is one the writer wrote whole. A version line that carries some
-// but not all of the four is read as "no source": a half-present source is a source the
-// reader cannot verify, and a silent disagreement is worse than a refusal.
+// the reader can extract is one the writer wrote whole. A version line that names some
+// source but that FindSource refuses (some but not all of the four, or a malformed dirty)
+// is read as "no source", and PartialSource reports it so the reader can say so.
 type Source struct {
 	// Repository is the checkout the build came from, e.g. "github.com/owner/repo". A
 	// build from a different repository cannot pass even if the linker stamp matches.
@@ -255,28 +253,34 @@ func (s Source) Extras() []string {
 // sourceKeys is the set of keys FindSource reads from Extras.
 var sourceKeys = map[string]bool{"repo": true, "revision": true, "dirty": true, "build_host": true}
 
+// sourceKeyCounts counts, per source key, how many extras name it.
+func (f Fields) sourceKeyCounts() map[string]int {
+	counts := map[string]int{}
+	for _, e := range f.Extras {
+		if k, _, found := strings.Cut(e, "="); found && sourceKeys[k] {
+			counts[k]++
+		}
+	}
+	return counts
+}
+
 // FindSource returns the Source the fields carry, or false. The four source keys are
 // the only ones FindSource reads: anything else in the extras -- nova-merge's
 // `build=<hex>`, nova-sandbox's `backend=` -- is ignored. A version line that carries
 // none of the four is reported with ok=false: old binaries, foreign tools, and a `go
 // install` from a tag never had this, and "no Source" is the honest answer. A version
-// line that carries SOME but not ALL of the four is ALSO reported with ok=false: a
-// partial source is a source the reader cannot verify, and the gate must refuse it
-// rather than guess at the missing field.
+// line that carries SOME but not ALL of the four is ALSO reported with ok=false, and
+// PartialSource reports it: the snapshot notes such a row and ignores its source.
 //
 // A malformed dirty token (anything other than "true" or "false") is refused: a value
 // like `dirty=maybe` is not a clean source and must not be silently accepted as
 // dirty=false. Duplicate source keys are also refused: two `repo=` entries in the
-// same line are a contradiction the reader cannot resolve.
+// same line are a contradiction the reader cannot resolve (Parse already refuses a
+// repeated key, so this guards a Fields built by hand).
 func (f Fields) FindSource() (Source, bool) {
-	// Count source keys to detect duplicates.
-	counts := map[string]int{}
-	for _, e := range f.Extras {
-		if k, _, found := strings.Cut(e, "="); found && sourceKeys[k] {
-			counts[k]++
-			if counts[k] > 1 {
-				return Source{}, false
-			}
+	for _, n := range f.sourceKeyCounts() {
+		if n > 1 {
+			return Source{}, false
 		}
 	}
 
@@ -284,9 +288,6 @@ func (f Fields) FindSource() (Source, bool) {
 	rev, hasRev := f.Extra("revision")
 	dirty, hasDirty := f.Extra("dirty")
 	host, hasHost := f.Extra("build_host")
-	if !hasRepo && !hasRev && !hasDirty && !hasHost {
-		return Source{}, false
-	}
 	if !hasRepo || !hasRev || !hasDirty || !hasHost {
 		return Source{}, false
 	}
@@ -299,4 +300,15 @@ func (f Fields) FindSource() (Source, bool) {
 		Dirty:      dirty == "true",
 		BuildHost:  host,
 	}, true
+}
+
+// PartialSource reports whether the line names at least one source key yet FindSource
+// refuses it: a partial source, or a contradictory one (a repeated key, dirty=maybe).
+// A line with none of the four keys is not partial; it simply has no source.
+func (f Fields) PartialSource() bool {
+	if len(f.sourceKeyCounts()) == 0 {
+		return false
+	}
+	_, ok := f.FindSource()
+	return !ok
 }
