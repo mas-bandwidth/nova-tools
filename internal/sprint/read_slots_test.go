@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // A friend's reader room is her read slots, not her card width and not a
@@ -110,4 +113,13 @@ func TestAnAskedReadPastTheBoundRaisesOneJudgment(t *testing.T) {
 	early.s.Fleet.SetProp(PropFriendReadWait, `{"amy":60}`)
 	early.s.ReaderStates = map[string]string{"reader-amy": ReaderAway}
 	require.Empty(t, readWaitsConds(early.s))
+}
+
+// The view reads each friend's read slots off the fleet table's property, and
+// nothing when the property is absent or not that JSON.
+func TestFriendReadSlotsOfReadsTheFleetProperty(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, map[string]int{"amy": 2, "bob": 0}, FriendReadSlotsOf(ntable.Table{Props: map[string]string{PropFriendReadSlots: `{"amy":2,"bob":0}`}}))
+	assert.Nil(t, FriendReadSlotsOf(ntable.Table{}))
+	assert.Nil(t, FriendReadSlotsOf(ntable.Table{Props: map[string]string{PropFriendReadSlots: "not json"}}))
 }

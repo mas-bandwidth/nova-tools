@@ -2068,7 +2068,10 @@ id (`--op`) returns the original result, with no second counter or notification.
   A read asked of a friend's reader that waits not begun past her read wait
   raises the readers are behind on that reader (the judgment's table row,
   section 8), and the sprint's own readers-behind line leaves friends'
-  readers out, so each wait is one judgment.
+  readers out, so each wait is one judgment. `where` draws `reader-<friend>`'s
+  width cell (the readers table's width beside reading, and `where --json` on
+  her reader's row) as her read slots, read off `friend_read_slots`
+  (`sprint.FriendReadSlotsOf`), while her friends row keeps her card width.
 - A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
   nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
   per pro card; readers still equal workers per machine"): a flash card needs

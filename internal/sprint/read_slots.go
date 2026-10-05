@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // A friend's reader room (the owner, 2026-10-05: "Reads are in extra slots
@@ -53,6 +55,22 @@ func (s *Snapshot) friendProp(prop, reader string) (int, bool) {
 	}
 	n, ok := m[name]
 	return n, ok
+}
+
+// FriendReadSlotsOf is each friend's read slots as the fleet table holds them
+// (PropFriendReadSlots), for a reader of the view: where draws reader-<friend>'s
+// width as her read slots, the room ReaderWidth gives her. Nil when the
+// property is absent or not that JSON.
+func FriendReadSlotsOf(fleet ntable.Table) map[string]int {
+	raw := fleet.Props[PropFriendReadSlots]
+	if raw == "" {
+		return nil
+	}
+	var m map[string]int
+	if json.Unmarshal([]byte(raw), &m) != nil {
+		return nil
+	}
+	return m
 }
 
 // readWaitBound is how long a friend reader's asked read waits before

@@ -42,6 +42,10 @@ func TestAReadAskedOfAFriendIsDeliveredToHerLikeACard(t *testing.T) {
 	require.Contains(t, again, "nothing to do", "a second sync writes nothing: %s", again)
 
 	ta.ok("reader add reader-amy")
+	var w whereView
+	ta.json("where", &w)
+	require.Equal(t, "2", cellText(w.Tables[sprint.Readers]["reader-amy"][sprint.FieldWidth]), "where draws her reader at her read slots")
+	require.Equal(t, "8", cellText(w.Tables[sprint.Friends]["amy"][sprint.FieldWidth]), "her card width stays her row's")
 	ta.ok("reader away reader-a")
 	ta.ok("reader away reader-b")
 	ta.ok("add --stream s1 --count 1 --one")
