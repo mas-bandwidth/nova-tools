@@ -147,19 +147,9 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 // machineVerb is the store of tick and run, acting as the machine unless
 // --actor names another.
 func (a *app) machineVerb(name string, args []string, stderr io.Writer, extra ...func(flagSet)) (*store.Store, *common, int) {
-	fs, c := a.verbSetup(name)
-	for _, x := range extra {
-		x(fs)
-	}
-	pos, err := parse(fs, args)
-	if err != nil {
-		return nil, nil, refuse(stderr, name, err.Error())
-	}
-	if len(pos) > 0 {
-		return nil, nil, refuse(stderr, name, "takes no words, found "+pos[0])
-	}
-	if c.actor == "" {
-		c.actor = sprint.MachineActor
+	c, code := a.machineFlags(name, args, stderr, extra...)
+	if c == nil {
+		return nil, nil, code
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -168,11 +158,38 @@ func (a *app) machineVerb(name string, args []string, stderr io.Writer, extra ..
 	return st, c, 0
 }
 
+// machineFlags is machineVerb's words alone, the store not yet opened: a shadow
+// tick opens its own, read-only (shadow.go).
+func (a *app) machineFlags(name string, args []string, stderr io.Writer, extra ...func(flagSet)) (*common, int) {
+	fs, c := a.verbSetup(name)
+	for _, x := range extra {
+		x(fs)
+	}
+	pos, err := parse(fs, args)
+	if err != nil {
+		return nil, refuse(stderr, name, err.Error())
+	}
+	if len(pos) > 0 {
+		return nil, refuse(stderr, name, "takes no words, found "+pos[0])
+	}
+	if c.actor == "" {
+		c.actor = sprint.MachineActor
+	}
+	return c, 0
+}
+
 func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
-	var rules, idle bool
-	st, c, code := a.machineVerb("tick", args, stderr, answerRulesFlag(&rules, false), idleAlarmFlag(&idle, false))
-	if st == nil {
+	var rules, idle, shadow bool
+	c, code := a.machineFlags("tick", args, stderr, answerRulesFlag(&rules, false), idleAlarmFlag(&idle, false), shadowFlag(&shadow))
+	if c == nil {
 		return code
+	}
+	if shadow {
+		return a.shadowTick(*c, rules, idle, stdout, stderr)
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "tick", err.Error())
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
 	ctx := context.Background()

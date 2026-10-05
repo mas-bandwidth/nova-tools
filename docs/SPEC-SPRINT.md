@@ -3505,6 +3505,35 @@ a shell around it; the wire and the worker's client are internal/sprintwire. Eac
 test in cmd/nova-sprint/serve_test.go and internal/sprintwire/worker_test.go, and none opens a
 socket.
 
+#### install-canary-shadow-tick-r.w1: a shadow tick before every server swap
+
+A release build broke the lander for 13 minutes, and a cold server crash-looped from 4:28 to
+4:31 PM; a tick of the new binary, planned before the swap, would have shown both. `server
+switch <binary>` therefore runs `<binary> tick --shadow --json` against the store `--redis`
+names (else the switch's environment) before it changes anything on disk. The shadow tick plans
+and applies nothing (plan and apply are separate: the store holds every step's plan before it
+applies it, section 3): it opens the store through a read-only store user (`store.ReadOnly`), a
+backend on which every write of the Backend and KV interfaces is a refusal
+(`store.ErrReadOnly`) and no optional writer is reachable; it writes no beat, heartbeat, repair
+of a pending operation or restore a clear owes (an operation pending past its tries, or an owed
+restore, fails the shadow, never repaired); on one fenced read it plans every part of the
+tick's start, its tables' updates in order and its end, as the tick's first pass does, whether
+the machine is RUNNING or STOPPED, and prints each part with something to do and the plan's
+size (units, notes, rows, closes and updates) and time (`store.ShadowTick`). A part that panics
+is not recovered: the shadow is the canary of a crash too. The switch refuses (`server switch
+REFUSED: the shadow tick of <binary> <why>`, exit 1, nothing on disk changed, the old server
+running as it was) when the shadow exits non-zero, panics, does not end within
+`--tick-deadline` (default the run loop's `TickDeadline`, 10s; the process is killed), or
+prints no plan; a binary that predates `--shadow` is refused for that. On a pass it prints
+`SHADOW TICK OK ... size= took= wall=`, switches as above, and records the shadow (binary,
+time, plan, its size, the plan's time and the process's) at `<target>.shadow.json`, beside the
+switch record. `server switch --rollback` with no binary restores the previous binary and runs
+no shadow. Tested on the twin store with this binary as a working candidate and broken
+candidates that error, panic, hang past the deadline and print no plan
+(`TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary`), the store byte for byte unchanged
+by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
+store refused (`TestShadowTickStoreRefusesEveryWrite`).
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,
