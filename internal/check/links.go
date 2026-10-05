@@ -226,8 +226,23 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 			}
 			checked++
 			if reason == "" {
-				if _, statErr := os.Stat(resolved); statErr != nil {
-					reason = "does not exist"
+				// The lexical check in resolveTarget rejects targets that leave
+				// root with "..", but an intermediate directory symlink could
+				// still escape the tree. Resolve symlinks and require the real
+				// path to equal root or sit under root+separator (as attest does
+				// in attest.go:120-123). A non-existent target keeps "does not exist".
+				realPath, evalErr := filepath.EvalSymlinks(resolved)
+				if evalErr != nil {
+					if errors.Is(evalErr, fs.ErrNotExist) || os.IsNotExist(evalErr) {
+						reason = "does not exist"
+					}
+				} else if realPath != root && !strings.HasPrefix(realPath, root+string(filepath.Separator)) {
+					reason = "escapes the tree through a symlink; cannot survive the repo travelling alone"
+				}
+				if reason == "" {
+					if _, statErr := os.Stat(resolved); statErr != nil {
+						reason = "does not exist"
+					}
 				}
 			}
 			if reason != "" {

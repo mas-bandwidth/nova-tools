@@ -364,8 +364,10 @@ func TestAMultiLineValueIsRefusedWithGenerateItWhereItIsUsed(t *testing.T) {
 	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
 	require.Equal(t, 125, code, "expected code 125, got %d", code)
-	assert.Contains(t, errOut, "key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable.", "expected multi-line refusal text, got: %s", errOut)
-	assert.Contains(t, errOut, "generate it where it is used: this store holds no file-shaped secrets.", "expected multi-line refusal text, got: %s", errOut)
+	assert.Equal(t, 1, strings.Count(errOut, "\n"), "expected exactly one refusal line, got: %s", errOut)
+	assert.NotContains(t, errOut, `\x0a`, "refusal must not escape newlines; it must be one line of text")
+	assert.Contains(t, errOut, "key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable", "expected multi-line refusal text, got: %s", errOut)
+	assert.Contains(t, errOut, "generate it where it is used: this store holds no file-shaped secrets", "expected multi-line refusal text, got: %s", errOut)
 
 	// names lists it with NO --key, NO --sops, and no sops process started
 	badSops := filepath.Join(td, "bad-sops-would-fail")

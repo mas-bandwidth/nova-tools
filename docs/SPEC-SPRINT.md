@@ -2253,6 +2253,27 @@ cannot read, is red as before with why no decision was made. Asked with the base
 the calibration of 2026-10-03 gave p(caused) AUC 0.8 and p(pre-existing) 0.522, so the
 lander acts on flaky alone.
 
+**The lander's pause.** `land` does not land onto a branch while a merge window is
+open, nor while that branch's merge queue on the forge holds a group: a direct push
+under a group being checked moves the base the group was cut from (windows were
+negotiated by message before this was a verb). `merge-window open --for <duration>
+--reason <text>` (the coordinator's) opens the window from the step's clock: its end, RFC
+3339 in UTC, and its reason are the merge table's properties `merge_window_until` and
+`merge_window_reason`, written guarded on the values read and replacing a window open
+before; a clear starts the next epoch with neither. While it is open every batch is
+refused, its reason `paused: a merge window is open until <end> (<reason>); the cards stay
+queued and land when it closes`, and no forge is asked. Otherwise the merge queue of the
+batch's base is asked (through an interface: a GitHub repository's through `gh api
+graphql`, its entries counted, each answer kept 20 s so the land loop's rounds do not ask
+every round; a repository on no forge with a merge queue, a path or a bare clone, has none,
+and tests give a fake): a group held refuses the batch, `paused: the merge queue of <base>
+holds a group; ...`, and a queue that cannot be read refuses it too, naming why: an
+unreadable queue is not an empty one. The pause is checked before any git and again just
+before the push. A paused batch records nothing, pushes nothing and stops no stream; its
+cards stay queued and land on a run after the pause ends. A dry run reads the store only:
+it shows the window and asks no forge. An end that cannot be read pauses, naming it, until
+the window is opened again (`sprint.LandPause`, `sprint.MergeWindowOpen`).
+
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
 card is not landing it. The notification names both streams and both cards.
@@ -2334,6 +2355,7 @@ the tick would make, no other open judgment on it).
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
 | a stream has made no progress past its deadline (stale) | where, queue (look), wait | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
+| review above its alarm, merging above its alarm, nothing ready while cards wait, the fleet works below its alarm (the backlog alarms, below) | ack (seen: quiet until the episode ends), wait | yes |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
@@ -2350,7 +2372,8 @@ The machine's tick writes its own judgments (section 14): cannot ask, fewer than
 member is up, a work card or a read card past its deadline, a stream with no
 merge step past its deadline, an invariant is broken, a stall (one
 judgment for each card nothing holds, or for the stall a chain of waiting
-cards ends at; the stall judgment itself holds nothing).
+cards ends at; the stall judgment itself holds nothing), and the backlog alarms
+(below).
 
 The sprint done is no judgment. The tick's last part, done, finds the sprint
 done when nothing is waiting, ready, working, in review or merging and at least
@@ -2478,6 +2501,31 @@ a need) is held by what it waits on, which the table shows, and is never stale.
 `wait stale:<stream>~<epoch> --for <duration>` writes the time on the stream's
 control card (`stale_review`), and the stream is not shown stale before it.
 This is pull visibility; nothing claims to detect a dead process.
+
+### Backlog alarms
+
+Four conditions of the whole sprint the tick keeps (its deadlines part plans them
+with the deadlines), each off until the coordinator sets its threshold with `set`,
+the work table's properties `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready`
+(a clear starts the next epoch with none):
+
+- review above its alarm: more primaries in review than `--alarm-review <n>`;
+- merging above its alarm: more primaries merging than `--alarm-merging <n>`;
+- nothing ready while cards wait: with `--alarm-ready on`, no primary ready and one or
+  more waiting;
+- the fleet works below its alarm: the members up working fewer work cards than
+  `--alarm-fleet <percent>` (1 to 100) of their width, while a primary is ready or
+  waiting.
+
+An alarm is an episode: one judgment of the sprint (no primaries) written when its
+condition starts, never again while it stands, whatever its counts do (it is keyed by
+its type), and closed once when it ends, in the same step as one happened note to the
+coordinator, "an alarm cleared", whose text opens with the alarm's type and a colon
+and says the count now. The judgment and that note are what `inbox --wait --push`
+pushes, so an episode is pushed once when it starts and once when it ends. `ack` keeps
+it quiet until the episode ends (the next is raised again); `wait --for` until that
+much running time has passed, when one that still stands is raised again; `off` takes
+an alarm off, and an open one clears.
 
 ### Answered by nova-decide
 
@@ -2765,7 +2813,7 @@ default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, hold, unhold, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, merge-window open, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -2830,6 +2878,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (her cards wait ready), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a friend keeps her cards, a stream's working cards finish. `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a friend's cards and a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back the cards she has not started (`--until` and her started cards' NOTE lines are its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold |
 | unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's and a friend's state is then their beat's; a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
+| merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
@@ -2844,7 +2893,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>]`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
-| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered) and `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, nothing to set, or another actor; a clear starts the next epoch with neither |
+| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
@@ -2896,6 +2945,10 @@ given `--epoch` is held to it like any other actor.
 ### store-snapshot-verb
 
 `nova-sprint snapshot --dir <d> [--keep <n>] [--every <duration>]` (the coordinator's) asks the store for a snapshot: BGSAVE, waited for until LASTSAVE moves with the save reported ok, then the RDB the server wrote is copied into `<d>` as `snapshot-<UTC time>.rdb` with `<name>.sha256` beside it. The copy is read back and checked against its SHA-256, loaded into a twin, and its counts compared with the store's at the save; a snapshot that fails either check is removed and the older ones stay, so the directory holds only verified snapshots. Only after a newer snapshot verifies is the directory pruned to the newest `--keep` (default 7). With `--every` the verb takes one now and another each interval until interrupted; a failed take is reported on stderr and the loop goes on. `nova-sprint snapshot --restore-drill <file>` checks the file against its checksum, loads it into a twin and prints its counts; it opens no store. The logic is `store.Snapshotter` and `store.RestoreDrill` (internal/sprint/store/snapshot.go), with the source and the twin as interfaces so the drill test (`TestSnapshotRestoreDrill`) runs on a fake source and a twin, with an injected clock and no socket. The RDB twin (`store.RDBTwin`) checks the REDIS header, the version and the CRC-64 trailer; it reports keys and cards as unknown, which are not compared, so a card-level load of the RDB is owed. The RDB is copied from the path CONFIG GET names, so the verb runs on the store's host.
+
+### sprint-backup-verb
+
+`nova-sprint backup --file <path>` (the machine's, like `snapshot`) is the sprint backup as one verb, where it was a hand procedure run by a child. It asks the store for its bytes (the same source as `snapshot`: BGSAVE and the RDB the server wrote on a Redis, the document of a `mem:` twin), writes them to `<path>` (a file that does not exist: an existing file is refused, never overwritten; written whole or not at all, owner-only), reads the file back against its SHA-256, restores it into a twin (`store.RDBTwin` on a Redis, `store.MemTwin` on a twin store) and compares: the restored counts with the store's, and on a twin store that the restore loses nothing the document holds (the restored store's document, restored and written once more, is the same document). It then scans the file line by line for secrets with the rules of `log.Redact`, the rules that keep a secret out of a log. A file that fails any step is removed, so the path holds only a verified, secret-free backup, and the failure names the lines (never the value) and what to do. The success line is `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=<document+counts|counts> secrets=none`. The verb reads the store and writes only the file; it uses no clock and no socket of its own, so its test (`TestBackupWritesRestoresComparesAndScansATwinStore`, with `TestBackupRefusesAndRemovesAFileHoldingASecret`, `TestBackupRefusesWhatItCannotDoSafely` and `TestBackupFailsAndRemovesTheFileWhenTheRestoreDiffers`) runs on a twin store. The logic is `runBackup` (cmd/nova-sprint/backup.go). On a Redis the RDB is copied from the path CONFIG GET names, so the verb runs on the store's host, and a card-level load of the RDB is owed as for `snapshot`.
 
 ### preflight
 
@@ -3244,8 +3297,8 @@ ask (T2: as many different readers up as it needs, one for a flash card and
 two for a pro card, for each primary in review with fewer read cards than that
 at its attempt and work not failed; a read asked of a
 reader that is not up is taken back first, section 6), check (T6: section 9, and the
-no-stall rule), deadlines, overdue, done (the sprint done: the machine
-stops). Each part is
+no-stall rule), deadlines (and the backlog alarms, section 8), overdue, done
+(the sprint done: the machine stops). Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
 catch up, and the machine line says so. A card made ready is dealt in the same
 tick. Running a tick twice in a row changes nothing the second time.
@@ -3504,6 +3557,35 @@ The server is `serve` in cmd/nova-sprint/serve.go, a step with no network in it;
 a shell around it; the wire and the worker's client are internal/sprintwire. Each rule here has a
 test in cmd/nova-sprint/serve_test.go and internal/sprintwire/worker_test.go, and none opens a
 socket.
+
+#### install-canary-shadow-tick-r.w1: a shadow tick before every server swap
+
+A release build broke the lander for 13 minutes, and a cold server crash-looped from 4:28 to
+4:31 PM; a tick of the new binary, planned before the swap, would have shown both. `server
+switch <binary>` therefore runs `<binary> tick --shadow --json` against the store `--redis`
+names (else the switch's environment) before it changes anything on disk. The shadow tick plans
+and applies nothing (plan and apply are separate: the store holds every step's plan before it
+applies it, section 3): it opens the store through a read-only store user (`store.ReadOnly`), a
+backend on which every write of the Backend and KV interfaces is a refusal
+(`store.ErrReadOnly`) and no optional writer is reachable; it writes no beat, heartbeat, repair
+of a pending operation or restore a clear owes (an operation pending past its tries, or an owed
+restore, fails the shadow, never repaired); on one fenced read it plans every part of the
+tick's start, its tables' updates in order and its end, as the tick's first pass does, whether
+the machine is RUNNING or STOPPED, and prints each part with something to do and the plan's
+size (units, notes, rows, closes and updates) and time (`store.ShadowTick`). A part that panics
+is not recovered: the shadow is the canary of a crash too. The switch refuses (`server switch
+REFUSED: the shadow tick of <binary> <why>`, exit 1, nothing on disk changed, the old server
+running as it was) when the shadow exits non-zero, panics, does not end within
+`--tick-deadline` (default the run loop's `TickDeadline`, 10s; the process is killed), or
+prints no plan; a binary that predates `--shadow` is refused for that. On a pass it prints
+`SHADOW TICK OK ... size= took= wall=`, switches as above, and records the shadow (binary,
+time, plan, its size, the plan's time and the process's) at `<target>.shadow.json`, beside the
+switch record. `server switch --rollback` with no binary restores the previous binary and runs
+no shadow. Tested on the twin store with this binary as a working candidate and broken
+candidates that error, panic, hang past the deadline and print no plan
+(`TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary`), the store byte for byte unchanged
+by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
+store refused (`TestShadowTickStoreRefusesEveryWrite`).
 
 ## 15. Reminders
 

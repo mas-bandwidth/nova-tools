@@ -401,7 +401,9 @@ func TestAPushToALocalPathRemoteReachesGit(t *testing.T) {
 		assert.True(t, os.IsNotExist(err), "%s: a push to a local-path remote records nothing", family)
 		code, _, errb := r.sh(r.repo, "git push --delete "+r.origin+" refs/heads/a")
 		require.Equal(t, 0, code, "%s: %s", family, errb)
-		assert.Equal(t, "refs/heads/d", strings.TrimSpace(git(t, r.origin, "for-each-ref", "--format=%(refname)", "refs/heads")), "%s: a delete to a local-path remote reaches git", family)
+		// origin holds the rig's main (newRig pushes it) and the d pushed above; the delete took a and nothing else.
+		assert.Equal(t, "refs/heads/d\nrefs/heads/main", strings.TrimSpace(git(t, r.origin, "for-each-ref", "--format=%(refname)", "refs/heads")), "%s: a delete to a local-path remote reaches git", family)
+		assert.Equal(t, r.base, git(t, r.origin, "rev-parse", "refs/heads/main"), "%s: the delete leaves the rig's main where it was", family)
 	}
 }
 

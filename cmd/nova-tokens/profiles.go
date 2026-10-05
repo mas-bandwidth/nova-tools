@@ -37,7 +37,7 @@ type profileModel struct {
 // parseCardBudget reads the card's budget line out of the PROMPT.md beside its usage.tsv.
 // No card, no line, or a non-numeric budget (unmetered) is an absence, never a zero budget.
 func parseCardBudget(promptPath string) (int64, bool) {
-	raw, err := os.ReadFile(promptPath)
+	raw, err := boundedReadFile(promptPath, 4<<20) // 4 MiB cap for PROMPT.md
 	if err != nil {
 		return 0, false
 	}

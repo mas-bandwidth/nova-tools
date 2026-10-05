@@ -41,7 +41,9 @@ func TestServerSwitchVerbSwitchesAndRollsBack(t *testing.T) {
 	candidate := filepath.Join(dir, "nova-sprint-candidate")
 
 	require.NoError(t, os.WriteFile(target, []byte("version-1"), 0o755))
-	require.NoError(t, os.WriteFile(candidate, []byte("version-2"), 0o755))
+	// version 2 passes the canary: its shadow tick prints a plan (shadow.go)
+	version2 := "#!/bin/sh\necho '" + `{"shadow":{"epoch":0,"state":"STOPPED","parts":[],"size":0,"took_ns":1}}` + "'\n"
+	require.NoError(t, os.WriteFile(candidate, []byte(version2), 0o755))
 
 	// Refuses with no args and no --rollback
 	code, _, errs := ta.do("server switch")
@@ -56,7 +58,7 @@ func TestServerSwitchVerbSwitchesAndRollsBack(t *testing.T) {
 	// Verify target is now version-2 and target.prev is version-1
 	content, err := os.ReadFile(target)
 	require.NoError(t, err)
-	assert.Equal(t, "version-2", string(content))
+	assert.Equal(t, version2, string(content))
 
 	prevContent, err := os.ReadFile(target + ".prev")
 	require.NoError(t, err)

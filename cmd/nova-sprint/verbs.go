@@ -51,7 +51,7 @@ func init() {
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
-		{"tick", "[--answer-rules] [--idle-alarm]", "tick", (*app).cmdTick},
+		{"tick", "[--answer-rules] [--idle-alarm] [--shadow]", "tick", (*app).cmdTick},
 		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
 		{"selftest", "[--dir <d>] [--keep]", "selftest", (*app).cmdSelftest},
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
@@ -76,6 +76,7 @@ func init() {
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
+		{"backup", "--file <path>", "backup --file /tmp/nova-sprint-backup.rdb", (*app).cmdBackup},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"hold", "<member|reader|friend|stream>... --reason <text> [--return] [--dry-run]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},
@@ -100,8 +101,9 @@ func init() {
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
-		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
+		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
@@ -132,7 +134,7 @@ func init() {
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
-		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
+		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
@@ -151,7 +153,7 @@ func verbNames() []string {
 	return append(out, "help", "version")
 }
 
-// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream):
+// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream, merge-window):
 // every verb whose name is that word and more; nil for a word that is no group.
 func groupVerbs(word string) []string {
 	var out []string
@@ -181,7 +183,7 @@ block shows the coordinator's day on that store.
 For one verb's usage, examples, flags and exit codes:
   nova-sprint help <verb> (or <verb> -h)
 For one group's help: nova-sprint help <group> (fleet, friend, reader, goal,
-stream).`
+stream, merge-window).`
 
 func banner() string {
 	var b strings.Builder
@@ -2689,11 +2691,16 @@ card's own tier, and default takes the stream's off.`) + "\n"
 
 // cmdSet writes the sprint's settings (sprint.Set): its read tier, the tier every
 // card's reads are raised to, and its dealt bound, how long a work card may wait
-// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27).
+// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27), and
+// the backlog alarms' thresholds (sprint.TickAlarms).
 func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("set")
 	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: each card's own tier)")
 	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
+	review := fs.String("alarm-review", "", "the backlog alarm on review: a judgment, once an episode, while more primaries than this whole number are in review; off takes it off (the default)")
+	merging := fs.String("alarm-merging", "", "the backlog alarm on merging: a judgment, once an episode, while more primaries than this whole number are merging; off takes it off (the default)")
+	fleet := fs.String("alarm-fleet", "", "the backlog alarm on the fleet: a judgment, once an episode, while the members up work fewer cards than this percent (1 to 100) of their width with a primary ready or waiting; off takes it off (the default)")
+	readyAlarm := fs.String("alarm-ready", "", "the backlog alarm on the feed: on raises a judgment, once an episode, while no primary is ready and one waits; off takes it off (the default)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
@@ -2705,7 +2712,8 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
 	}
-	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt,
+		AlarmReview: *review, AlarmMerging: *merging, AlarmFleet: *fleet, AlarmReady: *readyAlarm, Who: c.actor}), stdout, stderr)
 }
 
 // cmdPromoted is the coordinator's word that the sprint branch was promoted into dev

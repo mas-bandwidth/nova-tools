@@ -98,3 +98,42 @@ func TestSwarmProfilesRefusesNonexistentRoot(t *testing.T) {
 	wantContains(t, r.stderr, "does not exist")
 	wantContains(t, r.stderr, "nope")
 }
+
+// TestProfilesTreatsAnOversizeCardFileAsUnreadable: a usage.tsv larger than 1 MiB is skipped
+// (cards=0) and a PROMPT.md larger than 4 MiB yields no budget, so overshoot=0.
+func TestProfilesTreatsAnOversizeCardFileAsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	root := mkdir(t, filepath.Join(dir, "root"))
+	jobDir := filepath.Join(root, "batch-a", "jobs", "j1")
+	mkdir(t, jobDir)
+
+	// Write a valid usage.tsv but larger than 1 MiB (1<<20 = 1048576 bytes)
+	validRow := "c\t1\t2026-09-15T10:00:00Z\t2026-09-15T10:00:00Z\t0\tdeepseek\tdeepseek-v4\t1000\t500\t-\t-\t-\t0.0100\n"
+	validContent := cardUsageHeader + "\n" + validRow
+	oversizeUsage := validContent + strings.Repeat("x", 1024*1024-len(validContent)+1) // 1 byte over cap
+	write(t, filepath.Join(jobDir, "usage.tsv"), oversizeUsage)
+
+	// Write a valid budget PROMPT.md (under 4 MiB)
+	cardPrompt(t, jobDir, "1000")
+
+	r := invoke(t, "profiles", "--swarm-root", root)
+	wantExit(t, r, 0)
+	// Oversized usage.tsv should be skipped entirely: no model lines, only OK with cards=0
+	wantContains(t, r.stdout, "PROFILES OK models=0 cards=0 overshoot=0")
+
+	// A valid usage.tsv beside a PROMPT.md over 4 MiB: the card counts, but the budget is an
+	// absence. The budget line leads the file, so an uncapped read would find it and count
+	// the 500-token output against a budget of 100 as an overshoot.
+	root2 := mkdir(t, filepath.Join(dir, "root2"))
+	jobDir2 := filepath.Join(root2, "batch-a", "jobs", "j1")
+	mkdir(t, jobDir2)
+	write(t, filepath.Join(jobDir2, "usage.tsv"), validContent)
+	head := "YOUR TOKEN BUDGET IS 100. The machinery ends the job at the budget it can see.\n"
+	write(t, filepath.Join(jobDir2, "PROMPT.md"), head+strings.Repeat("x", 4<<20-len(head)+1)) // 1 byte over cap
+
+	r2 := invoke(t, "profiles", "--swarm-root", root2)
+	wantExit(t, r2, 0)
+	wantContains(t, r2.stdout, "PROFILES OK models=1 cards=1 overshoot=0")
+}
