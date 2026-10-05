@@ -10,8 +10,8 @@ import (
 
 // opencodeSpendRecord is the internal cost record for opencode spend since last top-up.
 type opencodeSpendRecord struct {
-	TotalSpend   float64 `json:"total_spend"`
-	LastTopUp    time.Time `json:"last_top_up"`
+	TotalSpend float64   `json:"total_spend"`
+	LastTopUp  time.Time `json:"last_top_up"`
 }
 
 // The test for opencode spend readout: when opencode's balance is unknown
@@ -36,7 +36,7 @@ func TestOpencodeSpendReadoutIsDone(t *testing.T) {
 		Note:      "opencode Zen publishes no balance endpoint",
 		SpendHour: float64(internalSpend), // spend from internal records
 	}.value())
-	
+
 	rows := ProviderRows(routes, f, coverT0)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "opencode", rows[0].Name)
