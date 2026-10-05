@@ -279,6 +279,24 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 	}
 }
 
+func TestFriendAsleepBeatShowsDownOnTheTableAndOrdinaryBeatShowsUp(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync")
+	ta.ok("friend beat --asleep amy")
+	assert.Equal(t, "down", ta.friendStatus()["amy"], "the table's words are up, held and down: a sleeping session is down")
+	assert.NotContains(t, ta.frame(), "asleep", "text and JSON share the friend status")
+	ta.ok("friend beat amy")
+	assert.Equal(t, "up", ta.friendStatus()["amy"])
+	ta.ok("friend down amy")
+	ta.ok("friend beat --asleep amy")
+	assert.Equal(t, "held", ta.friendStatus()["amy"])
+	ta.ok("friend up amy")
+	assert.Equal(t, "down", ta.friendStatus()["amy"])
+	ta.a.sleep(sprint.FriendDownAfter)
+	assert.Equal(t, "down", ta.friendStatus()["amy"])
+}
+
 // A friend is up while her last beat is under sprint.FriendDownAfter (15 s)
 // old and down once she has gone that long without one, or when she has
 // never beaten; a beat wakes her at once; held while friend down holds her
@@ -445,6 +463,15 @@ func TestAFriendBeatsThroughTheServer(t *testing.T) {
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, "FRIEND-BEAT OK amy")
 	assert.Contains(t, r.boss("nova-sprint where"), "amy     |     0 |       0 |     8 |    0 | 0.0% | up")
+	for _, argv := range [][]string{
+		{"friend", "beat", "amy", "--active", "2026-10-04T01:02:03Z"},
+		{"friend", "beat", "--asleep", "amy", "--active", "2026-10-04T01:02:03Z"},
+	} {
+		res := r.one(argv...)
+		require.Equal(t, 0, res.Code, res.Stderr)
+		assert.Contains(t, res.Stdout, "FRIEND-BEAT OK amy")
+		assert.Contains(t, res.Stdout, " active=2026-10-04T01:02:03Z")
+	}
 	for name, argv := range map[string][]string{
 		"no friend":       {"friend", "beat"},
 		"another actor":   {"friend", "beat", "amy", "--actor", "boss"},

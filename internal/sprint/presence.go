@@ -71,6 +71,7 @@ type LoadSample struct {
 // takes half of (WidthOfCores; fleet sync).
 type Beat struct {
 	At      time.Time      `json:"at"`
+	Asleep  bool           `json:"asleep,omitempty"` // a friend's beat said her session sleeps (friend beat --asleep); shown down
 	Load    float64        `json:"load"`
 	Cores   int            `json:"cores,omitempty"`
 	How     string         `json:"how,omitempty"`
@@ -174,7 +175,9 @@ func FriendBeating(b Beat, now time.Time) bool {
 // (friend health), the observation's word under the current seat generation
 // while its proof is fresh and down otherwise (ObservedStatus: her own beat
 // never makes an observed friend up again); else up while her last beat is
-// within FriendDownAfter, else down (never beaten, or silent that long).
+// within FriendDownAfter and does not say her session sleeps (friend beat
+// --asleep), else down (never beaten, silent that long, or asleep: the status
+// is up, held or down only; asleep is a word of the daemon's, kept on the beat).
 // Releasing a hold (friend up) is not a beat: a friend released with no
 // recent beat is down until she beats.
 func FriendStatus(f FriendPresence, now time.Time) string {
@@ -183,7 +186,7 @@ func FriendStatus(f FriendPresence, now time.Time) string {
 		return Held
 	case f.Health.Observed():
 		return ObservedStatus(f.Health, f.Generation, now)
-	case FriendBeating(f.Beat, now):
+	case FriendBeating(f.Beat, now) && !f.Beat.Asleep:
 		return Up
 	}
 	return Down

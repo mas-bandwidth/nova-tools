@@ -38,6 +38,57 @@ func TestCoordinatorSilentIsPushedOncePerOutageAndBackOnce(t *testing.T) {
 	assert.Equal(t, []string{"coordinator silent"}, subjects(m.Tick(t0.Add(4*Window+2*time.Second))), "a second outage is said again")
 }
 
+func TestSleepingMachinePausesChallengeAndSuppressesSyntheticNotices(t *testing.T) {
+	t.Parallel()
+	m := Start(t0)
+	m.Ping(t0.Add(time.Second), "ada", t0, "n1")
+	m.Sleep(t0.Add(2 * time.Second))
+
+	got := m.TickWhen(t0.Add(time.Second+Window), true)
+	assert.Empty(t, got, "sleep suppresses daemon-generated coordinator-silent pushes")
+	assert.Equal(t, Silent, m.Connection, "the transport clock still advances while asleep")
+	assert.Equal(t, Challenged, m.Challenge, "sleep itself must not make the session deaf")
+
+	wakeAt := t0.Add(time.Second + Window + time.Second)
+	back := m.ReceivePing(wakeAt, "coordinator", "coordinator", "ada", t0, "n2")
+	assert.Equal(t, []string{"coordinator back"}, subjects(back), "a real coordinator ping after durable wake remains an event")
+	assert.False(t, m.Asleep)
+	assert.Equal(t, t0.Add(time.Second+Window+time.Second), m.Asked, "the new nonce starts a fresh challenge after wake")
+
+	localSleep := wakeAt.Add(time.Second)
+	m.Sleep(localSleep)
+	awakeAt := localSleep.Add(5 * time.Second)
+	assert.Empty(t, m.TickWhen(awakeAt, false))
+	assert.Equal(t, Challenged, m.Challenge)
+	got = m.TickWhen(m.Asked.Add(Window), false)
+	assert.Equal(t, []string{"coordinator silent"}, subjects(got), "transport silence is independent of the paused session challenge")
+	assert.Equal(t, Deaf, m.Challenge, "awake time after wake still counts toward the deadline")
+}
+
+func TestSleepingMachineRejectsNonCoordinatorPing(t *testing.T) {
+	t.Parallel()
+	m := Start(t0)
+	m.Sleep(t0.Add(time.Second))
+	got := m.ReceivePing(t0.Add(2*time.Second), "unrelated", "coordinator", "ada", t0, "n1")
+	assert.Empty(t, got)
+	assert.Empty(t, m.Ping(t0.Add(2*time.Second), "ada", t0, "n1"), "raw pings cannot bypass sleep gating")
+	assert.True(t, m.Asleep)
+	assert.Equal(t, t0, m.LastPing, "a noncoordinator cannot change transport state while asleep")
+	assert.Empty(t, m.Nonce, "the message is not applied to the session challenge")
+}
+
+func TestAsleepMachineIsNotUpDespitePriorPong(t *testing.T) {
+	t.Parallel()
+	m := Start(t0)
+	m.Ping(t0.Add(time.Second), "coordinator", t0, "n1")
+	require.True(t, m.Pong(t0.Add(2*time.Second), "n1"))
+	assert.True(t, m.Up())
+	m.Sleep(t0.Add(3 * time.Second))
+	assert.False(t, m.Up(), "sleep status must not be reported as an active session")
+	m.Wake(t0.Add(4 * time.Second))
+	assert.True(t, m.Up(), "the earlier proof remains after local wake")
+}
+
 // The challenge: a ping challenges; only the current nonce answers it; a
 // window unanswered is deaf; a pong ends deaf; up only after a pong.
 func TestOnlyTheCurrentNonceAnswersAndAWindowUnansweredIsDeaf(t *testing.T) {
@@ -69,6 +120,31 @@ func TestOnlyTheCurrentNonceAnswersAndAWindowUnansweredIsDeaf(t *testing.T) {
 	assert.Equal(t, 2, m.Pongs)
 }
 
+func TestRepeatedCurrentNonceKeepsTheOriginalChallengeAndPong(t *testing.T) {
+	t.Parallel()
+	m := Start(t0)
+	asked := t0.Add(time.Second)
+	m.Ping(asked, "ada", t0, "n1")
+	duplicate := asked.Add(Window - time.Second)
+	m.Ping(duplicate, "ada", t0, "n1")
+	assert.Equal(t, duplicate, m.LastPing, "a repeated ping still refreshes the connection")
+	assert.Equal(t, asked, m.Asked, "it does not postpone the challenge deadline")
+	m.Tick(asked.Add(Window))
+	assert.Equal(t, Deaf, m.Challenge)
+	require.True(t, m.Pong(asked.Add(Window), "n1"))
+	m.Ping(asked.Add(Window+time.Second), "ada", t0, "n1")
+	assert.Equal(t, Quiet, m.Challenge, "an answered nonce is not a new challenge")
+	assert.Equal(t, asked, m.Asked)
+	assert.False(t, m.Pong(asked.Add(Window+2*time.Second), "n1"))
+	assert.Equal(t, 1, m.Pongs)
+	next := asked.Add(Window + 3*time.Second)
+	m.Ping(next, "ada", t0, "n2")
+	assert.Equal(t, Challenged, m.Challenge)
+	assert.Equal(t, next, m.Asked)
+	require.True(t, m.Pong(next, "n2"))
+	assert.Equal(t, 2, m.Pongs)
+}
+
 func TestPingAndPongLinesRoundTrip(t *testing.T) {
 	t.Parallel()
 	text := PingText("ada", t0, "abc123")
@@ -90,8 +166,3 @@ func TestPingAndPongLinesRoundTrip(t *testing.T) {
 	_, _, _, _, ok = ParsePong("daemon-pong abc123")
 	assert.False(t, ok)
 }
-
-// Up says whether the session has proved itself: it answered the current challenge, and
-// has answered at least once (the daemon alone never makes a friend up; tla/Friend.tla:
-// UpOnlyAfterPong).
-func (m *Machine) Up() bool { return m.Challenge == Quiet && m.Pongs > 0 }

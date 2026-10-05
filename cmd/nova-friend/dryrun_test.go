@@ -31,7 +31,7 @@ func TestTheWritingVerbsDryRunWritesNothing(t *testing.T) {
 		return open(ctx, addr)
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time, bool) (string, error) { beats++; return "", nil }
 	cli := cliOf(w)
 
 	cli.Do(t, "ping", "--as", "ada", "--to", "bob", "--nonce", "abc123", "--dry-run").Exit(0).Out("PING OK nonce=abc123 to=bob", "dry_run=true")
