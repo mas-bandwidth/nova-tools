@@ -19,7 +19,9 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "peek", Flags: store},
 		{Verb: "log", Flags: store},
 		{Verb: "names", Flags: store},
+		{Verb: "receipts", Flags: store},
+		{Verb: "overdue", Flags: store},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-bus", "send", "peek", "recv", "ack", "log", "names", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-bus", "send", "peek", "recv", "ack", "log", "names", "receipts", "overdue", "version")
 }

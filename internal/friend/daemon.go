@@ -259,6 +259,7 @@ type loop struct {
 	brokenAfter  int
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	failed       map[string]int  // entries whose turn failed, and how often
+	actedIDs     map[string]bool // message ids pushed into a turn that ended acted (exit 0)
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
 	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
 	notice       *Push           // the latest word about the coordinator the session is owed
@@ -297,7 +298,7 @@ type loop struct {
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
-		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, actedIDs: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, reads: newReadSet(), mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
@@ -622,6 +623,18 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
+			} else if dup, derr := l.acted(msg.ID); derr != nil || dup {
+				if derr != nil {
+					err = derr
+					break
+				}
+				if d.Record != nil {
+					d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
+				}
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
 			} else if !l.inHand[e.Entry] {
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
@@ -663,6 +676,16 @@ func (l *loop) read(now time.Time) bool {
 	return ok
 }
 
+// acted says whether the message id was pushed into a turn that ended acted:
+// remembered by this loop, else the store's receipt, so a redelivery after
+// a restart is dropped too (SPEC-BUS.md, message-receipts.w1).
+func (l *loop) acted(id string) (bool, error) {
+	if l.actedIDs[id] {
+		return true, nil
+	}
+	return l.b.Acted(l.ctx, l.d.Friend, id)
+}
+
 // take is the messages of the hand that go in the next turn: oldest first,
 // at most MaxBatch and BatchBytes, at least one when any waits.
 func (l *loop) take() (entries []string, msgs []bus.Message) {
@@ -676,12 +699,35 @@ func (l *loop) take() (entries []string, msgs []bus.Message) {
 	return entries, msgs
 }
 
+// markReceipts moves each message the turn carries to state. A store that
+// refuses is said on the record and left for overdue; the turn still ends.
+// Called from the loop after the result is posted, or from the output watch
+// before Deliver returns. Never from between those: Pause wakes when Deliver
+// returns, and a store round trip before the result is posted lets the loop
+// miss it and wait on the next pause forever.
+func (l *loop) markReceipts(t *turn, state string) {
+	if t == nil || len(t.msgs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(t.msgs))
+	for _, m := range t.msgs {
+		ids = append(ids, m.ID)
+	}
+	if err := l.b.MarkReceipts(l.ctx, l.d.Friend, state, ids...); err != nil && l.ctx.Err() == nil && l.d.Record != nil {
+		l.d.Record("receipt " + state + " not marked: " + oneLine(err.Error(), 300))
+	}
+}
+
 // startTurn runs deliver for t in its own goroutine, its context carrying the
 // watch on its output; the result goes to the batch's or the lanes' channel.
 func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	tctx, cancel := context.WithCancel(l.ctx)
 	seen := &atomic.Int64{}
-	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
+	tctx = WithOutputSeen(tctx, func() {
+		if seen.Add(1) == 1 {
+			l.markReceipts(t, bus.ReceiptRead) // first output: the adapter accepted the turn
+		}
+	})
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
 	switch f := deliver.(type) {
 	case func(context.Context) result:
@@ -779,6 +825,12 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		if len(t.msgs) > 0 {
+			for _, m := range t.msgs {
+				l.actedIDs[m.ID] = true
+			}
+			l.markReceipts(t, bus.ReceiptActed)
+		}
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -859,6 +911,8 @@ func (l *loop) batchDone(r result, now time.Time) {
 		}
 		return
 	}
+	// accepted, including a turn that printed nothing: read, then settle may move it to acted
+	l.markReceipts(r.t, bus.ReceiptRead)
 	line := fmt.Sprintf("%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), r.t.subjects, len(r.t.entries), now.Sub(r.t.started).Round(time.Millisecond), r.exit)
 	if r.t.notice != nil {
 		line += fmt.Sprintf(" notice=%q", r.t.notice.Subject)
