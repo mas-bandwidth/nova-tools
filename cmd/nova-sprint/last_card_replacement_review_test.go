@@ -52,6 +52,7 @@ func TestTheLastCardLandsAfterReplacingItsReaskedReader(t *testing.T) {
 		require.Equal(t, 0, res.Code, "%s\n%s%s", line, res.Stdout, res.Stderr)
 	}
 	r.ok("start")
+	r.markProtected()
 	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main --check 'test -f last.txt'"), "LAND DONE batches=1 cards=1 refused=0")
 	assert.Contains(t, r.ok("tick"), "the sprint is done")
 	assert.Contains(t, r.ok("where"), "DONE")

@@ -571,7 +571,7 @@ func checkFleet(r Row) error {
 		return fmt.Errorf("--pg_dsn wants a valid URI query with percent-encoded values and & between parameters; leave passwords out and deliver them through NOVA_PG_PASSWORD_ENV")
 	}
 	for key := range query {
-		if strings.EqualFold(key, "password") {
+		if strings.EqualFold(strings.TrimSpace(key), "password") {
 			return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
 		}
 	}

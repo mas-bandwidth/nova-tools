@@ -95,7 +95,7 @@ func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Cl
 		if err != nil {
 			return nil, 0, err
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }() // ignored: response body close after reading
 		if response.StatusCode != 200 {
 			if response.StatusCode == 403 || response.StatusCode == 429 {
 				r.Remedy = "ask again at x-ratelimit-reset=" + response.Header.Get("x-ratelimit-reset")

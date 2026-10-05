@@ -279,6 +279,70 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.Equal(t, "space", hist[0].After["store"], assertionMsg199...)
 		require.Equal(t, "", hist[1].After["store"], assertionMsg199...)
 	})
+
+	// Every kind is written and read back: an add of each multi-row kind and
+	// a set of each singleton and seeded row (they are there before anything
+	// is written, as a migrated Postgres has them), each write one history
+	// row of its op (docs/SPEC-CONFIG.md, "History": no write without a
+	// record).
+	t.Run("every kind is written and read back", func(t *testing.T) {
+		t.Parallel()
+		st := open(t)
+		loop, _ := Lookup(KindLoop)
+		route, _ := Lookup(KindRoute)
+		readBack := func(kind, name, op string, wrote map[string]string, id int64, err error) {
+			t.Helper()
+			require.NoError(t, err, "%s %s: %v", kind, name, err)
+			require.Positive(t, id, "%s %s: the write returned no history id", kind, name)
+			row, found, err := st.Get(ctx, kind, name)
+			require.NoError(t, err, "%s %s: %v", kind, name, err)
+			require.True(t, found, "%s %s: written, not read back", kind, name)
+			for f, want := range wrote {
+				assert.Equal(t, want, row.Fields[f], "%s %s: field %s read back wrong", kind, name, f)
+			}
+			hist, err := st.History(ctx, kind, name)
+			require.NoError(t, err, "%s %s: %v", kind, name, err)
+			require.NotEmpty(t, hist, "%s %s: the write left no history", kind, name)
+			assert.Equal(t, op, hist[len(hist)-1].Op, "%s %s: the last history row", kind, name)
+			assert.Equal(t, id, hist[len(hist)-1].ID, "%s %s: the last history row", kind, name)
+		}
+		box := map[string]string{"user": "u", "seat": "box", "slots": "8"}
+		id, err := st.Insert(ctx, KindMachine, mk(machine, "box", box), "t")
+		readBack(KindMachine, "box", OpAdd, box, id, err)
+		who := map[string]string{"slots": "2", "tiers": "frontier"}
+		id, err = st.Insert(ctx, KindFriend, mk(friend, "f", who), "t")
+		readBack(KindFriend, "f", OpAdd, who, id, err)
+		cmd := map[string]string{"machine": "box", "argv": `["/bin/x"]`, "every": "5"}
+		id, err = st.Insert(ctx, KindLoop, mk(loop, "l", cmd), "t")
+		readBack(KindLoop, "l", OpAdd, cmd, id, err)
+		via := map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"}
+		id, err = st.Insert(ctx, KindRoute, mk(route, "r", via), "t")
+		readBack(KindRoute, "r", OpAdd, via, id, err)
+		_, id, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "r"}, "t")
+		readBack(KindTier, "flash", OpSet, map[string]string{"routes": "r"}, id, err)
+		_, id, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "box"}, "t")
+		readBack(KindFleet, KindFleet, OpSet, map[string]string{"store": "box"}, id, err)
+		_, id, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "f"}, "t")
+		readBack(KindSprint, KindSprint, OpSet, map[string]string{"coordinator": "f"}, id, err)
+	})
+
+	// List reads every row of a kind by name (the Store interface), whatever
+	// order the rows were written in.
+	t.Run("list order", func(t *testing.T) {
+		t.Parallel()
+		st := open(t)
+		for _, name := range []string{"zed", "ann", "mid"} {
+			_, err := st.Insert(ctx, KindMachine, mk(machine, name, map[string]string{"user": "u", "seat": name, "slots": "1"}), "t")
+			require.NoError(t, err, name)
+		}
+		rows, err := st.List(ctx, KindMachine)
+		require.NoError(t, err)
+		var names []string
+		for _, r := range rows {
+			names = append(names, r.Name)
+		}
+		assert.Equal(t, []string{"ann", "mid", "zed"}, names, "list is by name")
+	})
 }
 
 func TestMemStoreKeepsTheContract(t *testing.T) {

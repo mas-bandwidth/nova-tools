@@ -538,6 +538,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	up := s.UpMembers()
 	var friends []*Card
 	for _, c := range s.Work.Column(Ready) {
+		if StreamHeld(s, c.Row) {
+			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
+		}
 		if _, ok := FriendCard(c); ok && !IsSentinel(c) {
 			// a friend's card: dealt to a friend below, never to a machine (friend_deal.go)
 			friends = append(friends, c)
@@ -580,6 +583,11 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			// lint): one judgment per tier either way
 			unserved[tier] = append(unserved[tier], c.ID)
 			whyOf[tier] = why
+			continue
+		}
+		if b := Bench(c); len(b) > 0 && len(onlyBench(up, b)) == 0 {
+			// its bench is down or held: it waits ready for a member of it, and is dealt to
+			// no other (bench_deal.go); the no-stall rule says why (held.go)
 			continue
 		}
 		ready = append(ready, c)
@@ -1019,7 +1027,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	for _, st := range s.Merge.Rows() {
 		ctl := s.StreamCtl(st)
 		state := ctl.F("state")
-		if state != StreamMerging && !(state == StreamWaiting && s.Merge.Count(st, Queued) > 0) {
+		if state != StreamMerging && (state != StreamWaiting || s.Merge.Count(st, Queued) <= 0) {
 			continue
 		}
 		last := max(ctl.F("since"), ctl.F("moved"))
@@ -1223,9 +1231,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	// that has run out is closed, and the condition, when it holds, is raised
 	// again.
 	var held []Open
-	for _, o := range s.Open {
-		held = append(held, o)
-	}
+	held = append(held, s.Open...)
 	for _, o := range s.Acked {
 		if !o.Note.Review.IsZero() && contains(types, o.Note.Type) {
 			if d, ok := r.running(s.Now, o.Note.At.UTC().Format(time.RFC3339)); ok && d >= o.Note.Review.Sub(o.Note.At) {

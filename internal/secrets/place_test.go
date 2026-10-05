@@ -15,7 +15,8 @@ func armHostGuard(t *testing.T) {
 	t.Setenv(testguard.EnvNoHost, "1")
 	testguard.Reload()
 	t.Cleanup(func() {
-		os.Unsetenv(testguard.EnvNoHost)
+		// ignored: the cleanup is best effort; t.Setenv restores the value after it
+		_ = os.Unsetenv(testguard.EnvNoHost)
 		testguard.Reload()
 	})
 }

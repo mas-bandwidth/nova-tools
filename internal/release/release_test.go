@@ -890,6 +890,182 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 	}
 }
 
+// TestInstallLeavesEveryToolAloneWhenOneStagingFails pins security#72 finding 4.
+//
+// The planted directory at the predictable .<tool>.new name must not be what
+// fails the install. Publish renames the staged temp onto the target, so
+// that name is never opened and both tools land. An install that replaces
+// nova-a before nova-b is published dies on the plant; rolling nova-a back
+// to its old bytes would still hide that, so this case requires the new
+// artifact, not the end state after a restore.
+//
+// The other case is a real staging failure, before any rename. nova-a has
+// to be the same file it was, not a copy put back afterwards.
+func TestInstallLeavesEveryToolAloneWhenOneStagingFails(t *testing.T) {
+	t.Parallel()
+
+	t.Run("planted temp name does not fail the install", func(t *testing.T) {
+		t.Parallel()
+
+		goos, _ := platformOf(t, "")
+		from := built(t, "v0.16.0", "", "nova-a", "nova-b")
+		bin := t.TempDir()
+		nameA := ToolFile("nova-a", goos)
+		nameB := ToolFile("nova-b", goos)
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		planted := "." + nameB + ".new"
+		if err := os.Mkdir(filepath.Join(bin, planted), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+			&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+				return "", fmt.Errorf("absent")
+			}})
+		if code != 0 {
+			require.Equal(t, 0, code, "planted %s failed the install (a tool was published before the rest):\n%s%s", planted, o.String(), e.String())
+		}
+		assertRunnable(t, filepath.Join(bin, nameA))
+		assertRunnable(t, filepath.Join(bin, nameB))
+		info, err := os.Lstat(filepath.Join(bin, planted))
+		if err != nil || !info.IsDir() {
+			require.FailNowf(t, "assertion failed", "planted %s is %v (%v); publish must not open that name", planted, info.Mode(), err)
+		}
+		entries, err := os.ReadDir(bin)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		for _, entry := range entries {
+			if entry.Name() != planted && (strings.Contains(entry.Name(), ".new") || strings.Contains(entry.Name(), ".aside")) {
+				require.FailNowf(t, "assertion failed", "a temp this run created was left behind: %s", entry.Name())
+			}
+		}
+	})
+
+	t.Run("one staging failure replaces nothing", func(t *testing.T) {
+		t.Parallel()
+
+		goos, goarch := platformOf(t, "")
+		from := built(t, "v0.16.0", "", "nova-a", "nova-b")
+		bin := t.TempDir()
+		nameA := ToolFile("nova-a", goos)
+		nameB := ToolFile("nova-b", goos)
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		af, err := os.Open(filepath.Join(bin, nameA))
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		before, err := af.Stat()
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := af.Close(); err != nil {
+			require.NoError(t, err, err)
+		}
+		art := ArtifactDir(from, "v0.16.0", goos, goarch)
+		var removeErr error
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+			&o, &e, Deps{VersionOf: func(_ context.Context, target string) (string, error) {
+				// After nova-a has been staged and before nova-b is. The
+				// artifact was verified already; removing it fails staging
+				// and must not publish anything.
+				if filepath.Base(target) == nameB {
+					removeErr = os.Remove(filepath.Join(art, nameB))
+				}
+				return "", fmt.Errorf("absent")
+			}})
+		if removeErr != nil {
+			require.NoError(t, removeErr, removeErr)
+		}
+		if code == 0 || !strings.Contains(e.String(), "were in place") || strings.Contains(e.String(), "restored") || strings.Contains(e.String(), "left replaced") {
+			require.FailNowf(t, "assertion failed", "staging failure was not reported before any publish: code=%d\n%s%s", code, o.String(), e.String())
+		}
+		after, err := os.Stat(filepath.Join(bin, nameA))
+		if err != nil || !os.SameFile(before, after) {
+			require.FailNowf(t, "assertion failed", "%s was replaced before every staged file was published (rollback hides the bytes)\n%s", nameA, e.String())
+		}
+		body, err := os.ReadFile(filepath.Join(bin, nameA))
+		if err != nil || string(body) != "old-a" {
+			require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameA, body, err, e.String())
+		}
+		body, err = os.ReadFile(filepath.Join(bin, nameB))
+		if err != nil || string(body) != "old-b" {
+			require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameB, body, err, e.String())
+		}
+		entries, err := os.ReadDir(bin)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), ".new") || strings.Contains(entry.Name(), ".aside") {
+				require.FailNowf(t, "assertion failed", "a temp this run created was left behind: %s", entry.Name())
+			}
+		}
+	})
+}
+
+// TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside pins security#72 finding 5.
+//
+// A directory at a tool path cannot be replaced by an executable. Install
+// must refuse to touch it, leaving the directory and any files inside intact,
+// and must not leave an aside or staged temp behind.
+func TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside(t *testing.T) {
+	t.Parallel()
+
+	goos, _ := platformOf(t, "")
+	from := built(t, "v0.16.0", "", "nova-c")
+	bin := t.TempDir()
+	name := ToolFile("nova-c", goos)
+	target := filepath.Join(bin, name)
+	require.NoError(t, os.Mkdir(target, 0o755))
+	keep := filepath.Join(target, "keep.txt")
+	require.NoError(t, os.WriteFile(keep, []byte("preserved"), 0o644))
+
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+		&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+			return "", fmt.Errorf("absent")
+		}})
+	require.NotZero(t, code, "install must fail when tool path is a directory: out=%s errs=%s", o.String(), e.String())
+	require.Contains(t, e.String(), "INSTALL FAIL")
+	require.Contains(t, e.String(), "not a regular file")
+
+	info, err := os.Lstat(target)
+	require.NoError(t, err)
+	require.True(t, info.IsDir(), "%s should still be a directory", target)
+
+	body, err := os.ReadFile(keep)
+	require.NoError(t, err)
+	require.Equal(t, "preserved", string(body))
+
+	entries, err := os.ReadDir(bin)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			require.FailNowf(t, "assertion failed", "unexpected temp file or aside left behind: %s", entry.Name())
+		}
+	}
+	require.Len(t, entries, 1)
+	require.Equal(t, name, entries[0].Name())
+
+	for _, aside := range []string{"." + name + ".old", "." + name + ".new"} {
+		_, err := os.Lstat(filepath.Join(bin, aside))
+		require.True(t, os.IsNotExist(err), "unexpected aside or temp %s: %v", aside, err)
+	}
+}
+
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
 	t.Parallel()
 
@@ -1693,7 +1869,7 @@ func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
 		}
 	}
 	// And the whole composed argv for a real machine carries none of them.
-	argv := ExecSSH{Path: "/usr/bin/ssh"}.sshArgs("hulk")
+	argv := remoteArgv("hulk")
 	if argv[len(argv)-1] != "hulk" {
 		require.FailNowf(t, "assertion failed", "the machine is not the last argument: %v", argv)
 	}
@@ -1799,6 +1975,61 @@ func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"},
 		&o, &e, Deps{SSH: s}); code != 0 {
 		require.FailNowf(t, "assertion failed", "the digest the cut wrote was not accepted: %d %s", code, e.String())
+	}
+}
+
+// THE LIST IS PINNED BY ITS OWN DIGEST (docs/SPEC-RELEASE.md section 5,
+// security#72 finding 10). A --paths-from file is the sensitive gate's only
+// input, and an unpinned list is a hand-editable one: whoever edits it between
+// the --local-diff that wrote it and the cut that reads it could delete the
+// sensitive paths and pass the gate with no --security-read, silently.
+func TestCutRefusesAPathsFileWhoseListWasEditedAfterItWasWritten(t *testing.T) {
+	t.Parallel()
+
+	const rangeName = "v0.15.10...abc123abc123def"
+	dir := t.TempDir()
+	written := filepath.Join(dir, "paths.txt")
+	list := []string{"internal/secrets/seal.go", "README.md"}
+	require.NoError(t, WritePathsFile(written, rangeName, list), "the verb could not write its own list")
+
+	// UNTOUCHED, THE ROUND TRIP STANDS: the file this verb wrote reads back
+	// exactly the list it was given.
+	got, err := ReadPathsFile(written, rangeName)
+	require.NoError(t, err, "an untouched list this verb wrote was refused: %v", err)
+	assert.Equal(t, list, got, "the round trip lost or changed paths")
+
+	raw, err := os.ReadFile(written)
+	require.NoError(t, err, err)
+
+	for _, tc := range []struct {
+		name string
+		drop string
+	}{
+		{"list line dropped", list[0] + "\n"},
+		{"digest line dropped", "# sha256 "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := string(raw)
+			if tc.name == "digest line dropped" {
+				lines := strings.SplitAfterN(body, "\n", 3)
+				require.GreaterOrEqual(t, len(lines), 3, "the written file has no second header line:\n%s", body)
+				require.True(t, strings.HasPrefix(lines[1], tc.drop), "the second header line is not a sha256 line: %q", lines[1])
+				body = lines[0] + lines[2]
+			} else {
+				body = strings.Replace(body, tc.drop, "", 1)
+			}
+			require.NotEqual(t, string(raw), body, "the edit changed nothing; the fixture is wrong")
+			paths := filepath.Join(dir, tc.name+".txt")
+			if err := os.WriteFile(paths, []byte(body), 0o644); err != nil {
+				require.NoError(t, err, err)
+			}
+			_, err := ReadPathsFile(paths, rangeName)
+			if assert.Error(t, err, "the cut read back a list edited after it was written") {
+				assert.Contains(t, err.Error(), "sha256", "the refusal does not name the digest mismatch: %v", err)
+				assert.Contains(t, err.Error(), "release cut --local-diff", "the refusal carries no remedy to regenerate the list: %v", err)
+			}
+		})
 	}
 }
 
@@ -2077,6 +2308,51 @@ func TestBuildRefusesAPlatformListItCannotRead(t *testing.T) {
 		"--source", sourceTree(t), "--platform", "linux-amd64,nonsense"}, &o, &e, Deps{Toolchain: &fakeToolchain{}})
 	if code != 2 || !strings.Contains(e.String(), "nonsense") {
 		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
+	}
+}
+
+// --platform is a goos and a goarch and nothing else. Each half is
+// ^[a-z0-9]+$, so a value carrying a path separator, a second dash or an
+// upper-case letter is refused rather than silently retargeted: a split on the
+// first dash alone lets `q-a/../b` name the goarch `a/../b`, and install then
+// reads a directory the --from tree never named. The install leg says the
+// refusal reaches the verb before --bin is touched.
+func TestPlatformRefusesAValueThatIsNotLowercaseGoosDashGoarch(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		platform string
+		wantErr  bool
+	}{
+		{"linux-amd64", false},
+		{"windows-arm64", false},
+		{"q-a/../b", true},
+		{"linux-amd64/../x", true},
+		{"../a-b", true},
+		{"linux-amd64-extra", true},
+		{"linux-AMD64", true},
+	} {
+		t.Run(tc.platform, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := Platform(tc.platform)
+			if tc.wantErr {
+				assert.Error(t, err, "accepted %q", tc.platform)
+				return
+			}
+			assert.NoError(t, err, "refused %q", tc.platform)
+		})
+	}
+
+	from := built(t, "v0.16.0", "", "nova-bus")
+	bin := t.TempDir()
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
+		"--bin", bin, "--platform", "q-a/../b"}, &o, &e, Deps{})
+	if code != 2 {
+		require.Equal(t, 2, code, "a retargeting --platform was accepted: code=%d out=%s errs=%s", code, o.String(), e.String())
+	}
+	if entries, err := os.ReadDir(bin); err != nil || len(entries) != 0 {
+		require.FailNowf(t, "assertion failed", "a refused install wrote %v (%v)", entries, err)
 	}
 }
 

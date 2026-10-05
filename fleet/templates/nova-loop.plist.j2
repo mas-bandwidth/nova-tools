@@ -51,8 +51,8 @@
 <key>AbandonProcessGroup</key>
 <true/>
 <key>StandardOutPath</key>
-<string>{{ loop_log | e }}</string>
+<string>{{ nova_home | e }}/Library/Logs/nova-loop-{{ l.name | e }}.log</string>
 <key>StandardErrorPath</key>
-<string>{{ loop_log | e }}</string>
+<string>{{ nova_home | e }}/Library/Logs/nova-loop-{{ l.name | e }}.log</string>
 </dict>
 </plist>

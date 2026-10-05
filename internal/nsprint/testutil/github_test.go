@@ -10,16 +10,21 @@ import (
 )
 
 func TestGitHubStubStartsCleanly(t *testing.T) {
+	t.Parallel()
+
 	stub := testutil.StartGitHubStub(t)
 	if stub.URL == "" {
 		require.NotEqual(t, "", stub.URL, "expected non-empty stub URL")
 	}
+	require.Contains(t, stub.Env, "GITHUB_API_URL="+stub.URL)
 	if stub.Calls() != 0 {
 		require.Equal(t, 0, stub.Calls(), "expected 0 calls initially, got %d", stub.Calls())
 	}
 }
 
 func TestGitHubStubInterceptsHTTPCalls(t *testing.T) {
+	t.Parallel()
+
 	// Use a dummy testing.T to verify it reports an error when called
 	subT := &testing.T{}
 	stub := testutil.StartGitHubStub(subT)
@@ -28,7 +33,7 @@ func TestGitHubStubInterceptsHTTPCalls(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, "get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // ignored: a response body opened only for reading; the read below is the report
 	_, _ = io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusForbidden {

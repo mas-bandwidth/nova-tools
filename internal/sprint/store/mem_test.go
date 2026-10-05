@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -96,4 +97,65 @@ func TestAddRowsKeepsEachTablesRowsSortedAndOnce(t *testing.T) {
 	if !slices.Equal(got[sprint.Work], []string{"s1", "s2", "s3"}) || !slices.Equal(got[sprint.Fleet], []string{"m1", "m2"}) || len(got[sprint.Merge]) != 0 {
 		require.Fail(t, fmt.Sprintf("rows %v", got))
 	}
+}
+
+// TestMemApplyLooksUpARecordedOperationBeforeValidatingTheManifest pins
+// security#78 finding 7: a recorded operation replays or conflicts by its
+// recorded bytes, before any newer validator refuses the re-sent request.
+func TestMemApplyLooksUpARecordedOperationBeforeValidatingTheManifest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	cols, err := ntable.ParseColumns("ready")
+	require.NoError(t, err)
+	require.NoError(t, m.Create(ctx, ntable.Table{Name: "demo", Columns: cols}))
+	require.NoError(t, m.RowsAdd(ctx, "demo", []string{"r"}))
+	dt, err := m.table("demo")
+	require.NoError(t, err)
+	rev := fmt.Sprint(dt.rev)
+	bad := ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "op-bad",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost"}},
+	}
+	badBody, err := json.Marshal(bad)
+	require.NoError(t, err)
+	dt.ops["0:op-bad"] = memOp{body: string(badBody), receipt: ntable.Receipt{ID: "recorded", Epoch: 0, Before: dt.rev, After: dt.rev, Outcome: "noop"}}
+	r, err := m.Apply(ctx, bad)
+	require.NoError(t, err, "a recorded operation must replay without validation")
+	require.True(t, r.Replay, "replayed receipt")
+	dt.ops["0:op-conflict"] = memOp{body: "different", receipt: ntable.Receipt{ID: "conflict", Epoch: 0, Before: dt.rev, After: dt.rev, Outcome: "noop"}}
+	_, err = m.Apply(ctx, ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "op-conflict",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OPCONFLICT")
+}
+
+// TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking pins
+// security#78 finding 2: the in-memory twin of ns_table_apply panics on a
+// legal manifest when a guard-only entry (Expect.Absent) has no Create.
+func TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	cols, err := ntable.ParseColumns("ready")
+	require.NoError(t, err)
+	require.NoError(t, m.Create(ctx, ntable.Table{Name: "demo", Columns: cols}))
+	require.NoError(t, m.RowsAdd(ctx, "demo", []string{"r"}))
+	man := ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: "1", OperationID: "x",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	}
+	r, err := m.Apply(ctx, man)
+	require.NoError(t, err, "a guard-only entry must not panic")
+	require.Equal(t, "noop", r.Outcome, "guard-only entry yields noop")
+	require.NoError(t, m.RowsAdd(ctx, "demo", []string{"s"}))
+	man2 := ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: "3", OperationID: "y",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	}
+	_, err = m.Apply(ctx, man2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MEMBEREXISTS")
 }

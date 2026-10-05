@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,8 +40,8 @@ func TestHelperProcess(t *testing.T) {
 	a = a[1:]
 	if p := os.Getenv("NOVA_UPDATE_CALLS"); p != "" {
 		f, _ := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		fmt.Fprintln(f, strings.Join(a, " "))
-		f.Close()
+		_, _ = fmt.Fprintln(f, strings.Join(a, " ")) // ignored: test helper subprocess log
+		_ = f.Close()                                // ignored: test helper subprocess log
 	}
 	switch a[0] {
 	case "print":
@@ -198,18 +197,51 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// testClient is an http.Client whose transport calls handler in this process:
+// the request is handed to the handler and what it writes comes back as the
+// response, so no listener is started and no socket is dialled (the unit
+// tier dials nothing). A redirect the handler writes is followed through the
+// same transport. The second value is kept for the callers' close.
 func testClient(handler func(http.ResponseWriter, *http.Request)) (*http.Client, func()) {
-	server := httptest.NewServer(http.HandlerFunc(handler))
 	c := defaultClient()
 	c.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
-		copy := r.Clone(r.Context())
-		u := *r.URL
-		u.Scheme = "http"
-		u.Host = strings.TrimPrefix(server.URL, "http://")
-		copy.URL = &u
-		return http.DefaultTransport.RoundTrip(copy)
+		w := &answer{header: http.Header{}, code: http.StatusOK}
+		handler(w, r)
+		return &http.Response{
+			Status:        fmt.Sprintf("%d %s", w.code, http.StatusText(w.code)),
+			StatusCode:    w.code,
+			Proto:         "HTTP/1.1",
+			ProtoMajor:    1,
+			ProtoMinor:    1,
+			Header:        w.header,
+			Body:          io.NopCloser(bytes.NewReader(w.body.Bytes())),
+			ContentLength: int64(w.body.Len()),
+			Request:       r,
+		}, nil
 	})
-	return c, server.Close
+	return c, func() {}
+}
+
+// answer is what a handler writes: the status, the header and the body.
+type answer struct {
+	header http.Header
+	body   bytes.Buffer
+	code   int
+	sent   bool
+}
+
+func (a *answer) Header() http.Header { return a.header }
+
+func (a *answer) WriteHeader(code int) {
+	if !a.sent {
+		a.code, a.sent = code, true
+	}
+}
+
+func (a *answer) Write(p []byte) (int, error) {
+	a.sent = true
+	return a.body.Write(p)
 }
 func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	t.Parallel()
@@ -221,13 +253,13 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
 			w.WriteHeader(404)
 		case strings.HasSuffix(r.URL.Path, "/tags"):
-			fmt.Fprint(w, `[{"name":"v0.11.0"}]`)
+			_, _ = fmt.Fprint(w, `[{"name":"v0.11.0"}]`) // ignored: test fixture response
 		case strings.HasSuffix(r.URL.Path, "/latest"):
-			fmt.Fprint(w, `{"version":"v1.2.3"}`)
+			_, _ = fmt.Fprint(w, `{"version":"v1.2.3"}`) // ignored: test fixture response
 		case strings.Contains(r.URL.Path, "/formula/"):
-			fmt.Fprint(w, `{"versions":{"stable":"v2.3.4"}}`)
+			_, _ = fmt.Fprint(w, `{"versions":{"stable":"v2.3.4"}}`) // ignored: test fixture response
 		default:
-			fmt.Fprint(w, `{"schemaVersion":2,"layers":[]}`)
+			_, _ = fmt.Fprint(w, `{"schemaVersion":2,"layers":[]}`) // ignored: test fixture response
 		}
 	})
 	defer close()
@@ -251,7 +283,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		c, done := testClient(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("x-ratelimit-reset", "123")
 			w.WriteHeader(tc.status)
-			fmt.Fprint(w, tc.body)
+			_, _ = fmt.Fprint(w, tc.body) // ignored: test fixture response
 		})
 		r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, c)
 		done()
@@ -289,7 +321,7 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
-	os.WriteFile(state, []byte("1.0.0\n"), 0600)
+	_ = os.WriteFile(state, []byte("1.0.0\n"), 0600) // ignored: test setup
 	read := command(t, "read", state)
 	write := command(t, "write", state, "{version}")
 	p := manifest(t, row("x", "tool", read, "local:"+printer(t, "v1.2.0\n"), write), row("model:tag", "model", "should-not-run", "ollama:model:tag", write))
@@ -338,7 +370,7 @@ func TestFourReadLimitAndOverallBudget(t *testing.T) {
 			entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
 
 		r := readEntries(ctx, entries, options{timeout: time.Minute}, Environment{Client: client}, false)
@@ -457,7 +489,7 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	blocked, cancel2 := context.WithCancel(context.Background())
+	blocked, cancel2 := context.WithCancel(t.Context())
 	cancel2()
 	if release, err := lockSnapshot(blocked, s); err == nil {
 		release()
@@ -470,6 +502,62 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 		release()
 	}
 }
+
+// The delivery-recovery file is named by --snapshot on this path, for report and
+// for send alike: the state-file flag is registered for both verbs, so the
+// delivery verb of the same path accepts it too. The clock is fixed so the one
+// stamp the file carries does not differ between the runs, and each run's file,
+// read with os.ReadFile, must equal one pinned JSON: the writer is untouched, so
+// report and send set the same bytes. The send verb parses the flag (no
+// unknown-flag refusal) and writes the file before the unconfirmed delivery
+// fails at exit 1.
+func TestReportStateFlagBytesAndSendVerb(t *testing.T) {
+	t.Parallel()
+
+	p := manifest(t, row("x", "tool", "v1.2.3", "npm:unused", "none"))
+	env := Environment{Now: func() time.Time { return time.Date(2026, 10, 2, 15, 4, 5, 0, time.UTC) }}
+	want := `{"observed":{"x":{"raw":"1.2.3","status":"known","at":"2026-10-02T15:04:05Z"}},"delivered":{}}` + "\n"
+
+	t.Run("report", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "s.json")
+		c, out, errs := run(t, env, "report", "--file", p, "--snapshot", path)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
+		state, err := readSnapshot(path)
+		require.NoError(t, err, err)
+		require.Len(t, state.Observed, 1)
+		need(t, out, "snapshot="+path)
+		b, err := os.ReadFile(path)
+		require.NoError(t, err, err)
+		require.Equalf(t, want, string(b), "report wrote a state file whose bytes differ")
+	})
+
+	// nova-version's send is the delivery verb of the same path, so the state
+	// file flag names the same file there and writes the same bytes. The fake
+	// child confirms nothing, so the delivery fails at exit 1 after the file is
+	// written; that the flag parsed and the file was set is what this pins, not
+	// the delivery.
+	t.Run("send", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "s.json")
+		sendEnv := Environment{Now: env.Now, Process: func(context.Context, []string, io.Reader, int) ProcessResult {
+			return ProcessResult{Stderr: "SEND REFUSED: no store\n"}
+		}}
+		var out, errs bytes.Buffer
+		c := Run("nova-version", []string{"send", "--file", p, "--snapshot", path, "--as", "fixture",
+			"--to", "integrator"}, "v0", &out, &errs, sendEnv)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out.String(), errs.String())
+		require.NotContains(t, errs.String(), "unknown flag")
+		state, err := readSnapshot(path)
+		require.NoError(t, err, err)
+		require.Len(t, state.Observed, 1)
+		need(t, errs.String(), "snapshot="+path)
+		b, err := os.ReadFile(path)
+		require.NoError(t, err, err)
+		require.Equalf(t, want, string(b), "send wrote a state file whose bytes differ from report's")
+	})
+}
+
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	rows := []string{}
 	for i := 0; i < 26; i++ {

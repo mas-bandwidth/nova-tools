@@ -23,22 +23,54 @@ const (
 type Redis struct{ C *redis.Client }
 
 func (r Redis) Roster(ctx context.Context) ([]string, time.Time, error) {
+	friends, machines, now, err := r.Members(ctx)
+	return append(friends, machines...), now, err
+}
+
+func (r Redis) Members(ctx context.Context) ([]string, []string, time.Time, error) {
 	pipe := r.C.Pipeline()
 	friends := pipe.SMembers(ctx, friendsKey)
 	machines := pipe.SMembers(ctx, machinesKey)
 	now := pipe.Time(ctx)
 	if err := redisconn.Exec(ctx, pipe); err != nil {
-		return nil, time.Time{}, err
+		return nil, nil, time.Time{}, err
 	}
-	return append(friends.Val(), machines.Val()...), now.Val(), nil
+	return friends.Val(), machines.Val(), now.Val(), nil
 }
 
-func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]string) error {
+func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error {
 	pipe := r.C.TxPipeline()
 	for _, s := range streams {
 		pipe.XAdd(ctx, &redis.XAddArgs{Stream: s, ID: "*", Values: toValues(fields)})
 	}
+	for _, m := range marks {
+		if m.Clear {
+			pipe.HDel(ctx, m.Key, m.Field)
+		} else {
+			pipe.HSet(ctx, m.Key, m.Field, m.Value)
+		}
+	}
 	return redisconn.Exec(ctx, pipe)
+}
+
+func (r Redis) Unmark(ctx context.Context, key string, fields ...string) (int64, error) {
+	return r.C.HDel(ctx, key, fields...).Result()
+}
+
+func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, error) {
+	pipe := r.C.Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, len(keys))
+	for i, k := range keys {
+		cmds[i] = pipe.HGetAll(ctx, k)
+	}
+	if err := redisconn.Exec(ctx, pipe); err != nil {
+		return nil, err
+	}
+	out := make([]map[string]string, len(keys))
+	for i, c := range cmds {
+		out[i] = c.Val()
+	}
+	return out, nil
 }
 
 func (r Redis) EnsureGroup(ctx context.Context, stream, group string) error {

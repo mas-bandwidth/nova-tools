@@ -41,6 +41,11 @@ at its opening byte. Every atom (keyword, string, integer, symbol) counts as one
 atom past `MaxNodes` is refused at its byte. A limits value with any bound at zero or below is
 refused rather than guessed. Past a bound, the input is refused whole and never truncated.
 
+The byte limit also controls the parser's memory exposure, but it is not an RSS limit: a hostile
+tree with very short atoms can require roughly 100 times its file size in memory. The tree file
+reader permits up to one node per byte, so its node limit does not give a tighter memory bound.
+Callers choose `MaxBytes` for the memory they can afford divided by that approximate multiplier.
+
 **One form per file.** Bytes after the first form, an unbalanced list and an unterminated
 string are each refused naming the byte.
 

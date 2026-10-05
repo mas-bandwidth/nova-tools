@@ -2,7 +2,7 @@
 // exists so that the tool and tools/sandboxcheck fill ONE text rather than two
 // (SPEC-SANDBOX rule 15, and the work list's "the file is embedded with go:embed").
 //
-// go:embed cannot reach outside its own directory, so the embed lives beside the
+// The go:embed directive cannot reach outside its own directory, so the embed lives beside the
 // template rather than in internal/sandbox. Nothing else belongs here: this package
 // carries no logic, so that the only way the profile text can change is by editing the
 // template a reader can read.

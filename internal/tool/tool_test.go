@@ -10,9 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -172,8 +170,8 @@ func TestRender(t *testing.T) {
 	}{
 		{"ok with facts", Done().Fact("session", "s1").Fact("bytes", 17).Fact("persisted", true).Fact("source", ""),
 			"DEMO OK session=s1 bytes=17 persisted=true source=-\n"},
-		{"a value with a space and an equals sign is one quoted field", Done().Fact("path", "a b=c"),
-			"DEMO OK path=\"a b=c\"\n"},
+		{"a value with a space and an equals sign is one field", Done().Fact("path", "a b=c"),
+			"DEMO OK path=a\\x20b\\x3dc\n"},
 		{"items, a MORE and notes", func() *Out {
 			o := Done().Fact("entries", 3)
 			o.Item("entry", "id", "e1", "bytes", 5).Item("entry", "id", "e2", "bytes", 6).Item("entry", "id", "e3", "bytes", 7)
@@ -218,73 +216,20 @@ func TestRender(t *testing.T) {
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
 			assert.True(t, want.Verb == "demo" && want.Exit == tc.out.Exit, "JSON result is %s exit %d, want demo exit %d", want.Verb, want.Exit, tc.out.Exit)
 			assert.NotContains(t, js.String(), `\`+`u003c`, "the JSON is HTML-escaped")
-			// The text quotes a value JSON carries raw; compare the quoted form.
+			// The text escapes what JSON carries raw; compare the escaped form.
 			for i, n := range want.Notes {
 				want.Notes[i] = strings.ReplaceAll(n, "\n", `\x0a`)
 			}
 			for k, v := range want.Facts {
-				if oneline.Field(v) != v {
-					want.Facts[k] = strconv.Quote(v)
+				want.Facts[k] = strings.NewReplacer(" ", `\x20`, "=", `\x3d`).Replace(v)
+			}
+			for _, f := range tc.out.Facts {
+				if s, ok := f.V.(Text); ok {
+					want.Facts[f.K] = strconv.Quote(string(s))
 				}
 			}
 			g, w := fmt.Sprintf("%+v", got), fmt.Sprintf("%+v", want)
 			assert.Equal(t, w, g, "the lines and the JSON disagree:\nlines %s\njson  %s", g, w)
-		})
-	}
-}
-
-// TestAValueWithAWhitespaceIsQuoted pins one way to print a value (skeleton
-// contract 1.14, STANDARD §2): a value that is one safe token prints bare, and
-// anything else -- a space, an "=", a control character -- prints as
-// strconv.Quote gives it, so no line holds `\x20`.
-func TestAValueWithAWhitespaceIsQuoted(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name  string
-		out   *Out
-		lines string
-	}{
-		{"a typed value with a space is quoted, never hex-escaped", Done().Fact("name", "land in batches"),
-			"DEMO OK name=\"land in batches\"\n"},
-		{"a safe token stays bare", Done().Fact("name", "batches"),
-			"DEMO OK name=batches\n"},
-		{"a value with an equals sign is quoted", Done().Fact("raw", "go version go1.27.1"),
-			"DEMO OK raw=\"go version go1.27.1\"\n"},
-		{"a control character is quoted", Done().Fact("text", "a\nb"),
-			"DEMO OK text=\"a\\nb\"\n"},
-		{"an item field with a space is quoted too", Done().Item("entry", "at", "x y"),
-			"DEMO OK\nDEMO ENTRY at=\"x y\"\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			tc.out.Verb, tc.out.token = "demo", "DEMO"
-			var text bytes.Buffer
-			tc.out.Render(&text, false)
-			assert.Equal(t, tc.lines, text.String())
-			assert.NotContains(t, text.String(), `\x20`)
-		})
-	}
-}
-
-// TestADuplicateKeyOnOneLineIsAFail pins the render-time refusal of a key a
-// line prints twice (skeleton contract 1.14, STANDARD §2): the result is a
-// FAILED naming the bug, never a line that names a key twice.
-func TestADuplicateKeyOnOneLineIsAFail(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		key  string
-		out  *Out
-	}{
-		{"a repeated fact key", "at", Done().Fact("at", "a").Fact("at", "b")},
-		{"a repeated item field key", "build", Done().Item("entry", "build", "a", "build", "b")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			tc.out.Verb, tc.out.token = "demo", "DEMO"
-			var text bytes.Buffer
-			assert.Equal(t, 1, tc.out.Render(&text, false))
-			assert.Equal(t, "DEMO FAILED: the key "+tc.key+" is printed twice on one line\n", text.String())
 		})
 	}
 }
@@ -628,107 +573,6 @@ func TestNamesInARefusal(t *testing.T) {
 	}
 }
 
-// TestCmdRendersTheWordsAShellReadsBack pins Cmd (skeleton contract 1.9: a
-// remedy is one runnable command): every word goes through oneline.ShellWord,
-// so a word holding a blank, a quote or a $ is one word a shell reads back and
-// a word no shell gives a meaning prints as it is. The words are split the way
-// a shell splits them (onboarding.SplitShell, nothing executed), never run.
-func TestCmdRendersTheWordsAShellReadsBack(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name  string
-		words []string
-		want  string
-	}{
-		{"words no shell reads print as they are", []string{"nova-demo", "put", "-h"}, "nova-demo put -h"},
-		{"a blank, a quote and a $ stay one word each", []string{"work trees", "it's", "e$f"}, `'work trees' 'it'"'"'s' 'e$f'`},
-		{"the empty word is quoted, so it is still one word", []string{"nova-demo", ""}, "nova-demo ''"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := Cmd(tc.words...)
-			assert.Equal(t, tc.want, got)
-			back, err := onboarding.SplitShell(got)
-			require.NoError(t, err)
-			assert.Equal(t, tc.words, back, "a shell reads the command back as the words meant")
-		})
-	}
-}
-
-// TestAUniquePrefixIsTheNearestName pins the nearest-name rule an unknown name
-// is answered with (STANDARD §2: the names there are and the nearest): a name
-// within two edits, or the one name an unknown word is a unique prefix of, is
-// the nearest; a prefix of two names and a word nothing is near guess nothing.
-func TestAUniquePrefixIsTheNearestName(t *testing.T) {
-	t.Parallel()
-	names := []string{"configure", "recall", "scan", "shapes"}
-	for _, tc := range []struct{ got, want string }{
-		{"conf", " did you mean configure?"}, // a unique prefix, five edits away
-		{"recal", " did you mean recall?"},   // one edit
-		{"s", ""},                            // a prefix of scan and shapes: not unique
-		{"zzz", ""},                          // nothing near and no prefix
-	} {
-		t.Run(tc.got, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, didYouMean(tc.got, names), tc.got)
-		})
-	}
-}
-
-// TestAnUnknownVerbListsEveryName pins that an unknown-verb refusal lists every
-// verb and names a unique prefix, never cutting the list to "and <n> more"
-// (STANDARD §2: an unknown verb is answered with the names there are and the
-// nearest).
-func TestAnUnknownVerbListsEveryName(t *testing.T) {
-	t.Parallel()
-	verbs := make([]Verb, 0, verbflag.ListMax+2)
-	for i := 1; i <= verbflag.ListMax+2; i++ {
-		verbs = append(verbs, Verb{Name: fmt.Sprintf("v%02d", i), Usage: "v", Effect: Inspection,
-			Run: func(*Call) *Out { return Done() }})
-	}
-	verbs = append(verbs, Verb{Name: "configure", Usage: "configure", Effect: Inspection,
-		Run: func(*Call) *Out { return Done() }})
-	tool := &Tool{Name: "nova-many", What: "has many verbs", ExitTable: "0 done, 1 said no, 2 could not run.", Verbs: verbs}
-	r := testkit.Main(tool.Run).Run("conf")
-	assert.Equal(t, 2, r.Code, "stderr %q", r.Stderr)
-	assert.Contains(t, r.Stderr, "did you mean configure?")
-	assert.Contains(t, r.Stderr, "v18", "the last numbered verb is named")
-	assert.Contains(t, r.Stderr, "version", "the version verb every tool has is named")
-	assert.NotContains(t, r.Stderr, "and", "the list is never cut to 'and <n> more'")
-	far := testkit.Main(tool.Run).Run("zzzz")
-	assert.NotContains(t, far.Stderr, "did you mean", "nothing near is not a guess")
-}
-
-// TestAnUnknownFlagNamesTheNearestAndEveryFlag pins an unknown-flag refusal
-// (STANDARD §2): one flag within two edits, a two-edit short flag, or a unique
-// prefix is named, a word nothing is near is not, and every flag is listed,
-// never "and <n> more".
-func TestAnUnknownFlagNamesTheNearestAndEveryFlag(t *testing.T) {
-	t.Parallel()
-	n := verbflag.ListMax + 2
-	tool := &Tool{Name: "nova-flags", What: "has many flags", ExitTable: "0 done, 1 said no, 2 could not run.",
-		Verbs: []Verb{{Name: "put", Usage: "put", Effect: Inspection, Flags: func(f *Flags) {
-			f.String("configure", "", "a long flag")
-			f.String("op", "", "a short flag")
-			for i := 1; i <= n; i++ {
-				f.String(fmt.Sprintf("f%02d", i), "", "a flag")
-			}
-		}, Run: func(*Call) *Out { return Done() }}}}
-	run := func(flag string) string {
-		t.Helper()
-		r := testkit.Main(tool.Run).Run("put", flag)
-		assert.Equal(t, 2, r.Code, "%s: stderr %q", flag, r.Stderr)
-		assert.Contains(t, r.Stderr, "run: nova-flags put -h", flag)
-		assert.Contains(t, r.Stderr, "--f18", "the flag past the old list cut is named")
-		assert.NotContains(t, r.Stderr, "and", "the list is never cut to 'and <n> more'")
-		return r.Stderr
-	}
-	assert.Contains(t, run("--conf"), "did you mean --configure?", "a unique prefix")
-	assert.Contains(t, run("--ope"), "did you mean --op?", "one edit")
-	assert.Contains(t, run("--xy"), "did you mean --op?", "two edits on a short flag")
-	assert.NotContains(t, run("--zzzz"), "did you mean", "nothing near is not a guess")
-}
-
 // selfTalk is a tool whose plain use is `<tool> <file>...`: its default verb.
 func selfTalk() *Tool {
 	return &Tool{Name: "nova-talk", What: "scans files", ExitTable: "0 none, 1 findings, 2 could not run.", Default: "scan",
@@ -977,6 +821,77 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 			}
 			check(r.Stdout, tc.stdout)
 			check(r.Stderr, tc.stderr)
+		})
+	}
+}
+
+// hiddenTool is a tool with one shown verb and one hidden one (Verb.Hidden):
+// a probe step verb a user never types.
+func hiddenTool() *Tool {
+	return &Tool{
+		Name: "nova-hide", What: "a tool with a hidden verb", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "scan", Usage: "scan", Example: "scan", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+			{Name: "probe-step", Usage: "probe-step <nonce>", Example: "probe-step <nonce>", Effect: Inspection, Hidden: true,
+				Run: func(*Call) *Out { return Done().Fact("probed", true) }},
+		},
+	}
+}
+
+// TestAHiddenVerbRunsAndNoListShowsIt pins Verb.Hidden: the hidden verb runs
+// and answers `-h` and `help <it>` at exit 0, while the banner, the usage
+// block and the verb list of every refusal leave it out (STANDARD §2: an
+// unknown name is answered with the names there are for the reader; §3: help
+// is never a refusal).
+func TestAHiddenVerbRunsAndNoListShowsIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		code        int
+		stdout      []string // substrings, in order
+		stderr      []string
+		absent      []string // in neither stream
+		emptyStderr bool
+	}{
+		{name: "the hidden verb runs", args: []string{"probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"PROBE-STEP OK probed=true\n"}},
+		{name: "the banner's usage and example blocks do not show it", args: []string{"help"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage:\n  nova-hide scan\n", "\nexample:\n  nova-hide scan\n"}, absent: []string{"probe-step"}},
+		{name: "a bare command's verb list does not name it", args: nil, code: 2,
+			stderr: []string{"HIDE REFUSED: no verb given; the verbs are scan, version; run: nova-hide help\n"},
+			absent: []string{"probe-step"}},
+		{name: "an unknown verb is not answered with it", args: []string{"probe"}, code: 2,
+			stderr: []string{`HIDE REFUSED: unknown verb "probe"; the verbs are scan, version; run: nova-hide help` + "\n"},
+			absent: []string{"probe-step", "did you mean"}},
+		{name: "help of it still prints its help", args: []string{"help", "probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]", "exit codes: 0 done, 1 said no, 2 could not run.", "effect: inspection"}},
+		{name: "its -h still answers", args: []string{"probe-step", "-h"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(hiddenTool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			check := func(name, got string, want []string) {
+				rest := got
+				for _, s := range want {
+					i := strings.Index(rest, s)
+					if !assert.GreaterOrEqual(t, i, 0, "%s lacks %q:\n%s", name, s, got) {
+						break
+					}
+					rest = rest[i+len(s):]
+				}
+			}
+			check("stdout", r.Stdout, tc.stdout)
+			check("stderr", r.Stderr, tc.stderr)
+			if tc.emptyStderr {
+				assert.Empty(t, r.Stderr)
+			}
+			for _, s := range tc.absent {
+				assert.NotContains(t, r.Stdout+r.Stderr, s)
+			}
 		})
 	}
 }

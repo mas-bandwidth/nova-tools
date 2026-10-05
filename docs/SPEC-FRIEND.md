@@ -130,6 +130,37 @@ which is how a renewed session is taken up. The finding of 2026-10-04:
 a friend's session refused every turn with `invalid_request_error` for two hours
 and nothing said so.
 
+A harness at its usage limit or out of credits is down until its reset,
+woken after it, and its measured usage rides on its beat
+(`internal/friend/limit.go`; the finding of 2026-10-04: a friend's harness
+stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while her row
+read up with six working cards, and four Claude accounts ran out of their
+weekly usage unseen). `Limits.Watch` reads every command an adapter runs:
+Claude Code's stream-json `rate_limit_event` (`rate_limit_info`: `status`
+allowed, allowed_warning or rejected; `isUsingOverage`; `unifiedWindows`
+`five_hour` and `seven_day`, each `utilization` 0 to 1 and `resetsAt` in epoch
+seconds), the last one anywhere in the output, is the measured usage, and a
+rejection is a limit until the spent window resets; otherwise a line in the
+last 2 KiB that says a limit or credits (`insufficient ... credits`, `usage
+limit`, `limit reached`, `hit your limit`, `quota exceeded`) with its reset
+beside it (a clock time, today or else tomorrow in the daemon's zone; `in N
+hours`; an epoch after `limit reached|`) is a limit. A line with no reset is
+no limit, and a provider's transient `rate_limit_error` is no limit, so a
+reply that only talks about limits sends no one down. A harness on paid
+overage reads down, until the spent window resets, unless the owner allows
+overage for that friend (`AllowOverage`). Each new limit calls `Down` once
+with its reset (`friend down --until`, the status cell `down (<reason>, until
+<time>)`). `Limits.Gate` holds the session: a delivery while it is down is
+`Deferred` without running the harness, so its messages stay in hand, counted
+toward nothing; a turn that hits a limit is `Deferred` the same way; the
+first delivery after the reset is a wake turn (`WakeText`) whose output must
+carry its nonce, six fresh characters each try, so only the session that ran
+this turn answers it; then `Up` with the nonce, and the message goes in. The
+usage is on the beat as `--five-hour <pct> --seven-day <pct>`
+(`Usage.BeatFlags`) for pacing to read.
+`TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
+(What is weak).
+
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
@@ -280,6 +311,39 @@ window's pid and `route=defer` with that line when none does. A wake path
 that is not absolute, or that the process listing cannot show whole, is
 still a refusal and nothing is written.
 
+### fr-delivery-receipts.w1: receipts, the table's columns, the send alarm
+
+The finding of 2026-10-04: the sprint server's notes to friends failed on
+`WRONGPASS` for its bus user for two hours (54 failures in 30 minutes) and
+only a log line said so; earlier a friend's harness got no note for 80
+minutes while her beat said up. A beat proves the daemon, and the daemon's
+ack proves the turn ran; neither proves the session read the message. So
+every message to a friend is owed her session's receipt (SPEC-BUS.md,
+fr-delivery-receipts.w1): her session runs `nova-bus ack --as <f> --id
+<ids>` once it has read them, or answers one (`re`); `ReceiptLine`
+(internal/friend/deliver.go) is that exact line for a turn's text, from its
+`RECV OK id=` lines. The daemon's own ack at exit 0 is unchanged and is no
+receipt.
+
+The friends table's two columns per friend are `DeliveryCells` over
+`bus.Undelivered`: undelivered, the count owed, and oldest, the oldest
+owed message's age (`Age`: `45s`, `12m`, `1h20m`, `3d`; `-` when none).
+
+The sprint server sends its notes through a `Courier`
+(internal/friend/deliver.go): the bus, or a dial per note (`Open`), with a
+`bus.Watch` on each result, so a login refused or a store not reached is
+one alarm to the coordinator naming the store and the user, raised at the
+first failure and cleared at the next success.
+
+Not wired by this card (outside its paths, owed): the daemon putting
+`ReceiptLine` in each turn (daemon.go's `Batch`); `nova-bus recv --ack`
+giving a receipt for a session that reads the bus itself; the friends
+table's columns (cmd/nova-sprint/friends.go); the sprint server's
+`sendBus` becoming a `Courier` whose `Raise` and `Clear` write the alarm
+where the coordinator reads it (a sprint note, like the idle alarm); and
+the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
+a daemon ack that clears it).
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
@@ -320,7 +384,10 @@ refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
 finishes its card and takes no other. The silence watch, the provider's
 refusal streak and the broken session are the batch turn's, across every
-lane.
+lane. The friend daemon stamps progress on the sprint for each card whose
+one-shot turn printed since that card's last stamp (`stampProgress`, at most
+every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
+late), so the late rule never returns a printing card for want of a stamp.
 
 Only a harness that can open a session and deliver into a named one has
 lanes (`LaneHarness`; OpenCode today: `opencode run --dir <dir> <seed>` with no
@@ -395,6 +462,18 @@ from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
 here; `ping` and `wait-pong` run the canary by hand. The beat carries no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
+
+The limit layer (`limit.go`) is built and tested, not yet wired: the daemon
+and `nova-friend run` do not yet wrap the adapter's Exec in `Limits.Watch` or
+the Deliverer in `Limits.Gate` (a wrap must keep the `LaneHarness` lanes and
+the OpenCode `Allow` setting, and gate the lanes' turns), do not call `Down`
+and `Up` at the sprint (a friend's own `down --until` and `up`, which the
+server today takes as the coordinator's hold), and the beat sends no flags;
+`friend beat` takes no `--five-hour` or `--seven-day` until the sprint
+records them for pacing. Claude has no deliver command, so its
+`rate_limit_event` is read only once a Claude run's output passes through
+`Watch`. The state machine (up, down until a reset, waking on a nonce) wants
+its TLA+ module beside `tla/Friend.tla`.
 
 ## The harness survey (2026-10-04)
 

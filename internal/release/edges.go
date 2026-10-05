@@ -390,12 +390,21 @@ func diffNamesResult(stdout, stderr *diffCapture, runErr error) ([]string, error
 // found on PATH, because "no cwd dependence, every path a flag" applies to the
 // program as much as to the directories: a bench with two ssh binaries should
 // not be a coin toss.
-type ExecSSH struct{ Path string }
+//
+// Guard is the per-test host guard this seam consults: a test arms an isolated
+// testguard.NewGuard(true) as a field on the value under test, so it needs
+// neither t.Setenv nor a process-wide reload. The nil default is the
+// production path: the package-level guard, armed from NOVA_TEST_NO_HOST by
+// `make test`.
+type ExecSSH struct {
+	Path  string
+	Guard *testguard.Guard
+}
 
-// sshArgs are the options every invocation carries. BatchMode so a missing key
-// is a refusal now rather than a password prompt nobody is at the keyboard for,
-// and a connect timeout so a sleeping bench costs seconds rather than the run.
-func (s ExecSSH) sshArgs(machine string) []string {
+// remoteArgv is the option list every invocation carries, with the machine the
+// invocation reaches. It composes the policy and starts no child: Run, Send and
+// Fetch are the only places a child starts, and each guards the child it starts.
+func remoteArgv(machine string) []string {
 	return append(append([]string(nil), SSHOptions...), machine)
 }
 
@@ -424,8 +433,12 @@ var SSHOptions = []string{
 // machineName, the version against ValidVersion, the paths by the flags that
 // named them).
 func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string, error) {
-	args := append(s.sshArgs(machine), argv...)
-	testguard.RefuseHosts(s.Path, args...)
+	args := append(remoteArgv(machine), argv...)
+	if s.Guard != nil {
+		s.Guard.RefuseHosts(s.Path, args...)
+	} else {
+		testguard.RefuseHosts(s.Path, args...)
+	}
 	return runCommand(ctx, s.Path, args...)
 }
 
@@ -452,9 +465,14 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	go func() {
 		pw.CloseWithError(writeTar(pw, dir, base, allowed))
 	}()
-	defer pr.Close()
-	args := append(s.sshArgs(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
-	testguard.RefuseHosts(s.Path, args...)
+	// ignored: the read end of a pipe the child has drained; the command's error is the one returned
+	defer func() { _ = pr.Close() }()
+	args := append(remoteArgv(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
+	if s.Guard != nil {
+		s.Guard.RefuseHosts(s.Path, args...)
+	} else {
+		testguard.RefuseHosts(s.Path, args...)
+	}
 	return runCommandInput(ctx, pr, "", s.Path, args...)
 }
 
@@ -464,8 +482,12 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 // tar. It is what makes `--from host:dir` work -- the host that has the ssh
 // trust adopting a release that lives on the host that has the cores.
 func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
-	args := append(s.sshArgs(machine), "tar", "-C", dir, "-cf", "-", ".")
-	testguard.RefuseHosts(s.Path, args...)
+	args := append(remoteArgv(machine), "tar", "-C", dir, "-cf", "-", ".")
+	if s.Guard != nil {
+		s.Guard.RefuseHosts(s.Path, args...)
+	} else {
+		testguard.RefuseHosts(s.Path, args...)
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stderr := bounded.NewCapture(childCap, cancel)
@@ -536,11 +558,7 @@ func readTar(r io.Reader, dest string) error {
 		if int64(len(body)) > fetchFileCap {
 			return fmt.Errorf("%s is larger than the %d byte ceiling for one fetched artifact", header.Name, fetchFileCap)
 		}
-		mode := os.FileMode(header.Mode).Perm()
-		if mode == 0 {
-			mode = 0o755
-		}
-		if err := writeNoFollow("unpack", filepath.Join(dest, name), body, mode); err != nil {
+		if err := writeNoFollow("unpack", filepath.Join(dest, name), body, 0o755); err != nil {
 			return err
 		}
 	}

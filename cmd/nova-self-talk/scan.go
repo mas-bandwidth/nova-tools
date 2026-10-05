@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -83,7 +84,7 @@ type report struct {
 	unmatched                                   []string // the --skip and --rule-doc names no named file has
 }
 
-func scan(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func scan(args []string, stdin io.Reader, stdout, stderr io.Writer, wd string) int {
 	asJSON := verbflag.BoolAsked(args, "json")
 	fset := verbflag.New("scan")
 	var skips, ruleDocs baseList
@@ -136,7 +137,7 @@ func scan(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if skipped[selftalk.Base(f)] {
 			continue
 		}
-		b, err := readNamed(f, stdin, &piped)
+		b, err := readNamed(f, stdin, &piped, wd)
 		if err != nil {
 			unread++
 			problems = append(problems, cannotRead(f, err))
@@ -244,10 +245,20 @@ func positionals(args []string, fset *flag.FlagSet) ([]string, string) {
 	return files, ""
 }
 
+// openPath is the path a read opens. A relative name is opened against wd, the
+// working directory main passes from os.Getwd and a test passes as its own
+// (docs/STANDARD.md section 8). The name printed stays the caller's words.
+func openPath(wd, name string) string {
+	if name == "-" || name == "" || wd == "" || filepath.IsAbs(name) {
+		return name
+	}
+	return filepath.Join(wd, name)
+}
+
 // readNamed reads one named file; "-" is standard input, read once however often it is named.
-func readNamed(name string, stdin io.Reader, piped *[]byte) ([]byte, error) {
+func readNamed(name string, stdin io.Reader, piped *[]byte, wd string) ([]byte, error) {
 	if name != "-" {
-		return os.ReadFile(name)
+		return os.ReadFile(openPath(wd, name))
 	}
 	if *piped == nil {
 		b, err := io.ReadAll(stdin)

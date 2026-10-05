@@ -222,7 +222,8 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	owe("| c | three | TODO |\n")
 	exit, stdout, _ := f.run(t, "--state", state, "--now", "2026-09-18T13:00:00Z")
 	require.EqualValues(t, 0, exit, "one widening tick exited %d, want 0 with a WARN:\n%s", exit, stdout)
-	require.True(t, strings.Contains(stdout, "CONVERGENCE WARN") && strings.Contains(stdout, "widening=LEDGER"), "one widening tick did not warn:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "CONVERGENCE WARN"), "one widening tick did not warn:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "widening=LEDGER"), "one widening tick did not warn:\n%s", stdout)
 	// And another: the same stream widening twice running is the red.
 	owe("| d | four | TODO |\n")
 	exit, stdout, _ = f.run(t, "--state", state, "--now", "2026-09-18T14:00:00Z")

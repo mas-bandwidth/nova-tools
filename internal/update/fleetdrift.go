@@ -133,7 +133,7 @@ func fleetReport(addr, help string, timeout time.Duration, now func() time.Time)
 	if err != nil {
 		return refused("report", help, fmt.Sprintf("%s (supply a reachable --store host:port)", err))
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: closing the store after results were read
 	fleet, err := readFleetBuilds(ctx, st.Client())
 	if err != nil {
 		return refused("report", help, fmt.Sprintf("fleet beats at %s: %s", addr, err))

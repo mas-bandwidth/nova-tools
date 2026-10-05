@@ -89,7 +89,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
-	ctx, stop := context.WithTimeout(context.Background(), 12*time.Minute)
+	ctx, stop := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer stop()
 	err := fn.Load(ctx, c)
 	require.NoError(t, err)

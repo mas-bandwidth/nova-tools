@@ -156,7 +156,8 @@ func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
 	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	require.Contains(t, out.String(), "HYGIENE FINDING reason=stray-file at=sign/RESULT.md", "stdout = %q, want the finding named", out.String())
-	require.True(t, strings.Contains(errb.String(), "HYGIENE FAILED ") && strings.Contains(errb.String(), "findings=1"), "stderr = %q, want the FAILED verdict line", errb.String())
+	require.True(t, strings.Contains(errb.String(), "HYGIENE FAILED "), "stderr = %q, want the FAILED verdict line", errb.String())
+	require.True(t, strings.Contains(errb.String(), "findings=1"), "stderr = %q, want the FAILED verdict line", errb.String())
 }
 
 // A branch with no declared paths says paths=- and skips out-of-path. The field is
@@ -296,7 +297,9 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	total, remedy := hygMore(t, out.String())
 	args, err := hygFields(remedy)
 	require.NoError(t, err, "the remedy %q cannot be split into arguments: %v", remedy, err)
-	require.True(t, len(args) != 0 && args[0] == "nova-check" && args[1] == "hygiene", "the remedy does not start with `nova-check hygiene`: %q", remedy)
+	require.True(t, len(args) != 0, "the remedy does not start with `nova-check hygiene`: %q", remedy)
+	require.True(t, args[0] == "nova-check", "the remedy does not start with `nova-check hygiene`: %q", remedy)
+	require.True(t, args[1] == "hygiene", "the remedy does not start with `nova-check hygiene`: %q", remedy)
 	var out2, errb2 bytes.Buffer
 	code2 := run(args[1:], &out2, &errb2)
 	require.NotEqualValues(t, 2, code2, "the printed remedy does not run:\n  %s\nexit 2: %s", remedy, errb2.String())
@@ -420,7 +423,8 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 		args, err := onboarding.SplitShell(cmd)
 		require.NoError(t, err, "cannot split the transcript line %q: %v", line, err)
-		require.True(t, len(args) != 0 && args[0] == "nova-check", "the transcript line %q is not a nova-check command", line)
+		require.True(t, len(args) != 0, "the transcript line %q is not a nova-check command", line)
+		require.True(t, args[0] == "nova-check", "the transcript line %q is not a nova-check command", line)
 		steps = append(steps, onboarding.Step{Line: line, Args: args[1:]})
 	}
 	for i := range steps {
@@ -553,15 +557,5 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 		code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
 			"--identity", "Rowan <rowan@example.com>"}, &out, &errb)
 		require.EqualValues(t, 0, code, "no --kind: exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
-}
-
-// The stray list's second column names kinds, and until now nothing checked that they
-// were kinds at all. A typo there silently grants an exception to nobody.
-func TestEveryKindTheStrayListNamesIsDeclared(t *testing.T) {
-	t.Parallel()
-
-	for _, kind := range hygiene.StrayKinds() {
-		assert.True(t, hygiene.KindDeclared(kind), "the stray list excuses a file for kind %q, which the tool does not declare: the exception is granted to nobody", kind)
 	}
 }

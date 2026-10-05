@@ -228,6 +228,9 @@ type landCard struct {
 	// generated ledgers regenerated, landledger.go): set by each build, reported with the
 	// batch
 	resolved string
+	// protected is why the lander may not land the card on its base, a protected branch in
+	// a stream not marked for its repository (sprint.ProtectedLandWhy), "" when it may
+	protected string
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -497,6 +500,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 				lc.base = cb.Ref
 			}
 		}
+		lc.protected = sprint.ProtectedLandWhy(s, stream, lc.repo, lc.base, c.ID)
 		cards = append(cards, lc)
 	}
 	for len(cards) > 0 {
@@ -641,7 +645,9 @@ func (l *lander) placeWhy(stream string, cards []landCard) (string, []string) {
 		flags = append(flags, "--repo-dir <clone>")
 	}
 	if len(why) == 0 {
-		return "", nil
+		// a protected base in an unmarked stream (docs/SPEC-SPRINT.md section 7), refused
+		// before any git with the mark as its one next command
+		return cards[0].protected, nil
 	}
 	var also []string
 	for _, c := range cards {
