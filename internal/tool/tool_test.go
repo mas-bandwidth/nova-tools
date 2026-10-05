@@ -799,6 +799,67 @@ func TestEveryBadValueIsNamedAtOnce(t *testing.T) {
 	assert.Equal(t, `PUT REFUSED: --one wants the letter a or b, got "c" (only a or b); run: nova-own put -h`+"\n", r.Stderr)
 }
 
+// TestEveryRefusalUnderJSONIsOneObjectOnStdout pins refusals under --json on
+// stdout (skeleton contract 1.4 and 1.6: "--json always stdout"): when --json
+// was given, a refusal is one JSON object on stdout and nothing on stderr,
+// including a refusal raised before the verb is known — an unknown verb or an
+// unknown flag with --json anywhere in argv, and the -h refusal of a tool that
+// refuses help (Tool.HelpRefused). The why array holds each reason alone,
+// never the whole `VERB REFUSED: ...; run: ...` line.
+func TestEveryRefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
+	t.Parallel()
+	helpRefused := func() *Tool {
+		d := demo()
+		d.HelpRefused = true
+		return d
+	}
+	for _, tc := range []struct {
+		name string
+		tool func() *Tool
+		args []string
+		verb string
+		why  []string // each reason alone, in order
+	}{
+		{"an unknown verb with --json after it", demo, []string{"bogus", "--json"}, "",
+			[]string{`unknown verb "bogus"; the verbs are put, who, deny, forget, raw, fn load, fn ls, careless, lib check, lib load, lib bogus, scan, version`}},
+		{"an unknown flag with --json anywhere in argv", demo, []string{"put", "--fix", "s", "--json"}, "put",
+			[]string{"unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?"}},
+		{"every bad value at once under --json: why holds each reason alone", demo,
+			[]string{"put", "--json", "--n", "x", "--fix", "--max", "y"}, "put",
+			[]string{`--n wants a whole number (how many rows), got "x"`,
+				"unknown flag --fix; the flags of put are --json, --key, --max, --n, --store; did you mean --max?",
+				`--max wants a whole number (items listed before one MORE line stands for the rest; 0 lists all), got "y"`}},
+		{"the -h refusal of a tool that refuses help", helpRefused, []string{"put", "--json", "-h"}, "put",
+			[]string{"-h is not an answer this tool gives, its exit 0 means CLEAR"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(tc.tool().Run).Run(tc.args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Empty(t, r.Stderr, "a refusal under --json prints nothing on stderr")
+			var j struct {
+				Result struct {
+					Verb   string   `json:"verb"`
+					Status string   `json:"status"`
+					Exit   int      `json:"exit"`
+					Remedy string   `json:"remedy"`
+					Why    []string `json:"why"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(r.Stdout), &j), "stdout is one JSON object: %q", r.Stdout)
+			assert.Equal(t, "refused", j.Result.Status)
+			assert.Equal(t, 2, j.Result.Exit)
+			assert.Equal(t, tc.verb, j.Result.Verb)
+			assert.NotEmpty(t, j.Result.Remedy, "the refusal carries its remedy")
+			assert.Equal(t, tc.why, j.Result.Why)
+			for _, w := range j.Result.Why {
+				assert.NotContains(t, w, "REFUSED", "why holds the reason alone, never the envelope")
+				assert.NotContains(t, w, "; run:", "why holds the reason alone, never the remedy")
+			}
+		})
+	}
+}
+
 // selfTalk is a tool whose plain use is `<tool> <file>...`: its default verb.
 func selfTalk() *Tool {
 	return &Tool{Name: "nova-talk", What: "scans files", ExitTable: "0 none, 1 findings, 2 could not run.", Default: "scan",

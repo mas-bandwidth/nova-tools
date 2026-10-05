@@ -121,7 +121,7 @@ func (t *Tool) Main() int { return t.Run(os.Args[1:], os.Stdin, os.Stdout, os.St
 // (HelpRefused) still answers `help <verb>` by name, while `<verb> -h` is a
 // refusal at exit 2, since its exit 0 would read as CLEAR.
 func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	defer t.help(stdout, stderr, &code)
+	defer t.help(args, stdout, stderr, &code)
 	if len(args) == 0 {
 		given := "no verb given"
 		if t.Default != "" {
@@ -347,12 +347,15 @@ func isFlagWord(a string) bool { return len(a) > 1 && a[0] == '-' }
 // may be its value or the first argument: the reading passes it over and reads
 // on, so a later bad value is named too. The terminator `--`, the first
 // argument and a help word end the reading, as they end the flag package's.
-func parseProblems(fs *flag.FlagSet, args []string) []string {
-	var problems []string
+// jsonAsked reports whether --json was asked as a flag, wherever it stands in
+// argv: a refusal asked for as --json is rendered as JSON (skeleton contract
+// 1.4 and 1.6: --json always stdout), and a --json that is another flag's
+// value asks for none.
+func parseProblems(fs *flag.FlagSet, args []string) (problems []string, jsonAsked bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" || !isFlagWord(a) {
-			return problems // the terminator or the first argument ends the flags
+			return problems, jsonAsked // the terminator or the first argument ends the flags
 		}
 		numMinuses := 1
 		if a[1] == '-' {
@@ -371,11 +374,17 @@ func parseProblems(fs *flag.FlagSet, args []string) []string {
 		if j := strings.IndexByte(name, '='); j >= 1 { // equals cannot be first (the flag package's reading)
 			name, value, inline = name[:j], name[j+1:], true
 		}
+		if name == "json" {
+			b, err := strconv.ParseBool(value)
+			if !inline || (err == nil && b) {
+				jsonAsked = true
+			}
+		}
 		f := fs.Lookup(name)
 		switch {
 		case f == nil:
 			if name == "help" || name == "h" {
-				return problems // the parse would have answered help here
+				return problems, jsonAsked // the parse would have answered help here
 			}
 			problems = append(problems, unknownFlag(fs, name))
 			if !inline && i+1 < len(args) && !isFlagWord(args[i+1]) {
@@ -390,7 +399,7 @@ func parseProblems(fs *flag.FlagSet, args []string) []string {
 		default:
 			if !inline {
 				if i+1 >= len(args) {
-					return append(problems, "--"+f.Name+" needs a value: it wants "+wants(f))
+					return append(problems, "--"+f.Name+" needs a value: it wants "+wants(f)), jsonAsked
 				}
 				i++
 				value = args[i]
@@ -404,7 +413,7 @@ func parseProblems(fs *flag.FlagSet, args []string) []string {
 			}
 		}
 	}
-	return problems
+	return problems, jsonAsked
 }
 
 // badValue words a value its flag cannot take: the flag named with two dashes,
@@ -486,8 +495,12 @@ func (t *Tool) verbHelp(verb string) string {
 // own, Verb.ExitTable, where it states them), then the verb's effect, on
 // stdout at exit 0. A tool that refuses help (HelpRefused) answers -h with a
 // refusal on stderr at exit 2 instead: `-h` is not an answer the tool gives,
-// and its exit 0 means CLEAR, so answering it could read as CLEAR.
-func (t *Tool) help(stdout, stderr io.Writer, code *int) {
+// and its exit 0 means CLEAR, so answering it could read as CLEAR. Asked as
+// --json, that refusal is one JSON object on stdout and nothing on stderr, as
+// every refusal under --json (skeleton contract 1.4 and 1.6: --json always
+// stdout); args carries the invocation's words, the verb's own words among
+// them, and the flags open at the first flag word.
+func (t *Tool) help(args []string, stdout, stderr io.Writer, code *int) {
 	r := recover()
 	if r == nil {
 		return
@@ -507,7 +520,14 @@ func (t *Tool) help(stdout, stderr io.Writer, code *int) {
 		}
 		o := Refuse("-h is not an answer this tool gives, its exit 0 means CLEAR")
 		o.Remedy = Cmd(t.Name, "help")
-		*code = t.emit(v, o, false, stdout, stderr)
+		scan := args
+		for len(scan) > 0 && scan[0] != "--" && !isFlagWord(scan[0]) {
+			scan = scan[1:] // the verb's own words: a group verb is two of them
+		}
+		_, asked := parseProblems(h.FS, scan)
+		// A verb that prints its own output takes no --json (Flags.Prints):
+		// its flag set defines no json flag, so a --json word asks for none.
+		*code = t.emit(v, o, h.FS.Lookup("json") != nil && asked, stdout, stderr)
 		return
 	}
 	t.writeHelp(h.FS.Name(), h.FS, stdout)
@@ -697,7 +717,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	f := v.flags()
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
-		problems := parseProblems(f.FlagSet, args)
+		problems, asked := parseProblems(f.FlagSet, args)
 		if len(problems) == 0 {
 			// A parse error the reading words none of (a boolean flag whose own
 			// Set("true") fails): the one wording the error has, so the refusal
@@ -713,7 +733,11 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 		}
 		o := Refuse(problems...)
 		o.Remedy = t.verbHelp(v.Name)
-		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
+		// A refusal asked for as --json is one JSON object on stdout and
+		// nothing on stderr, wherever --json stands in argv (skeleton contract
+		// 1.4 and 1.6: --json always stdout); a verb that prints its own
+		// output takes no --json (Flags.Prints).
+		return t.emit(&v, o, !f.prints && asked, stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
 	asJSON := !f.prints && c.Bool("json")
