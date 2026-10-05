@@ -2273,6 +2273,25 @@ never by a resolution on the card's branch, so no change a reader has not read
 lands. The conflict judgment's "resolve and resume" decision says so in its
 `--did` text.
 
+### protected-bases-r.w1
+
+Only the promotion stream takes or lands a card on a protected branch, dev or main
+(`sprint.ProtectedBranches`). `add` refuses a card whose `BASE:` is main (a pinned
+`main@<sha>` too) in a stream that is not the promotion stream, as it refuses one cut on
+dev (the sprint branch, above): the one-brief, `--count` and many-brief forms alike, the
+whole add, nothing written, naming the card, the stream and the mark,
+`run: nova-sprint stream set <s> --promotion` (`sprint.PromotionBaseWhy`,
+`sprint.PromotionRefusals`; the add step plans the refusal on its own snapshot,
+`promotionGuard` in cmd/nova-sprint/verbs.go). `stream set <s>... --promotion` marks the
+streams the promotion stream; it is the protected-branch mark for every repository
+(`--land-protected any`), kept on the stream's control card (`land_protected`), and
+`--promotion=false` takes it off (`--land-protected default`); both flags together are
+refused. A stream is a stream once it holds a card, so a promotion stream is marked after
+its first card cut on the sprint branch (or naming no `BASE:`). The lander refuses, before
+any git, land and its dry run alike, a batch whose base is dev or main in a stream not so
+marked, naming the stream and the mark (the protected branches, above).
+`TestAddAndLandRefuseDevAndMainOutsideAPromotionStream` covers add, the mark and land.
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
