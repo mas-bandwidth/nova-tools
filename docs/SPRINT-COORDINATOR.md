@@ -443,8 +443,10 @@ Each is a place this runbook describes a workaround; the change that removes it 
   verbs that compute holds (`card`, `inbox`, `ack`, `tick`, `fleet level`, `fleet up`) can spin on a fleet
   whose emptiest member refused the card at staging.
 - After card every-unit-installed-by-a-verb: `nova-sprint install`, `uninstall` and `units --check` are in
-  nova-sprint's verb table; `nova-swarm install disk-guard|mirror-refresh` and a `nova-swarm mirror` verb
-  are owed. Until then the units of section 1 are the hand-written ones.
+  nova-sprint's verb table, and `nova-swarm install disk-guard` writes the disk-guard unit (the unit
+  code is `internal/units`, which a worker may import). `nova-swarm install mirror-refresh` and a
+  `nova-swarm mirror` verb stay owed: there is no mirror verb for the unit to run. The coordinator
+  switches the hand-written units over after this lands; this card does not load them.
 - Where the sources disagree, the help is followed here:
   - the handover notes answer `cannot ask` with a drop and `stalled` with `ask --another`; the help offers
     `reader add`, `rework`, `drop` and `wait` for the first, `card <primary>` then the printed decision for

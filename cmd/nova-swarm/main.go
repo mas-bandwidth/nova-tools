@@ -78,6 +78,11 @@ usage:
                         over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
                         removes anything with uncommitted work or a live process, and prints one REMOVED,
                         TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
+  nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
+                       (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
+                        flags ride on the unit. mirror-refresh is refused until a mirror verb exists.)
+  nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
+                       (unloads that unit and removes its file; a dry run removes nothing.)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -139,6 +144,8 @@ var verbExamples = map[string]string{
 	"step":       "nova-swarm step --card card.md --dir repo",
 	"member":     "nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once",
 	"disk-guard": "nova-swarm disk-guard --root ~/nova-bench/run/member --scan ~/nova-bench/run --cache-max-gb 20",
+	"install":    "nova-swarm install disk-guard --dry-run --every 15m --dir ./no-unit-here",
+	"uninstall":  "nova-swarm uninstall disk-guard --dry-run --dir ./no-unit-here",
 }
 
 // cardLines is what `template -h` lists: the lines a card needs, in the order
@@ -183,14 +190,14 @@ func verbHelpLines(verb string) string {
 
 // verbNames are the verbs, in the usage's order: what a bare command and an unknown verb
 // are answered with (the tool-answers rule).
-var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "worker", "verify", "doctor", "profile", "slots", "version"}
+var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "install", "uninstall", "worker", "verify", "doctor", "profile", "slots", "version"}
 
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
 var helpVerbs = map[string]bool{
 	"version": true, "doctor": true, "verify": true, "lint": true,
 	"template": true, "profile": true, "native": true, "member": true, "slots": true, "worker": true,
-	"step": true, "disk-guard": true,
+	"step": true, "disk-guard": true, "install": true, "uninstall": true,
 }
 
 // refuse is what an unusable invocation costs: ONE line, `nova-swarm[ <verb>] REFUSED:
@@ -266,6 +273,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdSlots(rest, stdout, stderr)
 	case "disk-guard":
 		return cmdDiskGuard(rest, stdout, stderr)
+	case "install":
+		return cmdInstall(rest, stdout, stderr)
+	case "uninstall":
+		return cmdUninstall(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
 	case "worker":

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
 // friend sync install (docs/SPEC-SPRINT.md, "The friend sync loop as a service"; the
@@ -17,10 +19,10 @@ import (
 // each pass, so the unit names none. Its installer is SeatInstaller with its own file.
 
 // FriendSyncLabel is the friend sync loop's launchd label; its plist is FriendSyncLabel.plist.
-const FriendSyncLabel = "nova-sprint.friend-sync"
+const FriendSyncLabel = units.FriendSyncLabel
 
 // FriendSyncService is the friend sync loop's systemd user unit.
-const FriendSyncService = "nova-sprint-friend-sync.service"
+const FriendSyncService = units.FriendSyncService
 
 // FriendSyncEnv is the environment a friend sync unit carries as it was typed: the
 // names of the variables that hold the store's passwords and the bus's address and
@@ -103,14 +105,14 @@ func (u FriendSyncUnit) Text() (string, error) {
 }
 
 // launchdPlist is a launchd agent kept alive that runs args with env, its lines to log,
-// started again no sooner than every 10 s (units.go).
+// started again no sooner than every 10 s (internal/units).
 func launchdPlist(label string, args []string, env [][2]string, log string) string {
-	return launchdPlistEvery(label, args, env, log, 10)
+	return units.LaunchdPlist(label, args, env, log, 10)
 }
 
 // systemdUnit is a systemd user unit restarted always, 10 s apart, that runs args with env.
 func systemdUnit(description string, args []string, env [][2]string) string {
-	return systemdUnitEvery(description, args, env, 10)
+	return units.SystemdUnit(description, args, env, 10)
 }
 
 // InstallFriendSync writes the friend sync loop's unit into the installer's directory

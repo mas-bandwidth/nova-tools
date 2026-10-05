@@ -185,8 +185,8 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 | the seat's push loop | `nova-sprint install seat-push` | `nova-sprint inbox --wait --push seat` |
 | the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
 | the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
-| the disk guard | `nova-swarm install disk-guard` (owed) | `nova-swarm disk-guard`, one pass every 15 minutes |
-| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror` (owed) |
+| the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
+| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror` (owed: no mirror verb) |
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;
@@ -196,9 +196,12 @@ API key from its environment, and the member hands its children the providers' k
 from its environment; a unit carries neither, so until those verbs read a login as the store's does,
 the service's environment has to give them. `nova-sprint units --check` names each of the nine installed, missing or different, so a
 machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
-wrapper reads as different. The two nova-swarm verbs are owed: nova-swarm has no install verb, its
-binary may not import the unit code (it lives beside the store's code, which a worker never opens),
-and it has no mirror verb; until they land, the play's disk-guard row above runs the disk guard.
+wrapper reads as different. `nova-swarm install disk-guard` writes that unit; the unit code lives in
+`internal/units`, which a worker's binary may import, and the unit runs `nova-swarm disk-guard`
+itself. `nova-swarm install mirror-refresh` stays owed: nova-swarm has no mirror verb for the unit
+to run, and `units --check` says so rather than telling a stranger to run it. Until that verb
+exists, a mirror refresh is not installed from here. The play's disk-guard row above is the fleet's
+copy of the same pass.
 
 ## A fixture inventory
 

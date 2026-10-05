@@ -47,7 +47,8 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			assert.Equal(t, 1, code, errs)
 			assert.Contains(t, out, "UNIT server missing unit="+file("server")+"; run: nova-sprint install server")
 			assert.Contains(t, out, "UNITS CHECK DIFFERENT installed=0 missing=9 different=0")
-			assert.Contains(t, out, "UNIT disk-guard missing unit="+file("disk-guard")+"; owed: nova-swarm install disk-guard (nova-swarm has no install verb yet", "a verb not there yet is named owed, never as a line to run")
+			assert.Contains(t, out, "UNIT disk-guard missing unit="+file("disk-guard")+"; run: nova-swarm install disk-guard")
+			assert.Contains(t, out, "UNIT mirror-refresh missing unit="+file("mirror-refresh")+"; owed: nova-swarm install mirror-refresh (nova-swarm has no mirror verb", "a verb not there yet is named owed, never as a line to run")
 
 			code, out, errs = do((*app).cmdInstall, "server", "--listen", "127.0.0.1:6390", "--land", "--decide", "/srv/decide", "--dry-run")
 			require.Equal(t, 0, code, errs)
