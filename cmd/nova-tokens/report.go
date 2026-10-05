@@ -23,13 +23,46 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
+// seatAuth resolves the store's login by the one rule redisauth.Auth states -- the user
+// is --user, else redisauth.UserEnv; the password is the variable --password-env names,
+// else (with a user) the one redisauth.PasswordEnvEnv names, else
+// redisauth.DefaultPasswordEnv, and is never a flag -- reading the variables through the
+// run's injected environment (docs/STANDARD.md section 8) rather than the process's.
+// main passes os.Getenv, so the production path reads exactly what redisauth.Auth reads;
+// when redisauth grows a getenv variant of its own, this calls it and the mirror ends.
+func seatAuth(user, passwordEnv string, getenv func(string) string) (string, string, error) {
+	named := "--user " + user
+	if user == "" {
+		user = getenv(redisauth.UserEnv)
+		named = redisauth.UserEnv + "=" + user
+	}
+	if user == "" {
+		if passwordEnv == "" {
+			return "", "", nil
+		}
+		return "", getenv(passwordEnv), nil
+	}
+	if passwordEnv == "" {
+		passwordEnv = getenv(redisauth.PasswordEnvEnv)
+	}
+	if passwordEnv == "" {
+		passwordEnv = redisauth.DefaultPasswordEnv
+	}
+	password := getenv(passwordEnv)
+	if password == "" {
+		return "", "", fmt.Errorf("%s but %s is empty; run under nova-secrets exec --only %s", named, passwordEnv, passwordEnv)
+	}
+	return user, password, nil
+}
+
 // openLedger opens the fleet Redis at addr. The seat is the one every nova tool dials with
-// (redisauth.Auth): --user, else NOVA_SPRINT_REDIS_USER; the password is never a flag,
-// it is the variable --password-env names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's
-// or NOVA_REDIS_BENCH_PASSWORD. With no user, no variable is consulted unless --password-env
-// names one. Dialing does not ping.
-func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
-	user, password, err := redisauth.Auth(user, passwordEnv)
+// (seatAuth, redisauth.Auth's rule over the injected environment): --user, else
+// NOVA_SPRINT_REDIS_USER; the password is never a flag, it is the variable --password-env
+// names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's or NOVA_REDIS_BENCH_PASSWORD.
+// With no user, no variable is consulted unless --password-env names one. Dialing does not
+// ping.
+func openLedger(addr, user, passwordEnv string, getenv func(string) string) (record.LedgerStore, error) {
+	user, password, err := seatAuth(user, passwordEnv, getenv)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +72,7 @@ func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
 // cmdReportStore is `report --redis`: the month's ledger grouped by model, repo,
 // day, or the (day, model, repo) tuple, every one of the five types apart and a dash where
 // no row reported a type.
-func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int, stderr io.Writer) int {
+func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int, stderr io.Writer, env toolenv) int {
 	r := &refusals{token: "REPORT", s: s}
 	switch {
 	case month == "":
@@ -59,7 +92,7 @@ func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int,
 		s.o.Why = append(s.o.Why, err.Error())
 		return s.done(1, 0)
 	}
-	ls, err := openLedger(addr, user, passwordEnv)
+	ls, err := openLedger(addr, user, passwordEnv, env.getenv)
 	if err != nil {
 		return failed(err)
 	}
@@ -137,7 +170,7 @@ func avgRate(usdMicro, tokens int64, priced bool) float64 {
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, env toolenv) int {
 	fs := newFlagSet("report")
 	who := fs.String("who", "", "name to write in each note body row")
 	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
@@ -158,7 +191,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	if *redisAddr != "" {
-		return cmdReportStore(s, *redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stderr)
+		return cmdReportStore(s, *redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stderr, env)
 	}
 	if *monthFlag != "" {
 		return (&refusals{token: "REPORT", s: s, list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
@@ -171,7 +204,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case !tokens.ValidDay(*day):
 		r.add("--day is not a day: " + *day + "; it wants " + wantsDay)
 	}
-	sf.check(r)
+	sf.check(r, env)
 	checkMax(r, *max)
 	seen := map[string]bool{}
 	for _, id := range supersedes {
@@ -186,14 +219,14 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	rules, err := tokens.LoadRules(sf.repos)
+	rules, err := tokens.LoadRules(env.resolve(sf.repos))
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
+		r.add("--repos " + sf.repos + ": " + reroot(err, env.resolve(sf.repos), sf.repos).Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
 	sorted := slices.Sorted(slices.Values(supersedes))
 
-	sources, copyNotes := sf.read(rules, now, *dryRun)
+	sources, copyNotes := sf.read(rules, now, *dryRun, env)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {
@@ -270,12 +303,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *notePath != "" {
 		// A dry run checks the note's path exactly as the write would (atomicfile.Check)
 		// and refuses what it refuses; only the write itself is skipped.
-		write := func() error { return atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644) }
+		write := func() error { return atomicfile.Write(env.resolve(filepath.Clean(*notePath)), []byte(body), 0o644) }
 		if *dryRun {
-			write = func() error { return atomicfile.Check(filepath.Clean(*notePath), 0o644) }
+			write = func() error { return atomicfile.Check(env.resolve(filepath.Clean(*notePath)), 0o644) }
 		}
 		if err := write(); err != nil {
-			r.add("--note " + *notePath + ": " + err.Error())
+			r.add("--note " + *notePath + ": " + reroot(err, env.resolve(filepath.Clean(*notePath)), filepath.Clean(*notePath)).Error())
 			return r.print(stderr)
 		}
 	}
