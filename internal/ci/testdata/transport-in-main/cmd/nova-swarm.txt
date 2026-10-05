@@ -1,0 +1,4 @@
+# ceiling: 3
+cmd/nova-swarm:clock 17 the clock is read here instead of taken as a parameter
+cmd/nova-swarm:env 19 the environment is read here instead of taken as a parameter
+cmd/nova-swarm:stdio 11 the standard stream is named here instead of taken as a parameter

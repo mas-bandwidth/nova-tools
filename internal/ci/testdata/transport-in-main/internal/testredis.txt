@@ -1,0 +1,4 @@
+# ceiling: 3
+internal/testredis:clock 1 the clock is read here instead of taken as a parameter
+internal/testredis:env 3 the environment is read here instead of taken as a parameter
+internal/testredis:stdio 2 the standard stream is named here instead of taken as a parameter
