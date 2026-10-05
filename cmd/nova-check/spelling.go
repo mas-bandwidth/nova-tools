@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -12,7 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-func cmdSpelling(args []string, stdout, stderr io.Writer) int {
+func cmdSpelling(e env, args []string, stdout, stderr io.Writer) int {
 	var asJSON bool
 	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
 	defer stderr.(*jsonOutput).finish()
@@ -48,7 +47,10 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " spelling", oneline.Err(err))
 	}
 
-	root := *dir
+	// The tree a relative --dir names is resolved against the invocation's own
+	// directory, and with no --dir at all the invocation's directory IS the
+	// tree; neither is read off the process (docs/STANDARD.md section 8).
+	root := e.path(*dir)
 	if root != "" {
 		if abs, err := filepath.Abs(root); err == nil {
 			root = filepath.Clean(abs)
@@ -56,7 +58,7 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		if resolved, err := filepath.EvalSymlinks(root); err == nil {
 			root = resolved
 		}
-	} else if cwd, err := os.Getwd(); err == nil {
+	} else if cwd, err := e.workdir(); err == nil {
 		if abs, err := filepath.Abs(cwd); err == nil {
 			cwd = filepath.Clean(abs)
 		}

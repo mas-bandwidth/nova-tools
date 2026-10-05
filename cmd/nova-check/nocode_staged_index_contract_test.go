@@ -13,14 +13,13 @@ package main
 // classifiable is staged, 1 with `NOCODE FAILED <path>: <reason>` per path on
 // stderr, 2 for every refusal.
 //
-// Every case except the two below drives the command line end to end through
-// run(), over real temporary git repositories, so the file is red on a tree
-// without the verb and stays red if the wiring moves off the verb the spec
-// names. The two exceptions are the records real git cannot emit through this
-// command -- an unrecognised status letter and an unclassifiable destination
-// mode -- where the test drives cmdNoCodeIn directly with a fake git injected
-// as the verb's own git program, because the refusal branches exist precisely
-// for a git that one day will.
+// Every case drives the command line end to end through run(), over real
+// temporary git repositories, so the file is red on a tree without the verb
+// and stays red if the wiring moves off the verb the spec names. The one
+// exception is the two records real git cannot emit through this command --
+// an unrecognised status letter and an unclassifiable destination mode --
+// where a fake git stands in front of the real one and crafts the record,
+// because the refusal branches exist precisely for a git that one day will.
 
 import (
 	"bytes"
@@ -298,6 +297,7 @@ func noCodeStagedSaysNo(t *testing.T) {
 
 func TestNoCodeStagedRefusals(t *testing.T) {
 	t.Parallel()
+
 	noCodeStagedRefusals(t)
 }
 
@@ -371,10 +371,11 @@ func noCodeStagedRefusals(t *testing.T) {
 	// Real git emits neither through this command -- the branches exist for a
 	// git that one day will, and a switch with no default must refuse rather
 	// than skip -- so a fake git stands in front of the real one and crafts
-	// the one record. Everything else the tool asks git reaches the real
-	// binary behind it, over a real repository with a real staged record, so
-	// a fake that failed to take would classify prose and the case would go
-	// green over the refusal it came to pin.
+	// the one record, reached through the invocation's own program lookup.
+	// Everything else the tool asks git reaches the real binary behind it,
+	// over a real repository with a real staged record, so a fake that failed
+	// to take would classify prose and the case would go green over the
+	// refusal it came to pin.
 	for _, tc := range []struct{ name, record, want string }{
 		{
 			"an unrecognised status letter",
@@ -400,9 +401,9 @@ func noCodeStagedRefusals(t *testing.T) {
 			// binary behind the fake. The subcommand is found by scanning
 			// argv, not by position: the tool's own git plumbing runs with
 			// -C and -c configuration overrides in front of the verb, so
-			// no fixed position is the verb. The fake is the verb's own git
-			// program, injected as a field, so no process PATH is touched.
-			fakeGit := fakeBin(t, t.TempDir(), "git", fmt.Sprintf(`sub=
+			// no fixed position is the verb.
+			bin := t.TempDir()
+			fakeBin(t, bin, "git", fmt.Sprintf(`sub=
 skip=0
 for a in "$@"; do
   if [ "$skip" -eq 1 ]; then skip=0; continue; fi
@@ -422,9 +423,17 @@ case "$sub" in
     ;;
 esac
 `, tc.record, real))
-			var out, errb bytes.Buffer
-			exit := cmdNoCodeIn(stagedSeams{gitBin: fakeGit}, []string{"--staged", "--dir", dir}, &out, &errb)
-			stdout, stderr := out.String(), errb.String()
+			// The fake reaches the invocation through the lookup the invocation
+			// was handed, not through the process's PATH: every other test runs
+			// beside this one (docs/STANDARD.md section 8, no os.Setenv).
+			e := newEnv()
+			e.lookPath = func(name string) (string, error) {
+				if name == "git" {
+					return filepath.Join(bin, "git"), nil
+				}
+				return exec.LookPath(name)
+			}
+			exit, stdout, stderr := runCheckIn(t, e, "nocode", "--staged", "--dir", dir)
 			refused(t, tc.name, exit, stderr, tc.want)
 			assert.EqualValues(t, "", stdout, "%s printed to stdout: %q", tc.name, stdout)
 		})
