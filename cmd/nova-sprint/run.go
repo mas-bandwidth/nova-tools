@@ -438,8 +438,12 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			return true
 		}
 		began := a.now()
-		// one tick, or one worker's batch, at a time (serve.go)
-		a.serial.Lock()
+		// one tick, or one worker's batch, at a time (serve.go); the tick takes the line at
+		// its turn, after the batch in flight, not behind every batch waiting
+		// (sprint.ControlLine; docs/SPEC-SPRINT.md section 14, The server, "The tick's turn")
+		if waited := a.serial.TickLock(); waited > store.TickEvery {
+			fmt.Fprintf(stdout, "%s LINE the tick waited %s for the server's line of control (a batch or a lane held it)\n", a.now().Format("15:04:05"), waited.Round(time.Millisecond))
+		}
 		res, err, over := a.tickWithin(func() (store.TickResult, error) { return st.Tick(ctx) }, a.tickDeadline, began, stdout, stderr)
 		if over {
 			// serial stays held: the tick's goroutine is still in its plan
