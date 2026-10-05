@@ -2,6 +2,7 @@ package sprint_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -37,6 +38,17 @@ func newTwinClock(t *testing.T) *twinClock {
 }
 
 func (c *twinClock) step(d time.Duration) { c.mu.Lock(); c.now = c.now.Add(d); c.mu.Unlock() }
+
+func makeProviderOutOfCredit(t *testing.T, c *twinClock) {
+	t.Helper()
+	mem := c.st.B.(*store.Mem)
+	mem.SetRoutes([]sprint.Route{{Name: "flash-a", Tier: "flash", Provider: "provider-a", Enabled: true}})
+	mem.SetTiers(map[string][]string{"flash": {"flash-a"}})
+	_, err := c.st.Run(context.Background(), store.BalanceStep(sprint.BalanceReq{
+		Reads: []sprint.ProviderRead{{Provider: "provider-a", Known: true}}, Who: "coordinator",
+	}))
+	require.NoError(t, err)
+}
 
 // TestStopCarriesReasonAndUntilAndTheMachineRestartsItself pins a stop by hand
 // (docs/SPEC-SPRINT.md section 14): both --reason and --until are wanted, the
@@ -146,6 +158,49 @@ func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
 		res, err = c.st.Tick(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, store.Running, res.State, "at the second --until")
+	})
+	t.Run("an expiry with every provider out keeps the machine stopped for funds", func(t *testing.T) {
+		t.Parallel()
+		c := newTwinClock(t)
+		ctx := context.Background()
+		makeProviderOutOfCredit(t, c)
+		_, _, _, err := c.st.StopUntil(ctx, "a bench", stopAt.Add(time.Hour))
+		require.NoError(t, err)
+		c.step(time.Hour)
+		res, err := c.st.Tick(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, store.Stopped, res.State)
+		m, _, err := c.st.Machine(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.FundsCause, m.Cause)
+		assert.Empty(t, m.Reason)
+		assert.True(t, m.Until.IsZero())
+		assert.Contains(t, res.Parts[0].Refused[0].Why, sprint.FundsCause)
+	})
+	t.Run("a failed funds read leaves the due stop unchanged", func(t *testing.T) {
+		t.Parallel()
+		c := newTwinClock(t)
+		ctx := context.Background()
+		mem := c.st.B.(*store.Mem)
+		mem.SetRoutes([]sprint.Route{{Name: "flash-a", Tier: "flash", Provider: "provider-a", Enabled: true}})
+		mem.SetTiers(map[string][]string{"flash": {"flash-a"}})
+		_, _, _, err := c.st.StopUntil(ctx, "a bench", stopAt.Add(time.Hour))
+		require.NoError(t, err)
+		c.step(time.Hour)
+		mem.Fail = func(point string) error {
+			if point == "routes" {
+				return errors.New("route read failed")
+			}
+			return nil
+		}
+		_, err = c.st.Tick(ctx)
+		require.ErrorContains(t, err, "route read failed")
+		mem.Fail = nil
+		m, _, err := c.st.Machine(ctx)
+		require.NoError(t, err)
+		assert.False(t, m.Running())
+		assert.Equal(t, "a bench", m.Reason)
+		assert.True(t, stopAt.Add(time.Hour).Equal(m.Until))
 	})
 	t.Run("a clear takes the time back off: nothing starts a cleared sprint", func(t *testing.T) {
 		t.Parallel()

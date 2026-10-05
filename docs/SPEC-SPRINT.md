@@ -3154,7 +3154,8 @@ itself, recorded as the machine's start with the stop it ends, and runs it
 and the time, and the span goes on; a clear takes them off, so nothing starts
 a cleared sprint; when every provider is out of credit at `--until` the
 machine stays STOPPED for that cause, as a start is refused then. The
-machine's own stops carry their cause instead (below).
+machine's own stops carry their cause instead (below). The scoped transition
+model is `tla/MachineStop.tla`; its finite instance is `MCMachineStop`.
 
 The machine stops itself when the sprint is done (section 8): the tick's last
 part, done, says so to the coordinator and, in the same step, sets the record
@@ -3546,4 +3547,3 @@ no line of its own; `log --card <id>` and `log --json` keep each record whole. A
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
-
