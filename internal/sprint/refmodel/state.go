@@ -162,7 +162,7 @@ type Primary struct {
 	Score   float64
 	Attempt int      // the attempt of its current or next work card, from 1
 	Head    int      // the attempt whose finished work is its head; 0 before
-	Pair    []string // sorted: the two readers of its latest ask (the work table's asked field)
+	Pair    []string // sorted: the readers of the reads that stand at its attempt (the work table's asked field)
 	Reached bool     // a sentinel whose needs have all landed or been waived
 	// CI and CIHead are its last CI observation: "", "red" or "green", and
 	// the attempt whose head it was for (0: no head yet).
@@ -171,6 +171,11 @@ type Primary struct {
 	// ReturnedAt is the attempt at which the coordinator last returned it to
 	// review, 0 when never (sprint.FieldReturnedAttempt).
 	ReturnedAt int
+	// Finder is the reader whose finding its last rework sent back and
+	// FindingAttempt that attempt (sprint.FieldFindingReader, FieldFindingAttempt):
+	// the next attempt's first read is asked of the finder, out of turn (Ask).
+	Finder         string
+	FindingAttempt int
 }
 
 // WorkCard is one work card: <primary>.w<attempt>.
@@ -200,6 +205,7 @@ type ReadCard struct {
 	Reader  string
 	Place   string // Asked, Reading, OK, Broken, Retired
 	Verdict string // "", "ok" or "broken"
+	Finder  bool   // asked of the finder out of turn: the level leaves it (sprint.FieldFinderRead)
 }
 
 // MergeCard is one primary's merge place, and a stuck card's cross-stream
@@ -249,6 +255,11 @@ type State struct {
 	// DealLast modulo the members in name order, wrapping; the next readers
 	// the first able from AskLast modulo the readers.
 	DealLast, AskLast string
+	// Reserved is each reader's finder reads the tick's ask has placed in advance
+	// (sprint.askFinders): counted in the reader's load (NextReaders) until the
+	// primary's own Ask places the read, as the engine takes every finder's read
+	// off its room before any other read of the step. nil outside the tick's ask.
+	Reserved map[string]int
 	// StreamLast, AskStreamLast and AcceptStreamLast are the work table's
 	// stream indexes of the deal, the ask and the accept (sprint.PropStreamIndex,
 	// PropAskStreamIndex, PropAcceptStreamIndex):
@@ -303,6 +314,9 @@ func (s State) Clone() State {
 	c.Acked = make(map[Judgment]bool, len(s.Acked))
 	for k := range s.Acked {
 		c.Acked[k] = true
+	}
+	if s.Reserved != nil {
+		c.Reserved = maps.Clone(s.Reserved)
 	}
 	return c
 }
@@ -589,7 +603,7 @@ func (s State) NextReaders(p string, k int) []string {
 	at := roundFrom(order, s.AskLast)
 	load := map[string]int{}
 	for _, r := range order {
-		load[r] = s.Load(r)
+		load[r] = s.Load(r) + s.Reserved[r] // a finder's read placed in advance counts
 	}
 	var out []string
 	for len(out) < k && len(order) > 0 {
@@ -675,6 +689,41 @@ func (s State) OkReaders(p string) []string {
 
 // Acceptable is SprintTables.tla Acceptable(p) (Broken = "none").
 func (s State) Acceptable(p string) bool { return len(s.OkReaders(p)) >= 2 }
+
+// AskChoice is the readers the ask asks p of now (ReadsWanted), and whether the
+// first is the finder out of turn (sprint.finderFirst, sprint.askPicks): p's
+// first read goes to the reader whose finding the attempt's fix answers when
+// that reader has no card at the attempt (the model's readers have no width,
+// so the finder always has room); every other read to the least loaded reader
+// without a card at the attempt (NextReaders). The finder's read counts in its
+// load (Load) like any read, and in the tick's ask from the step's start
+// (Reserved), so no turn is kept for it.
+func (s State) AskChoice(p string) (readers []string, finder bool) {
+	want := s.ReadsWanted(p)
+	pr := s.Primaries[p]
+	if want == 1 && len(s.LiveReadsOf(p)) == 0 && pr.Finder != "" && pr.FindingAttempt == pr.Attempt-1 {
+		if _, made := s.Reads[RC(p, pr.Attempt, pr.Finder)]; !made {
+			return []string{pr.Finder}, true
+		}
+	}
+	return s.NextReaders(p, want), false
+}
+
+// ReadsWanted is how many reads the ask places on p now (sprint.ReadsWanted,
+// sequential reads): one while no read of its attempt stands, none while one
+// is outstanding or found it broken, else the rest of the two it needs.
+func (s State) ReadsWanted(p string) int {
+	live := s.LiveReadsOf(p)
+	for _, id := range live {
+		if s.Reads[id].Place != OK {
+			return 0
+		}
+	}
+	if len(live) == 0 {
+		return 1
+	}
+	return max(0, 2-len(live))
+}
 
 // Failed is SprintTables.tla Failed(p).
 func (s State) Failed(p string) bool {

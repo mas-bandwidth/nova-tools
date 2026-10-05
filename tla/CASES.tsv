@@ -362,3 +362,9 @@ MCCardISALive.cfg	MCCardISA.tla	pass	-	ignore-terminal	cardisa	required	-
 MCCardISABrokenSecondLand.cfg	MCCardISA.tla	invariant	NoCardRetiresTwice	ignore-terminal	cardisa	required	-
 MCCardISABrokenOtherBase.cfg	MCCardISA.tla	invariant	RetiredHeadOnBase	ignore-terminal	cardisa	required	-
 MCCardISABrokenWaitFirst.cfg	MCCardISA.tla	invariant	WaitDispatchesOnlyWhenOperandHolds	ignore-terminal	cardisa	required	-
+MCReadsByRoom.cfg	MCReadsByRoom.tla	pass	-	ignore-terminal	readsbyroom	required	-
+MCReadsByRoomBrokenPair.cfg	MCReadsByRoom.tla	invariant	OneAtATime	ignore-terminal	readsbyroom	required	-
+MCReadsByRoomBrokenPairCost.cfg	MCReadsByRoom.tla	invariant	ReadsPerLanding	ignore-terminal	readsbyroom	required	-
+MCReadsByRoomBrokenCount.cfg	MCReadsByRoom.tla	invariant	WidthRespected	ignore-terminal	readsbyroom	required	-
+MCReadsByRoomBrokenNoFinder.cfg	MCReadsByRoom.tla	invariant	FinderFirst	ignore-terminal	readsbyroom	required	-
+MCReadsByRoomBrokenTwoFinders.cfg	MCReadsByRoom.tla	invariant	OneBroken	ignore-terminal	readsbyroom	required	-

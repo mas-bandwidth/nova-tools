@@ -53,14 +53,17 @@ func TestTheStoryTellsEveryReadersFinding(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --report one")
 	ta.ok("tick")
 	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled'")
+	ta.ok("ask s1-1 --another") // reads are asked one at a time: the second reader by --another
 	ta.ok("read --as reader-b --ok --finding 'looks fine'")
 	ta.ok("rework s1-1")
 	ta.ok("tick")
 	ta.ok("take --as m1")
 	ta.ok("finish --as m1 s1-1.w2@1 --report two")
-	ta.ok("tick")
-	ta.ok("read --as reader-a --ok --finding 'looks fine'")
-	ta.ok("read --as reader-b --ok --finding 'looks fine'")
+	for range 2 { // one read a tick: the first, then the second once the first came back ok
+		ta.ok("tick")
+		ta.ok("read --as reader-a --ok --finding 'looks fine'")
+		ta.ok("read --as reader-b --ok --finding 'looks fine'")
+	}
 	story := ta.ok("card s1-1")
 	_, texts, _ := strings.Cut(story, "\nreports and findings:\n")
 	for _, want := range []string{

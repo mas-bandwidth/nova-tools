@@ -8,7 +8,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -117,8 +116,7 @@ func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
 			asked = append(asked, rc.F("reader"))
 		}
 	}
-	require.Len(t, asked, 2, "readers asked at attempt 2: two, and no third")
-	assert.NotEqual(t, asked[0], asked[1], "asked twice of one reader at attempt 2")
+	require.Len(t, asked, 1, "readers asked at attempt 2: the first read, and no other")
 	h.clean("asked again")
 }
 
@@ -278,7 +276,6 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 		{Kind: "finish", Member: "m1", Card: "a1.w1", Gen: 1, OK: true},
 		{Kind: "tick"},
 		{Kind: "begin", Reader: "r1", Card: "a1.r1.r1"},
-		{Kind: "begin", Reader: "r2", Card: "a1.r1.r2"},
 		{Kind: "take", Member: "m2", Card: "a2.w1", Gen: 1},
 		{Kind: "finish", Member: "m2", Card: "a2.w1", Gen: 1, OK: true},
 		{Kind: "tick"},
@@ -299,10 +296,10 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 		}
 	}
 	slices.Sort(readers)
-	want := []string{"r1", "r3"}
-	require.True(t, slices.Equal(readers, want), "a2 was asked of %v, want %v: past r2, round the readers", readers, want)
-	require.Equal(t, "m2", indexPast(s.Order, s.DealLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
-	require.Equal(t, "r1", indexPast(s.Readers, s.AskLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
+	want := []string{"r2"}
+	require.True(t, slices.Equal(readers, want), "a2 was asked of %v, want %v: past r1, round the readers", readers, want)
+	require.Equal(t, "m2", indexPast(s.Order, s.DealLast), "the store's indexes are past %q and %q, want m2 and r2", s.DealLast, s.AskLast)
+	require.Equal(t, "r2", indexPast(s.Readers, s.AskLast), "the store's indexes are past %q and %q, want m2 and r2", s.DealLast, s.AskLast)
 }
 
 // Every placement of a card on a member goes round the fleet and moves the

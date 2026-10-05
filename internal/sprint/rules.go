@@ -230,7 +230,7 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 		left(a, "the second identical failure: the bound rule answers it")
 		return
 	}
-	if bb, ok := AtBriefBound(pr, brokenFindings(s, pr)); ok {
+	if bb, ok := AtBriefBound(pr, brokenFindings(s, pr), s.AttemptsCap(pr.Row)); ok {
 		left(a, bb.String())
 		return
 	}
@@ -267,7 +267,7 @@ func ruleBound(s *Snapshot, a *RuleAnswer) {
 		left(a, why)
 		return
 	}
-	if bb, ok := AtBriefBound(pr, ""); ok {
+	if bb, ok := AtBriefBound(pr, "", s.AttemptsCap(pr.Row)); ok {
 		left(a, bb.String())
 		return
 	}

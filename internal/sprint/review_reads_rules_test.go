@@ -64,12 +64,13 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 		w.s.Work.Card(id).Fields[FieldTierNow] = "pro" // pro cards on pro (flash first: escalated)
 	}
 	toReview(w, "s1-1", "s1-2")
-	// s1-1: asked of reader-a, now away; returned by reader-b; reader-c read
-	// it already (retired). No reader is free for it: refused.
+	// s1-1: asked of reader-a, now away; returned by reader-b and retired (its
+	// re-asks spent); reader-c read it already (retired). No reader is free for
+	// it: refused.
 	away := putRead(w, "s1-1", 1, "reader-a", Asked)
 	away.Fields["asked"] = stamp(t0)
-	back := putRead(w, "s1-1", 1, "reader-b", Asked)
-	back.Fields["asked"], back.Fields[FieldReturned], back.Fields[FieldRoute] = stamp(t0), stamp(t0), "pro-c"
+	back := putRead(w, "s1-1", 1, "reader-b", "")
+	back.Fields["asked"], back.Fields[FieldRoute], back.Fields["retired"], back.Fields["retired_by"] = stamp(t0), "pro-c", stamp(t0), "returned"
 	old := putRead(w, "s1-1", 1, "reader-c", "")
 	old.Fields["retired"], old.Fields["retired_by"] = stamp(t0), "returned"
 	w.s.ReaderStates = map[string]string{"reader-a": ReaderAway, "reader-b": ReaderUp, "reader-c": ReaderUp}
@@ -78,11 +79,10 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 	require.Equal(t, "s1-1", p.Refused[0].Key)
 	w.do(p)
 	var drawn []string
-	for _, rd := range []string{"reader-b", "reader-c"} {
-		rc := w.s.Readers.Placed(ReadCardID("s1-2", 1, rd))
-		require.NotNil(t, rc, "s1-2 asked of %s", rd)
+	for _, rc := range liveReadsAt(w.s, w.s.Work.Card("s1-2"), 1) {
 		drawn = append(drawn, rc.F(FieldRoute))
 	}
+	require.Len(t, drawn, 1, "s1-2 asked its first read")
 	v, _ := w.s.Fleet.Prop(PropRouteIndex("pro"))
 	arr := w.s.tierArray("pro")
 	n := roundCount(nil, v)

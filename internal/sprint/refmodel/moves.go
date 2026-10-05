@@ -354,6 +354,7 @@ func noteAttrs(n sprint.Note) []string {
 	add("needs", strings.Join(slices.Sorted(slices.Values(n.Needs)), ","))
 	add("other", n.Other)
 	add("other_stream", n.OtherStream)
+	add("tier", n.Tier)
 	if !n.Review.IsZero() {
 		add("review", n.Review.UTC().Format(time.RFC3339))
 	}

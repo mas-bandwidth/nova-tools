@@ -46,7 +46,7 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 		}
 		h.work("m1")
 		h.work("m2")
-		h.readAll()
+		h.readOutstanding() // the next tick asks the next reads
 		h.landAll("s1")
 	}
 	require.NotZero(t, caught, "no tick caught a table up from its change stream: the world's writes were not read")
@@ -143,7 +143,7 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.work("m1")
-	h.readAll()
+	h.readOutstanding() // the next tick asks the next reads
 	failed := false
 	h.m.Fail = func(point string) error {
 		if point == "readset t-merge" && !failed {

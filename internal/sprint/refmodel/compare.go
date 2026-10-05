@@ -51,6 +51,7 @@ func Compare(e, m State) []Difference {
 			add("primary", id, "attempt", ep.Attempt, mp.Attempt)
 			add("primary", id, "head", ep.Head, mp.Head)
 			add("primary", id, "pair", ep.Pair, mp.Pair)
+			add("primary", id, "finder", ep.Finder, mp.Finder)
 			add("primary", id, "reached", ep.Reached, mp.Reached)
 		}
 		if ep.State == Review && mp.State == Review {

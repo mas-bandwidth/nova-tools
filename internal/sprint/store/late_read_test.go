@@ -31,6 +31,7 @@ func TestAReturnedReadAskedAgainInPlaceRunsOnAnotherRoute(t *testing.T) {
 	h.work("m1")
 	h.work("m2")
 	h.machine()
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true})) // the pair: the first read and one more
 	var back *sprint.Card
 	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {
 		if rc.F(sprint.FieldRoute) == "pro-b" {
@@ -65,6 +66,7 @@ func TestAReturnedReadTakenToAnotherReaderRunsOnAnotherRoute(t *testing.T) {
 	h.work("m1")
 	h.work("m2")
 	h.machine()
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true})) // the pair: the first read and one more
 	var back *sprint.Card
 	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {
 		if rc.F(sprint.FieldRoute) == "pro-b" {

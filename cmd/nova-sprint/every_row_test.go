@@ -18,7 +18,7 @@ import (
 
 // tablesView is the four tables' cells as where --json shows them.
 type tablesView struct {
-	Tables map[string]map[string]map[string]string `json:"tables"`
+	Tables map[string]map[string]map[string]any `json:"tables"`
 }
 
 // busy is the columns of a table's row that say it has work a tick or the
@@ -37,7 +37,7 @@ func rowsWithWork(v tablesView) map[string][]string {
 	for tb, cols := range busy {
 		for row, cells := range v.Tables[tb] {
 			for _, c := range cols.work {
-				if n, _ := strconv.Atoi(cells[c]); n > 0 {
+				if n, _ := strconv.Atoi(cellText(cells[c])); n > 0 {
 					out[tb] = append(out[tb], row)
 					break
 				}

@@ -29,8 +29,7 @@ func (h *harness) finishAttempt(id string, failed bool, head string) {
 // ask asks the attempt's readers here, every attempt: the finish asks no reader (one path asks).
 func (h *harness) reworkBroken(id string) {
 	h.t.Helper()
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-	rc := h.snap().Readers.Of(id)
+	rc := h.pairAsked(id)
 	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	// a finding per attempt: the same finding twice is the brief's bound (sprint.AtBriefBound)
 	finding := "f:" + h.snap().Work.Card(id).F("attempt")

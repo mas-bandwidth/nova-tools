@@ -42,7 +42,7 @@ func (ta *testApp) streamIndexes() string {
 func spreadOf(v tablesView, table, col string, streams []string) (lo, hi int) {
 	lo = -1
 	for _, s := range streams {
-		n, _ := strconv.Atoi(v.Tables[table][s][col])
+		n, _ := strconv.Atoi(cellText(v.Tables[table][s][col]))
 		if lo < 0 || n < lo {
 			lo = n
 		}
