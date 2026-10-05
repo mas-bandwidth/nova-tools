@@ -856,8 +856,11 @@ func seatOf(seat string, m bus.Message) string {
 
 // daemonPong answers a ping at once, from the daemon: transport is up,
 // kept on the status apart from the session's pong (LastDaemonPong), and it
-// ends no challenge (docs/SPEC-FRIEND.md, session-pong.w1). A send that
-// fails is the store's error on the status.
+// ends no challenge (docs/SPEC-FRIEND.md, session-pong.w1). It is never
+// presence: the daemon stays up while her harness is closed, so the sprint
+// reads her up only on her session's pong or finish (docs/SPEC-FRIEND.md,
+// "Presence is her session's evidence"). A send that fails is the store's
+// error on the status.
 func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string, now time.Time) {
 	_, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
 	if err != nil {

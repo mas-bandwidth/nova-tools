@@ -235,8 +235,11 @@ func TestFriendStallLadderBeatNamingRunningCardsIsActivity(t *testing.T) {
 	assert.Nil(t, pRel.Health, "the release writes no observation")
 	assert.Equal(t, []string{"amy"}, pRel.HealthClear)
 
-	// and her status is her beat rule again: up on a fresh beat
-	assert.Equal(t, Up, FriendStatus(FriendPresence{Beat: running(w.s.Now)["amy"], Generation: FirstSeatGeneration}, w.s.Now))
+	// and her status is her session's evidence alone: a fresh beat is none, her next
+	// answered wake ping makes her up (docs/SPEC-FRIEND.md, "Presence is her session's evidence")
+	assert.Equal(t, Down, FriendStatus(FriendPresence{Beat: running(w.s.Now)["amy"], Generation: FirstSeatGeneration}, w.s.Now))
+	pong := FriendHealth{State: Up, Seen: w.s.Now, Generation: FirstSeatGeneration}
+	assert.Equal(t, Up, FriendStatus(FriendPresence{Beat: running(w.s.Now)["amy"], Health: pong, Generation: FirstSeatGeneration}, w.s.Now))
 }
 
 // A finish on her row within friend_stall_after is her activity: a friend whose cards run in

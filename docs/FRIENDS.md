@@ -154,19 +154,33 @@ applied and its unit runs, that agent is retired, unloaded and its plist
 removed (`launchctl bootout gui/$(id -u)/com.nova.friend-sync`, then
 `rm ~/Library/LaunchAgents/com.nova.friend-sync.plist`), so one loop syncs.
 
-### A friend's beat comes only from her daemon
+### The beat loops are retired, with no replacement
 
-A friend's `friend beat` is sent by her nova-friend daemon alone, once a second
-while it runs (`nova-friend install`; docs/SPEC-FRIEND.md, "The beat comes from
-the daemon"). The hand-written per-friend beat loops are retired: the launch
+The per-friend beat loops are retired, and nothing replaces them: the launch
 agents `com.nova.loop.friend-beat-<friend>`, each a zsh `while` loop running
-`nova-sprint friend beat <friend>` every second whether or not her session was
-there, which is part of why a friend whose app was closed read up. Each is
-unloaded and its plist removed, as above
+`nova-sprint friend beat <friend>` every second while the friend's app process
+existed. Their beat measured that an app was open, not that she could work: on
+2026-10-04 one friend read up for four hours under a refusing harness, and
+another read working 8 for an hour while running nothing. They were retired by hand on
+2026-10-05: each unloaded and its plist removed, as above
 (`launchctl bootout gui/$(id -u)/com.nova.loop.friend-beat-<friend>`, then
-`rm ~/Library/LaunchAgents/com.nova.loop.friend-beat-<friend>.plist`), and no
-loop row, wrapper or other shell loop beats for a friend. A friend with no
-daemon running has no beat, and reads down.
+`rm ~/Library/LaunchAgents/com.nova.loop.friend-beat-<friend>.plist`). No loop
+row, wrapper, flag or other shell loop beats for a friend, and none is to be
+added: a "beat while a named process runs" flag is exactly what this forbids
+(it supersedes the beat half of card simp-retire-ping-and-beat-loops).
+
+A friend is up only on evidence from her own session (docs/SPEC-FRIEND.md,
+"Presence is her session's evidence"): a wake ping her session answered within
+ten minutes (the coordinator's ping loop sends `nova-friend ping --wake`; her
+daemon pushes it into her session as a turn; her session runs the pong line;
+the coordinator writes `friend health --state up`), or a card of hers finished
+within thirty (friend sync's collect of the report her session wrote). Her
+nova-friend daemon still runs `friend beat` once a second: the sprint records
+it and shows its age, and it never makes her up, nor does any other beat sent
+for her. Otherwise she reads down, her row naming the evidence missing and the
+age of the last of each (`where --json`, `friends[].evidence`). Down does not
+take her cards back: she keeps the cards dealt to her and their deadline judges
+them (docs/SPEC-FRIEND.md, the friend failure table).
 
 ## Where a job's work lives
 
