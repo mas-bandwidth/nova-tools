@@ -23,13 +23,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
-// server install (docs/SPEC-SPRINT.md, "The server", install-server-unit-by-verb-r.w2):
+// server install (docs/SPEC-SPRINT.md, "The server", install-server-unit-by-verb-r.w3):
 // the sprint server, run --listen, as the tool's own unit on the machine the verb is
 // typed on, in place of a unit written and edited by hand. The unit names no actor
 // (the seat is read from its record, "Handing over the seat"), reaches the store's
 // credentials only through nova-secrets exec --only, which names key names and never a
 // value, and is recorded by the hash of its bytes beside it, so a unit edited by hand
-// is a drift the next install refuses with the diff.
+// is a drift the next install refuses with the diff. This is the one writer of the
+// server's unit: server switch (server_switch.go) swaps the bytes of the binary the
+// unit names, in place, and writes no unit, so the unit and its hash stay as written.
 
 func init() {
 	notServed = append(notServed, "server install")
@@ -406,6 +408,9 @@ func (a *app) cmdServerInstall(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	// the loader is the machine's one service-manager hook, the one seat install uses
+	// (a.seatLoad, the test's fake when set); this base has no supervisor interface of
+	// install-rollback-on-missed-ticks to load through
 	load := a.seatLoad
 	if load == nil {
 		load = loadServerUnit

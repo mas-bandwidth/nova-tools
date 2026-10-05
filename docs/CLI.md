@@ -1135,7 +1135,7 @@ the old server running, when the shadow exits non-zero, panics, misses `--tick-d
 at `<target>.shadow.json`, beside the switch record. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
 
-### install-server-unit-by-verb-r.w2: the server's unit
+### install-server-unit-by-verb-r.w3: the server's unit
 
 `nova-sprint server install --listen <address:port> --secrets-store <dir>
 --secrets-as <seat> --secrets-key <path> --sops <path> [--redis <host:port>]
@@ -1148,7 +1148,11 @@ and names no actor. A unit edited or written by hand (its bytes not the recorded
 hash) is refused with the diff, secret-like values redacted, until
 `--replace-hand-edit` is given. `--dry-run` prints the unit and the plan
 (`write`, `keep` or `refuse`) and writes nothing. Exit 0 done, 1 a hand edit
-refused or a write or load failed, 2 usage. docs/SPEC-SPRINT.md, "The server".
+refused or a write or load failed, 2 usage. `server install` is the one
+writer of the server's unit: `server switch` swaps the bytes of the binary the
+unit names, in place, and writes no unit, so after a switch the unit and its
+hash are as installed and the next install's plan is `keep`.
+docs/SPEC-SPRINT.md, "The server".
 
 ### Exit codes
 

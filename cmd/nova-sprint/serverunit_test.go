@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// server install (docs/SPEC-SPRINT.md, "The server", install-server-unit-by-verb-r.w2)
+// server install (docs/SPEC-SPRINT.md, "The server", install-server-unit-by-verb-r.w3)
 // writes the server's unit with no actor in it and the store's credentials behind
 // nova-secrets exec --only, records its hash, and refuses to install over a unit edited
 // by hand, printing the diff with no secret's value; the loader is the test's.
@@ -128,6 +128,49 @@ func TestServerInstallWritesAUnitWithNoActorAndRefusesAHandEdit(t *testing.T) {
 		assert.Contains(t, errs, "  -Environment=JEV_API_KEY=<redacted>")
 		assert.NotContains(t, errs, "sk-live-value")
 		assert.Empty(t, r.calls)
+	})
+
+	t.Run("server switch swaps the binary the unit names and writes no unit: the unit and its hash stay as install wrote them", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t, "linux")
+		bin := filepath.Join(r.dir, "nova-sprint")
+		require.NoError(t, os.WriteFile(bin, []byte("version-1"), 0o755))
+		r.a.executable = func() (string, error) { return bin, nil }
+		code, _, errs := do(r)
+		require.Equal(t, 0, code, errs)
+		unit := filepath.Join(r.dir, serverService)
+		before, err := os.ReadFile(unit)
+		require.NoError(t, err)
+		hash, err := os.ReadFile(unit + ".sha256")
+		require.NoError(t, err)
+		assert.Contains(t, string(before), `"--" "`+bin+`" "run" "--listen"`)
+
+		// the candidate passes the canary: its shadow tick prints a plan (shadow.go)
+		candidate := filepath.Join(r.dir, "nova-sprint-candidate")
+		version2 := "#!/bin/sh\necho '" + `{"shadow":{"epoch":0,"state":"STOPPED","parts":[],"size":0,"took_ns":1}}` + "'\n"
+		require.NoError(t, os.WriteFile(candidate, []byte(version2), 0o755))
+		var out, errb bytes.Buffer
+		code = r.a.run([]string{"server", "switch", candidate, "--target", bin}, &out, &errb)
+		require.Equal(t, 0, code, errb.String())
+		assert.Contains(t, out.String(), "SERVER SWITCH OK")
+		swapped, err := os.ReadFile(bin)
+		require.NoError(t, err)
+		assert.Equal(t, version2, string(swapped))
+
+		after, err := os.ReadFile(unit)
+		require.NoError(t, err)
+		assert.Equal(t, string(before), string(after), "switch writes no unit")
+		afterHash, err := os.ReadFile(unit + ".sha256")
+		require.NoError(t, err)
+		assert.Equal(t, string(hash), string(afterHash), "switch writes no hash")
+		_, why, err := handEdit(unit)
+		require.NoError(t, err)
+		assert.Empty(t, why, "after a switch the unit is still the one install wrote")
+		assert.Len(t, r.calls, 1, "switch loads nothing: the server exits 3 on its replaced binary and the unit's Restart=always starts the new one")
+
+		code, dry, errs := do(r, "--dry-run")
+		require.Equal(t, 0, code, errs)
+		assert.Contains(t, dry, "plan=keep")
 	})
 
 	t.Run("refusals name every problem and write nothing", func(t *testing.T) {
