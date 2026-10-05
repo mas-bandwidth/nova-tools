@@ -135,13 +135,17 @@ func TestMalformedIsUnreadable(t *testing.T) {
 	t.Parallel()
 
 	for name, content := range map[string]string{
-		"a JSON array":              `[]`,
-		"a bare string":             `"lockdown"`,
-		"a number":                  `7`,
-		"truncated":                 `{"lockdown":{"at":"x"`,
-		"empty file":                ``,
-		"lockdown is not an object": `{"lockdown":"blown","quarantine":{}}`,
-		"quarantine is not a map":   `{"lockdown":null,"quarantine":[1,2]}`,
+		"a JSON array":                `[]`,
+		"a bare string":               `"lockdown"`,
+		"a number":                    `7`,
+		"a bare null":                 `null`,
+		"a boolean":                   `true`,
+		"truncated":                   `{"lockdown":{"at":"x"`,
+		"empty file":                  ``,
+		"lockdown is not an object":   `{"lockdown":"blown","quarantine":{}}`,
+		"quarantine is not a map":     `{"lockdown":null,"quarantine":[1,2]}`,
+		"an unknown top-level member": `{"lockdown":null,"quarantine":{},"defuse":true}`,
+		"data after the box object":   `{"lockdown":null,"quarantine":{}} {"lockdown":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := boxIn(t)
