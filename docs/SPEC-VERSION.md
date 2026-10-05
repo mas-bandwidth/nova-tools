@@ -77,8 +77,9 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    carries one and `-` otherwise, and `platform` the `goos/goarch`. Stdout carries `SNAPSHOT
    OK bin=<dir> out=<path> tools=<n> stamp=<stamp>`, `tools=` the row count and `stamp=` the
    one identity every binary reported, then one `SNAPSHOT ROW name= stamp= revision=
-   platform=` per row written (capped by `--max`). `--dry-run` takes the same reads, prints
-   the same lines with `dry_run=true`, and writes no `--out`.
+   platform=` per row written (capped by `--max`), and one `NOTE partial source metadata:
+   <name>` for each row whose source metadata is partial (item 4). `--dry-run` takes the
+   same reads, prints the same lines with `dry_run=true`, and writes no `--out`.
 4. **`snapshot` refuses a mixed set, naming the pair.** Two binaries reporting two different
    stamps are refused, exit 2, naming both binaries and both stamps, and no `--out` is
    written — so a friend's bin cannot be recorded as one set when it is four. The remedy is
@@ -86,7 +87,12 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    same way:** a line that carries the structured source metadata (repository, revision,
    dirty flag, build host) is compared with every other line that carries it, and two that
    differ are refused naming both binaries and both sources; a line with no source
-   metadata is recorded and has no say in that comparison.
+   metadata is recorded and has no say in that comparison, and prints no note. **A partial
+   source is noted, not refused:** a line that carries some but not all of the four source
+   keys, or a contradictory one (`dirty=maybe`), is recorded, is exempt from that comparison
+   like a line with none, and prints one `NOTE partial source metadata: <name>` (the name
+   quoted) saying so; the snapshot still succeeds. Only the snapshot reads source today:
+   the gate checks consistency across the binaries' own claims, not the build.
 5. **The rest of the `snapshot` refusals.** A `--bin` that is unreadable, or holds no
    `nova-*` regular file, names the directory and the readable `--bin` to supply; a binary
    whose `version` exits non-zero, hangs past its deadline, or prints no parseable line
@@ -145,3 +151,4 @@ reaches a network.
 10. `TestSnapshotIsBoundedByTheClock`: an injected clock and a fake binary sleeping past its deadline is exit 2 with the deadline named and no partial `--out`.
 11. `TestSnapshotToleratesTheFirstExecOfANeverSeenBinary`: a fake binary that is slow on its FIRST invocation and immediate on every one after — the platform's assessment made deterministic — is read, not refused, under the default bound, so the verb's own normal case (a `--bin` one `go install` old) is not a refusal.
 12. `TestSnapshotTakesItsBoundsFromFlags`: a fake binary sleeping past a given `--timeout` is exit 2 naming that tool and that duration with no partial `--out`; four such binaries under a `--budget` shorter than one of them is exit 2 naming the budget rather than a tool's slowness; a non-positive `--timeout` is exit 2 naming the flags.
+13. `TestSnapshotNotesARowWhoseSourceMetadataIsPartial`: a stub printing only `repo=` and `revision=`, and one printing all four with `dirty=maybe`, are each noted by name (`NOTE partial source metadata: "<name>"`) and the snapshot still succeeds with both rows; a stub with none of the four keys, and one with all four well formed, are named in no note.
