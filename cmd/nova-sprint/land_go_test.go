@@ -29,8 +29,12 @@ func TestTreeGateWords(t *testing.T) {
 		readonlyGoFlags([]string{"GOFLAGS=-tags=custom", "PATH=/bin", "GOFLAGS=-count=1 -mod=vendor"}))
 	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(false, []string{"internal/docs"}))
 	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(true, nil))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "test", "./internal/docs/", "./internal/ci/"}},
-		gateRuns(true, []string{"internal/docs", "internal/ci"}))
+	assert.Equal(t, [][]string{
+		{"go", "build", "./..."},
+		{"go", "vet", "./..."},
+		{"go", "test", "./internal/docs/", "./internal/ci/"},
+		{"go", "test", "-tags", "functional", "-run", "^(TestUncheckedErrors|TestStaticcheckFindings|TestDeadCode|TestEveryCommandMeetsTheOnboardingStandard)$", "./internal/ci/"},
+	}, gateRuns(true, []string{"internal/docs", "internal/ci"}))
 	for p, want := range map[string]bool{
 		"docs/CLI.md":            true,
 		"a/b_test.go":            true,
@@ -109,9 +113,9 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 		{"a build failure", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"bad.go": buildRed},
 			"fails the tree gate: go build ./...: exit status 1: # example.com/m | ./bad.go:3:14: syntax error:", ""},
 		{"a document the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "BAD\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: go test ./ ./internal/docs/: exit status 1: ", ""},
 		{"a Go file the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"forbidden.go": "package main\n\nfunc forbidden() {}\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: go test ./ ./internal/docs/: exit status 1: ", ""},
 		{"a plain file the tree tests would refuse is not tested", nil, map[string]string{"forbidden.txt": "plain\n"}, map[string]string{"notes.txt": "more plain\n"},
 			"", ""},
 		{"a red base refuses the batch", map[string]string{"bad.go": vetRed}, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "still fine\n"},
@@ -190,4 +194,37 @@ func TestTreeGateBaseCache(t *testing.T) {
 	require.NoError(t, os.WriteFile(mainGo, []byte(goModule["main.go"]), 0o600))
 	again, _ := l.treeGateBase(context.Background(), dir, "base-2")
 	assert.Equal(t, why, again)
+}
+
+// A batch whose change breaks another package's test is refused by the tree gate,
+// naming the broken package, even though the batch passes build, vet, and internal/ci.
+func TestTheTreeGateRefusesABatchThatBreaksAnotherPackage(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the module with pkga, pkgb and internal/ci", map[string]string{
+		"go.mod":                 "module example.com/m\n\ngo 1.21\n",
+		"main.go":                "package main\n\nfunc main() {}\n",
+		"internal/ci/ci.go":      "package ci\n",
+		"internal/ci/ci_test.go": "package ci\n\nimport \"testing\"\n\nfunc TestCI(t *testing.T) {}\n",
+		"pkgA/a.go":              "package pkga\n\nfunc Value() int { return 1 }\n",
+		"pkgB/b.go":              "package pkgb\n\nimport \"example.com/m/pkgA\"\n\nfunc Get() int { return pkga.Value() }\n",
+		"pkgB/b_test.go":         "package pkgb\n\nimport \"testing\"\n\nfunc TestGet(t *testing.T) {\n\tif Get() != 1 {\n\t\tt.Fatalf(\"want 1, got %d\", Get())\n\t}\n}\n",
+	})
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+
+	r.ok("add --stream s1 --count 1 --one")
+	head := r.card("s1-1", map[string]string{
+		"pkgA/a.go": "package pkga\n\nfunc Value() int { return 2 }\n",
+	})
+	r.queued(map[string]string{"s1-1": head}, "s1-1")
+
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 1, code, out+errs)
+	assert.Contains(t, errs, "fails the tree gate: go test ")
+	assert.Contains(t, errs, "./pkgB/")
+	assert.Contains(t, errs, "want 1, got 2")
+	assert.Equal(t, map[string]string{"s1-1": "merging/stuck"}, r.places("s1-1"), "the failing card is blamed and stuck")
+	r.clean()
 }

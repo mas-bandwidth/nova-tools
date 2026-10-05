@@ -2401,21 +2401,28 @@ on it names every failure, `<file>:<line>` and the rule.
 
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
-and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
-document or a test file (a `.md`, a `_test.go`) the packages that test the tree
-itself pass (`go test ./internal/docs/ ./internal/ci/`, those the clone has). The
-base's tip is gated once a batch, the tree tests included, before any head is
-merged: a base that is red refuses the batch, nothing pushed or reported and no
-card blamed, the reason naming the base and the run, and the remedy is to fix
-the base. A head whose merged tree is red is taken off the batch branch and ends
-the batch as a head that does not merge does, the conflict fact's note the run,
-how it ended and its output on one line (the finding; the heads before it land).
-A merge that made no commit is not gated. Every go run the lander makes in the
-clone, the gate's and the update runs below, is under `GOFLAGS=-mod=readonly`:
-no run writes `go.mod` or `go.sum` (under a caller's `-mod=mod` the update runs
-of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
-module that needs them changed fails the run, which is the card's finding.
-`--check` is the caller's own command on top, once a batch, as before.
+and vets (`go build ./...`, `go vet ./...`), and when tests are asked (a Go file, a
+document, testdata, or `go.mod`/`go.sum`: `.go`, `.md`, `testdata/`, `go.mod`, `go.sum`),
+tests run for every package touched by the batch's changed files plus every package
+that imports them (via `go list` dependency resolution, or packages under changed
+directories and their direct and transitive importers), plus the packages that test
+the tree itself (`./internal/docs/`, `./internal/ci/`, those the clone has), plus the
+whole-tree functional checks on `internal/ci` (`go test -tags functional -run '^(TestUncheckedErrors|TestStaticcheckFindings|TestDeadCode|TestEveryCommandMeetsTheOnboardingStandard)$' ./internal/ci/`).
+On a clean batch, dependency resolution takes ~1-2s with `go list`, unit tests run only
+for touched packages and their importers rather than the whole tree, and the four
+whole-tree functional checks take ~30-45s, keeping the gate bounded well within the
+15-minute lander budget. The base's tip is gated once a batch, the tree tests included,
+before any head is merged: a base that is red refuses the batch, nothing pushed or
+reported and no card blamed, the reason naming the base and the run, and the remedy is
+to fix the base. A head whose merged tree is red is taken off the batch branch and ends
+the batch as a head that does not merge does, the conflict fact's note the run, how it
+ended and its output on one line (the finding; the heads before it land; a red keeps the
+existing bisect to the card). A merge that made no commit is not gated. Every go run the
+lander makes in the clone, the gate's and the update runs below, is under `GOFLAGS=-mod=readonly`:
+no run writes `go.mod` or `go.sum` (under a caller's `-mod=mod` the update runs of
+2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a module that
+needs them changed fails the run, which is the card's finding. `--check` is the caller's
+own command on top, once a batch, as before.
 
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator

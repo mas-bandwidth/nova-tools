@@ -9,13 +9,16 @@ package main
 // card's finding.
 //
 // The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
-// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
-// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
-// is gated once a batch before any head is merged, so a base that is red refuses the
-// batch and blames no card. A head whose merged tree is red is taken off the batch branch
-// and ends the batch as a head that does not merge does, the gate's run and output its
-// finding. A clone with no go.mod has no module and no gate.
+// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when tests
+// are asked (a Go file, a document, or testdata: .go, .md, testdata/, go.mod, go.sum),
+// tests run for every package touched by the batch's changed files plus every package
+// that imports them, plus the tree tests (treeTests, where the clone has them:
+// internal/docs, internal/ci), plus the whole-tree functional checks on internal/ci
+// (TestUncheckedErrors, TestStaticcheckFindings, TestDeadCode, TestEveryCommandMeetsTheOnboardingStandard).
+// The base's tip is gated once a batch before any head is merged, so a base that is red
+// refuses the batch and blames no card. A head whose merged tree is red is taken off
+// the batch branch and ends the batch as a head that does not merge does, the gate's run
+// and output its finding. A clone with no go.mod has no module and no gate.
 
 import (
 	"context"
@@ -104,21 +107,192 @@ func withEnv(env []string, set ...string) []string {
 // treeTested says a change to p is one the tree tests read: a Go file, a document, or
 // under testdata.
 func treeTested(p string) bool {
-	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
+	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/") || p == "go.mod" || p == "go.sum"
 }
 
+// pkgArg formats p as a package argument for go test (e.g. ./dir/).
+func pkgArg(p string) string {
+	p = filepath.Clean(filepath.ToSlash(p))
+	if p == "." {
+		return "./"
+	}
+	p = strings.TrimPrefix(p, "./")
+	return "./" + strings.TrimSuffix(p, "/") + "/"
+}
+
+// hasCI reports whether have holds internal/ci.
+func hasCI(have []string) bool {
+	return slices.ContainsFunc(have, func(p string) bool {
+		p = strings.Trim(filepath.Clean(filepath.ToSlash(p)), "./")
+		return p == "internal/ci"
+	})
+}
+
+// functionalChecks are the whole-tree checks run on internal/ci when the clone holds it.
+const functionalChecks = "^(TestUncheckedErrors|TestStaticcheckFindings|TestDeadCode|TestEveryCommandMeetsTheOnboardingStandard)$"
+
 // gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
-// the tree tests (have: the ones the clone holds) when tests is asked.
+// the packages to test when tests is asked, plus the functional whole-tree checks on
+// internal/ci when the clone holds it.
 func gateRuns(tests bool, have []string) [][]string {
 	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}
 	if tests && len(have) > 0 {
 		run := []string{"go", "test"}
 		for _, p := range have {
-			run = append(run, "./"+p+"/")
+			run = append(run, pkgArg(p))
 		}
 		runs = append(runs, run)
+		if hasCI(have) {
+			runs = append(runs, []string{"go", "test", "-tags", "functional", "-run", functionalChecks, "./internal/ci/"})
+		}
 	}
 	return runs
+}
+
+type landPkgInfo struct {
+	relDir     string
+	importPath string
+	deps       map[string]bool
+}
+
+// gatePackages finds the packages to test for the gate: every package touched by changed
+// files plus every package that imports one of them (direct and transitive importers),
+// plus the tree tests the clone holds (treeTests).
+func (l *lander) gatePackages(ctx context.Context, dir string, changed []string, tests bool) []string {
+	var treeHave []string
+	for _, p := range treeTests {
+		if fi, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil && fi.IsDir() {
+			treeHave = append(treeHave, p)
+		}
+	}
+	if !tests {
+		return nil
+	}
+	if len(changed) == 0 {
+		return treeHave
+	}
+
+	out, err := l.goRun(ctx, dir, []string{"go", "list", "-f", "{{.Dir}}\t{{.ImportPath}}\t{{range .Deps}}{{.}} {{end}}{{range .TestImports}}{{.}} {{end}}{{range .XTestImports}}{{.}} {{end}}", "./..."})
+	if err != nil {
+		return treeHave
+	}
+
+	var pkgs []landPkgInfo
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 2 {
+			continue
+		}
+		rel, err := filepath.Rel(dir, parts[0])
+		if err != nil {
+			continue
+		}
+		relDir := filepath.ToSlash(rel)
+		deps := map[string]bool{}
+		if len(parts) > 2 {
+			for _, d := range strings.Fields(parts[2]) {
+				deps[d] = true
+			}
+		}
+		pkgs = append(pkgs, landPkgInfo{
+			relDir:     relDir,
+			importPath: parts[1],
+			deps:       deps,
+		})
+	}
+
+	allTouched := false
+	for _, raw := range changed {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		f := filepath.Clean(filepath.ToSlash(raw))
+		if f == "go.mod" || f == "go.sum" {
+			allTouched = true
+			break
+		}
+	}
+
+	touched := map[string]bool{}
+	if allTouched {
+		for _, p := range pkgs {
+			touched[p.importPath] = true
+		}
+	} else {
+		for _, raw := range changed {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			f := filepath.Clean(filepath.ToSlash(raw))
+			if p := enclosingPackage(f, pkgs); p != nil {
+				touched[p.importPath] = true
+			}
+		}
+	}
+
+	selected := map[string]bool{}
+	for _, p := range pkgs {
+		if touched[p.importPath] {
+			selected[p.relDir] = true
+		}
+	}
+	for {
+		added := false
+		for _, p := range pkgs {
+			if selected[p.relDir] {
+				continue
+			}
+			for _, other := range pkgs {
+				if selected[other.relDir] && p.deps[other.importPath] {
+					selected[p.relDir] = true
+					touched[p.importPath] = true
+					added = true
+					break
+				}
+			}
+		}
+		if !added {
+			break
+		}
+	}
+
+	for _, t := range treeHave {
+		selected[t] = true
+	}
+
+	var outDirs []string
+	for d := range selected {
+		outDirs = append(outDirs, d)
+	}
+	slices.Sort(outDirs)
+	return outDirs
+}
+
+// enclosingPackage returns the package whose directory is the longest match for f.
+func enclosingPackage(f string, pkgs []landPkgInfo) *landPkgInfo {
+	fDir := filepath.Dir(f)
+	var best *landPkgInfo
+	for i := range pkgs {
+		p := &pkgs[i]
+		if p.relDir == "." {
+			if fDir == "." && (best == nil || best.relDir == ".") {
+				best = p
+			}
+		} else {
+			if fDir == p.relDir || strings.HasPrefix(fDir, p.relDir+"/") {
+				if best == nil || len(p.relDir) > len(best.relDir) {
+					best = p
+				}
+			}
+		}
+	}
+	return best
 }
 
 // gateWhy is a red run as a finding, one line: the run, how it ended and its output.
@@ -168,7 +342,7 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why str
 	case f != nil && now.Before(f.next):
 		return f.said(), false
 	}
-	why = l.treeGate(ctx, dir, true)
+	why = l.treeGate(ctx, dir, nil, true)
 	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
@@ -225,18 +399,14 @@ func (l *lander) offRules(ctx context.Context) []string {
 	return off
 }
 
-// treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
+// treeGate runs the gate on the clone's tree, the tests too when tests: "" when it
 // is green or the clone has no module, else the finding (gateWhy).
-func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+// (docs/SPEC-SPRINT.md section 7, the tree gate).
+func (l *lander) treeGate(ctx context.Context, dir string, changed []string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
-	var have []string
-	for _, p := range treeTests {
-		if fi, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil && fi.IsDir() {
-			have = append(have, p)
-		}
-	}
+	have := l.gatePackages(ctx, dir, changed, tests)
 	for _, run := range gateRuns(tests, have) {
 		if out, err := l.goRun(ctx, dir, run); err != nil {
 			return gateWhy(run, err, out)
@@ -259,7 +429,8 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if err != nil {
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	files := strings.Split(changed, "\n")
+	why := l.treeGate(ctx, dir, files, slices.ContainsFunc(files, treeTested))
 	if why == "" {
 		return "", ""
 	}
