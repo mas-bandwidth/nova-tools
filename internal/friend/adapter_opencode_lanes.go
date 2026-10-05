@@ -161,7 +161,7 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 			return "", limit // a rate limit or out of funds: the lanes' governor answers it, not the open's retry alone
 		}
 	}
-	if exit, err = refused("(new)", out, exit, err); err != nil {
+	if exit, err = refusedHarness(ctx, "opencode", "(new)", out, exit, err); err != nil {
 		return "", err
 	}
 	if exit != 0 {
@@ -214,6 +214,6 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
 		}
 	}
-	exit, err = refused(id, out, exit, err)
+	exit, err = refusedHarness(ctx, "opencode", id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
 }

@@ -53,21 +53,21 @@ func (g *Grok) home() (string, error) {
 func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 	wake, deferred, err := g.classify(ctx)
 	if err != nil {
-		return 0, err
+		return refusedHarness(ctx, "grok", g.Wake, err.Error(), 1, err)
 	}
 	if deferred != nil {
 		return 0, Deferred{Reason: deferred.Error()}
 	}
 	f, err := os.OpenFile(wake, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
-		return 0, err
+		return refusedHarness(ctx, "grok", wake, err.Error(), 1, err)
 	}
 	_, err = f.WriteString(WakeLine(text) + "\n")
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		return 0, err
+		return refusedHarness(ctx, "grok", wake, err.Error(), 1, err)
 	}
 	if g.Out != nil {
 		fmt.Fprintln(g.Out, "one monitor event appended to "+wake+"; the turn runs after this")

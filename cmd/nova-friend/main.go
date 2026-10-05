@@ -64,6 +64,8 @@ type world struct {
 	exec      friend.Exec
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	beatDown  func(ctx context.Context, server, friend, reason string, until time.Time) error
+	beatUp    func(ctx context.Context, server, friend string) error
 	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	launchctl friend.Launchctl
@@ -133,6 +135,44 @@ func realWorld() world {
 				return "", fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
 			}
 			return res[0].Stdout, nil
+		},
+		beatDown: func(ctx context.Context, server, name, reason string, until time.Time) error {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			args := []string{"friend", "down", name}
+			if reason != "" {
+				args = append(args, "--reason", reason)
+			}
+			if !until.IsZero() {
+				args = append(args, "--until", until.UTC().Format(time.RFC3339))
+			}
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
+			if err != nil {
+				return err
+			}
+			if len(res) != 1 {
+				return fmt.Errorf("friend down: the server answered %d results, want 1", len(res))
+			}
+			if res[0].Code != 0 {
+				return fmt.Errorf("friend down refused: %s", strings.TrimSpace(res[0].Stderr))
+			}
+			return nil
+		},
+		beatUp: func(ctx context.Context, server, name string) error {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			args := []string{"friend", "up", name}
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
+			if err != nil {
+				return err
+			}
+			if len(res) != 1 {
+				return fmt.Errorf("friend up: the server answered %d results, want 1", len(res))
+			}
+			if res[0].Code != 0 {
+				return fmt.Errorf("friend up refused: %s", strings.TrimSpace(res[0].Stderr))
+			}
+			return nil
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
@@ -226,6 +266,7 @@ func friendTool(w world) *tool.Tool {
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
+		f.Duration("limit-rest", friend.DefaultLimitRest, "how long to stay down when a usage limit or out-of-credits message gives no reset time")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		stateDir(f)
 		redis(f)
@@ -250,7 +291,7 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--limit-rest <d>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -529,8 +570,8 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
-(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
+last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|limited|-> mode=<batch|one-shot|-> presence=<up|down>
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (limited: kind= until= reason=; broken: session_id= broken_at= reason=; one-shot: lanes=)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
@@ -747,6 +788,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
+		LimitRest: c.Dur("limit-rest"),
+		BeatDown: func(ctx context.Context, reason string, until time.Time) error {
+			if w.beatDown == nil {
+				return nil
+			}
+			return w.beatDown(ctx, server, name, reason, until)
+		},
+		BeatUp: func(ctx context.Context) error {
+			if w.beatUp == nil {
+				return nil
+			}
+			return w.beatUp(ctx, server, name)
+		},
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
@@ -1068,6 +1122,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+	}
+	if s.Session == friend.SessionLimited {
+		o.Fact("kind", dash(s.Kind)).Fact("until", stamp(s.Until)).Fact("reason", tool.Text(s.SessionReason))
+		o.Note(fmt.Sprintf("the friend is rate-limited (%s) until %s: the daemon delivers nothing into it until then, answering pings with daemon-pong", s.Kind, stamp(s.Until)))
 	}
 	pr, prFound, prErr := friend.ReadPresence(state)
 	switch {

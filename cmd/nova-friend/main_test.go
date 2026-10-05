@@ -263,6 +263,22 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
 }
 
+func TestStatusShowsSessionLimited(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
+	until := start.Add(time.Hour)
+	require.NoError(t, friend.WriteStatus(state, friend.Status{
+		Friend: "bob", Harness: "claude", At: start, Seat: "ada",
+		Session: friend.SessionLimited, Kind: "limit", Until: until, SessionReason: "429 rate limit exceeded",
+	}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out("STATUS OK daemon=up harness=claude status_age=1s connection=- seat=ada last_ping=- ping_age=- challenge=- nonce=- last_pong=- session_pong_age=- daemon_pong_age=- pongs=0 queue=0 working=0 width=0 beats=0 last_beat=- delivered=0 session=limited mode=- kind=limit until=2026-10-04T04:00:00Z status=down reason=\"429 rate limit exceeded\"",
+			"NOTE the friend is rate-limited (limit) until 2026-10-04T04:00:00Z: the daemon delivers nothing into it until then, answering pings with daemon-pong")
+}
+
 func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")

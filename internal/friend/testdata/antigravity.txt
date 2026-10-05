@@ -1,0 +1,2 @@
+429 RESOURCE_EXHAUSTED: Quota exceeded for quota metric 'GenerateContent requests' and limit 'GenerateContent requests per minute'. Reset at 2026-10-04T15:00:00Z
+402 Payment Required: Your Google Cloud billing account has run out of credits.

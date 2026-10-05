@@ -1,0 +1,2 @@
+{"error": {"message": "Rate limit reached for model gpt-4 in organization org-123. Please try again in 15m.", "type": "rate_limit_exceeded", "code": 429}}
+{"error": {"message": "You exceeded your current quota, please check your plan and billing details.", "type": "insufficient_quota", "code": 402}}
