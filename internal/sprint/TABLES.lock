@@ -149,6 +149,12 @@
 # so the ask gave a flash reader pro reads and a heavy one. readers.tiers is the
 # column: text, no fold, shown, after broken. An empty cell means every tier.
 # Held by TestSprintTablesAreLocked; the rule is docs/SPEC-SPRINT.md section 6.
+# Change, 2026-10-05, a cell's word, not a column (card presence-from-session-only): the
+# owner, ~9:30 AM ET, "there is no value in things that are answered just by the daemon".
+# friends.status is up only on her session's evidence, a wake ping her session answered
+# within 10 minutes or a card of hers finished within 30 (sprint.FriendPongWindow,
+# sprint.FriendFinishWindow, sprint.FriendStatus), else down; a beat is never evidence,
+# and the 15 s beat rule above is gone. No column changed, so the lines below are unchanged.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
