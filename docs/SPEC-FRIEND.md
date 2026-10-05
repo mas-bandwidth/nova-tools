@@ -254,6 +254,46 @@ usage is on the beat as `--five-hour <pct> --seven-day <pct>`
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
+### The harness check (internal/friend/alive.go)
+
+A session that cannot answer is caught by the challenge only after a window;
+a harness that has closed is caught at once. Every adapter answers `Alive`,
+from the cheapest true signal it has, the process table (`ps -axww -o
+user=,pid=,args=`, through the adapter's own runner, no shell): Codex, the
+ChatGPT app (`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`);
+Antigravity, its app; DSH, the DeepSeek Harness app; each its main
+executable, matched whole, of the daemon's user, never a helper. Grok, a
+window (the TUI process) open in the friend's directory: a pid of
+`active_sessions.json` with that cwd, alive in `ps -axww -o pid=,ppid=,args=`.
+OpenCode, batch and lanes, and Gemini run no standing process (every turn
+starts the runner afresh), so a runner that cannot be found is not running
+and a runner that is found cannot tell. An adapter that cannot tell says so
+(a stub; a desktop app off macOS; a listing that cannot be read), the record
+says it once, and its friend relies on the session check alone.
+
+`Alive` is its own interface, `Aliver`, beside the deliver adapter's, so it is
+optional by assertion: every adapter implements it
+(`TestEveryAdapterAnswersTheHarnessCheck`), and a Deliverer that does not
+cannot tell. `WatchHarness(d, adapter)` takes the bare adapter, the one
+`NewDeliverer` returned, never the daemon's `Deliver`: the gates in front of
+it (`SessionCheck.Gate`, `Limits.Gate`) answer no `Alive`
+(`TestTheWatchReadsTheBareAdapterNotTheGateInFrontOfIt`). Owed:
+`cmd/nova-friend/main.go` builds the daemon and calls `d.Run` without it, so
+the running daemon does not yet check; the wiring is one line before `Run`,
+`friend.WatchHarness(d, deliver)` (What is weak).
+
+`WatchHarness` puts the check in front of the daemon's beat. Every thirty
+seconds (`AliveEvery`) it asks; a harness not running makes the friend down
+at once, independent of the challenge: no beat goes to the sprint server
+(down after fifteen seconds without one, so within three quarters of a
+minute of the close), the beat's error, so the status, says `harness not
+running`, and the record says `down:` with what was read. It is up again only
+when the harness runs (or cannot be told) and the session has answered the
+daemon's current nonce, one the pong file did not hold when the harness
+closed; a harness that comes back is not yet a session that answers. Tested
+over a fake process table and a fake clock,
+`TestAClosedHarnessMakesItsFriendDownWithinAMinute`.
+
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
@@ -535,6 +575,12 @@ nothing on the bus is checked only once that turn ends, and keeps its word
 until then. A one-shot friend with no session in its directory at all has
 nowhere for the check to go until a lane opens one, and its lanes wait on the
 row, which comes with a beat; it stays down until a session exists.
+
+The harness check (internal/friend/alive.go) is built and tested, not yet
+run: `cmd/nova-friend/main.go` never calls `WatchHarness`, so a running
+daemon does not ask its harness and a closed harness does not yet make its
+friend down; that file is outside the card that built the check. Nor is the
+watch's down and up in `tla/FriendPresence.tla` yet.
 
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
