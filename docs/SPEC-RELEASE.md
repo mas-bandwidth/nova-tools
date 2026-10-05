@@ -501,6 +501,64 @@ A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receip
 `TestCycleRefusesBeforeAnyPlay`, `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks`,
 `TestATransitiveChangeRebuildsTheTool`, `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer`.*
 
+## 14. The store's spend matches the providers' own
+
+The owner, 2026-10-05: "We should not make a release without verifying that we capture actual
+spend, not < 1/2 of it." and "We must be reliable, and accurate." On 2026-10-04 openrouter's own
+account showed about $2,250 spent while the sprint's cost panel showed $836: runs with no result,
+reads and retries were not priced. The sprint prices every paid call whatever its end and
+reconciles each UTC day against the provider's count (SPEC-SPRINT, What a card cost, the
+reconciliation); **`cut` makes the release prove it** (`internal/release/spendcheck.go`).
+
+**The window** is since the previous release tag (the time of the commit it points at), or
+`--spend-since <day>` and `--spend-until <day>` (2006-01-02 or RFC 3339; until defaults to today),
+rounded to whole UTC days, `[the first day's midnight, the last day's midnight)`: the providers
+count completed days, and like is compared with like. With no previous tag and no `--spend-since`,
+`cut` refuses rather than guess a window.
+
+**What is compared.** For each provider the gate reads (`SpendProvider`: an interface per
+provider, its endpoint over net/http, its key from `nova-secrets exec`, never printed; a fake in
+tests) and each provider the store recorded in the window, the store's records
+(`sprint.RecordedSpendBetween`: every consumer record on every primary, a take or a read whatever
+its end, whose end stamp falls in the window, at its charged figure) are set beside the provider's
+own count of the same window. A paid provider is compared in dollars. A **subscription friend**
+(no dollars) is compared in tokens: the tokens recorded against its harness's own usage receipts.
+A gap over **5%** of the provider's figure (`sprint.CostGapOver`; when the provider says 0 and the
+store does not, the share is 100%) refuses. Every provider is printed, after the gate's progress
+line, before any tag:
+
+```
+RELEASE CUT SPEND provider=<p> unit=usd|tokens store=<figure> provider_says=<figure> gap=<figure> share=<n>% bound=5% verdict=ok|refused
+RELEASE CUT SPEND provider=<p> unit=<u> store=<figure> provider_says=unreadable verdict=refused why="<why>"
+RELEASE CUT SPEND store=unreadable verdict=refused why="<why>"
+RELEASE CUT NOTE spend-gate=ok window=<from>..<to> providers=<n>
+RELEASE CUT REFUSED reason=spend-gate window=<from>..<to> over=<n> unreadable=<n> store=read|unreadable named=<p,...> remedy="<remedy>"
+```
+
+The refusal exits 2 and tags nothing; it runs before `--dry-run` branches, as the sensitive-path
+classification does. The remedy is: "price every paid call and reconcile (nova-sprint cost reconcile), or make the named readout readable, then cut again".
+
+**Unread is never a pass.** A provider whose readout cannot be read (no key, an answer not of its
+shape, a window past what it keeps), a provider the store recorded that has no readout at all, and
+a store whose records cannot be read each refuse, naming it. There is no waiver flag.
+
+**The production readouts.** `nova-update release cut` (Main) wires `ProductionSpend`:
+openrouter's own account activity (`GET https://openrouter.ai/api/v1/activity`, a provisioning
+key in `OPENROUTER_PROVISIONING_KEY` through `nova-secrets exec --only OPENROUTER_PROVISIONING_KEY`,
+one item per day and endpoint over the last 30 completed UTC days, its `usage` summed over the
+window's days). **Owed, and until it lands every production cut refuses on the store:** a reader of
+the sprint store's cost records from nova-update (the store is reached through nova-sprint's seat
+login), and readouts for opencode's, Inception's and the subscription friends' usage (opencode's
+account, Inception's usage, the opencode database's token receipts). A caller of `release.Run` that
+wires no gate (a test) prints `RELEASE CUT NOTE spend-gate=unwired`.
+
+*Tests: `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` (on the in-memory store
+store.Mem: a $2,250 against $836 gap refuses naming the provider; a 3% gap passes and tags; an
+unreadable provider, a recorded provider with no readout and an unreadable store each refuse;
+subscription tokens refuse past 5% and pass within it), `TestTheProductionSpendGateRefusesWithoutAStoreReader`,
+`TestTheSpendWindowIsSinceThePreviousTag`, `TestOpenRouterActivityIsSummedOverTheWindow`,
+`TestTheRecordsOfAWindowAreThatWindowsOnly`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -511,7 +569,7 @@ network or a real machine.
 ## Tests this spec demands
 
 The release tests run entirely against fakes and temp dirs — a `fakeForge`, a `fakeSSH`, a `fakeToolchain`, a `fakeGit` — and never reach a network or a real machine; the sensitive-list, command-reference and windows-spec parity checks live in `internal/ci` and read the spec file directly.
-One numbered line per test; where one test holds several behaviours, they share its line, and the tests for drive paths and backslash folding also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named in the gate section. The behaviours this spec demands that no test proves yet follow, unnumbered.
+One numbered line per test; where one test holds several behaviours, they share its line, and the tests for drive paths and backslash folding also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named in the gate section, and the spend gate's in section 14. The behaviours this spec demands that no test proves yet follow, unnumbered.
 
 1. `TestCutRefusesASensitiveRangeWithoutASecurityRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
 2. `TestCutWithASecurityReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.

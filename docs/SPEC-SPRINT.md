@@ -1301,8 +1301,13 @@ and one line per provider is printed, `COST provider=<p> day=<d> provider_usd=<$
 gap=<$> share=<n>%` or `COST provider=<p> unknown: <why>`, then `COST RECONCILE OK
 providers=<n> notes=<n>` (with `--json`, the providers' records and the notes written; with
 no provider named by a route, `providers=0` and nothing written; with `--dry-run`, the same
-lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`); the
-release's spend check calls it (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
+lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`)
+(`TestCostReconcileSetsEachProvidersDayBesideTheRecords`). **The release's spend check**
+(SPEC-RELEASE section 14) sets the same records over a release's window beside each provider's
+own count of it (`internal/sprint/costreconcile_window.go`, `sprint.RecordedSpendBetween`: per
+provider, the dollars charged, the tokens counted, the records and the records unpriced, over
+`[from, to)`), and `nova-update release cut` refuses on a gap over 5%
+(`TestTheRecordsOfAWindowAreThatWindowsOnly`).
 **Not yet run by the loop:** the read when `nova-sprint run` begins and every hour after
 (outside every tick, as the balance poll does), with the judgment's entry in `Decisions` and
 its line in the help, is owed; until it lands a read is written only when the verb runs.

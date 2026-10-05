@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -64,7 +65,11 @@ type Deps struct {
 	// nil Dogfood is ReadDogfood, which reads the command reference and the
 	// receipts off disk and reaches nothing else.
 	Dogfood Dogfood
-	Now     func() time.Time
+	// Spend is the spend gate `cut` runs before it tags (spendcheck.go): each provider's
+	// own count of the release's window against the store's records. Main wires
+	// ProductionSpend; a nil Spend is a caller that wired none, and cut says so.
+	Spend *SpendGate
+	Now   func() time.Time
 	// Self answers what the nova-update RUNNING THIS is stamped with. It is a
 	// seam rather than a constant because this package is a library and the
 	// stamp lives in main; a nil Self means `adopt` cannot compare its own
@@ -94,6 +99,9 @@ type options struct {
 	// out of the ordinary.
 	cli, receipts string
 	noDogfood     bool
+	// spendSince and spendUntil are cut's spend window (spendcheck.go); since defaults to
+	// the previous tag's time and until to now.
+	spendSince, spendUntil string
 	// gate is build's --gate: "refuse" (the default, and the only way cut
 	// runs it) or "report", which prints the open edges and builds.
 	gate        string
@@ -187,7 +195,7 @@ func progress(w io.Writer, format string, a ...any) {
 // older than the release it is fanning out cannot run that release's install,
 // and a coordinator far enough behind cannot adopt at all.
 func Main(name string, args []string, stamp string, out, errs io.Writer) int {
-	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
+	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }, Spend: ProductionSpend(os.Getenv)})
 }
 
 // Run is `nova-update release <verb>`. The verb is dispatched here and each of
@@ -209,6 +217,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		fmt.Fprintln(out, ExitCodes+" `nova-update release <verb> -h` lists a verb's flags.")
 		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, DogfoodNote)
+		fmt.Fprintln(out, SpendNote)
 		fmt.Fprintln(out, IncrementalNote)
 		fmt.Fprintln(out, AdoptNote)
 		fmt.Fprintln(out, PullNote)
@@ -237,6 +246,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
 		addDogfoodFlags(f, &o, "docs/CLI.md beside --changelog")
+		f.StringVar(&o.spendSince, "spend-since", "", "the spend gate's window starts this UTC day, 2006-01-02 or RFC 3339 (default: the previous tag's day)")
+		f.StringVar(&o.spendUntil, "spend-until", "", "the spend gate's window ends before this UTC day, 2006-01-02 or RFC 3339 (default: today)")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
 		f.StringVar(&o.out, "out", "", "the artifact root the release is written under, as <out>/<version>/<goos-goarch>/")
@@ -323,6 +334,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			case "cut":
 				fmt.Fprintln(out, CutNote)
 				fmt.Fprintln(out, DogfoodNote)
+				fmt.Fprintln(out, SpendNote)
 			case "build":
 				fmt.Fprintln(out, DogfoodNote)
 				fmt.Fprintln(out, IncrementalNote)

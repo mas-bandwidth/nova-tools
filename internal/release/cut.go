@@ -526,6 +526,14 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		return refusal(errs, "CUT", err)
 	}
+	// THE SPEND GATE (spendcheck.go): the store's records of the release's window against
+	// each provider's own count, before --dry-run branches, for the reason classify is.
+	if err := spendCheck(ctx, "CUT", o, deps, forge, previous, errs); err != nil {
+		if errors.Is(err, errSpend) {
+			return 2
+		}
+		return refusal(errs, "CUT", err)
+	}
 	// --sums names a SHA256SUMS this release's build already wrote; its digest
 	// is recorded in the section so that an adopt on another host can check a
 	// fetched release against something that did not travel with the bits.
