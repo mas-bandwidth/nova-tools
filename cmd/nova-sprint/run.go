@@ -463,7 +463,8 @@ const (
 // read alone. Every tick of a RUNNING machine is printed, naming every table
 // and the rows it changed in each, and every tick that
 // failed; an error is printed always and the loop goes on, waiting longer
-// after each failure in a row, up to TickBackoffCap.
+// after each failure in a row, up to TickBackoffCap. After each tick of a
+// RUNNING machine every friend is reconciled (reconcileFriendsTick).
 //
 // A loop runs the code it was started with for as long as it runs: a binary
 // installed under it (a release, a fix) would leave the store ticked by the
@@ -478,6 +479,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 	// every line before the loop is seen: the first tick reads the state whole
 	cursor, _ := st.LogTail(ctx)
 	why := tickStart
+	friends := newFriendTick()
 	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {
 		if now := a.binaryStamp(); began0 != "" && now != began0 {
 			fmt.Fprintf(stdout, "RUN STOP the binary this loop runs was replaced on disk since it began (%s, now %s): exiting so its supervisor starts the new one; a loop that is not supervised: run nova-sprint run again\n", began0, orDashStr(now, "unreadable"))
@@ -518,6 +520,12 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			if line := sprintLine(ctx, st); line != "" {
 				fmt.Fprintln(stdout, line)
 			}
+		}
+		if err == nil && res.State == store.Running {
+			// every friend reconciled after the tick's deal, with friend reconcile's plan
+			// (friendreconcile_tick.go; docs/SPEC-SPRINT.md section 1,
+			// friend-reconcile-every-tick-r.w1)
+			a.reconcileFriendsTick(ctx, st, friends, stdout)
 		}
 		if n != 0 && i == n-1 {
 			return false
