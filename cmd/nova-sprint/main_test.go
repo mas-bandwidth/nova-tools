@@ -50,7 +50,7 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
 	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return ta.m, nil }
 	// the friends' bus: every message sent is kept, none goes anywhere
-	ta.a.bus = func(_ context.Context, m bus.Message) error {
+	ta.a.bus = func(_ context.Context, m bus.Message, _ func(string)) error {
 		ta.mu.Lock()
 		defer ta.mu.Unlock()
 		ta.sent = append(ta.sent, m)

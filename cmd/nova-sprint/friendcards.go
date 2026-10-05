@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -410,19 +411,39 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 // wakes a friend's daemon when it delivers her a card.
 const busRedisEnv = "NOVA_BUS_REDIS"
 
-// busSendFn sends one message on the friends' bus.
-type busSendFn func(ctx context.Context, m bus.Message) error
+// busSendFn sends one message on the friends' bus; say is handed each line the send has
+// for the verb's output (a bus store's alarm raised or cleared).
+type busSendFn func(ctx context.Context, m bus.Message, say func(string)) error
 
-// sendBus is the real busSendFn: the bus store dialed as nova-bus dials it
-// (internal/redisconn, the fleet's login from the environment), one message
-// sent, the connection closed.
-func (a *app) sendBus(ctx context.Context, m bus.Message) error {
-	addr := a.getenv(busRedisEnv)
-	if addr == "" {
-		return errors.New(busRedisEnv + " is not set: no bus to send on")
+// busWatch is the app's Watch of the bus store addr as user, one per store and user
+// for the life of the process: its alarm is raised at the first send that fails on the
+// login or the connection and cleared at the next that succeeds. Each is queued as its
+// one line (Alarm.Text) for the send that saw it to say (sendBus).
+func (a *app) busWatch(addr, user string) *bus.Watch {
+	a.busWatchesMu.Lock()
+	defer a.busWatchesMu.Unlock()
+	key := addr + ":" + user
+	if w, ok := a.busWatches[key]; ok {
+		return w
 	}
+	queue := func(al bus.Alarm) {
+		a.busAlarmsMu.Lock()
+		defer a.busAlarmsMu.Unlock()
+		a.busAlarms = append(a.busAlarms, al.Text())
+	}
+	w := &bus.Watch{Store: addr, User: user, Raise: queue, Clear: queue}
+	if a.busWatches == nil {
+		a.busWatches = map[string]*bus.Watch{}
+	}
+	a.busWatches[key] = w
+	return w
+}
+
+// openBus is the real busOpen: the bus store dialed as nova-bus dials it
+// (internal/redisconn, the fleet's login from the environment).
+func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-	if a.getenv(redisauth.UserEnv) != "" {
+	if user != "" {
 		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
 		if a.getenv(redisauth.PasswordEnvEnv) == "" {
 			o.PasswordEnv = redisauth.DefaultPasswordEnv
@@ -430,10 +451,40 @@ func (a *app) sendBus(ctx context.Context, m bus.Message) error {
 	}
 	conn, err := redisconn.Open(ctx, o, a.getenv)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer conn.Close() // ignored: the connection is closed at the end of the verb; a failed close has no one to tell
-	_, err = (&bus.Bus{Store: bus.Redis{C: conn.Client()}}).Send(ctx, m)
+	return &bus.Bus{Store: bus.Redis{C: conn.Client()}}, func() {
+		_ = conn.Close() // ignored: the connection is closed at the end of the send; a failed close has no one to tell
+	}, nil
+}
+
+// sendBus is the real busSendFn: one message sent through friend.Courier on a
+// connection opened for it (busOpen) and closed after, its result watched
+// (busWatch). The alarm a send raises or clears is said as one FRIEND-CARD
+// BUS-ALARM line, and a send that fails while the alarm is raised says so in its
+// error, which friend sync writes on the card's story.
+func (a *app) sendBus(ctx context.Context, m bus.Message, say func(string)) error {
+	addr := a.getenv(busRedisEnv)
+	if addr == "" {
+		return errors.New(busRedisEnv + " is not set: no bus to send on")
+	}
+	user := a.getenv(redisauth.UserEnv)
+	c := &friend.Courier{
+		Now:   func() time.Time { return a.now() },
+		Open:  func(ctx context.Context) (*bus.Bus, func(), error) { return a.busOpen(ctx, addr, user) },
+		Watch: a.busWatch(addr, user),
+	}
+	_, err := c.Send(ctx, m)
+	a.busAlarmsMu.Lock()
+	said := a.busAlarms
+	a.busAlarms = nil
+	a.busAlarmsMu.Unlock()
+	for _, text := range said {
+		say("FRIEND-CARD BUS-ALARM " + oneline.Escape(text))
+	}
+	if err != nil && c.Watch.Open() {
+		return fmt.Errorf("%w (the bus store's alarm is raised: FRIEND-CARD BUS-ALARM)", err)
+	}
 	return err
 }
 
@@ -447,7 +498,7 @@ func (a *app) sendBus(ctx context.Context, m bus.Message) error {
 func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, brief, line string, say func(string)) error {
 	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " dealt: " + line,
 		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report."}
-	err := a.bus(ctx, m)
+	err := a.bus(ctx, m, say)
 	if err == nil {
 		return nil
 	}

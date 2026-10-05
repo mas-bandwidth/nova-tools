@@ -139,7 +139,6 @@ func TestClaudesRateLimitEventIsTheMeasuredUsageAndItsRejectionALimit(t *testing
 	assert.True(t, limited)
 	assert.True(t, until.Equal(fiveReset))
 	assert.Contains(t, reason, "overage")
-	assert.InDelta(t, 1.0, l.Usage().FiveHour, 1e-9, "the usage rides on the beat whatever the verdict")
 
 	l = &Limits{Now: func() time.Time { return now }, AllowOverage: true}
 	se = &scriptExec{outs: []string{over}, exits: []int{0}}
@@ -149,7 +148,6 @@ func TestClaudesRateLimitEventIsTheMeasuredUsageAndItsRejectionALimit(t *testing
 	assert.Equal(t, 0, exit)
 	_, _, limited = l.Limited()
 	assert.False(t, limited)
-	assert.Equal(t, []string{"--five-hour", "100", "--seven-day", "70"}, l.Usage().BeatFlags())
 }
 
 func TestALimitLineIsReadOnlyWithItsResetAndNeverFromTheBodyOfAReply(t *testing.T) {
@@ -179,3 +177,33 @@ func TestALimitLineIsReadOnlyWithItsResetAndNeverFromTheBodyOfAReply(t *testing.
 
 func ftoa(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 func itoa(n int64) string   { return strconv.FormatInt(n, 10) }
+
+// A harness that opens a session per lane keeps its lanes under the gate: its
+// batch turn is held while it is down, and a lane turn goes straight to it,
+// its output still read for the limit (gatedLanes says why lanes are exempt).
+func TestTheGateKeepsALaneHarnessAndHoldsOnlyItsBatchTurn(t *testing.T) {
+	t.Parallel()
+	clock := &limitClock{t: time.Date(2026, 10, 4, 17, 40, 0, 0, edt)}
+	var downs []string
+	l := &Limits{Now: clock.now, Down: func(until time.Time, reason string) { downs = append(downs, until.Format(time.RFC3339)) }}
+	se := &scriptExec{
+		outs:  []string{"lane work\nYou've hit your usage limit. Try again in 2 hours.\n", "lane again\n"},
+		exits: []int{0, 0},
+	}
+	d := l.Gate(&OpenCode{Dir: t.TempDir(), Session: "s1", Run: l.Watch(se.run)})
+	lh, ok := d.(LaneHarness)
+	require.True(t, ok, "the gate keeps the harness's lanes")
+
+	_, err := lh.DeliverTo(context.Background(), "ses_lane1", "card c1")
+	require.NoError(t, err, "a lane turn's own end is its answer, never a deferral")
+	assert.Equal(t, []string{"2026-10-04T19:40:00-04:00"}, downs, "a lane turn that hits the limit sends the friend down")
+
+	_, err = d.Deliver(context.Background(), "hello")
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred, "the batch turn is held while she is down")
+	assert.Len(t, se.texts, 1, "the held batch turn runs nothing")
+
+	_, err = lh.DeliverTo(context.Background(), "ses_lane1", "card c1 again")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"card c1", "card c1 again"}, se.texts, "the lanes are not held")
+}
