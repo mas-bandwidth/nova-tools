@@ -166,3 +166,47 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)
 }
+
+// log --json --since with a window wider than 22 hours returns every entry since
+// that time. The JSON output contains the lines array; the test verifies
+// that cards s1-1, s1-2, and s1-3 all appear in the results.
+func TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 3 --brief-file " + writeBrief(t, "handle the empty case"))
+	ta.deal(3)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1 --report 'done'")
+	ta.ok("take --as m1 s1-2.w1@1")
+	ta.ok("finish --as m1 s1-2.w1@1 --report 'done'")
+	ta.ok("take --as m1 s1-3.w1@1")
+	ta.ok("finish --as m1 s1-3.w1@1 --report 'done'")
+	var j struct {
+		Lines []struct {
+			Kind, Card string
+			At         string `json:"at"`
+		} `json:"lines"`
+	}
+	sinceTime := ta.now.Add(-25 * time.Hour)
+	ta.json("log --json --since "+sinceTime.Format(time.RFC3339), &j)
+	require.NotEmpty(t, j.Lines, "log --json --since returns empty; got: %+v", j)
+	s11 := false
+	s12 := false
+	s13 := false
+	for _, l := range j.Lines {
+		if l.Card == "s1-1" {
+			s11 = true
+		}
+		if l.Card == "s1-2" {
+			s12 = true
+		}
+		if l.Card == "s1-3" {
+			s13 = true
+		}
+	}
+	assert.True(t, s11, "s1-1 not found in log --json --since output")
+	assert.True(t, s12, "s1-2 not found in log --json --since output")
+	assert.True(t, s13, "s1-3 not found in log --json --since output")
+}
