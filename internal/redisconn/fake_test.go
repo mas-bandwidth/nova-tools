@@ -116,7 +116,7 @@ func (s *fakeStore) dial(ctx context.Context, network, addr string) (net.Conn, e
 
 func (s *fakeStore) serve(conn int, c net.Conn) {
 	defer s.wg.Done()
-	defer c.Close()
+	defer func() { _ = c.Close() }() // ignored: the store is shutting down; a close error changes nothing
 	rd := bufio.NewReader(c)
 	for {
 		cmd, err := readCommand(rd)
