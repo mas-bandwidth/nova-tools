@@ -33,7 +33,6 @@ func outputAfterCommand(md, command string) (lines []string, found bool) {
 		if !strings.HasPrefix(ln, "$ ") || strings.TrimPrefix(ln, "$ ") != command {
 			continue
 		}
-		found = true
 		for j := i + 1; j < len(allLines); j++ {
 			nxt := allLines[j]
 			if strings.TrimSpace(nxt) == "" || strings.HasPrefix(nxt, "$ ") || strings.HasPrefix(nxt, "```") {

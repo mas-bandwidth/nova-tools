@@ -308,7 +308,7 @@ func treeLoadWorkers() int {
 // loadTreeFile reads one file's bytes when a rule reads them as text, and parses
 // a .go file.
 func loadTreeFile(fset *token.FileSet, f *treeFile) error {
-	if !f.Go && !strings.HasPrefix(f.Rel, ".github/") && !(strings.HasPrefix(f.Rel, "docs/") && strings.HasSuffix(f.Rel, ".md")) {
+	if !f.Go && !strings.HasPrefix(f.Rel, ".github/") && (!strings.HasPrefix(f.Rel, "docs/") || !strings.HasSuffix(f.Rel, ".md")) {
 		return nil
 	}
 	raw, err := os.ReadFile(f.Path)
