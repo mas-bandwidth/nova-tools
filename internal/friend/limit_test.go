@@ -207,3 +207,91 @@ func TestTheGateKeepsALaneHarnessAndHoldsOnlyItsBatchTurn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"card c1", "card c1 again"}, se.texts, "the lanes are not held")
 }
+
+// A harness that stops on its credits (the finding of 2026-10-04: a friend's
+// harness stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while
+// her row read up with six working cards, because the beat came from the
+// daemon, not from the harness) makes its friend down with the reset as
+// --until: no beat goes out and nothing is delivered from the turn that said
+// it; a reset that passes while the harness is not running keeps her down,
+// since only an answered wake proves the session; then the wake is answered,
+// she is up, beats, and the message goes in (docs/SPEC-FRIEND.md, a harness
+// at its limit).
+func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
+	t.Parallel()
+	clock := &limitClock{t: time.Date(2026, 10, 4, 17, 40, 0, 0, edt)}
+	type told struct {
+		until  time.Time
+		reason string
+	}
+	var downs []told
+	var ups []string
+	nonces := []string{"gone11", "back22"}
+	l := &Limits{
+		Now:   clock.now,
+		Nonce: func() string { n := nonces[0]; nonces = nonces[1:]; return n },
+		Down:  func(until time.Time, reason string) { downs = append(downs, told{until, reason}) },
+		Up:    func(nonce string) { ups = append(ups, nonce) },
+	}
+	// the fake harness: out of credits, then not running, then back
+	running := true
+	var texts []string
+	harness := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		text := args[len(args)-1]
+		if !running {
+			return "", -1, errors.New("exec: the harness app is not running")
+		}
+		texts = append(texts, text)
+		switch {
+		case len(texts) == 1:
+			return "working on card c1\nError: Insufficient AI Credits. Your credits will refresh 6:52 PM.\n", 1, nil
+		case strings.Contains(text, "back22"):
+			return "back22\n", 0, nil
+		}
+		return "I ran card c1.\n", 0, nil
+	}
+	d := l.Gate(&OpenCode{Dir: "/w/bob", Session: "s1", Run: l.Watch(harness)})
+	beats := 0
+	beat := l.Beat(func(context.Context) error { beats++; return nil })
+
+	require.NoError(t, beat(context.Background()), "up before her harness says anything")
+	_, err := d.Deliver(context.Background(), "card c1")
+	var deferred Deferred
+	require.ErrorAs(t, err, &deferred, "the turn that hit the limit is deferred, the message in hand")
+	reset := time.Date(2026, 10, 4, 18, 52, 0, 0, edt)
+	require.Len(t, downs, 1, "told down once")
+	assert.True(t, reset.Equal(downs[0].until), "--until is the reset the harness said: %s", downs[0].until)
+	assert.Contains(t, downs[0].reason, "Insufficient AI Credits")
+	require.Error(t, beat(context.Background()), "no beat while she is down: her row reads down")
+	assert.Equal(t, 1, beats)
+
+	clock.t = reset.Add(-time.Second)
+	_, err = d.Deliver(context.Background(), "card c1")
+	require.ErrorAs(t, err, &deferred)
+	assert.Len(t, texts, 1, "nothing runs before the reset")
+
+	// the reset passes while the harness is not running: no answer, no wake
+	clock.t, running = reset.Add(time.Minute), false
+	_, err = d.Deliver(context.Background(), "card c1")
+	require.ErrorAs(t, err, &deferred, "a wake into an absent harness is no wake")
+	assert.Empty(t, ups)
+	require.Error(t, beat(context.Background()), "still down after the reset until the session answers")
+	assert.Equal(t, 1, beats)
+
+	clock.t, running = reset.Add(2*time.Minute), true
+	_, err = d.Deliver(context.Background(), "card c1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"back22"}, ups, "woken once, by the answered nonce")
+	require.Len(t, texts, 3)
+	assert.Contains(t, texts[1], "back22", "the wake carries its nonce")
+	assert.Equal(t, "card c1", texts[2], "then the message goes in")
+	require.NoError(t, beat(context.Background()), "she beats again once woken")
+	assert.Equal(t, 2, beats)
+	assert.Len(t, downs, 1)
+
+	subject, body := LimitDownText("bob", downs[0].until, downs[0].reason)
+	assert.Contains(t, subject, "friend bob down")
+	assert.Contains(t, body, "nova-sprint friend down bob --reason 'harness limit: Error: Insufficient AI Credits. Your credits will refresh 6:52 PM.' --until 2026-10-04T22:52:00Z")
+	_, body = LimitUpText("bob")
+	assert.Contains(t, body, "nova-sprint friend up bob")
+}

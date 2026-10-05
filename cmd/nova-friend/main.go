@@ -240,8 +240,14 @@ answer brings it up; it starts down until the first answer. A turn runs as long 
 silent past --silent-stop is stopped with its process group, the reason on the record. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
-bus; a restart clears it. The friend row's mode and width come with each beat's answer (row_mode=,
-row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
+bus; a restart clears it. A turn whose harness says it is out of credits or at a usage limit (a Claude
+Code rate_limit_event rejected, "Insufficient AI Credits ... will refresh 6:52 PM", "usage limit ...
+try again at") makes the friend down until the reset: the presence file says down with the limit,
+no beat goes to the sprint server (her row reads down), nothing is delivered, and the seat (else
+--coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
+--reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
+nonce from inside the session before she beats again, and the seat is told she is back. The friend
+row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
 next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Prints
@@ -480,14 +486,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		return friend.WritePresence(state, p)
 	}
+	// the seat (else --coordinator) is told of each limit and each wake; set once the store is open
+	tellSeat := func(subject, body string) {}
 	fl.Down = func(until time.Time, reason string) {
-		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns held until then, then a wake")
+		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns and beats held until then, then a wake")
 		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
 		}
+		tellSeat(friend.LimitDownText(name, until, reason))
 	}
 	fl.Up = func(nonce string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
+		tellSeat(friend.LimitUpText(name))
 	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
@@ -520,17 +530,27 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	sc.Deliver = sc.Gate(fl.Gate(deliver))
+	tellSeat = func(subject, body string) {
+		to := answerTo()
+		if to == "" {
+			record(w.now().UTC().Format(time.RFC3339) + " limit: no seat or coordinator to tell: " + subject)
+			return
+		}
+		if _, err := (&bus.Bus{Store: sc.DaemonStore()}).Send(ctx, bus.Message{From: name, To: []string{to}, Subject: subject, Body: body}); err != nil {
+			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
+		}
+	}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
-		Beat: sc.Beat(func(ctx context.Context) error {
+		Beat: sc.Beat(fl.Beat(func(ctx context.Context) error {
 			answer, err := w.beat(ctx, server, name)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 				rowMode, rowWidth = m, wd
 			}
 			return err
-		}),
+		})),
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
 				return m, rowWidth // the override, for a test
