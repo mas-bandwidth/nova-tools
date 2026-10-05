@@ -571,3 +571,101 @@ func movedReadFields(c *Card, to string, now time.Time) map[string]string {
 	fields["reader"], fields["asked"], fields[FieldLeveled] = to, stamp(now), "1"
 	return fields
 }
+
+// DefaultReadLease is how long an in-flight read's lease stands without renewal (10m).
+const DefaultReadLease = 10 * time.Minute
+
+// FieldLease is a read card's lease expiration timestamp.
+const FieldLease = "lease"
+
+// RetiredByLapsed is a read card's retired_by when its lease lapsed and it was taken back on restart.
+const RetiredByLapsed = "lapsed"
+
+// ReadLeaseExpires returns when an in-flight read's lease expires.
+// Started by read --begin (begun + DefaultReadLease) and renewed by reader beat (FieldLease).
+func ReadLeaseExpires(c *Card) time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	if s := c.F(FieldLease); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t
+		}
+	}
+	if s := c.F("begun"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t.Add(DefaultReadLease)
+		}
+	}
+	return time.Time{}
+}
+
+// ReadLeaseLive reports whether the in-flight read's lease is live at now.
+func ReadLeaseLive(c *Card, now time.Time) bool {
+	exp := ReadLeaseExpires(c)
+	if exp.IsZero() {
+		return false
+	}
+	return !now.After(exp)
+}
+
+// RestartReads is the server restart plan (the model is tla/ServerLanes.tla,
+// Restart, LiveLeaseNeverTakenBack, EveryLapsedReadTakenBack): on server start,
+// keep every in-flight read whose lease is live, and only take back reads whose
+// lease has lapsed (retired_by lapsed).
+func RestartReads(s *Snapshot) Plan {
+	var p Plan
+	if s.Readers == nil {
+		return p
+	}
+	for _, rd := range s.Readers.Rows() {
+		cards := s.Readers.Cell(rd, Reading)
+		SortCards(cards)
+		for _, c := range cards {
+			if ReadLeaseLive(c, s.Now) {
+				continue
+			}
+			p.Units = append(p.Units, Unit{
+				Key:    c.ID,
+				Stream: c.F("stream"),
+				Changes: []Change{
+					change(Readers, removeEntry(c, map[string]string{
+						"retired":    stamp(s.Now),
+						"retired_by": RetiredByLapsed,
+					})),
+				},
+				Moved: fmt.Sprintf("%s %s:%s -> taken back (lease lapsed); the ask asks it of a reader up", c.ID, rd, c.Col),
+			})
+		}
+	}
+	return p
+}
+
+// ServerRestart is an alias for RestartReads.
+func ServerRestart(s *Snapshot) Plan {
+	return RestartReads(s)
+}
+
+// RenewReaderLeases renews the lease of every in-flight read on reader to now + DefaultReadLease.
+func RenewReaderLeases(s *Snapshot, reader string) Plan {
+	var p Plan
+	if s.Readers == nil {
+		return p
+	}
+	cards := s.Readers.Cell(reader, Reading)
+	SortCards(cards)
+	for _, c := range cards {
+		exp := s.Now.Add(DefaultReadLease)
+		p.Units = append(p.Units, Unit{
+			Key:    c.ID,
+			Stream: c.F("stream"),
+			Changes: []Change{
+				change(Readers, setEntry(c, map[string]string{
+					FieldLease: stamp(exp),
+				})),
+			},
+			Moved: fmt.Sprintf("%s lease renewed until %s", c.ID, stamp(exp)),
+		})
+	}
+	return p
+}
