@@ -82,6 +82,9 @@ type Store struct {
 	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
 	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
 	IdleAlarm bool
+	// Merge reads what the forge and the repository say of the merge for the
+	// coordinator's pass (sprint.TickReq.Merge, merge health); nil reads none.
+	Merge func(context.Context) (*sprint.MergeFacts, error)
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats

@@ -45,7 +45,7 @@ const (
 )
 
 // PassTypes are the pass's judgment types.
-var PassTypes = []string{NFriendDeaf, NFriendIdle, NCoordinatorBehind}
+var PassTypes = []string{NFriendDeaf, NFriendIdle, NCoordinatorBehind, NMergeHealth}
 
 const (
 	// PassEvery is the running time between two raises of one pass judgment.
@@ -120,10 +120,11 @@ func WithFriendFinish(p Plan, s *Snapshot, v string) Plan {
 }
 
 // TickCoordinatorPass is the pass, run by the overdue part (TickOverdue): the three
-// conditions raised, raised again and closed (the comment above).
+// conditions and merge health (coordinator_pass_merge.go) raised, raised again and closed
+// (the comment above).
 func TickCoordinatorPass(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
-	conds := append(append(deafConds(s, r), idleConds(s, r)...), behindConds(s, r)...)
+	conds := append(append(append(deafConds(s, r), idleConds(s, r)...), behindConds(s, r)...), mergeHealthConds(s, r)...)
 	due := notify(&p, s, conds, PassTypes, r)
 	reraise(&p, s, conds, r)
 	return p, due

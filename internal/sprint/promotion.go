@@ -116,12 +116,17 @@ func DevBehind(s *Snapshot) (DevLag, bool) {
 // What is the judgment's line: the count, the branch, the last promotion, and the promotion
 // to run.
 func (d DevLag) What() string {
+	return d.Line() + "; promote: merge origin/dev into the sprint branch, open the PR to dev, run the functional tier, queue it; then: nova-sprint promoted --sha <merge sha>"
+}
+
+// Line is dev behind as one line of merge health (coordinator_pass_merge.go): the count,
+// the branch and the last promotion.
+func (d DevLag) Line() string {
 	last := "no promotion recorded"
 	if !d.At.IsZero() {
 		last = "the last promotion at " + d.At.UTC().Format(time.RFC3339) + " (" + orDash(d.Sha) + ")"
 	}
-	return fmt.Sprintf("dev is behind: %d cards landed on %s since %s; promote: merge origin/dev into the sprint branch, open the PR to dev, run the functional tier, queue it; then: nova-sprint promoted --sha <merge sha>",
-		d.Count, d.Branch, last)
+	return fmt.Sprintf("dev is behind: %d cards landed on %s since %s", d.Count, d.Branch, last)
 }
 
 // Decisions are the judgment's: the promotion recorded, or wait 30m.

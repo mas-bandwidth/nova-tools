@@ -2841,7 +2841,7 @@ Otherwise, you will eventually drift and forget." The night before, one friend's
 session was deaf from about midnight to 8:41 AM and finished no card while his row read
 8/8 working, and reader findings and failed attempts waited on the coordinator for four
 hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.go,
-`TickCoordinatorPass`), three conditions the tick keeps, each a judgment:
+`TickCoordinatorPass`), four conditions the tick keeps, each a judgment:
 
 - **a friend's session is deaf** (`a friend's session is deaf`), one on each friend not
   held whose beat carries a session pong (`friend beat --pong <RFC3339>`, her daemon's
@@ -2871,6 +2871,29 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
   coordinator is never pushed twice in one tick for one late judgment. The pass's own
   judgments are not counted: each is raised again on its own (and, like every judgment,
   gets its one overdue line).
+- **merge health** (`merge health: the base, dev and the branches are not stitched`;
+  coordinator_pass_merge.go, `MergeHealthLines`; the owner, 2026-10-05: "How can we
+  ensure that you ALWAYS do the merging properly from now on, vs. drifting and
+  forgetting?"), one about the sprint while any of its lines holds, the lines in this
+  order, joined in one judgment: the base red at its tip (`base <base> is red at <sha>:
+  <why>`), each stream the base-gate rule stopped (an open `stream stopped: the base
+  fails its tree gate`), dev behind as `DevBehind` has it (section 7, `DevLag`), the
+  promotion PR open into dev with its number and state (`open`, `queued`, `failing`,
+  `conflicted`), and each branch named by an open card or by the running server that
+  holds commits the base does not, with its commits ahead and behind (`branch <b>
+  (<who names it>) is not on <base>: <n> ahead, <m> behind`). Dev behind and a stopped
+  stream are the store's own facts; the base's tip, the PR and the branches are the
+  forge's and the repository's, given to the tick by its binding (`TickReq.Merge`,
+  `MergeFacts`, the store's `Merge` hook) from the facts the drift alarms compute: the
+  pass never reads git or the forge itself, and keeps no second copy of them. A change
+  of lines rewrites the judgment in place; it is never a second judgment. `ack` and
+  `wait` quiet it as they do deaf and idle. **Not yet live for the forge's lines:** no
+  binding in cmd/nova-sprint sets the store's `Merge` hook yet (the drift alarms that
+  compute those facts are not on the base), so on the running machine merge health
+  carries dev behind and a stopped stream only, until the drift alarms land and the
+  binding passes their facts. Pinned by
+  `TestTheCoordinatorPassCarriesMergeHealthEveryTenMinutes` (the twin store, a fake
+  clock, a fake forge) and `...WithDevLagAndBaseRed`.
 
 Each is an episode, keyed by its type and subject: written once when its condition
 starts, raised again in place every 10 minutes of running time while it holds

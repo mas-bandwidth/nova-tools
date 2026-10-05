@@ -988,6 +988,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
+	// the merge's facts for the pass's merge health (sprint.TickCoordinatorPass)
+	if st.Merge != nil {
+		if req.Merge, err = st.Merge(ctx); err != nil {
+			return last, fmt.Errorf("merge facts: %w", err)
+		}
+	}
 	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
@@ -1822,6 +1828,11 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 	}
 	if req.Sessions, err = ro.FriendSessions(ctx); err != nil {
 		return out, err
+	}
+	if st.Merge != nil {
+		if req.Merge, err = st.Merge(ctx); err != nil {
+			return out, fmt.Errorf("merge facts: %w", err)
+		}
 	}
 	var routes RouteCache
 	plan := func(table string, parts []sprint.TickPartDef) error {

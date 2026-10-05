@@ -580,7 +580,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 	}
 	all[NRemindFailed] = []string{"goal set friend-a --to <route>", "goal drop friend-a", "ack"}
 	ackable := map[string]bool{NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true, NProviderFunds: true, NProviderLow: true, NProviderKey: true, NAllOutOfCredit: true, NScoredLow: true, NRaiseReadTier: true,
-		NAlarmReview: true, NAlarmMerging: true, NAlarmReady: true, NAlarmFleet: true, NFriendDeaf: true, NFriendIdle: true}
+		NAlarmReview: true, NAlarmMerging: true, NAlarmReady: true, NAlarmFleet: true, NFriendDeaf: true, NFriendIdle: true, NMergeHealth: true}
 	for typ, ds := range all {
 		w := setup(t, 1)
 		n := Note{ID: "n-x.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, Decisions: ds, At: w.s.Now}
@@ -604,7 +604,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 func TestTickKeptList(t *testing.T) {
 	t.Parallel()
 	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind}
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind, NMergeHealth}
 	got := []string{NRemindFailed}
 	for typ := range TickDecisions {
 		got = append(got, typ)
