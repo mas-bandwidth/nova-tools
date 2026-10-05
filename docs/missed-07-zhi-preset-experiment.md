@@ -1,7 +1,7 @@
 # Zhi's DSH push-route experiment (missed-07)
 
 Status: no push route proven; existing `route=defer` behaviour is documented in
-cmd/nova-friend/main.go:375 and docs/SPEC-FRIEND.md:279, but whether the daemon
+cmd/nova-friend/main.go:532 and docs/SPEC-FRIEND.md:552, but whether the daemon
 actually takes that branch for Zhi remains unverified, so no adapter change is
 made on that basis.
 
@@ -45,7 +45,7 @@ production session was targeted.
 
 Conclusion: the one-shot runner refuses a `minimal`-preset desktop session
 before any write. Existing `route=defer` behaviour is documented in
-cmd/nova-friend/main.go:375 ("route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE...")
-and docs/SPEC-FRIEND.md:279 ("`route=defer` with that line when none does");
+cmd/nova-friend/main.go:532 ("route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE...")
+and docs/SPEC-FRIEND.md:552 ("`route=defer` with that line when none does");
 what remains unverified is whether the daemon actually takes that branch for
 Zhi. No adapter change is made on that unverified basis.
