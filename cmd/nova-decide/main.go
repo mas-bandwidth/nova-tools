@@ -138,10 +138,14 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 				Example: "grade --brief " + fixture + "card.md --backend fixed --answers " + fixture + "grade-answers.json --record ./decisions.jsonl --op c1@grade",
 				Effect:  tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
 				Detail: `The grade decision: a card's convergence before its first deal, one choice, grade: script
-(no model), flash or pro, each with its p. The state is the brief alone.`,
+(no model), flash or pro, each with its p. The state is the brief alone, or with --examples
+ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed outside --held-out.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("brief", "the card's brief, a file")
+					f.String("examples", "", "few-shot examples from the sprint record, a JSON-lines file of {card, heading, paths, kind, label} (SPEC-NOVA-DECIDE section 11)")
+					f.String("held-out", "", "cards left out of the example pool, a file of card ids one per line (with --examples)")
+					f.String("seed", "0", "the seed that picks the examples, so a run reproduces (with --examples)")
 					w.asking(f)
 					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
@@ -272,6 +276,28 @@ An id comes from the source path and content, so a second import adds nothing. P
 				Run: w.importRecords,
 			},
 			{
+				Name:   "score-grades",
+				Usage:  "score-grades --record <file> --log <file> [--day <date>]",
+				Effect: tool.Inspection,
+				Detail: `Grades Jev's grades against the sprint log, for the grade decisions made in one UTC day
+(--day; default: the day before now). Each card is scored by its newest grade of the day against its
+cost records in a nova-sprint log --json export: GRADE lines are Jev's grade by the tier the card was
+first dealt on (n, landed by attempt 2, landed, escalated to pro, dropped, open); BUCKET lines are the
+p of a flash or pro grade by whether the flash first attempt failed. A card the log lacks is counted
+as no_log; a card never dealt to the fleet is left out. See docs/SPEC-NOVA-DECIDE.md section 11.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("record", "the record file holding the grade decisions")
+					f.Required("log", "a nova-sprint log --json export, the outcomes")
+					f.String("day", "", "the UTC day scored, 2006-01-02; default: the day before now")
+					f.Check(func(c *tool.Call) {
+						if _, err := time.Parse(time.DateOnly, c.Str("day")); c.Str("day") != "" && err != nil {
+							c.Problem(fmt.Sprintf("--day %q is not a date (2006-01-02)", c.Str("day")))
+						}
+					})
+				},
+				Run: w.scoreGrades,
+			},
+			{
 				Name:    "findings",
 				Usage:   "findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>]",
 				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
@@ -321,7 +347,7 @@ func (w world) asking(f *tool.Flags) {
 		case b == "jev" && c.Given("answers"):
 			c.Problem("--answers is the fixed backend's; --backend jev asks the model")
 		case b == "jev" && w.getenv(decide.JevSecret) == "" && !c.DryRun():
-			c.Problem(decide.JevSecret + " is absent from this environment; run under `nova-secrets exec --only " + decide.JevSecret + " -- nova-decide ...` (the key is never a flag or a file)")
+			c.ProblemAs("key_absent", decide.JevSecret+" is absent from this environment; run under `nova-secrets exec --only "+decide.JevSecret+" -- nova-decide ...` (the key is never a flag or a file)")
 		case b != "" && b != "jev" && b != "fixed":
 			c.Problem(fmt.Sprintf("--backend %q is no backend; it wants jev or fixed", b))
 		}
@@ -385,7 +411,33 @@ func (w world) grade(c *tool.Call) *tool.Out {
 	if refused != nil {
 		return refused
 	}
-	return w.decision(c, decide.GradeSchema(), decide.GradeState(texts["brief"]), inputs)
+	state := decide.GradeState(texts["brief"])
+	if c.Given("examples") {
+		raw, err := os.ReadFile(c.Str("examples"))
+		var pool []decide.Example
+		if err == nil {
+			pool, err = decide.ParseExamples(raw)
+		}
+		held := map[string]bool{}
+		if err == nil && c.Given("held-out") {
+			var ids []byte
+			if ids, err = os.ReadFile(c.Str("held-out")); err == nil {
+				for _, id := range strings.Fields(string(ids)) {
+					held[id] = true
+				}
+			}
+		}
+		var shots []decide.Example
+		if err == nil {
+			shots, err = decide.PickExamples(pool, held, c.Str("seed"), decide.GradeExamplesPerClass)
+		}
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		state = decide.GradeStateWith(texts["brief"], shots)
+		inputs["examples"], inputs["seed"] = c.Str("examples"), c.Str("seed")
+	}
+	return w.decision(c, decide.GradeSchema(), state, inputs)
 }
 
 // readFiles reads each named file flag that is given: its text, and the record's inputs
@@ -411,6 +463,37 @@ func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, 
 	return texts, inputs, nil
 }
 
+// scoreGrades prints the day's grade decisions scored against the sprint log
+// (docs/SPEC-NOVA-DECIDE.md section 11, scoring the grades).
+func (w world) scoreGrades(c *tool.Call) *tool.Out {
+	ds, err := decide.Load(c.Str("record"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	f, err := os.Open(c.Str("log"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	defer f.Close() // ignored: the log is only read; its close can lose nothing the read returned
+	facts, err := decide.ReadLog(f)
+	if err != nil {
+		return tool.Refuse(c.Str("log") + ": " + err.Error())
+	}
+	day := w.now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	if c.Given("day") {
+		day, _ = time.Parse(time.DateOnly, c.Str("day")) // checked by the verb's flag rule
+	}
+	s := decide.ScoreGrades(ds, facts, day, day.Add(24*time.Hour))
+	o := tool.Done().Fact("day", day.Format(time.DateOnly)).Fact("decisions", s.Decisions).Fact("cards", s.Cards).Fact("no_log", s.NoLog)
+	for _, r := range s.Rows {
+		o.Item("grade", "jev", r.Grade, "dealt", r.Dealt, "n", r.N, "landed2", r.Landed2, "landed", r.Landed, "to_pro", r.ToPro, "dropped", r.Dropped, "open", r.Open)
+	}
+	for _, b := range s.Buckets {
+		o.Item("bucket", "jev", b.Grade, "p", b.Bucket, "n", b.N, "att1_failed", b.FirstFailed, "landed2", b.Landed2)
+	}
+	return o
+}
+
 // findings prints the record's score decisions in the window clustered by class;
 // card values follow the one-token field model of internal/oneline.Field.
 func (w world) findings(c *tool.Call) *tool.Out {
@@ -420,7 +503,7 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	}
 	bar, _ := strconv.ParseFloat(c.Str("bar"), 64) // checked by the verb's flag rule
 	from, _ := since(c.Str("since"), w.now())      // checked by the verb's flag rule
-	clusters, scored := decide.Findings(ds, from, bar)
+	clusters, scored, skipped := decide.FindingsSkipped(ds, from, bar)
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
 		cards := make([]string, len(cl.Cards))
@@ -428,6 +511,13 @@ func (w world) findings(c *tool.Call) *tool.Out {
 			cards[i] = strings.ReplaceAll(oneline.Field(card), ",", `\x2c`)
 		}
 		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cards, ","))
+	}
+	if len(skipped) > 0 {
+		named := skipped[:min(len(skipped), 3)]
+		for i, id := range named {
+			named[i] = oneline.Field(id)
+		}
+		o.Note(fmt.Sprintf("%d score decisions skipped: at is not RFC 3339: %s", len(skipped), strings.Join(named, " ")))
 	}
 	if c.Str("shadow") == "" {
 		return o

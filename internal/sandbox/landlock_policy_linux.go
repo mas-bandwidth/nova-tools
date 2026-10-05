@@ -64,7 +64,7 @@ func LandlockPolicyText(p *Policy) (string, error) {
 	for _, r := range p.ReadsNoExec {
 		fmt.Fprintf(&b, "read-noexec=%s\n", r)
 	}
-	// A write outside the job dir and its tmp carries no REMOVE rights, and says so.
+	// A write outside the job dir, its tmp and the cwd carries no REMOVE rights, and says so.
 	for _, w := range writePaths(p) {
 		if p.DeletesIn(w) {
 			fmt.Fprintf(&b, "write=%s\n", w)
@@ -85,8 +85,8 @@ func LandlockPolicyText(p *Policy) (string, error) {
 }
 
 // writeRuleMask is the mask one write-set directory gets: the whole handled set beneath
-// the job dir and its tmp, and the same set minus REMOVE_FILE and REMOVE_DIR everywhere
-// else. Landlock checks a remove right on the PARENT of the entry removed or renamed
+// the job dir, its tmp and the cwd (Policy.DeletesIn), and the same set minus REMOVE_FILE
+// and REMOVE_DIR everywhere else. Landlock checks a remove right on the PARENT of the entry removed or renamed
 // away, so withholding both is what refuses unlink, rmdir and rename-away beneath a
 // shared cache or a config dir while writing there still works. Rules are a union, so
 // a job dir nested under such a write keeps its remove rights from its own rule

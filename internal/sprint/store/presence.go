@@ -343,7 +343,29 @@ func (st *Store) fleetBeats(ctx context.Context, shapes []ntable.Table) (ntable.
 		members = append(members, r.Key)
 	}
 	beats, err := st.Beats(ctx, members)
-	return shape, beats, err
+	if err != nil {
+		return shape, beats, err
+	}
+	// each friend's own beat under her name, beside the machines' (the friend stall reads
+	// her session activity there, sprint.TickFriendStall): a friend's beat is kept by her
+	// name, not her row
+	for _, row := range members {
+		f, ok := sprint.FriendOfRow(row)
+		if !ok {
+			continue
+		}
+		b, err := st.FriendBeatOf(ctx, f)
+		if err != nil {
+			return shape, beats, err
+		}
+		if b.Friend != nil {
+			if beats == nil {
+				beats = map[string]sprint.Beat{}
+			}
+			beats[f] = b
+		}
+	}
+	return shape, beats, nil
 }
 
 // freshOf is the members that are alive at now (fewer than MissedBeatsDown

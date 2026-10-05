@@ -85,3 +85,58 @@ func Read(ctx context.Context, rt http.RoundTripper, provider string, getenv fun
 	}
 	return sprint.ProviderRead{Provider: provider, Known: true, Balance: *wire.Data.Credits - *wire.Data.Usage, HasUsed: true, Used: *wire.Data.Usage}
 }
+
+// OpenRouterKeyURL is openrouter's key endpoint: GET with the key as a bearer token answers
+// {"data": {"usage_daily": <dollars the key used today, the UTC day>, ...}}, the provider's
+// own count the cost reconciliation sets beside the sprint's records (sprint.CostReconcile).
+const OpenRouterKeyURL = "https://openrouter.ai/api/v1/key"
+
+// ReadUsage is the provider's own count of the UTC day's usage over the transport (nil is
+// http.DefaultTransport), its key read from getenv; day is the UTC day the count is of,
+// 2006-01-02. A provider with no usage endpoint, no key, or an answer that is not its shape
+// is unknown with why, and the key is never in the why.
+func ReadUsage(ctx context.Context, rt http.RoundTripper, provider, day string, getenv func(string) string) sprint.UsageRead {
+	unknown := func(why string) sprint.UsageRead { return sprint.UsageRead{Provider: provider, Note: why} }
+	if provider != "openrouter" {
+		if why, ok := unknownWhy[provider]; ok {
+			return unknown(why)
+		}
+		return unknown("no usage endpoint is known for provider " + provider)
+	}
+	env := KeyEnv[provider]
+	key := getenv(env)
+	if key == "" {
+		return unknown(env + " is not in this environment: run under nova-secrets exec --only " + env)
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OpenRouterKeyURL, nil)
+	if err != nil {
+		return unknown("the request could not be made: " + err.Error())
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	resp, err := (&http.Client{Transport: rt}).Do(req)
+	if err != nil {
+		return unknown("GET " + OpenRouterKeyURL + " failed: " + err.Error())
+	}
+	defer resp.Body.Close() // ignored: the answer is read to its end or bounded above; a close error loses nothing read
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	if err != nil {
+		return unknown("GET " + OpenRouterKeyURL + ": the answer could not be read: " + err.Error())
+	}
+	if resp.StatusCode != http.StatusOK {
+		return unknown(fmt.Sprintf("GET %s answered %d", OpenRouterKeyURL, resp.StatusCode))
+	}
+	var wire struct {
+		Data struct {
+			Daily *float64 `json:"usage_daily"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil || wire.Data.Daily == nil {
+		return unknown("GET " + OpenRouterKeyURL + " answered no data.usage_daily")
+	}
+	return sprint.UsageRead{Provider: provider, Known: true, Day: day, Used: *wire.Data.Daily}
+}

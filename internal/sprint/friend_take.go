@@ -12,7 +12,7 @@ import (
 // friend (friend down) takes back every one of hers she has not started, as a held machine's
 // cards are withdrawn: the work card is withdrawn on her row (never a failure: no redeal of
 // its bound is spent, FieldTakeEnded is not set), its primary goes back to ready, and the
-// friends' deal (FriendDeal) places the same card again at its next generation, on its own
+// friends' deal (friendDeal) places the same card again at its next generation, on its own
 // branch and job. A card she has started stays with her and finishes: one she pushed to, one
 // her beat names running (the caller reads both: Started), and one she finished (in review
 // or later, so no longer ready or working on her row). With cards named, each one she may

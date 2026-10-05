@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -24,7 +25,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -171,4 +172,76 @@ func aLateCardRedealt(k *walk) []sample {
 		}
 	}
 	return out
+}
+
+// lanesFreedBesideABacklog fills the members' ready queues past their lanes and has
+// one member finish all it is working on: its lanes are free beside the others'
+// backlogs, the level's case (the level moves only to a member with free lanes).
+func lanesFreedBesideABacklog(k *walk) []sample {
+	for range 4 * len(k.members) {
+		k.addTo(k.streams[0])
+	}
+	k.wholeTick()
+	for _, m := range k.members {
+		k.try(sprint.Take(k.s, sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 1}, Who: m}))
+	}
+	if !k.emptyLanes() {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// friendBrief is a card's brief that names the friend it is hers.
+func friendBrief(name string) string {
+	return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend " + name + "\n\nThe task."
+}
+
+// aFriendStalls deals a friend two cards and lets her go silent: no session
+// activity, no progress stamp, past the stall bound and then a step at a time, the
+// friend stall climbing her ladder (the wake turns, the coordinator's judgment, her
+// unstarted cards taken back, marked down), a snapshot before each climb.
+func aFriendStalls(k *walk) []sample {
+	k.friends = []sprint.FriendSeat{{Name: "fia", Width: 3, Status: sprint.Up, Class: cardhdr.RouteFrontier}}
+	for i := range 2 {
+		id := fmt.Sprintf("p%d", k.next)
+		k.next++
+		if !k.try(sprint.Add(k.s, sprint.AddReq{Brief: friendBrief("fia"), Stream: k.streams[i%len(k.streams)], IDs: []string{id}, Who: coordinator})) {
+			return nil
+		}
+	}
+	if !k.runPart("deal") {
+		return nil
+	}
+	var out []sample
+	for _, past := range []time.Duration{sprint.FriendStallAfterDefault + time.Minute, sprint.FriendStallAfterDefault + 2*sprint.FriendStallStepDefault + time.Minute,
+		sprint.FriendStallAfterDefault + 4*sprint.FriendStallStepDefault + time.Minute} {
+		k.now = t0.Add(past + time.Duration(k.pick(30))*time.Second)
+		k.beatAll()
+		out = append(out, k.sample())
+		k.runPart(sprint.PartFriendStall)
+	}
+	return out
+}
+
+// aCardPastItsCap sets a stream's attempt cap to one (its control card's field, which a
+// snapshot carries), deals a card of it to a member and
+// holds every member, so the card's work is withdrawn and it is ready again past its
+// cap with a frontier friend up with room: the cap's default answer has a card to give
+// her, and no machine could take it.
+func aCardPastItsCap(k *walk) []sample {
+	k.friends = []sprint.FriendSeat{{Name: "gus", Width: 2, Status: sprint.Up, Class: cardhdr.RouteFrontier}}
+	id := k.addTo(k.streams[0]) // the stream is made by its first card
+	if id == "" || !k.try(sprint.Set(k.s, sprint.SetReq{Streams: []string{k.streams[0]}, Attempts: "1", Who: coordinator})) {
+		return nil
+	}
+	if !k.try(sprint.Deal(k.s, sprint.DealReq{Sel: sprint.Sel{IDs: []string{id}}, Who: sprint.MachineActor})) {
+		return nil
+	}
+	for _, m := range k.members {
+		k.try(sprint.FleetStep(k.s, sprint.FleetReq{Op: "hold", Member: m, Who: coordinator}))
+	}
+	if k.s.StateOf(id) != sprint.Ready {
+		return nil
+	}
+	return []sample{k.sample()}
 }

@@ -23,6 +23,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	kind := fs.String("kind", "", "one `kind` to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")
 	check := fs.Bool("check", false, "the same as --dry-run")
 	dry := fs.Bool("dry-run", false, "print the ADD, SET and REMOVE lines (CHECK ...) and write nothing; it still reads the store and Redis")
+	moveSeat := fs.Bool("move-seat", false, "write the sprint row's coordinator over a live seat that differs (the owner's word); without it apply holds the live seat, writes every other field and prints one APPLY HELD line")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
 		return code
@@ -103,12 +104,16 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	o.Verb = verb
 	for _, kn := range kinds {
 		start := d.now()
-		res, err := config.Apply(ctx, st, rs, kn, actor, *check, func(op config.Op) {
+		applyKind := config.Apply
+		if *moveSeat {
+			applyKind = config.ApplyMovingSeat
+		}
+		res, err := applyKind(ctx, st, rs, kn, actor, *check, func(op config.Op) {
 			if *asJSON {
 				o.Item("op", "kind", kn, "op", op.Op, "name", op.Name, "changed", op.Changed)
 				return
 			}
-			fmt.Fprintln(stdout, config.OpLine(word, kn, op))
+			fmt.Fprintln(stdout, config.SaidLine(word, kn, op)) // a held seat's line said whole
 		})
 		if err != nil {
 			if config.IsConflict(err) {

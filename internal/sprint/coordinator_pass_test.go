@@ -30,7 +30,9 @@ func newPassRig(t *testing.T) *passRig {
 	return r
 }
 
-// tick moves the clock by d, beats everyone (each friend with her pong) and runs one tick.
+// tick moves the clock by d, beats everyone (each friend with her pong, and her session
+// active, as on a long turn: the stall ladder, friend_stall.go, leaves her be, and the
+// pass alone judges her) and runs one tick.
 func (r *passRig) tick(d time.Duration) {
 	r.t.Helper()
 	r.mu.Lock()
@@ -43,7 +45,7 @@ func (r *passRig) tick(d time.Duration) {
 		require.NoError(r.t, err)
 	}
 	for f, pong := range r.pongs {
-		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{}, nil, pong)
+		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil, pong)
 		require.NoError(r.t, err)
 	}
 	_, err := r.st.Tick(r.ctx)

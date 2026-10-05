@@ -559,13 +559,13 @@ only when `sprint:coordinator` is absent (a first apply) or already equal to
 the row. When the live value differs, apply writes every other sprint field,
 leaves `sprint:coordinator` as it is, and the library reports one
 `APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: the seat moves by
-nova-sprint's seat verb; run nova-config sprint set --coordinator <a> to make
-the row agree` line and exits 0. A configuration publish never moves the
-seat. `ApplyMovingSeat` writes the differing coordinator. `nova-config apply`
-does not parse `--move-seat` (an unknown flag, exit 2). The seat moves by
-nova-sprint's seat verb. `nova-config apply` prints every op through
-`OpLine`, which wraps an OpHeld name as `APPLY HELD kind=sprint name=<the
-line>` (and `CHECK HELD` on `--dry-run`). `--json` emits `op=held` with
+nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run
+nova-config sprint set --coordinator <a> to make the row agree` line and exits
+0. A configuration publish never moves the seat unless the owner names the move:
+`nova-config apply --move-seat` (`ApplyMovingSeat`) writes the differing
+coordinator. Otherwise the seat moves by nova-sprint's seat verb. `nova-config
+apply` prints every op through `SaidLine`, so the held line is printed whole,
+as the library says it (on `--dry-run` too). `--json` emits `op=held` with
 `name` equal to that line. When the only difference is the coordinator, the
 plan still reports `SET` `changed=coordinator`, the set count includes it,
 and the write stores the live value; the revision stamp advances, so

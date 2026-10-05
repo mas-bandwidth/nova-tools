@@ -15,6 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
 )
 
 // alarmRig is a sprint on the in-memory store, ticked by the machine on its twin
@@ -38,7 +39,7 @@ func newAlarmRig(t *testing.T) *alarmRig {
 		NewID: func() string { r.mu.Lock(); defer r.mu.Unlock(); n++; return fmt.Sprint(n) },
 		Sleep: func(time.Duration) {}}
 	r.st.CheckTwin = func(twin, fresh *sprint.Snapshot) error {
-		if d := store.TwinDiff(twin, fresh); d != "" {
+		if d := storetest.TwinDiff(twin, fresh); d != "" {
 			return errors.New(d)
 		}
 		return nil

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
 )
 
 // A busy sprint is read whole once: the first tick reads the four tables,
@@ -162,7 +163,7 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 	fresh, at, err := h.st.Fenced(h.ctx, All, tickExtras, nil)
 	require.NoError(t, err, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
 	require.Equal(t, gen.Gen, at, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
-	d := TwinDiff(snap, fresh)
+	d := storetest.TwinDiff(snap, fresh)
 	require.Empty(t, d, "the twin after a cut read: %s", d)
 	require.NotEmpty(t, snap.Merge.Cards(), "the merge table is empty: the check shows nothing")
 }

@@ -1683,3 +1683,97 @@ func TestLockdownOnParentSymlinkedBoxRefuses(t *testing.T) {
 	require.NoError(t, err, "ReadFile failed")
 	require.Equal(t, string(before), string(after), "target bytes changed:\nbefore: %s\nafter: %s", before, after)
 }
+
+// TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface pins that check
+// fails closed when given the exact oneline.Field-escaped spelling printed by status
+// (e.g. spaced\x20name for a blown surface "spaced name"), rather than failing open
+// with FUSE OK because the literal backslash text matches nothing. (security#74 finding 2)
+func TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "spaced name", "testing status spelling"}, now)
+
+	code, out, _ := capture(t, []string{"status", "--box", box}, now)
+	require.Equal(t, 0, code, "status must exit 0")
+
+	var token string
+	for _, line := range strings.Split(out, "\n") {
+		for _, field := range strings.Fields(line) {
+			if strings.HasPrefix(field, "quarantine=") {
+				token = strings.TrimPrefix(field, "quarantine=")
+				break
+			}
+		}
+		if token != "" {
+			break
+		}
+	}
+	require.NotEmpty(t, token, "status output must report a quarantine token: %q", out)
+	require.Equal(t, `spaced\x20name`, token, "status output must escape space as \\x20")
+
+	// Check with that exact token: must exit 1 and report FUSE FAILED
+	code, _, errOut := capture(t, []string{"check", "--box", box, token}, now)
+	assert.Equal(t, 1, code, "check with displayed spelling must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+	assert.Contains(t, errOut, `quarantine=spaced\x20name`, "stderr must report quarantine token: %q", errOut)
+
+	// Check with an unrelated surface still exits 0
+	code, out, _ = capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "check with unrelated surface must exit 0, got %d", code)
+	assert.Contains(t, out, "FUSE OK", "stdout must report FUSE OK: %q", out)
+
+	// Also check that equals sign escaped as \x3d is refused when quarantined
+	mustRun(t, []string{"quarantine", "--box", box, "surface=with=equals", "testing equals"}, now)
+	code, _, errOut = capture(t, []string{"check", "--box", box, `surface\x3dwith\x3dequals`}, now)
+	assert.Equal(t, 1, code, "check with \\x3d must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+}
+
+// TestCheckRefusesTheSpellingStatusDisplaysForARawByteKey pins that \xNN with NN >= 0x80
+// decodes to the raw byte, as oneline.Field emits it for invalid UTF-8, so fuse.Surface
+// folds it to the same U+FFFD a stored key holds and check refuses rather than failing open.
+func TestCheckRefusesTheSpellingStatusDisplaysForARawByteKey(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{"a\ufffdb":{"at":"2026-01-01T00:00:00Z","reason":"hand edited"}}}`)
+
+	code, _, errOut := capture(t, []string{"check", "--box", box, `a\xffb`}, now)
+	assert.Equal(t, 1, code, "check with a raw-byte escape must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+
+	code, out, _ := capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "check with unrelated surface must exit 0, got %d", code)
+	assert.Contains(t, out, "FUSE OK", "stdout must report FUSE OK: %q", out)
+}
+
+func TestUnescapeField(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"simple", "simple"},
+		{`spaced\x20name`, "spaced name"},
+		{`equal\x3dsign`, "equal=sign"},
+		{`non\u00a0breaking`, "non\u00a0breaking"},
+		{`line\u2028separator`, "line\u2028separator"},
+		{`incomplete\x`, `incomplete\x`},
+		{`incomplete\x1`, `incomplete\x1`},
+		{`invalid\xgg`, `invalid\xgg`},
+		{`incomplete\u123`, `incomplete\u123`},
+		{`invalid\uzz00`, `invalid\uzz00`},
+		{`a\xffb`, "a\xffb"},
+		{`a\x80\xc3`, "a\x80\xc3"},
+		{"raw\xffbyte\\x20kept", "raw\xffbyte kept"},
+		{`\xc3\xa9`, "\u00e9"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, unescapeField(tc.in), "unescapeField(%q)", tc.in)
+	}
+}

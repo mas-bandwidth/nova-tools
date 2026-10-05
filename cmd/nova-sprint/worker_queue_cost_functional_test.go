@@ -81,7 +81,7 @@ func TestWorkerQueueReadCostAtOneHundredMilliseconds(t *testing.T) {
 	do("fleet", "beat", "m1")
 	do("fleet", "up", "m1")
 	seed := &store.Store{B: &store.Redis{C: admin, Now: time.Now}, Actor: "coordinator"}
-	dealt, err := seed.Run(ctx, store.DealStep(sprint.DealReq{}))
+	dealt, err := seed.Run(ctx, dealStep(sprint.DealReq{}))
 	require.NoError(t, err)
 	require.Len(t, dealt.Moved, 4)
 	do("take", "--as", "m1", "s1-1.w1@1", "--epoch", "0")

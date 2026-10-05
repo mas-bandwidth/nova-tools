@@ -90,7 +90,7 @@ card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
 tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
 report done failed, and a report with no verdict word is done failed too,
 never ok. `ready` is never a friend's card's state: the tick deals a card
-straight into `working` (`sprint.FriendDeal`). A hand-written inbox job that is
+straight into `working` (`sprint.TickDeal`). A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
 is its pointer. `ready` and `working` count her cards in those states; `width`
@@ -293,7 +293,7 @@ waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
 `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal picks the
 friend the card names, or for `WHO: friend` the friend up with the most room
 free, the first by name among equals; with none it waits ready, held by the
-no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
+no-stall rule as waiting for a friend (`sprint.TickDeal`). The tick reads the
 friends' records (the roster, then the beats: two round trips) only when a
 friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
@@ -386,7 +386,7 @@ route serves (`readTierOf`), is frontier — a frontier card, or a heavy card
 whose read tier is the one above — is asked of a friend of frontier class,
 not drawn on a reader machine (`FriendReadAsk`, `FriendReadClose`). The friend
 is up, below her room (the same free width a friend's card is dealt within,
-`FriendDeal`), and her tiers include frontier: the one with the most free
+`TickDeal`), and her tiers include frontier: the one with the most free
 width, the first by name among equals. Each ask takes one of that free width.
 The ask writes `inbox/<read-card>/BRIEF.md` in her working directory when it
 knows it: the primary's AS A READ section through the next heading, the
@@ -800,7 +800,7 @@ the cards named <was|were> refused"
 **The friends' deal and level fill idle lanes first, by tier, every tick**
 (the owner, 2026-10-05: "You should automatically rebalance queues", "This
 should not require you to remember, it should just happen mechanically." and
-"The machine should do this."; `sprint.FriendDeal`, `sprint.FriendLevel`,
+"The machine should do this."; `sprint.TickDeal`, `sprint.FriendLevel`,
 `sprint.TickDeal`). Two failures led here: on 2026-10-04 at 3:57 PM eight
 unstarted cards taken back from three full friends for two idle ones were dealt
 back to the full friends by the next tick; on 2026-10-05 at 9:40 AM a friend
@@ -824,7 +824,14 @@ not level the friends":
 - **Never back to a friend it left.** A work card carries `friends_left`, the
   friends it has left: each the level moved it off, and the one the coordinator
   took it back from (`taken_from`, kept past the deal that places it again).
-  Neither the deal nor the level places it on any of them.
+  Neither the deal nor the level places it on any of them, with one exception,
+  the owner's rule that a held or down friend's cards go to the up friends' ready
+  queues: a card withdrawn off a friend held or down (or taken back) that no
+  friend up it has not left may take is dealt to a friend up with room that the
+  level moved it off, never to the friend it was withdrawn on or taken back from
+  (`sprint.withdrawnFrom`; `TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff`;
+  found by the chaos suite's hold case, where the level had moved the held
+  friend's cards off the only other friend).
 - **The level runs inside every tick, after the deal.** The tick reads the
   friends' records whenever the roster has a friend, not only when a friend's
   card is ready, so a friend coming up (friend up, or a hold released) is
@@ -1010,7 +1017,25 @@ finding, else its failed report, else its bound's class, the latest kept under t
 8 KiB bound), decisions brief and drop
 (`TestTheAttemptCapIsOneJudgmentWithEveryFindingAndTheSpend`,
 `TestFailedWorkReachesTheAttemptCapToo`, `TestTheAttemptCapIsASettingOfTheSprintAndTheStream`).
-Then `rework` is refused, nothing written, one line: `<id> has failed the
+**The attempt cap's default answer is a friend card** (`sprint.AttemptCapDeal`, the
+pump's part `cap deal` before the deal, `sprint.TickCapDeal`, decided in the reference
+model as the duty `cap deal`;
+`TestTheAttemptCapJudgmentsDefaultAnswerDealsAFriendCard`,
+`TestTwoCappedCardsDoNotExceedAFriendsWidth`): a machine's primary ready and past its cap
+(`sprint.AtBriefBound` asked with `sprint.AttemptsCap`), in a stream not held, is dealt
+as a friend card (section 1) to a frontier or heavy-class friend up with room (her
+seat's class), the friend up with the most free width (her width less the cards she
+holds), the first by name among equals. The plan counts that free width as it deals,
+decremented per card and picked again, so one friend's width takes one such card; the
+deal after it reads the cards it gave her. The card keeps its work and
+findings, its brief gains `WHO: friend <name>` for the friend chosen (the fields the
+brief edit writes, so the cap count resets as a replaced brief does), its next
+attempt's work card is created on her row in working, and a brief-defect judgment open
+on it closes. With no such friend up with room the card is the deal's as before: at its
+redeal bound it is not dealt again and the tick raises the cap's judgment above (brief
+and drop), which closes once a friend takes it; below its bound its attempt is dealt
+again to a machine. The tick reads the friends' seats when a friend's card or a card
+past its cap is ready. Then `rework` is refused, nothing written, one line: `<id> has failed the
 same way twice (attempts <n> and <m>: <the finding's first sentence>); the brief is
 wrong, not the worker; run: nova-sprint brief <id> --brief-file <path> (a waiting card)
 or drop <id> and add it again with the brief corrected` (or the cap's line, then the
@@ -1232,11 +1257,18 @@ to the fleet table's property `cost_reconcile_<provider>`, the last read of each
 the provider (`a provider's usage and the sprint's cost records disagree`, filed under
 `provider:<p>`, decisions ack and wait), never a second while it is open; a read back within
 the bound closes it. A provider with no usage endpoint (opencode) or no key is recorded
-unknown with why, and changes nothing. **Not yet run:** the loop that reads each provider
-when `nova-sprint run` begins and every hour after (through the seat's key in its own
-environment, outside every tick, as the balance poll does), with the judgment's entry in
-`Decisions` and its line in the help, lives in `cmd/nova-sprint` and is owed; until it lands
-no read is written, no judgment opens, and the unreconciled line below reads $0.00.
+unknown with why, and changes nothing. **`nova-sprint cost reconcile [--dry-run] [--json]`** runs it
+once: each provider the routes name is read through the seat's key in its own environment
+(`provbalance.ReadUsage`, today's UTC day), the reads go to the step (`store.CostReconcileStep`),
+and one line per provider is printed, `COST provider=<p> day=<d> provider_usd=<$> records=<$>
+gap=<$> share=<n>%` or `COST provider=<p> unknown: <why>`, then `COST RECONCILE OK
+providers=<n> notes=<n>` (with `--json`, the providers' records and the notes written; with
+no provider named by a route, `providers=0` and nothing written; with `--dry-run`, the same
+lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`); the
+release's spend check calls it (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
+**Not yet run by the loop:** the read when `nova-sprint run` begins and every hour after
+(outside every tick, as the balance poll does), with the judgment's entry in `Decisions` and
+its line in the help, is owed; until it lands a read is written only when the verb runs.
 
 **The dashboard's cost** is the complete total: every take and read of every card on the
 work table in any column, landed or not (`total_cost` on each stream's `stream_costs`), plus
@@ -4292,7 +4324,9 @@ gives one at a time beside the store, so no two steps of the record interleave.
 **The friend stall ladder** (docs/SPEC-SPRINT.md, `internal/sprint/friend_stall.go`;
 the model is `tla/StallLadder.tla`). When a friend stalls while holding dealt sprint cards,
 recovery is fully mechanical as a tick part (`PartFriendStall = "friend-stall"`) in the
-fleet update pass (`TickTables`, `TickParts`), with no step needing the coordinator.
+fleet update pass, after presence (`TickTables`, `TickParts`), with no step needing the
+coordinator; the reference model decides it as the duty `friend-stall`
+(`internal/sprint/refmodel`).
 
 A friend holding dealt cards (`Ready` or `Working` on her row) is stalled when neither
 session activity (`FriendReport.Active`, her daemon's report of the newest write under
@@ -4301,8 +4335,9 @@ than `friend_stall_after` (default 20 minutes, configurable via `nova-sprint set
 
 While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 minutes,
 configurable via `nova-sprint set --friend-stall-step`):
-1. **Wake turn 1**: a bus message to her (`wakeFriendStall` / `a.sendBus`) pushed into her
-   daemon as a turn.
+1. **Wake turn 1**: a bus message to her (`wakeFriendStall`, the store's `WakeFriend` that
+   `tick` and `run` set) pushed into her daemon as a turn; a message not sent is said on
+   stderr and the rung climbs the same.
 2. **Wake turn 2**: a second wake bus message.
 3. **Coordinator note**: a pushed judgment (`Kind: Judgment`, `Type: NStalled`,
    `"friend <f> stalled <d>: two wakes unanswered"`).

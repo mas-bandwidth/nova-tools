@@ -50,7 +50,7 @@ func FriendMedianWall(s *Snapshot, name string) (median float64, n int) {
 }
 
 // FieldFriendDeadline is a friend's work card's working deadline in seconds, set when it is
-// placed on her row (FriendDeal, FriendLevel: friendDeadline), as #5300 sets a machine's
+// placed on her row (friendDeal, FriendLevel: friendDeadline), as #5300 sets a machine's
 // card's when it is dealt: absent while she has no ok attempt, and DeadlineUnfinished holds.
 const FieldFriendDeadline = "friend_deadline"
 

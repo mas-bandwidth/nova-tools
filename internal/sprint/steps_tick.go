@@ -166,7 +166,7 @@ type TickReq struct {
 	// the done part's note counts from; zero is not known.
 	Started time.Time
 	// Friends is each friend the deal may give a friend's card to, read by
-	// the binding with every tick while the roster has a friend (FriendDeal),
+	// the binding with every tick while the roster has a friend (friendDeal),
 	// with what her beat names running (FriendSeat.Running): the tick levels
 	// them after its deal (FriendLevel). nil is none: a friend's card waits
 	// ready and no friend is levelled.
@@ -241,11 +241,19 @@ const PartDrain = "drain"
 // none is ("the tick doesn't end until all dirty bits are cleared"). The
 // model is tla/DirtyTick.tla.
 var TickTables = []TableUpdate{
-	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
+	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {PartCapDeal, TickCapDeal}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}}},
 }
+
+// PartCapDeal is the attempt cap's default answer, the pump's part before the deal
+// (TickCapDeal, brief_bound.go): a card past its cap goes to a frontier or heavy friend
+// with room before the deal could give it to a machine.
+const PartCapDeal = "cap deal"
+
+// TickCapDeal is the attempt cap's default answer as a part of the tick (AttemptCapDeal).
+func TickCapDeal(s *Snapshot, r TickReq) (Plan, int) { return AttemptCapDeal(s, r), 0 }
 
 // PartFriendStall is the friend stall ladder part (friend_stall.go).
 const PartFriendStall = "friend-stall"
@@ -306,8 +314,7 @@ var TickParts = func() []TickPartDef {
 			}
 		}
 	}
-	out = append(out, TickEnd...)
-	return append(out, TickPartDef{PartFriendStall, TickFriendStall})
+	return append(out, TickEnd...)
 }()
 
 // NReadyToMerge is the note the pump addresses to the coordinator once a

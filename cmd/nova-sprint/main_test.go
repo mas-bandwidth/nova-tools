@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
 )
 
 var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -64,7 +65,7 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a.mergeQueue = ta.queue
 	// every part a tick plans on its twin is checked against a fresh read
 	ta.a.checkTwin = func(twin, fresh *sprint.Snapshot) error {
-		if d := store.TwinDiff(twin, fresh); d != "" {
+		if d := storetest.TwinDiff(twin, fresh); d != "" {
 			return errors.New(d)
 		}
 		return nil
@@ -177,7 +178,7 @@ func (ta *testApp) deal(n int) {
 	ta.t.Helper()
 	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
 	require.NoError(ta.t, err)
-	res, err := st.Run(context.Background(), store.DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: n}}))
+	res, err := st.Run(context.Background(), dealStep(sprint.DealReq{Sel: sprint.Sel{Limit: n}}))
 	require.NoError(ta.t, err, "deal %d: %+v %v", n, res.Refused, err)
 	require.Empty(ta.t, res.Refused, "deal %d: %+v %v", n, res.Refused, err)
 }
@@ -538,4 +539,11 @@ func (ta *testApp) dry(line string) string {
 	require.NoError(ta.t, err)
 	require.JSONEq(ta.t, string(before), string(after), "%s wrote to the store", line)
 	return out
+}
+
+// dealStep cuts and deals work cards by hand, the step the tick's deal replaced
+// (sprint.TickDeal): a test that needs exact queues deals with it.
+func dealStep(r sprint.DealReq) store.Step {
+	return store.Step{Args: store.ArgsOf(r), Verb: "deal", Load: []string{sprint.Work, sprint.Fleet, sprint.Merge}, Mirrors: true, Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
 }

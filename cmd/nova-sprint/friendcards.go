@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -33,7 +34,7 @@ import (
 // for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends
 // where we would normally do friend work."; docs/SPEC-SPRINT.md section 1, a friend's
 // card). The tick deals a card whose brief says WHO: friend to a friend's fleet row
-// (sprint.FriendDeal); friend sync, which runs where the friends' working directories are
+// (sprint.TickDeal); friend sync, which runs where the friends' working directories are
 // and is the coordinator's own loop (only the coordinator reaches out), carries it across
 // the inbox/outbox standard (docs/FRIENDS.md): it delivers each card working on her row
 // as inbox/<job>/BRIEF.md, and finishes it from outbox/<job>/REPORT.md once she writes
@@ -305,7 +306,7 @@ func friendReadReport(dir, job string) (report, why string, at time.Time, err er
 // outside her working directory. It says what it did, a line each, and how many it
 // delivered and finished.
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
-	// her working cards, then the ready ones dealt behind them (sprint.FriendDeal): both are
+	// her working cards, then the ready ones dealt behind them (sprint.TickDeal): both are
 	// delivered, and her queue file says which are which
 	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
 	// places them again: taken in her queue file, so her daemon starts none of them
@@ -518,6 +519,14 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 		err = errors.New(res.Refused[0].Why)
 	}
 	return err
+}
+
+// stallWaker is the store's WakeFriend for the machine (tick and run): the friend stall
+// part's wake turn sent on the bus (wakeFriendStall), a message not sent said on out.
+func (a *app) stallWaker(st *store.Store, out io.Writer) func(string, int, time.Duration) error {
+	return func(name string, rung int, d time.Duration) error {
+		return a.wakeFriendStall(context.Background(), st, name, rung, d, func(l string) { fmt.Fprintln(out, l) })
+	}
 }
 
 // wakeFriendStall wakes a friend whose stall ladder has climbed to a wake rung (1 or 2;

@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -593,7 +594,7 @@ func TestAckWritesOneDecidedNote(t *testing.T) {
 // checkTwin is every harness's CheckTwin: the twin a part planned on is the
 // state a fresh read of the same generation gives.
 func checkTwin(twin, fresh *sprint.Snapshot) error {
-	if d := TwinDiff(twin, fresh); d != "" {
+	if d := storetest.TwinDiff(twin, fresh); d != "" {
 		return errors.New(d)
 	}
 	return nil

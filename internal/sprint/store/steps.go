@@ -57,12 +57,6 @@ func ResolveStep(r sprint.ResolveReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Resolve(s, r) }}
 }
 
-// DealStep cuts and deals work cards.
-func DealStep(r sprint.DealReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "deal", Load: tables(sprint.Work, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
-}
-
 // TakeStep is a worker taking work cards.
 func TakeStep(r sprint.TakeReq) Step {
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
@@ -202,6 +196,14 @@ func MergeWindowStep(r sprint.MergeWindowReq) Step {
 func BalanceStep(r sprint.BalanceReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "balance", Load: tables(sprint.Fleet), Routes: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Balance(s, r) }}
+}
+
+// CostReconcileStep is one cost reconciliation (sprint.CostReconcile): each provider's own
+// count of a UTC day beside the sprint's records of it, read from the work table and the
+// routes, written to the fleet table's record, and the provider's one gap judgment.
+func CostReconcileStep(r sprint.CostReconcileReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "cost reconcile", Load: tables(sprint.Work, sprint.Fleet), Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.CostReconcile(s, r) }}
 }
 
 // FundedStep is the coordinator's word that a provider was paid: every rest of its funds

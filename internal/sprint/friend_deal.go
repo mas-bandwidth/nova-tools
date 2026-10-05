@@ -100,7 +100,10 @@ type FriendSeat struct {
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
 // level moved it off (FriendLevel), and the one the coordinator took it back from
 // (FieldTakenFrom) once it is dealt again. Neither the deal nor the level places it on any
-// of them again (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1).
+// of them again (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1), with one
+// exception: a card withdrawn off a friend held or down that no other friend up may take
+// is dealt back to a friend the level moved it off (never the one it was withdrawn or
+// taken back from), rather than stranded ready (friendDeal, withdrawnFrom).
 const FieldFriendsLeft = "friends_left"
 
 // friendTiers is the tiers the friend can do: her Tiers, else her class's.
@@ -129,6 +132,20 @@ func friendsLeft(wc *Card) []string {
 		left = append(left, from)
 	}
 	return left
+}
+
+// withdrawnFrom is the friends a withdrawn work card must never go back to: the friend
+// whose row it was withdrawn on, and the one the coordinator took it back from
+// (FieldTakenFrom), never the friends the level moved it off.
+func withdrawnFrom(wc *Card) []string {
+	var out []string
+	if f, ok := FriendOfRow(wc.Row); ok {
+		out = append(out, f)
+	}
+	if f, ok := FriendOfRow(wc.F(FieldTakenFrom)); ok && !slices.Contains(out, f) {
+		out = append(out, f)
+	}
+	return out
 }
 
 // friendStarted says the friend has started the work card, by the store's own data: her
@@ -218,7 +235,7 @@ func friendLoad(s *Snapshot, name string) int {
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
 }
 
-// FriendDeal deals the friends' cards (in the order given, the deal's stream turns) to
+// friendDeal is the tick's friend deal (TickDeal): it deals the friends' cards (in the order given, the deal's stream turns) to
 // the friends up, each within her room, DealAhead times her width, as the machines'
 // deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
 // people busy by having 2X width queued up in ready per-friend"): a card naming a
@@ -237,13 +254,8 @@ func friendLoad(s *Snapshot, name string) int {
 // its deadline is the working one) and ready behind them otherwise (her finish takes the next:
 // Finish), carrying the primary's fix, finding and why as a machine's deal does; its primary
 // moves ready -> working. The friend's row is declared by the plan the first time she is dealt to.
-func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
-	p, _, _ := friendDeal(s, cards, seats)
-	return p
-}
-
-// friendDeal is FriendDeal, with the cards it places on each friend's row and how many of
-// them go into working: the tick levels the friends after it (TickDeal).
+// It answers the cards it places on each friend's row and how many of them go into
+// working: the tick levels the friends after it.
 func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
@@ -278,6 +290,20 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 					may = append(may, f)
 				}
 			}
+			if len(may) == 0 && wc != nil {
+				// a card withdrawn off a friend held or down (or taken back) whom no friend
+				// it has not left may take: the friends the level moved it off may have it
+				// back, so it is not stranded ready while one is up with room (the owner's
+				// rule: a held or down friend's cards go to the up friends' ready queues);
+				// never the friend it was withdrawn from or taken back from
+				gone := withdrawnFrom(wc)
+				for _, f := range up {
+					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) {
+						may = append(may, f)
+					}
+				}
+				left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
+			}
 			name = preferredFriend(may, lanes, free)
 		}
 		if name == "" || slices.Contains(left, name) || free[name] <= 0 {
@@ -305,14 +331,36 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			p.Units = append(p.Units, friendRedealUnit(s, c, wc, row, col))
 			continue
 		}
-		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col))
+		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col, nil))
 	}
 	return Lawful(p), dealt, dealtWorking
 }
 
+// friendWithFree is the up friend of one of the classes with the most free width in
+// free, the first by name among equals; "" when none has room. AttemptCapDeal passes
+// the free width it has left in this plan, decremented after each deal.
+func friendWithFree(seats []FriendSeat, free map[string]int, classes ...string) string {
+	var up []string
+	for _, f := range seats {
+		if f.Status == Up && slices.Contains(classes, f.Class) {
+			up = append(up, f.Name)
+		}
+	}
+	slices.Sort(up)
+	name := ""
+	for _, n := range up {
+		if free[n] > 0 && (name == "" || free[n] > free[name]) {
+			name = n
+		}
+	}
+	return name
+}
+
 // friendDealUnit is one friend's card dealt: its work card on her row, in working (taken
-// now) or ready behind her working cards, and its primary ready -> working on it.
-func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
+// now) or ready behind her working cards, and its primary ready -> working on it. set
+// rides the primary's move beside the deal's own fields (the attempt cap's default
+// answer writes the WHO line and the count reset, brief_bound.go).
+func friendDealUnit(s *Snapshot, c *Card, card, row, col string, set map[string]string) Unit {
 	attempt := c.Int("attempt") + 1
 	now := stamp(s.Now)
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": row,
@@ -332,9 +380,13 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string) Unit {
 		dl, _ := friendDeadline(s, name)
 		maps.Copy(fields, dl)
 	}
+	prim := map[string]string{"attempt": itoa(attempt), "work": card}
+	for k, v := range set {
+		prim[k] = v
+	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, row, col, c.Score, fields)),
-		change(Work, moveEntry(c, c.Row, Working, map[string]string{"attempt": itoa(attempt), "work": card}, "result")),
+		change(Work, moveEntry(c, c.Row, Working, prim, "result")),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s %s (a friend's card: friend sync delivers it to her inbox)", c.ID, c.Col, card, row, col)}
 }
 
