@@ -385,6 +385,14 @@ func commands(g Group, first Note, prefix string) []Command {
 	if g.Size == 1 && len(g.Members) == 1 {
 		subj, subjAns = " "+g.Members[0], ""
 	}
+	// A stream-level judgment's group acts on no card (its subject is the stream, a tier,
+	// a member): a decision about its cards names the primaries the note names
+	// (TestEveryPrintedDecisionCommandRuns).
+	cards := g.Members
+	if len(cards) == 0 && len(first.Primaries) > 0 {
+		cards = first.Primaries
+		subj, subjAns = " "+strings.Join(cards, " "), ans
+	}
 	s := g.Stream
 	resume := func(did string) string { return cmd + "resume --stream " + s + " --did " + did + ans }
 	look := func() []string {
@@ -425,7 +433,7 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "clear":
 				add(d, cmd+"clear --confirm "+Names{Prefix: prefix}.View())
 			case "add":
-				add(d, cmd+"add --stream '<stream>' --count '<n>' --brief '<brief>'")
+				add(d, cmd+"add --stream '<stream>' --brief-dir '<dir of briefs, one <id>.md each>'")
 			}
 		case g.Type == NSentinelReached:
 			ids := strings.Join(g.Members, " ")
@@ -433,13 +441,13 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "release":
 				add(d, cmd+"release "+ids+" --reason '<what you looked at and found>'"+ans)
 			case "do more before going on":
-				add(d, cmd+"add --stream "+s+" --before "+card+" '<new id>' --brief '<brief>' --one")
+				add(d, cmd+"add --stream "+s+" --before "+card+" '<new id>' --brief-file '<path>' --one")
 			case "drop":
 				add(d, cmd+"drop "+ids+" --reason "+whyText+ans)
 			}
 		case g.Type == NScoredLow && d == "add a repair card":
 			// the work landed: its repair is a new card, then the judgment is answered by ack
-			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief '<the finding: file:line, the class, the wanted text>' --one",
+			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief-file '<path: the finding, file:line, the class, the wanted text>' --one",
 				cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'repair card <fix id> added'")...)
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
@@ -543,6 +551,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
 		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "fleet up ") || strings.HasPrefix(d, "reader up ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
+		case instanceLines(d) != nil:
+			add(d, instanceLines(d)...)
 		case d == "promoted":
 			add(d, cmd+"promoted --sha '<merge sha>'"+ans)
 		case d == "wait 15m" || d == "wait 10m" || d == "wait 30m":
@@ -564,7 +574,13 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "resume" && s != "":
 			add(d, resume(didText))
 		case d == "release":
-			add(d, cmd+"release "+strings.Join(g.Members, " ")+" --reason '<what you looked at and found>'"+ans)
+			// a condition the tick keeps (the fleet starving) is closed by the tick once the
+			// release clears it, never answered by the release
+			relAns := ans
+			if TickKept(g.Type) {
+				relAns = ""
+			}
+			add(d, cmd+"release "+strings.Join(cards, " ")+" --reason '<what you looked at and found>'"+relAns)
 		}
 	}
 	if g.Type == NRed {

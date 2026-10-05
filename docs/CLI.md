@@ -1122,6 +1122,16 @@ on something dropped" judgment, in one step. Where the drop and the add were mad
 judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
 card replaced by its twin".
 
+A card at its bound is re-cut the same way by `brief`: when a judgment offering `brief`
+holds a dealt card ("a card has reached its bound: the brief is wrong, not the worker", or
+"a card reached its bound" past the attempt cap), `brief <id> --brief-file <path>`, the
+command the judgment prints, replaces the card by its twin with the new brief (the twin id
+`recut` would choose, `s1-1b` for `s1-1`), drops the old card `replaced by` it, re-points
+every waiting card that needed it, and answers the judgment, in one step; its MOVED line
+says `the brief's bound: <id> cut as its twin, answering <judgment>`. A dealt card no such
+judgment holds still keeps its brief. Every command a judgment prints runs as printed on
+the twin store (`TestEveryPrintedDecisionCommandRuns`).
+
 ### Role views: what a model reads instead of the dashboard
 
 The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human
