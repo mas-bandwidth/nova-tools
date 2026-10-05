@@ -227,7 +227,7 @@ func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Wr
 		why = fmt.Sprintf("unknown verb %q in %s;%s", g+" "+args[1], g, didYouMean(g+" "+args[1], members))
 	}
 	o := Refuse(why + " the verbs are " + verbflag.List(members))
-	o.Remedy = t.Name + " " + g + " -h"
+	o.Remedy = t.verbHelp(g)
 	return t.emit(nil, o, asJSON, stdout, stderr)
 }
 
@@ -237,6 +237,30 @@ func didYouMean(got string, names []string) string {
 		return " did you mean " + best + "?"
 	}
 	return ""
+}
+
+// Cmd renders the words of a command a reader is told to run, so a POSIX shell
+// reads them back as exactly those words: each goes through oneline.ShellWord,
+// which prints a word no shell gives a meaning as it is and single-quotes any
+// other, so a value holding a blank, a quote or a $ stays the one value it is
+// (skeleton contract 1.9: a remedy is one runnable command; STANDARD §2, a
+// result names the next command as one that runs; §3, a refusal carries the
+// remedy in its line).
+func Cmd(words ...string) string {
+	quoted := make([]string, len(words))
+	for i, w := range words {
+		quoted[i] = oneline.ShellWord(w)
+	}
+	return strings.Join(quoted, " ")
+}
+
+// verbHelp is the remedy that points at one verb's own -h: `<tool> <verb> -h`,
+// the verb's name split into its words so a group verb ("fn load") reads as the
+// two words a reader types. A flag mistake's remedy is the verb's -h, never the
+// top banner a hundred lines from the answer (STANDARD §3: help is never a
+// refusal; skeleton contract 1.9).
+func (t *Tool) verbHelp(verb string) string {
+	return Cmd(append(append([]string{t.Name}, strings.Fields(verb)...), "-h")...)
 }
 
 // help is deferred by Run: a verb's -h (verbflag's Help) prints that verb's
@@ -264,7 +288,7 @@ func (t *Tool) help(stdout, stderr io.Writer, code *int) {
 			}
 		}
 		o := Refuse("-h is not an answer this tool gives, its exit 0 means CLEAR")
-		o.Remedy = t.Name + " help"
+		o.Remedy = Cmd(t.Name, "help")
 		*code = t.emit(v, o, false, stdout, stderr)
 		return
 	}
@@ -442,7 +466,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
 		o := Refuse(oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes))
-		o.Remedy = t.Name + " " + v.Name + " -h"
+		o.Remedy = t.verbHelp(v.Name)
 		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
@@ -516,7 +540,7 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 		o.token = strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))
 	}
 	if o.Status == Refused && o.Remedy == "" {
-		o.Remedy = t.Name + " help"
+		o.Remedy = Cmd(t.Name, "help")
 	}
 	if o.printed {
 		return o.Exit

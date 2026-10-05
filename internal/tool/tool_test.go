@@ -573,6 +573,33 @@ func TestNamesInARefusal(t *testing.T) {
 	}
 }
 
+// TestCmdRendersTheWordsAShellReadsBack pins Cmd (skeleton contract 1.9: a
+// remedy is one runnable command): every word goes through oneline.ShellWord,
+// so a word holding a blank, a quote or a $ is one word a shell reads back and
+// a word no shell gives a meaning prints as it is. The words are split the way
+// a shell splits them (onboarding.SplitShell, nothing executed), never run.
+func TestCmdRendersTheWordsAShellReadsBack(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		words []string
+		want  string
+	}{
+		{"words no shell reads print as they are", []string{"nova-demo", "put", "-h"}, "nova-demo put -h"},
+		{"a blank, a quote and a $ stay one word each", []string{"work trees", "it's", "e$f"}, `'work trees' 'it'"'"'s' 'e$f'`},
+		{"the empty word is quoted, so it is still one word", []string{"nova-demo", ""}, "nova-demo ''"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := Cmd(tc.words...)
+			assert.Equal(t, tc.want, got)
+			back, err := onboarding.SplitShell(got)
+			require.NoError(t, err)
+			assert.Equal(t, tc.words, back, "a shell reads the command back as the words meant")
+		})
+	}
+}
+
 // selfTalk is a tool whose plain use is `<tool> <file>...`: its default verb.
 func selfTalk() *Tool {
 	return &Tool{Name: "nova-talk", What: "scans files", ExitTable: "0 none, 1 findings, 2 could not run.", Default: "scan",
