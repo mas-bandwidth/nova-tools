@@ -64,7 +64,8 @@ type SeatInjectOptions struct {
 
 func (o SeatInjectOptions) say(format string, a ...interface{}) {
 	if o.Progress != nil {
-		fmt.Fprintf(o.Progress, "seat inject: "+format+"\n", a...)
+		// ignored: the progress line is best effort; the verb's result still carries the outcome
+		_, _ = fmt.Fprintf(o.Progress, "seat inject: "+format+"\n", a...)
 	}
 }
 
