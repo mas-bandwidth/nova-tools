@@ -167,7 +167,7 @@ func defaultSyncDir(dir string) error {
 	if err != nil {
 		return nil
 	}
-	defer dirFile.Close()
+	defer func() { _ = dirFile.Close() }() // ignored: a read-only directory handle closed after a best-effort fsync
 	// ignored: a directory fsync is best effort where the platform does not support it; the rename already landed
 	_ = dirFile.Sync()
 	return nil
