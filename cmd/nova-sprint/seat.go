@@ -665,11 +665,11 @@ func writeSeatWrapper(path, text string, replace bool) (bool, error) {
 		return false, err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) // ignored: a best-effort removal of the temporary file; the chmod error is the one returned
 		return false, err
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) // ignored: a best-effort removal of the temporary file; the rename error is the one returned
 		return false, err
 	}
 	return true, nil
