@@ -94,6 +94,12 @@ const templateFixCard = `fix-card — take one card and land the fix
    pick it up with no other context.
 `
 
+// GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
+// the card's steps): a red gate line names its file and says whether the file is the child's own
+// (yours) or is unchanged from BASE, so the child neither fixes a file it may not touch nor
+// reports a failure that is not its own. templateCard and cardgen.Render share it.
+const GateNamesWhoseFile = "When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
+
 // templateCard is the card the coordinator starts from: the contract line, the RULES
 // paragraph with every general rule of DefaultChildRules quoted verbatim (lintchild.go), the task,
 // and the steps. It passes `nova-swarm lint --card --child-rules` as printed; under a rules file
@@ -116,7 +122,7 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
-	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
+	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each. " + GateNamesWhoseFile + "\n" +
 	"STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against <base>, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
 	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
 

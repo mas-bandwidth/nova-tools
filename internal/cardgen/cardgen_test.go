@@ -6,6 +6,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 const serialFixture = `# The tests that do not open with t.Parallel()
@@ -276,4 +279,39 @@ func TestAPackageWithNoTestFileGetsItsTestOnTheNEWLine(t *testing.T) {
 	has.New = nil
 	NewTestFile(&has, func(string) bool { return true })
 	assert.Empty(t, has.New, "a package with tests creates none")
+}
+
+// The gate step of every card the generators write, and of the card template, tells the
+// child what to do when the gate is red: name the failing test's file, say whether it is
+// changed by the child's work (yours) or is unchanged (already red at BASE), and report that line first. The card
+// stays under the lint's advisory size and still passes the lint.
+func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
+	t.Parallel()
+	const sentence = "When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
+	gateStep := func(brief string) string {
+		for _, line := range strings.Split(brief, "\n") {
+			if strings.HasPrefix(line, "STEP 4.") {
+				return line
+			}
+		}
+		return ""
+	}
+
+	rows, _ := ParseLedger(Ledgers["serial-tests"], serialFixture)
+	require.NotEmpty(t, rows)
+	fs, _ := ParseFindings("file\tfinding\tremedy\ttest\ninternal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n")
+	require.Len(t, fs, 1)
+	cards := append(PlanLedger(Ledgers["serial-tests"], rows, "", "", 0).Cards, PlanFindings(fs, "", "", 0).Cards...)
+	cards = append(cards, PlanHelp("nova-x", "x\n", "", "", ""))
+	for _, c := range cards {
+		brief := Render(header, c)
+		assert.Contains(t, gateStep(brief), sentence, c.ID)
+		assert.Empty(t, Lint(c.ID, brief), c.ID)
+		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, c.ID)
+	}
+
+	tmpl, err := swarm.Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, gateStep(tmpl), sentence, "the card template")
+	assert.Less(t, len(tmpl), cardlimits.BriefAdvisoryBytes)
 }
