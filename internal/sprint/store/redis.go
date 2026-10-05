@@ -415,6 +415,8 @@ const (
 	keyProgress = "progress" // HASH stream -> RFC3339 time of its last progress
 	keyDone     = "done"     // HASH caller operation id -> result
 	keyQueue    = "queue"    // LIST of the work table's queued changes (sprint.QueuedChange, JSON), oldest first
+	keyLogCards = "logcards" // SET of card ids whose log lines are indexed
+	keyLogIndex = "logindex" // STRING count of log lines the card index holds
 )
 
 func (r *Redis) ReadFence(ctx context.Context) (Fence, error) {
@@ -601,12 +603,15 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		}
 		p.RPush(ctx, r.key(keyQueue), string(body))
 	}
+	cardIDs := map[string]struct{}{}
+	nLines := 0
 	for _, line := range op.Log {
 		body, err := json.Marshal(line)
 		if err != nil {
 			return err
 		}
-		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(body)}})
+		r.writeLogLine(ctx, p, line, body, cardIDs)
+		nLines++
 	}
 	notes := append(append([]sprint.Note{}, op.Notes...), op.Decided...)
 	// each judgment's and acknowledgement's alias is its place among the epoch's
@@ -637,11 +642,13 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		if err != nil {
 			return err
 		}
-		lb, err := json.Marshal(sprint.NoteLine(n.Bound(), op.ID))
+		nl := sprint.NoteLine(n.Bound(), op.ID)
+		lb, err := json.Marshal(nl)
 		if err != nil {
 			return err
 		}
-		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(lb)}})
+		r.writeLogLine(ctx, p, nl, lb, cardIDs)
+		nLines++
 		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyInbox), Values: []any{"note", string(body)}})
 		if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
 			p.HSet(ctx, r.key(keyNotes), n.ID, string(body))
@@ -662,7 +669,18 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 			return err
 		}
 		p.HSet(ctx, r.key(keyNotes), n.ID, string(body))
-		p.XAdd(ctx, &redis.XAddArgs{Stream: r.key(keyLog), Values: []any{"line", string(lb)}})
+		r.writeLogLine(ctx, p, line, lb, cardIDs)
+		nLines++
+	}
+	if nLines > 0 {
+		p.IncrBy(ctx, r.key(keyLogIndex), int64(nLines))
+	}
+	if len(cardIDs) > 0 {
+		members := make([]any, 0, len(cardIDs))
+		for id := range cardIDs {
+			members = append(members, id)
+		}
+		p.SAdd(ctx, r.key(keyLogCards), members...)
 	}
 	if len(op.Closes) > 0 {
 		p.HDel(ctx, r.key(keyOpen), op.Closes...)

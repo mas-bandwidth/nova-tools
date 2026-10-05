@@ -73,6 +73,10 @@ type memLog struct {
 	progress map[string]time.Time
 	inbox    []memNote
 	lines    []memLine // the log
+	// byCard is each card's lines, in log order, while indexed says byCard
+	// holds every line of lines. A card reads byCard and does not walk lines.
+	byCard   map[string][]sprint.Line
+	indexed  bool
 	notes    map[string]sprint.Note
 	aliases  map[string]string // alias (j<n>) -> note id (sprint.Alias)
 	answered map[string]string // judgment id -> who answered it, as it closed
@@ -971,8 +975,7 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		}
 		l.queue = append(l.queue, op.Queue...)
 		for _, line := range op.Log {
-			m.seq++
-			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), line})
+			m.appendLocked(l, line)
 		}
 		for _, n := range append(append([]sprint.Note{}, op.Notes...), op.Decided...) {
 			// every subject stays open; only the note's listing is bounded
@@ -986,8 +989,7 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 				n.Alias = sprint.Alias(len(l.aliases) + 1)
 				l.aliases[n.Alias] = n.ID
 			}
-			m.seq++
-			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), sprint.NoteLine(n, op.ID)})
+			m.appendLocked(l, sprint.NoteLine(n, op.ID))
 			m.seq++
 			l.inbox = append(l.inbox, memNote{fmt.Sprintf("%d-0", m.seq), n})
 			if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
@@ -1002,8 +1004,7 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			l.notes[n.ID] = n
 			line := sprint.NoteLine(n, op.ID)
 			line.Verb = "updated"
-			m.seq++
-			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), line})
+			m.appendLocked(l, line)
 		}
 		for _, k := range op.Closes {
 			delete(l.open, k)
