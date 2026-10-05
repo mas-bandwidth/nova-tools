@@ -76,9 +76,10 @@ type Plan struct {
 	// Health is a friend's health observed (ObserveFriend): the step's commit
 	// writes it as her record.
 	Health *FriendHealthWrite
-	// Timers is the timer record the step leaves (TimerNotes): the timers it
-	// raised are closed in the same commit as their judgment.
-	Timers *Timers
+	// Timers is the step's change to the timer record (SetTimer, CancelTimer,
+	// TimerNotes): its commit applies it to the record under the fence, so the
+	// timers a tick raises are closed in the same commit as their judgment.
+	Timers *TimerWrite
 	// Stop is the cause the binding stops the machine with as the step commits: the
 	// tick's deal when every provider is out of credit (FundsCause words); "" is none.
 	Stop string

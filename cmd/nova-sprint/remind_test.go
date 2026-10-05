@@ -138,3 +138,56 @@ func TestRemindRefusals(t *testing.T) {
 	}
 	assert.NotContains(t, ta.ok("remind --list"), "REMINDER", "a refusal wrote a timer")
 }
+
+// TestRemindDryRunSaysTheWriteAndAtIsToday pins what --dry-run says: the row
+// the write would record (by is the caller, whoever the timer wakes), and for
+// a cancel the open timer it would take off, refusing an id the write refuses;
+// and that --at a time of day is that time today.
+func TestRemindDryRunSaysTheWriteAndAtIsToday(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("start")
+
+	// --for friend-a --dry-run: woken is the friend, by is the caller.
+	out := ta.ok(`remind --in 30m --note for-her --for friend-a --dry-run`)
+	require.Contains(t, out, "REMIND DRY-RUN", "%s", out)
+	assert.Contains(t, out, "for=friend-a", "%s", out)
+	assert.Contains(t, out, "by=coordinator", "the write records the caller as by: %s", out)
+
+	// --at a time of day is today: t0 is 03:04:05 on 2030-01-02 (UTC).
+	var v remindView
+	ta.json(`remind --at 04:00 --note today`, &v)
+	assert.Equal(t, time.Date(2030, 1, 2, 4, 0, 0, 0, time.UTC), v.Due, "--at 04:00 is today: %+v", v)
+	v = remindView{}
+	ta.json(`remind --at 03:30:15 --note today-seconds --dry-run`, &v)
+	assert.Empty(t, v.ID, "a dry run names no id")
+	assert.Equal(t, time.Date(2030, 1, 2, 3, 30, 15, 0, time.UTC), v.Due, "--at 03:30:15 is today: %+v", v)
+	for _, line := range []string{`remind --at 03:00 --note gone`, `remind --at 03:00 --note gone --dry-run`} {
+		exit, _, errOut := ta.do(line)
+		assert.Equal(t, 2, exit, "%s: %s", line, errOut)
+		assert.Contains(t, errOut, "not after now", "a time of day already past today: %s", line)
+	}
+
+	// --cancel --dry-run prints the open timer's row and writes nothing.
+	v = remindView{}
+	ta.json(`remind --at 04:00 --note to-cancel`, &v)
+	out = ta.ok("remind --cancel " + v.ID + " --dry-run")
+	require.Contains(t, out, "REMIND DRY-RUN id="+v.ID, "%s", out)
+	assert.Contains(t, out, "for=coordinator", "the timer's row: %s", out)
+	assert.Contains(t, out, "due=2030-01-02T04:00:00Z", "its due time, not now: %s", out)
+	assert.Contains(t, out, "note=to-cancel", "its note: %s", out)
+	assert.Contains(t, ta.ok("remind --list"), "to-cancel", "--cancel --dry-run took it off")
+	exit, _, errOut := ta.do("remind --cancel nosuch --dry-run")
+	assert.Equal(t, 2, exit, "%s", errOut)
+	assert.Contains(t, errOut, "no open timer is nosuch", "an unknown id is refused as the write refuses it")
+
+	// The listing is bounded by --max with the MORE line.
+	out = ta.ok("remind --list --max 1")
+	assert.Equal(t, 1, strings.Count(out, "REMINDER "), "%s", out)
+	assert.Contains(t, out, "MORE kind=reminder shown=1 total=2", "%s", out)
+
+	// A missing --note is refused in a timer's own words.
+	_, _, errOut = ta.do(`remind --in 5m`)
+	assert.Contains(t, errOut, "the timer's note is empty", "%s", errOut)
+}

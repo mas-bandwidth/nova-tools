@@ -3509,10 +3509,20 @@ it would write and writes nothing, and `--json`, the same value.
 While the machine is RUNNING the tick reads the record and raises each timer
 whose due time the clock has reached as one judgment of kind `timer` addressed
 to its actor (`Note.To`), open on its own subject `timer:<id>`, carrying its
-note, with the decision `ack`; the same step leaves the record without it, so a
+note, with the decision `ack`; the same step takes it off the record, so a
 timer is raised once and never before its due time (`sprint.TimerNotes`,
 `store.timers`, `tla/Timer.tla`). A timer the tick raised is off the record, so
-there is none to cancel.
+there is none to cancel. Setting, cancelling and the tick's raise are each one
+step under the sprint's fence: each plans on the record read after the fence's
+generation, and its commit applies only its own change (the timer it adds, the
+ids it closes) to the record as the commit reads it (`sprint.TimerWrite`),
+never writing back a copy read before. So a timer cancelled before the tick
+commits is not raised, a timer set while the tick raises is kept, and a cancel
+of a timer the tick raised first is refused (`tla/Timer.tla`,
+`CancelledNeverFires` and `NoLapse`). `--dry-run` reads as the write does: a
+set prints the row the write would record (`by` is the caller, whoever it
+wakes) and a cancel prints the open timer it would take off, refusing an id
+that is no open timer.
 
 A timer counts running time, not wall time, as every deadline of this tree
 does: the time the machine was STOPPED between the timer's write and now is not
@@ -3522,8 +3532,12 @@ machine raises nothing. The test is the tree's one clock comparison,
 against the due time's own distance from `set`. The timer's tick
 (`sprint.DueTimers`) and the judgment review time `wait --until` sets
 (`sprint.TickOverdue`, `Note.Review` based at `Note.ReviewSet`) both call it,
-and a later external `wait` operand (`after <time>`) calls the same function:
-there is no second clock comparison in the tree.
+as do the two other readers of a review time, the inbox's overdue mark
+(`sprint.InboxReq`) and the no-stall rule's judgment past its due time
+(`sprint.Unheld`), and a later external `wait` operand (`after <time>`) calls
+the same function: no review time or timer is decided by a second clock
+comparison. A judgment with no review time is still overdue by its own
+deadline (`DeadlineJudgment`), a separate rule.
 
 The judgment reaches its actor by the routes the tree has and adds none. A
 timer for the coordinator reaches the coordinator's wake with no new path: the

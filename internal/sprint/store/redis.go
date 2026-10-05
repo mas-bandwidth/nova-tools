@@ -514,6 +514,11 @@ func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 		return err
 	}
 	prefix := `{"id":` + string(id) + `,`
+	watched := []string{fence}
+	timersKey := r.Names.Key(keyTimers)
+	if commit && op.Timers != nil {
+		watched = append(watched, timersKey)
+	}
 	for i := 0; i < 8; i++ {
 		err = r.C.Watch(ctx, func(tx *redis.Tx) error {
 			cur, err := tx.GetRange(ctx, fence, 0, int64(len(prefix)-1)).Result()
@@ -523,17 +528,40 @@ func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 			if cur != prefix {
 				return nil // empty (released) or another operation's
 			}
+			// The step's change to the timer record is applied to the record
+			// as it is read here, watched with the fence: never a copy the
+			// step read before (sprint.TimerWrite).
+			var timers []byte
+			if commit && op.Timers != nil {
+				var t sprint.Timers
+				raw, err := tx.Get(ctx, timersKey).Result()
+				switch {
+				case errors.Is(err, redis.Nil):
+				case err != nil:
+					return err
+				default:
+					if err := json.Unmarshal([]byte(raw), &t); err != nil {
+						return fmt.Errorf("the machine's %s record is unreadable: %w", keyTimers, err)
+					}
+				}
+				if timers, err = json.Marshal(op.Timers.Apply(t)); err != nil {
+					return err
+				}
+			}
 			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
 				if commit {
 					if err := r.commit(ctx, p, op); err != nil {
 						return err
+					}
+					if timers != nil {
+						p.Set(ctx, timersKey, string(timers), 0)
 					}
 				}
 				p.Del(ctx, fence)
 				return nil
 			})
 			return err
-		}, fence)
+		}, watched...)
 		// The fence moved while this release was prepared: another writer
 		// finishing the same operation released it, or took the fence after;
 		// read it again, and release only if it still holds this operation.
@@ -693,13 +721,6 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 			return err
 		}
 		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
-	}
-	if op.Timers != nil {
-		rec, err := json.Marshal(op.Timers)
-		if err != nil {
-			return err
-		}
-		p.Set(ctx, r.Names.Key(keyTimers), string(rec), 0)
 	}
 	return nil
 }

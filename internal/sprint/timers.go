@@ -1,8 +1,10 @@
 package sprint
 
 import (
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -62,8 +64,14 @@ func (t *Timers) Sort() {
 }
 
 // ValidTimerNote is nil for text a timer can carry: the shape a goal's text is
-// held to (ValidGoalText), at most MaxTimerNote bytes.
-func ValidTimerNote(text string) error { return ValidGoalText(text, MaxTimerNote) }
+// held to (ValidGoalText), at most MaxTimerNote bytes, refused in a timer's
+// own words.
+func ValidTimerNote(text string) error {
+	if err := ValidGoalText(text, MaxTimerNote); err != nil {
+		return errors.New(strings.Replace(err.Error(), "the goal text", "the timer's note", 1))
+	}
+	return nil
+}
 
 // DueTimers is the timers whose due time the clock has reached at now, in the
 // order the record keeps them: the one due test the tree has, DueNow, so a
@@ -79,36 +87,75 @@ func DueTimers(t Timers, now time.Time, stopped func(from, to time.Time) time.Du
 	return out
 }
 
-// TimerNotes is the plan that raises the timers due names as judgments of
-// kind NTimer, each addressed to its actor, and leaves the record with them
-// closed: one timer, one judgment, once, in the step that writes it
-// (docs/SPEC-SPRINT.md, "Timers"; tla/Timer.tla, Tick). who is recorded with
-// each judgment.
-func TimerNotes(s *Snapshot, t Timers, due []Timer, who string) Plan {
-	if len(due) == 0 {
-		return Plan{}
+// TimerWrite is a step's change to the timer record: the timers it adds and
+// the ids it closes. The store's commit applies it to the record as it reads
+// it inside that commit, under the fence (Apply), never writing back a copy
+// the step read before, so a timer set or cancelled by another step is not
+// overwritten (tla/Timer.tla, Set, Cancel and Tick are each one step).
+type TimerWrite struct {
+	Add   []Timer  `json:"add,omitempty"`
+	Close []string `json:"close,omitempty"`
+}
+
+// Apply is the record t with w applied: the closed ids taken off, the added
+// timers put on unless one of that id is already there, in due order. A
+// commit applied twice (a writer finishing another's operation) leaves the
+// record as once.
+func (w TimerWrite) Apply(t Timers) Timers {
+	closed := map[string]bool{}
+	for _, id := range w.Close {
+		closed[id] = true
 	}
-	raising := map[string]bool{}
-	var p Plan
-	for _, x := range due {
-		if t.Find(x.ID) < 0 || raising[x.ID] {
-			continue // cancelled while the tick read, or named twice: no judgment
+	var out Timers
+	for _, x := range t.Open {
+		if !closed[x.ID] {
+			out.Open = append(out.Open, x)
 		}
-		raising[x.ID] = true
+	}
+	for _, x := range w.Add {
+		if !closed[x.ID] && out.Find(x.ID) < 0 {
+			out.Open = append(out.Open, x)
+		}
+	}
+	out.Sort()
+	return out
+}
+
+// SetTimer is the plan that adds the timer t to the record (remind): its
+// commit puts it on the record as it stands then (TimerWrite).
+func SetTimer(t Timer) Plan {
+	return Plan{Timers: &TimerWrite{Add: []Timer{t}}}
+}
+
+// CancelTimer is the plan that takes the open timer id off the record
+// (remind --cancel), read in the step's own snapshot (s.Timers): a timer the
+// tick already raised, or none ever set, is no open timer and is refused.
+func CancelTimer(s *Snapshot, id string) Plan {
+	var p Plan
+	if s.Timers.Find(id) < 0 {
+		p.refuse(TimerSubject(id), "no open timer is "+id+"; run: nova-sprint remind --list")
+		return p
+	}
+	p.Timers = &TimerWrite{Close: []string{id}}
+	return p
+}
+
+// TimerNotes is the plan that raises the timers of the step's own snapshot
+// (s.Timers) whose due time has come at s.Now as judgments of kind NTimer,
+// each addressed to its actor, and closes them: one timer, one judgment,
+// once, in the step that writes it (docs/SPEC-SPRINT.md, "Timers";
+// tla/Timer.tla, Tick). who is recorded with each judgment.
+func TimerNotes(s *Snapshot, stopped func(from, to time.Time) time.Duration, who string) Plan {
+	var p Plan
+	w := TimerWrite{}
+	for _, x := range DueTimers(s.Timers, s.Now, stopped) {
 		p.Notes = append(p.Notes, Note{Kind: Judgment, Type: NTimer, Primaries: []string{TimerSubject(x.ID)},
 			Count: 1, What: fmt.Sprintf("the timer %s for %s is due: %s", x.ID, x.For, x.Note),
 			Who: who, At: s.Now, To: x.For, Decisions: append([]string(nil), Decisions[NTimer]...)})
+		w.Close = append(w.Close, x.ID)
 	}
-	if len(p.Notes) == 0 {
-		return Plan{}
+	if len(w.Close) > 0 {
+		p.Timers = &w
 	}
-	var leave Timers
-	for _, x := range t.Open {
-		if !raising[x.ID] {
-			leave.Open = append(leave.Open, x)
-		}
-	}
-	leave.Sort()
-	p.Timers = &leave
 	return p
 }

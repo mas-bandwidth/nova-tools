@@ -171,6 +171,10 @@ type Step struct {
 	// within a tick).
 	Readers      bool
 	ReaderStates map[string]string
+	// Timers says the step plans on the sprint's open timers
+	// (sprint.Snapshot.Timers), read after the fence's generation, so a plan
+	// on them commits only if no other step wrote since (timers.go).
+	Timers bool
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -558,6 +562,11 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return res, err
 			}
 		}
+		if step.Timers {
+			if snap.Timers, err = st.Timers(ctx); err != nil {
+				return res, err
+			}
+		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))
 		if len(held) > 0 {
@@ -624,7 +633,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil {
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil && op.Timers == nil {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}

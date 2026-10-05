@@ -588,12 +588,11 @@ func (c *held) overdueUnmarked() []Finding {
 			continue
 		}
 		past := false
-		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
-			past = s.Now.After(n.Review)
-		} else if !n.Review.IsZero() {
-			// a wait counts running time from when it was set
-			d, ok := c.running(stamp(n.ReviewSet))
-			past = ok && d >= n.Review.Sub(n.ReviewSet)
+		if !n.Review.IsZero() {
+			// the review time wait set, by the tree's one due test, the same
+			// one a timer is due by (stopped.go DueNow; docs/SPEC-SPRINT.md,
+			// "Timers")
+			past = DueNow(s.Now, n.Review, n.ReviewSet, c.req.Stopped)
 		} else if d, ok := c.running(stamp(n.At)); ok {
 			past = d > DeadlineJudgment
 		}

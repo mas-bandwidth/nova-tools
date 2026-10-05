@@ -50,16 +50,24 @@ func orDashID(id string) string {
 }
 
 // timerAt is the time --at names: RFC3339, or a local date and time, a local
-// date, or a local time of day today.
+// date, or a local time of day today (now's date: a time of day parses with
+// no date of its own, so it takes today's, and one not after now is refused
+// by the write as any past time is).
 func timerAt(text string, now time.Time) (time.Time, error) {
 	layouts := []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02", "15:04:05", "15:04"}
 	for _, l := range layouts {
-		if t, err := time.Parse(l, text); err == nil {
-			if l == time.RFC3339 {
-				return t, nil
-			}
-			return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location()), nil
+		t, err := time.Parse(l, text)
+		if err != nil {
+			continue
 		}
+		switch l {
+		case time.RFC3339:
+			return t, nil
+		case "15:04:05", "15:04":
+			y, m, d := now.Date()
+			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), 0, now.Location()), nil
+		}
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location()), nil
 	}
 	return time.Time{}, fmt.Errorf("the --at time %s is none of RFC3339 (2006-01-02T15:04:05Z07:00), a local date and time (2006-01-02 15:04:05), a local date (2006-01-02) or a local time of day today (15:04)", oneline.Escape(text))
 }
@@ -138,8 +146,15 @@ func (a *app) remindSet(ctx context.Context, name string, c common, st *store.St
 	}
 	t := sprint.Timer{For: who, Due: due, Note: note, By: caller, Set: a.now()}
 	if dry {
+		// the row the write would record: By is the caller, as AddTimer
+		// records it, whoever the timer wakes; a due time the write would
+		// refuse is refused here too
+		if !due.After(t.Set) {
+			return refuse(stderr, name, fmt.Sprintf("the timer's due time %s is not after now %s; give --in <duration> or an --at in the future",
+				due.UTC().Format(time.RFC3339), t.Set.UTC().Format(time.RFC3339)))
+		}
 		v := timerView(t)
-		v.By, v.Set, v.DryRun = who, time.Time{}, true
+		v.DryRun = true
 		return a.remindPrint(name, c, stdout, v, "nothing was written; the store assigns the id when it writes")
 	}
 	wrote, err := st.AddTimer(ctx, t)
@@ -153,7 +168,14 @@ func (a *app) remindSet(ctx context.Context, name string, c common, st *store.St
 // remindCancel takes one timer off the record, or with --dry-run says which.
 func (a *app) remindCancel(ctx context.Context, name string, c common, st *store.Store, id string, dry bool, stdout, stderr io.Writer) int {
 	if dry {
-		v := remindView{ID: id, Due: a.now(), DryRun: true}
+		// the open timer the cancel would take off, read as the write reads
+		// it: an id that is no open timer is refused as the write refuses it
+		open, err := st.OpenTimer(ctx, id)
+		if err != nil {
+			return refuse(stderr, name, err.Error())
+		}
+		v := timerView(open)
+		v.DryRun = true
 		return a.remindPrint(name, c, stdout, v, "nothing was written; the timer stays open")
 	}
 	gone, err := st.CancelTimer(ctx, id)
@@ -186,12 +208,11 @@ func (a *app) remindList(name string, c common, st *store.Store, stdout, stderr 
 		fmt.Fprintln(stdout, "REMIND none; run: nova-sprint remind --in 30m --note <text>")
 		return 0
 	}
-	for _, v := range cut(views, c.max) {
-		fmt.Fprintf(stdout, "REMINDER %s\n", v.line())
+	lines := make([]string, 0, len(views))
+	for _, v := range views {
+		lines = append(lines, v.line())
 	}
-	if m := moreOf(len(views), c.max); m != nil {
-		fmt.Fprintf(stdout, "MORE kind=timer shown=%d total=%d run: nova-sprint remind --list --max 0\n", m.Shown, m.Total)
-	}
+	listed(stdout, "REMINDER", lines, c.max, name)
 	return 0
 }
 

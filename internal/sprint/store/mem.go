@@ -1039,7 +1039,14 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			m.kv[friendHealthKey(op.Health.Friend)] = string(rec)
 		}
 		if op.Timers != nil {
-			rec, err := json.Marshal(op.Timers)
+			// the record as it stands under the fence, the step's change applied
+			var cur sprint.Timers
+			if raw, ok := m.kv[keyTimers]; ok {
+				if err := json.Unmarshal([]byte(raw), &cur); err != nil {
+					return fmt.Errorf("the machine's %s record is unreadable: %w", keyTimers, err)
+				}
+			}
+			rec, err := json.Marshal(op.Timers.Apply(cur))
 			if err != nil {
 				return err
 			}

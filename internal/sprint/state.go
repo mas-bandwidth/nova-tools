@@ -306,6 +306,10 @@ type Snapshot struct {
 	// that drains it.
 	QueueLen int
 	Queue    []QueuedChange
+	// Timers is the sprint's open timers, read with a step that asks for them
+	// (timers.go): after the fence's generation, so a step planned on them
+	// commits only if no other step wrote since.
+	Timers Timers
 	// Held is the work cards a change queued after the pump's drain names,
 	// read with a pump part's step: the part leaves them for the next tick's
 	// pump (LeaveQueued), and a part that plans a card's move reads it to

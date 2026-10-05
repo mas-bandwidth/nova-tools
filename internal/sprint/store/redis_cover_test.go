@@ -1603,6 +1603,28 @@ func TestRedisCoverRelease(t *testing.T) {
 		r, ctx := coverRedis(t, 0)
 		require.NoError(t, r.Release(ctx, OpRecord{ID: "op1", Verb: "tick"}, false))
 	})
+	t.Run("a timer write applies to the record as the commit reads it", func(t *testing.T) {
+		t.Parallel()
+		r, ctx := coverRedis(t, 0)
+		// the record holds t1 and t3, t3 set after the step read it: the
+		// commit closes t1 and keeps t3 (sprint.TimerWrite; tla/Timer.tla)
+		at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+		rec, err := json.Marshal(sprint.Timers{Open: []sprint.Timer{{ID: "t1", Due: at}, {ID: "t3", Due: at.Add(time.Hour)}}})
+		require.NoError(t, err)
+		require.NoError(t, r.SetKey(ctx, keyTimers, string(rec)))
+		op := OpRecord{ID: "op1", Verb: "tick timers", Timers: &sprint.TimerWrite{Close: []string{"t1"}}}
+		ok, err := r.Acquire(ctx, 0, op)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, r.Release(ctx, op, true))
+		raw, found, err := r.GetKey(ctx, keyTimers)
+		require.NoError(t, err)
+		require.True(t, found)
+		var got sprint.Timers
+		require.NoError(t, json.Unmarshal([]byte(raw), &got))
+		require.Len(t, got.Open, 1, "the record after the commit: %s", raw)
+		assert.Equal(t, "t3", got.Open[0].ID, "the timer set after the step read is kept")
+	})
 	t.Run("another operation's fence is left alone", func(t *testing.T) {
 		t.Parallel()
 		r, ctx := coverRedis(t, 0)

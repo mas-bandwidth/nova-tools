@@ -31,6 +31,14 @@
 \*            reached: NeverEarly
 \*   "lost"   a restart loses the store with the memory: a timer set before it
 \*            is never raised: NoLapse
+\*   "stale"  the tick raises from a read of the store taken before its commit
+\*            (Read), and its commit writes that read back less what it raised,
+\*            so a cancel or a set that landed between the read and the commit
+\*            is overwritten: a cancelled timer fires: CancelledNeverFires. The
+\*            code holds Tick to one step: the tick plans on the record read
+\*            after the fence's generation and its commit takes off only the
+\*            ids it raised from the record as it reads it then
+\*            (sprint.TimerWrite; store/timers.go)
 EXTENDS Naturals
 
 CONSTANTS MaxTime, MaxTimers, Broken
@@ -78,15 +86,25 @@ Cancel(t) ==
     /\ gone' = gone \cup {t}
     /\ UNCHANGED <<now, due, armed, fired, mem>>
 
-\* the timers this tick raises: the store's open ones whose due time the clock
-\* has reached (sprint.DueNow, the tree's one clock comparison)
-Raising == IF "early" \in Broken THEN open ELSE {t \in open : now >= due[t]}
+\* "stale" only: the tick's read of the store, a step before its commit
+Read ==
+    /\ "stale" \in Broken
+    /\ mem' = open
+    /\ UNCHANGED <<now, due, open, armed, gone, fired>>
+
+\* the store as the tick's commit plans on it: the store itself (one step), or
+\* under "stale" the read it took before
+Seen == IF "stale" \in Broken THEN mem ELSE open
+
+\* the timers this tick raises: the open ones whose due time the clock has
+\* reached (sprint.DueNow, the tree's one clock comparison)
+Raising == IF "early" \in Broken THEN Seen ELSE {t \in Seen : now >= due[t]}
 
 Tick ==
     /\ Raising # {}
-    /\ mem' = open
+    /\ mem' = IF "stale" \in Broken THEN mem \ Raising ELSE open
     /\ fired' = [t \in Timers |-> IF t \in Raising THEN fired[t] + 1 ELSE fired[t]]
-    /\ open' = IF "twice" \in Broken THEN open ELSE open \ Raising
+    /\ open' = IF "twice" \in Broken THEN open ELSE Seen \ Raising
     /\ UNCHANGED <<now, due, armed, gone>>
 
 Advance ==
@@ -104,6 +122,7 @@ Restart ==
 Next ==
     \/ \E t \in Timers : \E d \in 0..MaxTime : Set(t, d)
     \/ \E t \in Timers : Cancel(t)
+    \/ Read
     \/ Tick
     \/ Advance
     \/ Restart

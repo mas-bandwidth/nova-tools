@@ -26,13 +26,13 @@ func TestRemindTimerFiresOnceAtItsTime(t *testing.T) {
 
 	// Not before its due time.
 	for _, at := range []time.Time{timerT0, timerT0.Add(time.Minute), due.Add(-time.Nanosecond)} {
-		p := TimerNotes(&Snapshot{Now: at}, rec, DueTimers(rec, at, nil), MachineActor)
+		p := TimerNotes(&Snapshot{Now: at, Timers: rec}, nil, MachineActor)
 		assert.True(t, p.Empty(), "raised at %s, before its due time", at)
 	}
 
 	// Once, at its due time: one judgment of kind NTimer addressed to its
-	// actor, and the record the step leaves has the timer closed.
-	p := TimerNotes(&Snapshot{Now: due}, rec, DueTimers(rec, due, nil), MachineActor)
+	// actor, and the step's write closes the timer.
+	p := TimerNotes(&Snapshot{Now: due, Timers: rec}, nil, MachineActor)
 	require.Len(t, p.Notes, 1, "the tick at its due time")
 	n := p.Notes[0]
 	assert.Equal(t, Judgment, n.Kind, "the note is a judgment")
@@ -42,13 +42,15 @@ func TestRemindTimerFiresOnceAtItsTime(t *testing.T) {
 	assert.Contains(t, n.What, "the merge window closes", "carrying its note")
 	assert.Equal(t, []string{"ack"}, n.Decisions, "its decisions")
 	require.NotNil(t, p.Timers, "the step closes the timer")
-	assert.Empty(t, p.Timers.Open, "the record the step leaves")
+	assert.Equal(t, []string{"t1"}, p.Timers.Close, "the step closes the timer it raised")
+	assert.Empty(t, p.Timers.Add, "and sets none")
+	left := p.Timers.Apply(rec)
+	assert.Empty(t, left.Open, "the record the commit leaves")
 
 	// Never again on a later tick: the timer the step closed is not there to
 	// raise, so no later tick writes a second judgment.
-	left := *p.Timers
 	for _, at := range []time.Time{due, due.Add(time.Hour), due.Add(24 * time.Hour)} {
-		assert.True(t, TimerNotes(&Snapshot{Now: at}, left, DueTimers(left, at, nil), MachineActor).Empty(),
+		assert.True(t, TimerNotes(&Snapshot{Now: at, Timers: left}, nil, MachineActor).Empty(),
 			"raised again at %s", at)
 	}
 }
@@ -76,17 +78,45 @@ func TestRemindTimerCancelStopsItAndATimerRaisedIsNotThereToCancel(t *testing.T)
 	// raises nothing (tla/Timer.tla, Cancel and CancelledNeverFires).
 	two := Timers{Open: []Timer{rec.Open[0], {ID: "t2", For: "friend-a", Due: due, Note: "the second",
 		By: "coordinator", Set: timerT0}}}
-	i := two.Find("t1")
-	require.Equal(t, 0, i)
-	two.Open = append(two.Open[:i], two.Open[i+1:]...) // the cancel takes it off the record
-	p := TimerNotes(&Snapshot{Now: due}, two, DueTimers(two, due, nil), MachineActor)
+	c := CancelTimer(&Snapshot{Now: timerT0, Timers: two}, "t1")
+	require.Empty(t, c.Refused)
+	require.NotNil(t, c.Timers)
+	two = c.Timers.Apply(two) // the cancel's commit takes it off the record
+	p := TimerNotes(&Snapshot{Now: due, Timers: two}, nil, MachineActor)
 	require.Len(t, p.Notes, 1, "only the open timer is raised")
 	assert.Equal(t, "t2", p.Notes[0].Primaries[0][len("timer:"):], "the cancelled timer fired")
 	// A timer the tick raised is off the record, so it is not there to cancel:
-	// Find says none, and a second raise is impossible.
-	raised := TimerNotes(&Snapshot{Now: due}, rec, DueTimers(rec, due, nil), MachineActor)
+	// the cancel planned on the record after the tick is refused and writes
+	// nothing.
+	raised := TimerNotes(&Snapshot{Now: due, Timers: rec}, nil, MachineActor)
 	require.NotNil(t, raised.Timers)
-	assert.Equal(t, -1, raised.Timers.Find("t1"), "a fired timer is no longer open")
+	after := raised.Timers.Apply(rec)
+	assert.Equal(t, -1, after.Find("t1"), "a fired timer is no longer open")
+	late := CancelTimer(&Snapshot{Now: due, Timers: after}, "t1")
+	assert.Len(t, late.Refused, 1, "a cancel of a raised timer is refused")
+	assert.Nil(t, late.Timers, "and writes nothing")
+}
+
+// TestRemindTimerWriteKeepsWhatAnotherStepWrote pins the commit's rule: a
+// step's change to the timer record is applied to the record as the commit
+// reads it, never a copy the step read before. A tick that planned on a record
+// holding t1 alone commits after a cancel of t1 and a set of t3: t1 is not
+// put back, t3 is not lost (tla/Timer.tla, CancelledNeverFires and NoLapse).
+func TestRemindTimerWriteKeepsWhatAnotherStepWrote(t *testing.T) {
+	t.Parallel()
+	rec, due := timerRecord("coordinator")
+	tick := TimerNotes(&Snapshot{Now: due, Timers: rec}, nil, MachineActor)
+	require.NotNil(t, tick.Timers)
+
+	t3 := Timer{ID: "t3", For: "friend-a", Due: due.Add(time.Hour), Note: "later", By: "friend-a", Set: due}
+	now := SetTimer(t3).Timers.Apply(rec) // a set between the tick's read and its commit
+	now = tick.Timers.Apply(now)
+	assert.Equal(t, -1, now.Find("t1"), "the raised timer is closed")
+	assert.Equal(t, 0, now.Find("t3"), "the timer set meanwhile is kept")
+
+	// applied twice (a writer finishing another's operation), as once
+	assert.Equal(t, now, tick.Timers.Apply(now))
+	assert.Equal(t, now, SetTimer(t3).Timers.Apply(now))
 }
 
 // TestRemindTimerAndTheReviewTimeShareOneDueCheck pins the one mechanism: the
@@ -125,8 +155,15 @@ func TestRemindTimerAndTheReviewTimeShareOneDueCheck(t *testing.T) {
 			for _, x := range p.Notes {
 				review = review || x.Type == NOverdue
 			}
+			// the inbox's overdue mark of the same judgment
+			_, inbox := InboxReq{Now: tc.now, Stopped: stopped}.due(n)
+			// the no-stall rule's judgment past its due time
+			c := &held{s: s, req: TickReq{Who: MachineActor, Stopped: stopped}, marks: map[string]bool{}}
+			stall := len(c.overdueUnmarked()) == 1
 			assert.Equal(t, tc.want, timer, "the timer")
 			assert.Equal(t, tc.want, review, "the review time")
+			assert.Equal(t, tc.want, inbox, "the inbox's review time")
+			assert.Equal(t, tc.want, stall, "the no-stall rule's review time")
 			assert.Equal(t, review, timer, "one due check answers both")
 		})
 	}

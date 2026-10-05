@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -156,7 +157,7 @@ func TestRemindTimerRefusals(t *testing.T) {
 	}{
 		{"no due time", sprint.Timer{For: "coordinator", Note: "x"}, "no due time"},
 		{"a due time in the past", sprint.Timer{For: "coordinator", Note: "x", Due: h.now.Add(-time.Minute)}, "not after now"},
-		{"no note", sprint.Timer{For: "coordinator", Due: h.now.Add(time.Minute)}, "the goal text is empty"},
+		{"no note", sprint.Timer{For: "coordinator", Due: h.now.Add(time.Minute)}, "the timer's note is empty"},
 		{"an unsafe actor name", sprint.Timer{For: "../etc", Due: h.now.Add(time.Minute), Note: "x"}, "lower-case letters"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -166,4 +167,73 @@ func TestRemindTimerRefusals(t *testing.T) {
 			assert.Empty(t, h.timers().Open, "wrote a timer it refused")
 		})
 	}
+}
+
+// betweenReadAndCommit has the next acquire of the fence find the timer
+// record moved by another fenced step first: change edits the record and the
+// fence's generation advances, as a remind or a cancel that committed between
+// the tick's read and its own acquire leaves it.
+func (h *harness) betweenReadAndCommit(change func(*sprint.Timers)) {
+	h.t.Helper()
+	armed := true
+	h.m.Fail = func(point string) error {
+		if point != "acquire" || !armed {
+			return nil
+		}
+		armed = false
+		var ts sprint.Timers
+		if raw, ok := h.m.kv[keyTimers]; ok {
+			require.NoError(h.t, json.Unmarshal([]byte(raw), &ts))
+		}
+		change(&ts)
+		rec, err := json.Marshal(ts)
+		require.NoError(h.t, err)
+		h.m.kv[keyTimers] = string(rec)
+		h.m.log().gen++
+		return nil
+	}
+}
+
+// runTimers is the tick's timer duty alone, so the next acquire is its own.
+func (h *harness) runTimers() TickResult {
+	h.t.Helper()
+	m, _, err := h.st.Machine(h.ctx)
+	require.NoError(h.t, err)
+	var res TickResult
+	require.NoError(h.t, h.st.timers(h.ctx, m, &res))
+	return res
+}
+
+func TestRemindTimerSetWhileTheTickRaisesIsKept(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.startMachine()
+	due := h.setTimer(30*time.Minute, "coordinator")
+	h.tick(30 * time.Minute)
+	later := sprint.Timer{ID: "late", For: "friend-a", Due: h.now.Add(time.Hour), Note: "set meanwhile", By: "friend-a", Set: h.now}
+	h.betweenReadAndCommit(func(ts *sprint.Timers) { ts.Open = append(ts.Open, later) })
+	h.runTimers()
+	h.m.Fail = nil
+	open := h.openOf(sprint.NTimer)
+	require.Len(t, open, 1, "the due timer is raised once")
+	assert.Equal(t, sprint.TimerSubject(due.ID), open[0].Subject())
+	ts := h.timers()
+	require.Len(t, ts.Open, 1, "the timer set while the tick raised is lost (tla/Timer.tla, NoLapse)")
+	assert.Equal(t, "late", ts.Open[0].ID)
+}
+
+func TestRemindTimerCancelledWhileTheTickReadsNeverFires(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.startMachine()
+	gone := h.setTimer(30*time.Minute, "coordinator")
+	h.tick(30 * time.Minute)
+	h.betweenReadAndCommit(func(ts *sprint.Timers) {
+		ts.Open = append(ts.Open[:ts.Find(gone.ID)], ts.Open[ts.Find(gone.ID)+1:]...)
+	})
+	res := h.runTimers()
+	h.m.Fail = nil
+	assert.Empty(t, h.openOf(sprint.NTimer), "a timer cancelled before the tick committed fired (tla/Timer.tla, CancelledNeverFires)")
+	assert.Empty(t, res.Parts, "the duty says it raised a timer")
+	assert.Empty(t, h.timers().Open, "the cancelled timer is back on the record")
 }

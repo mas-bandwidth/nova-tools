@@ -75,15 +75,15 @@ func (r InboxReq) due(n Note) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	if !n.Review.IsZero() {
-		if n.ReviewSet.IsZero() {
-			return n.Review, r.Now.After(n.Review)
-		}
-		// The review time counts running time from when wait set it.
+		// The review time counts running time from when wait set it: whether
+		// it is due is the tree's one due test, the same one a timer is due by
+		// (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers"); the time shown
+		// is the review time moved by the hours STOPPED since.
 		due := n.Review
-		if r.Stopped != nil {
+		if r.Stopped != nil && !n.ReviewSet.IsZero() {
 			due = due.Add(r.Stopped(n.ReviewSet, r.Now))
 		}
-		return due, r.running(n.ReviewSet) >= n.Review.Sub(n.ReviewSet)
+		return due, DueNow(r.Now, n.Review, n.ReviewSet, r.Stopped)
 	}
 	due := n.At.Add(r.Deadline)
 	if r.Stopped != nil {
