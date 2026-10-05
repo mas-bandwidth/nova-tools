@@ -74,6 +74,7 @@ type world struct {
 	binary    func() (string, error)
 	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
+	alive     friend.Aliver // the harness check, when set (a test's fake harness); nil watches the adapter
 }
 
 func realWorld() world {
@@ -543,10 +544,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
+	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
 	writePresence := func(p friend.PresenceStatus) error {
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
+		} else if watch != nil {
+			if down, why := watch.Down(); down {
+				p.Presence, p.Reason = friend.PresenceDown, friend.HarnessNotRunning+": "+why
+			}
 		}
 		return friend.WritePresence(state, p)
 	}
@@ -669,6 +675,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
+	}
+	watch = friend.WatchHarness(d, deliver)
+	if w.alive != nil {
+		watch.Alive = w.alive
 	}
 	if err := d.Run(ctx); err != nil {
 		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())

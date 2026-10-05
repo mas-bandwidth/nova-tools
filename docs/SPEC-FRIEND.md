@@ -293,10 +293,9 @@ optional by assertion: every adapter implements it
 cannot tell. `WatchHarness(d, adapter)` takes the bare adapter, the one
 `NewDeliverer` returned, never the daemon's `Deliver`: the gates in front of
 it (`SessionCheck.Gate`, `Limits.Gate`) answer no `Alive`
-(`TestTheWatchReadsTheBareAdapterNotTheGateInFrontOfIt`). Owed:
-`cmd/nova-friend/main.go` builds the daemon and calls `d.Run` without it, so
-the running daemon does not yet check; the wiring is one line before `Run`,
-`friend.WatchHarness(d, deliver)` (What is weak).
+(`TestTheWatchReadsTheBareAdapterNotTheGateInFrontOfIt`). `cmd/nova-friend/main.go`
+wires it just before `d.Run`: `friend.WatchHarness(d, deliver)`
+(`TestRunPutsTheHarnessWatchInFrontOfTheBeat`).
 
 `WatchHarness` puts the check in front of the daemon's beat. Every thirty
 seconds (`AliveEvery`) it asks; a harness not running makes the friend down
@@ -694,11 +693,9 @@ until then. A one-shot friend with no session in its directory at all has
 nowhere for the check to go until a lane opens one, and its lanes wait on the
 row, which comes with a beat; it stays down until a session exists.
 
-The harness check (internal/friend/alive.go) is built and tested, not yet
-run: `cmd/nova-friend/main.go` never calls `WatchHarness`, so a running
-daemon does not ask its harness and a closed harness does not yet make its
-friend down; that file is outside the card that built the check. Nor is the
-watch's down and up in `tla/FriendPresence.tla` yet.
+The harness check (internal/friend/alive.go) is wired in `cmd/nova-friend/main.go`
+before `d.Run` (`TestRunPutsTheHarnessWatchInFrontOfTheBeat`). The watch's down
+and up is not in `tla/FriendPresence.tla` yet.
 
 The server side of the ping is `serve` (The coordinator's ping, above); the
 daemon's side still waits a window of three minutes for a ping, not ten
