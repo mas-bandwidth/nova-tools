@@ -349,6 +349,10 @@ type Snapshot struct {
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.
 	ReaderStates map[string]string
+	// ReaderTiers is the tiers each reader reads, as its row carries them (reader
+	// add --tiers, reader set --tiers; reader_tiers.go): a reader absent, or with
+	// none, reads every tier. Read with ReaderStates; nil is every reader every tier.
+	ReaderTiers map[string][]string
 	// Friends is each friend the deal may give a friend's card to, or whose delivery
 	// mode is consulted by friendNext (FriendSeat); nil is none.
 	Friends []FriendSeat

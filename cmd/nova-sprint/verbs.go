@@ -98,7 +98,8 @@ func init() {
 		{"lane take", "<kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]", "lane take go --machine m1 --as m1", (*app).cmdLaneTake},
 		{"lane give", "<kind> --machine <m> --as <worker> [--dry-run]", "lane give go --machine m1 --as m1", (*app).cmdLaneGive},
 		{"lane list", "", "lane list", (*app).cmdLaneList},
-		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
+		{"reader add", "<reader>... [--tiers <tier>[,<tier>...]]", "reader add reader-fast --tiers flash", (*app).cmdReaderAdd},
+		{"reader set", "<reader>... --tiers <tier>[,<tier>...]", "reader set reader-fast --tiers flash", (*app).cmdReaderSet},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
@@ -2565,8 +2566,12 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain, d, off), stdout, stderr)
 }
 
+// cmdReaderAdd adds the named readers' rows to the readers table, each reading
+// the tiers --tiers names (every tier when it names none; docs/SPEC-SPRINT.md
+// section 6, a reader's tiers): a flash reader is asked flash reads only.
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("reader add")
+	tiersFlag := fs.String("tiers", "", readerTiersUsage)
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "reader add", err.Error())
@@ -2579,16 +2584,33 @@ func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "reader add", "a reader name wants letters, digits, _ and -: "+n)
 		}
 	}
+	var tiers []string
+	if *tiersFlag != "" {
+		if tiers, err = sprint.ParseReaderTiers(*tiersFlag); err != nil {
+			return refuse(stderr, "reader add", err.Error())
+		}
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "reader add", err.Error())
 	}
-	if err := st.B.RowsAdd(context.Background(), st.Names.Table(sprint.Readers), names); err != nil {
+	ctx := context.Background()
+	if err := st.B.RowsAdd(ctx, st.Names.Table(sprint.Readers), names); err != nil {
 		fmt.Fprintf(stderr, "%s reader add: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
-	sayOK(stdout, c.json, "reader add", "READER-ADD OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
-	return 0
+	// --tiers sets the rows' tiers; without it a new row reads every tier and a
+	// row added again keeps its own
+	for _, n := range names {
+		if tiers == nil {
+			break
+		}
+		if err := st.SetReaderTiers(ctx, n, tiers); err != nil {
+			fmt.Fprintf(stderr, "%s reader add: the rows were added, the tiers were not: %s; run: nova-sprint reader set %s --tiers %s\n", prog, oneline.Escape(err.Error()), strings.Join(names, " "), strings.Join(tiers, ","))
+			return 1
+		}
+	}
+	return a.sayReaderTiers(ctx, st, c, "reader add", names, stdout, stderr)
 }
 
 // readerNames are the readers a reader verb names: at least one, each a name

@@ -988,7 +988,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates, tiers: first.ReaderTiers}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
 	if updates == nil {
@@ -1114,6 +1114,8 @@ type tickRun struct {
 	// readers is each reader's state as the tick's first read found it (nil: a
 	// store that keeps no beats).
 	readers map[string]string
+	// tiers is the tiers each reader reads, read with readers.
+	tiers map[string][]string
 }
 
 // update is one table's update: its queue drained (the entries other updates
@@ -1141,7 +1143,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		if view != nil && view.ReaderStates == nil && t.readers != nil {
 			v := *view
-			v.ReaderStates = t.readers
+			v.ReaderStates, v.ReaderTiers = t.readers, t.tiers
 			view = &v
 		}
 		if view != nil && view.Routes == nil && routesPart(part.Name) {
@@ -1200,7 +1202,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		step.Routes, step.RouteCache = routesPart(part.Name), &t.routes
 		// the ask, and the parts that ask what the ask does, plan with the readers' states
 		step.Readers = part.Name == "ask" || part.Name == "check" || part.Name == sprint.PartLevelReads
-		step.ReaderStates = t.readers
+		step.ReaderStates, step.ReaderTiers = t.readers, t.tiers
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins
 		step.Halts = true

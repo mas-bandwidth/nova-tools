@@ -100,7 +100,9 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // so the readers of an earlier attempt are not preferred, the finder's first
 // read aside. A read its reader handed back with no verdict is not a read: it
 // is asked of a reader free at the attempt, or of the same reader again when
-// none is (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a
+// none is and it reads the card's tier (tla/DirtyTick.tla,
+// JudgedOnlyAfterTheBound). Every reader asked reads the card's read tier
+// (freeReaders; reader_tiers.go, tla/ReaderTiers.tla). With Another, a
 // primary already asked is dealt to
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
@@ -202,7 +204,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
-		// own reader is asked it again, in place, the round not moved and no
+		// own reader is asked it again, in place, when it reads the primary's
+		// tier (never otherwise: tla/ReaderTiers.tla, AskedWithinTier), the round not moved and no
 		// bound of the primary spent (ReasksBounded: Read counts each return
 		// in reasked and retires the one past MaxReadReasks, and the refusal
 		// below is then the "cannot ask" judgment). Every read the unit asks
@@ -213,7 +216,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		var inPlace []*Card
 		for _, rc := range returned {
 			failed = append(failed, rc.F(FieldRoute))
-			if len(chosenReaders)+len(again) < want {
+			// never in place of a reader outside the primary's tier (reader_tiers.go)
+			if len(chosenReaders)+len(again) < want && s.readerReadsCard(rc.F("reader"), c) {
 				inPlace = append(inPlace, rc)
 				again = append(again, rc.F("reader"))
 				continue

@@ -1966,6 +1966,36 @@ id (`--op`) returns the original result, with no second counter or notification.
   sprint (below) raises the route its reads are drawn on and never their
   count. The reads per machine are unchanged: a reader still runs at its
   machine's width.
+- **A reader row carries the tiers it reads** (the owner, 2026-10-05, of the
+  reading bottleneck, of a friend whose lane runs a flash model: could it
+  "do more reading?", it is "very fast and cheap"; `sprint/reader_tiers.go`, the
+  model `tla/ReaderTiers.tla`). `reader add <reader> --tiers flash[,pro,heavy]`
+  declares them and `reader set <reader>... --tiers <list>` changes them, all
+  or none (a named reader with no row refuses the call and writes nothing);
+  a row that names none reads every tier, the behaviour before rows carried
+  tiers, and `reader add` without `--tiers` keeps the tiers of a row added
+  again. The tiers are a record beside the reader's beat and hold
+  (`reader-tiers:<reader>`, absent for every tier, removed with the row), read
+  with the readers' states, once per tick. A reader counts for a primary only
+  when it reads the primary's read tier (the tier its reads are drawn on, a
+  frontier card's heavy; the read floor: a read runs on a route of its card's
+  tier, never below): the ask asks it nothing else, the level moves it no read
+  of another tier, and the rebalance's safety counts only readers of the tier
+  as takers. A card with too few readers of its tier up (a pro card with one
+  pro reader up and a flash reader idle) is the existing "fewer than two readers
+  up" judgment, whose text names each reader of some tiers only and the tiers
+  it reads, and nothing is asked of a reader outside its tier. A read handed
+  back by a reader outside the card's tier (one asked before the row carried
+  tiers) is never asked again in place: it waits for a free reader of the tier
+  and its card is then retired (`returned`); before rows carried tiers the ask
+  asked a flash reader five pro reads and a heavy one in ten
+  seconds, each returned and re-asked of it in place until six were retired
+  with their re-asks spent in thirty seconds. `reader add` and `reader set`
+  print the tiers the rows now read (`tiers=<list>`, or
+  `tiers=<reader>:<list>;...` when they differ; `--json` a `tiers` map), and
+  `where --all` prints a `tiers:` line under the readers table naming every
+  reader of some tiers only (text only: `where --json` is the same with and
+  without `--all`).
 - ask deals every primary in review that wants a read to as many different
   readers UP as it wants now, in work order. **Reads are asked one at a time,
   each to a reader with room** (`sprint.ReadsWanted` says how many,

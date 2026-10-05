@@ -75,7 +75,15 @@ needs more readers than are up is not asked: the tick raises one judgment
 reader holds a read (asked, reading, ok or broken); reader retire keeps the
 row and its read cards (the history) and takes the reader off the table for
 good: never asked, its queue no beat and reader false, until reader up brings
-it back.`) + "\n"
+it back. A reader row carries the tiers it reads: reader add <reader> --tiers
+flash[,pro,heavy] declares them and reader set <reader>... --tiers <list>
+changes them (a row with none reads every tier; reader add without --tiers keeps
+a row's own). The ask asks a reader only reads of a card whose read tier it
+reads, the level moves it none of another tier, a read it handed back outside
+its tiers is never asked of it again in place, and a card with too few readers
+of its tier up is the same judgment (fewer than two readers up), never a read
+asked of a reader outside its tier. where --all names the readers of some
+tiers only under the readers table.`) + "\n"
 }
 
 // fleetStep is the coordinator's fleet verb as a step: up releases a hold,

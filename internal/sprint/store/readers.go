@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -13,10 +15,13 @@ import (
 // records per reader under the deployment's prefix, outside the tables and the
 // fence as a member's beat is: reader-beat:<reader>, written by the reader's
 // own queue, and reader-away:<reader>, the coordinator's hold, written by
-// reader away and emptied by reader up.
+// reader away and emptied by reader up. A third carries the tiers the reader's
+// row reads (sprint/reader_tiers.go): reader-tiers:<reader>, written by reader
+// add --tiers and reader set --tiers, absent for a row that reads every tier.
 
-func readerBeatKey(reader string) string { return "reader-beat:" + reader }
-func readerAwayKey(reader string) string { return "reader-away:" + reader }
+func readerBeatKey(reader string) string  { return "reader-beat:" + reader }
+func readerAwayKey(reader string) string  { return "reader-away:" + reader }
+func readerTiersKey(reader string) string { return "reader-tiers:" + reader }
 
 // readerHold is the coordinator's hold of a reader away: empty while released.
 // Held marks a hold made by hold <reader> (hold.go), whose state reads held, with
@@ -130,13 +135,13 @@ func (st *Store) setReaderHold(ctx context.Context, reader string, hold readerHo
 	return kv.SetKey(ctx, readerAwayKey(reader), string(out))
 }
 
-// ForgetReaders deletes the beat and the hold of readers taken off the readers
+// ForgetReaders deletes the beat, the hold and the tiers of readers taken off the readers
 // table (reader remove): a reader added again under the name starts clean, and
 // teardown has no key of a reader it can no longer find.
 func (st *Store) ForgetReaders(ctx context.Context, readers []string) error {
 	var keys []string
 	for _, r := range readers {
-		keys = append(keys, st.Names.Key(readerBeatKey(r)), st.Names.Key(readerAwayKey(r)))
+		keys = append(keys, st.Names.Key(readerBeatKey(r)), st.Names.Key(readerAwayKey(r)), st.Names.Key(readerTiersKey(r)))
 	}
 	_, err := st.B.DeleteKeys(ctx, keys)
 	return err
@@ -195,5 +200,67 @@ func (st *Store) readerStatesInto(ctx context.Context, s *sprint.Snapshot) error
 		return err
 	}
 	s.ReaderStates = m
+	tiers, err := st.ReaderTiers(ctx, s.Readers.Rows())
+	if err != nil {
+		return err
+	}
+	s.ReaderTiers = tiers
 	return nil
+}
+
+// SetReaderTiers writes the tiers reader reads (reader add --tiers, reader set
+// --tiers; sprint.ParseReaderTiers names them): every tier is no record, the
+// row's default. The reader is a row of the readers table.
+func (st *Store) SetReaderTiers(ctx context.Context, reader string, tiers []string) error {
+	kv, err := st.rootKV()
+	if err != nil {
+		return err
+	}
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return err
+	}
+	if !contains(rows, reader) {
+		return fmt.Errorf("no reader %s on the readers table; run: nova-sprint reader add %s --tiers %s", reader, reader, strings.Join(tiers, ","))
+	}
+	if slices.Equal(tiers, sprint.ReaderTierNames) {
+		_, err := st.B.DeleteKeys(ctx, []string{st.Names.Key(readerTiersKey(reader))})
+		return err
+	}
+	out, err := json.Marshal(tiers)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, readerTiersKey(reader), string(out))
+}
+
+// ReaderTiers is the tiers each of readers reads, for the readers whose row
+// names some (sprint.Snapshot.ReaderTiers): nil when none does, or the store
+// keeps no records, and every reader reads every tier. An unreadable record
+// names no tier, which the next reader set --tiers replaces.
+func (st *Store) ReaderTiers(ctx context.Context, readers []string) (map[string][]string, error) {
+	kv, err := st.rootKV()
+	if err != nil || len(readers) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(readers))
+	for _, r := range readers {
+		names = append(names, readerTiersKey(r))
+	}
+	vals, oks, err := getKeys(ctx, kv, names)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string][]string
+	for i, r := range readers {
+		var tiers []string
+		if !oks[i] || json.Unmarshal([]byte(vals[i]), &tiers) != nil || len(tiers) == 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string][]string{}
+		}
+		out[r] = tiers
+	}
+	return out, nil
 }
