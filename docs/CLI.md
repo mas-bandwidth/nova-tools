@@ -1107,6 +1107,18 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 
 `nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
 
+A fleet member back from down adopts the latest before it is dealt when the
+coordinator's machine sets `NOVA_SPRINT_ADOPT_FLAGS` to `nova-update release adopt`'s
+flags less `--machines`, `--version` and `--dry-run` (blank-separated: `--ssh`, `--from`,
+`--bin`, `--dest`, the stage's digest, `--no-certify` or the certification's three) and
+`nova-sprint` was built with a release stamp: the tick holds a member whose beat
+returns after it was down (the fleet table's status `adopting`, reason `adopting <release>: back
+from down`), adopts the release this `nova-sprint` runs onto that machine alone, reads its
+installed version back, and brings it up at its width with one note `<m> is back:
+<old> -> <new>`; a failed adoption keeps it held with the failure as its reason and
+one judgment (`fleet up <m>` brings it up as it is). Unset, a member back is up at
+once (docs/SPEC-SPRINT.md section 5, "Back from down: adopt the latest").
+
 ### The sprint backup
 
 `nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store, and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=<document+counts|counts> secrets=none`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).
