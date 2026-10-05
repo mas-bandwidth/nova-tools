@@ -65,6 +65,7 @@ type world struct {
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
+	finish    func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -77,6 +78,24 @@ type world struct {
 	random    func() string
 	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+}
+
+// sprintVerb sends one worker verb (progress, finish) to the sprint server and answers its
+// refusal as an error.
+func sprintVerb(ctx context.Context, server string, argv []string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
+	if err != nil {
+		return err
+	}
+	if len(res) != 1 {
+		return fmt.Errorf("%s: the server answered %d results, want 1", argv[0], len(res))
+	}
+	if res[0].Code != 0 {
+		return fmt.Errorf("%s refused: %s", argv[0], strings.TrimSpace(res[0].Stderr))
+	}
+	return nil
 }
 
 func realWorld() world {
@@ -115,21 +134,8 @@ func realWorld() world {
 			}
 			return res[0].Stdout, nil
 		},
-		progress: func(ctx context.Context, server string, argv []string) error {
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
-			if err != nil {
-				return err
-			}
-			if len(res) != 1 {
-				return fmt.Errorf("progress: the server answered %d results, want 1", len(res))
-			}
-			if res[0].Code != 0 {
-				return fmt.Errorf("progress refused: %s", strings.TrimSpace(res[0].Stderr))
-			}
-			return nil
-		},
+		progress: sprintVerb,
+		finish:   sprintVerb,
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
 		settings: friend.OSFS{},
@@ -777,6 +783,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return nil
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		Finish: func(ctx context.Context, argv []string) error {
+			if w.finish == nil {
+				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
+			}
+			return w.finish(ctx, server, argv)
+		},
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
 			if err != nil {

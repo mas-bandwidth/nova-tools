@@ -635,7 +635,8 @@ there, the card is done and the lane takes the next; absent, the same card
 is handed again once, and after `CardTurns` (two) turns without it the card
 is set aside (recorded in `lanes.json`, never handed again by this daemon),
 and the coordinator is told once on the bus, `friend <name>: card <id> not
-finished after 2 turns (lane <n>): <reason>`. The reason is the last turn's:
+finished after 2 turns (lane <n>): <reason>`, and the card is finished failed
+in the sprint (a lane's end, below). The reason is the last turn's:
 a permission the harness refused, a turn stopped silent, the provider's
 refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
@@ -725,6 +726,63 @@ per-friend `tier` on the row (flash, pro, heavy, frontier), defaulted from a
 small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
+
+### lane-end-finishes-the-card.w1 — a lane's end is a finish
+
+The owner, 2026-10-05: "Now let's look at friends. Are they actually doing
+work?" Six one-shot runs had ended overnight without writing `REPORT.md`
+(killed at a cap, or exited early), so friend sync never saw a finish and the
+cards stayed working on the friend's row for up to 14 hours; the coordinator
+closed them by hand with `finish --failed`. A lane is done with a card when
+its `RESULT.md` or `REPORT.md` is there after a turn, or when the card is set
+aside after `CardTurns`; that end is the card's finish (`lane_end.go`):
+
+- the friend wrote `outbox/<job>/REPORT.md`: that is the finish, and friend
+  sync reads it as before; the lane writes nothing over it and sends nothing
+  (`finish=report` on the record);
+- she did not: the lane writes `outbox/<job>/REPORT.md` itself, with
+  `Verdict: FAIL`, or `Verdict: HOLD` with `Head: <sha>` when she pushed, and
+  one paragraph naming the lane and how the run ended: its exit, its wall, the
+  turns it had, the cap that stopped it (`no output for <SilentStop>`) or the
+  permission refused or the harness's error, and the pushed head or
+  `no pushed head found`. It then sends the failed finish to the sprint
+  server, as the friend's row:
+  `finish --as friend.<name> <card>@<gen> --epoch <n> --failed [--head <sha>] --branch <b> --report "friend <name> <verdict>: <paragraph>"`,
+  the words friend sync would use for the same report
+  (`finish=failed sent=server`). A finish the server does not answer within
+  `FinishWait`, or refuses, is said on the record
+  (`sent=sync finish_error=...`) and left to friend sync, which finishes the
+  card from the report the lane wrote.
+
+The card's generation and epoch are read off its job directory,
+`<id>~<epoch>[.g<gen>]` (nova-sprint `friendJobOf`; `ParseJob`); a lane hands
+the generation the queue names (`cardDir`), and the finish names that
+generation, `<card>@<gen>`. The pushed head is the branch the brief's
+STATUS line names, read as `refs/remotes/origin/<branch>` (loose or packed,
+through a worktree's `.git` file too) in a clone under `jobs/<job>/`: a push
+writes it, and no network is asked. A card with a `REPORT.md` is not handed to
+a lane.
+
+A lane marks each card it begins as started in `lanes.json` (`started`, keyed
+by the job, `<id>~<epoch>[.g<gen>]`: its lane, the card and when) and clears it at the card's end. A daemon starting up
+finds every card still marked: the run that held it is gone with the daemon
+that ran it (exited, killed or crashed), so it ends each as above, the report's
+paragraph saying `the run is gone: the lane daemon started up at <t> and found
+the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, by
+job, as a set-aside card is) so it is not handed again. A daemon stopping leaves its running cards marked, for the next
+one to finish.
+
+The model is `internal/friend/tla/LaneEnd.tla` (TLC on a Linux bench, two cards:
+288 distinct states, `NoOrphan`, `HersStands` and `Finished` hold); its
+reversed witness `MCLaneEndBrokenNoWrite.cfg`, a lane that writes nothing at a
+run's end as before this card, breaks `NoOrphan` in 6 states.
+
+Not done here: the claude one-shot runner that marks a job started outside
+nova-friend (the runner that ran the six overnight runs) is not in this
+repository, and `take back`'s refusal of a card with a push is in
+internal/sprint; both are outside this card. A gone run is known by the
+daemon's restart alone: no process id is kept, so a harness that outlived its
+daemon is not checked.
 
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
 
