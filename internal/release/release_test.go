@@ -1016,6 +1016,56 @@ func TestInstallLeavesEveryToolAloneWhenOneStagingFails(t *testing.T) {
 	})
 }
 
+// TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside pins security#72 finding 5.
+//
+// A directory at a tool path cannot be replaced by an executable. Install
+// must refuse to touch it, leaving the directory and any files inside intact,
+// and must not leave an aside or staged temp behind.
+func TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside(t *testing.T) {
+	t.Parallel()
+
+	goos, _ := platformOf(t, "")
+	from := built(t, "v0.16.0", "", "nova-c")
+	bin := t.TempDir()
+	name := ToolFile("nova-c", goos)
+	target := filepath.Join(bin, name)
+	require.NoError(t, os.Mkdir(target, 0o755))
+	keep := filepath.Join(target, "keep.txt")
+	require.NoError(t, os.WriteFile(keep, []byte("preserved"), 0o644))
+
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+		&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+			return "", fmt.Errorf("absent")
+		}})
+	require.NotZero(t, code, "install must fail when tool path is a directory: out=%s errs=%s", o.String(), e.String())
+	require.Contains(t, e.String(), "INSTALL FAIL")
+	require.Contains(t, e.String(), "not a regular file")
+
+	info, err := os.Lstat(target)
+	require.NoError(t, err)
+	require.True(t, info.IsDir(), "%s should still be a directory", target)
+
+	body, err := os.ReadFile(keep)
+	require.NoError(t, err)
+	require.Equal(t, "preserved", string(body))
+
+	entries, err := os.ReadDir(bin)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			require.FailNowf(t, "assertion failed", "unexpected temp file or aside left behind: %s", entry.Name())
+		}
+	}
+	require.Len(t, entries, 1)
+	require.Equal(t, name, entries[0].Name())
+
+	for _, aside := range []string{"." + name + ".old", "." + name + ".new"} {
+		_, err := os.Lstat(filepath.Join(bin, aside))
+		require.True(t, os.IsNotExist(err), "unexpected aside or temp %s: %v", aside, err)
+	}
+}
+
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
 	t.Parallel()
 
