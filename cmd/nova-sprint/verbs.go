@@ -76,6 +76,7 @@ func init() {
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
+		{"verify-landed", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>]", "verify-landed --stream s1 --base main", (*app).cmdVerifyLanded},
 		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
 		{"backup", "--file <path>", "backup --file /tmp/nova-sprint-backup.rdb", (*app).cmdBackup},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
