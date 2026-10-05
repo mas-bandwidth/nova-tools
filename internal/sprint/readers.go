@@ -204,11 +204,26 @@ func enoughReadersUp(s *Snapshot, pr *Card) bool {
 // at its current attempt and head (okReaders).
 func acceptable(s *Snapshot, pr *Card) bool { return len(okReaders(s, pr)) >= ReadsNeeded(pr) }
 
+// placedReadsAt is the primary's placed read cards at an attempt,
+// checking both the plain identity and the second identity (.g1).
+func placedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	var out []*Card
+	for _, r := range s.Readers.Rows() {
+		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
+			if c := s.Readers.Placed(id); c != nil {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.
 func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
-	for _, rc := range readsAt(s, pr, attempt) {
+	for _, rc := range placedReadsAt(s, pr, attempt) {
 		if !awayRead(s, rc) && !returnedRead(rc) {
 			out = append(out, rc)
 		}
@@ -230,19 +245,42 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
+// ReadCardForAsk returns the read card ID to use when asking a reader of a primary
+// at an attempt: plain identity if no card exists yet, or second identity if an
+// away-retired card exists with the plain identity and no second card exists yet.
+// ok is true if the reader is eligible to be asked.
+func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
+	plain := ReadCardID(primary, attempt, reader)
+	existing := s.Readers.Card(plain)
+	if existing == nil {
+		return plain, true
+	}
+	if existing.F("retired_by") == "away" {
+		second := ReadCardSecondID(primary, attempt, reader)
+		if s.Readers.Card(second) == nil {
+			return second, true
+		}
+	}
+	return plain, false
+}
+
 // freeReaders is the readers the ask may ask the primary's attempt of: up,
 // reading the primary's tier (readerReadsTier; an empty tiers cell reads every
 // tier), with no read card of it at the attempt, placed or retired. A reader
 // is asked an attempt once: one read card per reader per attempt (ReadCardID),
-// so a reader with a card at this attempt (read, or taken back away, levelled
-// or returned) is not asked it again; the next attempt is read on new cards,
-// by every reader of the tier.
+// so a reader with a card at this attempt (read, or taken back levelled or
+// returned) is not asked it again; the next attempt is read on new cards, by
+// every reader of the tier. A card taken back by the away sweep (retired_by
+// away) is no card at the attempt: while no second card exists the reader is
+// asked it again under the second identity ReadCardSecondID (ReadCardForAsk).
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	tier := s.readTierOf(pr)
 	var out []string
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.readerReadsTier(rd, tier) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
-			out = append(out, rd)
+		if s.ReaderIsUp(rd) && s.readerReadsTier(rd, tier) {
+			if _, ok := ReadCardForAsk(s, pr.ID, attempt, rd); ok {
+				out = append(out, rd)
+			}
 		}
 	}
 	return out
@@ -377,7 +415,7 @@ func sweepReads(s *Snapshot, p *Plan) {
 		}
 		tier := s.readTierOf(pr)
 		for _, rd := range up {
-			if s.readerReadsTier(rd, tier) && s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+			if _, ok := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), rd); ok && s.readerReadsTier(rd, tier) {
 				return true
 			}
 		}
@@ -540,8 +578,8 @@ func levelReads(s *Snapshot, p *Plan) {
 				tier = s.readTierOf(pr)
 			}
 			for _, rd := range up {
-				id := ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd)
-				if s.Readers.Card(id) != nil || planned[id] || (tier != "" && !s.readerReadsTier(rd, tier)) {
+				id, ok := ReadCardForAsk(s, q[i].F("primary"), q[i].Int("attempt"), rd)
+				if !ok || planned[id] || (tier != "" && !s.readerReadsTier(rd, tier)) {
 					avoid = append(avoid, rd)
 				}
 			}
@@ -557,12 +595,12 @@ func levelReads(s *Snapshot, p *Plan) {
 		queues[long] = append(q[:i:i], q[i+1:]...)
 		moves[c.ID] = to
 		fields := movedReadFields(c, to, s.Now)
-		id := ReadCardID(c.F("primary"), c.Int("attempt"), to)
-		planned[id] = true
+		targetID, _ := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), to)
+		planned[targetID] = true
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{
 			change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByLevel})),
-			change(Readers, createEntry(id, to, Asked, c.Score, fields)),
-		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, id)})
+			change(Readers, createEntry(targetID, to, Asked, c.Score, fields)),
+		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, targetID)})
 	}
 	roundWrites(p, rr, moves)
 }

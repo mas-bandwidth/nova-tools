@@ -548,14 +548,19 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 	// and the read card ids the ask part could create for every primary in
 	// review, at its attempt: one retired there (read, taken back or returned)
 	// means that reader already had it, whatever is placed beside it (a read
-	// placed on a reader since gone away is taken back by the same ask).
+	// placed on a reader since gone away is taken back by the same ask). Both
+	// identities of a read are listed (ReadCardIDs): an away-retired plain card
+	// and its re-ask's second one (SPEC-SPRINT, the reader re-ask), so a retired
+	// second card is in a sparse snapshot as well.
 	var reads []string
 	if s.Readers != nil {
 		for _, c := range s.Work.Column(sprint.Review) {
 			attempt := c.Int("attempt")
 			for _, rd := range s.Readers.Rows() {
-				if id := sprint.ReadCardID(c.ID, attempt, rd); s.Readers.Placed(id) == nil {
-					reads = append(reads, id)
+				for _, id := range ReadCardIDs(c.ID, attempt, rd) {
+					if s.Readers.Placed(id) == nil {
+						reads = append(reads, id)
+					}
 				}
 			}
 		}

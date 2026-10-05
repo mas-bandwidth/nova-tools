@@ -394,3 +394,21 @@ func TestTickCoverStoreLandingRate(t *testing.T) {
 		})
 	}
 }
+
+// tickExtras lists both identities of every read a primary in review could be
+// asked at its attempt that is not placed, so a retired second card (.g1) is in
+// a sparse tick snapshot beside the retired plain one; a placed card is not
+// listed (it is in the snapshot already).
+func TestTickExtrasListsBothReadIdentitiesOfEveryReaderNotPlaced(t *testing.T) {
+	t.Parallel()
+	s := &sprint.Snapshot{Work: sprint.NewTable(sprint.Work), Readers: sprint.NewTable(sprint.Readers)}
+	s.Work.SetRows([]string{"s1"})
+	s.Work.Put(&sprint.Card{ID: "p1", Row: "s1", Col: sprint.Review, Rev: 1, Fields: map[string]string{"kind": "primary", "attempt": "2", "stream": "s1"}})
+	s.Readers.SetRows([]string{"reader-a", "reader-b"})
+	s.Readers.Put(&sprint.Card{ID: sprint.ReadCardID("p1", 2, "reader-b"), Row: "reader-b", Col: sprint.Asked, Rev: 1, Fields: map[string]string{"kind": "read", "primary": "p1", "attempt": "2"}})
+	got := tickExtras(s)[sprint.Readers]
+	assert.ElementsMatch(t, []string{
+		sprint.ReadCardID("p1", 2, "reader-a"), sprint.ReadCardSecondID("p1", 2, "reader-a"),
+		sprint.ReadCardSecondID("p1", 2, "reader-b"),
+	}, got, "both identities of a reader with no card, the second of one whose plain card is placed")
+}
