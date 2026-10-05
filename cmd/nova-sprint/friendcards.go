@@ -447,15 +447,24 @@ func (a *app) busWatch(addr, user string) *bus.Watch {
 	return w
 }
 
-// openBus is the real busOpen: the bus store dialed as nova-bus dials it
-// (internal/redisconn, the fleet's login from the environment).
-func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
-	// the bus has its own login (NOVA_BUS_REDIS_USER, NOVA_BUS_REDIS_PASSWORD_ENV), never the
-	// sprint store's: a coordinator's store login sent to a bus with no users is refused
-	// (WRONGPASS), and every note to a friend failed that way on 2026-10-04
+// busOptions selects the login for the bus connection used by friend sync
+// (SPEC-SPRINT section 1). It holds variable names, never a password value.
+func busOptions(getenv func(string) string) redisconn.Options {
+	addr := getenv(busRedisEnv)
+	user := getenv(busUserEnv)
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: busUserEnv}}
 	if user != "" {
 		o.Env.PasswordEnv = busPasswordEnvEnv
+	}
+	return o
+}
+
+// openBus is the real busOpen: the bus store dialed as nova-bus dials it
+// (internal/redisconn, the fleet's login from the environment).
+func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
+	o := busOptions(a.getenv)
+	if addr != "" {
+		o.Addr = addr
 	}
 	conn, err := redisconn.Open(ctx, o, a.getenv)
 	if err != nil {
