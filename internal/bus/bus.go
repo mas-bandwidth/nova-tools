@@ -219,6 +219,12 @@ type Store interface {
 	// Get is the named entries of the stream, in one trip (a pipeline of XRANGE
 	// id id); an id that is not there is left out.
 	Get(ctx context.Context, stream string, entries []string) ([]Entry, error)
+}
+
+// Waiter is the two reads a wait makes over a Store that also holds them: the
+// Redis store does; a Store without them cannot wait (SPEC-BUS.md, the verbs:
+// wait).
+type Waiter interface {
 	// Tail is the stream's last entry id and whether the stream is there at
 	// all (XINFO STREAM's last-generated-id, "0-0" for an empty one): the
 	// cursor a wait arms at when the caller gives none (SPEC-BUS.md, the
@@ -230,6 +236,15 @@ type Store interface {
 	// group, so what it hands out is still a later recv's to deliver and ack
 	// (SPEC-BUS.md, the verbs: wait).
 	BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]Entry, error)
+}
+
+// Waiter is the Store's wait reads, or the refusal of a Store that has none.
+func (b *Bus) Waiter() (Waiter, error) {
+	w, ok := b.Store.(Waiter)
+	if !ok {
+		return nil, errors.New("this store cannot wait")
+	}
+	return w, nil
 }
 
 // Bus is the rules over a Store.
@@ -572,7 +587,11 @@ func (b *Bus) WaitArm(ctx context.Context, as, after string) (string, error) {
 	if after != "" {
 		return after, nil
 	}
-	tail, exists, err := b.Store.Tail(ctx, StreamOf(as))
+	w, err := b.Waiter()
+	if err != nil {
+		return "", err
+	}
+	tail, exists, err := w.Tail(ctx, StreamOf(as))
 	if err != nil {
 		return "", err
 	}

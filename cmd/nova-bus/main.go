@@ -885,6 +885,10 @@ func (w world) wait(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
+	waiter, err := b.Waiter()
+	if err != nil {
+		return answer(err)
+	}
 	jsonOut := c.Bool("json")
 	if !jsonOut {
 		waitLine(c, tool.Done().As("ARMED").Fact("after", cursor))
@@ -939,7 +943,7 @@ func (w world) wait(c *tool.Call) *tool.Out {
 				block = left
 			}
 		}
-		got, err := b.Store.BlockRead(ctx, bus.StreamOf(as), cursor, block, bus.WaitRead)
+		got, err := waiter.BlockRead(ctx, bus.StreamOf(as), cursor, block, bus.WaitRead)
 		if err != nil {
 			return answer(err)
 		}

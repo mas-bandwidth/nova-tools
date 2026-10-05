@@ -244,9 +244,9 @@ func TestAStoreThatIsDownIsAnError(t *testing.T) {
 	assert.ErrorIs(t, err, f.Fail)
 	_, err = b.Names(ctx)
 	assert.ErrorIs(t, err, f.Fail)
-	_, _, err = b.Store.Tail(ctx, StreamOf("bob"))
+	_, _, err = b.Store.(Waiter).Tail(ctx, StreamOf("bob"))
 	assert.ErrorIs(t, err, f.Fail)
-	_, err = b.Store.BlockRead(ctx, StreamOf("bob"), "0-0", 0, 1)
+	_, err = b.Store.(Waiter).BlockRead(ctx, StreamOf("bob"), "0-0", 0, 1)
 	assert.ErrorIs(t, err, f.Fail)
 }
 
