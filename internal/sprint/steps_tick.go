@@ -637,6 +637,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// one judgment per provider while its routes rest for its funds or its key, never one
 	// per card (provider_funds.go)
 	pc, stop := providerConds(s)
+	pc, stop = friendsKeepRunning(pc, stop, r.Friends)
 	conds = append(conds, pc...)
 	// a member whose cards are timing out, three within the window (overload.go)
 	conds = append(conds, overloadConds(s)...)
