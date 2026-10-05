@@ -10,7 +10,8 @@ import (
 
 // releaseHoldWords tells release apart from the holds on a member, a reader,
 // and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
-const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, or friend:
+const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
+  unhold <name>... releases any of them (one verb for the four)
   fleet up <member> releases a held member
   reader up <reader> releases a held reader
   friend up <friend> releases a held friend
@@ -190,6 +191,10 @@ func verbProse(name string) string {
 		return friendLevelWords
 	case "add", "brief":
 		return cardHelpWords
+	case "hold", "unhold":
+		return holdWords()
+	case "fleet down", "reader away", "reader up":
+		return oldHoldWords(name)
 	default:
 		return ""
 	}

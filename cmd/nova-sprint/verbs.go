@@ -75,9 +75,11 @@ func init() {
 		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
+		{"hold", "<member|reader|friend|stream>... --reason <text> [--return]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},
+		{"unhold", "<member|reader|friend|stream>... [--reason <text>]", "unhold m1 --reason 'the cleaner is fixed'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(true, args, o, e) }},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n> | --width 0]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
-		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
+		{"fleet down", "<member>", "fleet down m1", (*app).cmdFleetDown},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"friend sync", "[--pg <dsn>] [--root <dir>]", "friend sync", (*app).cmdFriendSync},
@@ -228,6 +230,7 @@ and prints each one's generation.
 ` + inboxExample + `
 ` + machineWords() + `
 ` + serverWords() + `
+` + holdWords() + `
 ` + fleetWords() + `
 ` + friendWords() + `
 ` + readerWords() + `
@@ -2557,14 +2560,12 @@ func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "%s %s: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, verbName, strings.Join(bad, ","), strings.Join(rows, ","))
 		return 1
 	}
-	for _, n := range names {
-		if err := st.SetReaderAway(ctx, n, away, c.actor); err != nil {
-			fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.Escape(err.Error()))
-			return 1
-		}
-	}
-	sayOK(stdout, c.json, verbName, token(verbName)+" OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
-	return 0
+	// the old words of hold <reader>... --return and unhold <reader>... (one release): the
+	// reads it holds are asked of another, as a reader away's always were
+	// (docs/SPEC-SPRINT.md section 11)
+	return a.runHold(verbName, "", *c, st, sprint.HoldReq{Names: names, Kind: sprint.HoldReader, Release: !away, Return: away, Who: c.actor}, func() (string, map[string]any) {
+		return token(verbName) + " OK readers=" + strings.Join(names, ","), map[string]any{"readers": names}
+	}, stdout, stderr)
 }
 
 // cmdReaderRemove takes the named readers off the readers table (the mirror of
