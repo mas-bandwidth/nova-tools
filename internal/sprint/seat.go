@@ -92,3 +92,81 @@ func MoveSeat(s *Snapshot, r SeatReq) Plan {
 	p.Seat = c
 	return p
 }
+
+// The seat key follows the seat record (docs/SPEC-SPRINT.md, "Handing over the
+// seat", seat-key-follows-record.w2): a server whose unit names another actor
+// than the seat's holder once left the key naming that actor after each
+// restart, and every coordinator verb of the holder was refused until the key
+// was set by hand.
+// Only init and the seat's own steps write the key, and from the record: the
+// run loop never does, whatever actor it runs as. seat shows the key, the
+// record's holder and the server's actor, and a drift between them; seat
+// --repair writes the key from the record.
+
+// SeatDrift is how the key, the record's holder and the server's actor
+// disagree, "" when they do not: the key names someone the record does not, or
+// the server runs as a named actor who is not the holder. record is "" when the
+// seat has no record (init's key is the record then); server is "" when no
+// server is recorded, and MachineActor is the server acting as no one.
+func SeatDrift(key, record, server string) string {
+	holder := record
+	if holder == "" {
+		holder = key
+	}
+	var why []string
+	if record != "" && key != record {
+		why = append(why, "the key says "+orDash(key)+" and the record "+record+": nova-sprint seat --repair --reason <text> (the holder or the owner)")
+	}
+	if server != "" && server != MachineActor && server != holder {
+		why = append(why, "the server runs as "+server+" and the seat is "+orDash(holder)+"'s: change the server's NOVA_SPRINT_ACTOR="+server+" to NOVA_SPRINT_ACTOR="+orDash(holder)+" and restart it")
+	}
+	return strings.Join(why, "; ")
+}
+
+// SeatRepairReq asks for the coordinator key to be written from the seat's
+// record. Owner is the sprint's owner ("" when it names none).
+type SeatRepairReq struct {
+	Who, Reason, Owner string
+}
+
+// NotSeatRepair is why who may not repair the key, "" is may: the record's
+// holder or the owner, with a reason, while the key says someone else. ok is
+// whether the seat has a record (rec its last change).
+func NotSeatRepair(key string, rec SeatChange, ok bool, r SeatRepairReq) string {
+	switch {
+	case strings.TrimSpace(r.Reason) == "":
+		return "a repair of the seat's key wants --reason <text>: it is recorded in the log"
+	case !ok:
+		return "the seat has not moved since init, and init's key is its record: there is nothing to repair it from; nothing was changed"
+	case key == rec.Holder:
+		return "the key says " + key + " as the record does; nothing was changed"
+	case r.Who != rec.Holder && (r.Owner == "" || r.Who != r.Owner):
+		why := "the seat's key is repaired by the record's holder: " + rec.Holder + ", not " + orDash(r.Who)
+		if r.Owner != "" {
+			why += " (or the owner: " + r.Owner + ")"
+		}
+		return why + "; nothing was changed"
+	}
+	return ""
+}
+
+// RepairSeat is the key written from the record rec, read before the step: the
+// commit writes the record back unchanged with its holder as the key, and a
+// happened note, the log's line of it, says who and why. A seat that moved since
+// rec was read (its generation is not rec's) is refused: the step reads again.
+func RepairSeat(s *Snapshot, rec SeatChange, r SeatRepairReq) Plan {
+	var p Plan
+	if s.SeatGeneration != max(rec.Generation, FirstSeatGeneration) {
+		p.refuse(rec.Holder, "the seat moved since its record was read; run seat again; nothing was changed")
+		return p
+	}
+	if why := NotSeatRepair(s.Coordinator, rec, true, r); why != "" {
+		p.refuse(rec.Holder, why)
+		return p
+	}
+	c := rec
+	p.Notes = []Note{{Kind: Happened, Type: NSeat, At: s.Now, Who: r.Who, To: rec.Holder,
+		What: "repaired: the key said " + orDash(s.Coordinator) + ", the record " + rec.Holder + ": " + strings.TrimSpace(r.Reason) + ", by " + r.Who}}
+	p.Seat = &c
+	return p
+}

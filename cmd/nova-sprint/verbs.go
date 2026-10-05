@@ -119,7 +119,7 @@ func init() {
 		{"view worker", "--as <member|friend> [--since <cursor>] [--json]", "view worker --as m1 --json", (*app).cmdViewWorker},
 		{"seat install", "[--dir <dir>] [--log <file>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
-		{"seat", "", "seat", (*app).cmdSeat},
+		{"seat", "[--repair --reason <text>]", "seat", (*app).cmdSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
 		{"stats", "", "stats", (*app).cmdStats},
@@ -991,7 +991,9 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	if err := st.B.SetCoordinator(ctx, *coordinator); err != nil {
+	// the key from the seat's record when the seat has moved, else the first
+	// coordinator: never from an actor that is not the holder (seat-key-follows-record.w2)
+	if _, err := st.InitSeat(ctx, *coordinator); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
