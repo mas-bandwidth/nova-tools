@@ -80,6 +80,7 @@ Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
 --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
 Completed launches leave no checkout; each pool keeps its newest five failed launches.
 No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
+--max-load refuses a local child above the configured one-minute host load; --warn-load warns at its threshold through that bound.
 The shared Go build cache is held under --gocache-limit GiB (default 20), never an entry used in the last two hours.
 A staging refusal reports why so the sprint can deal the card to another member.`,
 	"lint": `a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file

@@ -7,6 +7,18 @@ of the team", "it must be this way when they start up next time, not just now,
 but always", and "like a network connection: client/server and the coordinator
 is the server; both sides need to know they are connected, continually".
 
+## The local child load gate
+
+Friend work runs as fleet cards. A `nova-swarm member` may configure the raw
+one-minute host-load thresholds `--max-load` and `--warn-load`. Immediately
+before it creates a new local child, it reads that load through `hostload.Source`:
+above the maximum it refuses the launch and names the measured load and bound;
+at or above the warning threshold through the maximum it warns with both values
+and starts. Zero disables the corresponding check, and both default to zero, so
+existing fleet members keep their previous admission behavior. An unavailable
+load reading also leaves that behavior unchanged. The warning threshold requires
+an enabled maximum and cannot exceed it; near is configured, never inferred.
+
 ## The pattern in one sentence
 
 One daemon per friend, started by launchd and never by the model, parks on the
