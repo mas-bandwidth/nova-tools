@@ -891,53 +891,129 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 }
 
 // TestInstallLeavesEveryToolAloneWhenOneStagingFails pins security#72 finding 4.
-// A directory planted at the predictable temp name fails the second tool. The
-// install must exit non-zero and leave every tool at the bytes it had, with
-// no temp this run created left behind.
+//
+// The planted directory at the predictable .<tool>.new name must not be what
+// fails the install. Publish renames the staged temp onto the target, so
+// that name is never opened and both tools land. An install that replaces
+// nova-a before nova-b is published dies on the plant; rolling nova-a back
+// to its old bytes would still hide that, so this case requires the new
+// artifact, not the end state after a restore.
+//
+// The other case is a real staging failure, before any rename. nova-a has
+// to be the same file it was, not a copy put back afterwards.
 func TestInstallLeavesEveryToolAloneWhenOneStagingFails(t *testing.T) {
 	t.Parallel()
 
-	goos, _ := platformOf(t, "")
-	from := built(t, "v0.16.0", "", "nova-a", "nova-b")
-	bin := t.TempDir()
-	nameA := ToolFile("nova-a", goos)
-	nameB := ToolFile("nova-b", goos)
-	if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
-		require.NoError(t, err, err)
-	}
-	if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
-		require.NoError(t, err, err)
-	}
-	planted := "." + nameB + ".new"
-	if err := os.Mkdir(filepath.Join(bin, planted), 0o755); err != nil {
-		require.NoError(t, err, err)
-	}
+	t.Run("planted temp name does not fail the install", func(t *testing.T) {
+		t.Parallel()
 
-	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
-		&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
-			return "", fmt.Errorf("absent")
-		}})
-	if code == 0 {
-		require.NotEqual(t, 0, code, "install succeeded despite a planted temp directory:\n%s%s", o.String(), e.String())
-	}
-	body, err := os.ReadFile(filepath.Join(bin, nameA))
-	if err != nil || string(body) != "old-a" {
-		require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameA, body, err, e.String())
-	}
-	body, err = os.ReadFile(filepath.Join(bin, nameB))
-	if err != nil || string(body) != "old-b" {
-		require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameB, body, err, e.String())
-	}
-	entries, err := os.ReadDir(bin)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	for _, entry := range entries {
-		if strings.Contains(entry.Name(), ".new") && entry.Name() != planted {
-			require.FailNowf(t, "assertion failed", "a .new file this run created was left behind: %s", entry.Name())
+		goos, _ := platformOf(t, "")
+		from := built(t, "v0.16.0", "", "nova-a", "nova-b")
+		bin := t.TempDir()
+		nameA := ToolFile("nova-a", goos)
+		nameB := ToolFile("nova-b", goos)
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
+			require.NoError(t, err, err)
 		}
-	}
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		planted := "." + nameB + ".new"
+		if err := os.Mkdir(filepath.Join(bin, planted), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+			&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+				return "", fmt.Errorf("absent")
+			}})
+		if code != 0 {
+			require.Equal(t, 0, code, "planted %s failed the install (a tool was published before the rest):\n%s%s", planted, o.String(), e.String())
+		}
+		assertRunnable(t, filepath.Join(bin, nameA))
+		assertRunnable(t, filepath.Join(bin, nameB))
+		info, err := os.Lstat(filepath.Join(bin, planted))
+		if err != nil || !info.IsDir() {
+			require.FailNowf(t, "assertion failed", "planted %s is %v (%v); publish must not open that name", planted, info.Mode(), err)
+		}
+		entries, err := os.ReadDir(bin)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		for _, entry := range entries {
+			if entry.Name() != planted && (strings.Contains(entry.Name(), ".new") || strings.Contains(entry.Name(), ".aside")) {
+				require.FailNowf(t, "assertion failed", "a temp this run created was left behind: %s", entry.Name())
+			}
+		}
+	})
+
+	t.Run("one staging failure replaces nothing", func(t *testing.T) {
+		t.Parallel()
+
+		goos, goarch := platformOf(t, "")
+		from := built(t, "v0.16.0", "", "nova-a", "nova-b")
+		bin := t.TempDir()
+		nameA := ToolFile("nova-a", goos)
+		nameB := ToolFile("nova-b", goos)
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		af, err := os.Open(filepath.Join(bin, nameA))
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		before, err := af.Stat()
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := af.Close(); err != nil {
+			require.NoError(t, err, err)
+		}
+		art := ArtifactDir(from, "v0.16.0", goos, goarch)
+		var removeErr error
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+			&o, &e, Deps{VersionOf: func(_ context.Context, target string) (string, error) {
+				// After nova-a has been staged and before nova-b is. The
+				// artifact was verified already; removing it fails staging
+				// and must not publish anything.
+				if filepath.Base(target) == nameB {
+					removeErr = os.Remove(filepath.Join(art, nameB))
+				}
+				return "", fmt.Errorf("absent")
+			}})
+		if removeErr != nil {
+			require.NoError(t, removeErr, removeErr)
+		}
+		if code == 0 || !strings.Contains(e.String(), "were in place") || strings.Contains(e.String(), "restored") || strings.Contains(e.String(), "left replaced") {
+			require.FailNowf(t, "assertion failed", "staging failure was not reported before any publish: code=%d\n%s%s", code, o.String(), e.String())
+		}
+		after, err := os.Stat(filepath.Join(bin, nameA))
+		if err != nil || !os.SameFile(before, after) {
+			require.FailNowf(t, "assertion failed", "%s was replaced before every staged file was published (rollback hides the bytes)\n%s", nameA, e.String())
+		}
+		body, err := os.ReadFile(filepath.Join(bin, nameA))
+		if err != nil || string(body) != "old-a" {
+			require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameA, body, err, e.String())
+		}
+		body, err = os.ReadFile(filepath.Join(bin, nameB))
+		if err != nil || string(body) != "old-b" {
+			require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameB, body, err, e.String())
+		}
+		entries, err := os.ReadDir(bin)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), ".new") || strings.Contains(entry.Name(), ".aside") {
+				require.FailNowf(t, "assertion failed", "a temp this run created was left behind: %s", entry.Name())
+			}
+		}
+	})
 }
 
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {

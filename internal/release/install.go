@@ -213,8 +213,12 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	// The old loop renamed tool by tool, so a planted .<tool>.new failed the
 	// next tool after earlier ones were already replaced. CreateTemp is
 	// exclusive and unpredictable; mode 0755; every error path removes the
-	// temps. Renames run only once every tool is staged, and a rename that
-	// fails puts back the tools already replaced.
+	// temps. Renames run only once every tool is staged. Each rename is
+	// os.Rename of that temp onto the target: installFile would write the
+	// bytes again to the fixed name "."+base+".new", and a directory planted
+	// there would fail mid-loop after earlier tools were already replaced.
+	// installFile itself is unchanged (windows aside, findings 5 and 8).
+	// A rename that fails puts back the tools already replaced.
 	type stagedTool struct {
 		name   string
 		target string
@@ -285,13 +289,16 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	failReplaced := func(tool string, err error) int {
 		names, rerr := restorePlaced()
 		removeStaged()
+		// names are the tools put back. The rest of placed are still the
+		// new bytes. Saying 0 whenever restore failed was a false claim.
+		left := len(placed) - len(names)
 		if rerr != nil {
 			err = fmt.Errorf("%w; restore failed: %v", err, rerr)
 		} else if len(names) > 0 {
 			err = fmt.Errorf("%w; restored %s", err, strings.Join(names, ","))
 		}
-		fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; 0 of %d left replaced)\n",
-			field(tool), field(o.bin), oneLine("", err), len(arts))
+		fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d left replaced)\n",
+			field(tool), field(o.bin), oneLine("", err), left, len(arts))
 		return 1
 	}
 	for i, s := range staged {
@@ -300,14 +307,12 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			return failReplaced(s.name, err)
 		}
 		progress(errs, "installing %s", s.name)
-		if err := atomicInstall(s.tmp, s.target); err != nil {
+		// The staged temp is already the exclusive file. Rename it onto
+		// the target. Do not call installFile: that writes "."+base+".new".
+		if err := os.Rename(s.tmp, s.target); err != nil {
 			if backErr := putBack(s.target, aside, existed); backErr != nil {
 				err = fmt.Errorf("%w; %s could not be restored: %v", err, s.name, backErr)
 			}
-			return failReplaced(s.name, err)
-		}
-		if err := os.Remove(s.tmp); err != nil && !os.IsNotExist(err) {
-			placed = append(placed, placedTool{name: s.name, target: s.target, aside: aside, existed: existed})
 			return failReplaced(s.name, err)
 		}
 		staged[i].tmp = ""
@@ -403,9 +408,9 @@ func hasToken(line, version string) bool {
 	return slices.Contains(strings.Fields(strings.ReplaceAll(line, "=", " ")), version)
 }
 
-// stageArtifact copies src into an exclusive temp in bin. The name is not the
-// predictable .<tool>.new installFile still uses for its own rename: a planted
-// directory there must not be the file this write opens.
+// stageArtifact copies src into an exclusive temp in bin. Publish renames
+// this file onto the target. The name is not the predictable .<tool>.new
+// installFile still uses: a planted directory there must not be opened.
 func stageArtifact(bin, name, src string) (string, error) {
 	body, err := os.ReadFile(src)
 	if err != nil {
