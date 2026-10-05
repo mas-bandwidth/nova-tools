@@ -37,15 +37,18 @@ func TestTheIdleAlarmNamesTheRootsOnceAnEpisode(t *testing.T) {
 	h := newHarness(t)
 	h.st.IdleAlarm = true
 	h.setup(0)
-	// root is dropped: ten cards wait on it, the first three directly
-	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"root", "held-one"}}))
+	// root is a dropped sentinel: ten cards wait on it, the first three directly.
+	// a drop of a needed primary is refused, so the blocked judgments are the
+	// ones add opens for a need naming a dropped sentinel (docs/SPEC-SPRINT.md section 11)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"root"}, Sentinel: true}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"held-one"}}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"root", "held-one"}}, Reason: "re-cut"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"a", "b", "c"}, Needs: []string{"root"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"a1", "a2", "a3", "b1", "b2"}, Needs: []string{"a"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c1", "c2"}, Needs: []string{"c"}}))
 	// two more behind a sentinel never released
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"gate"}, Sentinel: true, Held: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"g1", "g2"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"root", "held-one"}}, Reason: "re-cut"}))
 	h.startMachine()
 	h.machine()
 	assert.Empty(t, h.notesTo(sprint.NIdle), "under the window: nothing yet")

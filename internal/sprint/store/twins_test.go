@@ -65,19 +65,23 @@ func TestAddReplacesTakesOverEveryEdgeOfTheOldCard(t *testing.T) {
 	}
 }
 
-// The drop and add pair already made: the replace takes over the edges of a card dropped
-// before, and closes the blocked judgments its drop raised, answered "replaced by".
+// A drop of a card waiting cards still need is refused, so it raises no blocked
+// judgment (docs/SPEC-SPRINT.md section 11). A card dropped while nothing needed
+// it is replaced as a stored record: the twin is admitted and the old reason stays.
 func TestAddReplacesADroppedCardClosesItsBlockedJudgments(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
-	require.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3, "the drop blocks its three dependents")
-	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}, Replaces: []string{"old"}, Who: "tester"}))
-	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "the replace answers the blocked judgments")
-	s := h.snap()
-	assert.Equal(t, "re-cut", h.record("old").F("reason"), "a card dropped before keeps its reason")
-	assert.Equal(t, "old-tb,other", s.Work.Card("dep3").F("needs"))
-	assert.True(t, h.decidedWith("replaced by old-tb"), "the answer is recorded as a decided note")
+	res := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	require.NotEmpty(t, res.Refused, "drop of a needed card: %+v", res)
+	assert.Contains(t, res.Refused[0].Why, "old is needed by dep1, dep2, dep3")
+	assert.Empty(t, res.Moved, "a refused drop wrote: %+v", res)
+	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "a refused drop opened no blocked judgment")
+	assert.True(t, h.snap().Work.Card("old").Placed(), "old stays")
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"lone"}}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"lone"}}, Reason: "re-cut"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"lone-tb"}, Replaces: []string{"lone"}, Who: "tester"}))
+	assert.Equal(t, "re-cut", h.record("lone").F("reason"), "a card dropped before keeps its reason")
+	assert.False(t, h.record("lone").Placed())
 	h.clean("replaced after the drop")
 }
 
@@ -109,28 +113,35 @@ func TestAddReplacesIsRefusedWholeWhenItCannotHold(t *testing.T) {
 func TestRelinkRepairsTheEdgesOfADropAndAnAdd(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	refused := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	require.NotEmpty(t, refused.Refused, "drop of a needed card: %+v", refused)
+	assert.Empty(t, refused.Moved)
+	// a need naming a dropped sentinel is admitted and opens the blocked
+	// judgment; relink repairs that stored pair (docs/SPEC-SPRINT.md section 11)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"sold"}, Sentinel: true}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"sold"}}, Reason: "re-cut"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"dep4"}, Needs: []string{"sold"}}))
+	require.Len(t, h.nOpenOf(sprint.NBlocked, ""), 1)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}}))
-	require.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3)
-	res := h.must(RelinkStep(sprint.RelinkReq{Old: []string{"old"}, New: "old-tb", Who: "tester"}))
-	assert.Len(t, res.Moved, 3+1, "three dependents and the twin's weight: %v", res.Moved)
+	res := h.must(RelinkStep(sprint.RelinkReq{Old: []string{"sold"}, New: "old-tb", Who: "tester"}))
+	assert.Contains(t, strings.Join(res.Moved, "\n"), "dep4 needs sold -> old-tb", "the move lines say the relink: %v", res.Moved)
 	s := h.snap()
-	assert.Equal(t, "old-tb", s.Work.Card("dep1").F("needs"))
-	assert.Equal(t, "old-tb,other", s.Work.Card("dep3").F("needs"))
+	assert.Equal(t, "old-tb", s.Work.Card("dep4").F("needs"))
 	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "relink closes the pair's blocked judgments")
 	assert.True(t, h.decidedWith("replaced by old-tb"))
-	assert.Equal(t, "3", s.Work.Card("old-tb").F(sprint.FieldBehind))
 	h.clean("relinked")
-	// once more: nothing needs old now
-	again := h.run(RelinkStep(sprint.RelinkReq{Old: []string{"old"}, New: "old-tb", Who: "tester"}))
+	again := h.run(RelinkStep(sprint.RelinkReq{Old: []string{"sold"}, New: "old-tb", Who: "tester"}))
 	require.NotEmpty(t, again.Refused)
-	assert.Contains(t, again.Refused[0].Why, "nothing waits on old")
+	assert.Contains(t, again.Refused[0].Why, "nothing waits on sold")
 }
 
 func TestRelinkIsTheCoordinatorsAndRefusesWhatCannotHold(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	// old stays: a drop while dep1, dep2 and dep3 need it is refused, so the
+	// blocked judgments that refusal prevents are not open here
+	refused := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	require.NotEmpty(t, refused.Refused)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}, Needs: []string{"dep2"}}))
 	for _, tc := range []struct {
 		name string
@@ -147,7 +158,8 @@ func TestRelinkIsTheCoordinatorsAndRefusesWhatCannotHold(t *testing.T) {
 		assert.Contains(t, res.Refused[0].Why, tc.why, tc.name)
 		assert.Empty(t, res.Moved, tc.name)
 	}
-	assert.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3, "nothing was answered")
+	assert.True(t, h.snap().Work.Card("old").Placed(), "a refused relink left old")
+	assert.Equal(t, "old", h.snap().Work.Card("dep1").F("needs"))
 	h.clean("refused")
 }
 

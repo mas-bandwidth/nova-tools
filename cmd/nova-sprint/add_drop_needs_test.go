@@ -24,26 +24,24 @@ func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 
 	// A need on the dropped card is refused, naming it and its outcome; a
 	// need on no record at all is refused, naming the id.
-	code, out, errs := ta.do("add --stream s2 b --needs s1-1")
-	require.NotEqual(t, 0, code, "add on a dropped need: %s%s", out, errs)
+	code, out, errs := ta.do("add --stream s2 b --one --needs s1-1")
+	require.Equal(t, 1, code, "add on a dropped need: %s%s", out, errs)
 	require.NotContains(t, out, "MOVED", "add on a dropped need wrote: %s", out)
-	assert.Contains(t, errs, "s1-1", "add on a dropped need: %s", errs)
-	assert.Contains(t, errs, "dropped", "add on a dropped need: %s", errs)
-	code, out, errs = ta.do("add --stream s2 b --needs ghost")
-	require.NotEqual(t, 0, code, "add on a missing need: %s%s", out, errs)
+	assert.Contains(t, errs, "needs s1-1, which was dropped", "add on a dropped need: %s", errs)
+	code, out, errs = ta.do("add --stream s2 b --one --needs ghost")
+	require.Equal(t, 1, code, "add on a missing need: %s%s", out, errs)
 	assert.Contains(t, errs, "ghost", "add on a missing need: %s", errs)
 
 	// A chain: b waits on s1-2, and c waits on b.
-	ta.ok("add --stream s2 b --needs s1-2")
-	ta.ok("add --stream s2 c --needs b")
+	ta.ok("add --stream s2 b --one --needs s1-2")
+	ta.ok("add --stream s2 c --one --needs b")
 
 	// Dropping s1-2 while b waits on it is refused for that card, naming the
 	// dependants, and nothing is written: s1-2 stays ready.
 	before := ta.applies()
 	code, out, errs = ta.do("drop s1-2 --reason obsolete")
-	require.NotEqual(t, 0, code, "drop of a needed card: %s%s", out, errs)
-	assert.Contains(t, errs, "s1-2", "drop of a needed card: %s", errs)
-	assert.Contains(t, errs, "b", "drop of a needed card: %s", errs)
+	require.Equal(t, 1, code, "drop of a needed card: %s%s", out, errs)
+	assert.Contains(t, errs, "s1-2 is needed by b; drop them too with --cascade", "drop of a needed card: %s", errs)
 	require.Equal(t, before, ta.applies(), "a refused drop wrote")
 	require.Contains(t, ta.ok("card --fields s1-2"), "place=s1:ready", "a refused drop moved s1-2")
 
@@ -60,10 +58,10 @@ func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 	// refused, and x after it — w, kept a moment, is refused later in the
 	// same plan and still needs x — and nothing is written; the same cards
 	// by id are refused the same way.
-	ta.ok("add --stream s2 v")
-	ta.ok("add --stream s1 x --needs v")
-	ta.ok("add --stream s1 w --needs x")
-	ta.ok("add --stream s2 u --needs w")
+	ta.ok("add --stream s2 v --one")
+	ta.ok("add --stream s1 x --one --needs v")
+	ta.ok("add --stream s1 w --one --needs x")
+	ta.ok("add --stream s2 u --one --needs w")
 	before = ta.applies()
 	code, out, errs = ta.do("drop --stream s1 --reason obsolete")
 	require.NotEqual(t, 0, code, "a stream drop of a needed chain: %s%s", out, errs)
