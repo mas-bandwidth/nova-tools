@@ -249,13 +249,15 @@ func (k *walk) acceptOrRework() bool {
 	return k.try(sprint.Accept(k.s, sprint.AcceptReq{Sel: sprint.Sel{Stream: c.Row}, Who: coordinator}))
 }
 
-// drop has the coordinator drop a primary that has not landed.
+// drop has the coordinator drop a primary that has not landed, with its
+// dependants now and then: a card a waiting card needs is refused without the
+// cascade (docs/SPEC-SPRINT.md section 11), so the walks drop the chains whole.
 func (k *walk) drop() bool {
 	c, ok := k.primaryIn(sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review)
 	if !ok {
 		return false
 	}
-	return k.try(sprint.Drop(k.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Reason: "not wanted", Who: coordinator}))
+	return k.try(sprint.Drop(k.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Reason: "not wanted", Cascade: k.pick(2) == 0, Who: coordinator}))
 }
 
 // merge is a merge step of a stream, with a fact that stops it now and then.

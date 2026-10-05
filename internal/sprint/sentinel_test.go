@@ -183,7 +183,8 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 	open := w.openOn("stop")
 	require.Empty(t, open, "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
 	require.Equal(t, "x", strings.Join(WaitsFor(w.s, w.s.Work.Card("stop"), nil), ","), "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"x"}}, Reason: "obsolete"}))
+	w.seedDroppedNeed("x")
+	w.must(Resolve(w.s, ResolveReq{}))
 	blocked := w.openOn("stop")
 	require.Len(t, blocked, 1, "blocked: %+v", blocked)
 	require.Equal(t, NBlocked, blocked[0].Note.Type, "blocked: %+v", blocked)
@@ -201,7 +202,7 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 	w.must(tickDone(w.s, TickReq{}))
 	done := w.notesOf(NSprintDone)
 	require.Len(t, done, 1, "the sprint is done: %+v", done)
-	require.Equal(t, "2 landed, 2 dropped", done[0].What, "the sprint is done: %+v", done)
+	require.Equal(t, "2 landed, 1 dropped", done[0].What, "the sprint is done: %+v", done)
 	w.clean("released")
 }
 
