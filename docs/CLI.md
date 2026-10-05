@@ -2136,6 +2136,29 @@ exit 2 and nothing is written.
 
 See [SPEC-CI.md](SPEC-CI.md).
 
+### bench run
+
+`nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>]
+[--cache <dir>] [--with-git] -- <go command>` runs one command on a Linux bench
+against a copy of a local tree, in place of the ssh, rsync and ssh recipe a
+brief used to carry. It makes a fresh run directory under `--root` on the bench
+(`mktemp -d`, default `nova-bench/runs` under the login's home), copies the tree
+into `<run>/repo` with `.git` left out unless `--with-git`, runs the command
+there under `nice -n 19` with `GOCACHE` (`--cache`, default
+`nova-bench/cache/go-build`), `GOFLAGS=-mod=readonly` and `NOVA_TEST_NO_HOST=1`,
+streams its output to stdout and stderr as it arrives, and removes the run
+directory it made and nothing else, whether the command passed, failed or was
+interrupted. A `--host` that does not answer (ssh's own exit 255) is passed over
+for `--fallback` with one `CI BENCH PASSED host=<h> reason=<why> next=<h>` line;
+a host that answers is never passed over. The run ends with one line on stderr,
+`CI BENCH host=<h> run=<dir> exit=<n> removed=yes|no`, so stdout is exactly the
+command's. The exit status is the command's own; a run that never reached the
+command (usage, no bench answered, the copy failed) is one `nova-ci bench run
+REFUSED:` line at exit 2. Neither bench is guessed: `--host` is required, and
+`--root` and `--cache` are plain paths, relative to the login's home or
+absolute, never `~`, `..`, the home or `/`. For example, `nova-ci bench run
+--host <bench> --fallback <other-bench> --dir . -- go test -count=1 ./cmd/nova-ci/`.
+
 ### github receipt
 
 `nova-ci github receipt --from-runner --redis <addr> --repo owner/name --sha <40hex>
