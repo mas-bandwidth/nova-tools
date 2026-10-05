@@ -21,7 +21,6 @@ func TestOpencodeSpendReadoutIsDone(t *testing.T) {
 	// Setup: opencode has no balance endpoint (Known=false)
 	// but has internal spend records
 	opencodeTotalSpend := 1234.56
-	opencodeLastTopUp := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	// Simulate the internal cost record lookup
 	internalSpend := opencodeTotalSpend
 
