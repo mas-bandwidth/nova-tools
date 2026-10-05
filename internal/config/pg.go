@@ -90,11 +90,9 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 // deadline given, so the package's tests can shorten it: a caller's deadline,
 // longer or shorter, always governs.
 func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
-	cfg, err := pgconn.ParseConfig(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("postgres dsn: %w", err)
+	if _, err := pgconn.ParseConfig(dsn); err != nil {
+		return nil, &dsnParseError{cause: err}
 	}
-	_ = cfg
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)
@@ -113,6 +111,22 @@ func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*P
 	}
 	return &PG{db: db}, nil
 }
+
+// dsnParseError is a DSN that pgconn could not parse. pgconn's text quotes
+// the string it could not read, and a string that is not a DSN may be a
+// token or a password, so Error names only the kind of failure; the cause is
+// kept for errors.Is and errors.As through Unwrap and is never printed.
+type dsnParseError struct{ cause error }
+
+func (e *dsnParseError) Error() string {
+	var pe *pgconn.ParseConfigError
+	if errors.As(e.cause, &pe) && pe != nil {
+		return "postgres dsn: not a connection string pgx can parse (the string is withheld from this error; it may carry a secret)"
+	}
+	return "postgres dsn: unreadable (the string is withheld from this error; it may carry a secret)"
+}
+
+func (e *dsnParseError) Unwrap() error { return e.cause }
 
 // Close closes the pool.
 func (p *PG) Close() error { return p.db.Close() }
