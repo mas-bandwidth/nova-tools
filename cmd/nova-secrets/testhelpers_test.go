@@ -62,7 +62,7 @@ var (
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if builtDir != "" {
-		os.RemoveAll(builtDir)
+		_ = os.RemoveAll(builtDir) // ignored: temp dir may already be gone
 	}
 	os.Exit(code)
 }

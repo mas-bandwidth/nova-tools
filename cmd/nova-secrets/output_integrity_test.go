@@ -38,7 +38,7 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 			}
 		}
 
-		pkgsMap, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly)
+		pkgsMap, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly) // ignored: SA1019 parser.ParseDir deprecated since Go 1.25
 		require.NoError(t, err, "failed to parse package in %s: %v", dir, err)
 
 		for _, p := range pkgsMap {

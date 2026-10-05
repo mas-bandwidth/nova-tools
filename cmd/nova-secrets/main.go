@@ -239,7 +239,7 @@ type streams struct {
 // stderr, and returns code: 2, or 125 for exec, whose refusals stand apart from the
 // statuses of the command it runs.
 func (s streams) refuse(verb string, code int, err error) int {
-	fmt.Fprintf(s.stderr, "SECRETS %s REFUSED: %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), "nova-secrets "+verb+" -h"))
+	fmt.Fprintf(s.stderr, "SECRETS %s REFUSED: %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), "nova-secrets "+verb+" -h")) // ignored: stderr write
 	return code
 }
 
@@ -354,7 +354,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 
 func dispatch(args []string, s streams) int {
 	if len(args) == 0 {
-		fmt.Fprintf(s.stderr, "SECRETS REFUSED: no arguments is not an invocation; run: nova-secrets help\n")
+		fmt.Fprintf(s.stderr, "SECRETS REFUSED: no arguments is not an invocation; run: nova-secrets help\n") // ignored: stderr write
 		return 2
 	}
 
@@ -365,7 +365,7 @@ func dispatch(args []string, s streams) int {
 
 	// Check refusal table first
 	if msg, refused := disallowedVerbs[verb]; refused {
-		fmt.Fprintf(s.stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(msg, "nova-secrets help"))
+		fmt.Fprintf(s.stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(msg, "nova-secrets help")) // ignored: stderr write
 		return 2
 	}
 
@@ -374,7 +374,7 @@ func dispatch(args []string, s streams) int {
 		if verb == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return dispatch(append(slices.Clone(args[1:]), "--help"), s)
 		}
-		fmt.Fprintf(s.stdout, "%s", usage)
+		fmt.Fprintf(s.stdout, "%s", usage) // ignored: stdout write
 		return 0
 	case "exec":
 		return runExecCLI(args[1:], s)
@@ -395,7 +395,7 @@ func dispatch(args []string, s streams) int {
 	case "seat":
 		return runSeatCLI(args[1:], s)
 	default:
-		fmt.Fprintf(s.stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs)
+		fmt.Fprintf(s.stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs) // ignored: stderr write
 		return 2
 	}
 }
@@ -405,10 +405,10 @@ func dispatch(args []string, s streams) int {
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) != 0 {
-		fmt.Fprintf(stderr, "SECRETS VERSION REFUSED: version takes no flags and no arguments, got %d; run: nova-secrets version\n", len(args))
+		fmt.Fprintf(stderr, "SECRETS VERSION REFUSED: version takes no flags and no arguments, got %d; run: nova-secrets version\n", len(args)) // ignored: stderr write
 		return 2
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-secrets", version))
+	fmt.Fprintln(stdout, buildinfo.Line("nova-secrets", version)) // ignored: stdout write
 	return 0
 }
 
@@ -496,12 +496,12 @@ func runNamesCLI(args []string, s streams) int {
 	okLine, names, more := r.Lines()
 
 	for _, n := range names {
-		fmt.Fprintln(s.stdout, n)
+		fmt.Fprintln(s.stdout, n) // ignored: stdout write
 	}
 	if more != "" {
-		fmt.Fprintln(s.stdout, more)
+		fmt.Fprintln(s.stdout, more) // ignored: stdout write
 	}
-	fmt.Fprintln(s.stdout, okLine)
+	fmt.Fprintln(s.stdout, okLine) // ignored: stdout write
 	return 0
 }
 
@@ -547,18 +547,18 @@ func runCheckCLI(args []string, s streams) int {
 	}
 
 	if code == 0 {
-		fmt.Fprintln(s.stdout, okLine)
+		fmt.Fprintln(s.stdout, okLine) // ignored: stdout write
 		return 0
 	}
 
 	// Failure output
 	for _, l := range failLines {
-		fmt.Fprintln(s.stderr, l)
+		fmt.Fprintln(s.stderr, l) // ignored: stderr write
 	}
 	for _, m := range moreLines {
-		fmt.Fprintln(s.stderr, m)
+		fmt.Fprintln(s.stderr, m) // ignored: stderr write
 	}
-	fmt.Fprintln(s.stderr, summaryLine)
+	fmt.Fprintln(s.stderr, summaryLine) // ignored: stderr write
 	return code
 }
 
@@ -593,9 +593,9 @@ func runGateCLI(args []string, s streams) int {
 		MachinesPath: *machinesFlag,
 	})
 	if code != 0 {
-		fmt.Fprintln(s.stderr, line)
+		fmt.Fprintln(s.stderr, line) // ignored: stderr write
 	} else {
-		fmt.Fprintln(s.stdout, line)
+		fmt.Fprintln(s.stdout, line) // ignored: stdout write
 	}
 	return code
 }
@@ -653,7 +653,7 @@ func runKeygenCLI(args []string, s streams) int {
 	}
 
 	for _, l := range lines {
-		fmt.Fprintln(s.stdout, l)
+		fmt.Fprintln(s.stdout, l) // ignored: stdout write
 	}
 	return 0
 }
@@ -671,7 +671,7 @@ func runSeatCLI(args []string, s streams) int {
 	case "inject":
 		return runSeatInjectCLI(args[1:], s)
 	case "help", "--help", "-h":
-		fmt.Fprintf(s.stdout, "%s", usage)
+		fmt.Fprintf(s.stdout, "%s", usage) // ignored: stdout write
 		return 0
 	default:
 		return s.refuse("seat", 2, fmt.Errorf("unknown seat subverb %s; the subverbs are add and inject; run: nova-secrets seat add -h", oneline.Quote(args[0])))
@@ -712,7 +712,7 @@ func runSeatInjectCLI(args []string, s streams) int {
 	if err != nil {
 		return s.refuse("seat inject", 2, err)
 	}
-	fmt.Fprintln(s.stdout, line)
+	fmt.Fprintln(s.stdout, line) // ignored: stdout write
 	return 0
 }
 
@@ -745,7 +745,7 @@ func runSeatAddCLI(args []string, s streams) int {
 		return s.refuse("seat add", 2, err)
 	}
 	for _, l := range lines {
-		fmt.Fprintln(s.stdout, l)
+		fmt.Fprintln(s.stdout, l) // ignored: stdout write
 	}
 	return 0
 }
@@ -785,7 +785,7 @@ func runPlaceCLI(args []string, s streams) int {
 	if err != nil {
 		return s.refuse("place", 2, err)
 	}
-	fmt.Fprintln(s.stdout, okLine)
+	fmt.Fprintln(s.stdout, okLine) // ignored: stdout write
 	return 0
 }
 
@@ -806,9 +806,9 @@ func runPlacedCLI(args []string, s streams) int {
 	if err != nil {
 		return s.refuse("placed", 2, err)
 	}
-	fmt.Fprintln(s.stdout, okLine)
+	fmt.Fprintln(s.stdout, okLine) // ignored: stdout write
 	for _, l := range itemLines {
-		fmt.Fprintln(s.stdout, l)
+		fmt.Fprintln(s.stdout, l) // ignored: stdout write
 	}
 	return 0
 }
@@ -857,6 +857,6 @@ func runSealCLI(args []string, s streams) int {
 		return s.refuse("seal", 2, err)
 	}
 
-	fmt.Fprintln(s.stdout, line)
+	fmt.Fprintln(s.stdout, line) // ignored: stdout write
 	return 0
 }
