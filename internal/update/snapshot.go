@@ -286,7 +286,7 @@ func writeSnapshot(path string, s *snapshot) error {
 		err = closeErr
 	}
 	if err != nil {
-		return fmt.Errorf("cannot write snapshot (check space and permissions)")
+		return fmt.Errorf("cannot write snapshot (check room and permissions)")
 	}
 	if err = renameSnapshot(temp, path); err != nil {
 		return fmt.Errorf("cannot replace snapshot atomically (check destination permissions)")
