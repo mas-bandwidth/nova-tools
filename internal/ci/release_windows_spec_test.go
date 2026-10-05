@@ -40,7 +40,7 @@ func TestTheCommandReferenceShowsAWindowsAdopt(t *testing.T) {
 	t.Parallel()
 
 	text := readFile(t, filepath.Join(repoRoot(t), "docs", "CLI.md"))
-	for _, want := range []string{"windows-amd64", `C:\Users\nova\.local\bin`} {
+	for _, want := range []string{"windows-amd64", `C:\tools\bin`} {
 		assert.Contains(t, text, want, "docs/CLI.md does not name %s; the windows bench is a target like any other", want)
 	}
 }

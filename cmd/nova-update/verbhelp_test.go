@@ -28,11 +28,6 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "report", Flags: append(file, "--snapshot", "{dir}/snap", "--store", "{addr}")},
 		{Verb: "watch", Flags: []string{"--adopt", "{dir}/checks.tsv"}},
 		{Verb: "adoption", Flags: file},
-		{Verb: "release cut"},
-		{Verb: "release build"},
-		{Verb: "release install"},
-		{Verb: "release adopt"},
-		{Verb: "release pull"},
 		{Verb: "version"},
 	})
 	testverbhelp.HelpVerb(t, updateRun, "nova-update", "check", "status", "adoption", "version")
@@ -53,7 +48,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 			"rule 5 says how the apply argv runs")
 		for _, para := range []string{
 			"Defaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.",
-			"Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.",
+			"Every verb but watch takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.",
 			"Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.",
 			"A delivery is one nova-bus send on the Redis bus (nova-bus reads its store from NOVA_BUS_REDIS); with --snapshot, a report unchanged since it was confirmed sent to the same recipients is not sent again.",
 			"A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.",

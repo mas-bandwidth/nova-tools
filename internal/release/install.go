@@ -37,13 +37,13 @@ func ReadSums(dir string) ([]Artifact, error) {
 		}
 		sum, name, ok := strings.Cut(line, "  ")
 		if !ok || sum == "" || name == "" {
-			return nil, refuse("build the release again with `nova-update release build`",
+			return nil, refuse("build the release again with `nova-release build`",
 				"%s line %d is not a sha256sum line: %q", SumsFile, i+1, line)
 		}
 		// A name with a separator in it would install outside --bin. The
 		// build writes bare names; anything else is not this file's.
 		if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
-			return nil, refuse("build the release again with `nova-update release build`",
+			return nil, refuse("build the release again with `nova-release build`",
 				"%s line %d names a path rather than a file: %q", SumsFile, i+1, name)
 		}
 		// The name is also written under --bin by install and interpolated into
@@ -52,13 +52,13 @@ func ReadSums(dir string) ([]Artifact, error) {
 		// (remoteArtifactName), so every caller sees only safe names
 		// (security#72 finding 1, artifact-name half).
 		if !remoteArtifactName.MatchString(name) {
-			return nil, refuse("build the release again with `nova-update release build`",
+			return nil, refuse("build the release again with `nova-release build`",
 				"%s line %d names %q, which is not a file name this tool will install or delete", SumsFile, i+1, name)
 		}
 		arts = append(arts, Artifact{Name: name, Sum: sum})
 	}
 	if len(arts) == 0 {
-		return nil, refuse("build the release again with `nova-update release build`",
+		return nil, refuse("build the release again with `nova-release build`",
 			"%s lists no artifact", SumsFile)
 	}
 	sort.Slice(arts, func(i, j int) bool { return arts[i].Name < arts[j].Name })
@@ -185,7 +185,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	if err != nil {
 		if os.IsNotExist(err) {
 			return refusal(errs, "INSTALL", refuse(
-				fmt.Sprintf("build it first: nova-update release build --version %s --out %s --source <checkout>", o.version, o.from),
+				fmt.Sprintf("build it first: nova-release build --version %s --out %s --source <checkout>", o.version, o.from),
 				"there is no %s for %s at %s", o.version, goos+"-"+goarch, dir))
 		}
 		return refusal(errs, "INSTALL", err)
@@ -196,6 +196,20 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	progress(errs, "verifying %d artifacts against %s", len(arts), SumsFile)
 	if _, err := VerifyArtifacts(dir, arts); err != nil {
 		return refusal(errs, "INSTALL", err)
+	}
+	// --dry-run ENDS HERE: the release is verified whole, and --bin is not
+	// created. A tool whose installed bytes are already these is the one
+	// install would skip.
+	if o.dryRun {
+		skip := 0
+		for _, a := range arts {
+			if sum, err := fileSum(filepath.Join(o.bin, a.Name)); err == nil && sum == a.Sum {
+				skip++
+			}
+		}
+		fmt.Fprintf(out, "RELEASE INSTALL OK version=%s tools=%d skipped=%d bin=%s platform=%s dry-run=yes\n",
+			field(o.version), len(arts)-skip, skip, field(o.bin), field(goos+"-"+goarch))
+		return 0
 	}
 	if err := os.MkdirAll(o.bin, 0o755); err != nil {
 		return refusal(errs, "INSTALL", fmt.Errorf("cannot create %s: %w (name a writable --bin)", o.bin, err))

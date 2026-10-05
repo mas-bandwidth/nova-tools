@@ -104,7 +104,7 @@ func pullNames(arts []Artifact) ([]string, error) {
 	names := make([]string, 0, len(arts)+2)
 	for _, a := range arts {
 		if !remoteArtifactName.MatchString(a.Name) {
-			return nil, refuse("build the release again with `nova-update release build`",
+			return nil, refuse("build the release again with `nova-release build`",
 				"%s names %q, which is not a file name this verb will delete", SumsFile, a.Name)
 		}
 		names = append(names, a.Name)
