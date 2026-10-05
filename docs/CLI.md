@@ -555,6 +555,27 @@ the system's privacy permission for background processes, granted to the
 binary by the person in the privacy settings and lost when the binary is
 rebuilt (the state files are under the home directory, out of its way).
 
+### Reach a silent friend
+
+`nova-friend reach --as <coordinator> <friend> [--step-timeout <duration>]
+[--from <bus|push|window>] [--window-bundle <id>]` records a bounded ladder:
+bus, the friend's daemon push, then its own app window. Each rung prints
+`REACH STEP step= sent= nonce=`, then either `REACH PROOF step= after= by=pong|message`
+and `REACH OK friend= step=` (exit 0), or `REACH NONE step= waited=` before climbing.
+After every rung, `REACH FAILED friend= tried=bus,push,window` is sent to the
+coordinator and the command exits 1. Exit 2 means a rung could not run.
+Only a nonce-bearing pong or a new real message from the friend proves reach;
+old notes, pongs for another nonce and daemon controls do not. The daemon rung
+is skipped when its current presence is down. The window rung needs a configured
+bundle and a single verified idle composer and send control; it refuses ambiguity
+or missing Accessibility permission and never requests permission itself.
+
+Example:
+
+```sh
+nova-friend reach --as ada bob --step-timeout 60s --dry-run
+```
+
 ### The daemon
 
 ```sh

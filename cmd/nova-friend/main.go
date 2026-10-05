@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,6 +63,7 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
+	window    func(context.Context, friend.Exec, string, string, string, string) error
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
@@ -150,6 +152,7 @@ func realWorld() world {
 			return string(raw[:])
 		},
 	}
+	w.window = friend.WindowReach
 	w.open = w.openRedis
 	return w
 }
@@ -157,12 +160,39 @@ func realWorld() world {
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
+	args = normalizeReachArgs(args)
 	if len(args) > 0 && args[0] == friend.WallVerb {
 		// the lane's wall around one command: its argv follows "--", which the verb table
 		// does not carry, so it is dispatched here (internal/friend RunWall)
 		return friend.RunWall(args[1:], os.Environ(), stdin, stdout, stderr)
 	}
 	return friendTool(w).Run(args, stdin, stdout, stderr)
+}
+
+// normalizeReachArgs keeps reach's friend positional as its public contract
+// while the shared tool skeleton keeps ordinary verbs flags-only.
+func normalizeReachArgs(args []string) []string {
+	if len(args) < 2 || args[0] != "reach" {
+		return args
+	}
+	for _, a := range args[1:] {
+		if a == "--friend" {
+			return args
+		}
+	}
+	needsValue := map[string]bool{"--as": true, "--step-timeout": true, "--from": true, "--state-dir": true, "--window-bundle": true, "--window-title": true, "--composer-id": true, "--redis": true}
+	for i := 1; i < len(args); i++ {
+		if needsValue[args[i]] {
+			i++
+			continue
+		}
+		if !strings.HasPrefix(args[i], "-") {
+			out := append([]string{}, args[:i]...)
+			out = append(out, "--friend", args[i])
+			return append(out, args[i+1:]...)
+		}
+	}
+	return args
 }
 
 // openRedis dials the bus store the way nova-bus does (internal/redisconn,
@@ -446,6 +476,37 @@ pushes the pong line in as its own turn, so an idle session is asked too; only t
 					redis(f)
 				},
 				Run: w.ping,
+			},
+			{
+				Name:    "reach",
+				Usage:   "reach --as <coordinator> <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--state-dir <d>] [--window-bundle <id> --window-title <title> --composer-id <id>] [--dry-run] [--json]",
+				Example: "reach --as ada bob --step-timeout 60s",
+				Effect:  tool.Delivery + ": escalates from a bus note, through the friend's daemon, to its own window until the session proves it heard",
+				DryRun:  true,
+				Detail:  `Records REACH STEP before each bus, push or window attempt and waits --step-timeout (default 60s) for a nonce-bearing pong or a real message from the friend. REACH PROOF stops the ladder and REACH OK exits 0. REACH NONE climbs; after all three, REACH FAILED is sent to the coordinator's stream and exits 1. A missing daemon skips push. A window is refused until a harness supplies verified idle-target evidence; macOS GUI access is also refused with the Accessibility remedy and the tool never asks for permission. --from starts at that rung. --dry-run prints the ladder but sends, types and waits for nothing.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator")
+					f.Required("friend", "the friend to reach")
+					f.Duration("step-timeout", time.Minute, "how long each rung waits for proof")
+					f.String("from", "bus", "the first rung: bus, push or window")
+					f.String("window-bundle", "", "the bundle identifier of the app whose verified composer receives the window rung")
+					f.String("window-title", "", "the exact accessible title of the app window to reach")
+					f.String("composer-id", "", "the exact accessibility identifier of the empty composer")
+					stateDir(f)
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						if !slices.Contains([]string{"bus", "push", "window"}, c.Str("from")) {
+							c.Problem("--from wants bus, push or window")
+						}
+						if c.Dur("step-timeout") <= 0 {
+							c.Problem("--step-timeout wants a positive duration, such as 60s")
+						}
+						if c.Str("friend") == c.Str("as") {
+							c.Problem("--friend wants another friend, not --as")
+						}
+					})
+				},
+				Run: w.reach,
 			},
 			{
 				Name:    "pong",

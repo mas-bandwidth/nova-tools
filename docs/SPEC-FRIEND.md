@@ -113,6 +113,17 @@ only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
 
+## Reach
+
+Reach is the coordinator's bounded escalation ladder: bus, daemon push, then
+the friend's own window. It records each step before it starts and accepts only
+a new nonce-bearing session pong or a real message from the target. A proof is
+terminal: later steps never run. Each rung has its own timeout. The daemon step
+is skipped when presence is down. A window adapter checks Accessibility without
+prompting and acts only on a configured bundle whose one idle composer and one
+send control it can verify; any uncertainty refuses. When all three run without
+proof, one failed notice goes to the coordinator stream.
+
 ## Presence (internal/friend/presence.go)
 
 The finding of 2026-10-04: three friends read up with eight cards each while
