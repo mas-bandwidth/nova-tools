@@ -116,3 +116,33 @@ func TestARefusalIsAtMostTwoLinesAndNamesTheDoor(t *testing.T) {
 	assert.Equal(t, 0, exit, "`help` did not print the usage: exit %d", exit)
 	assert.Contains(t, stdout, "usage:", "`help` did not print the usage: exit %d", exit)
 }
+
+// One sentence of a million bytes is one finding, and one finding is one bounded line and
+// one bounded JSON item: match= and text are free text a writer controls, and the TRAIT
+// rules matched the whole span between their two signals (security#80 finding 1). SPEC
+// section 2 says the two renderings of one value agree, so the bound holds in both.
+func TestOneGiantTraitSentenceCannotMakeAFindingLineOrJSONItemGiant(t *testing.T) {
+	t.Parallel()
+
+	const bound = 2 << 10
+	giant := "I hoard " + strings.Repeat("word ", 200000) + "and manufacture limits.\n"
+	require.Greater(t, len(giant), 1_000_000)
+	path := filepath.Join(t.TempDir(), "journal.md")
+	require.NoError(t, os.WriteFile(path, []byte(giant), 0o644))
+
+	exit, stdout, stderr := runSelfTalk(t, path)
+	require.Equal(t, 1, exit, "stdout: %.200s stderr: %.200s", stdout, stderr)
+	fails := 0
+	for _, line := range strings.Split(stderr+stdout, "\n") {
+		if strings.HasPrefix(line, "SELFTALK FAIL ") {
+			fails++
+		}
+		assert.Less(t, len(line), bound, "a lines-mode line is %d bytes", len(line))
+	}
+	assert.Equal(t, 1, fails, "want one FAIL line:\n%.600s", stderr)
+
+	exit, stdout, stderr = runSelfTalk(t, "--json", path)
+	require.Equal(t, 1, exit, "stdout: %.200s stderr: %.200s", stdout, stderr)
+	assert.Less(t, len(stdout), bound, "the --json object for one finding is %d bytes", len(stdout))
+	assert.Contains(t, stdout, `"shape"`, "no finding in the JSON object: %.300s", stdout)
+}
