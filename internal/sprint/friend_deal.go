@@ -120,22 +120,12 @@ func friendTiers(f FriendSeat) []string {
 	return Split(f.Class)
 }
 
-// friendTakes says the friend may be given a card of the tier: it is one of her tiers,
-// never her class as a whole; a friend whose row names no tier takes every tier.
+// friendTakes says the friend may be given a card of the tier: it is one of her tiers
+// (friendTiers), never her class as a whole. A friend whose row names no tier takes none,
+// and every friend deal and move is gated on it, whatever the card's WHO line, so a
+// frontier card never reaches a friend without frontier.
 func friendTakes(f FriendSeat, tier string) bool {
-	t := friendTiers(f)
-	return len(t) == 0 || slices.Contains(t, tier)
-}
-
-// friendOffered says the friends-first deal may give the friend a card of the tier: a card
-// with a WHO line (WHO: friend, or a friend it prefers) by friendTakes, where a friend whose
-// row names no tier takes every tier; a card with no WHO line, the fleet's unless a friend
-// takes it, only when her tiers name its tier (an empty class covers nothing).
-func friendOffered(f FriendSeat, c *Card, tier string) bool {
-	if _, who := FriendCard(c); !who && len(friendTiers(f)) == 0 {
-		return false
-	}
-	return friendTakes(f, tier)
+	return slices.Contains(friendTiers(f), tier)
 }
 
 // friendsLeft is the friends the work card has left (FieldFriendsLeft), with the one it
@@ -258,16 +248,20 @@ func friendLoad(s *Snapshot, name string) int {
 // turns) to the friends up, each within her room, DealAhead times her width, as the
 // machines' deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
 // people busy by having 2X width queued up in ready per-friend"). A card whose WHO line
-// names a friend goes to her first while she is up, below her room and not one it has
-// left, even when her tiers do not hold its tier; else (or with no WHO line, or WHO:
-// friend) it goes to a friend up whose tiers hold its tier (friendOffered; a card with no
-// tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
+// names a friend goes to her first while she is up, below her room, not one it has left,
+// and her tiers hold its tier; else (or with no WHO line, or WHO: friend) it goes to a
+// friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card with
+// no tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
 // left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
 // then the most room, then by name (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
 // unless it says WHO: only friend <name> (OnlyFriend), the one hard pin: it waits ready for
-// her. A withdrawn attempt at its redeal bound, or refused at staging by every member up,
-// stays with the machines' deal and its judgment. A friend at or over her room is never
+// her, and so does one whose friend's tiers do not hold its tier. A withdrawn attempt at its
+// redeal bound at its ceiling or its attempt cap (AtRedealBound), or refused at staging by
+// every member up, stays with the machines' deal and its judgment; one at its redeal bound
+// below its ceiling is offered at the tier it escalates to (escalating), as the machines
+// would escalate it, and a friend's deal of it is a new attempt on that tier, the bound
+// attempt retired (friendEscalateUnit). A friend at or over her room is never
 // dealt. In batch mode (the default), a friend's room is DealAhead times her width and
 // her lanes are her width; in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's
 // card"), a friend's room is 1 and her lanes are 1: she gets one card at a time, straight
@@ -304,24 +298,26 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		if wc != nil && wc.Col != Withdrawn {
 			wc = nil
 		}
-		// a failed attempt's bound and escalation, and a staging refusal by every member
-		// up, stay with the machines' deal and its judgment
-		if wc != nil && redealBound(wc) {
+		// a failed attempt's judgment (at its ceiling or its attempt cap), and a staging
+		// refusal by every member up, stay with the machines' deal; an attempt at its
+		// redeal bound below its ceiling is offered at the tier it escalates to
+		if AtRedealBound(s, c) != nil {
 			continue
 		}
 		if held, _ := AtStagingBound(s, c, members); held != nil {
 			continue
 		}
+		escalated := wc != nil && redealBound(wc)
+		tier := cardTierOf(escalating(s, c))
 		left := friendsLeft(wc)
 		name, _ := FriendCard(c)
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name)) {
-			name = "" // the friend it names is not up with room, or it has left her
+		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
+			name = "" // the friend it names is not up with room, it has left her, or not her tier
 		}
 		if name == "" && !OnlyFriend(c) {
-			tier := cardTierOf(c)
 			var may []string
 			for _, f := range up {
-				if free[f] > 0 && !slices.Contains(left, f) && friendOffered(seat[f], c, tier) {
+				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
 					may = append(may, f)
 				}
 			}
@@ -333,7 +329,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 				// never the friend it was withdrawn from or taken back from
 				gone := withdrawnFrom(wc)
 				for _, f := range up {
-					if free[f] > 0 && !slices.Contains(gone, f) && friendOffered(seat[f], c, tier) {
+					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) {
 						may = append(may, f)
 					}
 				}
@@ -345,7 +341,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
-		if wc == nil && s.Fleet.Card(card) != nil {
+		if (wc == nil || escalated) && s.Fleet.Card(card) != nil {
 			p.refuse(c.ID, "work card "+card+" exists already")
 			continue
 		}
@@ -362,13 +358,28 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			p.Rows = append(p.Rows, RowAdd{Fleet, row})
 			declared[row] = true
 		}
-		if wc != nil {
+		switch {
+		case escalated:
+			p.Units = append(p.Units, friendEscalateUnit(s, c, wc, card, row, col, tier))
+		case wc != nil:
 			p.Units = append(p.Units, friendRedealUnit(s, c, wc, row, col))
-			continue
+		default:
+			p.Units = append(p.Units, friendDealUnit(s, c, card, row, col, nil))
 		}
-		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col, nil))
 	}
 	return Lawful(p), dealt, dealtWorking
+}
+
+// friendEscalateUnit is a withdrawn attempt at its redeal bound below its ceiling dealt to
+// a friend, as the machines' deal escalates it (escalate): a new attempt's work card on her
+// row (friendDealUnit), its primary on the tier it escalates to (FieldTierNow), and the
+// bound attempt's work card retired, its record kept.
+func friendEscalateUnit(s *Snapshot, c, prev *Card, card, row, col, tier string) Unit {
+	from, _ := CardTiers(c)
+	u := friendDealUnit(s, c, card, row, col, map[string]string{FieldTierNow: tier})
+	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
+	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s at its redeal bound", from, tier, prev.ID)
+	return u
 }
 
 // FriendDeal is the tick's friend deal alone (friendDeal), its plan without the counts

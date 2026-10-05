@@ -44,10 +44,10 @@ func TestPreferenceOverflowOnTheTwin(t *testing.T) {
 		name, who, want string
 		seats           []sprint.FriendSeat
 	}{
-		{"preferred", "friend amy", "friend.amy", []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up}, {Name: "bob", Width: 8, Status: sprint.Up, Class: "pro"}}},
-		{"another friend", "friend amy", "friend.bob", []sprint.FriendSeat{{Name: "amy", Width: 0, Status: sprint.Up}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "pro"}}},
-		{"fleet", "friend amy", "fleet", []sprint.FriendSeat{{Name: "amy", Width: 0, Status: sprint.Up}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "flash"}}},
-		{"only waits", "only friend amy", "", []sprint.FriendSeat{{Name: "amy", Width: 0, Status: sprint.Up}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "pro"}}},
+		{"preferred", "friend amy", "friend.amy", []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up, Class: "flash,pro"}, {Name: "bob", Width: 8, Status: sprint.Up, Class: "pro"}}},
+		{"another friend", "friend amy", "friend.bob", []sprint.FriendSeat{{Name: "amy", Width: 0, Status: sprint.Up, Class: "flash,pro"}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "pro"}}},
+		{"fleet", "friend amy", "fleet", []sprint.FriendSeat{{Name: "amy", Width: 0, Status: sprint.Up, Class: "flash,pro"}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "flash"}}},
+		{"only waits", "only friend amy", "", []sprint.FriendSeat{{Name: "amy", Width: 0, Status: sprint.Up, Class: "flash,pro"}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "pro"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
@@ -122,7 +122,7 @@ func TestUnpinReturnedCardWhileRunningOnTheTwin(t *testing.T) {
 	brief := "job tier: pro\nWHO: only friend amy\n\nWork."
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "a", Brief: brief}, {ID: "b", Brief: brief}}}))
 	var due int
-	h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up}}}, nil, nil, &due))
+	h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up, Class: "flash,pro"}}}, nil, nil, &due))
 	h.must(FriendTakeStep(sprint.FriendTakeReq{Friend: "amy", IDs: []string{"b"}, Reason: "share"}))
 	h.startMachine()
 	h.must(UnpinStep(sprint.UnpinReq{IDs: []string{"b"}, Reason: "share returned work", Who: "tester"}))

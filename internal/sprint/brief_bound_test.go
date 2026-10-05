@@ -44,7 +44,7 @@ func onHerRow(w *world, friend string, n int) {
 		w.must(Add(w.s, AddReq{Stream: "s2", Cards: []CardAdd{{ID: id, Brief: friendBrief("friend " + friend)}}}))
 		cards = append(cards, w.s.Primary(id))
 	}
-	p, _, _ := friendDeal(w.s, cards, []FriendSeat{{Name: friend, Width: n, Status: Up}}) // the tick's friend deal (TickDeal)
+	p, _, _ := friendDeal(w.s, cards, []FriendSeat{{Name: friend, Width: n, Status: Up, Class: "flash,pro"}}) // the tick's friend deal (TickDeal)
 	w.must(p)
 }
 

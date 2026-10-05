@@ -21,7 +21,7 @@ const reconcileHead = "0123456789abcdef0123456789abcdef01234567"
 func TestFriendReconcileCollectsOrReturnsEachCard(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 4, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash,pro"})
 	for _, id := range []string{"s1-1.w1", "s1-2.w1", "s1-3.w1", "s1-4.w1"} {
 		require.Equal(t, Working, w.s.Fleet.Card(id).Col, "every card is working on her row")
 	}
@@ -85,7 +85,7 @@ func TestFriendReconcileCollectsOrReturnsEachCard(t *testing.T) {
 	w.clean("after the reconcile")
 
 	// the tick deals a returned card again, as its next attempt, to a friend up with room
-	dealWith(w, FriendSeat{Name: "amy", Width: 4, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash,pro"})
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-3.w2").Col, "a returned card is dealt again at its next attempt")
 	w.clean("after the deal again")
 

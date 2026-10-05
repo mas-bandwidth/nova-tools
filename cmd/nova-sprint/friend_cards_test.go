@@ -407,7 +407,7 @@ func TestTheFriendBriefSaysWhatSyncChecks(t *testing.T) {
 func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	t.Parallel()
 	ta, cfg := friendApp(t)
-	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"width": "1"}}, "t")
+	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"width": "1", "tiers": "flash"}}, "t")
 	require.NoError(t, err)
 	ta.a.tip = tipIs(t, landHead)
 	root := t.TempDir()

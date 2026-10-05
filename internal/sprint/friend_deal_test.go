@@ -47,11 +47,11 @@ func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 	require.Equal(t, "only."+FriendRow("amy"), pr.F(FieldWho), "add writes the brief's WHO line on the card")
 
 	// not up, or no width: it waits ready, and no machine is dealt it
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Down}, FriendSeat{Name: "bob", Width: 2, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Down}, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"})
 	require.Equal(t, Ready, w.s.StateOf("s1-1"))
 	require.Nil(t, w.s.Fleet.Card("s1-1.w1"))
 
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
 	wc := w.s.Fleet.Card("s1-1.w1")
 	require.NotNil(t, wc)
 	assert.Equal(t, FriendRow("amy"), wc.Row)
@@ -74,7 +74,7 @@ func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 func TestAFriendIsDealtHerRoomWorkingAtHerWidthAndReadyBehind(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("friend"))
-	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
+	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
 	dealWith(w, seats...)
 	amy := FriendRow("amy")
 	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy works her width")
@@ -114,7 +114,7 @@ func TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt(t *testing.T) {
 		briefs[i] = friendBrief("only friend amy")
 	}
 	w := friendWorld(t, briefs...)
-	seat := FriendSeat{Name: "amy", Width: 8, Status: Up}
+	seat := FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro"}
 	dealWith(w, seat)
 	amy := FriendRow("amy")
 	require.Equal(t, 8, w.s.Fleet.Count(amy, Working))
@@ -153,7 +153,7 @@ func TestACardWithNoWhoIsDealtToAMachine(t *testing.T) {
 func TestAFriendWhoGoesQuietKeepsHerCardAndTheDeadlineHoldsIt(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 
 	// she goes quiet: the presence, the rebalance and the level move nothing of hers
@@ -183,13 +183,13 @@ func TestAFriendWhoGoesQuietKeepsHerCardAndTheDeadlineHoldsIt(t *testing.T) {
 func TestAReworkOfAFriendsCardWaitsReadyForAFriend(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: FriendRow("amy"), Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "friend amy HOLD: the gate is red"}))
 	require.Equal(t, Review, w.s.StateOf("s1-1"))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "make the gate green"}))
 	require.Equal(t, Ready, w.s.StateOf("s1-1"), "a friend's rework is never dealt to a machine")
 	require.Nil(t, w.s.Fleet.Card("s1-1.w2"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
 	wc := w.s.Fleet.Card("s1-1.w2")
 	require.NotNil(t, wc)
 	assert.Equal(t, FriendRow("amy"), wc.Row)
@@ -201,7 +201,7 @@ func TestAReworkOfAFriendsCardWaitsReadyForAFriend(t *testing.T) {
 func TestAFriendsRowIsNoMemberOfTheClearsShape(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
 	require.True(t, w.s.Fleet.HasRow(FriendRow("amy")))
 	sh := ShapeOf(w.s)
 	assert.Equal(t, []string{"m1", "m2"}, sh.Members)
@@ -223,8 +223,8 @@ func TestDealingRespectsAFriendDeliveryMode(t *testing.T) {
 		friendBrief("only friend bob"), friendBrief("only friend bob"), friendBrief("only friend bob"), friendBrief("only friend bob"),
 	)
 	seats := []FriendSeat{
-		{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch},
-		{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeOneShot},
+		{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash,pro"},
+		{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash,pro"},
 	}
 	dealWith(w, seats...)
 
@@ -292,14 +292,14 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 	}
 	w := friendWorld(t, briefs...)
 	// amy initially dealt in batch mode at width 2: s1-1 and s1-2 working, s1-3 and s1-4 ready
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash,pro"})
 	amy := FriendRow("amy")
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 
 	// Amy switches to one-shot mode:
 	seats := []FriendSeat{
-		{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeOneShot},
+		{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash,pro"},
 	}
 
 	// Finishing s1-1.w1 in one-shot mode: s1-2.w1 is still working, so occupancy is 1 > 0.

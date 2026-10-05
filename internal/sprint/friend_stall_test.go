@@ -194,7 +194,7 @@ func TestFriendStallLadderProgressDoesNotReleaseDownFriend(t *testing.T) {
 func TestFriendStallLadderBeatNamingRunningCardsIsActivity(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"))
-	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up}}
+	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}}
 	dealWith(w, seats...)
 	t0 := w.s.Now
 
@@ -244,7 +244,7 @@ func TestFriendStallLadderBeatNamingRunningCardsIsActivity(t *testing.T) {
 func TestFriendStallLadderFinishIsActivity(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
-	seats := []FriendSeat{{Name: "amy", Width: 3, Status: Up}}
+	seats := []FriendSeat{{Name: "amy", Width: 3, Status: Up, Class: "flash,pro"}}
 	dealWith(w, seats...)
 	t0 := w.s.Now
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)

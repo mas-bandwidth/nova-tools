@@ -201,7 +201,7 @@ func friendBrief(name string) string {
 // friend stall climbing her ladder (the wake turns, the coordinator's judgment, her
 // unstarted cards taken back, marked down), a snapshot before each climb.
 func aFriendStalls(k *walk) []sample {
-	k.friends = []sprint.FriendSeat{{Name: "fia", Width: 3, Status: sprint.Up, Class: cardhdr.RouteFrontier}}
+	k.friends = []sprint.FriendSeat{{Name: "fia", Width: 3, Status: sprint.Up, Class: cardhdr.RouteFrontier, Tiers: []string{cardhdr.RouteFlash, cardhdr.RouteFrontier}}}
 	for i := range 2 {
 		id := fmt.Sprintf("p%d", k.next)
 		k.next++

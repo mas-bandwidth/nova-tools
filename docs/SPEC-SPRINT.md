@@ -316,7 +316,8 @@ waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
 (item 22 of tmp/manual-to-verbs-2026-10-04.md;
 `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
 first, before the machines' deal) offers every ready card to its named friend
-first, then to the friends up whose tiers hold its tier, an idle lane first,
+whose tiers hold its tier first, then to the friends up whose tiers hold its
+tier, an idle lane first,
 then the most room free, the first by name among equals, then to the fleet. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
 no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
@@ -839,11 +840,17 @@ hers differed), and two cards taken back were dealt to a friend working 8 of 8
 up with the most room free" and "within each class" above, and "the tick does
 not level the friends":
 
-- **Eligibility is by tier, never by class.** A card for any friend (`WHO: friend`)
-  may go to a friend up whose tiers (her `FriendSeat.Tiers`, else her
-  class's) hold the card's tier; a card with no tier is the dealer's default,
-  flash (`cardTierOf`). A friend whose row names no tier takes every tier.
-  There is no fallback to any friend: a card no friend up may take waits ready.
+- **Eligibility is by tier, never by class.** Every friend deal and every
+  level move, whatever the card's WHO line, goes only to a friend up whose
+  tiers (her `FriendSeat.Tiers`, else her class's) hold the card's tier; a card
+  with no tier is the dealer's default, flash (`cardTierOf`), and a withdrawn
+  attempt at its redeal bound below its ceiling is offered at the tier it
+  escalates to (`escalating`), a new attempt on that tier. A friend whose row
+  names no tier takes none; a named friend without the tier is passed over for
+  another friend with it, and a hard pin to her waits
+  (`TestAFrontierCardGoesOnlyToAFriendWithFrontier`,
+  `TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute`). A card no
+  friend up may take is the fleet's (WHO is a preference); a hard pin waits ready.
 - **Idle lanes first.** Among the friends it may go to, a friend with an idle
   lane (width - working > 0) is preferred over every friend with none, the most
   idle lanes first, then the most room (DealAhead x width - working - ready),
@@ -863,7 +870,9 @@ not level the friends":
 - **The level runs inside every tick, after the deal.** The tick reads the
   friends' records whenever the roster has a friend, not only when a friend's
   card is ready, so a friend coming up (friend up, or a hold released) is
-  levelled on the same tick. An unstarted ready card for any friend on a friend
+  levelled on the same tick. An unstarted ready card that is not a hard pin (no
+  WHO line, `WHO: friend`, or one preferring a friend; never `WHO: only friend`,
+  `TestTheLevelMovesUnpinnedCardsToAnIdleFriend`) on a friend
   with no idle lane moves to a friend it may go to with an idle lane, into
   working; then backlogs even as before (a card moves from a backlog to one
   smaller by more than one, below her room), across every friend it may go to.

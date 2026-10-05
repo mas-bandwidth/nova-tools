@@ -15,9 +15,11 @@ import (
 // the members' ready queues (level); friend level evens the friends', and every tick runs
 // it after its deal (TickDeal), so no verb is needed. A card moves only to a friend whose
 // tiers hold its tier (friendTakes), never by class, and never to a friend it has left
-// (friendsLeft). Only a card for any friend (WHO: friend) that is ready on her row behind
-// her working cards and that she has not started moves: a card naming her stays hers, and
-// a working card is hers to finish or the coordinator's to take back (FriendTake).
+// (friendsLeft). Every card but a hard pin (WHO: only friend, OnlyFriend) that is ready on
+// her row behind her working cards and that she has not started moves: a card with no WHO
+// line, WHO: friend, or one preferring her (WHO is a preference, friends first); a hard pin
+// stays hers, and a working card is hers to finish or the coordinator's to take back
+// (FriendTake).
 
 // FriendLevelPerTick is the most cards the tick's level moves in one tick.
 const FriendLevelPerTick = 4
@@ -70,7 +72,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		row := FriendRow(f.Name)
 		held[f.Name], working[f.Name] = friendLoad(s, f.Name)+dealt[f.Name], s.Fleet.Count(row, Working)+dealtWorking[f.Name]
 		for _, c := range s.Fleet.Cell(row, Ready) {
-			if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.F(FieldWho) == WhoFriend && r.Started[c.ID] == "" && !friendStarted(s, f, c) {
+			if pr := s.Work.Placed(c.F("primary")); pr != nil && !OnlyFriend(pr) && r.Started[c.ID] == "" && !friendStarted(s, f, c) {
 				queues[f.Name] = append(queues[f.Name], c)
 			}
 		}

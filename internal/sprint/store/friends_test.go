@@ -41,8 +41,8 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	h := newHarness(t)
 	// amy is batch mode (width 2), bob is one-shot mode (width 2, mode: one-shot)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{
-		{Name: "amy", Width: 2, Mode: "batch"},
-		{Name: "bob", Width: 2, Mode: "one-shot"},
+		{Name: "amy", Width: 2, Mode: "batch", Class: "flash"},
+		{Name: "bob", Width: 2, Mode: "one-shot", Class: "flash"},
 	})
 	require.NoError(t, err)
 	_, err = h.st.FriendBeat(h.ctx, "amy")
@@ -114,7 +114,7 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	h := newHarness(t)
 	// Amy begins in batch mode with width 2
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{
-		{Name: "amy", Width: 2, Mode: "batch"},
+		{Name: "amy", Width: 2, Mode: "batch", Class: "flash"},
 	})
 	require.NoError(t, err)
 	_, err = h.st.FriendBeat(h.ctx, "amy")
@@ -144,7 +144,7 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 
 	// Switch amy to one-shot mode through config sync
 	_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{
-		{Name: "amy", Width: 2, Mode: "one-shot"},
+		{Name: "amy", Width: 2, Mode: "one-shot", Class: "flash"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"amy"}, updated)

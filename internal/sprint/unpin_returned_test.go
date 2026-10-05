@@ -38,7 +38,7 @@ func TestUnpinRefusesStartedOrFinishedWork(t *testing.T) {
 	for _, col := range []string{Working, Review, Merging, Landed} {
 		t.Run(col, func(t *testing.T) {
 			w := friendWorld(t, friendBrief("only friend amy"))
-			dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up})
+			dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"})
 			c := w.s.Primary("s1-1")
 			w.must(Plan{Units: []Unit{{Key: c.ID, Changes: []Change{change(Work, moveEntry(c, c.Row, col, nil))}}}})
 			p := Unpin(w.s, UnpinReq{IDs: []string{c.ID}, Reason: "share"})
