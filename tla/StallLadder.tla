@@ -4,11 +4,8 @@
 \* The stall ladder makes recovery fully mechanical as a tick part in
 \* internal/sprint/friend_stall.go added to TickParts (internal/sprint/steps_tick.go).
 \*
-\* A friend is stalled when she holds dealt cards and neither her activity nor a
-\* progress stamp on any of her cards is newer than friend_stall_after (20m). Her
-\* activity is her session activity, a beat of hers naming running cards (a one-shot
-\* lane or cards in child agents move no session), or a finish of a card on her row;
-\* the action FriendActivity stands for all three (2026-10-05).
+\* A friend is stalled when she holds dealt cards and neither her session activity
+\* nor a progress stamp on any of her cards is newer than friend_stall_after (20m).
 \* The ladder climbs one rung per friend_stall_step (5m) while she stays stalled:
 \*   (1) a wake turn: a bus message to her that her daemon pushes in as a turn
 \*   (2) a second wake
@@ -16,24 +13,21 @@
 \*   (4) every card of hers she has not started taken back (FriendTake with All;
 \*       a started card stays with her and finishes), ready for the next deal
 \*   (5) she is marked down with reason "stalled", and released to up by the tick itself
-\*       at her first activity after it; the release removes the coordinator's
-\*       observation of her and writes none, so her status is her beat rule again.
-\* Every rung is a happened note pushed like the rest; any activity or progress
+\*       at her first session activity after it.
+\* Every rung is a happened note pushed like the rest; any session activity or progress
 \* resets her to rung 0.
 \*
 \* Invariants:
 \*   NoCardHeldPastBound: no card is held by a stalled friend for more than the
 \*     bound (stall_after plus four steps).
 \*   NoStartedRedealt: no card is redealt while it has started.
-\*   ReleasedOnlyByActivity: a friend is released only by her own activity (session,
-\*     running beat or finish), never by card progress alone. Widened in words on
-\*     2026-10-05; the TLC rerun is owed.
+\*   ReleasedOnlyByActivity: a friend is released only by her own activity.
 \*
 \* Broken values:
 \*   "none"          the design
 \*   "notaken"       rung 4 fails to take back unstarted cards (breaks NoCardHeldPastBound)
 \*   "takestarted"   rung 4 takes back started cards too, allowing redeal (breaks NoStartedRedealt)
-\*   "releaseother"  friend is released to up without activity of hers (breaks ReleasedOnlyByActivity)
+\*   "releaseother"  friend is released to up without session activity (breaks ReleasedOnlyByActivity)
 
 EXTENDS Naturals, FiniteSets
 
@@ -107,7 +101,7 @@ Tick ==
           ELSE status[f]]
   /\ UNCHANGED <<cardHolder, activity, cardProgress, wasStarted, releasedWithoutActivity>>
 
-\* Friend has activity: session activity, a beat naming running cards, or a finish
+\* Friend has session activity
 FriendActivity(f) ==
   /\ activity' = [activity EXCEPT ![f] = clock]
   /\ rung' = [rung EXCEPT ![f] = 0]

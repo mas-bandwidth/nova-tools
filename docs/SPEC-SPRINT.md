@@ -4384,6 +4384,7 @@ The TLA+ specification `tla/StallLadder.tla` verifies three core invariants:
 - `NoStartedRedealt`: no started card is taken back or redealt; started cards stay and finish.
 - `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by her
   activity (session activity, a beat naming running cards, or a finish on her row), never by
-  card progress alone. The module's words name the wider activity; its actions still model
-  one activity event, which stands for all three, and the TLC rerun on the widened words is
-  owed.
+  card progress alone. The module's invariant already says "her own activity" and its one
+  activity action (`FriendActivity`) stands for all three; its header comments still say
+  session activity, and widening them (with the TLC rerun the edit makes due, since the
+  recorded runs hash the module) is owed.

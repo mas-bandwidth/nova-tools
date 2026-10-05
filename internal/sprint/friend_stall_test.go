@@ -228,8 +228,8 @@ func TestFriendStallLadderBeatNamingRunningCardsIsActivity(t *testing.T) {
 	// her beat names a running card again: released, the observation removed, none written
 	w.s.Now = w.s.Now.Add(time.Minute)
 	pRel := w.part(TickFriendStall, TickReq{Beats: running(w.s.Now), Friends: seats})
-	_, hasDown := w.s.Fleet.Prop(PropFriendStallDown("amy"))
-	assert.False(t, hasDown, "stall down cleared")
+	downStamp, _ := w.s.Fleet.Prop(PropFriendStallDown("amy"))
+	assert.Empty(t, downStamp, "stall down cleared")
 	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
 	assert.Empty(t, rung)
 	assert.Nil(t, pRel.Health, "the release writes no observation")
@@ -269,8 +269,8 @@ func TestFriendStallLadderFinishIsActivity(t *testing.T) {
 	w.place(w.s.Fleet, "s1-1.w1", FriendRow("amy"), DoneFailed)
 	w.s.Fleet.Card("s1-1.w1").Fields["finished"] = stamp(w.s.Now)
 	pRel := w.part(TickFriendStall, TickReq{Friends: seats})
-	_, hasDown := w.s.Fleet.Prop(PropFriendStallDown("amy"))
-	assert.False(t, hasDown, "a finish after the down releases her")
+	downStamp, _ := w.s.Fleet.Prop(PropFriendStallDown("amy"))
+	assert.Empty(t, downStamp, "a finish after the down releases her")
 	assert.Nil(t, pRel.Health)
 	assert.Equal(t, []string{"amy"}, pRel.HealthClear)
 }
