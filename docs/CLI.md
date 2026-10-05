@@ -563,6 +563,15 @@ nova-friend install --as <me> --harness dsh --dir <d> --width <n> --secrets DEEP
 nova-friend status --as <me> --dir <my working directory>
 ```
 
+When the session is free the daemon delivers every message waiting as one
+turn, oldest first: one line per message, `[i/n] <id> from=<f> at=<RFC3339>
+age=<m>m subject=<s>`, then its body; the text is capped at 256 KiB and what does
+not fit is named, `and <n> more (<ids>): nova-bus recv --as <me> --all`, and stays
+pending. All of the envelope is acked at exit 0, none of it at a failure. The
+daemon's own `coordinator silent` and `coordinator back` notices keep only the
+newest (the dropped are acked, `superseded=<newer id>` on the record), and a ping
+is answered by the daemon and never a turn.
+
 A harness that needs a secret in its environment gets it through `--secrets
 NAME[,NAME]` with the machine's nova-secrets `--seat`: the agent runs
 `nova-secrets exec --store ~/nova-bench/secrets --as <seat> --key
