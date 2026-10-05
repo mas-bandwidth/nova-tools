@@ -68,6 +68,14 @@ func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
+	if p.Tier != "" {
+		// the tier line: the tier she was dealt the card on and her row's model for it
+		// (docs/SPEC-FRIEND.md, a friend's models)
+		b.WriteString(sprint.FriendTierLine(p.Tier, p.Model) + "\n")
+		if p.Model != "" {
+			fmt.Fprintf(&b, "Run this card on %[1]s: in a child agent on %[1]s when your harness can choose a child's model, else in a session on %[1]s; your REPORT.md names it in a line Model: %[1]s, which the finish checks against this line.\n", p.Model)
+		}
+	}
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a twin recut --widen made starts from the held attempt's head (member.Carried)
@@ -195,6 +203,13 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 	para = oneline.Cap(para, maxFriendReport)
 	row := sprint.FriendRow(name)
 	r := sprint.FinishReq{Sel: sprint.Sel{IDs: []string{p.Card}}, As: row, Gens: map[string]int{p.Card: p.Gen}, Branch: p.Branch, Who: row}
+	// verified on every finish: a LAND whose report does not name her row's model for the
+	// card's tier is work that came back failed, a judgment to the coordinator, never landed
+	// (docs/SPEC-FRIEND.md, a friend's models)
+	if why := sprint.FriendModelMismatch(p.Model, report); verdict == VerdictLand && why != "" {
+		r.Failed, r.Report = true, "friend "+name+" LAND on the wrong model: "+why+"; "+para
+		return r, nil
+	}
 	switch {
 	case verdict == VerdictLand && typedrec.IsFullSha(head):
 		// the head is origin's tip, never the report's word: what lands is what is there
@@ -346,9 +361,24 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	if err != nil {
 		return 0, 0, err
 	}
+	// her row, as friend sync last wrote it: the model of each card's tier is her row's now
+	// (a card the level moved to her carries the model of the friend it left), and her queue
+	// file carries the row to her daemon (docs/SPEC-FRIEND.md, a friend's models)
+	spec, err := st.FriendSpecOf(ctx, name)
+	if err != nil {
+		return 0, 0, err
+	}
+	for i := range packets {
+		if m := spec.Models[packets[i].Tier]; m != "" && packets[i].Kind == "work" {
+			packets[i].Model = m
+		}
+	}
+	if note := friendRowChange(dir, spec); note != "" {
+		a.tellFriendRow(ctx, st, name, note, say)
+	}
 	defer func() {
 		if err == nil {
-			err = writeQueueFile(dir, states, left, packets)
+			err = writeQueueFileRow(dir, states, left, packets, friendQueueRowOf(spec))
 		}
 	}()
 	for i, p := range packets {
@@ -514,7 +544,7 @@ func (a *app) sendBus(ctx context.Context, m bus.Message, say func(string)) erro
 // told.
 func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, brief, line string, say func(string)) error {
 	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " dealt: " + line,
-		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report."}
+		Body: friendRunLine(p) + "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report."}
 	err := a.bus(ctx, m, say)
 	if err == nil {
 		return nil
@@ -648,7 +678,20 @@ const queueTaken = "taken"
 
 // friendQueue is the queue file's shape, as nova-friend reads it.
 type friendQueue struct {
-	Tasks []friendTask `json:"tasks"`
+	// Row is her row as friend sync last wrote it (friend.QueueRow): what nova-friend
+	// whoami prints, the lanes' model per tier and what nova-friend check reads.
+	Row   *friendQueueRow `json:"row,omitempty"`
+	Tasks []friendTask    `json:"tasks"`
+}
+
+// friendQueueRow is her row in her queue file, the shape of friend.QueueRow.
+type friendQueueRow struct {
+	Tiers      []string          `json:"tiers"`
+	Models     map[string]string `json:"models,omitempty"`
+	Mode       string            `json:"mode,omitempty"`
+	Width      int               `json:"width,omitempty"`
+	Children   string            `json:"children,omitempty"`
+	ChildModel string            `json:"child_model,omitempty"`
 }
 
 type friendTask struct {
@@ -658,6 +701,70 @@ type friendTask struct {
 	ID          string `json:"id"`
 	State       string `json:"state"`
 	Deliverable string `json:"deliverable,omitempty"`
+	// Tier and Model are the card's tier and her row's model for it: a one-shot lane
+	// launches her harness with the model's flag (friend.Task).
+	Tier  string `json:"tier,omitempty"`
+	Model string `json:"model,omitempty"`
+}
+
+// friendQueueRowOf is her row as her queue file carries it.
+func friendQueueRowOf(s store.FriendSpec) *friendQueueRow {
+	return &friendQueueRow{Tiers: sprint.Split(s.Class), Models: s.Models, Mode: s.Mode, Width: s.Width, Children: s.Children, ChildModel: s.ChildModel}
+}
+
+// friendRunLine is the first line of a card's delivery to her session when her row names a
+// model for its tier: the one question she answers when she takes a card is which model the
+// child that runs it runs on, and this is the answer (the owner, 2026-10-05: "ok what model
+// do I run this card on in a child agent? That's the question for them."); "" when it names
+// none.
+func friendRunLine(p sprint.Packet) string {
+	if p.Model == "" {
+		return ""
+	}
+	return "Run this card in a child on " + p.Model + " (" + sprint.FriendTierLine(p.Tier, p.Model) + "); if your harness cannot choose a child's model, run it on your session's model only if that is " + p.Model + ", else report HOLD and say so.\n"
+}
+
+// friendRowChange is the note owed her when her row (spec) differs from the row her queue
+// file in dir carries, one line naming what she serves now; "" when it is the same, or her
+// queue file carries no row yet (her first sync is no change).
+func friendRowChange(dir string, spec store.FriendSpec) string {
+	raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(queueFile)))
+	if err != nil {
+		return ""
+	}
+	var q friendQueue
+	if json.Unmarshal(raw, &q) != nil || q.Row == nil {
+		return ""
+	}
+	now := friendQueueRowOf(spec)
+	was, _ := json.Marshal(q.Row)
+	is, _ := json.Marshal(now)
+	if bytes.Equal(was, is) {
+		return ""
+	}
+	return "your row changed: " + friendRowWords(now) + " (was " + friendRowWords(q.Row) + "); run nova-friend whoami to read it"
+}
+
+// friendRowWords is a row in one line: tiers, the model per tier, mode, width and abilities.
+func friendRowWords(r *friendQueueRow) string {
+	var models []string
+	for _, t := range r.Tiers {
+		models = append(models, t+"="+cmp.Or(r.Models[t], "-"))
+	}
+	return fmt.Sprintf("tiers=%s models=%s mode=%s width=%d children=%s child_model=%s", cmp.Or(strings.Join(r.Tiers, ","), "-"), cmp.Or(strings.Join(models, ","), "-"),
+		cmp.Or(r.Mode, "batch"), r.Width, cmp.Or(r.Children, "yes"), cmp.Or(r.ChildModel, "yes"))
+}
+
+// tellFriendRow pushes her the note that her row changed, through the bus to her daemon,
+// as a card's delivery wakes her; a message not sent is said and nothing else fails.
+func (a *app) tellFriendRow(ctx context.Context, st *store.Store, name, note string, say func(string)) {
+	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "friend " + name + ": " + note,
+		Body: "Your nova-config friend row changed, " + note + ". Cards from now on carry the model of their tier in their tier line and in the delivery's first line."}
+	if err := a.bus(ctx, m, say); err != nil {
+		say(fmt.Sprintf("FRIEND-ROW NOTE friend=%s: the bus message about her changed row was not sent (%s); tell her by hand", name, oneline.Escape(err.Error())))
+		return
+	}
+	say(fmt.Sprintf("FRIEND-ROW CHANGED friend=%s: %s", name, oneline.Escape(note)))
 }
 
 // writeQueueFile keeps the friend's queue file as the sprint sees her cards: each card
@@ -668,9 +775,15 @@ type friendTask struct {
 // nothing changes. docs/FRIENDS.md: a new generation or epoch resets a done record;
 // an unchanged job preserves the session's completion.
 func writeQueueFile(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error), packets []sprint.Packet) error {
+	return writeQueueFileRow(dir, states, leftOf, packets, nil)
+}
+
+// writeQueueFileRow is writeQueueFile with her row written into the file (nil keeps the
+// row it holds).
+func writeQueueFileRow(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error), packets []sprint.Packet, row *friendQueueRow) error {
 	jobs := map[string]friendTask{}
 	for _, p := range packets {
-		jobs[p.Card] = friendTask{ID: p.Card, Gen: max(1, p.Gen), Job: friendJobOf(p)}
+		jobs[p.Card] = friendTask{ID: p.Card, Gen: max(1, p.Gen), Job: friendJobOf(p), Tier: p.Tier, Model: p.Model}
 	}
 	path := filepath.Join(dir, filepath.FromSlash(queueFile))
 	var q friendQueue
@@ -682,6 +795,9 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	if row != nil {
+		q.Row = row
 	}
 	var gone []string
 	for _, t := range q.Tasks {
@@ -706,6 +822,7 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 			}
 			if assigned {
 				q.Tasks[i].Gen, q.Tasks[i].Job = job.Gen, job.Job
+				q.Tasks[i].Tier, q.Tasks[i].Model = job.Tier, job.Model
 				if newJob {
 					q.Tasks[i].Deliverable = ""
 				}

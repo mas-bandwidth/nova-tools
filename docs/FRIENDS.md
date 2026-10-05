@@ -107,7 +107,17 @@ normally do friend work."). It arrives as a job like any other:
 STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
 ```
 
-then the working-directory line below, a later attempt's start (the current tip
+then, when her nova-config row names a model for the card's tier, the tier line and what to
+run it on (docs/SPEC-FRIEND.md, a friend's models):
+
+```
+tier: heavy model: claude-opus-5-5
+Run this card on claude-opus-5-5: in a child agent on claude-opus-5-5 when your harness can choose a child's model, else in a session on claude-opus-5-5; your REPORT.md names it in a line Model: claude-opus-5-5, which the finish checks against this line.
+```
+
+Her REPORT.md then carries `Model: <model>`. `nova-friend whoami --as <me> --dir <d>` prints her
+row (tiers, the model per tier, her directory, her delivery session); run it at session start.
+Then the working-directory line below, a later attempt's start (the current tip
 of the card's base branch on origin, never an older base, with the work of the
 last attempt that pushed carried onto it by her, redone where it does not
 apply, and the Head she reports on that tip; nothing checks that descent, and

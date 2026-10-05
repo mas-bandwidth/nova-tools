@@ -53,6 +53,13 @@ type friendEntry struct {
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
+	// Models is her row's model per tier, and Children and ChildModel what her harness
+	// can do (config.FriendModels, children, child_model; docs/SPEC-FRIEND.md, a friend's
+	// models): the deal writes the model of a card's tier on the card, and her queue file
+	// carries the three to her daemon. Empty is none, and yes.
+	Models     map[string]string `json:"models,omitempty"`
+	Children   string            `json:"children,omitempty"`
+	ChildModel string            `json:"child_model,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -70,6 +77,16 @@ type FriendSpec struct {
 	Mode  string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
+	// Models, Children and ChildModel are her row's model per tier and what her harness
+	// can do (config.FriendModels, children, child_model).
+	Models     map[string]string
+	Children   string
+	ChildModel string
+}
+
+// sameModels says two friends' model maps hold the same models, none being empty.
+func sameModels(a, b map[string]string) bool {
+	return maps.Equal(a, b) || len(a) == 0 && len(b) == 0
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -85,6 +102,8 @@ type FriendRow struct {
 	Status  string `json:"status"`
 	Class   string `json:"class,omitempty"`
 	Mode    string `json:"mode,omitempty"`
+	// Models is her row's model per tier, as friend sync last wrote it; absent when none.
+	Models map[string]string `json:"models,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -165,11 +184,12 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || !sameModels(e.Models, s.Models) || e.Children != s.Children || e.ChildModel != s.ChildModel:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
 		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
+		e.Models, e.Children, e.ChildModel = s.Models, s.Children, s.ChildModel
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -337,7 +357,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Models: r[n].Models, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -384,7 +404,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Why: whys[r.Name]}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Models: r.Models, Why: whys[r.Name]}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
@@ -572,7 +592,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, Models: e.Models, Children: e.Children, ChildModel: e.ChildModel}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last
