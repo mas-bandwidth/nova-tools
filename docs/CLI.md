@@ -983,8 +983,8 @@ result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
-are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
-actor except `inbox --read`, which moves the coordinator's cursor. A set is
+are reports; `tick`, `run`, `friend clean`, `snapshot` and `backup` are the machine's. Reads need no
+actor except `inbox --read`, which moves the coordinator's cursor. `nova-sprint backup --dir <d> [--keep <n>]` is the sprint backup in one verb: it writes the store to a verified file in `<d>`, restores the file into a twin and compares the counts, and scans the file for credentials, printing `BACKUP OK file=... restored=... secrets=none`; a credential in the file fails it (exit 1) naming its kind and count, never the value. A set is
 ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 `--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
 which refuses a group that has changed. `nova-sprint help <verb>` (or
