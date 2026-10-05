@@ -161,6 +161,8 @@ type harness struct {
 	tailnet string
 	// dir is where a --file path is opened ("" refuses one).
 	dir string
+	// verbs, when set, is the probe loop add, set and status ask; nil asks nothing.
+	verbs config.VerbProbe
 }
 
 func newHarness() *harness {
@@ -211,6 +213,7 @@ func (h *harness) deps() deps {
 			}
 			return []byte(h.tailnet), nil
 		},
+		probe: h.verbs,
 	}
 }
 
