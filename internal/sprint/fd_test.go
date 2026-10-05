@@ -127,7 +127,7 @@ func TestOpenFilesOverTheAlarmRaiseOneJudgmentNamingTheTopHolders(t *testing.T) 
 	for _, want := range []string{"m1 has 160000 open files, above its alarm of 150000", "node pid=300 user=build fds=140000", "redis-server pid=200 user=build fds=9000", wc.ID + " (deadline)"} {
 		assert.Contains(t, j.What, want, "the judgment names %q", want)
 	}
-	assert.Equal(t, []string{"fleet up m1 --width 2", "fleet down m1"}, j.Decisions)
+	assert.Equal(t, []string{"fleet up m1 --width 2", "fleet down m1", "ack", "wait 15m"}, j.Decisions)
 
 	// the count moves and stays over the alarm: the same episode, no second judgment
 	meter.set(170000)
@@ -135,6 +135,7 @@ func TestOpenFilesOverTheAlarmRaiseOneJudgmentNamingTheTopHolders(t *testing.T) 
 	raised, cleared, _ = r.fdEpisodes()
 	require.Equal(t, [2]int{1, 0}, [2]int{raised, cleared}, "one judgment an episode, whatever the count does")
 	require.Equal(t, 1, r.openOf(sprint.NFilesAlarm), "the episode's judgment is open")
+	assert.Contains(t, r.fdJudgment().What, "m1 has 170000 open files", "the open judgment says the latest count")
 
 	// under the alarm: closed, one cleared note
 	meter.set(1000)
@@ -158,6 +159,94 @@ func TestOpenFilesOverTheAlarmRaiseOneJudgmentNamingTheTopHolders(t *testing.T) 
 	raised, cleared, _ = r.fdEpisodes()
 	require.Equal(t, [2]int{2, 2}, [2]int{raised, cleared}, "a stale beat clears the episode")
 	require.Empty(t, r.fdText())
+}
+
+// fdJudgment is the open open-files judgment.
+func (r *alarmRig) fdJudgment() sprint.Note {
+	r.t.Helper()
+	for _, o := range r.snap().Open {
+		if o.Note.Type == sprint.NFilesAlarm && o.Note.Kind == sprint.Judgment {
+			return o.Note
+		}
+	}
+	require.FailNow(r.t, "no open judgment of type "+sprint.NFilesAlarm)
+	return sprint.Note{}
+}
+
+// fleetLoad is m1's load cell in the fleet table.
+func (r *alarmRig) fleetLoad() string {
+	r.t.Helper()
+	shapes, err := r.m.Shapes(r.ctx, []string{r.st.Names.Table(sprint.Fleet)})
+	require.NoError(r.t, err)
+	require.NotEmpty(r.t, shapes)
+	for _, row := range shapes[0].Rows {
+		if row.Key == "m1" {
+			return row.Texts[sprint.Load]
+		}
+	}
+	require.FailNow(r.t, "no fleet row m1")
+	return ""
+}
+
+// The fleet table shows a member's open files over its warn bound beside its load, and
+// the open-files judgment is the coordinator's to answer like every alarm's
+// (docs/SPEC-SPRINT.md section 8, "Open files"): ack holds the episode quiet whatever
+// the count does until it falls under; wait 15m holds it for that running time and the
+// tick raises it again when the count is still over, with no cleared note between.
+func TestOpenFilesShowInTheFleetTableAndTheJudgmentTakesAckAndWait(t *testing.T) {
+	t.Parallel()
+	r := newAlarmRig(t)
+	meter := &fdMeter{open: 1000}
+	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 4}))
+	_, _, _, err := r.st.SetMachine(r.ctx, true)
+	require.NoError(t, err)
+	r.fdTicks(meter, 3)
+	assert.Equal(t, "10.0%", r.fleetLoad(), "under the warn bound the load cell is the load alone")
+
+	meter.set(60000)
+	r.fdTicks(meter, 3)
+	assert.Equal(t, "10.0% fds 60000 warn", r.fleetLoad(), "over the warn bound the fleet table says warn")
+
+	meter.set(160000)
+	r.fdTicks(meter, 3)
+	assert.Equal(t, "10.0% fds 160000 alarm", r.fleetLoad())
+	j := r.fdJudgment()
+	assert.Equal(t, []string{"fleet up m1 --width 2", "fleet down m1", "ack", "wait 15m"}, j.Decisions)
+
+	// ack: the episode is held quiet while the count moves over the alarm
+	r.must(store.AckStep(sprint.AckReq{Notes: []string{j.ID}, Reason: "seen", Who: "coordinator"}))
+	meter.set(170000)
+	r.fdTicks(meter, 3)
+	raised, cleared, _ := r.fdEpisodes()
+	require.Equal(t, [2]int{1, 0}, [2]int{raised, cleared}, "acknowledged: no second judgment while it stays over")
+	require.Zero(t, r.openOf(sprint.NFilesAlarm))
+
+	// under the alarm: the acknowledged episode clears once; over again is a new episode
+	meter.set(1000)
+	r.fdTicks(meter, 3)
+	raised, cleared, _ = r.fdEpisodes()
+	require.Equal(t, [2]int{1, 1}, [2]int{raised, cleared}, "the acknowledged episode clears under the alarm")
+	meter.set(160000)
+	r.fdTicks(meter, 3)
+	raised, cleared, _ = r.fdEpisodes()
+	require.Equal(t, [2]int{2, 1}, [2]int{raised, cleared}, "a second episode")
+
+	// wait 15m: quiet for that running time, then raised again while still over, not cleared
+	r.mu.Lock()
+	until := r.now.Add(15 * time.Minute)
+	r.mu.Unlock()
+	r.must(store.WaitStep(sprint.WaitReq{Note: r.fdJudgment().ID, Until: until, Who: "coordinator"}))
+	r.fdTicks(meter, 3)
+	raised, cleared, _ = r.fdEpisodes()
+	require.Equal(t, [2]int{2, 1}, [2]int{raised, cleared}, "waiting: quiet")
+	require.Zero(t, r.openOf(sprint.NFilesAlarm))
+	r.mu.Lock()
+	r.now = until
+	r.mu.Unlock()
+	r.fdTicks(meter, 3)
+	raised, cleared, _ = r.fdEpisodes()
+	require.Equal(t, [2]int{3, 1}, [2]int{raised, cleared}, "the wait run out on a count still over: raised again, no cleared note")
+	require.Equal(t, 1, r.openOf(sprint.NFilesAlarm))
 }
 
 // openOf is how many judgments of the type are open.

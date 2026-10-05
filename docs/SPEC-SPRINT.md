@@ -3017,15 +3017,20 @@ backlog alarms, in its deadlines part) from the open files its beat reads (secti
 while a member's beat is fresh, its reading taken within a beat window, and the count
 above its alarm bound, one judgment of the member, "open files above the alarm",
 filed under `member:<m>`, written when the condition starts and never again while it
-stands, whatever the count does (the episode keeps the line it was written with). Its
+stands, whatever the count does (the episode is keyed by its type and member, and its
+line is updated in place with the latest count and holders). Its
 line names the member, the count, the alarm bound, the system's limit, the top
 holders (or why they are not listed), and, as an alarm is an effect on cards, the
 member's cards that ended on a timeout within the overload window, or that none did.
-Its decisions are `fleet up <m> --width <half>` and `fleet down <m>`. It closes when
-the count falls to the alarm or under, or the beat or the reading goes stale, in the
-same step as one happened note to the coordinator, "an alarm cleared", whose text
-opens with "open files above the alarm:" and says the count now. Over the warn bound
-only, no judgment is written.
+Its decisions are `fleet up <m> --width <half>`, `fleet down <m>`, `ack` (seen: the
+acknowledgement holds the episode quiet until the count falls under) and `wait 15m`
+(quiet for that running time; when it runs out on a count still over, the judgment is
+raised again and nothing is cleared). It closes when the count falls to the alarm or
+under, or the beat or the reading goes stale, in the same step as one happened note to
+the coordinator, "an alarm cleared", whose text opens with "open files above the
+alarm:" and says the count now. Over the warn bound only, no judgment is written; the
+fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
+`alarm` above the alarm bound), while the beat and its reading are fresh.
 
 ### The coordinator's pass
 

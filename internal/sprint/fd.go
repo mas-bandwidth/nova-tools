@@ -17,8 +17,10 @@ import (
 // and carries the reading in the beat's measuring state. Over the warn bound the
 // member's files word says warn; over the alarm bound the tick writes one judgment of
 // the member, an episode: written when the count passes the alarm, never again while it
-// stays over whatever it does, closed with one cleared note when it falls under or the
-// beat goes stale. It names the count, the top holders and, as an alarm is an effect on
+// stays over whatever it does (its line updated in place with the latest count and
+// holders), closed with one cleared note when it falls under or the beat goes stale. Its
+// decisions are the member's (halve its width, or hold it down), ack (seen: quiet for
+// the episode) and wait 15m (quiet for that running time, raised again if still over). It names the count, the top holders and, as an alarm is an effect on
 // cards, the member's cards that ended on a timeout within OverloadWindow.
 
 // NFilesAlarm is the judgment of a member whose open file descriptors are above its
@@ -66,45 +68,48 @@ func filesWhat(s *Snapshot, m string, f hostload.Files) string {
 	return what
 }
 
-// filesDecisions are the judgment's: halve the member's width, or hold it and deal its
-// cards elsewhere. The judgment closes itself when the count falls under the alarm.
+// filesDecisions are the judgment's: halve the member's width, hold it and deal its
+// cards elsewhere, acknowledge it (seen: quiet for the episode), or wait 15m (quiet
+// for that running time, raised again if the count is still over). The judgment
+// closes itself when the count falls under the alarm.
 func filesDecisions(s *Snapshot, m string) []string {
-	return []string{fmt.Sprintf("fleet up %s --width %d", m, max(1, s.Width(m)/2)), "fleet down " + m}
+	return []string{fmt.Sprintf("fleet up %s --width %d", m, max(1, s.Width(m)/2)), "fleet down " + m, "ack", "wait 15m"}
 }
 
 // filesConds is the tick's open-files condition of every member over its alarm bound.
-// An episode keeps the line its judgment was written with (the condition is keyed by
-// its line), so a count that moves while it stays over is the same episode.
+// An episode is keyed by its type and member alone (condKey), so a count that moves
+// while it stays over is the same episode, and its judgment's line is updated in place
+// with the latest count and holders; an acknowledgement or a wait of it holds the
+// episode the same way.
 func filesConds(s *Snapshot, r TickReq) []cond {
-	judged := map[string]string{}
-	for _, o := range s.Open {
-		if o.Note.Type == NFilesAlarm && o.Note.Kind == Judgment {
-			judged[o.Note.Stream] = o.Note.What
-		}
-	}
 	var out []cond
 	for _, m := range s.Members() {
 		f, ok := FilesAt(r.Beats[m], s.Now)
 		if !ok || f.Level() != hostload.LevelAlarm {
 			continue
 		}
-		subject := MemberSubject(m)
-		what, open := judged[subject]
-		if !open {
-			what = filesWhat(s, m, f)
-		}
-		out = append(out, cond{typ: NFilesAlarm, stream: subject, streamLevel: true, what: what, decisions: filesDecisions(s, m)})
+		out = append(out, cond{typ: NFilesAlarm, stream: MemberSubject(m), streamLevel: true, what: filesWhat(s, m, f), decisions: filesDecisions(s, m)})
 	}
 	return out
 }
 
 // tickFiles is the tick's open-files alarms, planned with the backlog alarms
 // (tickAlarms): a judgment for each member whose count passes its alarm, none while it
-// stays over, and, for each the tick closes, one cleared note to the coordinator.
+// stays over or the coordinator's ack or wait holds it, and, for each the tick closes
+// because the count fell under (or the beat went stale), one cleared note to the
+// coordinator.
 func tickFiles(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
-	due := notify(&p, s, filesConds(s, r), []string{NFilesAlarm}, r)
+	conds := filesConds(s, r)
+	stands := map[string]bool{}
+	for _, c := range conds {
+		stands[c.stream] = true
+	}
+	due := notify(&p, s, conds, []string{NFilesAlarm}, r)
 	for _, o := range p.Closes {
+		if stands[o.Note.Stream] {
+			continue // a wait run out on a count still over the alarm is raised again, not cleared
+		}
 		m := strings.TrimPrefix(o.Note.Stream, MemberSubject(""))
 		now := m + " gives no fresh reading of its open files"
 		if f, ok := FilesAt(r.Beats[m], s.Now); ok {
