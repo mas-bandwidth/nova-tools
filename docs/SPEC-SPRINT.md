@@ -4450,7 +4450,13 @@ While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 min
 configurable via `nova-sprint set --friend-stall-step`):
 1. **Wake turn 1**: a bus message to her (`wakeFriendStall`, the store's `WakeFriend` that
    `tick` and `run` set) pushed into her daemon as a turn; a message not sent is said on
-   stderr and the rung climbs the same.
+   stderr and on the tick's result, and the rung climbs the same. The part only plans the
+   wake: the store's tick (`tickRun.parts`, `internal/sprint/store/tick.go`) hands it a
+   `TickReq.WakeFriend` that keeps the wakes of the plan being made, and sends the last
+   plan's once the part's step commits. A plan made to see whether the part has work, or
+   made again after a commit lost to another writer, wakes no one, so each wake rung wakes
+   her once (2026-10-05: the plan made to see whether the part had work sent the wake too,
+   and every wake went twice; `TestATickWakesAStalledFriendOnceAtEachWakeRung`).
 2. **Wake turn 2**: a second wake bus message.
 3. **Coordinator note**: a pushed judgment (`Kind: Judgment`, `Type: NStalled`,
    `"friend <f> stalled <d>: two wakes unanswered"`).
@@ -4471,13 +4477,15 @@ configurable via `nova-sprint set --friend-stall-step`):
 Every rung emits a happened note (`Kind: Happened`, `Type: "friend stall"`). Any activity
 or card progress resets her to rung 0.
 
-The TLA+ specification `tla/StallLadder.tla` verifies three core invariants:
+The TLA+ specification `tla/StallLadder.tla` verifies five invariants:
 - `NoCardHeldPastBound`: no unstarted card is held by a stalled friend for more than the bound
   (`friend_stall_after + 4 * friend_stall_step`).
 - `NoStartedRedealt`: no started card is taken back or redealt; started cards stay and finish.
 - `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by her
   activity (session activity, a beat naming running cards, or a finish on her row), never by
-  card progress alone. The module's invariant already says "her own activity" and its one
-  activity action (`FriendActivity`) stands for all three; its header comments still say
-  session activity, and widening them (with the TLC rerun the edit makes due, since the
-  recorded runs hash the module) is owed.
+  card progress alone. Its one activity action (`FriendActivity`) stands for all three.
+- `WokenAtEveryWakeRung`: a friend past wake rung n (n = 1, 2) was sent wake n (reversed
+  witness `nowake`: the wake planned and never sent, as `friend-stall-ladder-r` left it).
+- `NoWakeWithoutRung`: a wake is sent only at a rung the ladder climbed, and once
+  (`PlanUncommitted`, a plan the tick makes and does not commit; reversed witness
+  `wakeinplan`: the planner sends the wake as it plans).
