@@ -704,6 +704,145 @@ type nativeChild struct {
 	result                      member.Result
 }
 
+// receiptSpend reads this launch's durable per-attempt usage rows (docs/SPEC-SPRINT.md,
+// "What a card cost"). The job directory is
+// unique to one card generation or read attempt, so rows from another attempt cannot enter
+// the consumer's cost. Native writes these rows before it prints its final summary; they
+// recover accounting when that summary is cut off.
+func receiptSpend(job string) (cardcost.Usage, bool, error) {
+	f, err := os.Open(filepath.Join(job, "usage.tsv"))
+	if os.IsNotExist(err) {
+		return cardcost.NoUsage(), false, nil
+	}
+	if err != nil {
+		return cardcost.NoUsage(), false, err
+	}
+	defer f.Close() // ignored: a read-only usage receipt needs no close result
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return cardcost.NoUsage(), false, scanErr
+		}
+		return cardcost.NoUsage(), false, nil
+	}
+	header := strings.Split(scanner.Text(), "\t")
+	columns := make(map[string]int, len(header))
+	for i, name := range header {
+		columns[name] = i
+	}
+	for _, name := range []string{"provider", "model", "tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd"} {
+		if _, ok := columns[name]; !ok {
+			return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv has no %s column", name)
+		}
+	}
+	var runs []cardcost.Usage
+	rows := 0
+	completeCost := true
+	for scanner.Scan() {
+		row := strings.Split(scanner.Text(), "\t")
+		if len(row) != len(header) {
+			return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv row has %d fields; header has %d", len(row), len(header))
+		}
+		value := func(name string) string { return row[columns[name]] }
+		rows++
+		for _, name := range []string{"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning"} {
+			v := value(name)
+			if v != "" && v != swarm.Dash {
+				n, parseErr := strconv.ParseInt(v, 10, 64)
+				if parseErr != nil || n < 0 {
+					return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv row has invalid %s value %q", name, v)
+				}
+			}
+		}
+		spend := map[string]string{
+			"tokens_in": value("tokens_in"), "tokens_out": value("tokens_out"),
+			"cache_write": value("cache_write"), "cache_read": value("cache_read"),
+			"reasoning": value("reasoning"), "provider": value("provider"), "model": value("model"),
+		}
+		if usd := value("usd"); usd != "" && usd != swarm.Dash {
+			if _, ok := cardcost.Sum(usd, "0"); !ok {
+				return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv row has invalid usd value %q", usd)
+			}
+			spend["cost"] = usd // a measured zero is present, not an absent cost
+		} else {
+			completeCost = false
+		}
+		u := launchSpend(spend)
+		runs = append(runs, u)
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return cardcost.NoUsage(), false, scanErr
+	}
+	if rows == 0 {
+		return cardcost.NoUsage(), false, nil
+	}
+	usage := cardcost.ParseSpend(spendWord(runs))
+	// A missing dollar value on any durable attempt is unknown, even if another
+	// attempt reported a price. Do not expose a partial aggregate as full spend.
+	if !completeCost {
+		usage.Actual, usage.ActualBy = "", ""
+	}
+	return usage, true, nil
+}
+
+// mergeReceiptSpend keeps native's final timing and budget words while filling the per-call
+// usage fields from the durable receipt written before that summary (docs/SPEC-SPRINT.md,
+// "What a card cost").
+func mergeReceiptSpend(line string, recovered cardcost.Usage) string {
+	u := cardcost.ParseUsage(line)
+	mergeCount := func(old, receipt int64) int64 {
+		if receipt >= 0 {
+			return receipt
+		}
+		return old
+	}
+	u.Tokens = cardcost.Tokens{
+		Input:      mergeCount(u.Tokens.Input, recovered.Tokens.Input),
+		CacheRead:  mergeCount(u.Tokens.CacheRead, recovered.Tokens.CacheRead),
+		CacheWrite: mergeCount(u.Tokens.CacheWrite, recovered.Tokens.CacheWrite),
+		Output:     mergeCount(u.Tokens.Output, recovered.Tokens.Output),
+		Reasoning:  mergeCount(u.Tokens.Reasoning, recovered.Tokens.Reasoning),
+		Requests:   mergeCount(u.Tokens.Requests, recovered.Tokens.Requests),
+		MaxPrompt:  mergeCount(u.Tokens.MaxPrompt, recovered.Tokens.MaxPrompt),
+	}
+	if recovered.Model != "" {
+		u.Model = recovered.Model
+	}
+	// The receipt is authoritative when the summary is absent or disagrees. Its
+	// empty actual is unknown, and must clear any partial summary price.
+	u.Actual, u.ActualBy = recovered.Actual, recovered.ActualBy
+	return u.String()
+}
+
+// spendMatchesReceipt is whether a native summary carries the per-call totals that the
+// durable receipt rows independently report. A disagreement marks a truncated summary.
+func spendMatchesReceipt(summary string, recovered cardcost.Usage) bool {
+	u := cardcost.ParseSpend(summary)
+	counts := [][2]int64{
+		{u.Tokens.Input, recovered.Tokens.Input}, {u.Tokens.CacheRead, recovered.Tokens.CacheRead},
+		{u.Tokens.CacheWrite, recovered.Tokens.CacheWrite}, {u.Tokens.Output, recovered.Tokens.Output},
+		{u.Tokens.Reasoning, recovered.Tokens.Reasoning},
+	}
+	for _, pair := range counts {
+		if pair[1] >= 0 && pair[0] != pair[1] {
+			return false
+		}
+	}
+	if recovered.Model != "" && u.Model != recovered.Model {
+		return false
+	}
+	if recovered.Actual != "" {
+		a, aok := cardcost.Sum(u.Actual, "0")
+		b, bok := cardcost.Sum(recovered.Actual, "0")
+		if !aok || !bok || a != b {
+			return false
+		}
+	} else if u.Actual != "" {
+		return false
+	}
+	return true
+}
+
 // Wait is closed when the child has ended (member.Waiter).
 func (c *nativeChild) Wait() <-chan struct{} { return c.done }
 
@@ -819,7 +958,8 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, refused, budget, gate, gateTests, carry string
+		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		nativeHasSpend := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			carry = cardcontract.ParseCarryLine(b)
 			if m := nativeGateLine.FindSubmatch(b); m != nil {
@@ -854,10 +994,30 @@ func (c *nativeChild) Result() member.Result {
 				u.Wall, u.Budget = string(m[1]), string(m[2])
 				usage = u.String()
 			}
+			if s := nativeSpend.FindSubmatch(b); s != nil {
+				nativeHasSpend = true
+				nativeSpendLine = string(s[1])
+			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
 			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && (end == member.EndBudget || end == member.EndUnverifiable) {
 				budget = strings.TrimSpace(string(m[1]))
+			}
+		}
+		if c.job != "" {
+			// collect writes usage.tsv before report prints spend= on the final NATIVE
+			// line; a native process stopped between those writes still has a durable
+			// per-attempt receipt for this generation. The file is also the fallback when
+			// native's final log is absent altogether.
+			recovered, found, receiptErr := receiptSpend(c.job)
+			if receiptErr != nil {
+				usageError = receiptErr.Error()
+			} else if found && (usage == "" || !nativeHasSpend || !spendMatchesReceipt(nativeSpendLine, recovered)) {
+				if usage == "" {
+					usage = recovered.String()
+				} else {
+					usage = mergeReceiptSpend(usage, recovered)
+				}
 			}
 		}
 		path := newestResult(c.results)
@@ -898,6 +1058,14 @@ func (c *nativeChild) Result() member.Result {
 			} else {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
+		}
+		if usageError != "" {
+			// Keep the missing receipt visible in the stored cost record and the finish
+			// words; never turn an unreadable snapshot into a measured zero.
+			u := cardcost.ParseUsage(usage)
+			u.Extra = append(u.Extra, "usage_source_error=receipt-unreadable")
+			usage = u.String()
+			report = oneline.Cap(report+"; usage receipt unreadable: "+oneline.Escape(usageError), 300)
 		}
 		if verdict == "not-done" && gate == member.GateGreen {
 			// the child's gate was red only on failures the gate decision classed flaky, and
