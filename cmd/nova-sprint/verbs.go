@@ -2531,11 +2531,11 @@ func (a *app) cmdCardBase(args []string, stdout, stderr io.Writer) int {
 		if repo != "" {
 			tip, err := a.branchTip(ctx, repo, branch)
 			if err != nil {
-				fmt.Fprintf(stderr, "%s card base REFUSED: reading origin's tip of %s: %s\n", prog, oneline.Escape(branch), oneline.Escape(err.Error()))
+				fmt.Fprintf(stderr, "%s card base REFUSED: reading origin's tip of %s: %s; run: nova-sprint card base %s %s\n", prog, oneline.Escape(branch), oneline.Escape(err.Error()), oneline.Escape(id), oneline.Escape(branch))
 				return 1
 			}
 			if tip == "" {
-				fmt.Fprintf(stderr, "%s card base REFUSED: the branch %s is not on origin\n", prog, oneline.Escape(branch))
+				fmt.Fprintf(stderr, "%s card base REFUSED: the branch %s is not on origin; push the branch or name one origin holds, then run: nova-sprint card base %s <branch>\n", prog, oneline.Escape(branch), oneline.Escape(id))
 				return 1
 			}
 		}
