@@ -23,13 +23,23 @@ func cliTwin(t *testing.T, exe, twinFile string, lines ...[]string) {
 	}
 }
 
+// baseStamped is a candidate built from commit (docs/SPEC-SPRINT.md section 14,
+// "server-from-base-only-w.w1"): its version verb prints the commit's stamp, and any other
+// verb runs body, a shell script's lines.
+func baseStamped(commit, body string) string {
+	return "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'nova-sprint 20261005120000-" + commit[:12] + " linux/amd64 go1.24.0'; exit 0; fi\n" + body
+}
+
 // TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary: server switch runs the
 // candidate's tick --shadow against the store before the swap (docs/SPEC-SPRINT.md
 // section 14, install-canary-shadow-tick-r.w1). On the twin store a working candidate
 // (this binary) plans the tick, writes nothing, and is switched in with its plan size
 // and time recorded beside the switch record; a candidate whose shadow tick exits
 // non-zero, panics or misses the tick deadline is refused, and the old server's
-// binary is left as it was.
+// binary is left as it was. Every candidate is built from the sprint base of a twin
+// repository, so the base check (server-from-base-only-w.w1) passes and the shadow is what
+// is tested; the working one is this binary behind a wrapper that answers version with the
+// base's stamp, since a test binary carries no vcs stamp.
 func TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary(t *testing.T) {
 	t.Parallel()
 	exe, err := os.Executable()
@@ -42,24 +52,26 @@ func TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary(t *testing.T) {
 		[]string{"start"})
 	twinBefore, err := os.ReadFile(twinFile)
 	require.NoError(t, err)
+	clone, base, _ := verbTwin(t)
+	onBase := " --repo " + clone + " --base sprint/base"
 
 	t.Run("a broken binary is refused and the old server keeps running", func(t *testing.T) {
 		cases := []struct {
 			name, script, extra, why string
 		}{
-			{"errors", "#!/bin/sh\necho 'tick: the store refused' >&2\nexit 2\n", "", "exited 2: tick: the store refused"},
-			{"panics", "#!/bin/sh\necho 'panic: runtime error: index out of range [3] with length 3' >&2\necho 'goroutine 1 [running]:' >&2\nexit 2\n", "", "panicked: panic: runtime error: index out of range [3]"},
-			{"misses the deadline", "#!/bin/sh\nexec sleep 60\n", " --tick-deadline 300ms", "missed the tick deadline 300ms"},
-			{"prints no plan", "#!/bin/sh\necho 'TICK OK'\n", "", "exited 0 and printed no plan"},
+			{"errors", "echo 'tick: the store refused' >&2\nexit 2\n", "", "exited 2: tick: the store refused"},
+			{"panics", "echo 'panic: runtime error: index out of range [3] with length 3' >&2\necho 'goroutine 1 [running]:' >&2\nexit 2\n", "", "panicked: panic: runtime error: index out of range [3]"},
+			{"misses the deadline", "exec sleep 60\n", " --tick-deadline 300ms", "missed the tick deadline 300ms"},
+			{"prints no plan", "echo 'TICK OK'\n", "", "exited 0 and printed no plan"},
 		}
 		for _, tc := range cases {
 			sub := t.TempDir()
 			target := filepath.Join(sub, "nova-sprint")
 			candidate := filepath.Join(sub, "candidate")
 			require.NoError(t, os.WriteFile(target, []byte("the running server"), 0o755))
-			require.NoError(t, os.WriteFile(candidate, []byte(tc.script), 0o755))
+			require.NoError(t, os.WriteFile(candidate, []byte(baseStamped(base, tc.script)), 0o755))
 			ta := newTestApp(t)
-			code, out, errs := ta.do("server switch " + candidate + " --target " + target + " --redis mem:" + twinFile + " --rollback" + tc.extra)
+			code, out, errs := ta.do("server switch " + candidate + " --target " + target + " --redis mem:" + twinFile + onBase + " --rollback" + tc.extra)
 			assert.Equal(t, 1, code, tc.name)
 			assert.Contains(t, errs, "server switch REFUSED: the shadow tick of "+candidate, tc.name)
 			assert.Contains(t, errs, tc.why, tc.name)
@@ -77,21 +89,25 @@ func TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary(t *testing.T) {
 	})
 
 	t.Run("a working binary plans, writes nothing, and is switched in", func(t *testing.T) {
-		target := filepath.Join(t.TempDir(), "nova-sprint")
+		sub := t.TempDir()
+		target := filepath.Join(sub, "nova-sprint")
 		require.NoError(t, os.WriteFile(target, []byte("the running server"), 0o755))
+		working := filepath.Join(sub, "candidate")
+		require.NoError(t, os.WriteFile(working, []byte(baseStamped(base, "exec '"+exe+"' \"$@\"\n")), 0o755))
 		ta := newTestApp(t)
-		code, out, errs := ta.do("server switch " + exe + " --target " + target + " --redis mem:" + twinFile + " --rollback --dry-run")
+		code, out, errs := ta.do("server switch " + working + " --target " + target + " --redis mem:" + twinFile + onBase + " --rollback --dry-run")
 		require.Equal(t, 0, code, errs)
-		assert.Contains(t, out, "SHADOW TICK OK binary="+exe)
-		assert.Contains(t, out, "SERVER SWITCH DRY-RUN target="+target+" binary="+exe)
+		assert.Contains(t, out, "BASE OK binary="+working+" commit="+base)
+		assert.Contains(t, out, "SHADOW TICK OK binary="+working)
+		assert.Contains(t, out, "SERVER SWITCH DRY-RUN target="+target+" binary="+working)
 		for _, side := range []string{".prev", ".switch.json", ".shadow.json"} {
 			_, err := os.Stat(target + side)
 			assert.True(t, os.IsNotExist(err), "a dry run writes nothing beside the target (%s)", side)
 		}
 
-		code, out, errs = ta.do("server switch " + exe + " --target " + target + " --redis mem:" + twinFile + " --rollback")
+		code, out, errs = ta.do("server switch " + working + " --target " + target + " --redis mem:" + twinFile + onBase + " --rollback")
 		require.Equal(t, 0, code, errs)
-		assert.Contains(t, out, "SHADOW TICK OK binary="+exe+" epoch=0 state=RUNNING")
+		assert.Contains(t, out, "SHADOW TICK OK binary="+working+" epoch=0 state=RUNNING")
 		assert.Contains(t, out, "SERVER SWITCH OK")
 		twinAfter, err := os.ReadFile(twinFile)
 		require.NoError(t, err)
@@ -101,7 +117,7 @@ func TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary(t *testing.T) {
 		require.NoError(t, err)
 		var rec shadowRecord
 		require.NoError(t, json.Unmarshal(b, &rec))
-		assert.Equal(t, exe, rec.Binary)
+		assert.Equal(t, working, rec.Binary)
 		assert.Positive(t, rec.Plan.Size, "the plan's size is recorded: the tick would deal the ready card")
 		assert.Positive(t, rec.Wall, "the shadow's time is recorded")
 		_, err = os.Stat(target + ".switch.json")

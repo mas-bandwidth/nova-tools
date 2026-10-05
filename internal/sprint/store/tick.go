@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/redis/go-redis/v9"
@@ -988,6 +991,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
+	// the running server's build commit against origin's sprint base, for the deadlines
+	// part's judgment (sprint.TickServerBase): the last check made, never one made here
+	req.ServerBase = st.serverBase()
 	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
@@ -1906,4 +1912,59 @@ func (st *Store) shadowRead(ctx context.Context) (*sprint.Snapshot, error) {
 		return snap, nil
 	}
 	return nil, fmt.Errorf("the sprint is busy: an operation was pending or the fence moved on each of %d reads in %s; a shadow tick repairs nothing; run it again", r.tries, r.slept().Round(time.Millisecond))
+}
+
+// ServerBaseEvery is how often the tick has the running server's build commit checked
+// against origin's sprint base (docs/SPEC-SPRINT.md section 14, "server-from-base-only-w.w1"):
+// a fetch, never one a tick.
+const ServerBaseEvery = 5 * time.Minute
+
+// ServerBaseWait bounds one check: its fetch and its merge-base.
+const ServerBaseWait = time.Minute
+
+// The server's base, as the tick last saw it: the check runs beside the ticks, never in one,
+// so a slow fetch never holds a tick; the tick reads the last check made.
+var serverBaseState struct {
+	mu      sync.Mutex
+	at      time.Time
+	running bool
+	last    *sprint.ServerBase
+}
+
+// serverBase is the last check of this running server against origin's sprint base, and
+// starts the next one in the background when ServerBaseEvery has passed. The base and the
+// clone are the ones server switch checks a candidate against: NOVA_SPRINT_BASE and
+// NOVA_SPRINT_SERVER_REPO; with either unset no check is made. A check not made, or one that
+// could not be made (said once in the stats), gives nil: no judgment raised or closed. The
+// server's line is its own (buildinfo.Line), read in the process, never from the file on
+// disk a switch may have replaced.
+func (st *Store) serverBase() *sprint.ServerBase {
+	repo, base := os.Getenv("NOVA_SPRINT_SERVER_REPO"), os.Getenv("NOVA_SPRINT_BASE")
+	if repo == "" || base == "" {
+		return nil
+	}
+	b := &serverBaseState
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if now := time.Now(); !b.running && (b.at.IsZero() || now.Sub(b.at) >= ServerBaseEvery) {
+		b.at, b.running = now, true
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), ServerBaseWait)
+			defer cancel()
+			got, err := sprint.CheckServerBase(ctx, buildinfo.Line("nova-sprint", ""), repo, base)
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			b.running, b.last = false, nil
+			if err != nil {
+				st.stats().note("the running server's base check could not be made: " + err.Error())
+				return
+			}
+			b.last = &got
+		}()
+	}
+	if b.last == nil {
+		return nil
+	}
+	got := *b.last
+	return &got
 }

@@ -3315,7 +3315,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | selftest land | lands a canned card on a scratch clone with this binary; green on a good binary, red on a broken lander |
-| server switch | `<binary> [--rollback]`: switches the server binary on disk, keeping the previous binary; with `--rollback`, rolls back if a land fails within the window; `--rollback` alone restores the previous binary |
+| server switch | `<binary> [--rollback] --repo <clone> --base <branch>`: switches the server binary on disk, keeping the previous binary, once the binary's build commit is an ancestor of origin's sprint base (section 14, "server-from-base-only-w.w1") and its shadow tick passes; with `--rollback`, rolls back if a land fails within the window; `--rollback` alone restores the previous binary |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
 | teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
 | selftest | the install gate, one verb (`selftest [--dir <d>] [--keep]`, the machine's, needing no actor): a build installed for a fleet is gated by running the binary itself before it lands anything, because a build of 2026-10-04 refused every landing for nine minutes ("the base dev fails the tree gate": go build said "package os is not in std") while its unit tests were green, and the install was gated by hand with the help's walkthrough. It makes a fresh directory (under `--dir`, else the system's temporary directory), a bare repository origin.git standing for the forge and a clone work whose base commit holds a go.mod (module selftest, the go directive of nova-sprint's go.mod, from the toolchain that built the binary) and a main.go importing fmt and os, so the lander's tree gate (section 7) really builds, then runs the walkthrough's card flow (realSteps) in process on a twin file in that directory — init with two readers and one member, one card, start, ticks, take, a commit pushed to the card's branch, finish with `--head`, a read ok, `land --repo-dir work --base main`, a tick — and checks origin's main holds the landing. It prints one line: `SELFTEST OK landed=1 land=<duration> gate=<duration> go=<go version> dir=<d>` at exit 0 (land the landing step took, gate the whole selftest, go the toolchain that built the binary), or `SELFTEST FAILED step=<name> why=<one line> dir=<d>` at exit 1, naming the step and its own reason — the lander's for a red gate, so the gate's go output is printed ("package os is not in std" would be). The directory is removed unless `--keep` or a failure (a failure keeps it and names it); a removal that cannot run is said on a NOTE line and keeps the exit. It opens no store of the caller's, no Redis and no network |
@@ -3990,6 +3990,65 @@ candidates that error, panic, hang past the deadline and print no plan
 (`TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary`), the store byte for byte unchanged
 by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
 store refused (`TestShadowTickStoreRefusesEveryWrite`).
+
+#### server-from-base-only-w.w1: the server is built from the sprint base and nothing else
+
+On 2026-10-04 the live server ran a binary built from a side branch for a day, a branch 1,052
+commits off the base one way and 24 the other: two lander designs running at once. The owner,
+2026-10-05: "Prevention is better than cure". So the server is built from origin's sprint base
+and nothing else, and the check is git's, never a person's memory.
+
+The build commit is read from the binary's version line (`<binary> version`, internal/buildinfo,
+`Fields.Commit`): the revision of a whole source (`repo= revision= dirty= build_host=`) when the
+line carries one, else the hex of the vcs stamp in field two (`<utc time>-<12 hex>`). A line that
+names no commit (devel, a release tag, a module version) and a build from an edited tree
+(`dirty=true`, or a stamp ending `-dirty`) name no source commit. The check
+(`sprint.CheckServerBinary`, internal/sprint/server_base.go) fetches origin's base into a clone
+(`git fetch origin +refs/heads/<base>:refs/remotes/origin/<base>`) and asks `git merge-base
+--is-ancestor <commit> origin/<base>`; a commit the clone does not hold is on no branch fetched
+from origin, and off the base. A check that cannot be made (no base or clone named, a fetch that
+fails, a version verb that fails) is an error and never a pass.
+
+`server switch <binary>` makes the check first, before the shadow tick, so an off-base binary
+runs nothing against the store. It wants `--repo <clone>` and `--base <branch>` (else
+`NOVA_SPRINT_SERVER_REPO` and `NOVA_SPRINT_BASE`); without them the check cannot be made and
+the switch is refused, exit 1 (`the base check of <binary> could not be made`). A binary off
+the base, or naming no source commit, is refused, exit 1, nothing on disk changed and the old
+server running: `server switch REFUSED: <binary> was built from commit <12 hex> (or no source
+commit), not from the sprint base origin/<base> (tip <12 hex>): <why>; ...; remedy: build
+nova-sprint from origin/<base> at its tip, then run: nova-sprint server switch <that binary>`.
+On the base it prints `BASE OK binary= commit= base=origin/<base> tip=` and goes on to the
+shadow tick. `server switch --rollback` with no binary restores the previous binary unchecked:
+it was checked when it was switched in (or predates this check), and a rollback is the way back
+from a broken land. server switch is the one verb that installs the server binary.
+
+The tick's judgment `the server runs off the sprint base` (`sprint.NServerOffBase`,
+`sprint.TickServerBase`) is one for the sprint while the running server's commit is not on the
+base, none while it stands, and closed when a check finds it back on. It is tick kept, planned in
+the deadlines part beside the backlog alarms on the check the tick is given
+(`TickReq.ServerBase`), and answered by `ack` or `wait`; the remedy is in its line. Its line names
+the commit and the base and never the tip, so the base moving on is the same episode, and a
+server switched to another commit off the base is a new one. A tick with no check (nil) raises
+nothing and closes nothing.
+
+The store's tick gives it the last check made of the running server (internal/sprint/store/tick.go,
+`serverBase`): the server's own version line, read in the process (`buildinfo.Line`) and never
+from the file on disk a switch may have replaced, checked against `NOVA_SPRINT_BASE` fetched into
+`NOVA_SPRINT_SERVER_REPO`, the same base and clone server switch checks a candidate against. The
+check runs beside the ticks, never in one, every `ServerBaseEvery` (5m), bounded by
+`ServerBaseWait` (1m), so a slow fetch never holds a tick. With either variable unset no check is
+made; a check that cannot be made is said once in the stats; both give the tick nil.
+
+Tested on a twin repository, a bare origin with the base and a side branch cut from it
+(`TestServerSwitchRefusesABinaryBuiltOffTheSprintBase`: a side-branch stamp refused naming its
+commit, the base and the remedy; a base stamp on it after the base moved on; a source revision
+read whole; devel, a tag, both dirty forms, a non-version line and an unknown commit refused; a
+check that cannot be made an error; the judgment raised once, kept, not closed by a tick with no
+check, and closed back on the base, all through the tick's own deadlines part, and tick kept), and at the verb (`TestServerSwitchVerbRefusesABinaryOffTheSprintBase`:
+refused, exit 1, with no base named; an off-base candidate refused before its shadow tick with nothing
+written beside the target; a base candidate switched); every candidate of the shadow tick's test
+(`TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary`) is stamped from a twin's base, the
+working one this binary behind a wrapper, since a test binary carries no vcs stamp.
 
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 

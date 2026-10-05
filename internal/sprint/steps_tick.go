@@ -150,6 +150,8 @@ var TickDecisions = map[string][]string{
 	NFriendDeaf:        {"ack", "wait"},
 	NFriendIdle:        {"ack", "wait"},
 	NCoordinatorBehind: {"act", "wait"},
+	// the server's base (server_base.go): closed by the tick once the server runs a build of the base
+	NServerOffBase: {"ack", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -181,6 +183,11 @@ type TickReq struct {
 	// coordinator holds her, read by the binding with every tick (coordinator_pass.go);
 	// nil is none read, and no friend is deaf.
 	Sessions map[string]FriendSession
+	// ServerBase is the running server's build commit checked against origin's sprint base,
+	// by the binding (server_base.go; docs/SPEC-SPRINT.md section 14,
+	// "server-from-base-only-w.w1"): the deadlines part keeps one judgment while it is not On.
+	// nil is no check this tick, and nothing is raised or closed.
+	ServerBase *ServerBase
 }
 
 func (r TickReq) who() string {
@@ -1088,7 +1095,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// the backlog alarms, on a plan of their own: each notify closes and judges after its own closes
 	a, alarmsDue := tickAlarms(s, r)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, a.Notes...), append(p.Closes, a.Closes...), append(p.Updates, a.Updates...)
-	return p, due + alarmsDue
+	// the server's base, on a plan of its own the same way (server_base.go)
+	b, baseDue := TickServerBase(s, r, r.ServerBase)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, b.Notes...), append(p.Closes, b.Closes...), append(p.Updates, b.Updates...)
+	return p, due + alarmsDue + baseDue
 }
 
 // TickOverdue marks each open judgment overdue once, when it passes its due
