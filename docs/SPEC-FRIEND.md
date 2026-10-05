@@ -130,6 +130,37 @@ which is how a renewed session is taken up. The finding of 2026-10-04:
 a friend's session refused every turn with `invalid_request_error` for two hours
 and nothing said so.
 
+A harness at its usage limit or out of credits is down until its reset,
+woken after it, and its measured usage rides on its beat
+(`internal/friend/limit.go`; the finding of 2026-10-04: a friend's harness
+stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while her row
+read up with six working cards, and four Claude accounts ran out of their
+weekly usage unseen). `Limits.Watch` reads every command an adapter runs:
+Claude Code's stream-json `rate_limit_event` (`rate_limit_info`: `status`
+allowed, allowed_warning or rejected; `isUsingOverage`; `unifiedWindows`
+`five_hour` and `seven_day`, each `utilization` 0 to 1 and `resetsAt` in epoch
+seconds), the last one anywhere in the output, is the measured usage, and a
+rejection is a limit until the spent window resets; otherwise a line in the
+last 2 KiB that says a limit or credits (`insufficient ... credits`, `usage
+limit`, `limit reached`, `hit your limit`, `quota exceeded`) with its reset
+beside it (a clock time, today or else tomorrow in the daemon's zone; `in N
+hours`; an epoch after `limit reached|`) is a limit. A line with no reset is
+no limit, and a provider's transient `rate_limit_error` is no limit, so a
+reply that only talks about limits sends no one down. A harness on paid
+overage reads down, until the spent window resets, unless the owner allows
+overage for that friend (`AllowOverage`). Each new limit calls `Down` once
+with its reset (`friend down --until`, the status cell `down (<reason>, until
+<time>)`). `Limits.Gate` holds the session: a delivery while it is down is
+`Deferred` without running the harness, so its messages stay in hand, counted
+toward nothing; a turn that hits a limit is `Deferred` the same way; the
+first delivery after the reset is a wake turn (`WakeText`) whose output must
+carry its nonce, six fresh characters each try, so only the session that ran
+this turn answers it; then `Up` with the nonce, and the message goes in. The
+usage is on the beat as `--five-hour <pct> --seven-day <pct>`
+(`Usage.BeatFlags`) for pacing to read.
+`TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
+(What is weak).
+
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
@@ -376,6 +407,18 @@ from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
 here; `ping` and `wait-pong` run the canary by hand. The beat carries no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
+
+The limit layer (`limit.go`) is built and tested, not yet wired: the daemon
+and `nova-friend run` do not yet wrap the adapter's Exec in `Limits.Watch` or
+the Deliverer in `Limits.Gate` (a wrap must keep the `LaneHarness` lanes and
+the OpenCode `Allow` setting, and gate the lanes' turns), do not call `Down`
+and `Up` at the sprint (a friend's own `down --until` and `up`, which the
+server today takes as the coordinator's hold), and the beat sends no flags;
+`friend beat` takes no `--five-hour` or `--seven-day` until the sprint
+records them for pacing. Claude has no deliver command, so its
+`rate_limit_event` is read only once a Claude run's output passes through
+`Watch`. The state machine (up, down until a reset, waking on a nonce) wants
+its TLA+ module beside `tla/Friend.tla`.
 
 ## The harness survey (2026-10-04)
 
