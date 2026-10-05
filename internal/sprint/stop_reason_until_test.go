@@ -66,6 +66,7 @@ func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
 			{"no reason", "", "1h", []string{"--reason"}},
 			{"no until", "a bench", "", []string{"--until"}},
 			{"until in the past", "a bench", "2030-01-02T12:00:00Z", []string{"--until", "after now"}},
+			{"until is now", "a bench", "2030-01-02T13:04:00Z", []string{"--until", "after now"}},
 			{"until unreadable", "a bench", "soonish", []string{"--until", "soonish"}},
 		} {
 			t.Run(c.name, func(t *testing.T) {
