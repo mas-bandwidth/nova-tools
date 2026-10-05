@@ -107,11 +107,11 @@ function syncRows(box, header, keys, build, update, total) {
   map.forEach(function (r, k) { if (!seen.has(k)) { r.node.remove(); map.delete(k); } });
   if (total && prev.nextSibling !== total) box.insertBefore(total, prev.nextSibling);
 }
-// The header rows of Work, Fleet and Friends are the page's own markup (index.html), the
+// The header rows of Work, Fleet, Friends and Lanes are the page's own markup (index.html), the
 // strings of docs/SPEC-SPRINT-DASHBOARD.md, which a test holds equal: each table's header is
 // a clone of the row the page carries.
 var HEADS = {};
-["streams", "fleet", "friends"].forEach(function (id) {
+["streams", "fleet", "friends", "lanes"].forEach(function (id) {
   var h = document.getElementById(id).querySelector(".row.head");
   if (h) { h.remove(); HEADS[id] = h; }
 });
@@ -356,7 +356,7 @@ function renderFriends(d) {
 // Lanes (docs/SPEC-SPRINT-DASHBOARD.md, "Lanes"): each machine's lane of a kind, the
 // friends or machines that hold it, and those that wait, from where --json --cards's
 // lanes array (verb-lane-take-give). One row a machine, by machine then kind.
-function names(v) { return (v && v.length) ? v.join(", ") : "-"; }
+function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
 function renderLanes(d) {
   var box = $("lanes"), lanes = Array.isArray(d.lanes) ? d.lanes.slice() : [];
   lanes.sort(function (a, b) { return String(a.machine).localeCompare(String(b.machine)) || String(a.kind).localeCompare(String(b.kind)); });
@@ -371,7 +371,7 @@ function renderLanes(d) {
     return;
   }
   if (box._empty) { box.textContent = ""; box._empty = false; }
-  if (!box._head) { box._head = headRow([["machine"], ["kind"], ["width", "num"], ["held"], ["waiting"]]); }
+  if (!box._head) { box._head = pageHead("lanes"); }
   var byKey = {};
   lanes.forEach(function (l) { byKey[l.machine + "/" + l.kind] = l; });
   syncRows(box, box._head, lanes.map(function (l) { return l.machine + "/" + l.kind; }), function () {
@@ -382,7 +382,7 @@ function renderLanes(d) {
   }, function (r, k) {
     var l = byKey[k];
     setText(r.machine, l.machine); setText(r.kind, l.kind); setNum(r.width, int(l.width));
-    setText(r.held, names(l.held)); setText(r.waiting, names(l.waiting));
+    setText(r.held, nameList(l.held)); setText(r.waiting, nameList(l.waiting));
   });
   setText($("lanes-sub"), lanes.length + (lanes.length === 1 ? " lane" : " lanes"));
 }

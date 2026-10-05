@@ -130,7 +130,9 @@ from the owner edits one line here and nothing else moves.
   that hold it, and those that wait, read from `nova-sprint where --json --cards` (the `lanes`
   array, verb-lane-take-give). Names are in the order the sprint records them; an empty `lanes`
   shows an honest empty state, as Friends does.
-- Columns: machine | kind | width | held | waiting (headers exactly so, all lowercase).
+- Columns: machine | kind | width | held | waiting (headers exactly so, all lowercase); width alone
+  is a number (right-aligned), the others names. The row's five columns sit beside each other at
+  every width, never stacked and never scrolled.
 
 ## Footer: one line, "nova-sprint" bold white, then "from https://github.com/mas-bandwidth/nova-tools" (link).
 

@@ -1,11 +1,34 @@
 package sprintdash
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// lanesRowCSS is the page's rule that lays the lanes panel's rows out, found in its style.
+var lanesRowCSS = regexp.MustCompile(`(?s)\.lanes \.row \{[^}]*grid-template-columns:\s*([^;]+);`)
+
+// gridTracks is how many tracks a grid-template-columns value names: its top-level tracks,
+// which whitespace separates; a track written minmax(9rem, 1fr) is one, comma and all.
+func gridTracks(v string) int {
+	n, depth, in := 0, 0, false
+	for _, r := range v {
+		switch {
+		case r == '(':
+			depth, in = depth+1, true
+		case r == ')':
+			depth--
+		case depth == 0 && (r == ' ' || r == '\n' || r == '\t'):
+			in = false
+		case depth == 0 && !in:
+			n, in = n+1, true
+		}
+	}
+	return n
+}
 
 // TestPageShowsPerMachineLanes pins the lanes panel (docs/SPEC-SPRINT-DASHBOARD.md,
 // "Lanes"): the `lanes` array `nova-sprint where --json --cards` prints (verb-lane-take-give)
@@ -26,6 +49,12 @@ func TestPageShowsPerMachineLanes(t *testing.T) {
 	panel := doc.one(t, "a lanes panel", byClass("lanes"))
 	assert.Equal(t, "Lanes", textOf(panel.one(t, "the lanes panel's title", func(n *node) bool { return n.name == "h2" })))
 	assert.Contains(t, string(file("index.html")), `id="lanes"`)
+
+	// The lanes rows are a table: the page's CSS gives the panel's row one track a column, so
+	// its five columns sit beside each other and never stack into one column.
+	m := lanesRowCSS.FindStringSubmatch(string(file("index.html")))
+	require.NotNil(t, m, "the page's CSS gives .lanes .row no grid tracks, so its columns stack")
+	assert.Equal(t, 5, gridTracks(m[1]), "the lanes row's grid tracks, one a column (machine, kind, width, held, waiting)")
 
 	// The render path: app.js draws the rows from d.lanes, holders and waiters.
 	js := string(file("app.js"))
