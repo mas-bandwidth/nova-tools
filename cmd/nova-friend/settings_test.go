@@ -50,6 +50,7 @@ func TestInstallWritesTheHarnessSettingsAndCheckNamesTheDrift(t *testing.T) {
 func TestInstallNamesTheGrokWakeFileAndTheClaudeConfigDirInTheAgent(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
+	r.env["CLAUDE_CONFIG_DIR"] = "/env/claude"
 	cli := r.cli()
 	plist := filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist")
 	wake := filepath.Join(r.home, ".nova-friend", "bob", "bob.wake")
@@ -59,6 +60,14 @@ func TestInstallNamesTheGrokWakeFileAndTheClaudeConfigDirInTheAgent(t *testing.T
 		Out(`INSTALL PLAN command="write `+filepath.Dir(wake)+` wake-directory=directory"`, `INSTALL PLAN command="write `+wake+` wake-file=file"`, "NOTE monitor `tail -n 0 -F "+wake+"`")
 	_, err := r.fs.ReadFile(wake)
 	require.ErrorIs(t, err, os.ErrNotExist, "a dry run writes nothing")
+
+	// An environment default is used for harness settings, but does not turn a
+	// passive installed Claude friend into a headless one.
+	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob").
+		Out("INSTALL OK label=com.nova.friend-bob")
+	raw, err := os.ReadFile(plist)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "<string>--config-dir</string>")
 
 	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--config-dir", "").Exit(2).
 		Err("harness claude wants --config-dir")

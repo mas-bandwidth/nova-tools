@@ -929,6 +929,8 @@ through one list, so check reports exactly what install writes.
 | claude | `--config-dir` (default `CLAUDE_CONFIG_DIR`) | a real directory, made private; the agent's `run --config-dir` names it; install refuses claude without one |
 | opencode | `<dir>/opencode.json` | `permission.external_directory["<dir>/**"] = allow` (as `AllowDirs` writes before each turn), and `model` when `--model` names one |
 
+The `CLAUDE_CONFIG_DIR` default supplies the Claude settings directory during install but does not opt the installed agent into headless mode. The launchd command receives `--config-dir` only when the install command explicitly gives that flag.
+
 **Rules.** Every path is read first. A symlink where a directory belongs, a
 directory that is a file, a missing directory install does not make (the friend's
 directory, the DSH desktop profile), or a config file that is a symlink is

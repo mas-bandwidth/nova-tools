@@ -843,7 +843,11 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
 	}
 	if a.Harness == "claude" {
-		a.ConfigDir = c.Str("config-dir")
+		// The environment default configures Claude settings but does not opt an
+		// installed friend into headless mode; only an explicit flag does.
+		if c.Given("config-dir") {
+			a.ConfigDir = c.Str("config-dir")
+		}
 	}
 	if len(a.Secrets) > 0 {
 		for _, p := range []struct {
