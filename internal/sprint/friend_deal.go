@@ -100,7 +100,10 @@ type FriendSeat struct {
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
 // level moved it off (FriendLevel), and the one the coordinator took it back from
 // (FieldTakenFrom) once it is dealt again. Neither the deal nor the level places it on any
-// of them again (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1).
+// of them again (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1), with one
+// exception: a card withdrawn off a friend held or down that no other friend up may take
+// is dealt back to a friend the level moved it off (never the one it was withdrawn or
+// taken back from), rather than stranded ready (friendDeal, withdrawnFrom).
 const FieldFriendsLeft = "friends_left"
 
 // friendTiers is the tiers the friend can do: her Tiers, else her class's.
@@ -129,6 +132,20 @@ func friendsLeft(wc *Card) []string {
 		left = append(left, from)
 	}
 	return left
+}
+
+// withdrawnFrom is the friends a withdrawn work card must never go back to: the friend
+// whose row it was withdrawn on, and the one the coordinator took it back from
+// (FieldTakenFrom), never the friends the level moved it off.
+func withdrawnFrom(wc *Card) []string {
+	var out []string
+	if f, ok := FriendOfRow(wc.Row); ok {
+		out = append(out, f)
+	}
+	if f, ok := FriendOfRow(wc.F(FieldTakenFrom)); ok && !slices.Contains(out, f) {
+		out = append(out, f)
+	}
+	return out
 }
 
 // friendStarted says the friend has started the work card, by the store's own data: her
@@ -277,6 +294,20 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
 					may = append(may, f)
 				}
+			}
+			if len(may) == 0 && wc != nil {
+				// a card withdrawn off a friend held or down (or taken back) whom no friend
+				// it has not left may take: the friends the level moved it off may have it
+				// back, so it is not stranded ready while one is up with room (the owner's
+				// rule: a held or down friend's cards go to the up friends' ready queues);
+				// never the friend it was withdrawn from or taken back from
+				gone := withdrawnFrom(wc)
+				for _, f := range up {
+					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) {
+						may = append(may, f)
+					}
+				}
+				left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
 			}
 			name = preferredFriend(may, lanes, free)
 		}

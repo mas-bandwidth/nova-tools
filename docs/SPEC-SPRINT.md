@@ -824,7 +824,14 @@ not level the friends":
 - **Never back to a friend it left.** A work card carries `friends_left`, the
   friends it has left: each the level moved it off, and the one the coordinator
   took it back from (`taken_from`, kept past the deal that places it again).
-  Neither the deal nor the level places it on any of them.
+  Neither the deal nor the level places it on any of them, with one exception,
+  the owner's rule that a held or down friend's cards go to the up friends' ready
+  queues: a card withdrawn off a friend held or down (or taken back) that no
+  friend up it has not left may take is dealt to a friend up with room that the
+  level moved it off, never to the friend it was withdrawn on or taken back from
+  (`sprint.withdrawnFrom`; `TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff`;
+  found by the chaos suite's hold case, where the level had moved the held
+  friend's cards off the only other friend).
 - **The level runs inside every tick, after the deal.** The tick reads the
   friends' records whenever the roster has a friend, not only when a friend's
   card is ready, so a friend coming up (friend up, or a hold released) is

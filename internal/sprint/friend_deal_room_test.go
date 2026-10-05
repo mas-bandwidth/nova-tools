@@ -133,3 +133,75 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 		assert.Len(t, p.Units, FriendLevelPerTick)
 	})
 }
+
+// The owner's rule: a held or down friend's working and ready cards go to the up friends'
+// ready queues. A card the level moved off amy onto bob carries friends_left=amy; when bob
+// is held with his cards handed back, amy is the only friend up with room, and the card is
+// dealt back to her rather than stranded ready (the chaos suite's hold case found it,
+// internal/friend/chaos_functional_test.go). A friend up it never left is still preferred,
+// and a card is never dealt back to the friend it was withdrawn from or taken back from.
+func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
+	t.Parallel()
+	amy, bob, cat := FriendRow("amy"), FriendRow("bob"), FriendRow("cat")
+	running := FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro", Running: []string{"s1-16.w1"}}
+	bobUp := FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash"}
+	// levelled: four of amy's cards go to bob, each carrying friends_left=amy
+	levelled := func(t *testing.T) (*world, []string) {
+		w := fullWorld(t, "friend", "", 0)
+		dealWith(w, running, bobUp)
+		var his []string
+		for _, col := range []string{Ready, Working} {
+			for _, c := range w.s.Fleet.Cell(bob, col) {
+				require.Equal(t, "amy", c.F(FieldFriendsLeft), "%s was levelled off amy", c.ID)
+				his = append(his, c.ID)
+			}
+		}
+		require.Len(t, his, 4)
+		w.must(HoldNames(w.s, HoldReq{Names: []string{"bob"}, Return: true, Reason: "held", Who: "coordinator", Friends: []string{"amy", "bob", "cat"}}))
+		require.Zero(t, friendLoad(w.s, "bob"), "the hold hands his cards back")
+		return w, his
+	}
+	bobHeld := FriendSeat{Name: "bob", Width: 2, Status: Held, Class: "flash"}
+	roomy := FriendSeat{Name: "amy", Width: 16, Status: Up, Class: "flash,pro", Running: []string{"s1-16.w1"}}
+
+	t.Run("the only friend up with room is one the level moved them off", func(t *testing.T) {
+		t.Parallel()
+		w, his := levelled(t)
+		dealWith(w, roomy, bobHeld)
+		for _, id := range his {
+			wc := w.s.Fleet.Card(id)
+			assert.Equal(t, amy, wc.Row, "%s off held bob is dealt back to amy, not stranded ready", id)
+			assert.Equal(t, Working, w.s.StateOf(wc.F("primary")))
+		}
+		assert.Zero(t, friendLoad(w.s, "bob"))
+		assert.Empty(t, Check(w.s, nil))
+	})
+
+	t.Run("a friend up it never left is preferred", func(t *testing.T) {
+		t.Parallel()
+		w, his := levelled(t)
+		dealWith(w, roomy, bobHeld, FriendSeat{Name: "cat", Width: 4, Status: Up, Class: "flash"})
+		for _, id := range his {
+			assert.Equal(t, cat, w.s.Fleet.Card(id).Row, "%s goes to cat, whom it never left, before amy", id)
+		}
+	})
+
+	t.Run("never back to the friend it was taken back from", func(t *testing.T) {
+		t.Parallel()
+		// the coordinator takes bob's cards back (taken_from=bob) while amy is held: bob,
+		// up, is the friend each was taken from and amy the one each left, so none moves
+		w := fullWorld(t, "friend", "", 0)
+		dealWith(w, running, bobUp)
+		taken := w.must(FriendTake(w.s, FriendTakeReq{Friend: "bob", All: true, Reason: "slow", Who: "coordinator"}))
+		require.NotEmpty(t, taken.Units)
+		var his []string
+		for _, c := range w.s.Fleet.Cell(bob, Withdrawn) {
+			his = append(his, c.ID)
+		}
+		require.NotEmpty(t, his)
+		dealWith(w, bobUp, FriendSeat{Name: "amy", Width: 16, Status: Held, Class: "flash,pro"})
+		for _, id := range his {
+			assert.Equal(t, Withdrawn, w.s.Fleet.Card(id).Col, "%s waits: taken back from bob, and amy is held", id)
+		}
+	})
+}
