@@ -2245,6 +2245,21 @@ id (`--op`) returns the original result, with no second counter or notification.
   in `listen` (`run --listen`), both through `serverStart`, so in-flight reads with live
   leases survive a server restart while lapsed reads are retired and re-asked.
 
+### read-asked-again-after-takebackc.w2
+
+A read taken back with no verdict does not count as asked. That take-back is
+the reader marked away, a server restart, or a read deadline (`retired_by`
+`away`, `restart`, or `deadline`). The reader may be asked the same attempt
+again, after every reader who has never been asked it. The first ask keeps
+the id `<primary>.r<attempt>.<reader>`. A re-ask appends `.t<n>` with n = 2,
+3, … so the second ask of that reader at that attempt is
+`<primary>.r<attempt>.<reader>.t2`, and an id already stored parses unchanged.
+A reader that gave a verdict (ok, broken, or a return) is never asked that
+attempt again. A reader whose read of one attempt was taken back three times
+is not asked it again, and the card raises the reads-exhausted judgment, as
+it does when the reads are done without the oks it needs. No store operation
+restores a removed record: the re-ask is a new id.
+
 ## 7. Merging
 
 1. In work order, never random: the head of the stream's queued cell first.
