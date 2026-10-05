@@ -5,11 +5,11 @@ A mechanical render of the work record's roadmap data, by release. The planned c
 | release | status | cards |
 |---|---|---:|
 | v1.2.0 | current |  |
-| v1.3.0 | planned | 497 |
+| v1.3.0 | planned | 500 |
 
 ## v1.3.0
 
-497 cards in 30 streams, planned on 2026-10-04 for the release after v1.2.0.
+500 cards in 31 streams, planned on 2026-10-04 for the release after v1.2.0.
 
 | stream | cards |
 |---|---:|
@@ -37,6 +37,7 @@ A mechanical render of the work record's roadmap data, by release. The planned c
 | split | 5 |
 | tools-v1-2-0-docs | 5 |
 | lint | 4 |
+| night-2026-10-04 | 3 |
 | sandbox-v1-2-0 | 3 |
 | toolkit | 3 |
 | frictions2 | 2 |
