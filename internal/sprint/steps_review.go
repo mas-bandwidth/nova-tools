@@ -1235,12 +1235,20 @@ func finderOf(s *Snapshot, c *Card) string {
 }
 
 // brokenFindings is the findings of the primary's broken reads at its attempt,
-// each once, joined; "" when no read of it is broken.
+// each once, joined; "" when no read of it is broken. A friend's read leaves no
+// readers-table row: its finding is on the open broken-read judgment on this
+// primary at its attempt (FriendReadClose), so a group rework with no --fix gives
+// each card its own finding, never the group's first (2026-10-05).
 func brokenFindings(s *Snapshot, c *Card) string {
 	var found []string
 	for _, rc := range s.Readers.Of(c.ID) {
 		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
 			found = append(found, rc.F("finding"))
+		}
+	}
+	for _, o := range closesFor(s.Open, []string{NReadBroken}, c.ID) {
+		if n := o.Note; n.Attempt == c.Int("attempt") && n.What != "" && !contains(found, n.What) {
+			found = append(found, n.What)
 		}
 	}
 	return strings.Join(found, "; ")
