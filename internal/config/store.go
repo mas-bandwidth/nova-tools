@@ -262,6 +262,10 @@ func NewMem() *Mem {
 			m.rows[k.Name][name] = row
 		}
 	}
+	// The fleet's loops_dir has no code Default (internal/config/kind.go,
+	// "fleet"); migration 0033 seeds the migrated fleet row with
+	// ~/nova-bench/loops, and this store carries the same seed.
+	m.rows[KindFleet][KindFleet].Fields["loops_dir"] = "~/nova-bench/loops"
 	return m
 }
 
