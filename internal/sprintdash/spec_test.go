@@ -211,6 +211,9 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 			got = append(got, "Hero row")
 		case c.has("progress-card"):
 			got = append(got, "Progress bar")
+		case c.has("spend"):
+			spendTitle := textOf(c.one(t, "a spend panel title", func(n *node) bool { return n.name == "h2" }))
+			assert.Equal(t, "Cost breakdown", spendTitle, "spend panel title must be 'Cost breakdown'")
 		case c.has("panel"):
 			got = append(got, textOf(c.one(t, "a panel title", func(n *node) bool { return n.name == "h2" })))
 		case c.name == "footer":
