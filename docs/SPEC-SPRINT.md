@@ -96,7 +96,8 @@ the next beat and carried on `where --json`'s `friends` beside the table's
 counts, which stay the sprint's (her row's cards) and her width the roster's; a
 value of the wrong shape is refused, exit 2; a friend not in the record is
 refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). Her status is the friends' rule (`sprint.FriendStatus`):
-`held` while the coordinator holds her (`friend down`; `friend up` releases the
+`held` while the coordinator holds her (`hold <friend> --reason <text>`,
+section 11, and `friend down`; `unhold <friend>` and `friend up` release the
 hold), whatever she beats or the coordinator observes; else, once the
 coordinator has observed her (`friend health`, below), the observation's word
 alone, `up` or `down`, and never her beat again; else `up` while her last beat
@@ -413,8 +414,14 @@ merge, friends, fleet, and `where --json` carries every table and every row of i
 with the flag or without. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
-running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED`, with no count of seconds. Every count cell is an ordered set.
+running; a RUNNING machine whose last tick is older than MachineSilence
+(15 s) keeps the summary line, with the machine's `running (tick late 16s)`
+after it, the whole seconds since that tick, and is never shown `STOPPED`,
+which is a stop's alone: the machine's record STOPPED (section 14). The
+coordinator measured the old reading at 2:23 PM on 2026-10-04: sampled every 2
+to 3 s, `where` said `machine: STOPPED` for about 7 s, then running, over and
+over, while the server was RUNNING the whole time, ticking 7 to 16 s apart.
+Every count cell is an ordered set.
 The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
 waiting on one of those through a need (`sprint.HeldBack`, counted by the
@@ -1540,6 +1547,24 @@ and it is the coordinator's decision, receipted.
   (`tla/DirtyTick.tla`, `Room` and `WidthRespected`, which bound the room;
   `TestAReworkIsNotDealtToAMemberAtDealAheadTimesItsWidth`). A member takes
   its ready cards in stream turns, so it starts every stream alike.
+- A card's bench: a brief whose header carries `BENCH: <member>`, or a
+  comma-separated list of members, names the members that have what the card
+  needs (a tool one machine alone holds), and the card is dealt only to them.
+  `add` refuses a BENCH that does not read and a name that is no fleet member,
+  with the members there are (exit 2, nothing written); the primary's field
+  `bench` is the line's names, written with its brief by `add` and `brief`. A
+  card with no BENCH line is dealt round the fleet as every card before it was.
+  Every placement of its work cards honours the line: the deal, a redeal, an
+  escalation and a rework draw from the members of its bench that are up alone
+  (`round.next` over them, its room DealAhead times its width as any member's),
+  a member going down or held withdraws its bench's card instead of dealing it
+  to another member, and the level never moves it off the bench it was dealt to
+  (the members its line does not name are avoided as a member that refused it at
+  staging is). While no member of its bench is up (down, or held) the card waits
+  in `ready`: the tick's deal passes it by, no judgment is written, and the
+  no-stall rule holds it as waiting for its bench, the line `nova-sprint card
+  <id>` prints (`sprint.BenchOfBrief` and `sprint.Bench`, `bench_deal.go`;
+  `TestDealHonoursACardsBenchLine`).
 - Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
   work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
   a counter: a uint64 from 0 that goes up by one with every placement and by
@@ -1564,7 +1589,10 @@ and it is the coordinator's decision, receipted.
   safety too ("and it's a safety, if ever there are cards on a held or down
   machine, rebalance moves them away."): no card stays on a held or down
   member; its cards, ready or working, are dealt to the members up as a member
-  going down sends them, or withdrawn when none is up.- done and ok% are computed by the table from the member's `ok` and `failed`
+  going down sends them, or withdrawn when none is up. The one exception is the
+  coordinator's hold with no `--return` (section 11, hold): a member held to
+  finish keeps its working cards (`held_finish` on its control card) until they
+  finish or their deadline judges them, and its ready cards go.- done and ok% are computed by the table from the member's `ok` and `failed`
   cells.
 - A fleet member says it is there by beating: `nova-sprint fleet beat
   <member>`, run on the machine every few seconds, writes its last beat time
@@ -1580,8 +1608,10 @@ and it is the coordinator's decision, receipted.
   beaten, and held while the coordinator holds it, whatever it beats. A card
   is taken back from a member only when the member is down by this rule
   (tla/DirtyTick.tla, Lapse). A member's verb the server does not answer is
-  sent again, three tries in all (internal/sprintwire). `fleet down <member>` holds a
-  member and takes it down; `fleet up <member>` releases the hold, counts as a
+  sent again, three tries in all (internal/sprintwire). `hold <member> --reason
+  <text>` holds a member (section 11, hold; `fleet down <member>` is `hold
+  <member> --return` in the old words, for one release) and takes it down;
+  `unhold <member>` or `fleet up <member>` releases the hold; `fleet up` counts as a
   beat of a member that has beaten, adds a member the sprint does not know,
   and brings it up at once when it is alive.
 - The fleet comes from the inventory. `nova-sprint fleet sync` makes the fleet
@@ -1679,10 +1709,15 @@ id (`--op`) returns the original result, with no second counter or notification.
   naming `nova-sprint reader add <name>` (nova-tools#5096 item 23). It is up while its
   last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
   away when it beat and has lapsed, down when it has never beaten; the
-  coordinator's `reader away <reader>` holds it away whatever it beats, and
-  `reader up <reader>` releases the hold; `reader retire <reader>` holds it
+  coordinator's `hold <reader> --reason <text>` holds it whatever it beats
+  (state `held`; section 11, hold), and `unhold <reader>` releases the hold;
+  `reader away <reader>` (`hold --return`) and `reader up <reader>` (`unhold`)
+  are the old words, for one release; `reader retire <reader>` holds it
   away for good (state `retired`, its beat written no more, its row and read
-  cards kept) until `reader up`. The readers table has no `status`
+  cards kept) until `reader up`. A held reader is asked nothing, its reads
+  asked and not begun are asked of another, and its reads begun finish (with
+  `--return` they are taken back at the hold, where a reader up is free to read
+  them); a reader away or down has every read, begun or not, taken back. The readers table has no `status`
   column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
@@ -2525,7 +2560,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 |---|---|---|
 | `failed` | work came back failed (a take with no result is redealt by the machine, section 5, and reaches here as its bound) | the next attempt (rework, the report its fix) on the next route of its tier, the routes it drew left out; the `RuleAttemptCap`-th (2) failure on one tier (`rule_tier`, `rule_fails` on the primary) a new attempt one tier up (`rework --tier`: flash to pro to heavy, the first tier above that a route serves); past heavy, a friend's card (`who=friend`: the friends' deal gives it to a friend up with room) |
 | `bound` | a card reached its bound (its redeal bound at its ceiling, or the second identical failure) | a new attempt one tier up, as `failed`'s climb; past heavy, a friend's card. A card every member up refused at staging, or at its brief's bound, is left |
-| `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp, which its worker reports; no member writes it yet, so today a late card has none) a wait of 30 minutes, once a generation (`rule_waited`); without, or after its wait, once its holder has had its own whole deadline, the card is returned and dealt again (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A friend's card is left: a friend keeps her cards |
+| `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp: the server's time of its holder's last `progress` verb, which the member sends every 3 minutes while its child prints and the friend daemon while a lane's turn on the card prints; a stamp from before the card's take is another holder's and counts as none) a wait of 30 minutes, once a generation (`rule_waited`). The default is wait only: a working card whose holder has stamped no progress since its take is held 30 minutes at a time and never returned by this rule, so a member that does not stamp never loses an honest long child to it (`tla/SprintRules.tla`, `NeverStampedNeverReturned`). A card whose holder stamped and then went silent past the 10 minutes, or whose one wait is spent, is returned and dealt again once its holder has had its own whole deadline (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A friend's card is left: a friend keeps her cards |
 | `conflict` | stream stopped: conflict on a card, where the lander said the paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports) | the card returned to review (`rule_redo` its attempt), the stream resumed, and the card reworked with the fix `redo the same change on the current tip`; a conflict in a ledger the lander could not resolve, or one whose files the lander did not say, is left |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
@@ -2686,7 +2721,7 @@ refused), `--json` and `--max` (`--limit` is `--max` for one release). `--actor`
 default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
-resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
+resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, hold, unhold, fleet
 up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, friend take, friend level, friend health, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
@@ -2726,6 +2761,7 @@ command that loads it.
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up); a card on a route that rests is never taken: refused by id, naming the rest, and passed over by count (the tick withdraws it) |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost); `--decision <json>` (the take's attempt decision, one card a finish, its op naming that take's card and attempt, else refused) is kept on the card, recorded by the server's decide lane, and routes a failed finish when its class is no-result or nothing-to-do at or above that class's bar on the card (section 2, the attempt decision) |
+| progress | a holder stamps progress on the work cards it works: `progress --as <worker> <card>[@<gen>]... --epoch <n>` sets the card's `progress` field to the server's time and nothing else; refused for a card that is not working, one another row holds (only the holder stamps), and one named at a generation that is not its live one. The member sends it every 3 minutes for each card whose child printed since its last stamp, and the friend daemon for each card whose lane turn did; a child that prints nothing stamps nothing, and the late rule (section 8) reads that silence |
 | ask | deals primaries in review to the readers each needs (one for a flash card, two different readers for a pro card; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
@@ -2747,18 +2783,20 @@ which has no git, a `NOTE` that `merge --stream <s> --batch <n>` records the lan
 land's place; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
 | promote | the machine's promotion, on a schedule, of a frozen branch cut from the sprint tip (`promo/<YYYY-MM-DD>-<n>`, `git branch --no-track` at that commit), never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the frozen commit before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since the base, oldest first. Admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge prints `promoted --sha <sha>` and moves `refs/promoted/last`. A failed merge-group run raises one judgment, the failing check's log tail, decisions `fix-and-recut` and `skip`, and does not record the sha; a later pass of the same branch does not raise a second one. `--dry-run` prints the branch and the cards and cuts nothing. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
-| fleet | `up|down <member>`, `level`; down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
+| fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
+| hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (her cards wait ready), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a friend keeps her cards, a stream's working cards finish. `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a friend's cards and a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back the cards she has not started (`--until` and her started cards' NOTE lines are its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold |
+| unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's and a friend's state is then their beat's; a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
-| friend down, friend up | hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
+| friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready and a card she has started finishes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
 | friend level | even the ready queues of the friends up within each class, as fleet level evens the members' |
 | friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer |
 | seat | the seat as the daemons read it every second: `SEAT holder= epoch= generation=`, `--json`; three keys, no table (section 1, a friend's health) |
 | reader add | declares readers |
-| reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
-| reader up | releases the hold; the reader's state is then its beat's |
+| reader away | `hold <reader>... --return` in the old words, for one release: holds readers whatever they beat (state `held`): no read is asked of them, a read asked and not begun is asked of another at the next tick, and a read begun is taken back where a reader up is free to read it |
+| reader up | `unhold <reader>...` in the old words, for one release: releases the hold; the reader's state is then its beat's |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... --read-tier <flash|pro|heavy|default>`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`); `default` takes a stream's off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, or another actor |
@@ -3079,9 +3117,11 @@ moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
 wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
-and nothing after the word: `machine: STOPPED` is also what it says when the
-state is RUNNING and nothing has ticked for 15 s (MachineSilence), on a store
-a run loop ticks. A twin (`mem:<file>`) is ticked by hand and nothing ticks
+and nothing after the word but a late tick: when the state is RUNNING and
+nothing has ticked for 15 s (MachineSilence), on a store a run loop ticks, it
+says `machine: running (tick late 16s)`, the whole seconds since the last
+tick; a late tick is never `machine: STOPPED`, which is a stop's alone, the
+record STOPPED. A twin (`mem:<file>`) is ticked by hand and nothing ticks
 between its commands, so there a RUNNING machine says `machine: running`
 however long since its last tick, and the inbox's judgment that it is not
 ticking names `nova-sprint tick` (a twin refuses `run`). The sprint line of every
@@ -3260,11 +3300,11 @@ batches=<n> beat-lane=<n> read-lane=<n> on-line=<n> gone=<n> wait-max=<d> held-m
 held-by=<verb> over=<d>`. The model is `tla/ServerLanes.tla`. The server keeps
 nothing between requests.
 
-The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
+The server runs the workers' verbs only: `take`, `finish`, `progress`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
 nothing more, and `friend beat <friend>` with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
 `actor`: the server gives the store and the actor, and puts them before the worker's words. A
-`take`, a `finish` and a `read` name the epoch their worker holds (`--epoch`). A `queue`'s
+`take`, a `finish`, a `progress` and a `read` name the epoch their worker holds (`--epoch`). A `queue`'s
 `--packets` is a count from 0 to 1024 and its `--have` card ids, each given once: a worker asks
 for the packets it can use this pass and no others (a reader of width 8 with 150 asked reads:
 445,525 bytes an answer before, 51,623 after; a member with 32 cards working and 32 ready:

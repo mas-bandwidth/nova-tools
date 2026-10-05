@@ -608,6 +608,9 @@ Every rule here is normative. Only living verbs are retained.
     harness that reports no cost never reaches it, and the token budget and the deadline stay the
     stops. Whichever budget stopped the card, native's `NATIVE BUDGET` line says which and at what
     count, the cost to the cent rounded up, and the member's failed finish carries those words.
+    The token and usd budgets are read from the harness's own usage store under the child's
+    writable data home, so under a hostile harness they are advisory; the deadline is the
+    enforced bound.
 12. **Malformed reports are refused.** `verify` checks `RESULT.md` against its contract line,
     and malformed reports or missing lines are refused rather than accepted as verified evidence.
 13. **Publication by rename.** Reports are published whole by renaming `.tmp` over `RESULT.md`.

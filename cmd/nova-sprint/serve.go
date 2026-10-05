@@ -77,8 +77,8 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		}
 		return argv[2], 2, ""
 	}
-	if len(argv) == 0 || !slices.Contains([]string{"take", "finish", "read", "queue"}, argv[0]) {
-		return "", 0, "the server runs the workers' verbs only: take, finish, read, queue, fleet beat, friend beat"
+	if len(argv) == 0 || !slices.Contains([]string{"take", "finish", "progress", "read", "queue"}, argv[0]) {
+		return "", 0, "the server runs the workers' verbs only: take, finish, progress, read, queue, fleet beat, friend beat"
 	}
 	verb, rest := argv[0], argv[1:]
 	if len(rest) < 2 || rest[0] != "--as" {

@@ -388,6 +388,10 @@ func tiersArg(tiers string) string {
 	return tiers
 }
 
+// writeFriend applies one friend row: her slots and tiers through
+// ns_capacity_desired, charged to the machine her beat reports or the fleet's
+// coordinator machine, then her width, delivery mode and roles
+// (docs/SPEC-CONFIG.md, "friend").
 func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, actor, idem string) error {
 	f := row.Name
 	// 1. slots and tiers, registering the friend (ns_capacity_desired),
@@ -411,6 +415,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	case "NAME-IS-LOGIN":
 		return &RefusedError{Err: ErrActor, Detail: fmt.Sprintf("%s is a login in Redis (friends:login), not a friend", f)}
 	default:
+		// capacity_desired's INVALID reply names the check that refused
+		// beside the machine and the two numbers (the fifth word), so a
+		// friend row apply cannot accept is refused with the reason, never a
+		// bare "INVALID <machine> 0 0".
+		if check := word(words, 4); check != "" {
+			return fmt.Errorf("redis: friend %s slots: INVALID %s", f, check)
+		}
 		return fmt.Errorf("redis: friend %s slots: %s", f, strings.Join(words, " "))
 	}
 	// 2. her width, the desired hash's own field beside slots and tiers that
@@ -643,12 +654,23 @@ func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, act
 	return nil
 }
 
+// registrySet is the set that holds the names of one kind's rows that name a
+// machine: the function library writes friend names to "friends" and bench
+// names to "benches" (internal/nsprint/fn/lua/capacity.lua registry_set).
+func registrySet(kind string) string {
+	if kind == KindFriend {
+		return FriendsKey
+	}
+	return "benches"
+}
+
 func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string) error {
 	var users []string
 	for _, kind := range []string{KindFriend, "bench"} {
-		names, err := a.Client.SMembers(ctx, kind+"s").Result()
+		set := registrySet(kind)
+		names, err := a.Client.SMembers(ctx, set).Result()
 		if err != nil {
-			return fmt.Errorf("redis: read %ss: %w", kind, err)
+			return fmt.Errorf("redis: read %s: %w", set, err)
 		}
 		if len(names) == 0 {
 			continue
@@ -659,7 +681,7 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 			cmds[i] = pipe.HGet(ctx, kind+":"+n+":desired", "machine")
 		}
 		if err := redisconn.Exec(ctx, pipe); err != nil {
-			return fmt.Errorf("redis: read %ss: %w", kind, err)
+			return fmt.Errorf("redis: read %s: %w", set, err)
 		}
 		for i, n := range names {
 			if cmds[i].Val() == m {

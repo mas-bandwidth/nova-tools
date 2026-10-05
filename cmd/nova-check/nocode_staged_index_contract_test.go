@@ -391,9 +391,22 @@ func noCodeStagedRefusals(t *testing.T) {
 			// NUL separators are interpreted at run time, not embedded in
 			// the script. Everything else the tool asks git -- the root
 			// test, the base detector -- is exec'd through to the real
-			// binary behind the fake.
+			// binary behind the fake. The subcommand is found by scanning
+			// argv, not by position: the tool's own git plumbing runs with
+			// -C and -c configuration overrides in front of the verb, so
+			// no fixed position is the verb.
 			bin := t.TempDir()
-			fakeBin(t, bin, "git", fmt.Sprintf(`case "$3" in
+			fakeBin(t, bin, "git", fmt.Sprintf(`sub=
+skip=0
+for a in "$@"; do
+  if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+  case "$a" in
+  -C|-c) skip=1 ;;
+  -*) ;;
+  *) sub=$a; break ;;
+  esac
+done
+case "$sub" in
   diff-index)
     printf '%s'
     exit 0
@@ -467,7 +480,8 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	mustWrite(t, first, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, first, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", first)
-	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, exit == 1, "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 
 	// The sha256 form: the empty tree is obtained inside the repository, never
 	// hard-coded. The sha1 constant 4b825dc6... names no object a sha256
@@ -481,7 +495,8 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	stGit(t, s256, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", s256)
 	require.NotEqualValues(t, 2, exit, "the unborn sha256 repository was refused; the empty tree was not obtained from inside it (a hard-coded sha1 constant does not exist there):\n%s", stderr)
-	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, exit == 1, "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 	{
 		et := strings.TrimSpace(stGit(t, s256, "hash-object", "-t", "tree", os.DevNull))
 		require.NotEqualValues(t, "4b825dc642cb6eb9a060e54bf8d69288fbee4904", et, "this sha256 repository names the sha1 empty tree %q", et)

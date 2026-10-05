@@ -122,7 +122,8 @@ func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 1, code, "exit %d, want 1", code)
 	require.NotContains(t, stdout, "DOGFOOD OK", "a ledger was printed over records it could not read:\n%s", stdout)
-	require.True(t, strings.Contains(stderr, "DOGFOOD FAILED") && strings.Contains(stderr, "broken.json"), "stderr does not name the bad record:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "DOGFOOD FAILED"), "stderr does not name the bad record:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "broken.json"), "stderr does not name the bad record:\n%s", stderr)
 }
 
 func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
@@ -160,7 +161,8 @@ func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
 
 	code, stdout, stderr = dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 0, code, "ledger exit %d\n%s", code, stderr)
-	require.True(t, strings.Contains(stdout, "verb=links by=Stella") && strings.Contains(stdout, "dogfooded=1 by-nonauthor=1"), "the receipt record wrote did not reach the ledger:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "verb=links by=Stella"), "the receipt record wrote did not reach the ledger:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "dogfooded=1 by-nonauthor=1"), "the receipt record wrote did not reach the ledger:\n%s", stdout)
 }
 
 func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
@@ -187,7 +189,8 @@ func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
 		"--by", "Stella", "--notes", "real work", "--receipts", receipts}
 	code, _, stderr := dogfoodRun(t, args...)
 	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt with no verdict is not a receipt", code)
-	require.True(t, strings.Contains(stderr, "--ok") && strings.Contains(stderr, "--not-ok"), "the refusal does not say how to state the verdict:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "--ok"), "the refusal does not say how to state the verdict:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "--not-ok"), "the refusal does not say how to state the verdict:\n%s", stderr)
 	code, _, stderr = dogfoodRun(t, append(args, "--ok", "--not-ok")...)
 	require.EqualValues(t, 2, code, "exit %d, want 2: both verdicts at once is a typo with two readings", code)
 	require.Contains(t, stderr, "--ok", "the refusal does not name the flags:\n%s", stderr)
@@ -288,7 +291,8 @@ func TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd(t *testing.T) {
 	}
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped)
 	require.EqualValues(t, 0, code, "with --shipped exit %d, want 0\nstderr:%s", code, stderr)
-	require.True(t, strings.Contains(stderr, "DOGFOOD NOTE shipped=1 outside=1") && strings.Contains(stdout, "DOGFOOD GATE OK"), "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
+	require.True(t, strings.Contains(stderr, "DOGFOOD NOTE shipped=1 outside=1"), "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
+	require.True(t, strings.Contains(stdout, "DOGFOOD GATE OK"), "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
 
 	writeReceipt(t, receipts, "c.json", map[string]any{
 		"tool": "nova-example", "verb": "corpus", "by": "Stella",
@@ -337,7 +341,8 @@ func TestDogfoodRefusesAMissingPath(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			code, _, stderr := dogfoodRun(t, tc.args...)
 			require.EqualValues(t, 2, code, "exit %d, want 2", code)
-			require.True(t, strings.Contains(stderr, tc.want) && strings.Contains(stderr, "refusing to guess"), "refusal:\n%s", stderr)
+			require.True(t, strings.Contains(stderr, tc.want), "refusal:\n%s", stderr)
+			require.True(t, strings.Contains(stderr, "refusing to guess"), "refusal:\n%s", stderr)
 		})
 	}
 }
@@ -448,7 +453,8 @@ func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
-	require.True(t, strings.Contains(stderr, "stranded") && strings.Contains(stderr, "stranded.json"), "the stranded receipt is not named:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "stranded"), "the stranded receipt is not named:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "stranded.json"), "the stranded receipt is not named:\n%s", stderr)
 	require.Contains(t, stderr, "verb=lnks", "the note does not say what the receipt claimed:\n%s", stderr)
 	require.Contains(t, stderr, "nova-example links", "the note does not say what it was probably meant to be:\n%s", stderr)
 }
@@ -468,7 +474,8 @@ func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
 	require.EqualValues(t, 1, code, "exit %d, want 1", code)
-	require.True(t, strings.Contains(stderr, "stranded.json") && strings.Contains(stderr, "nova-example links"), "the gate discarded a receipt and did not say so:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "stranded.json"), "the gate discarded a receipt and did not say so:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "nova-example links"), "the gate discarded a receipt and did not say so:\n%s", stderr)
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 0, code, "exit %d, want 0 without --require-all\n%s", code, stderr)
 	require.Contains(t, stderr, "stranded.json", "a green gate said nothing about the receipt it discarded:\n%s\n%s", stdout, stderr)
@@ -537,7 +544,8 @@ func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
 		"--notes", "real work", "--receipts", receipts)
 	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt checked against nothing is how nine of them were stranded", code)
-	require.True(t, strings.Contains(stderr, "--cli") && strings.Contains(stderr, "--tools"), "the refusal does not name either source:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "--cli"), "the refusal does not name either source:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "--tools"), "the refusal does not name either source:\n%s", stderr)
 }
 
 // The binaries are the authoritative list when they are to hand: a reference

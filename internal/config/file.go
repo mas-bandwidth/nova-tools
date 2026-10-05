@@ -131,10 +131,10 @@ func (f *FileStore) save() error {
 	if err != nil {
 		return err
 	}
-	f.Mem.mu.Lock()
+	f.mu.Lock()
 	st := fileState{Schema: len(all), Rows: f.rows, History: f.history}
 	raw, err := json.MarshalIndent(st, "", "  ")
-	f.Mem.mu.Unlock()
+	f.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("--file %s: encode: %w", f.path, err)
 	}
@@ -178,8 +178,8 @@ func (f *FileStore) List(ctx context.Context, kind string) ([]Row, error) {
 // staged keeps a write private until save replaces the file: a failed
 // encode, write or rename leaves both the open store and its file unchanged.
 func (f *FileStore) staged() *FileStore {
-	f.Mem.mu.Lock()
-	defer f.Mem.mu.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	m := &Mem{rows: map[string]map[string]Row{}, Now: f.Now, history: append([]Change(nil), f.history...)}
 	for kind, rows := range f.rows {
 		m.rows[kind] = map[string]Row{}

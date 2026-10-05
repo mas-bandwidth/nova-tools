@@ -250,7 +250,7 @@ func (f *Fake) Get(_ context.Context, stream string, entries []string) ([]Entry,
 func after(a, b string) bool {
 	num := func(id string) (int64, int64) {
 		ms, seq, _ := strings.Cut(id, "-")
-		m, _ := strconv.ParseInt(ms, 10, 64)  // ignored: a fake id is always one this file made, or "-"/"+"
+		m, _ := strconv.ParseInt(ms, 10, 64)  // ignored: a fake id is one this file made, and a range end that is no id reads as 0
 		s, _ := strconv.ParseInt(seq, 10, 64) // ignored: as above
 		return m, s
 	}

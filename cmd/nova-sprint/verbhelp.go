@@ -10,7 +10,8 @@ import (
 
 // releaseHoldWords tells release apart from the holds on a member, a reader,
 // and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
-const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, or friend:
+const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
+  unhold <name>... releases any of them (one verb for the four)
   fleet up <member> releases a held member
   reader up <reader> releases a held reader
   friend up <friend> releases a held friend
@@ -37,6 +38,12 @@ var verbExit = map[string]string{
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
+	"hold":             "local write: holds the named members, readers, friends or streams in the sprint's store (--return also hands back their begun work); --dry-run writes nothing",
+	"unhold":           "local write: releases the named holds in the sprint's store; --dry-run writes nothing",
+	"check":            "inspection: reads the sprint's tables and prints each violation, writes nothing",
+	"routes":           "inspection: reads the route table and prints each route, writes nothing",
+	"promote":          "delivery: promotes the landed cards toward the development branch and records the promotion in the sprint's store; --dry-run prints the branch and the landed cards and changes nothing",
+	"friend clean":     "local write: removes the friends' finished job directories and listings past --days under --root; --dry-run prints every removal with the bytes it would free and removes nothing",
 	"where":            "inspection: reads the sprint table and its rows, writes nothing",
 	"card":             "inspection: reads one card, its brief and its attempts, writes nothing",
 	"log":              "inspection: reads the sprint's change log, writes nothing",
@@ -190,6 +197,10 @@ func verbProse(name string) string {
 		return friendLevelWords
 	case "add", "brief":
 		return cardHelpWords
+	case "hold", "unhold":
+		return holdWords()
+	case "fleet down", "reader away", "reader up":
+		return oldHoldWords(name)
 	default:
 		return ""
 	}

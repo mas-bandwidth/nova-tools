@@ -35,12 +35,12 @@ var verbClasses = map[string]string{
 	"init": classCoordinator, "add": classCoordinator, "quack": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
 	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator, "relink": classCoordinator, "recut": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
-	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
+	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator, "hold": classCoordinator, "unhold": classCoordinator,
 	"fleet level": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "friend take": classCoordinator, "friend level": classCoordinator, "friend health": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "reader retire": classCoordinator, "stream remove": classCoordinator, "stream set": classCoordinator, "set": classCoordinator, "promoted": classCoordinator, "funded": classCoordinator, "wait": classCoordinator,
 	"ack": classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker,
+	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker,
 
 	"merge": classReport, "ci": classReport,
 

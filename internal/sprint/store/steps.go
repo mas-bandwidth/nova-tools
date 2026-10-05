@@ -80,6 +80,12 @@ func FinishStep(r sprint.FinishReq) Step {
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
 
+// ProgressStep is a holder stamping progress on the work cards it works (sprint.Progress).
+func ProgressStep(r sprint.ProgressReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "progress", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Progress(s, r) }}
+}
+
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
 	return Step{Answers: r.Answers, Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,

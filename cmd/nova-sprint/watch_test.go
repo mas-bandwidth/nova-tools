@@ -135,7 +135,7 @@ func TestWhereFrameIsTheGolden(t *testing.T) {
 	ta := whereFixture(t)
 	golden(t, "where_frame.golden", ta.ok("where"))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 { // the cursor hidden, then the frame
@@ -176,7 +176,8 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 
 	frame := ta.ok("where --all")
 	lines := strings.Split(frame, "\n")
-	require.Equal(t, []string{"SPRINT TABLE  coordinator coordinator", "", "STOPPED", ""}, lines[:4], "the head of the frame")
+	// the machine RUNNING, its last tick three hours late: running, never STOPPED
+	require.Equal(t, []string{"SPRINT TABLE  coordinator coordinator", "", "0/3 0.0% -> ETA -  running (tick late 10800s)", ""}, lines[:4], "the head of the frame")
 	for _, l := range lines[4:] {
 		assert.True(t, l == "" || strings.Contains(l, " | ") || strings.Contains(l, "-+-"), "a line that is not a table's: %q\n%s", l, frame)
 	}
@@ -273,7 +274,7 @@ func (ta *testApp) mergeRows() []string {
 func TestWatchDrawsEachFrameInPlaceWithOneWrite(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 3 { // the cursor hidden, then two frames
@@ -331,7 +332,7 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 	t.Run("cancelled while it sleeps", func(t *testing.T) {
 		t.Parallel()
 		ta := whereFixture(t)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		ta.a.sleep = func(time.Duration) { cancel() }
 		screen := &writeLog{}
@@ -348,7 +349,7 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 	t.Run("cancelled before it starts", func(t *testing.T) {
 		t.Parallel()
 		ta := whereFixture(t)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		screen := &writeLog{}
 		var errb bytes.Buffer
@@ -392,7 +393,7 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 func TestWatchJSONIsOneObjectAFrameAndNoEscape(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 {
@@ -455,7 +456,7 @@ func TestPauseSleepsInStepsAndStopsWhenCancelled(t *testing.T) {
 	a.sleep = func(d time.Duration) { slept = append(slept, d) }
 	require.True(t, a.pause(context.Background(), 250*time.Millisecond), "a pause nothing interrupted says the watch is over")
 	require.Equal(t, []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 50 * time.Millisecond}, slept, "slept")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	a.sleep = func(time.Duration) { cancel() }
 	slept = nil
 	require.False(t, a.pause(ctx, time.Hour), "a cancelled pause says the watch goes on")
@@ -532,7 +533,7 @@ func TestWhereWatchDrawsOnlyTheLinesThatFitTheScreen(t *testing.T) {
 	rows := 10
 	var asked []io.Writer
 	ta.a.screen = func(w io.Writer) (int, int) { asked = append(asked, w); return rows, 0 }
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		switch n {
@@ -593,7 +594,7 @@ func TestWhereWatchCutsItsLinesToTheWidthOfTheScreen(t *testing.T) {
 	plain := plainLines(ta.ok("where"))
 	const cols = 24
 	ta.a.screen = func(io.Writer) (int, int) { return 0, cols }
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 {
@@ -630,7 +631,7 @@ func TestWatchWritesAFrameOverFourKiBInOneWrite(t *testing.T) {
 	}
 	ta.ok("add --stream " + strings.Join(streams, ",") + " --count 2")
 	plain := ta.ok("where")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 {

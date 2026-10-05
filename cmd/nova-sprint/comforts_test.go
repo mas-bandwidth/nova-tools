@@ -93,11 +93,11 @@ func (ta *testApp) raw(line string) (int, string, string) {
 }
 
 // Which verbs need --epoch: the verbs that act on cards handed to an actor
-// outside the sprint (take by id, finish, read, ci, and a merge by anyone but
-// the coordinator), never the coordinator's own. A table over every verb.
+// outside the sprint (take by id, finish, progress, read, ci, and a merge by anyone
+// but the coordinator), never the coordinator's own. A table over every verb.
 func TestWhichVerbsNeedAnEpoch(t *testing.T) {
 	t.Parallel()
-	always := map[string]bool{"finish": true, "read": true, "ci": true, "take by id": true}
+	always := map[string]bool{"finish": true, "progress": true, "read": true, "ci": true, "take by id": true}
 	seen := map[string]bool{}
 	for _, v := range append(append([]verb(nil), verbs...), verb{name: "take by id"}) {
 		seen[v.name] = true
