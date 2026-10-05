@@ -837,6 +837,59 @@ facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `w
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
 internal/friend/check.go; each cites this section.
 
+## Harness settings (internal/friend/settings.go)
+
+The finding of 2026-10-05: each friend's harness was set up by hand-editing
+its config, and each hand edit failed once. One friend's Codex writable root
+was a symlink, and she did no work for ten hours. Another's DeepSeek Harness was
+on the `minimal` agent preset, and the headless runner refused every turn. A
+Grok friend's wake file path and the buds' `CLAUDE_CONFIG_DIR` were typed into
+units. Now
+`nova-friend install --harness <h>` writes the settings, before the agent, with
+one small writer per harness (`settings_<harness>.go`). `nova-friend check
+--settings` compares what is there with what install would write. Both go
+through one list, so check reports exactly what install writes.
+
+| harness | file | setting install writes |
+|---|---|---|
+| every one | `--dir` | a real directory (never made, never a symlink) |
+| codex | `$CODEX_HOME/config.toml` (else `~/.codex`) | `[sandbox_workspace_write] writable_roots` holds `--dir`, added to the roots there; edited by line, so comments and other keys stay |
+| dsh | `$DSH_HOME/profiles/desktop/cordis.patch.yml` (else `~/.dsh`) | the patch entry `agent-preset-registry`, `config.default` and `config.selectedDefault` = `standard`; the desktop profile must exist (the app makes it); edited as a YAML node tree |
+| grok | the wake file, `--session`, else `~/.nova-friend/<me>/<me>.wake` | its directory a real directory (made), the file a file (made empty); the agent's `--session` names it, and the NOTE's monitor line names it |
+| claude | `--config-dir` (default `CLAUDE_CONFIG_DIR`) | a real directory, made private; the agent's `run --config-dir` names it; install refuses claude without one |
+| opencode | `<dir>/opencode.json` | `permission.external_directory["<dir>/**"] = allow` (as `AllowDirs` writes before each turn), and `model` when `--model` names one |
+
+**Rules.** Every path is read first. A symlink where a directory belongs, a
+directory that is a file, a missing directory install does not make (the friend's
+directory, the DSH desktop profile), or a config file that is a symlink is
+refused (`ErrNotRealDir`, exit 2): nothing is written and no agent is loaded.
+The refusal names the path and its target. Install never replaces a symlink,
+because an atomic write over a dotfile repository's link would cut it. A setting
+under a refused path is not read through it, and check shows it as `unread`.
+Each written setting is merged into what the file holds and read back; one
+that still differs is an error. A second install writes nothing. `--dry-run`
+plans each write as `INSTALL PLAN command="write <file> <name>=<value>"` and
+refuses as the install would. A real install says each write as `INSTALL WROTE
+harness= file= name= value=`.
+
+**Check.** `nova-friend check --settings --as <me> --harness <h> --dir <d>`,
+with the flags install took (`--session`, `--config-dir`, `--model`,
+`--state-dir`), writes nothing. It prints `CHECK OK harness= settings=<n>
+drift=0`, or `CHECK DRIFT harness= settings=<n> drift=<n>` at exit 1 with one
+`CHECK DRIFT harness= file= name= want= have=` line per drifted setting and a
+NOTE with the install line that writes them. A symlink is
+`have="symlink to <target>"`.
+
+**What is not measured.** The DSH preset value `standard` is the owner's hand
+fix of 2026-10-04, written into the same key; whether the headless runner
+composes a `standard` session was not measured here (the runner refused a
+`minimal` one). A session keeps the preset it was opened under, so the friend
+opens a new session after install. The Codex key is the documented
+`sandbox_workspace_write.writable_roots`; it takes effect only under
+`sandbox_mode = "workspace-write"`, which install leaves alone. The health check
+(`check` with no `--harness`) does not yet carry settings drift: run
+`--settings` per friend.
+
 ## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
 
 The server side of the connection, as the owner designed it: the coordinator

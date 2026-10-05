@@ -21,6 +21,9 @@ var callArgs sync.Map // *tool.Call -> []string
 
 // check handles both health check and delivery conformance check.
 func (w world) check(c *tool.Call) *tool.Out {
+	if c.Bool("settings") {
+		return w.settingsCheck(c)
+	}
 	if c.Str("harness") != "" {
 		return w.deliveryCheckVerb(c)
 	}
@@ -51,6 +54,28 @@ func (w world) deliveryCheckVerb(c *tool.Call) *tool.Out {
 		return tool.Fail().As("FAIL").Fact("harness", harness).Fact("stage", res.Stage).Fact("why", tool.Text(res.Why))
 	}
 	return tool.Done().Fact("harness", harness).Fact("took", res.Took.String())
+}
+
+// settingsCheck compares the harness's settings with what install would
+// write (docs/SPEC-FRIEND.md, Harness settings); it writes nothing.
+func (w world) settingsCheck(c *tool.Call) *tool.Out {
+	all, err := w.harnessSettings(c).Check()
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	drift := friend.Drift(all)
+	o := tool.Done()
+	if len(drift) > 0 {
+		o = tool.Fail().As("DRIFT")
+	}
+	o.Fact("harness", c.Str("harness")).Fact("settings", len(all)).Fact("drift", len(drift))
+	for _, s := range drift {
+		o.Item("drift", "harness", s.Harness, "file", s.File, "name", s.Name, "want", tool.Text(s.Want), "have", tool.Text(s.Have))
+	}
+	if len(drift) > 0 {
+		o.Note("install again writes them: nova-friend install --as " + c.Str("as") + " --harness " + c.Str("harness") + " --dir " + c.Str("dir"))
+	}
+	return o
 }
 
 // healthCheckVerb runs the coordinator friend health check.

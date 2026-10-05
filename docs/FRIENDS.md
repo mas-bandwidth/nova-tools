@@ -34,6 +34,16 @@ never from her daemon's beat alone, and shows the evidence beside it
 status=down why="no session answer 12m" evidence="harness unknown; no session answer 12m; no limit; 2 undelivered; last result 40m exit=0"
 ```
 
+## Her harness's settings: `nova-friend install` writes them
+
+The settings a friend's harness needs in its own config are written by
+`nova-friend install --harness <h>`, never by hand, and `nova-friend check
+--settings --as <name> --harness <h> --dir <dir>` names any that drifted
+(docs/SPEC-FRIEND.md, "Harness settings"). Her working directory must be a real
+directory, not a symlink to one: install refuses a symlink and writes nothing
+(on 2026-10-05 a Codex writable root that was a symlink took no writes for ten
+hours). Name the real path with `--dir`.
+
 ## Generation-specific jobs
 
 The queue file, `inbox/QUEUE.json`, records each task's `id`, `state`, `gen`
