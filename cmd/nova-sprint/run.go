@@ -357,11 +357,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	// on server start, keep every in-flight read whose lease is live and only
 	// take back reads whose lease has lapsed (tla/ServerLanes.tla, Restart)
 	// ignored: a best-effort read cleanup on startup; tick takes care of any subsequent lapses
-	_, _ = st.Run(context.Background(), store.Step{
-		Verb: "restart",
-		Load: []string{sprint.Readers, sprint.Work},
-		Plan: sprint.RestartReads,
-	})
+	_ = a.serverStart(context.Background(), st)
 
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
@@ -661,4 +657,13 @@ func idleAlarmFlag(on *bool, byDefault bool) func(flagSet) {
 	return func(fs flagSet) {
 		fs.BoolVar(on, "idle-alarm", byDefault, "when the fleet works under half its width for "+sprint.IdleWindow.String()+" while cards wait, push the coordinator one note (the inbox, and inbox --push) naming the roots the waiting cards are behind, the most cards first, once an episode, and one more when it recovers (run: on by default; a tick by hand only with --idle-alarm)")
 	}
+}
+
+// serverStart runs the server startup steps before the first tick:
+// on server start, keep every in-flight read whose lease is live and only
+// take back reads whose lease has lapsed (tla/ServerLanes.tla, Restart;
+// docs/SPEC-SPRINT.md section 6).
+func (a *app) serverStart(ctx context.Context, st *store.Store) error {
+	_, err := st.Run(ctx, store.ServerRestartStep())
+	return err
 }
