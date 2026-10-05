@@ -397,3 +397,4 @@ MCCoordinatorPassBrokenReopen.cfg	MCCoordinatorPass.tla	invariant	OneJudgmentAnE
 MCCoordinatorPassBrokenNoClose.cfg	MCCoordinatorPass.tla	invariant	ClosedWhenCleared	ignore-terminal	coordinatorpass	required	-
 MCCoordinatorPassBehind.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinatorpass	required	-
 MCCoordinatorPassBrokenDoublePush.cfg	MCCoordinatorPass.tla	invariant	OnePushATick	ignore-terminal	coordinatorpass	required	-
+MCBus2BrokenActTwice.cfg	MCBus2.tla	invariant	NoMessageActedTwice	ignore-terminal	bus2	required	-
