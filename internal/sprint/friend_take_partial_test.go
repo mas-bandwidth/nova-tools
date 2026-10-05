@@ -17,7 +17,7 @@ import (
 func partialWorld(t *testing.T) (*world, map[string]string) {
 	t.Helper()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash"})
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 	require.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col)
 	require.Equal(t, Ready, w.s.Fleet.Card("s1-3.w1").Col)
