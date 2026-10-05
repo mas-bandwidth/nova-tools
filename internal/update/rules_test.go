@@ -220,7 +220,7 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 		fakeEnv.Process = func(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
 			assert.Equal(t, []string{"fake-version", "version"}, args)
 			deadline, ok := ctx.Deadline()
-			if !assert.True(t, ok) || !assert.Equal(t, 20*time.Millisecond, deadline.Sub(time.Now())) {
+			if !assert.True(t, ok) || !assert.Equal(t, 20*time.Millisecond, time.Until(deadline)) {
 				return ProcessResult{Reason: "invalid child deadline"}
 			}
 			<-ctx.Done()
