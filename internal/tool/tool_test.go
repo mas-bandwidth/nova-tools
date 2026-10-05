@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -170,8 +171,8 @@ func TestRender(t *testing.T) {
 	}{
 		{"ok with facts", Done().Fact("session", "s1").Fact("bytes", 17).Fact("persisted", true).Fact("source", ""),
 			"DEMO OK session=s1 bytes=17 persisted=true source=-\n"},
-		{"a value with a space and an equals sign is one field", Done().Fact("path", "a b=c"),
-			"DEMO OK path=a\\x20b\\x3dc\n"},
+		{"a value with a space and an equals sign is one quoted field", Done().Fact("path", "a b=c"),
+			"DEMO OK path=\"a b=c\"\n"},
 		{"items, a MORE and notes", func() *Out {
 			o := Done().Fact("entries", 3)
 			o.Item("entry", "id", "e1", "bytes", 5).Item("entry", "id", "e2", "bytes", 6).Item("entry", "id", "e3", "bytes", 7)
@@ -216,20 +217,73 @@ func TestRender(t *testing.T) {
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
 			assert.True(t, want.Verb == "demo" && want.Exit == tc.out.Exit, "JSON result is %s exit %d, want demo exit %d", want.Verb, want.Exit, tc.out.Exit)
 			assert.NotContains(t, js.String(), `\`+`u003c`, "the JSON is HTML-escaped")
-			// The text escapes what JSON carries raw; compare the escaped form.
+			// The text quotes a value JSON carries raw; compare the quoted form.
 			for i, n := range want.Notes {
 				want.Notes[i] = strings.ReplaceAll(n, "\n", `\x0a`)
 			}
 			for k, v := range want.Facts {
-				want.Facts[k] = strings.NewReplacer(" ", `\x20`, "=", `\x3d`).Replace(v)
-			}
-			for _, f := range tc.out.Facts {
-				if s, ok := f.V.(Text); ok {
-					want.Facts[f.K] = strconv.Quote(string(s))
+				if oneline.Field(v) != v {
+					want.Facts[k] = strconv.Quote(v)
 				}
 			}
 			g, w := fmt.Sprintf("%+v", got), fmt.Sprintf("%+v", want)
 			assert.Equal(t, w, g, "the lines and the JSON disagree:\nlines %s\njson  %s", g, w)
+		})
+	}
+}
+
+// TestAValueWithAWhitespaceIsQuoted pins one way to print a value (skeleton
+// contract 1.14, STANDARD §2): a value that is one safe token prints bare, and
+// anything else -- a space, an "=", a control character -- prints as
+// strconv.Quote gives it, so no line holds `\x20`.
+func TestAValueWithAWhitespaceIsQuoted(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		out   *Out
+		lines string
+	}{
+		{"a typed value with a space is quoted, never hex-escaped", Done().Fact("name", "land in batches"),
+			"DEMO OK name=\"land in batches\"\n"},
+		{"a safe token stays bare", Done().Fact("name", "batches"),
+			"DEMO OK name=batches\n"},
+		{"a value with an equals sign is quoted", Done().Fact("raw", "go version go1.27.1"),
+			"DEMO OK raw=\"go version go1.27.1\"\n"},
+		{"a control character is quoted", Done().Fact("text", "a\nb"),
+			"DEMO OK text=\"a\\nb\"\n"},
+		{"an item field with a space is quoted too", Done().Item("entry", "at", "x y"),
+			"DEMO OK\nDEMO ENTRY at=\"x y\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.out.Verb, tc.out.token = "demo", "DEMO"
+			var text bytes.Buffer
+			tc.out.Render(&text, false)
+			assert.Equal(t, tc.lines, text.String())
+			assert.NotContains(t, text.String(), `\x20`)
+		})
+	}
+}
+
+// TestADuplicateKeyOnOneLineIsAFail pins the render-time refusal of a key a
+// line prints twice (skeleton contract 1.14, STANDARD §2): the result is a
+// FAILED naming the bug, never a line that names a key twice.
+func TestADuplicateKeyOnOneLineIsAFail(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		key  string
+		out  *Out
+	}{
+		{"a repeated fact key", "at", Done().Fact("at", "a").Fact("at", "b")},
+		{"a repeated item field key", "build", Done().Item("entry", "build", "a", "build", "b")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.out.Verb, tc.out.token = "demo", "DEMO"
+			var text bytes.Buffer
+			assert.Equal(t, 1, tc.out.Render(&text, false))
+			assert.Equal(t, "DEMO FAILED: the key "+tc.key+" is printed twice on one line\n", text.String())
 		})
 	}
 }
