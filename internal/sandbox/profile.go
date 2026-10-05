@@ -174,6 +174,25 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// device grant here: the minimum Metal mechanisms are still unmeasured, so
 	// the profile stays closed and the GPU probe classifies the outcome.
 	text = out.String()
+	// Deletes only in the job dir and its tmp: a --write outside both may be written and
+	// never deleted from. SBPL's last matching rule wins, so the denies come after every
+	// write grant in the template (HOME's included) and the job dir and the tmp are given
+	// their unlink back after the denies, for a job dir nested inside a denied write.
+	var nodelete []string
+	for i, w := range p.Writes {
+		if !p.DeletesIn(w) {
+			nodelete = append(nodelete, fmt.Sprintf("(deny file-write-unlink (subpath (param %q)))", fmt.Sprintf("WRITE%d", i)))
+		}
+	}
+	if len(nodelete) > 0 {
+		text += ";; deletes only in the job dir and its tmp (docs/SPEC-SANDBOX.md, deletes-only-in-the-job-dir.w3)\n"
+		text += strings.Join(nodelete, "\n") + "\n"
+		text += `(allow file-write-unlink (subpath (param "WRITE0")))` + "\n"
+		if p.Tmp != "" && !Inside(p.Tmp, p.Writes[0]) {
+			text += `(allow file-write-unlink (subpath (param "JOBTMP")))` + "\n"
+			params = append(params, "JOBTMP="+p.Tmp)
+		}
+	}
 	if p.GPUMode == GPUMetal {
 		text += ";; gpu=metal requested: no mach-lookup or device grant added; Metal stays denied until measured\n"
 	}
