@@ -207,18 +207,18 @@ func Parse(s string) (Fields, bool) {
 }
 
 // Source is the structured view of WHERE a binary was built from. The version line has
-// always carried an unstructured "the stamp this build reports"; Source is what the stamp
-// is verified against: every stamp read at the gate -- apply --sha's postflight, the
-// snapshot, `moved`'s per-revision readback -- also reads this four-field shape and
-// refuses a binary that names a different checkout, a different revision, a dirty tree,
-// or a different build host than the manifest recorded. A build from the wrong
-// repository that happens to carry the requested linker stamp cannot pass (#2291,
-// SPEC-VERSION item 6).
+// always carried an unstructured "the stamp this build reports"; Source is the line's own
+// claim of origin. Today only the snapshot reads it (internal/update snapverb.go, through
+// FindSource): it compares the binaries that name a source with one another, so the gate
+// checks consistency across the binaries' own claims, not the build -- a binary built
+// from the wrong checkout that stamps the source it was told to stamp passes
+// (SPEC-VERSION item 6). apply --sha's postflight and `moved`'s readback do not read it.
 //
 // All four fields are always written together, so the round-trip is unambiguous: a Source
 // the reader can extract is one the writer wrote whole. A version line that carries some
-// but not all of the four is read as "no source": a half-present source is a source the
-// reader cannot verify, and a silent disagreement is worse than a refusal.
+// but not all of the four, or a malformed dirty, is read as "no source" by FindSource and
+// reported by PartialSource, so the snapshot can say so rather than treat it as a binary
+// that never named source.
 type Source struct {
 	// Repository is the checkout the build came from, e.g. "github.com/owner/repo". A
 	// build from a different repository cannot pass even if the linker stamp matches.
@@ -260,9 +260,9 @@ var sourceKeys = map[string]bool{"repo": true, "revision": true, "dirty": true, 
 // `build=<hex>`, nova-sandbox's `backend=` -- is ignored. A version line that carries
 // none of the four is reported with ok=false: old binaries, foreign tools, and a `go
 // install` from a tag never had this, and "no Source" is the honest answer. A version
-// line that carries SOME but not ALL of the four is ALSO reported with ok=false: a
-// partial source is a source the reader cannot verify, and the gate must refuse it
-// rather than guess at the missing field.
+// line that carries SOME but not ALL of the four is ALSO reported with ok=false, as is
+// one with a malformed dirty: the reader does not guess at a missing or contradictory
+// field, and PartialSource tells such a line from one that named no source at all.
 //
 // A malformed dirty token (anything other than "true" or "false") is refused: a value
 // like `dirty=maybe` is not a clean source and must not be silently accepted as
@@ -299,4 +299,22 @@ func (f Fields) FindSource() (Source, bool) {
 		Dirty:      dirty == "true",
 		BuildHost:  host,
 	}, true
+}
+
+// PartialSource reports whether the line names at least one of the four source keys
+// yet FindSource refused it: some but not all four, a malformed dirty token, or a
+// duplicated key (Parse already refuses a duplicate in a parsed line). Such a line is
+// not "no source" -- it claimed one the reader cannot use -- and the snapshot notes it
+// (SPEC-VERSION item 6) rather than refusing. A line with none of the four, and a line
+// FindSource accepts, are not partial.
+func (f Fields) PartialSource() bool {
+	if _, ok := f.FindSource(); ok {
+		return false
+	}
+	for _, e := range f.Extras {
+		if k, _, found := strings.Cut(e, "="); found && sourceKeys[k] {
+			return true
+		}
+	}
+	return false
 }

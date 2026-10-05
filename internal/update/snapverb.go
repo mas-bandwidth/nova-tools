@@ -68,11 +68,13 @@ const snapshotHeader = "name\tstamp\trevision\tplatform"
 // tells the mixed-source gate whether the line named source at all: a binary
 // that did not name source contributes no opinion to that gate, and a binary
 // that did is checked against every other binary that did (SPEC-VERSION
-// item 6).
+// item 6). partial is set when the line named source but not usably (some of
+// the four keys, a malformed dirty): the row is recorded and has no say, and the
+// verb says so in a note.
 type snapRow struct {
 	name, stamp, revision, platform string
 	src                             buildinfo.Source
-	has                             bool
+	has, partial                    bool
 }
 
 // sourceString is the one line a Source reads as on a refusal: every field
@@ -115,15 +117,16 @@ func revisionOf(stamp string) string {
 // carry the four source keys (an old binary, a foreign tool, a `go install`
 // from a tag) returns src with has=false: the row is still recorded, and
 // "no source" is the honest answer rather than a refusal at this verb's
-// normal case. The mixed-source gate downstream compares only what the rows
+// normal case; a line that names source but not usably returns has=false and
+// partial=true, so the caller can say it was ignored. The mixed-source gate downstream compares only what the rows
 // carry (SPEC-VERSION item 6).
-func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo.Source, has bool, ok bool) {
+func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo.Source, has, partial, ok bool) {
 	f, ok := buildinfo.Parse(s)
 	if !ok {
-		return "", "", "", buildinfo.Source{}, false, false
+		return "", "", "", buildinfo.Source{}, false, false, false
 	}
 	src, has = f.FindSource()
-	return f.Version, revisionOf(f.Version), f.Platform, src, has, true
+	return f.Version, revisionOf(f.Version), f.Platform, src, has, f.PartialSource(), true
 }
 
 // isNotOneTSVField reports whether s contains any control or whitespace
@@ -219,11 +222,11 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 			}
 			return tool.Refuse(fmt.Sprintf("cannot read %s version (%s) (%s)", e.Name(), reason, remedy))
 		}
-		stamp, revision, platform, src, has, ok := parseVersionLine(p.Stdout)
+		stamp, revision, platform, src, has, partial, ok := parseVersionLine(p.Stdout)
 		if !ok {
 			return tool.Refuse(fmt.Sprintf("cannot read %s version (it printed no version line: want `<tool> <stamp> <goos>/<goarch> <go version>` and then any key=value extras) (repair the build there: go build ./cmd/%s)", e.Name(), e.Name()))
 		}
-		rows = append(rows, snapRow{e.Name(), stamp, revision, platform, src, has})
+		rows = append(rows, snapRow{e.Name(), stamp, revision, platform, src, has, partial})
 	}
 	if len(rows) == 0 {
 		return tool.Refuse(fmt.Sprintf("--bin %s holds no nova-* regular file (supply a readable --bin: a directory of nova-* executables)", bin))
@@ -242,11 +245,9 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	// source (an old binary, a foreign tool, a `go install` from a tag)
 	// contributes no opinion, so the existing tests' four-token stubs
 	// remain readable; a row that names source is checked against every
-	// other row that named source, and disagreement is refused. Missing
-	// in the strict sense ("a binary whose source metadata is missing")
-	// is the next issue's slice, once every stamp read across the tree
-	// can demand source without breaking the older binaries in the
-	// wild.
+	// other row that named source, and disagreement is refused. A row
+	// whose source is partial or malformed is noted below, not refused;
+	// refusing a binary with no source is a later slice.
 	var firstSrc buildinfo.Source
 	var firstSrcName string
 	var firstSrcSet bool
@@ -270,6 +271,13 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
 		o.Item("row", "name", r.name, "stamp", r.stamp, "revision", r.revision, "platform", r.platform)
+	}
+	// A row that named source unusably is recorded, exempt from the comparison
+	// above, and named here without a refusal (SPEC-VERSION item 6).
+	for _, r := range rows {
+		if r.partial {
+			o.Note("partial source metadata: " + oneline.Quote(r.name))
+		}
 	}
 	// SECURITY #81 finding 2: every nova-* non-directory entry skipped for
 	// not being a regular file (e.g. a symlink or failed Info) is noted on the
