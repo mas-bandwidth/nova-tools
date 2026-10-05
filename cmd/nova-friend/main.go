@@ -267,7 +267,11 @@ nonce from inside the session before she beats again, and the seat is told she i
 row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Every
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A lane
+turn the provider rate-limits (429, "rate limit reached", "too many requests", "input token limit
+exceeded") keeps its card and pauses new lanes for a backoff (30s doubling to 10m), lowers the live lane
+cap by a quarter and raises it one lane per clean 10m, no hold; three lowerings in an hour are one
+blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. Every
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
 (row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
 --dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that

@@ -28,8 +28,9 @@ type LaneHarness interface {
 	OpenSession(ctx context.Context, seed string) (session string, err error)
 	// DeliverTo pushes text into session as one turn and blocks until it
 	// ends: its exit, and a permission the harness refused without asking,
-	// read from the turn's output (empty when none). A provider's refusal is
-	// ProviderRefused, as Deliver answers it.
+	// read from the turn's output (empty when none). A rate limit is
+	// RateLimited and out of funds OutOfFunds (ProviderLimit); a provider's
+	// refusal is ProviderRefused, as Deliver answers it.
 	DeliverTo(ctx context.Context, session, text string) (LaneTurn, error)
 }
 
@@ -155,6 +156,11 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
+	if exit != 0 && err == nil {
+		if limit := ProviderLimit("(new)", out); limit != nil {
+			return "", limit // a rate limit or out of funds: the lanes' governor answers it, not the open's retry alone
+		}
+	}
 	if exit, err = refused("(new)", out, exit, err); err != nil {
 		return "", err
 	}
@@ -193,12 +199,20 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 }
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
-// <id> --dir <dir> <text>`, its output read for a refused permission.
+// <id> --dir <dir> <text>`, its output read for a refused permission, and its
+// tail for a rate limit or out of funds (ProviderLimit, whatever the exit:
+// the lanes heed it only when the card has no RESULT.md) before a provider's
+// refusal of the session.
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
 	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	if err == nil {
+		if limit := ProviderLimit(id, out); limit != nil {
+			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
+		}
 	}
 	exit, err = refused(id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
