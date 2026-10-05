@@ -2723,6 +2723,17 @@ and `tlacheck run --bench` checks before it runs. `TestTLCRecordFreshnessAndCove
 records, wrong exits, invalid gate waivers and manual required records refuse, while a
 declared failed bench measurement is retained as debt, never PASS.
 
+`TestEveryStateMachineHasACurrentModel` (`internal/ci/tla_coverage_class_test.go`,
+with `TestTLACoverageRefusesAnOwedRowWithNoCard`) holds every state machine of
+nova-tools and nova-sprint to its model in `tla/COVERAGE.tsv`. Every row names its
+code file and its TLA+ module with a valid status (`current`, `partial`, `stale`
+or `missing`). A row that is not current names the card in `owed_by` that owes the
+model; a current row has `owed_by` as `-` and its module must have at least one
+reversed witness (expected-fail case) in `tla/CASES.tsv` and current run records
+in `tla/RUNS.tsv`. A row marked missing, partial or stale reports a skip naming the
+card that owes it, never a pass.
+
+
 The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix
 from the case plan and runs only on self-hosted Linux runners, with two-minute
 job timeouts and a 110-second group limit. The repository's `TLC_JAR` variable
