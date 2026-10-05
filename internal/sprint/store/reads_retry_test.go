@@ -30,7 +30,7 @@ func (m movingStore) AtEpoch(epoch uint64, old bool) Backend {
 func (m movingStore) ReadSet(ctx context.Context, table string, ids []string) (ntable.ReadSetResult, error) {
 	if *m.left > 0 && strings.HasSuffix(table, sprint.Fleet) {
 		*m.left--
-		if err := m.Mem.RowSet(ctx, table, "m1", map[string]string{sprint.Load: strconv.Itoa(*m.left)}); err != nil {
+		if err := m.RowSet(ctx, table, "m1", map[string]string{sprint.Load: strconv.Itoa(*m.left)}); err != nil {
 			return ntable.ReadSetResult{}, err
 		}
 	}

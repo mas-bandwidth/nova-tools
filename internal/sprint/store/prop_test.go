@@ -606,7 +606,7 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 	if progress {
 		var act []string
 		for _, d := range ds {
-			if !idle[d] && !(d == "ack" && g.Type == sprint.NStalled) {
+			if !idle[d] && (d != "ack" || g.Type != sprint.NStalled) {
 				act = append(act, d)
 			}
 		}
@@ -794,7 +794,7 @@ func (r *propRun) check(i int, a pAct) *propFail {
 		r.stats["actions ending with an operation pending"]++
 	}
 	for _, e := range r.errs {
-		if !(r.cutUsed || pending || busy(e)) {
+		if !r.cutUsed && !pending && !busy(e) {
 			return fail("error", "%v", e)
 		}
 	}

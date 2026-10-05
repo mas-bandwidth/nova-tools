@@ -40,7 +40,7 @@ func (l *logMem) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, er
 	return ok, err
 }
 func (l *logMem) Release(ctx context.Context, op OpRecord, commit bool) error {
-	had := l.Mem.Pending()
+	had := l.Pending()
 	err := l.Mem.Release(ctx, op, commit)
 	hid := ""
 	if had != nil {
@@ -56,29 +56,29 @@ type tagMem struct {
 }
 
 func (t *tagMem) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Receipt, error) {
-	r, err := t.logMem.Mem.Apply(ctx, m)
+	r, err := t.Mem.Apply(ctx, m)
 	var ids []string
 	for _, e := range m.Members {
 		if hasChanges(e) {
 			ids = append(ids, e.ID)
 		}
 	}
-	t.logMem.add(fmt.Sprintf("%s apply %s %s exp %s -> %v err=%v replay=%v [%s]", t.who, m.Table, m.OperationID, m.ExpectedTableRevision, r.After, err, r.Replay, strings.Join(ids, " ")))
+	t.add(fmt.Sprintf("%s apply %s %s exp %s -> %v err=%v replay=%v [%s]", t.who, m.Table, m.OperationID, m.ExpectedTableRevision, r.After, err, r.Replay, strings.Join(ids, " ")))
 	return r, err
 }
 func (t *tagMem) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
-	ok, err := t.logMem.Mem.Acquire(ctx, gen, op)
-	t.logMem.add(fmt.Sprintf("%s acquire %s gen %d ok=%v", t.who, op.ID, gen, ok))
+	ok, err := t.Mem.Acquire(ctx, gen, op)
+	t.add(fmt.Sprintf("%s acquire %s gen %d ok=%v", t.who, op.ID, gen, ok))
 	return ok, err
 }
 func (t *tagMem) Release(ctx context.Context, op OpRecord, commit bool) error {
-	had := t.logMem.Mem.Pending()
-	err := t.logMem.Mem.Release(ctx, op, commit)
+	had := t.Pending()
+	err := t.Mem.Release(ctx, op, commit)
 	hid := ""
 	if had != nil {
 		hid = had.ID
 	}
-	t.logMem.add(fmt.Sprintf("%s release %s commit=%v (fence held %s)", t.who, op.ID, commit, hid))
+	t.add(fmt.Sprintf("%s release %s commit=%v (fence held %s)", t.who, op.ID, commit, hid))
 	return err
 }
 

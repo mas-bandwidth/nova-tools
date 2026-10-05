@@ -302,7 +302,7 @@ type stopper struct {
 
 func (s *stopper) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Receipt, error) {
 	s.once.Do(func() {
-		_ = s.Mem.SetKey(ctx, keyMachine, `{"state":"STOPPED"}`)
+		_ = s.SetKey(ctx, keyMachine, `{"state":"STOPPED"}`)
 	})
 	return s.Mem.Apply(ctx, m)
 }
