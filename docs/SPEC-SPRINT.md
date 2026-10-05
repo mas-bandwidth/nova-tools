@@ -3267,7 +3267,7 @@ nothing between requests.
 
 The server runs the workers' verbs only: `take`, `finish`, `progress`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
-nothing more, and `friend beat [--asleep] <friend>` (the flag before the name) with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
+nothing more, and `friend beat [--asleep] <friend>` (the flag before the name) with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more. It also runs the coordinator keepalive's three shapes and no other: `seat --json`, `where --json`, and `friend health --actor <coordinator> <friend> --state <up|asleep|down> --seen <RFC3339> --generation <n>` (the health the seat's holder alone may write, at the seat's generation now). No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
 `actor`: the server gives the store and the actor, and puts them before the worker's words. A
 `take`, a `finish`, a `progress` and a `read` name the epoch their worker holds (`--epoch`). A `queue`'s
 `--packets` is a count from 0 to 1024 and its `--have` card ids, each given once: a worker asks

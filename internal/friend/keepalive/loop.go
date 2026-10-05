@@ -13,7 +13,7 @@ type Observation struct {
 	Seat           Seat
 	DaemonInstance string
 	Evidence       uint64
-	PongAge        time.Duration
+	Seen           time.Time
 	Asleep         bool
 	Up             bool
 }
@@ -188,15 +188,19 @@ func (l *Loop) Run(ctx context.Context) error {
 			var observations []Observation
 			for peer, m := range machines {
 				s := m.Status(now)
-				age := time.Duration(0)
-				if !s.LastPong.IsZero() {
-					age = now.Sub(s.LastPong)
+				// The same ACK always carries the same proof instant. Once it
+				// expires the sprint derives down from age; writing down with that
+				// same instant would either renew or conflict with the proof.
+				if s.LastPong.IsZero() || s.LastAckSeq == 0 || (!s.Up && !s.Asleep) {
+					continue
 				}
-				o := Observation{Friend: peer, Seat: seat, DaemonInstance: l.Instance, Evidence: s.LastAckSeq, PongAge: age, Asleep: s.Asleep, Up: s.Up}
+				o := Observation{Friend: peer, Seat: seat, DaemonInstance: l.Instance, Evidence: s.LastAckSeq, Seen: s.LastPong, Asleep: s.Asleep, Up: s.Up}
 				observations = append(observations, o)
 			}
-			if err := l.HealthBatch(ctx, observations); err != nil {
-				l.Record("keepalive health: " + err.Error())
+			if len(observations) > 0 {
+				if err := l.HealthBatch(ctx, observations); err != nil {
+					l.Record("keepalive health: " + err.Error())
+				}
 			}
 		}
 		pause()

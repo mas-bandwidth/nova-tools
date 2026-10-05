@@ -91,9 +91,10 @@ func TestLoopExchangesDaemonFramesWithoutNativeDelivery(t *testing.T) {
 				assert.Equal(t, seat, f.Seat)
 			}
 			if role == "coordinator" {
-				require.Len(t, observed, 4)
-				assert.True(t, observed[3].Up)
-				assert.NotZero(t, observed[3].Evidence)
+				require.Len(t, observed, 3, "no observation is invented before the first ACK")
+				assert.True(t, observed[2].Up)
+				assert.NotZero(t, observed[2].Evidence)
+				assert.False(t, observed[2].Seen.IsZero())
 			} else {
 				assert.Empty(t, observed, "friends cannot project authoritative sprint health")
 			}
@@ -126,7 +127,7 @@ func TestLoopStopsAuthoritativeWritesWhenAuthorityFails(t *testing.T) {
 	}, Record: func(s string) { logs = append(logs, s) }}
 	require.NoError(t, l.Run(ctx))
 	assert.Len(t, store.sent, 1)
-	assert.Equal(t, 1, projections)
+	assert.Zero(t, projections, "authority alone is no health proof")
 	assert.NotEmpty(t, logs)
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,12 @@ func (r *rig) world() world {
 			}
 			return "", errors.New("executable file not found in ")
 		},
-		random: func() string { return "r4nd0m" },
+		random:        func() string { return "r4nd0m" },
+		openKeepalive: openFakeKeepalive,
+		instance:      func() string { return "test-instance" },
+		sprint: func(context.Context, string, ...[]string) ([]sprintwire.Result, error) {
+			return nil, errors.New("no sprint server in this test")
+		},
 	}
 }
 
@@ -537,6 +543,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return ctx, cancel
 		}
 		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+		w.openKeepalive = nil // the lane's loop paces itself on the same pause, which would wait on itself in the bubble
 		dir := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))

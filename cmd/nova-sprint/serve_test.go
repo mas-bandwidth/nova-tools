@@ -54,6 +54,37 @@ func TestFriendAsleepWorkerVerbPreservesIdentityAndRefusesOtherWords(t *testing.
 	}
 }
 
+func TestKeepaliveRemoteVerbsHaveOneNarrowGrammar(t *testing.T) {
+	t.Parallel()
+	assertWorker := func(argv []string, actor string) {
+		t.Helper()
+		got, words, why := workerVerb(argv)
+		assert.Empty(t, why)
+		assert.Equal(t, actor, got)
+		assert.Equal(t, 2, words)
+	}
+	assertWorker([]string{"friend", "health", "--actor", "seat", "amy", "--state", "up", "--seen", "2026-10-04T01:02:03Z", "--generation", "7"}, "seat")
+	for _, argv := range [][]string{
+		{"friend", "health", "amy", "--state", "up", "--seen", "2026-10-04T01:02:03Z", "--generation", "7"},
+		{"friend", "health", "--actor", "seat", "amy", "bob", "--state", "up", "--seen", "2026-10-04T01:02:03Z", "--generation", "7"},
+		{"friend", "health", "--actor", "seat", "amy", "--state", "up", "--seen", "2026-10-04T01:02:03Z", "--generation", "7", "--actor", "other"},
+		{"friend", "health", "--actor", "seat", "amy", "--state", "up", "--seen", "2026-10-04T01:02:03Z", "--generation", "7", "-as=other"},
+		{"friend", "health", "--actor", "seat", "amy", "--state", "up", "--seen", "2026-10-04T01:02:03Z", "--generation", "7", "--redis=x"},
+		{"friend", "health", "--actor", "seat", "amy", "--state", "up", "--state", "down", "--seen", "2026-10-04T01:02:03Z", "--generation", "7"},
+	} {
+		_, _, why := workerVerb(argv)
+		assert.NotEmpty(t, why, "%v", argv)
+	}
+	for _, argv := range [][]string{{"seat", "--json"}, {"where", "--json"}} {
+		got, words, why := workerVerb(argv)
+		assert.Empty(t, why)
+		assert.Empty(t, got)
+		assert.Equal(t, 1, words)
+	}
+	_, _, why := workerVerb([]string{"where", "--json", "--cards"})
+	assert.NotEmpty(t, why)
+}
+
 // The sprint's server is tested as the state machine it is (the owner,
 // 2026-10-01: "design client and server as a state machine, and so you can
 // create unit tests by mocking data and batches coming in to the server in one

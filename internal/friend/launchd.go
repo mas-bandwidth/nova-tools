@@ -63,7 +63,11 @@ func (a Agent) Args() []string {
 		args = append(args, "--")
 	}
 	if a.Role == "coordinator" {
-		return append(args, a.Binary, "coordinate", "--as", a.Friend, "--redis", a.Redis, "--server", a.Server, "--state-dir", a.StateDir)
+		args = append(args, a.Binary, "coordinate", "--as", a.Friend, "--redis", a.Redis, "--server", a.Server)
+		if a.StateDir != "" {
+			args = append(args, "--state-dir", a.StateDir)
+		}
+		return args
 	}
 	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
 	if a.Session != "" {
