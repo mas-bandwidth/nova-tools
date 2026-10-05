@@ -935,6 +935,7 @@ nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] |
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint backup --file <path>
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint fleet beat <member> [--load <percent>]
 nova-sprint fleet up <member> [--width <n>]
@@ -990,6 +991,10 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### The backup
+
+`nova-sprint backup --file <path>` writes the store to a new file (mode 0600), reads it back against its SHA-256, restores it into a twin and compares it, and scans the file for secrets by shape. It prints `BACKUP OK file=... sha256=... verified=checksum+twin+secrets` and exits 0. A file that fails any check is removed and the verb exits 1; a secret is named by shape and line, never by its text. An existing `--file` is refused (exit 2) and never overwritten. The store is read and never changed. On a Redis it runs on the store's host, as `snapshot` does.
 
 ### A card re-cut as its twin
 
