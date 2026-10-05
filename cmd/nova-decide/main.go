@@ -420,7 +420,7 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	}
 	bar, _ := strconv.ParseFloat(c.Str("bar"), 64) // checked by the verb's flag rule
 	from, _ := since(c.Str("since"), w.now())      // checked by the verb's flag rule
-	clusters, scored := decide.Findings(ds, from, bar)
+	clusters, scored, skipped := decide.FindingsSkipped(ds, from, bar)
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
 		cards := make([]string, len(cl.Cards))
@@ -428,6 +428,13 @@ func (w world) findings(c *tool.Call) *tool.Out {
 			cards[i] = strings.ReplaceAll(oneline.Field(card), ",", `\x2c`)
 		}
 		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cards, ","))
+	}
+	if len(skipped) > 0 {
+		named := skipped[:min(len(skipped), 3)]
+		for i, id := range named {
+			named[i] = oneline.Field(id)
+		}
+		o.Note(fmt.Sprintf("%d score decisions skipped: at is not RFC 3339: %s", len(skipped), strings.Join(named, " ")))
 	}
 	if c.Str("shadow") == "" {
 		return o

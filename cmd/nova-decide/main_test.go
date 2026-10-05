@@ -319,6 +319,27 @@ func TestFindingsDoesNotMergeACardIDWithACommaIntoTwoCards(t *testing.T) {
 	assert.Equal(t, count, len(strings.Split(cards, ",")), "escaped card IDs split into exactly the reported number of cards")
 }
 
+// A score decision whose at is not RFC 3339 cannot be placed in the window, so findings
+// skips it, and says so: the note names its id and the count. A decision of another kind
+// with a bad at is not a score and is not mentioned (security#79 finding 3, second shape).
+func TestFindingsNamesAScoreDecisionWhoseAtDoesNotParse(t *testing.T) {
+	t.Parallel()
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	for _, d := range []decide.Decision{
+		{ID: "c1@landed@aaaaaaaaaaaa", Decision: decide.ScoreName, At: "2026-10-03T00:00:00Z"},
+		{ID: "c2@landed@bbbbbbbbbbbb", Decision: decide.ScoreName, At: "yesterday"},
+		{ID: "c3@read@cccccccccccc", Decision: "read", At: "last week"},
+	} {
+		_, err := decide.Append(rec, d)
+		require.NoError(t, err)
+	}
+	jev := testkit.Main(decideTool(testWorld("k-test", new(atomic.Int32), jevScoreReply(0.83))).Run)
+	jev.Do(t, "findings", "--record", rec, "--since", "2026-10-02").Exit(0).Out(
+		"FINDINGS OK scored=1 ",
+		"FINDINGS NOTE 1 score decisions skipped: at is not RFC 3339: c2@landed@bbbbbbbbbbbb",
+	).NotOut("c3@read")
+}
+
 // jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
 // the mass on the other options.
 func jevChoice(question, option string, p float64) func([]byte) ([]byte, error) {
