@@ -43,7 +43,7 @@ func outputGrammar(t *testing.T) map[string]string {
 			cur = append(cur, line)
 		}
 	}
-	require.False(t, block == nil, "docs/SPEC-TOKENS.md has no OUTPUT GRAMMAR block carrying `TOKENS FOLD at=`; this test was reading the wrong thing and would have passed by checking nothing")
+	require.NotNil(t, block, "docs/SPEC-TOKENS.md has no OUTPUT GRAMMAR block carrying `TOKENS FOLD at=`; this test was reading the wrong thing and would have passed by checking nothing")
 	out := map[string]string{}
 	for _, l := range block {
 		f := strings.Fields(l)
@@ -260,7 +260,7 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 		}
 	}
 	require.True(t, sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
-	require.False(t, n < 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
+	require.GreaterOrEqual(t, n, 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
 }
 
 // TestStatusGrammar pins the first word after the verb token together with the exit code

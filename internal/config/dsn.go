@@ -77,6 +77,12 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	if !named {
 		name = DefaultPassEnv
 	}
+	// The name is operator input too, and a password pasted where a variable
+	// name belongs must not come back in a message: only a name of letters,
+	// digits and underscores is quoted (docs/nova-config/README.md, "Connecting").
+	if named && !isEnvName(name) {
+		return "", fmt.Errorf("%s does not name a variable: want letters, digits and underscores only", EnvPGPassEnv)
+	}
 	pw := getenv(name)
 	if pw == "" {
 		if named {
@@ -115,7 +121,10 @@ func flagCarriesPassword(dsn string) bool {
 		}
 		u, err := url.Parse(dsn)
 		if err != nil {
-			return false
+			// net/url refuses a control byte the pgconn URI reader takes as
+			// data, so the query is read here the way pgconn reads it: the
+			// flag whose parse failed may still name an sslpassword.
+			return uriQueryCarriesPassword(dsn)
 		}
 		if _, has := u.User.Password(); has {
 			return true
@@ -135,6 +144,31 @@ func flagCarriesPassword(dsn string) bool {
 		return false
 	}
 	return keywordCarriesPassword(dsn)
+}
+
+// uriQueryCarriesPassword reads the query of a URI the net/url parser refused,
+// as the pgconn URI reader does: pairs split on "&", the key before the first
+// "=", percent-decoded when it decodes and kept as written when it does not
+// (pgconn then refuses the DSN, and ResolveDSN refuses it without quoting it).
+// It reads keys only, so it holds no value and a message built from it has
+// none to echo (docs/nova-config/README.md, "Connecting").
+func uriQueryCarriesPassword(dsn string) bool {
+	_, query, has := strings.Cut(dsn, "?")
+	if !has {
+		return false
+	}
+	for query != "" {
+		var pair string
+		pair, query, _ = strings.Cut(query, "&")
+		key, _, _ := strings.Cut(pair, "=")
+		if decoded, err := url.QueryUnescape(key); err == nil {
+			key = decoded
+		}
+		if isPasswordKey(strings.Trim(key, kwSpaces)) {
+			return true
+		}
+	}
+	return false
 }
 
 // kwSpaces is the whitespace the keyword/value grammar knows, the set the
@@ -216,7 +250,10 @@ func withPassword(dsn, user, pw string) (string, error) {
 	if strings.Contains(dsn, "://") {
 		u, err := url.Parse(dsn)
 		if err != nil {
-			return "", fmt.Errorf("--pg: %v", err)
+			// url.Error quotes the raw DSN, which may hold a credential in a
+			// spelling pgconn took and net/url did not: the refusal names the
+			// defect class and quotes no byte of the input.
+			return "", fmt.Errorf("--pg: the address is not a URL this tool can add the password to; want postgres://user@host:5432/nova (%T)", err)
 		}
 		if user == "" {
 			user = u.User.Username()
@@ -226,4 +263,19 @@ func withPassword(dsn, user, pw string) (string, error) {
 	}
 	escaped := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(pw)
 	return dsn + " password='" + escaped + "'", nil
+}
+
+// isEnvName reports whether s is spelled as an environment variable name: the
+// one class of the operator's text a refusal here may quote.
+func isEnvName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
 }

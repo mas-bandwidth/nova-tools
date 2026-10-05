@@ -1,4 +1,4 @@
-# nova-check convergence — specification
+# nova-dev convergence — specification
 
 **Convergence is the health metric**: the contraction ratio per stream, every
 tick. Answered by hand, *are we converging?* is six windows read out of six
@@ -10,7 +10,7 @@ law, no guessed paths — and [SPEC.md's `## nova-check`](SPEC.md) holds the rec
 verbs this file does not restate. `help` prints this line, byte for byte:
 
 ```
-nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
+nova-dev convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
 ```
 
 ## What a stream is

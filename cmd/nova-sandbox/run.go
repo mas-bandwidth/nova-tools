@@ -141,6 +141,10 @@ var (
 	runExec                  = startInOwnGroup
 	runNow                   = time.Now
 	runSignals               = notifyTerminating
+	// runGroupUsage counts a process group's live processes and resident bytes. It is nil
+	// where the tool cannot look (reapprocs_unix.go sets it on darwin and linux), and then
+	// the run has no caps to watch.
+	runGroupUsage func(pgid int) (sandbox.Usage, error)
 	// runGOOS is the platform this verb believes it is on. It is a var for the same reason
 	// internal/sandbox's winDir is a function of the platform rather than of runtime.GOOS:
 	// the windows half of this verb cannot be run on a Mac, and a test that only ever walks
@@ -159,6 +163,9 @@ type runFlags struct {
 	// validateRun's business.
 	scratch, memory, cpu string
 	place                string
+	// maxProcs and maxMem are the wall's caps on the tree (docs/SPEC-SANDBOX.md
+	// "wall-caps-processes.w1"): empty is the default, 256 processes and 8 GiB.
+	maxProcs, maxMem string
 	// out, artifacts and outMax are the handoff (handoff.go): the one writable
 	// path off the volume, taken after the command finishes and before the volume
 	// is deleted. Without them a card's commit dies with the place it was made in.
@@ -219,6 +226,11 @@ usage:
                   cache lives under the caller's home, which the wall denies -- so a
                   card that builds Go wants this flag, and the alternative is naming
                   both by hand in every argv.
+  --max-procs <n> the most processes the command's tree may hold, default 256.
+                  Counted every second; past it the whole process group is killed
+                  and the run ends "runaway: <n> processes" with exit 137.
+  --max-mem <s>   the most resident memory the tree may hold, default 8g. Past it
+                  the group is killed and the run ends "runaway: <n> bytes of memory".
   --read <dir>    readable, recursively, and NOT writable. Repeatable.
   --out <dir>     the ONE writable path off the volume. After the command exits
                   and BEFORE the volume is deleted, the named artifacts are
@@ -312,6 +324,10 @@ func parseRun(args []string) runFlags {
 			f.cpu = want("--cpu")
 		case "--place":
 			f.place = want("--place")
+		case "--max-procs":
+			f.maxProcs = want("--max-procs")
+		case "--max-mem":
+			f.maxMem = want("--max-mem")
 		case "--read":
 			if v := want("--read"); v != "" {
 				f.reads = append(f.reads, v)
@@ -559,6 +575,17 @@ func validateRun(f *runFlags, goos string) (time.Duration, []sandbox.Refusal) {
 		add("bad_scratch", "--scratch wants an EXISTING ABSOLUTE path: --scratch C:\\nova. A relative one is resolved against a working directory this verb is about to replace")
 	case !win && f.scratch != "":
 		add("bad_scratch", "--scratch is the windows half's flag: on darwin the disposable place is an APFS volume made by the tool and there is nothing for it to be made under. Drop it, or run this on windows")
+	}
+
+	if f.maxProcs != "" {
+		if n, err := strconv.Atoi(f.maxProcs); err != nil || n <= 0 {
+			add("bad_max_procs", "--max-procs wants a positive whole number of processes: --max-procs 256")
+		}
+	}
+	if f.maxMem != "" {
+		if n, ok := parseBytes(f.maxMem); !ok || n <= 0 {
+			add("bad_max_mem", "--max-mem wants a positive quantity, a number with an optional k, m, g or t: --max-mem 8g")
+		}
 	}
 
 	// W4. --memory and --cpu are the JOB's caps and they are accepted and IGNORED off
@@ -816,13 +843,16 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 	// The wall: the volume is the ONE --write, so the only place on this machine the
 	// command may write is the place that is about to be deleted. Rule 8's temp directory
 	// defaults inside it, which is what puts TMPDIR on the volume too.
-	p, bad := sandbox.Build(sandbox.Input{
+	in := sandbox.Input{
 		Reads:  f.reads,
 		Writes: []string{vol.Mount},
 		Cwd:    work,
 		Argv:   f.argv,
 		Home:   home,
-	})
+	}
+	in.MaxProcs, _ = strconv.Atoi(f.maxProcs)
+	in.MaxMem, _ = parseBytes(f.maxMem)
+	p, bad := sandbox.Build(in)
 	if len(bad) > 0 {
 		code := refuseAll(stderr, bad)
 		fmt.Fprintln(stderr, runRemedy)
@@ -848,6 +878,14 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 		return refuse("sandbox_failed", "the contained command could not be started: %s", oneline.Err(err))
 	}
 
+	// THE CAPS: the group is counted every second and killed by its id past either one.
+	// The run's own status is the group kill's, so supervise needs no change.
+	stopWatch := func() string { return "" }
+	if runGroupUsage != nil && started.pid > 1 {
+		pgid := started.pid
+		stopWatch = p.Watch(nil, func() (sandbox.Usage, error) { return runGroupUsage(pgid) }, func() { killGroup(syscall.SIGKILL) })
+	}
+
 	var deadlineC <-chan time.Time
 	if deadline > 0 {
 		timer := time.NewTimer(deadline)
@@ -860,6 +898,10 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 	defer stop()
 
 	code, timedOut := supervise(done, deadlineC, grace.C, sigs, killGroup)
+	if line := stopWatch(); line != "" {
+		fmt.Fprintf(stderr, "SANDBOX RUNAWAY %s; the process group was killed\n", line)
+		return sandbox.ExitRunaway
+	}
 	// A TIMEOUT IS NOT A DENIAL, and this is the difference between the two sentences a
 	// failed run can be told. Measured in the 20-run soak (a bench, 2026-09-18): a run that
 	// passed its --timeout paid the bounded two-second denials query and was then told

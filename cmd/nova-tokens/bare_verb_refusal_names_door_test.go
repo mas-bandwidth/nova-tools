@@ -43,7 +43,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 		seen[verb] = true
 		verbs = append(verbs, verb)
 	}
-	require.False(t, len(verbs) == 0, "no flag-bearing verbs parsed from the help banner")
+	require.NotEmpty(t, verbs, "no flag-bearing verbs parsed from the help banner")
 
 	for _, verb := range verbs {
 		t.Run(verb, func(t *testing.T) {

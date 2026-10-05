@@ -245,7 +245,7 @@ func TestLandDeletesTheBranchOfEveryAttemptOfACard(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.branch = func(id string) string { return sprint.BranchOf("", 0, sprint.WorkCardID(id, 1), 1) }
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	first := r.head("s1-1.w1.g1.e0", "main", "a.txt", "attempt 1\n")
 	r.queued(map[string]string{"s1-1": first}, "s1-1")
 	r.ok("return s1-1 --reason 'again'")
@@ -361,7 +361,7 @@ func TestPrunePreservesUnownedBranchesAndOtherStreamBases(t *testing.T) {
 			if mode == "other stream base" {
 				path := filepath.Join(t.TempDir(), "guard.card")
 				require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+branch+"\n\nWrite guard.txt.")), 0o600))
-				r.ok("add --stream s2 guard --brief-file " + path)
+				r.ok("add --stream s2 guard --one --brief-file " + path)
 			}
 
 			out := r.ok("land --stream s1 --repo-dir " + r.clone + " --base main")

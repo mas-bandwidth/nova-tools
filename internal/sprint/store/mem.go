@@ -74,6 +74,8 @@ type memLog struct {
 	inbox    []memNote
 	lines    []memLine // the log
 	notes    map[string]sprint.Note
+	aliases  map[string]string // alias (j<n>) -> note id (sprint.Alias)
+	answered map[string]string // judgment id -> who answered it, as it closed
 	open     map[string]string
 	cursor   string
 	queue    []sprint.QueuedChange // the work table's queue, oldest first
@@ -176,7 +178,7 @@ func (m *Mem) log() *memLog {
 	m.touch(m.epoch)
 	l := m.logs[m.epoch]
 	if l == nil {
-		l = &memLog{done: map[string]string{}, progress: map[string]time.Time{}, notes: map[string]sprint.Note{}, open: map[string]string{}}
+		l = &memLog{done: map[string]string{}, progress: map[string]time.Time{}, notes: map[string]sprint.Note{}, aliases: map[string]string{}, open: map[string]string{}}
 		m.logs[m.epoch] = l
 	}
 	return l
@@ -391,6 +393,24 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	if err != nil {
 		return ntable.Receipt{}, err
 	}
+	body := string(raw)
+	opKey := man.Epoch + ":" + man.OperationID
+	t, err := m.table(man.Table)
+	if err != nil {
+		return ntable.Receipt{}, err
+	}
+	// Twin replay fidelity (security#78 finding 7): an operation already
+	// recorded under this id replays or conflicts on its recorded bytes, before
+	// any newer validator would refuse the re-sent request. This mirrors the real
+	// store's op-record lookup in internal/nsprint/fn/lua/table.lua.
+	if rec, ok := t.ops[opKey]; ok {
+		if rec.body != body {
+			return ntable.Receipt{}, refusal("OPCONFLICT", "operation "+man.OperationID+" already holds a different request")
+		}
+		r := rec.receipt
+		r.Replay = true
+		return r, nil
+	}
 	if _, verr := ntable.ValidateBatchManifestRaw(raw); verr != nil {
 		var re *ntable.RuleError
 		var le *ntable.LimitError
@@ -404,20 +424,6 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	}
 	if err := m.fail("apply " + man.Table + " before"); err != nil {
 		return ntable.Receipt{}, fmt.Errorf("%w: %w", ntable.ErrUnknownOutcome, err)
-	}
-	t, err := m.table(man.Table)
-	if err != nil {
-		return ntable.Receipt{}, err
-	}
-	body := string(raw)
-	opKey := man.Epoch + ":" + man.OperationID
-	if rec, ok := t.ops[opKey]; ok {
-		if rec.body != body {
-			return ntable.Receipt{}, refusal("OPCONFLICT", "operation "+man.OperationID+" already holds a different request")
-		}
-		r := rec.receipt
-		r.Replay = true
-		return r, nil
 	}
 	active := m.active(t)
 	req, perr := strconv.ParseUint(man.Epoch, 10, 64)
@@ -972,6 +978,14 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			// every subject stays open; only the note's listing is bounded
 			subjects := n.Subjects()
 			n = n.Bound()
+			if n.Kind == sprint.Judgment || n.Kind == sprint.Acknowledged {
+				// the note's alias: its place among the epoch's, under the fence (sprint.Alias)
+				if l.aliases == nil {
+					l.aliases = map[string]string{} // a log loaded from a file written before aliases
+				}
+				n.Alias = sprint.Alias(len(l.aliases) + 1)
+				l.aliases[n.Alias] = n.ID
+			}
 			m.seq++
 			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), sprint.NoteLine(n, op.ID)})
 			m.seq++
@@ -994,6 +1008,10 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		for _, k := range op.Closes {
 			delete(l.open, k)
 		}
+		if l.answered == nil {
+			l.answered = map[string]string{}
+		}
+		maps.Copy(l.answered, answeredBy(op))
 		m.wakeLog()
 		if op.Stuck != "" {
 			delete(m.kv, keyStuck)
@@ -1013,6 +1031,16 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 				m.kv = map[string]string{}
 			}
 			m.kv[keyCoordinator], m.kv[keySeat] = op.Seat.Holder, rec
+		}
+		if op.Health != nil {
+			rec, err := json.Marshal(op.Health.Health)
+			if err != nil {
+				return err
+			}
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			m.kv[friendHealthKey(op.Health.Friend)] = string(rec)
 		}
 	}
 	l.fence = nil
@@ -1081,6 +1109,32 @@ func (m *Mem) Pending() *OpRecord {
 	defer m.mu.Unlock()
 	l := m.log()
 	return l.fence
+}
+
+func (m *Mem) Answered(_ context.Context, ids []string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("answered")
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if who, ok := m.log().answered[id]; ok {
+			out[id] = who
+		}
+	}
+	return out, nil
+}
+
+func (m *Mem) Aliases(_ context.Context, aliases []string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("aliases")
+	out := make(map[string]string, len(aliases))
+	for _, a := range aliases {
+		if id, ok := m.log().aliases[a]; ok {
+			out[a] = id
+		}
+	}
+	return out, nil
 }
 
 func (m *Mem) OpenNotes(context.Context) ([]sprint.Open, error) {

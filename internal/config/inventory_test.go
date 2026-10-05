@@ -297,3 +297,18 @@ func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{}, empty.TLA.Hosts, "an empty group is [], never null")
 }
+
+// A machine key that is not a row name is refused before the inventory is built.
+func TestBuildInventoryRefusesAMachineNameThatIsNotARowName(t *testing.T) {
+	t.Parallel()
+	s := snapshot(nil)
+	s.Machines["../x"] = View{"user": "user-a", "seat": "seat-a", "slots": "64", "runners": "1"}
+	inv, err := BuildInventory(s, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "../x")
+	assert.Nil(t, inv)
+
+	valid, err := BuildInventory(snapshot(nil), "")
+	require.NoError(t, err)
+	assert.NotNil(t, valid)
+}

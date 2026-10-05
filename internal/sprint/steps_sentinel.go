@@ -25,6 +25,19 @@ func IsHeld(c *Card) bool { return c.F(FieldHeld) != "" }
 // FieldHeld is the stamp of a primary admitted held.
 const FieldHeld = "held"
 
+// heldWave is the first held sentinel waiting that waits for nothing itself (a wave loads
+// behind a held sentinel with nothing before it), in work order: the wave behind it is what
+// the tick offers when the fleet is starving (NStarving), since its release is what lets the
+// wave through; nil when no such sentinel is held.
+func heldWave(s *Snapshot) *Card {
+	for _, c := range s.Work.Column(Waiting) {
+		if IsSentinel(c) && IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
+			return c
+		}
+	}
+	return nil
+}
+
 // HeldBack is how many primaries no tick moves on its own: every sentinel not
 // released, every card admitted held, and every waiting card that waits,
 // through a need or its place in line, on one of those. where shows them as
@@ -299,6 +312,9 @@ type ReleaseReq struct {
 }
 
 // Release lands reached sentinels, and those with nothing before them (HasBefore),
+// and those not yet reached whose waits are each under way (notUnderWay: landed,
+// dropped, or in flight), so a starving fleet frees the cards behind work in flight
+// (nova-tools#5096 item c13); what such a one still waited for is waived on it.
 // (waiting -> landed, the only step that may)
 // and, in the same step, moves every waiting primary whose needs have all now
 // landed to ready, and marks reached every sentinel that is now due. It
@@ -329,7 +345,7 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	case r.Who != r.Coordinator:
 		return refuseAll("release is the coordinator's alone: " + r.Coordinator + ", not " + orDash(r.Who))
 	}
-	landing, unheld := map[string]bool{}, map[string]bool{}
+	landing, unheld, past := map[string]bool{}, map[string]bool{}, map[string][]string{}
 	var chosen []*Card
 	for _, id := range r.IDs {
 		c := s.Work.Card(id)
@@ -351,16 +367,14 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 			p.Units = append(p.Units, releaseHeld(s, c, r))
 			continue
 		}
-		if w := WaitsFor(s, c, nil); len(w) > 0 || c.F("reached") == "" && !IsHeld(c) && HasBefore(s, c) {
-			var st []string
-			for _, n := range w {
-				st = append(st, n+" ("+orDash(s.StateOf(n))+")")
-			}
-			p.refuse(id, "not reached: it waits for "+strings.Join(st, ", "))
+		w := WaitsFor(s, c, nil)
+		if n, why := notUnderWay(s, w); n != "" {
+			p.refuse(id, "not reached: it waits for "+n+" ("+why+"); release lands a sentinel whose waits have each landed, been dropped, or are in flight (taken, in review or merging)")
 			continue
 		}
 		landing[id] = true
 		chosen = append(chosen, c)
+		past[id] = w
 	}
 	after := resolveAfter(s, landing, r.Who)
 	moving := map[string]bool{}
@@ -379,14 +393,27 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 				ready++ // named it from another stream
 			}
 		}
+		set := map[string]string{"landed": stamp(s.Now), "released": stamp(s.Now), "released_by": r.Who, "release_reason": r.Reason}
+		by := "released by " + r.Who
+		if w := past[c.ID]; len(w) > 0 {
+			// released before it was reached: what it still waited for is in flight
+			// or dropped, waived on it with who and when, so it lands with every need met
+			var st []string
+			for _, n := range w {
+				_, why := notUnderWay(s, []string{n})
+				st = append(st, n+" ("+why+")")
+			}
+			set["waived"] = strings.Join(append(Split(c.F("waived")), w...), ",")
+			set["waived_by"], set["waived_at"] = r.Who, stamp(s.Now)
+			by += " before it was reached, past " + strings.Join(st, ", ")
+		}
 		n := happened(NSentinelLanded, c.Row, s.Now, c.ID)
 		n.Who = r.Who
-		n.What = fmt.Sprintf("sentinel %s landed, released by %s: %d cards are now ready; %s", c.ID, r.Who, ready, r.Reason)
+		n.What = fmt.Sprintf("sentinel %s landed, %s: %d cards are now ready; %s", c.ID, by, ready, r.Reason)
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
-			Changes: []Change{change(Work, moveEntry(c, c.Row, Landed, map[string]string{
-				"landed": stamp(s.Now), "released": stamp(s.Now), "released_by": r.Who, "release_reason": r.Reason}, FieldHeld))},
-			Notes: []Note{n}, Closes: closesFor(s.Open, nil, c.ID),
-			Moved: fmt.Sprintf("sentinel %s waiting -> landed (released by %s); %d cards are now ready", c.ID, r.Who, ready)})
+			Changes: []Change{change(Work, moveEntry(c, c.Row, Landed, set, FieldHeld))},
+			Notes:   []Note{n}, Closes: closesFor(s.Open, nil, c.ID),
+			Moved: fmt.Sprintf("sentinel %s waiting -> landed (%s); %d cards are now ready", c.ID, by, ready)})
 	}
 	if len(chosen) == 0 && len(unheld) == 0 {
 		return p
@@ -401,6 +428,45 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	// (TickDone), which says so and stops the machine.
 	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
+}
+
+// notUnderWay is the first of a sentinel's waits that is not under way, with its
+// state in words: waiting, ready, working with its work card dealt and not taken, or
+// not on the table (nova-tools#5096 item c13). A wait under way has landed, was
+// dropped, or is in flight: working with its work card taken by a member, in review,
+// or merging. "" when every wait is under way; for one wait under way, its words.
+func notUnderWay(s *Snapshot, waits []string) (string, string) {
+	why := ""
+	for _, id := range waits {
+		c := s.Work.Card(id)
+		switch {
+		case c == nil:
+			return id, "not on the table"
+		case !c.Placed() && c.F("outcome") == "dropped":
+			why = "dropped"
+		case !c.Placed():
+			return id, "off the table (" + orDash(c.F("outcome")) + ")"
+		case c.Col == Review, c.Col == Merging, c.Col == Landed:
+			why = c.Col
+		case c.Col == Working && taken(s, c):
+			why = "working, taken"
+		case c.Col == Working:
+			return id, "working, its work card not taken"
+		default:
+			return id, c.Col
+		}
+	}
+	return "", why
+}
+
+// taken says a working primary's work card is taken by its member: in the fleet
+// table's working column, not dealt and waiting in the member's ready queue.
+func taken(s *Snapshot, c *Card) bool {
+	if s.Fleet == nil {
+		return false
+	}
+	wc := s.Fleet.Placed(c.F("work"))
+	return wc != nil && wc.Col == Working
 }
 
 // releaseHeld is release of a held primary (add --held): its hold cleared,

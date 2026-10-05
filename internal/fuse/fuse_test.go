@@ -52,6 +52,38 @@ func TestAnAbsentBoxIsErrNoBoxNeverClear(t *testing.T) {
 	}
 }
 
+func TestReadBoxRefusesASymlinkAtTheBoxPath(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.json")
+	write(t, real, `{"lockdown":null,"quarantine":{}}`)
+	_, err := ReadBox(real)
+	require.NoError(t, err, "regular box must remain readable")
+
+	link := filepath.Join(dir, "box.json")
+	require.NoError(t, os.Symlink(real, link))
+	_, err = ReadBox(link)
+	require.Error(t, err, "ReadBox followed a symlink at the box path")
+	assert.NotErrorIs(t, err, ErrNoBox, "a symlink is an unsafe box, not an absent box")
+	assert.Contains(t, err.Error(), "symlink")
+
+	dangling := filepath.Join(dir, "dangling.json")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "missing.json"), dangling))
+	_, err = ReadBox(dangling)
+	require.Error(t, err, "ReadBox treated a dangling symlink as an absent box")
+	assert.NotErrorIs(t, err, ErrNoBox, "a dangling symlink is an unsafe box, not an absent box")
+	assert.Contains(t, err.Error(), "symlink")
+
+	_, err = ReadBox(dir)
+	require.Error(t, err, "ReadBox accepted a directory as a box")
+	assert.NotErrorIs(t, err, ErrNoBox, "a non-regular path is an unsafe box, not an absent box")
+	assert.Contains(t, err.Error(), "not a regular file")
+}
+
 // TestCreateBoxIsEmptyExclusiveAndNeverReplaces: CreateBox makes a readable empty box
 // once, and anything already at the path is left byte for byte with fs.ErrExist.
 func TestCreateBoxIsEmptyExclusiveAndNeverReplaces(t *testing.T) {
@@ -436,6 +468,48 @@ func TestPreserveUnreadableNamesTheDestinationEvenWhenItFails(t *testing.T) {
 	dst, err := PreserveUnreadable(path)
 	require.Error(t, err, "expected an error preserving a file that is not there")
 	assert.Equal(t, path+UnreadableSuffix, dst, "the destination must be named even on failure, got %q", dst)
+}
+
+// TestPreserveUnreadableRefusesASymlinkSourceAndWritesNothing pins security
+// finding 74.5: a source that is a symlink at inspection is refused.
+func TestPreserveUnreadableRefusesASymlinkSourceAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires privileges not held by every test runner")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "private")
+	require.NoError(t, os.WriteFile(target, []byte("private bytes\n"), 0o600))
+	require.NoError(t, os.Chmod(target, 0o600))
+	box := filepath.Join(dir, "box.json")
+	require.NoError(t, os.Symlink(target, box))
+
+	dst, err := PreserveUnreadable(box)
+	require.Error(t, err, "a symlink source must be refused")
+	assert.Equal(t, box+UnreadableSuffix, dst)
+	_, statErr := os.Lstat(dst)
+	assert.True(t, os.IsNotExist(statErr), "symlink source wrote %s: %v", dst, statErr)
+}
+
+// TestPreserveUnreadableNewCopyUsesSourceMode pins that a new evidence copy
+// carries the regular source's permission bits instead of a wider default.
+func TestPreserveUnreadableNewCopyUsesSourceMode(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: permission bits are not faithfully reported here")
+	}
+	path := boxIn(t)
+	require.NoError(t, os.WriteFile(path, []byte(`{"corrupt":`), 0o600))
+	require.NoError(t, os.Chmod(path, 0o600))
+
+	dst, err := PreserveUnreadable(path)
+	require.NoError(t, err)
+	info, err := os.Stat(dst)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	assert.Equal(t, `{"corrupt":`, string(got))
 }
 
 // TestPreserveUnreadablePreservesExistingPermissions asserts that when the destination

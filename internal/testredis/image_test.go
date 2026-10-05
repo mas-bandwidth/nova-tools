@@ -913,7 +913,7 @@ func TestImageStopsWhenItsContextEnds(t *testing.T) {
 		t.Parallel()
 
 		s := newFakeStore(fakeKeysUnder(prefix, fakeScanPage))
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		got, err := Image(ctx, s.client(t), prefix)
 		if !errors.Is(err, context.Canceled) || got != nil {
@@ -928,7 +928,7 @@ func TestImageStopsWhenItsContextEnds(t *testing.T) {
 
 		const stopAfter = 2 // the SCAN call that ends the context
 		s := newFakeStore(fakeKeysUnder(prefix, fakeScanPage*5))
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		s.onScan = func(fakeScan) {
 			if len(s.scans) == stopAfter {

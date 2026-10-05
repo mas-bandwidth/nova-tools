@@ -42,3 +42,27 @@ func TestBootLoadsExactlyThePinnedFiles(t *testing.T) {
 	want := strconv.Itoa(len(a) + len(b) + len(c))
 	assert.Containsf(t, stdout, "bytes="+want, "stdout = %q, want bytes=%s (exactly the three pinned files, not the unpinned d.md)", stdout, want)
 }
+
+// TestBootRefusesAPinEntryThroughADirectorySymlinkOutOfRoot pins docs/SPEC.md
+// rule 245 (a pin entry that escapes --root is a refusal) on the hole
+// security#76 finding 5 names: an intermediate directory symlink. root/dir
+// points at a directory outside --root; the pin names dir/outside.md. os.Lstat
+// on the joined path follows that link and would print BOOT OK for the outside
+// file. The boot must refuse, exit 2, and name the entry.
+func TestBootRefusesAPinEntryThroughADirectorySymlinkOutOfRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	outsideBody := []byte("outside --root; a boot must not claim these bytes.\n")
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "outside.md"), outsideBody, 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "dir")))
+
+	pin := filepath.Join(root, "pin.txt")
+	require.NoError(t, os.WriteFile(pin, []byte("dir/outside.md\n"), 0o644))
+
+	exit, stdout, stderr := runCLI(t, "", "boot", "--root", root, "--pin", pin)
+	require.Equalf(t, 2, exit, "a directory symlink out of --root must refuse; stdout = %q stderr = %q", stdout, stderr)
+	assert.NotContains(t, stdout, "BOOT OK", "no success line when the entry leaves --root")
+	assert.Contains(t, stderr, "dir/outside.md", "the refusal names the offending entry")
+}

@@ -63,9 +63,13 @@ func ParseAuthors(path string) (Authors, error) {
 // can answer without a git of their own. Nothing here reaches the network.
 type Runner func(ctx context.Context, dir string, args ...string) (string, error)
 
-// GitRunner runs git in a directory, with the context's deadline.
+// GitRunner runs git in a directory, with the context's deadline. It refuses
+// the diff helpers a repository's own config can turn into programs: a
+// core.fsmonitor hook runs on walk-heavy commands (security#56 finding 1),
+// and the textconv and external-diff refusals live in authorArgs beside the
+// commands that would run them (security#77 finding 2).
 func GitRunner(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := subproc.Context(ctx, "git", args...)
+	cmd := subproc.Context(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -128,11 +132,15 @@ func AuthorsFromGit(ctx context.Context, repo string, verbs []Verb, run Runner, 
 // under cmd/<tool>: the commit that introduced the tool, and with it the bare
 // invocation, which nothing before that commit could have established.
 func authorArgs(v Verb) []string {
+	// --no-textconv and --no-ext-diff keep the pickaxe off the diff helpers a
+	// repository's config can name: a committed .gitattributes can select a
+	// driver, and the driver's textconv is a program run as the invoking user
+	// for every file the log diffs (security#77 finding 2).
 	words := strings.Fields(v.Verb)
 	if len(words) == 0 {
-		return []string{"log", "--reverse", "--diff-filter=A", "--format=%an", "--", "cmd/" + v.Tool}
+		return []string{"log", "--no-textconv", "--no-ext-diff", "--reverse", "--diff-filter=A", "--format=%an", "--", "cmd/" + v.Tool}
 	}
-	return []string{"log", "--reverse", "--format=%an", "-S", `"` + words[0] + `"`, "--", "cmd/" + v.Tool}
+	return []string{"log", "--no-textconv", "--no-ext-diff", "--reverse", "--format=%an", "-S", `"` + words[0] + `"`, "--", "cmd/" + v.Tool}
 }
 
 func firstLine(s string) string {

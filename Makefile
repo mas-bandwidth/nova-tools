@@ -5,7 +5,7 @@
 # `test-full`; `check` is what CI runs on a pull request.
 #
 # PKGS is the package set. It defaults to ./... and every caller may narrow it
-# with `make test PKGS=./cmd/nova-bus ./internal/bus`, which is how the sharded
+# with `make test PKGS=./cmd/nova-swarm ./internal/swarm`, which is how the sharded
 # CI legs hand their shard to the same target.
 
 GO ?= go
@@ -251,7 +251,7 @@ preflight:
 # measured at and where, `<seconds>s@run<id>` or `@<bench>` (internal/ci:
 # TestSlowAllowlistRowsNameTheirMeasurement).
 #
-# A BUDGET VERDICT IS THE SAME ON ANY MACHINE (Rowan's ruling on nova-tools#4413,
+# A BUDGET VERDICT IS THE SAME ON ANY MACHINE (the owner's ruling on nova-tools#4413,
 # 2026-09-26). What is ENFORCED on every leg is static: no unit test waits on
 # the wall clock (internal/ci: TestNoUnitTestWaitsOnTheWallClock), and a test
 # skipped with the SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does
@@ -260,7 +260,7 @@ preflight:
 # The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
 # CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
 # them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the
-# nightly whole-tree run on the space legs (ci.yml, the test step's schedule
+# nightly whole-tree run on the bench legs (ci.yml, the test step's schedule
 # branch). SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run
 # over the whole tree passes the old 60 s package budget instead (ci.yml).
 SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt
@@ -280,15 +280,15 @@ GOTEST_TIMEOUT ?= 110s
 # GOTEST_COUNT_FLAG=) so Go's test cache serves a package whose inputs did not
 # change: a landing runs the suite three times (pull request, merge group,
 # push to dev) on trees that differ by nothing, and -count=1 made every run
-# recompile and re-execute every shard (Glenn 2026-09-26 9:42 AM ET, the
-# Studio at 100% on its own PR: "We aren't doing anything that should be this
+# recompile and re-execute every shard (the owner 2026-09-26 9:42 AM ET, the
+# runner at 100% on its own PR: "We aren't doing anything that should be this
 # heavy in CPU use"). A cached pass is a real earlier pass on identical
 # inputs; Go keys the cache on the package, its files, the env it reads and
 # the files it opens.
 GOTEST_COUNT_FLAG ?= -count=1
 # GOTEST_LDFLAGS: empty by hand; CI passes -ldflags=-w so test binaries link
 # without DWARF: on darwin every test binary otherwise runs dsymutil (seen at
-# 51% CPU on the Studio, 2026-09-26 9:47 AM ET) and a debug-info-free binary
+# 51% CPU on the runner, 2026-09-26 9:47 AM ET) and a debug-info-free binary
 # is smaller for the malware scan that follows every fresh executable.
 GOTEST_LDFLAGS ?=
 # GOTEST_TAGS: empty in every CI leg of the unit tier (ci.yml never sets it;
@@ -300,7 +300,7 @@ test: PKGS = $(CL_PKGS)
 test:
 	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) $(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$$status" -ne 0 ] || status=2; }; exit $$status'
 
-# THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we should
+# THE FUNCTIONAL TIER (nova-tools#4328; the owner 2026-09-26 11:20 AM ET: "we should
 # run functional tests, not on every small PR being merged or worked on, but
 # only as we merge whole work streams"). A functional test is one in a _test.go
 # built only under `//go:build functional`: it starts a real redis-server, a

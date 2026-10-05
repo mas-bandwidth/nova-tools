@@ -576,31 +576,52 @@ func without(xs []string, x string) []string {
 	return out
 }
 
-// NextReaders is the ask's choice of k readers for p at its attempt
-// (SprintEvents.tla RoundTwo): from just past AskLast, in name
-// order, wrapping, the first reader without a read card at the attempt, then
-// the first past it, and so on.
+// NextReaders is the ask's choice of k readers for p at its attempt: the
+// reader with the most free room among those without a read card at the
+// attempt, a tie going to the first from just past AskLast, in name order,
+// wrapping (SprintEvents.tla RoundTwo), then the one with the most room left
+// past it, and so on. The model's readers have no width (none is named for a
+// fleet row), so the room is unbounded and ordered by the load alone, reads
+// asked and reading (Load), the engine's readerRooms and round.pickByRoom.
 func (s State) NextReaders(p string, k int) []string {
 	order := sorted(s.Readers)
 	attempt := s.Primaries[p].Attempt
 	at := roundFrom(order, s.AskLast)
+	load := map[string]int{}
+	for _, r := range order {
+		load[r] = s.Load(r)
+	}
 	var out []string
 	for len(out) < k && len(order) > 0 {
 		pick := -1
 		for i := range order {
 			j := (at + i) % len(order)
-			if _, made := s.Reads[RC(p, attempt, order[j])]; !made && !slices.Contains(out, order[j]) {
+			if _, made := s.Reads[RC(p, attempt, order[j])]; made || slices.Contains(out, order[j]) {
+				continue
+			}
+			if pick < 0 || load[order[j]] < load[order[pick]] {
 				pick = j
-				break
 			}
 		}
 		if pick < 0 {
 			break
 		}
 		out = append(out, order[pick])
+		load[order[pick]]++
 		at = pick + 1
 	}
 	return out
+}
+
+// Load is a reader's reads asked and reading together, the engine's readerLoad.
+func (s State) Load(r string) int {
+	n := 0
+	for _, c := range s.Reads {
+		if c.Reader == r && (c.Place == Asked || c.Place == Reading) {
+			n++
+		}
+	}
+	return n
 }
 
 // AskedLen is SprintTables.tla AskedLen(r).
