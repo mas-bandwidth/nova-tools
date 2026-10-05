@@ -536,6 +536,11 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			return "a friend's card, waiting for " + name + " to be up with room", "", true
 		}
 		up := s.UpMembers()
+		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {
+			// a bench card waits for a member of its bench up (bench_deal.go): no placement
+			// deals it to another member, so what holds it is its bench's beat and hold
+			return benchWaits(b), "", true
+		}
 		if len(up) == 0 {
 			return "no fleet member is up, and no judgment says so", "", false
 		}

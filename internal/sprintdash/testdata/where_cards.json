@@ -28,5 +28,8 @@
     {"id": "tick-late-ci-04.1", "kind": "a work card is past its deadline", "card": "ci-04"},
     {"id": "ci-03-failed.2", "kind": "work came back failed", "card": "ci-03"}
   ],
+  "lanes": [
+    {"kind": "go", "machine": "bench-a", "width": 1, "held": ["amy"], "waiting": ["bob"]}
+  ],
   "providers": [{"name": "openrouter", "balance": "$41.20", "state": "serving"}]
 }

@@ -282,6 +282,20 @@ func TestParseRoundTrips(t *testing.T) {
 	assert.Equal(t, Message{}, Parse(map[string]string{}), "an empty entry is the zero message, not a refusal")
 }
 
+func TestParseToleratesTheShapesTheBusActuallyWrites(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, f := rig(t, "ada", "bob")
+	require.NoError(t, f.AddAll(ctx, []string{LogKey}, map[string]string{"at": "not-a-stamp", "subject": "odd"}))
+	es, err := b.Log(ctx, "-")
+	require.NoError(t, err, "a log with one odd entry still reads")
+	require.Len(t, es, 1)
+	m := es[0].Message()
+	assert.True(t, m.At.IsZero(), "an at that is no instant reads as the zero time, never a refusal")
+	assert.Equal(t, "odd", m.Subject, "the fields around the odd one still read")
+	assert.Empty(t, m.Body, "a field that is not there is empty")
+}
+
 func TestULIDIsCrockfordAndTimeOrdered(t *testing.T) {
 	t.Parallel()
 	b, _ := rig(t)

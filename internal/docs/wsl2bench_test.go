@@ -69,8 +69,8 @@ func TestWSL2BootstrapScriptCarriesTheOneStepSetup(t *testing.T) {
 		"systemctl enable --now ssh",
 		"go.mod",
 		"sdk",
-		"Rowan Claude",
-		"rowan@mas-bandwidth.com",
+		"A Worker",
+		"worker@example.com",
 		// The public half of the fleet's keys is carried in the repo and read,
 		// never written back.
 		"authorized_keys",

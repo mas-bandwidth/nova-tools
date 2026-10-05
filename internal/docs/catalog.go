@@ -92,6 +92,7 @@ var DefaultCatalog = []Entry{
 	E("internal/pkgselect", "package selection, the shard deal and the test fan-out that CI and nova-ci local share", "go test ./internal/pkgselect", "go test ./internal/pkgselect"),
 	E("internal/provbalance", "a model provider's balance read through the seat's key", "go test ./internal/provbalance", "go test ./internal/provbalance"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
+	E("internal/readregular", "the one way to read a file a tool did not write: regular files only (links followed), size capped, FIFOs and devices refused by name", "go test ./internal/readregular", "go test ./internal/readregular"),
 	E("internal/redisconn", "the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown", "go test ./internal/redisconn", "go test ./internal/redisconn"),
 	E("internal/redisacl", "the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL", "go test ./internal/redisacl", "go test ./internal/redisacl"),
 	E("internal/redisfn", "build, load and check a Redis function library from embedded Lua source", "go test ./internal/redisfn", "go test ./internal/redisfn"),

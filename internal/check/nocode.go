@@ -38,9 +38,9 @@ var codeNamesData string
 // These labels are read in two places: in a finding's REASON --
 // `code extension .py (floor-list)` -- and on the `deny-list=` and `source=`
 // FIELDS of nova-check's summary lines. SPEC.md's rule is that a field is ONE
-// token, so each label IS one token, with no space and no "=": the same
+// token, so each label IS one token, with no whitespace and no "=": the same
 // spelling reads the same in both places, and the field needs no escape to
-// be one (a label with a space printed as `floor\x20list`, which a scanner
+// be one (a label with a blank printed as `floor\x20list`, which a scanner
 // could count and a reader had to decode). The caller still renders them
 // through oneline.Field, which leaves a token like these unchanged.
 const (
@@ -244,7 +244,7 @@ func validExt(e string) error {
 	case strings.ContainsAny(e, "*?[]"):
 		return fmt.Errorf("deny-list entry %q looks like a glob; extensions are matched literally", e)
 	case strings.IndexFunc(e, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) >= 0:
-		// Not just " " and "\t": a zero-width space builds an entry that
+		// Not just " " and "\t": a zero-width blank builds an entry that
 		// matches nothing and would be accepted as a one-entry deny-list.
 		return fmt.Errorf("deny-list entry %q contains whitespace or a non-printable character", e)
 	case strings.Contains(body, "."):
@@ -539,7 +539,7 @@ func peekTwoFile(p string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading; readFirstTwo's error is the one returned
 	return readFirstTwo(f)
 }
 
