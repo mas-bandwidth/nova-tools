@@ -144,10 +144,11 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	// off as it goes; a reader at width is given nothing
 	room := s.readerRooms(s.Readers.Rows())
 	moves := roundMoves{}
-	// a read card's route is drawn as a work card's is, from its primary's tier
+	// a fleet reader's read is drawn as a work card's is, from its primary's tier
 	// at that tier's rolling index on the fleet table (route.go, readRouteOf;
-	// tla/RouteIndex.tla, THE READS); a step that read no fleet table or no
-	// route asks with none
+	// tla/RouteIndex.tla, THE READS). A friend or bud reader brings its own
+	// model and needs no route (readFieldsOf). A step that read no fleet table
+	// or no route asks a fleet reader with none
 	var ri routeIndexes
 	if s.Fleet != nil && len(s.Routes) > 0 {
 		ri = routeIndexesOf(s)
@@ -242,7 +243,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		for _, rc := range inPlace {
 			set := map[string]string{"asked": stamp(s.Now)}
-			maps.Copy(set, s.readRouteOf(ri, c, failed))
+			maps.Copy(set, s.readFieldsOf(ri, c, rc.F("reader"), failed))
 			takenBack = append(takenBack, change(Readers, setEntry(rc, set, FieldReturned)))
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
@@ -258,7 +259,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			if rd == finder {
 				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
 			}
-			maps.Copy(fields, s.readRouteOf(ri, c, failed))
+			maps.Copy(fields, s.readFieldsOf(ri, c, rd, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}

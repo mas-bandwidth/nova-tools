@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -128,6 +129,49 @@ func (st *Store) setReaderHold(ctx context.Context, reader string, hold readerHo
 		return err
 	}
 	return kv.SetKey(ctx, readerAwayKey(reader), string(out))
+}
+
+// SetReaderUsage records reader's usage line on the readers table
+// (sprint.PropReaderUsage), the line the ask reads for a friend or bud
+// reader's model and harness. An empty line takes that reader's record out.
+// The reader is a row of the readers table. The line is one row of key=value
+// words: a newline or a tab would split the record.
+func (st *Store) SetReaderUsage(ctx context.Context, reader, line string) error {
+	if strings.ContainsAny(line, "\n\t") {
+		return fmt.Errorf("reader %s usage line holds a newline or a tab: one line of key=value words", reader)
+	}
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return err
+	}
+	if !contains(rows, reader) {
+		return fmt.Errorf("no reader %s on the readers table; run: nova-sprint reader add %s", reader, reader)
+	}
+	res, err := st.Run(ctx, Step{
+		Verb: "reader usage",
+		Load: tables(sprint.Readers),
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			was, ok := "", false
+			if s.Readers != nil {
+				was, ok = s.Readers.Prop(sprint.PropReaderUsage)
+			}
+			next := sprint.SetReaderUsageLine(was, reader, line)
+			if next == was && (ok || next == "") {
+				return sprint.Plan{}
+			}
+			return sprint.Plan{Props: []sprint.PropWrite{{
+				Table: sprint.Readers, Name: sprint.PropReaderUsage,
+				Value: next, Was: was, WasAbsent: !ok,
+			}}}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if len(res.Refused) > 0 {
+		return fmt.Errorf("reader %s usage: %s", reader, res.Refused[0].Why)
+	}
+	return nil
 }
 
 // ForgetReaders deletes the beat and the hold of readers taken off the readers

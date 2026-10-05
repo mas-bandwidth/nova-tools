@@ -621,10 +621,11 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 				what: identicalWorkWhat(wc.ID, c.Int("attempt"), c.F(FieldFailure), c.ID)})
 		}
 	}
-	// the reads too: a primary in review waiting for reads while no enabled route
-	// serves its tier is held by the same judgment of that tier, the deal's,
-	// at once, not at the unreported deadline (route.go, readRouteMissing); one
-	// owner of the judgment, so it is written once and closed once
+	// the reads too: a primary in review waiting for reads while no reader up
+	// serves its tier and no enabled route does either is held by the same
+	// judgment of that tier, the deal's, at once, not at the unreported
+	// deadline (route.go, readRouteMissing); one owner of the judgment, so it
+	// is written once and closed once
 	if s.Readers != nil {
 		for _, c := range s.Work.Column(Review) {
 			if c.F("result") == "failed" || !readsWithoutRoute(s, c) {

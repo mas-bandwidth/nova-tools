@@ -411,13 +411,18 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 }
 
 // readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
-// no read card of it can be drawn a route of that tier: "" when the store holds
-// no route at all (reads run on the reader's own model) or an enabled route of
-// the tier is in its array. The deal's tick raises the tier's judgment for the
-// reads waiting (TickDeal, NNoRoute), as it does for work cards.
+// no read of it can be served: "" when the store holds no route at all (reads
+// run on the reader's own model), when a friend or bud reader up brings a
+// model (readerUpServes: that reader needs no fleet route), or an enabled
+// route of the tier is in its array. The deal's tick raises the tier's
+// judgment for the reads waiting (TickDeal, NNoRoute) only when no reader up
+// serves the tier and no route does either.
 func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
 	tier = s.readTierOf(pr)
 	if len(s.Routes) == 0 {
+		return tier, ""
+	}
+	if s.readerUpServes(tier) {
 		return tier, ""
 	}
 	for _, name := range s.tierArray(tier) {

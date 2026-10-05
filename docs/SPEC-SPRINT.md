@@ -2114,11 +2114,11 @@ id (`--op`) returns the original result, with no second counter or notification.
   tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
   reader loop needs no `--model`, and a reader started with `--model`,
   `--tokens` and `--deadline` runs its reads on those. A store with no route
-  asks with none, and the reader runs its own; a read whose tier no enabled
-  route serves is asked with none too, and the deal's tick raises that
-  tier's judgment, `no route serves the tier`, at once for every primary in
-  review whose reads wait or were asked with no route (`route.go`,
-  readRouteMissing), closed when a route serves the tier.
+  asks with none, and the reader runs its own. A read whose tier no enabled
+  fleet route serves is still asked when a reader up serves that tier, and
+  the deal's tick raises `no route serves the tier` only when no reader up
+  serves the tier and no route does either (`route.go`, readRouteMissing;
+  heavy-reads-need-a-reader-not-a-route.w1, below).
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
   attempt only (the primary's `asked` field still names the readers the
@@ -2219,6 +2219,35 @@ id (`--op`) returns the original result, with no second counter or notification.
   no judgment; the primary goes back to review at the passed head, and the tick
   asks the readers its tier needs at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
   With no pass at the head it is failed work for the coordinator, as before.
+
+### heavy-reads-need-a-reader-not-a-route.w1
+
+- A read is asked when a reader up serves the card's tier, whether or not an
+  enabled fleet route of that tier exists. A friend or bud reader brings its
+  own model and needs no route. Its read records the reader's model and
+  harness from the reader's usage line. A fleet reader still draws a route
+  (`readRouteOf`). The no-route judgment for reads is raised only when no
+  reader up serves the tier and no route does either
+  (`TestAHeavyCardIsReadByAFriendReaderWithNoHeavyRoute`).
+
+  A reader brings its own model when its usage line names `model=`. The line
+  is the readers table's property `reader_usage`: one record a line, the
+  reader, a tab, then the line (`model=anthropic/claude-opus-5-5
+  harness=claude`). The ask writes that model and harness on the read card
+  and leaves `route` empty, and it does not move the tier's route index. A
+  reader whose line names no model is a fleet reader and draws a route as
+  before. Readers named `reader-a` in a test, with no such line, stay fleet
+  readers.
+
+  Until a reader row names the tiers it serves, any friend or bud reader up
+  serves every tier. A fleet reader up does not serve a tier that has no
+  enabled route, so a pro read with only a flash route is still
+  `no route serves the tier` while those readers are up. With no reader up,
+  the judgment is the one the deal raises today.
+
+  `store.SetReaderUsage` records one reader's line on that property, which a
+  tick's fresh read of the readers table carries into the ask. An empty line
+  takes that reader's record out. The line is one row of key=value words.
 
 ### reader-ignores-attribution.w5
 

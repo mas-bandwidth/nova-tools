@@ -94,3 +94,27 @@ func TestMemRowsDelRemovesTheRowsAndUnplacesTheirCards(t *testing.T) {
 	pinned := h.m.AtEpoch(7, false)
 	require.Error(t, pinned.RowsDel(h.ctx, "t-readers", []string{"reader-a"}), "a stale epoch is refused")
 }
+
+// SetReaderUsage records the line the ask reads (sprint.PropReaderUsage): one
+// record a line, the reader, a tab, then the usage line. A second reader is
+// another record. An empty line takes the record out. A reader with no row is
+// refused, and so is a line that would split the record.
+func TestSetReaderUsageRecordsTheLineTheAskReads(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	rowan := "model=anthropic/claude-opus-5-5 harness=claude"
+	require.NoError(t, h.st.SetReaderUsage(h.ctx, "reader-a", rowan))
+	got, ok := h.snap().Readers.Prop(sprint.PropReaderUsage)
+	require.True(t, ok)
+	assert.Equal(t, "reader-a\t"+rowan, got)
+	require.NoError(t, h.st.SetReaderUsage(h.ctx, "reader-b", "model=xai/grok-4 harness=grok"))
+	got, ok = h.snap().Readers.Prop(sprint.PropReaderUsage)
+	require.True(t, ok)
+	assert.Equal(t, "reader-a\t"+rowan+"\nreader-b\tmodel=xai/grok-4 harness=grok", got)
+	require.NoError(t, h.st.SetReaderUsage(h.ctx, "reader-a", ""))
+	got, ok = h.snap().Readers.Prop(sprint.PropReaderUsage)
+	require.True(t, ok)
+	assert.Equal(t, "reader-b\tmodel=xai/grok-4 harness=grok", got)
+	require.Error(t, h.st.SetReaderUsage(h.ctx, "reader-z", rowan))
+	require.Error(t, h.st.SetReaderUsage(h.ctx, "reader-b", "model=x\nharness=y"))
+}
