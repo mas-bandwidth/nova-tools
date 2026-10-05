@@ -791,6 +791,9 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	log := c.Str("launchd-log")
 	if log == "" {
 		log = filepath.Join(w.home, "Library", "Logs", "nova-friend-"+name+".log")
+		if c.Str("role") == "coordinator" {
+			log = filepath.Join(w.home, "Library", "Logs", "nova-friend-coordinator-"+name+".log")
+		}
 	}
 	a := friend.Agent{
 		Role:   c.Str("role"),

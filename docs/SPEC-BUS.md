@@ -11,8 +11,10 @@ nova-bus on 2026-10-04, when the git bus was removed.
 
 - One stream per recipient, `bus2:to:<name>`, with one consumer group on it
   named `<name>`, made on the recipient's first `recv` (`XGROUP CREATE ... 0
-  MKSTREAM`). Every reader is the one consumer `nova-bus2`: who holds an entry
-  is told by its idle time, never by a name.
+  MKSTREAM`). The interactive reader is the one consumer `nova-bus2`: who holds
+  an entry is told by its idle time, never by a name. A daemon may read as a
+  consumer of its own (nova-friend's `nova-friend-daemon`), so what it holds is
+  told apart from an interactive reader's (receive helpers, below).
 - One stream `bus2:log` holding every message once, for history and audit.
 - A message is one stream entry with the fields `id` (a ULID the sender makes
   from the store's time: `TIME`, never the client's clock; its first ten random

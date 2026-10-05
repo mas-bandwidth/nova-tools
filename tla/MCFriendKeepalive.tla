@@ -3,7 +3,7 @@ EXTENDS Integers, FiniteSets
 CONSTANT Broken
 \* One receiving endpoint; the opposite direction uses the same rules.
 \* Time is this endpoint's monotonic seconds, never a peer timestamp.
-\* Two emitted challenges per incarnation reduce state space (the positive run
+\* Two emitted challenges per incarnation reduce the number of states (the positive run
 \* has to finish inside the 110 s budget of tlacheck); production
 \* uses an eleven-slot ledger at one-second cadence. No transport/auth proof.
 \* Ttl is the ten seconds of the protocol, scaled to five ticks so the positive

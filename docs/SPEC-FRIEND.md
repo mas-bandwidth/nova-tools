@@ -39,7 +39,8 @@ friend up.
   working directory: `inbox/QUEUE.json` (the coordinator and the session: one
   record per task with `id`, `state` of queued, working or done, and
   `deliverable`).
-- The launchd agent `com.nova.friend-<friend>`: RunAtLoad, KeepAlive, a five
+- The launchd agents `com.nova.friend-<friend>` (delivery) and
+  `com.nova.friend-coordinator-<name>` (the coordinator's keepalive): RunAtLoad, KeepAlive, a five
   second throttle. launchd opens its own log before the daemon runs and cannot
   open one on a network volume (EX_CONFIG, measured 2026-10-03), so that log
   is under the home directory, beside the state directory.
@@ -165,6 +166,50 @@ and does not cover pagination beyond 1,000 entries, authorization, native
 delivery, or liveness. Selected Go tests cover ACK-failure and state-error
 cases, but this projection does not prove those paths executed or establish
 cross-layer behavior.
+
+## The daemon keepalive engine
+
+`internal/friend/keepalive` implements a daemon-only challenge and
+acknowledgment machine, a one-second loop, and a Redis transport on the
+dedicated `bus2:keepalive:<recipient>` lanes (SPEC-BUS.md: the key prefix keeps
+the old spelling). Its frames never enter the ordinary message stream and never
+reach a model. Each side emits at most once per second; only a fresh
+acknowledgment of that invocation's outstanding challenge proves the peer, and
+proof expires after ten seconds. The coordinator batches peer frames and health
+observations; the friend talks only to the current fenced coordinator seat. The
+Redis lane batches appends and reads, retains about one minute, and carries no
+ordinary receive or acknowledge API. A sleeping daemon still answers: its frames
+say `asleep`, the coordinator reads that the daemon is up and the session is not,
+and the keepalive never wakes the session or costs a turn.
+
+The engine runs on both sides. `nova-friend run` assigns the friend-side loop to
+the delivery daemon (a child of it, started after the singleton lock and the
+session state are checked, stopped with it), using the same `--redis` and
+`--server` and reading the saved asleep choice on each tick; the process
+instance is a fresh `rand.Text` each run. `nova-friend coordinate --as
+<coordinator>` runs the coordinator side: it reads the seat and the configured
+friends through the coordination server, challenges each peer, and writes one
+fenced health batch carrying the exact seat generation and the exact proof time
+of each friend, and nothing for a friend with no fresh proof (a silent friend
+ages out by the clock; a report never renews it). The server bridge admits only
+`seat --json`, `where --json`, and exactly `friend health --actor <coordinator>
+<friend> --state <up|asleep|down> --seen <RFC3339> --generation <positive>` with
+nothing else. For the write it removes the asserted actor pair and injects its
+own actor and store before dispatch. It rejects later `actor`, `as`, or `redis`
+flags. The actor remains a trusted private-network identity assertion, not
+authentication. The public status of a friend stays up, held or down: a sleeping
+session is projected as down.
+
+`install --role coordinator` writes a separate launchd agent
+(`com.nova.friend-coordinator-<name>`) beside the friend's delivery agent, with
+separate state (`~/.nova-friend/coordinator-<name>`) and log paths. It runs
+`coordinate`; the default friend role still runs `run`. Before opening the
+store, `coordinate` takes the singleton daemon lock in its separate coordinator
+state directory. A second owner exits 1 with `COORDINATE FAIL: singleton:
+<error>`. Transport, authority, and projection errors are recorded and retried
+by the loop; a fatal loop, store-open error, or lock-release error exits the
+coordinator command at 1. The model is `tla/MCFriendKeepalive.tla` (nine
+reversed witnesses, measured; `tla/MCFriendKeepalive.md`).
 
 ## The loop (internal/friend/daemon.go)
 
