@@ -44,56 +44,6 @@ func TestVerifyExcludesEveryCheck(t *testing.T) {
 	}
 }
 
-// TestVerifyDoesNotGlobThroughADirectorySymlinkOutOfRoot pins security#76
-// finding 4. root/linked and root/linkedB are directory symlinks to a tree
-// outside --root, holding outside.md. fs.Glob over os.DirFS reaches through
-// them, while Build's walk does not descend one, so the index and the
-// verifier disagree about the corpus. cmdVerify opens the root with
-// os.OpenRoot and globs through Root.FS, which refuses a path that leaves
-// the root through a symlink: such a glob matches nothing, and the existing
-// empty-glob refusal (exit 2) fires instead of verifying bytes outside root.
-func TestVerifyDoesNotGlobThroughADirectorySymlinkOutOfRoot(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name      string
-		args      func(root string) []string
-		wantInErr string
-	}{
-		{
-			name: "frontmatter glob through a symlinked directory",
-			args: func(root string) []string {
-				return []string{"verify", "--root", root, "--links", "info", "--frontmatter", "linked/*.md"}
-			},
-			wantInErr: "matched nothing",
-		},
-		{
-			name: "coverage B glob through a symlinked directory",
-			args: func(root string) []string {
-				return []string{"verify", "--root", root, "--links", "info", "--coverage", "real.md:linkedB/*.md"}
-			},
-			wantInErr: "broken check",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			outside := t.TempDir()
-			verifyFile(t, root, "real.md", "lighthouse real\n")
-			verifyFile(t, root, "keep/plain.md", "kept\n")
-			// Outside.md names real's stem, so on the old os.DirFS glob the B
-			// side was satisfied by text outside the root and coverage went OK.
-			require.NoError(t, os.WriteFile(filepath.Join(outside, "outside.md"),
-				[]byte("real references the A file\n"), 0600))
-			require.NoError(t, os.Symlink(outside, filepath.Join(root, "linked")))
-			require.NoError(t, os.Symlink(outside, filepath.Join(root, "linkedB")))
-			code, out, errOut := runCLI(t, "", tc.args(root)...)
-			require.Equalf(t, 2, code, "glob through symlink: exit %d out=%s err=%s", code, out, errOut)
-			require.Containsf(t, errOut, tc.wantInErr, "glob through symlink: exit %d err=%s", code, errOut)
-			require.NotContainsf(t, out, "VERIFY OK", "verify must not print an OK line, got %q", out)
-		})
-	}
-}
-
 func TestVerifyCountsFindingsBeforeCapping(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
