@@ -432,12 +432,17 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 	// every line before the loop is seen: the first tick reads the state whole
 	cursor, _ := st.LogTail(ctx)
 	why := tickStart
+	// the server's record, the actor this loop runs as, which seat and handover
+	// show beside the seat's holder: written before the first tick and every
+	// store.ServerEvery (seat-key-follows-record.w2)
+	var said time.Time
 	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {
 		if now := a.binaryStamp(); began0 != "" && now != began0 {
 			fmt.Fprintf(stdout, "RUN STOP the binary this loop runs was replaced on disk since it began (%s, now %s): exiting so its supervisor starts the new one; a loop that is not supervised: run nova-sprint run again\n", began0, orDashStr(now, "unreadable"))
 			return true
 		}
 		began := a.now()
+		said = a.sayServer(ctx, st, said, stderr)
 		// one tick, or one worker's batch, at a time (serve.go)
 		a.serial.Lock()
 		res, err, over := a.tickWithin(func() (store.TickResult, error) { return st.Tick(ctx) }, a.tickDeadline, began, stdout, stderr)
@@ -482,6 +487,23 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		cursor, why = a.pace(ctx, st, res.Epoch, cursor, began)
 	}
 	return false
+}
+
+// sayServer writes the server's record, the actor the loop runs as, when
+// store.ServerEvery has passed since said, its last write, and returns the
+// time of the last write; a failed write is said and tried again on the next
+// tick. It writes nothing else: never the coordinator key, which init and the
+// seat's steps write from the seat's record.
+func (a *app) sayServer(ctx context.Context, st *store.Store, said time.Time, stderr io.Writer) time.Time {
+	now := a.now()
+	if !said.IsZero() && now.Sub(said) < store.ServerEvery {
+		return said
+	}
+	if err := st.SetServerActor(ctx, st.Actor); err != nil {
+		fmt.Fprintf(stderr, "%s run: the server's record was not written: %s\n", prog, oneline.Escape(err.Error()))
+		return said
+	}
+	return now
 }
 
 // pace is the wait between two ticks of run: it blocks on the log of the
