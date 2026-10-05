@@ -80,6 +80,14 @@ func TestCardBaseReplacesBaseForMergingCardAndRefusesNotOnOrigin(t *testing.T) {
 	assert.NotEqual(t, 0, code)
 	assert.Contains(t, errs, "the branch branch-does-not-exist is not on origin")
 
+	// A member may not re-point a card: card base is the coordinator's alone
+	before := r.applies()
+	code, _, errs = r.do("card base s1-1 main --actor m1")
+	assert.Equal(t, 2, code, "card base by a member: %q", errs)
+	assert.Contains(t, errs, "card base is the coordinator's alone")
+	assert.Equal(t, before, r.applies(), "card base by a member wrote")
+	assert.NotContains(t, r.ok("log --card s1-1"), "card s1-1 base ->")
+
 	// Merging card, target branch main is on origin
 	out := r.ok("card base s1-1 main")
 	assert.Contains(t, out, "card s1-1 base -> main")

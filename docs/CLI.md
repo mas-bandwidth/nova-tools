@@ -1110,7 +1110,7 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 
 ### Re-pointing a card's base branch
 
-`nova-sprint card base <id> <branch>` records the new BASE for a merging card, keeps work and reads, writes one log line, and clears any dead-base mark so the next land pass tries it once against the new base. It verifies that `<branch>` exists on origin (refusing if not found) and that `<id>` is currently merging.
+`nova-sprint card base <id> <branch>`, the coordinator's alone, records the new BASE for a merging card, keeps work and reads, writes one log line, and clears any dead-base mark so the next land pass tries it once against the new base. It verifies that `<branch>` exists on origin (refusing if not found) and that `<id>` is currently merging.
 
 ### The sprint backup
 

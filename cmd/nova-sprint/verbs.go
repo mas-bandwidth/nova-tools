@@ -147,7 +147,7 @@ func init() {
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
-	verbClasses["card base"] = classReport
+	verbClasses["card base"] = classCoordinator
 }
 
 func verbNames() []string {
