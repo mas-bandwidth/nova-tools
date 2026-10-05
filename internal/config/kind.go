@@ -70,6 +70,11 @@ const (
 	// or exponent), stored as text in its one spelling (cardcost.Canonical), ""
 	// when not set: a price, never a float.
 	TypeDecimal Type = "decimal"
+	// TypeMap is a comma list of key=value pairs, each key a word of
+	// Field.Enum given once, each value one word (no blank, comma or =),
+	// sorted by key, stored as text ("" is the empty map): a friend's model
+	// per tier.
+	TypeMap Type = "map"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -191,8 +196,13 @@ var FriendRoles = []string{"builder", "may-hold", "reader"}
 const DefaultFriendWidth = 8
 
 // FriendWidth is a friend row's width: its width field, DefaultFriendWidth
-// when the row has none.
+// when the row has none, and 1 for a friend who can go wide neither way, in one
+// session (batch) with no child agents, whatever is typed (docs/SPEC-FRIEND.md,
+// a friend's models).
 func FriendWidth(r Row) int {
+	if FriendMode(r) == FriendModeBatch && r.Fields[FieldFriendChildren] == FriendNo {
+		return 1
+	}
 	if r.Fields["width"] == "" {
 		return DefaultFriendWidth
 	}
@@ -230,7 +240,7 @@ func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
 	}
-	return nil
+	return checkFriendModels(r)
 }
 
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
@@ -402,13 +412,16 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, and her delivery mode",
+		Doc:   "an AI friend: her slots, which tiers she can do and the model she runs each on, her roles, her width, the jobs she works at once, her delivery mode, and what her harness can do (children, a child's model)",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: FieldFriendModel, Type: TypeMap, Enum: Tiers, Help: "the model she runs each tier's cards on: comma list of <tier>=<model> (flash=..., pro=..., heavy=..., frontier=...), each tier one of her tiers; a tier of hers with no model is served and warned until it is filled"},
+			{Name: FieldFriendChildren, Type: TypeEnum, Enum: FriendYesNo, Default: FriendYes, Help: "whether her harness runs child agents: yes (the default) or no; a batch friend with no children works one card at a time, whatever her width"},
+			{Name: FieldFriendChildModel, Type: TypeEnum, Enum: FriendYesNo, Default: FriendYes, Help: "whether a child's model can be chosen: yes (the default: each card runs in a child on its tier's model) or no (her children run her session's model)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -912,6 +925,12 @@ func (f Field) Canonical(raw string) (string, error) {
 			}
 		}
 		return strings.Join(words, ","), nil
+	case TypeMap:
+		m, err := ParseMap(raw, f.Enum)
+		if err != nil {
+			return "", fmt.Errorf("--%s %q: %v", f.Name, raw, err)
+		}
+		return FormatMap(m), nil
 	case TypeRef:
 		if raw == "" {
 			if f.Required {

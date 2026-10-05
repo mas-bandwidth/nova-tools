@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", FieldFriendModel, FieldFriendChildren, FieldFriendChildModel)
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -255,6 +255,10 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"roles": sortedList(roles[i].Val()),
 			"width": intText(str(d, 2)),
 			"mode":  str(d, 3),
+			// her models and her harness's abilities, plain fields beside mode
+			FieldFriendModel:      str(d, 4),
+			FieldFriendChildren:   str(d, 5),
+			FieldFriendChildModel: str(d, 6),
 		}
 	}
 	return views, revValue(rev), nil
@@ -433,7 +437,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeRoles {
+	var plain []string // her models and abilities: plain fields beside mode, each written when it differs
+	for _, k := range []string{FieldFriendModel, FieldFriendChildren, FieldFriendChildModel} {
+		if prev == nil || prev[k] != row.Fields[k] {
+			plain = append(plain, k)
+		}
+	}
+	if !writeWidth && !writeMode && !writeRoles && len(plain) == 0 {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -443,6 +453,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
 		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
+	}
+	for _, k := range plain {
+		pipe.HSet(ctx, "friend:"+f+":desired", k, row.Fields[k])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
