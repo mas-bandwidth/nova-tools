@@ -20,7 +20,9 @@ import (
 
 // TestRedisIsACopy pins RedisIsACopy invariant (tla/ConfigApply.tla line 348).
 // Invariant: after a completed apply, Redis's views equal the store's rows:
-//   RedisIsACopy == \A k \in Kinds : clean[k] => ViewEq(k)
+//
+//	RedisIsACopy == \A k \in Kinds : clean[k] => ViewEq(k)
+//
 // This test runs Apply (check=false) on Mem with newFake(), requiring that the
 // fake's views for the kind equal the store's rows (names and fields), after an
 // add, a set, and a remove.
@@ -80,7 +82,9 @@ func TestRedisIsACopy(t *testing.T) {
 
 // TestConflictRefusesAhead pins ConflictRefusesAhead invariant (tla/ConfigApply.tla line 352).
 // Invariant: Apply never writes when the stamp it read is ahead of the revision:
-//   ConflictRefusesAhead == ~wroteAhead
+//
+//	ConflictRefusesAhead == ~wroteAhead
+//
 // Reversed witness: Broken = "overahead" (tla/ConfigApply.tla line 73).
 // This test requires that fake logged no write (ap.log empty, views unchanged,
 // ap.revs[KindMachine] still 100). The store is given at least one row so a
@@ -117,16 +121,18 @@ func TestConflictRefusesAhead(t *testing.T) {
 // TestApplyOrder pins ApplyOrder invariant (tla/ConfigApply.tla lines 356-368).
 // Invariant: in any apply, machine ceiling precedes friend placed on it, and
 // friend removals come last:
-//   ApplyOrder ==
-//     \A i \in 1..Len(prefix) :
-//       /\ IsPlace(prefix[i]) =>
-//            \/ ceilAtStart[prefix[i].value]
-//            \/ \E j \in 1..(i - 1) :
-//                 /\ prefix[j].kind = "machine"
-//                 /\ prefix[j].name = prefix[i].value
-//                 /\ prefix[j].op \in {"add", "set"}
-//       /\ IsFrRem(prefix[i]) =>
-//            \A j \in (i + 1)..Len(prefix) : prefix[j].op = "remove"
+//
+//	ApplyOrder ==
+//	  \A i \in 1..Len(prefix) :
+//	    /\ IsPlace(prefix[i]) =>
+//	         \/ ceilAtStart[prefix[i].value]
+//	         \/ \E j \in 1..(i - 1) :
+//	              /\ prefix[j].kind = "machine"
+//	              /\ prefix[j].name = prefix[i].value
+//	              /\ prefix[j].op \in {"add", "set"}
+//	    /\ IsFrRem(prefix[i]) =>
+//	         \A j \in (i + 1)..Len(prefix) : prefix[j].op = "remove"
+//
 // Reversed witness: Broken = "friendfirst" (tla/ConfigApply.tla line 70).
 // This test applies KindMachine then KindFriend against fake with a machine and
 // a friend, requiring the log order (machine add before friend add); and adds
@@ -216,7 +222,9 @@ func TestApplyOrder(t *testing.T) {
 
 // TestStampOnlyWhenComplete pins StampOnlyWhenComplete invariant (tla/ConfigApply.tla line 371).
 // Invariant: the revision stamp is written only after that kind's ops:
-//   StampOnlyWhenComplete == \A k \in Kinds : stampMoved[k] => opsDone[k]
+//
+//	StampOnlyWhenComplete == \A k \in Kinds : stampMoved[k] => opsDone[k]
+//
 // Reversed witness: Broken = "stampfirst" (tla/ConfigApply.tla line 69).
 // This test applies with check=false and ops pending, requiring that every op
 // appears in fake's log before stamp (ap.revs set only after last op), and that
@@ -283,7 +291,9 @@ func TestStampOnlyWhenComplete(t *testing.T) {
 
 // TestHistoryCoversEveryWrite pins HistoryCoversEveryWrite invariant (tla/ConfigApply.tla line 344).
 // Invariant: every change of a row has one history row (store.go; SPEC-CONFIG History):
-//   HistoryCoversEveryWrite == mRows = FoldM /\ fRows = FoldF
+//
+//	HistoryCoversEveryWrite == mRows = FoldM /\ fRows = FoldF
+//
 // Reversed witness: Broken = "nohistory" (tla/ConfigApply.tla line 71).
 // This test requires that Mem records a history row with Kind and Name for every
 // Insert, Update, and Delete, and that a refused write (duplicate name, missing name)
