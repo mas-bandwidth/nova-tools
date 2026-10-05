@@ -137,10 +137,14 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 				Example: "grade --brief " + fixture + "card.md --backend fixed --answers " + fixture + "grade-answers.json --record ./decisions.jsonl --op c1@grade",
 				Effect:  tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
 				Detail: `The grade decision: a card's convergence before its first deal, one choice, grade: script
-(no model), flash or pro, each with its p. The state is the brief alone.`,
+(no model), flash or pro, each with its p. The state is the brief alone, or with --examples
+ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed outside --held-out.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("brief", "the card's brief, a file")
+					f.String("examples", "", "few-shot examples from the sprint record, a JSON-lines file of {card, heading, paths, kind, label} (SPEC-NOVA-DECIDE section 11)")
+					f.String("held-out", "", "cards left out of the example pool, a file of card ids one per line (with --examples)")
+					f.String("seed", "0", "the seed that picks the examples, so a run reproduces (with --examples)")
 					w.asking(f)
 					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 				},
@@ -384,7 +388,33 @@ func (w world) grade(c *tool.Call) *tool.Out {
 	if refused != nil {
 		return refused
 	}
-	return w.decision(c, decide.GradeSchema(), decide.GradeState(texts["brief"]), inputs)
+	state := decide.GradeState(texts["brief"])
+	if c.Given("examples") {
+		raw, err := os.ReadFile(c.Str("examples"))
+		var pool []decide.Example
+		if err == nil {
+			pool, err = decide.ParseExamples(raw)
+		}
+		held := map[string]bool{}
+		if err == nil && c.Given("held-out") {
+			var ids []byte
+			if ids, err = os.ReadFile(c.Str("held-out")); err == nil {
+				for _, id := range strings.Fields(string(ids)) {
+					held[id] = true
+				}
+			}
+		}
+		var shots []decide.Example
+		if err == nil {
+			shots, err = decide.PickExamples(pool, held, c.Str("seed"), decide.GradeExamplesPerClass)
+		}
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		state = decide.GradeStateWith(texts["brief"], shots)
+		inputs["examples"], inputs["seed"] = c.Str("examples"), c.Str("seed")
+	}
+	return w.decision(c, decide.GradeSchema(), state, inputs)
 }
 
 // readFiles reads each named file flag that is given: its text, and the record's inputs
