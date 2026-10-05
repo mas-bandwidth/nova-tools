@@ -49,6 +49,10 @@ type walk struct {
 	running bool
 	since   time.Time
 	spans   []sprint.Span
+	// friends is the friends the deal may give a friend's card to: none on a
+	// walk, whose sprint is the machines'; a scenario of a friend's card names
+	// hers (aFriendStalls).
+	friends []string
 }
 
 // newWalk is the sprint of a seed: two or three streams, two or three members
@@ -336,10 +340,11 @@ func (k *walk) tick() bool {
 	}
 	// the done part is drawn by the whole tick only: it writes a note and
 	// no card, and the draw of one part keeps the walks the parts before it
-	// gave
+	// gave; the friend stall part is drawn only on a sprint with friends, and
+	// a walk has none, so its draws are the ones they were before the part
 	var parts []sprint.TickPartFn
 	for _, p := range sprint.TickParts {
-		if p.Name != sprint.PartDone {
+		if p.Name != sprint.PartDone && (p.Name != sprint.PartFriendStall || len(k.friends) > 0) {
 			parts = append(parts, p.Fn)
 		}
 	}
@@ -362,9 +367,18 @@ func (k *walk) wholeTick() bool {
 	return did
 }
 
-// req is what the tick is given beside the tables.
+// req is what the tick is given beside the tables: the friends among them, each
+// up but while the stall ladder has her down.
 func (k *walk) req() sprint.TickReq {
-	return sprint.TickReq{Who: sprint.MachineActor, Stopped: func(from, to time.Time) time.Duration { return sprint.StoppedBetween(k.spans, from, to) }, Beats: k.beats}
+	var seats []sprint.FriendSeat
+	for _, f := range k.friends {
+		status := sprint.Up
+		if v, _ := k.s.Fleet.Prop(sprint.PropFriendStallDown(f)); v != "" {
+			status = sprint.Down
+		}
+		seats = append(seats, sprint.FriendSeat{Name: f, Width: 1, Status: status})
+	}
+	return sprint.TickReq{Who: sprint.MachineActor, Stopped: func(from, to time.Time) time.Duration { return sprint.StoppedBetween(k.spans, from, to) }, Beats: k.beats, Friends: seats}
 }
 
 // clock moves the time on: seconds mostly, minutes now and then, and hours

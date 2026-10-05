@@ -3,6 +3,7 @@ package refmodel_test
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,9 +73,9 @@ func (w *world) apply(p sprint.Plan) error {
 	for _, pw := range p.Props {
 		tb := w.s.T(pw.Table)
 		props := map[string]string{}
-		for _, n := range []string{sprint.PropDealIndex, sprint.PropAskIndex} {
-			if v, ok := tb.Prop(n); ok {
-				props[n] = v
+		for n, v := range tb.Props() {
+			if n == sprint.PropDealIndex || n == sprint.PropAskIndex || strings.HasPrefix(n, "friend_stall_") {
+				props[n] = v // the rolling indexes, and the stall ladder's rungs (DutyStall)
 			}
 		}
 		props[pw.Name] = pw.Value

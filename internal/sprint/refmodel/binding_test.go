@@ -99,6 +99,7 @@ func loadSample(tb testing.TB, s sample) *loaded {
 		l.apply(stored, placed)
 		l.apply(stored, kept)
 		l.apply(stored, removed)
+		l.props(stored, tab.Props())
 	}
 	l.judgments(t)
 	_, l.inbox, _ = l.m.Tails(l.ctx)
@@ -120,6 +121,19 @@ func (l *loaded) apply(table string, members []ntable.BatchMemberEntry) {
 	_, err := l.m.Apply(l.ctx, ntable.BatchManifest{Schema: 1, Table: table, Epoch: "0", ExpectedTableRevision: strconv.FormatUint(l.m.Revision(table), 10),
 		OperationID: fmt.Sprintf("load-%d", l.ops), Actor: "load", Members: members})
 	require.NoError(l.tb, err, "load %s: %v", table, err)
+}
+
+// props writes a table's properties: the rolling indexes and the friend stall
+// ladder's rungs the tick reads.
+func (l *loaded) props(table string, props map[string]string) {
+	l.tb.Helper()
+	if len(props) == 0 {
+		return
+	}
+	l.ops++
+	_, err := l.m.Apply(l.ctx, ntable.BatchManifest{Schema: 1, Table: table, Epoch: "0", ExpectedTableRevision: strconv.FormatUint(l.m.Revision(table), 10),
+		OperationID: fmt.Sprintf("load-%d", l.ops), Actor: "load", Props: props})
+	require.NoError(l.tb, err, "load %s properties: %v", table, err)
 }
 
 // judgments writes the open judgments and the acknowledged conditions as one

@@ -10,7 +10,7 @@ import (
 // A scenario is a short script of a sprint that a random walk reaches by luck
 // only now and then: a stream stopped on another's card that has landed since,
 // ready queues left uneven by a member taking its cards, a lateness raised and
-// then the card's member going down. The scripts draw their sprint from a seed
+// then the card's member going down, a friend gone quiet on her cards. The scripts draw their sprint from a seed
 // as the walks do, and take a snapshot where the tick has something to do.
 
 // scenarioSeeds is how many sprints each scenario is run on, and scenarioBase
@@ -24,7 +24,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, aFriendStalls} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -37,6 +37,20 @@ func (k *walk) addTo(stream string, needs ...string) string {
 	id := fmt.Sprintf("p%d", k.next)
 	k.next++
 	if !k.try(sprint.Add(k.s, sprint.AddReq{Brief: proBrief, Stream: stream, IDs: []string{id}, Needs: needs, Who: coordinator})) {
+		return ""
+	}
+	return id
+}
+
+// friendBrief is the brief of a friend's card: its WHO line names any friend.
+const friendBrief = proBrief + "\nWHO: friend"
+
+// addFriendCard admits a friend's card into the stream, and says its id; "" when
+// it was not admitted.
+func (k *walk) addFriendCard(stream string) string {
+	id := fmt.Sprintf("p%d", k.next)
+	k.next++
+	if !k.try(sprint.Add(k.s, sprint.AddReq{Brief: friendBrief, Stream: stream, IDs: []string{id}, Who: coordinator})) {
 		return ""
 	}
 	return id
@@ -171,4 +185,40 @@ func aLateCardRedealt(k *walk) []sample {
 		}
 	}
 	return out
+}
+
+// aFriendStalls deals two friend's cards to a friend, has her start the one she
+// works, and lets her go quiet: a snapshot before each rung of the stall ladder
+// the tick climbs (two wakes, the coordinator's judgment, her unstarted card
+// taken back, her down), and one after her session moves again, which releases
+// her. A walk's sprint is the machines' and has no friend.
+func aFriendStalls(k *walk) []sample {
+	const f = "f1"
+	k.friends = []string{f}
+	row := sprint.FriendRow(f)
+	k.addFriendCard(k.streams[0])
+	k.addFriendCard(k.streams[len(k.streams)-1])
+	k.runPart("deal")
+	working := k.s.Fleet.Cell(row, sprint.Working)
+	if len(working) == 0 {
+		return nil
+	}
+	for _, c := range working {
+		c.Fields[sprint.FieldProgress] = k.now.UTC().Format(time.RFC3339)
+		c.Rev++
+		k.s.Fleet.Put(c)
+	}
+	k.now = k.now.Add(k.s.FriendStallAfter() + time.Duration(k.pick(60))*time.Second)
+	var out []sample
+	for range 5 {
+		k.beatAll()
+		out = append(out, k.sample())
+		if !k.runPart(sprint.PartFriendStall) {
+			return out
+		}
+		k.now = k.now.Add(k.s.FriendStallStep())
+	}
+	k.beatAll()
+	k.beats[row] = sprint.Beat{At: k.now, Friend: &sprint.FriendReport{Active: k.now}}
+	return append(out, k.sample())
 }

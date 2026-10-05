@@ -35,23 +35,27 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	// s1-2 is left unstarted
 
 	t0 := w.s.Now
+	// the wakes are the plan's (Plan.Wakes), sent by the binding once it commits
 	var woken []int
-	wakeFn := func(friend string, rung int, d time.Duration) error {
-		if friend == "amy" {
-			woken = append(woken, rung)
+	part := func() Plan {
+		p := w.part(TickFriendStall, TickReq{Friends: seats})
+		for _, wk := range p.Wakes {
+			if wk.Friend == "amy" {
+				woken = append(woken, wk.Rung)
+			}
 		}
-		return nil
+		return p
 	}
 
 	// At t0: not stalled (< 20m)
-	w.part(TickFriendStall, TickReq{WakeFriend: wakeFn, Friends: seats})
+	part()
 	rung, _ := w.s.Fleet.Prop(PropFriendStallRung("amy"))
 	assert.Empty(t, rung, "rung 0 has no property")
 	assert.Empty(t, woken)
 
 	// Rung 1: at t0 + 21m (between 20m and 25m)
 	w.s.Now = t0.Add(21 * time.Minute)
-	w.part(TickFriendStall, TickReq{WakeFriend: wakeFn, Friends: seats})
+	part()
 	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
 	assert.Equal(t, "1", rung)
 	assert.Equal(t, []int{1}, woken)
@@ -60,7 +64,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 
 	// Rung 2: at t0 + 26m (between 25m and 30m)
 	w.s.Now = t0.Add(26 * time.Minute)
-	w.part(TickFriendStall, TickReq{WakeFriend: wakeFn, Friends: seats})
+	part()
 	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
 	assert.Equal(t, "2", rung)
 	assert.Equal(t, []int{1, 2}, woken)
@@ -69,7 +73,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 
 	// Rung 3: at t0 + 31m (between 30m and 35m)
 	w.s.Now = t0.Add(31 * time.Minute)
-	p3 := w.part(TickFriendStall, TickReq{WakeFriend: wakeFn, Friends: seats})
+	p3 := part()
 	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
 	assert.Equal(t, "3", rung)
 	var judged bool
@@ -85,7 +89,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	// Rung 4: at t0 + 36m (between 35m and 40m)
 	// Unstarted card s1-2.w1 should be taken back; started card s1-1.w1 stays!
 	w.s.Now = t0.Add(36 * time.Minute)
-	w.part(TickFriendStall, TickReq{WakeFriend: wakeFn, Friends: seats})
+	part()
 	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
 	assert.Equal(t, "4", rung)
 	assert.Equal(t, Withdrawn, w.s.Fleet.Card("s1-2.w1").Col, "unstarted card taken back")
@@ -95,7 +99,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	// Rung 5: at t0 + 41m (>= 40m)
 	// Friend marked down
 	w.s.Now = t0.Add(41 * time.Minute)
-	p5 := w.part(TickFriendStall, TickReq{WakeFriend: wakeFn, Friends: seats})
+	p5 := part()
 	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
 	assert.Equal(t, "5", rung)
 	downStamp, hasDown := w.s.Fleet.Prop(PropFriendStallDown("amy"))
@@ -106,6 +110,8 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	assert.Equal(t, Down, p5.Health.Health.State)
 	assert.Equal(t, "stalled", p5.Health.Health.Reason)
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "started card stays even when marked down")
+	assert.Equal(t, []int{1, 2}, woken, "each wake rung wakes her once, and no rung past them wakes")
+	assert.Equal(t, Up, seats[0].Status, "the part writes nothing it reads: her down is the plan's health record")
 
 	// Friend session activity arrives -> released to up and ladder resets to 0!
 	w.s.Now = t0.Add(42 * time.Minute)

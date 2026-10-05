@@ -76,6 +76,10 @@ type Plan struct {
 	// Health is a friend's health observed (ObserveFriend): the step's commit
 	// writes it as her record.
 	Health *FriendHealthWrite
+	// Wakes are the friends the stall ladder wakes (TickFriendStall, rungs 1 and 2):
+	// the binding sends each, once, after the step's commit (store.Store.WakeFriend),
+	// never as the plan is made, so a plan made and not committed wakes no one.
+	Wakes []FriendWake
 	// Stop is the cause the binding stops the machine with as the step commits: the
 	// tick's deal when every provider is out of credit (FundsCause words); "" is none.
 	Stop string

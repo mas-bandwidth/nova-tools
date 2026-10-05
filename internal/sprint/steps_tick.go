@@ -171,8 +171,6 @@ type TickReq struct {
 	// IdleAlarm says the tick watches for an idle fleet and tells the coordinator why
 	// (idle.go; run --idle-alarm).
 	IdleAlarm bool
-	// WakeFriend wakes a friend by bus message during the stall ladder (cmd/nova-sprint/friendcards.go).
-	WakeFriend func(friend string, rung int, d time.Duration) error
 }
 
 func (r TickReq) who() string {
@@ -234,10 +232,11 @@ var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}}},
 }
 
-// PartFriendStall is the friend stall ladder part (friend_stall.go).
+// PartFriendStall is the friend stall ladder part (friend_stall.go): the fleet's
+// update, after the presence part, so a friend's row is read as presence left it.
 const PartFriendStall = "friend-stall"
 
 // PartLevel and PartLevelReads are the tick start's parts: the fleet's and the
@@ -296,8 +295,7 @@ var TickParts = func() []TickPartDef {
 			}
 		}
 	}
-	out = append(out, TickEnd...)
-	return append(out, TickPartDef{PartFriendStall, TickFriendStall})
+	return append(out, TickEnd...)
 }()
 
 // NReadyToMerge is the note the pump addresses to the coordinator once a

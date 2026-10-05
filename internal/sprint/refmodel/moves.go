@@ -29,6 +29,8 @@ const (
 	KindUpdate  = "update"  // an open judgment is rewritten with the latest facts
 	KindRefuse  = "refuse"  // a card the planner would not move, and why
 	KindPush    = "push"    // a reminder is delivered to a person
+	KindWake    = "wake"    // a stalled friend is woken (Card is her name, Attrs her rung)
+	KindHealth  = "health"  // a friend's health record is written (Card is her name, Set its state)
 	KindDue     = "due"     // moves and judgments left past the duty's bounds
 )
 
@@ -241,6 +243,18 @@ func planMoves(duty string, s *sprint.Snapshot, p sprint.Plan) []Move {
 	}
 	for _, r := range p.Refused {
 		out = append(out, Move{Duty: duty, Kind: KindRefuse, Card: r.Key, Words: r.Why})
+	}
+	for _, w := range p.Wakes {
+		out = append(out, Move{Duty: duty, Kind: KindWake, Card: w.Friend, Attrs: []string{"rung=" + strconv.Itoa(w.Rung)},
+			Words: fmt.Sprintf("wake %d to friend %s, idle %s", w.Rung, w.Friend, w.Idle.Round(time.Second))})
+	}
+	if h := p.Health; h != nil {
+		set := []string{"generation=" + strconv.FormatUint(h.Health.Generation, 10), "state=" + h.Health.State}
+		if h.Health.Reason != "" {
+			set = append(set, "reason="+h.Health.Reason)
+		}
+		sort.Strings(set)
+		out = append(out, Move{Duty: duty, Kind: KindHealth, Card: h.Friend, Set: set})
 	}
 	return out
 }

@@ -82,6 +82,11 @@ type Store struct {
 	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
 	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
 	IdleAlarm bool
+	// WakeFriend sends one wake of the friend stall ladder (sprint.Plan.Wakes, rungs 1 and
+	// 2; tla/StallLadder.tla): the tick calls it for each wake of the stall part's plan once
+	// that plan's step has committed, never for a plan made and not committed. nil sends
+	// none (the bus is the binding's: cmd/nova-sprint wakeFriendStall).
+	WakeFriend func(ctx context.Context, w sprint.FriendWake) error
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats

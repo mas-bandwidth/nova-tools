@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -518,6 +519,17 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 		err = errors.New(res.Refused[0].Why)
 	}
 	return err
+}
+
+// stallWakes has the store's tick send the stall ladder's wakes (sprint.Plan.Wakes) with
+// wakeFriendStall, each once its step has committed (store.Store.WakeFriend): the tick and
+// run verbs' machine, never a shadow tick's, which commits nothing. A send that fails is
+// said on stderr and on the tick's result, and the rung it climbed stands.
+func (a *app) stallWakes(st *store.Store, stderr io.Writer) {
+	say := func(line string) { fmt.Fprintln(stderr, line) }
+	st.WakeFriend = func(ctx context.Context, w sprint.FriendWake) error {
+		return a.wakeFriendStall(ctx, st, w.Friend, w.Rung, w.Idle, say)
+	}
 }
 
 // wakeFriendStall wakes a friend whose stall ladder has climbed to a wake rung (1 or 2;

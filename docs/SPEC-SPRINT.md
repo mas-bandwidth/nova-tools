@@ -4100,7 +4100,8 @@ than `friend_stall_after` (default 20 minutes, configurable via `nova-sprint set
 While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 minutes,
 configurable via `nova-sprint set --friend-stall-step`):
 1. **Wake turn 1**: a bus message to her (`wakeFriendStall` / `a.sendBus`) pushed into her
-   daemon as a turn.
+   daemon as a turn. The plan carries the wake (`Plan.Wakes`); the binding sends it after
+   the step commits (see below).
 2. **Wake turn 2**: a second wake bus message.
 3. **Coordinator note**: a pushed judgment (`Kind: Judgment`, `Type: NStalled`,
    `"friend <f> stalled <d>: two wakes unanswered"`).
@@ -4121,3 +4122,39 @@ The TLA+ specification `tla/StallLadder.tla` verifies three core invariants:
 - `NoStartedRedealt`: no started card is taken back or redealt; started cards stay and finish.
 - `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by session
   activity, never by card progress alone.
+
+### pr-friend-stall-complete.w2: the ladder on the live path
+
+friend-stall-ladder-r.w1 left the ladder off the live path: its part was appended to
+`TickParts` after the tick's end, which no tick runs (the store's tick runs `TickStart`,
+`TickTables` and `TickEndWith`); its wakes went through `TickReq.WakeFriend`, which no
+binding set, so `wakeFriendStall` was never called; its fleet properties were named
+`friend_stall_rung:<f>` and `friend_stall_down:<f>`, which the store refuses (a property
+name is letters, digits, `_`, `.` and `-`), so its step could never commit; and the
+reference model had no duty for it. Now:
+
+- **Where it runs.** The part is the fleet's update, after presence:
+  `{Fleet, [presence, friend-stall]}` in `TickTables`. `TickParts` holds it there, and the
+  reference model's duties name it there (`refmodel.DutyStall`, after `DutyPresence`).
+- **Properties.** `friend_stall_rung.<f>` and `friend_stall_down.<f>`.
+- **Wakes.** `TickFriendStall` makes no call and writes nothing it reads. A wake rung adds a
+  `sprint.FriendWake` (friend, rung, idle) to `Plan.Wakes`. After the part's step commits
+  and is not lost, the store's tick calls `Store.WakeFriend` once for each wake. The
+  `tick` and `run` verbs set that hook to `wakeFriendStall`; `tick --shadow` does not. A
+  plan the tick makes only to see whether the part has work, or makes again after a commit
+  lost to another writer, sends nothing. A send that fails is said on stderr
+  (`FRIEND-STALL NOTE`) and on the tick's result (`said`), and the rung stands.
+- **Rung records.** A rung is recorded by its happened note, and is no unit of the plan
+  unless it changes a card.
+- **The reference model.** `FriendStallMoves` is the part's moves. A wake is a move of kind
+  `wake`, and a friend's health record one of kind `health`. The reference snapshot carries
+  the ladder's fleet properties, so a rung climbed stays climbed. The scenario
+  `aFriendStalls` takes a friend through all five rungs and her release; the walks stay the
+  machines' sprint.
+- **The model.** `tla/StallLadder.tla` adds `woken`, the wakes sent in a stall episode, and
+  `PlanUncommitted`, a plan that is not committed. Two invariants are added:
+  - `WokenAtEveryWakeRung`: past rung n (n = 1, 2), wake n was sent. Reversed witness
+    `nowake`: the ladder as it was, with the wake never sent.
+  - `NoWakeWithoutRung`: a wake is sent only at a rung climbed, and only once. Reversed
+    witness `wakeinplan`: the planner sends as it plans, as `TickReq.WakeFriend` did. TLC's
+    trace is the store's pass-over plan waking her at rung 0.

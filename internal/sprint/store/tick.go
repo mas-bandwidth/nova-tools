@@ -1244,6 +1244,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		if !r.Lost && len(r.Moved) > 0 {
 			t.res.addRows(sprint.PlanRows(planned))
 		}
+		if !r.Lost {
+			t.wake(planned.Wakes)
+		}
 		// Each table this part wrote, other than its own and the work table,
 		// holds what it wrote in its queue until its update runs.
 		for _, x := range All {
@@ -1280,6 +1283,20 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 	}
 	return tickOn
+}
+
+// wake sends the stall ladder's wakes of a part's plan, its step committed
+// (Store.WakeFriend): each once, a send that fails said on the tick's result
+// and never failing the tick, as the rung it climbed is written and stands.
+func (t *tickRun) wake(ws []sprint.FriendWake) {
+	if t.st.WakeFriend == nil {
+		return
+	}
+	for _, w := range ws {
+		if err := t.st.WakeFriend(t.ctx, w); err != nil {
+			t.res.Said = append(t.res.Said, fmt.Sprintf("the stall wake %d of friend %s was not sent: %v", w.Rung, w.Friend, err))
+		}
+	}
 }
 
 // end is what the tick returns when an update or a part ended it early.

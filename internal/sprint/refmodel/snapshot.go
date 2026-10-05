@@ -3,6 +3,7 @@ package refmodel
 import (
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -91,6 +92,7 @@ func cloneTable(t *sprint.Table) *sprint.Table {
 	c := sprint.NewTable(t.Name)
 	c.Epoch, c.Revision = t.Epoch, t.Revision
 	c.SetRows(slices.Clone(t.Rows()))
+	c.SetProps(stallProps(t))
 	for row, texts := range t.Texts {
 		c.Texts[row] = maps.Clone(texts)
 	}
@@ -98,6 +100,20 @@ func cloneTable(t *sprint.Table) *sprint.Table {
 		c.Put(&sprint.Card{ID: card.ID, Row: card.Row, Col: card.Col, Score: card.Score, Rev: card.Rev, Fields: maps.Clone(card.Fields)})
 	}
 	return c
+}
+
+// stallProps is the table's properties the friend stall ladder keeps (its rung and its
+// down stamp of each friend, sprint.PropFriendStallRung and PropFriendStallDown): state
+// the tick reads, and a rung the copy lost would be climbed again. The other
+// properties (the rolling indexes) are not carried, as before the ladder.
+func stallProps(t *sprint.Table) map[string]string {
+	out := map[string]string{}
+	for name, v := range t.Props() {
+		if strings.HasPrefix(name, sprint.PropFriendStallRung("")) || strings.HasPrefix(name, sprint.PropFriendStallDown("")) {
+			out[name] = v
+		}
+	}
+	return out
 }
 
 func cloneOpen(os []sprint.Open) []sprint.Open {

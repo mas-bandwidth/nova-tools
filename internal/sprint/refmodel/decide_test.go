@@ -29,7 +29,7 @@ func brief(m refmodel.Move) string {
 		return fmt.Sprintf("%s %s %s %s", m.Kind, m.Table, m.Card, strings.Join(m.Set, ","))
 	case refmodel.KindClose:
 		return fmt.Sprintf("close %s %v", m.Type, m.Subjects)
-	case refmodel.KindDue, refmodel.KindPush, refmodel.KindRow, refmodel.KindRefuse:
+	case refmodel.KindDue, refmodel.KindPush, refmodel.KindRow, refmodel.KindRefuse, refmodel.KindWake, refmodel.KindHealth:
 		return m.Kind + " " + m.Card + strings.Join(m.Attrs, ",")
 	}
 	return fmt.Sprintf("%s %s %v", m.Kind, m.Type, m.Subjects)
@@ -584,7 +584,7 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 		assert.True(t, names[p.Name], "the tick's part %s is no duty: Decide would leave it out", p.Name)
 	}
 	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
-		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
+		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyStall, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
 	var got []string
 	for _, d := range refmodel.Duties {
 		got = append(got, d.Name)
