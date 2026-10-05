@@ -1156,7 +1156,31 @@ func readersAll(t ntable.Table) ntable.Table {
 	if any {
 		width = strconv.Itoa(total)
 	}
-	return allOf(t, map[string]string{sprint.FieldWidth: width})
+	texts := map[string]string{sprint.FieldWidth: width}
+	if slices.Contains(columnNames(t.Columns), sprint.ReaderTiers) {
+		word := readerTiersSummary(t)
+		if word == "" {
+			word = sprint.ReaderTiersAll
+		}
+		texts[sprint.ReaderTiers] = word
+	}
+	return allOf(t, texts)
+}
+
+// readerTiersSummary is the tiers word of the one readers row: the word the
+// rows share, or the distinct words in row order. An empty cell prints all.
+func readerTiersSummary(t ntable.Table) string {
+	var words []string
+	seen := map[string]bool{}
+	for _, r := range t.Rows {
+		w := sprint.ReaderTiersShown(r.Texts[sprint.ReaderTiers])
+		if seen[w] {
+			continue
+		}
+		seen[w] = true
+		words = append(words, w)
+	}
+	return strings.Join(words, ",")
 }
 
 // readersWidths is the readers table with a width column beside reading, each
@@ -1185,6 +1209,9 @@ func readersWidths(t ntable.Table, fleet ntable.Table) ntable.Table {
 			width = widths[m]
 		}
 		row.Texts[sprint.FieldWidth] = width
+		if slices.Contains(columnNames(cols), sprint.ReaderTiers) {
+			row.Texts[sprint.ReaderTiers] = sprint.ReaderTiersShown(row.Texts[sprint.ReaderTiers])
+		}
 		rows[i] = row
 	}
 	t.Columns, t.Rows = cols, rows

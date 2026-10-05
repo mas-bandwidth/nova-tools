@@ -2151,6 +2151,21 @@ id (`--op`) returns the original result, with no second counter or notification.
   sprint (below) raises the route its reads are drawn on and never their
   count. The reads per machine are unchanged: a reader still runs at its
   machine's width.
+- A reader row carries the tiers it reads (`readers.tiers`, text, no fold;
+  an empty cell means every tier). `reader add <reader>... [--tiers
+  flash[,pro,heavy,frontier]]` and `reader set <reader>... --tiers ...` write
+  them; omitted, `all` and `default` store empty, which is today's behaviour.
+  The ask (`freeReaders`, `enoughReadersUp`, the level, and a returned read
+  asked again in place) counts a reader only for a primary whose read tier
+  (`readTierOf`) the cell names, and never asks a reader a read outside that
+  tier. A card with fewer readers of its tier up than `ReadsNeeded` raises the
+  one existing judgment `fewer than two readers up` and asks nothing of a
+  reader outside the tier. `where` and the reader verbs print the tiers
+  (`all` when the cell is empty). A table created before the column gains it
+  at `init` or at the next `reader set` (and at `reader add` when `--tiers`
+  is given). The model is `tla/ReaderTiers.tla`: no read is asked of a reader
+  outside the primary's tier. `tla/ReadsByRoom.tla` and `tla/DirtyTick.tla`
+  do not name reader tiers.
 - ask deals every primary in review that wants a read to as many different
   readers UP as it wants now, in work order. **Reads are asked one at a time,
   each to a reader with room** (`sprint.ReadsWanted` says how many,
