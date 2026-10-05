@@ -127,8 +127,6 @@ cmd/nova-version/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
 cmd/nova-version/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 cmd/nova-version/friendsequence_test.go:TestFriendSequenceSnapshotReport serial: t.Setenv
 internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
-internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls serial: t.Setenv
-internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard serial: t.Setenv
 internal/scaffold/scaffold_test.go:TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight serial: swaps package var scaffold.BeforeCreate
