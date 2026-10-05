@@ -105,7 +105,7 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	if d.Out != nil && out != "" {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return refused(id, out, exit, err)
+	return refusedHarness(ctx, "dsh", id, out, exit, err)
 }
 
 // Route is what status says: always defer. No live push into the open

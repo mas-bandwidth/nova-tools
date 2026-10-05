@@ -58,7 +58,9 @@ type world struct {
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
 	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
+	beatDown  func(ctx context.Context, server, friend, reason string, until time.Time) error
+	beatUp    func(ctx context.Context, server, friend string) error
+	progress  func(ctx context.Context, server string, argv []string) error // one progress verb to the sprint server (friend.ProgressArgv)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -105,6 +107,44 @@ func realWorld() world {
 				return "", fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
 			}
 			return res[0].Stdout, nil
+		},
+		beatDown: func(ctx context.Context, server, name, reason string, until time.Time) error {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			args := []string{"friend", "down", name}
+			if reason != "" {
+				args = append(args, "--reason", reason)
+			}
+			if !until.IsZero() {
+				args = append(args, "--until", until.UTC().Format(time.RFC3339))
+			}
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
+			if err != nil {
+				return err
+			}
+			if len(res) != 1 {
+				return fmt.Errorf("friend down: the server answered %d results, want 1", len(res))
+			}
+			if res[0].Code != 0 {
+				return fmt.Errorf("friend down refused: %s", strings.TrimSpace(res[0].Stderr))
+			}
+			return nil
+		},
+		beatUp: func(ctx context.Context, server, name string) error {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			args := []string{"friend", "up", name}
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
+			if err != nil {
+				return err
+			}
+			if len(res) != 1 {
+				return fmt.Errorf("friend up: the server answered %d results, want 1", len(res))
+			}
+			if res[0].Code != 0 {
+				return fmt.Errorf("friend up refused: %s", strings.TrimSpace(res[0].Stderr))
+			}
+			return nil
 		},
 		progress: func(ctx context.Context, server string, argv []string) error {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -200,6 +240,7 @@ func friendTool(w world) *tool.Tool {
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
+		f.Duration("limit-rest", friend.DefaultLimitRest, "how long to stay down when a usage limit or out-of-credits message gives no reset time")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		stateDir(f)
 		redis(f)
@@ -223,7 +264,7 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--limit-rest <d>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -238,7 +279,10 @@ carries messages. A turn runs as long as it prints; one silent past --silent-sto
 its process group, the reason on the record. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
-bus; a restart clears it. The friend row's mode and width come with each beat's answer (row_mode=,
+bus; a restart clears it. A usage limit or out-of-credits message marks the friend down until reset:
+nothing is delivered, messages stay pending, status says session=limited, the friend is held down
+on the sprint server with reason and until, and the seat is told once on the bus; at reset time
+the turn is retried, lifting the hold if it answers. The friend row's mode and width come with each beat's answer (row_mode=,
 row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
@@ -374,7 +418,7 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
+last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|limited|-> mode=<batch|one-shot|-> (limited: kind= until= reason=; broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
@@ -478,6 +522,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
+		LimitRest: c.Dur("limit-rest"),
+		BeatDown: func(ctx context.Context, reason string, until time.Time) error {
+			if w.beatDown == nil {
+				return nil
+			}
+			return w.beatDown(ctx, server, name, reason, until)
+		},
+		BeatUp: func(ctx context.Context) error {
+			if w.beatUp == nil {
+				return nil
+			}
+			return w.beatUp(ctx, server, name)
+		},
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
@@ -671,6 +728,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+	}
+	if s.Session == friend.SessionLimited {
+		o.Fact("kind", dash(s.Kind)).Fact("until", stamp(s.Until)).Fact("reason", tool.Text(s.SessionReason))
+		o.Note(fmt.Sprintf("the friend is rate-limited (%s) until %s: the daemon delivers nothing into it until then, answering pings with daemon-pong", s.Kind, stamp(s.Until)))
 	}
 	if s.BeatError != "" {
 		o.Note("the last beat failed: " + s.BeatError)

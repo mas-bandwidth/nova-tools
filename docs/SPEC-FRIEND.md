@@ -444,3 +444,36 @@ runner does not compose"; measured 2026-10-04 on a "minimal" session), so the
 adapter answers Deferred: the message stays pending, never given up, and the
 reason tells the friend to start a session without a preset or read the bus with
 `nova-bus recv`.
+
+
+### limits-mean-down.w1
+
+When a friend's harness encounters a usage-limit or out-of-credits condition (HTTP 429
+or 402, rate limits, token caps, daily quotas, or depleted credits), `internal/friend/limits.go`
+parses the harness output using a dedicated parser per harness (`claude`, `codex`, `opencode`,
+`grok`, `antigravity`, `dsh`, `gemini`). Unrecognised errors remain ordinary turn failures.
+
+The parser extracts:
+1. `kind`: `"limit"` (rate or usage limit) or `"credits"` (out of credits).
+2. `until`: reset time, extracted from timestamps (RFC3339, epoch seconds, relative offsets,
+   or clock times with AM/PM or 24h format); if unspecified, defaulting to `--limit-rest` (default 1h).
+3. `reason`: the error reason string.
+
+On a match:
+- The daemon marks the friend down until `until`.
+- While limited, the daemon delivers nothing into the session: messages stay pending on the bus
+  and are not counted towards deliveries or failed attempts.
+- The daemon continues to answer coordinator pings immediately with `daemon-pong` and acks them.
+- `status.json` records `session=limited kind=<k> until=<RFC3339>`.
+- The daemon sends a hold to the sprint server via its beat client (`friend down <name> --reason <r> --until <RFC3339>`).
+- The coordinator seat (or `--coordinator`) is told once on the bus (`friend <name>: <kind> limit: down until <RFC3339>`).
+
+At reset time (`now >= until`):
+- The daemon tries one turn with pending messages.
+- If the turn answers successfully:
+  - The friend is marked up again (`session=ok`).
+  - The hold is lifted on the sprint server (`friend up <name>`).
+  - The coordinator seat is told once on the bus (`friend <name>: up again after limit reset`).
+  - Pending messages are delivered and acked.
+- If the retry turn returns another usage-limit or out-of-credits message, the next reset time
+  is extracted and the friend remains down until the new reset time.

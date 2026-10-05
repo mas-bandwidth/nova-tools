@@ -15,21 +15,29 @@
 \* (the "coordinator silent" pushes) beside outages (the times the
 \* connection went silent).
 \*
+\* The harness limits (limits.go): a turn hits a usage limit or runs out of
+\* credits (TurnHitsLimit), marking the friend limited until its reset time
+\* (limitUntil). While limited, no turn is delivered into the session
+\* (NoTurnWhileLimited). At the reset time, the limit ends (LimitedEnds).
+\*
 \* Broken = "none" is the design. Every other value is a reversed witness,
 \* each caught by one property below:
-\*   "upwithoutpong"  the daemon's own beat makes the friend up: UpOnlyAfterPong
-\*   "neverdeaf"      a challenge never times out: DeafAfterWindow
-\*   "silenttwice"    "coordinator silent" is pushed every tick of an outage:
-\*                    SilentOncePerOutage
-\*   "neversilent"    the outage is never said: SilentOncePerOutage
-\*   "stalepong"      any nonce the session ever saw answers: OnlyCurrentNonceAnswers
+\*   "upwithoutpong"        the daemon's own beat makes the friend up: UpOnlyAfterPong
+\*   "neverdeaf"            a challenge never times out: DeafAfterWindow
+\*   "silenttwice"          "coordinator silent" is pushed every tick of an outage:
+\*                          SilentOncePerOutage
+\*   "neversilent"          the outage is never said: SilentOncePerOutage
+\*   "stalepong"            any nonce the session ever saw answers: OnlyCurrentNonceAnswers
+\*   "deliverwhilelimited"  a turn delivers while the harness is limited: NoTurnWhileLimited
 
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Window, MaxTime, MaxPings, Broken
 
-VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered
-vars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered>>
+VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
+          limited, limitUntil, delivering
+vars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
+          limited, limitUntil, delivering>>
 
 NoNonce == 0
 
@@ -46,6 +54,9 @@ TypeOK ==
   /\ silentSaid \in 0..MaxTime
   /\ outages \in 0..MaxTime
   /\ answered \in 0..MaxPings
+  /\ limited \in BOOLEAN
+  /\ limitUntil \in 0..MaxTime
+  /\ delivering \in BOOLEAN
 
 \* Up is what the daemon reports: the session answered the current challenge
 \* and has answered at least once (machine.go Up). The witness lets the
@@ -59,6 +70,7 @@ Init ==
   /\ seen = {}
   /\ silentSaid = 0 /\ outages = 0
   /\ answered = NoNonce
+  /\ limited = FALSE /\ limitUntil = 0 /\ delivering = FALSE
 
 \* The clock (machine.go Tick): a window without a ping makes the
 \* coordinator silent, said once at that moment; a window challenged with
@@ -73,7 +85,10 @@ Tick ==
        ELSE /\ UNCHANGED <<conn, silentFrom, outages>>
             /\ silentSaid' = IF Broken = "silenttwice" /\ conn = "silent" THEN silentSaid + 1 ELSE silentSaid
   /\ chal' = IF chal = "challenged" /\ now + 1 - asked >= Window /\ Broken # "neverdeaf" THEN "deaf" ELSE chal
-  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered>>
+  /\ IF limited /\ now + 1 >= limitUntil /\ Broken # "limitneverends"
+       THEN /\ limited' = FALSE /\ limitUntil' = 0
+       ELSE /\ UNCHANGED <<limited, limitUntil>>
+  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, delivering>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping): the
 \* connection is back (said once; the push is "coordinator back", not
@@ -86,7 +101,7 @@ Ping ==
   /\ chal' = IF chal = "deaf" THEN "deaf" ELSE "challenged"
   /\ asked' = now
   /\ seen' = seen \cup {nonce'}
-  /\ UNCHANGED <<now, silentFrom, pongs, silentSaid, outages, answered>>
+  /\ UNCHANGED <<now, silentFrom, pongs, silentSaid, outages, answered, limited, limitUntil, delivering>>
 
 \* The session answers with a nonce it has seen (machine.go Pong): the
 \* current one ends the challenge; any other changes nothing. The witness
@@ -96,12 +111,39 @@ Pong(n) ==
   /\ chal # "quiet"
   /\ (n = nonce \/ Broken = "stalepong")
   /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, limited, limitUntil, delivering>>
+
+\* A turn is delivered into the session. While the harness is limited,
+\* no turn is delivered unless the broken witness permits it.
+Deliver ==
+  /\ ~delivering
+  /\ IF Broken = "deliverwhilelimited" THEN TRUE ELSE ~limited
+  /\ delivering' = TRUE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, limited, limitUntil>>
+
+\* The turn completes successfully.
+TurnSuccess ==
+  /\ delivering
+  /\ delivering' = FALSE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, limited, limitUntil>>
+
+\* The turn hits a usage limit or runs out of credits.
+TurnHitsLimit ==
+  /\ delivering
+  /\ ~limited
+  /\ now + 2 <= MaxTime
+  /\ delivering' = FALSE
+  /\ limited' = TRUE
+  /\ limitUntil' = now + 2
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered>>
 
 Next ==
   \/ Tick
   \/ Ping
-  \/ \E n \in 1..MaxPings : Pong(n)
+  \/ (\E n \in 1..MaxPings : Pong(n))
+  \/ Deliver
+  \/ TurnSuccess
+  \/ TurnHitsLimit
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
 
@@ -122,6 +164,12 @@ SilentOncePerOutage == silentSaid = outages
 \* changes nothing.
 OnlyCurrentNonceAnswers ==
   [][(chal # "quiet" /\ chal' = "quiet") => answered' = nonce]_vars
+
+\* No turn is delivered while the harness is limited.
+NoTurnWhileLimited == delivering => ~limited
+
+\* A limit ends once the clock reaches its reset time.
+LimitedEnds == limited => now < limitUntil
 
 \* No liveness is claimed: the clock is finite here, and DeafAfterWindow
 \* already says an open challenge is younger than a window at every state,

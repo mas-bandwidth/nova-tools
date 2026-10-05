@@ -92,7 +92,12 @@ func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
 	for _, args := range routes {
 		out, exit, err := c.Run(ctx, c.Dir, c.program(), args, "")
 		if exit != 0 || err != nil {
-			if _, r := refused(session, out, exit, err); refusal == nil {
+			if _, r := refusedHarness(ctx, "codex", session, out, exit, err); refusal == nil {
+				if _, ok := r.(ProviderRefused); ok {
+					refusal = r
+				} else if _, ok := r.(UsageLimit); ok {
+					refusal = r
+				}
 				if _, ok := r.(ProviderRefused); ok {
 					refusal = r
 				}

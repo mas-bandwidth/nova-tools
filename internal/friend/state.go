@@ -61,6 +61,8 @@ type Status struct {
 	SessionID     string    `json:"session_id,omitempty"`
 	SessionReason string    `json:"session_reason,omitempty"`
 	BrokenAt      time.Time `json:"broken_at,omitempty"`
+	Kind          string    `json:"kind,omitempty"`
+	Until         time.Time `json:"until,omitzero"`
 	// Mode is how the daemon delivers now (batch or one-shot), and Lanes the
 	// one-shot lanes as n:session:card/turn, empty in batch.
 	Mode  string `json:"mode,omitempty"`

@@ -68,8 +68,9 @@ const (
 
 // The session's state, as the status file says it.
 const (
-	SessionOK     = "ok"
-	SessionBroken = "broken"
+	SessionOK      = "ok"
+	SessionBroken  = "broken"
+	SessionLimited = "limited"
 )
 
 // Daemon is one friend's loop: the recv loop over the friend's stream with
@@ -111,6 +112,9 @@ type Daemon struct {
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
+	LimitRest   time.Duration // default rest time when a limit gives none (--limit-rest, default 1h)
+	BeatDown    func(ctx context.Context, reason string, until time.Time) error
+	BeatUp      func(ctx context.Context) error
 	// Row is the friend's nova-config row as the daemon last read it (from
 	// its beat): her delivery mode (ModeBatch or ModeOneShot) and width,
 	// read every step so a change takes effect without a restart; nil, or
@@ -213,30 +217,35 @@ func oneLine(s string, n int) string {
 // loop is one run of the daemon: what Run keeps between steps, shared by the
 // batch turn and the one-shot lanes.
 type loop struct {
-	d            *Daemon
-	ctx          context.Context
-	b            *bus.Bus
-	passive      bool
-	silentStop   time.Duration
-	brokenAfter  int
-	answered     map[string]bool // entries whose ping the daemon has ponged
-	failed       map[string]int  // entries whose turn failed, and how often
-	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
-	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
-	notice       *Push           // the latest word about the coordinator the session is owed
-	noticeTaken  *Push           // the word the last head() put in a turn
-	saidSilent   bool            // what the session last heard: the coordinator silent
-	busy         *turn           // the batch turn under way, or deferred in hand
-	retry        time.Time       // when the deferred turn in hand is tried again; zero while none is
-	deferrals    int
-	deferSaid    time.Time
-	refusal      string // the last provider refusal, and how many turns in a row said it
-	streak       int
-	broken, told bool
-	results      chan result
-	lanes        *laneSet
-	mode         string // the mode the daemon delivers in now
-	saidNoLanes  bool
+	d                            *Daemon
+	ctx                          context.Context
+	b                            *bus.Bus
+	passive                      bool
+	silentStop                   time.Duration
+	brokenAfter                  int
+	answered                     map[string]bool // entries whose ping the daemon has ponged
+	failed                       map[string]int  // entries whose turn failed, and how often
+	hand                         []bus.Entry     // messages read and not yet in a turn, oldest first
+	inHand                       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
+	notice                       *Push           // the latest word about the coordinator the session is owed
+	noticeTaken                  *Push           // the word the last head() put in a turn
+	saidSilent                   bool            // what the session last heard: the coordinator silent
+	busy                         *turn           // the batch turn under way, or deferred in hand
+	retry                        time.Time       // when the deferred turn in hand is tried again; zero while none is
+	deferrals                    int
+	deferSaid                    time.Time
+	refusal                      string // the last provider refusal, and how many turns in a row said it
+	streak                       int
+	broken, told                 bool
+	limited, toldLimited, toldUp bool
+	limitRest                    time.Duration
+	limitedKind                  string
+	limitedUntil                 time.Time
+	limitedReason                string
+	results                      chan result
+	lanes                        *laneSet
+	mode                         string // the mode the daemon delivers in now
+	saidNoLanes                  bool
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -252,7 +261,7 @@ type loop struct {
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
-	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
+	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter, limitRest: d.LimitRest,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
@@ -261,6 +270,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	if l.brokenAfter <= 0 {
 		l.brokenAfter = DefaultBrokenAfter
+	}
+	if l.limitRest <= 0 {
+		l.limitRest = DefaultLimitRest
 	}
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
@@ -301,6 +313,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.status.Mode = l.mode
 		switch {
 		case l.broken:
+		case l.limited && now.Before(l.limitedUntil):
+			// deliver nothing while limited before reset
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
 			d.status.Lanes = l.lanes.said(width)
@@ -312,6 +326,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		if l.broken && !l.told {
 			l.told = d.tellBroken(ctx, l.b, l.brokenAfter)
+		}
+		if l.limited && !l.toldLimited {
+			l.toldLimited = d.tellLimited(ctx, l.b, l.limitedKind, l.limitedUntil, l.limitedReason)
 		}
 		if storeOK {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
@@ -441,7 +458,13 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 // It answers whether the store answered.
 func (l *loop) read(now time.Time) bool {
 	d, b := l.d, l.b
-	if l.busy == nil && !l.passive && !l.broken && len(l.hand) < MaxBatch {
+	canRead := l.busy == nil && !l.passive && !l.broken && len(l.hand) < MaxBatch
+	if l.limited {
+		if now.Before(l.limitedUntil) || l.busy != nil || len(l.hand) > 0 {
+			canRead = false
+		}
+	}
+	if canRead {
 		// in one-shot mode the lanes' turns run while the loop reads: it reads
 		// at once and pauses after, so a lane's result is never a block behind
 		block := BeatEvery
@@ -520,6 +543,7 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	tctx, cancel := context.WithCancel(l.ctx)
 	seen := &atomic.Int64{}
 	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
+	tctx = WithLimits(tctx, now, l.limitRest)
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
 	switch f := deliver.(type) {
 	case func(context.Context) result:
@@ -607,9 +631,26 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		delete(l.inHand, e) // acked below, or pending for the claim to hand in again
 	}
 	var refused ProviderRefused
+	var limited UsageLimit
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		if l.limited {
+			l.limited = false
+			d.status.Session = SessionOK
+			d.status.Kind = ""
+			d.status.Until = time.Time{}
+			d.status.SessionReason = ""
+			if d.BeatUp != nil {
+				if berr := d.BeatUp(l.ctx); berr != nil {
+					d.status.BeatError = berr.Error()
+				}
+			}
+			if !l.toldUp {
+				l.toldUp = d.tellUp(l.ctx, l.b)
+			}
+			line += " session=ok"
+		}
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -622,6 +663,29 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 				}
 			}
 		}
+	case errors.As(err, &limited):
+		// the harness hit a usage limit or ran out of credits: mark friend down until reset
+		l.streak, l.refusal = 0, ""
+		l.limited = true
+		l.limitedKind = limited.Kind
+		l.limitedUntil = limited.Until
+		l.limitedReason = limited.Reason
+		l.toldLimited = false
+		l.toldUp = false
+		d.status.Session = SessionLimited
+		d.status.Kind = limited.Kind
+		d.status.Until = limited.Until
+		d.status.SessionReason = limited.Reason
+		if d.BeatDown != nil {
+			if berr := d.BeatDown(l.ctx, limited.Reason, limited.Until); berr != nil {
+				d.status.BeatError = berr.Error()
+			}
+		}
+		for _, e := range l.hand {
+			delete(l.inHand, e.Entry)
+		}
+		l.hand = nil
+		line += fmt.Sprintf(" session=limited kind=%s until=%s", limited.Kind, limited.Until.UTC().Format(time.RFC3339))
 	case errors.As(err, &refused) && !t.stopped:
 		// the session is at fault, not the messages: they stay pending, counted toward nothing
 		if refused.Reason == l.refusal {
@@ -637,6 +701,22 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		}
 	default:
 		l.streak, l.refusal = 0, ""
+		if l.limited {
+			l.limited = false
+			d.status.Session = SessionOK
+			d.status.Kind = ""
+			d.status.Until = time.Time{}
+			d.status.SessionReason = ""
+			if d.BeatUp != nil {
+				if berr := d.BeatUp(l.ctx); berr != nil {
+					d.status.BeatError = berr.Error()
+				}
+			}
+			if !l.toldUp {
+				l.toldUp = d.tellUp(l.ctx, l.b)
+			}
+			line += " session=ok"
+		}
 		var given []string
 		for _, e := range t.entries {
 			l.failed[e]++
@@ -712,6 +792,41 @@ func (l *loop) batchDone(r result, now time.Time) {
 // to the seat the last ping named, else Coordinator. It answers whether
 // the word went out, or there was no one to tell (said on the record); a
 // send that fails is tried again the next step.
+func (d *Daemon) tellLimited(ctx context.Context, b *bus.Bus, kind string, until time.Time, reason string) bool {
+	to := d.m.Seat
+	if to == "" {
+		to = d.Coordinator
+	}
+	if to == "" {
+		d.Record("friend limited, and no coordinator to tell: no ping has named the seat and --coordinator is not set")
+		return true
+	}
+	subject := fmt.Sprintf("friend %s: %s limit: down until %s", d.Friend, kind, until.UTC().Format(time.RFC3339))
+	body := fmt.Sprintf("The friend hit a usage or credit limit (%s). The daemon delivers nothing until %s; every message stays pending. Reason: %s\n", kind, until.UTC().Format(time.RFC3339), reason)
+	if _, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
+		d.status.StoreError = "telling " + to + " the friend is limited: " + err.Error()
+		return false
+	}
+	return true
+}
+
+func (d *Daemon) tellUp(ctx context.Context, b *bus.Bus) bool {
+	to := d.m.Seat
+	if to == "" {
+		to = d.Coordinator
+	}
+	if to == "" {
+		return true
+	}
+	subject := fmt.Sprintf("friend %s: up again after limit reset", d.Friend)
+	body := fmt.Sprintf("The friend answered a turn after its limit reset and is up again.\n")
+	if _, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
+		d.status.StoreError = "telling " + to + " the friend is up: " + err.Error()
+		return false
+	}
+	return true
+}
+
 func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, brokenAfter int) bool {
 	to := d.m.Seat
 	if to == "" {
