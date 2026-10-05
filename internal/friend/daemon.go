@@ -119,6 +119,9 @@ type Daemon struct {
 	// CardDone is the one bus line a lane's session sends when its card is
 	// done (nova-bus send by path, as this friend, to the coordinator).
 	CardDone func(card, to string) string
+	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
+	// sprint server); nil stamps none.
+	Progress func(ctx context.Context, cards []Card) error
 
 	m           *Machine
 	status      Status
@@ -141,6 +144,7 @@ type turn struct {
 	seenN    int64
 	lastOut  time.Time // when the daemon last saw the turn print, or its start
 	stopped  bool      // the daemon stopped it: silent past SilentStop
+	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 }
 
@@ -275,6 +279,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		for _, t := range l.turns() {
 			l.watch(t, now)
 		}
+		l.stampProgress(now)
 		select {
 		case r := <-l.results:
 			l.batchDone(r, now)
@@ -548,6 +553,36 @@ func (l *loop) watch(t *turn, now time.Time) {
 		t.cancel()
 		l.d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
 			now.UTC().Format(time.RFC3339), t.subjects, l.silentStop, t.lastOut.UTC().Format(time.RFC3339)))
+	}
+}
+
+// stampProgress stamps progress on the cards whose lane turn printed since the turn's last
+// stamp, each at most every ProgressEvery, in one Progress call (docs/SPEC-SPRINT.md
+// section 8, the rules table's row late; tla/SprintRules.tla, Stamp). A turn that has
+// printed nothing stamps nothing, and the late rule reads that silence; a batch turn carries
+// messages, not a card, and stamps none. A stamp that fails is said and waits ProgressEvery
+// like any other.
+func (l *loop) stampProgress(now time.Time) {
+	if l.d.Progress == nil {
+		return
+	}
+	var cards []Card
+	var ts []*turn
+	for _, ln := range l.lanes.lanes {
+		t := ln.t
+		if t == nil || !t.running || ln.card == nil || t.seenN == 0 || !t.lastOut.After(t.stamped) || now.Sub(t.stamped) < ProgressEvery {
+			continue
+		}
+		cards, ts = append(cards, *ln.card), append(ts, t)
+	}
+	if len(cards) == 0 {
+		return
+	}
+	for _, t := range ts {
+		t.stamped = now
+	}
+	if err := l.d.Progress(l.ctx, cards); err != nil {
+		l.d.Record(fmt.Sprintf("%s progress: not stamped on %d cards: %s; tried again in %s", now.UTC().Format(time.RFC3339), len(cards), oneLine(err.Error(), 300), ProgressEvery))
 	}
 }
 

@@ -75,6 +75,19 @@ type Child interface {
 	Result() Result
 }
 
+// Printer is a Child that says when it last printed output (zero: never). The member stamps
+// progress on its card while it prints (stampProgress); a child that is not a Printer is
+// never stamped, and the late rule never returns its card for want of a stamp.
+type Printer interface {
+	Printed() time.Time
+}
+
+// ProgressEvery is how often the member stamps progress on a card whose child prints: the
+// sprint's own number (internal/sprint ProgressEvery, inside its RuleProgressWindow of ten
+// minutes with room for a stamp that is late or lost; docs/SPEC-SPRINT.md section 8, the
+// rules table's row late).
+const ProgressEvery = 3 * time.Minute
+
 // Pusher puts a work card's commit on origin, outside the wall: the commit
 // the child's result names (Result.Head) pushed to the branch the packet
 // names (Packet.Branch), never forced. It is asked once per ended launch.
@@ -396,6 +409,7 @@ type launch struct {
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
 	retried bool      // a read run again after a stage failure: a second one is returned
+	stamped time.Time // when the member last stamped progress on the card (stampProgress); zero: never
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -946,6 +960,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
+	if out := m.stampProgress(now); out != nil {
+		noAnswer("progress", out)
+	}
 	m.spent.Report = since()
 	if m.drain {
 		return acted, nil
@@ -1229,6 +1246,51 @@ func (m *Member) collect() (acted int) {
 	}
 	m.longWork()
 	return acted
+}
+
+// stampProgress stamps progress on the work cards whose child printed since the card's last
+// stamp, each at most every ProgressEvery: `progress --as <member> <card>@<gen>... --epoch
+// <n>`, one verb for the cards of each epoch (docs/SPEC-SPRINT.md section 8, the rules
+// table's row late; tla/SprintRules.tla, Stamp). A child that prints nothing stamps nothing:
+// the silence is what the late rule reads. A refused stamp waits ProgressEvery like any
+// other; it returns what the verb printed when the store did not answer, nil otherwise.
+func (m *Member) stampProgress(now time.Time) (unanswered []byte) {
+	if m.cfg.Reader {
+		return nil
+	}
+	byEpoch := map[uint64][]string{}
+	for id, l := range m.running {
+		p, ok := l.child.(Printer)
+		if !ok || l.busy || l.spent || l.res != nil || l.child.Done() {
+			continue
+		}
+		if at := p.Printed(); at.IsZero() || !at.After(l.stamped) || now.Sub(l.stamped) < ProgressEvery {
+			continue
+		}
+		byEpoch[l.epoch] = append(byEpoch[l.epoch], id)
+	}
+	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
+		ids := slices.Sorted(slices.Values(byEpoch[epoch]))
+		args := []string{"progress", "--as", m.cfg.As}
+		for _, id := range ids {
+			args = append(args, id+"@"+strconv.Itoa(m.running[id].gen))
+		}
+		args = append(args, "--epoch", strconv.FormatUint(epoch, 10))
+		code, out := m.run(args...)
+		if code == 2 {
+			unanswered = out
+			continue
+		}
+		if code != 0 {
+			fmt.Fprintf(m.out, "NOTE progress refused (exit %d): %s\n", code, oneLine(strings.TrimSpace(string(out))))
+		}
+		for _, id := range ids {
+			l := m.running[id]
+			l.stamped = now
+			m.running[id] = l
+		}
+	}
+	return unanswered
 }
 
 // forget drops a launch and what is remembered of its card, and tells a runner that is an

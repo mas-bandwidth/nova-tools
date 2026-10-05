@@ -388,6 +388,10 @@ func tiersArg(tiers string) string {
 	return tiers
 }
 
+// writeFriend applies one friend row: her slots and tiers through
+// ns_capacity_desired, charged to the machine her beat reports or the fleet's
+// coordinator machine, then her width, delivery mode and roles
+// (docs/SPEC-CONFIG.md, "friend").
 func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, actor, idem string) error {
 	f := row.Name
 	// 1. slots and tiers, registering the friend (ns_capacity_desired),
@@ -411,6 +415,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	case "NAME-IS-LOGIN":
 		return &RefusedError{Err: ErrActor, Detail: fmt.Sprintf("%s is a login in Redis (friends:login), not a friend", f)}
 	default:
+		// capacity_desired's INVALID reply names the check that refused
+		// beside the machine and the two numbers (the fifth word), so a
+		// friend row apply cannot accept is refused with the reason, never a
+		// bare "INVALID <machine> 0 0".
+		if check := word(words, 4); check != "" {
+			return fmt.Errorf("redis: friend %s slots: INVALID %s", f, check)
+		}
 		return fmt.Errorf("redis: friend %s slots: %s", f, strings.Join(words, " "))
 	}
 	// 2. her width, the desired hash's own field beside slots and tiers that
