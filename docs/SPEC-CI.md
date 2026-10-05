@@ -438,15 +438,18 @@ verb's job (the owner, 2026-10-05: "We need to get away from these one shot
 shell scripts.").
 
 The run, per host, in order, each step behind internal/bench's `Transport` (the
-system ssh and rsync through internal/subproc, each guarded by
-`testguard.RefuseHosts`; a fake in the tests):
+system ssh alone, through internal/subproc in one function, `sshLine`, guarded
+by `testguard.RefuseHosts`; a fake in the tests):
 
 1. **make**: one ssh, `mkdir -p <root> && mktemp -d <root>/run.XXXXXXXX`. ssh's
    own exit 255 (or ssh not starting) is a host that did not answer: the run
    moves to `--fallback` and asks nothing more of it. Any other non-zero status
    is a host that answered and refused, the end of the run. A directory mktemp
    prints that is not `<root>/run.<x>` is refused and nothing is removed.
-2. **copy**: the tree into `<run>/repo`, `.git` left out unless `--with-git`.
+2. **copy**: the tree into `<run>/repo`, `.git` left out unless `--with-git`:
+   `mkdir -p <run>/repo && tar -C <run>/repo -xf -` with a tar stream written in
+   Go (`bench.WriteTree`: directories, regular files and symlinks with their
+   modes; anything else refused) on ssh's stdin, so no rsync and no local tar.
 3. **exec**: `cd <run>/repo && GOCACHE=<cache> GOFLAGS=-mod=readonly
    NOVA_TEST_NO_HOST=1 nice -n 19 <command>`, every word shell-quoted, its
    output streamed; its exit status is the verb's.
@@ -460,19 +463,24 @@ up; an unanswering host falls back and is asked nothing more; no host
 answering is a refusal that removes nothing; a mktemp answer that is not a run
 directory is never removed), `TestBenchRunRefusesUsage` (a host ssh could read
 as an option, a `~`, `..`, home or root path, and a missing tree are refused
-before any bench is reached) and
-`TestRunRemovesTheRunDirectoryWhenTheCopyFails` in internal/bench.
+before any bench is reached), `TestBenchToolHasNoProblems`, and in
+internal/bench `TestRunRemovesTheRunDirectoryWhenTheCopyFails` and
+`TestWriteTreeLeavesGitOutUnlessAsked`.
 
 Not yet: the bench, the cache and the fallback default from nova-config's
 machine rows. A machine row today carries no bench cache or fallback field, so
 `--host` is required and the paths have fixed defaults until the rows do.
 
-Held, not landed: internal/bench's `Exec.Shell` is a new ssh exec site, which
+Held, not landed: internal/bench's `sshLine` is a new ssh exec site, which
 `TestCIOneBenchRunner` refuses (the fleet plays are the one way this tree runs
-a script on a bench, and `testdata/bench-runners.allow` only shrinks); its
-rsync wants a row in `infra/functional-image/binaries.txt`; and the verb's own
-`flag.FlagSet` is a sixth nova-ci site past the `no-hand-printing` ceiling of
-five. Whether a bench run is a sanctioned runner is the owner's decision.
+a script on a bench, and `testdata/bench-runners.allow` only shrinks). The
+allow file's own remedy, "a new site uses" the benchsh package, names a
+package #4327 deleted, so no sanctioned runner remains for a new site to use. Whether a
+bench run is a sanctioned runner (one row, `internal/bench/exec.go sshLine`,
+with `benchRunnerAtBase` raised, or internal/bench read as the one runner the
+way the deleted benchsh package was) is the owner's decision. The verb itself is
+on internal/tool, so it adds no `flag.FlagSet` to nova-ci, and it runs nothing
+but ssh, so the functional image needs no new row.
 
 ## The class tests
 

@@ -2,109 +2,118 @@ package main
 
 // bench.go is `nova-ci bench run`: one command on a Linux bench against a copy
 // of a local tree, the recipe every brief used to type out by hand
-// (internal/bench holds the run; this file is its flags and its lines).
+// (internal/bench holds the run; this file is its flags and its lines). It is
+// nova-ci's first verb on internal/tool: the skeleton parses its flags and
+// renders its refusals, and the verb prints only the command's own output and
+// its one CI BENCH line (Flags.Prints).
 
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"strings"
-	"syscall"
+	"slices"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bench"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// cmdBench is `nova-ci bench <verb>`; run is the one verb.
-func cmdBench(args []string, stdout, stderr io.Writer, t bench.Transport) int {
-	if len(args) > 0 {
-		verbflag.HelpIfAsked(args[:1], "bench")
+// benchEffect is what `bench run` does beyond printing, the last line of its -h.
+const benchEffect tool.Effect = "delivery: copies the tree to a run directory on the bench, runs the command there and removes that directory"
+
+// benchTool is the tool behind `nova-ci bench`: one verb, run over t, which
+// runs argv, the words after --. The skeleton parses the flags before --; a
+// word there that is no flag is refused as a positional argument.
+func benchTool(t bench.Transport, argv []string) *tool.Tool {
+	return &tool.Tool{
+		Name:      "nova-ci",
+		What:      "nova-ci bench runs one command on a Linux bench against a copy of a local tree.",
+		How:       "make a run directory on the bench, copy the tree into it, run the command\nunder nice with the bench's cache, then remove that directory and nothing else.",
+		ExitTable: exitTable("bench run"),
+		Verbs: []tool.Verb{{
+			Name:      "bench run",
+			Usage:     "bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>] [--cache <dir>] [--with-git] -- <go command>",
+			Effect:    benchEffect,
+			ExitTable: exitTable("bench run"),
+			Flags:     benchRunFlags,
+			Run:       func(c *tool.Call) *tool.Out { return runBench(c, t, argv) },
+		}},
 	}
-	if len(args) == 0 || args[0] != "run" {
-		what := "a verb is needed after bench; the one verb is run"
-		if len(args) > 0 {
-			what = fmt.Sprintf("unknown verb %q after bench; the one verb is run", args[0])
-		}
-		return refuseRun(stderr, " bench", what, "nova-ci bench run -h")
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return cmdBenchRun(ctx, args[1:], stdout, stderr, t)
 }
 
-// cmdBenchRun is `nova-ci bench run --host <h> [--fallback <h>] --dir <tree>
-// -- <command>`. Its exit status is the command's; 2 is a run that never
-// reached the command (usage, no bench answered, the copy failed), said in one
-// REFUSED line. The command's output is its own on stdout and stderr; the run's
-// own lines (CI BENCH PASSED for a host passed over, CI BENCH for the run) go
-// to stderr, so stdout is exactly the command's.
-func cmdBenchRun(ctx context.Context, args []string, stdout, stderr io.Writer, t bench.Transport) int {
-	const where = " bench run"
-	fs := flag.NewFlagSet("bench run", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	host := fs.String("host", "", "the bench the command runs on, a tailnet host ssh reaches (required)")
-	fallback := fs.String("fallback", "", "the bench tried when --host does not answer (ssh itself fails); never tried when --host answered")
-	dir := fs.String("dir", "", "the local tree copied to the bench, its .git left out (required)")
-	root := fs.String("root", bench.DefaultRoot, "where on the bench the run directory is made, relative to the login's home or absolute")
-	cache := fs.String("cache", bench.DefaultCache, "GOCACHE on the bench, relative to the login's home or absolute; shared by every run there")
-	withGit := fs.Bool("with-git", false, "copy the tree's .git as well, for a command that reads history")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, where, verbflag.Explain(fs, err))
+// cmdBench is `nova-ci bench <verb>`; run is the one verb. The words after
+// the first -- are the command, never flags of the verb.
+func cmdBench(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, t bench.Transport) int {
+	head, argv := args, []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		head, argv = args[:i], args[i+1:]
 	}
-	argv := fs.Args()
-	var bad []string
-	if *host == "" {
-		bad = append(bad, "--host wants the bench the command runs on")
-	}
-	if *dir == "" {
-		bad = append(bad, "--dir wants the local tree to copy")
-	}
+	return benchTool(t, argv).RunContext(ctx, append([]string{"bench"}, head...), stdin, stdout, stderr)
+}
+
+func benchRunFlags(f *tool.Flags) {
+	f.Prints()
+	f.Required("host", "the bench the command runs on, a host ssh reaches")
+	f.String("fallback", "", "the bench tried when --host does not answer (ssh itself fails); never tried when --host answered")
+	f.Required("dir", "the local tree copied to the bench, its .git left out")
+	f.String("root", bench.DefaultRoot, "where on the bench the run directory is made, relative to the login's home or absolute")
+	f.String("cache", bench.DefaultCache, "GOCACHE on the bench, relative to the login's home or absolute; shared by every run there")
+	f.Bool("with-git", false, "copy the tree's .git as well, for a command that reads history")
+	f.Check(func(c *tool.Call) {
+		if c.Str("fallback") != "" && c.Str("fallback") == c.Str("host") {
+			c.Problem("--fallback names the same bench as --host")
+		}
+		if dir := c.Str("dir"); dir != "" {
+			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+				c.Problem(fmt.Sprintf("--dir %s is not a directory here", oneline.Quote(dir)))
+			}
+		}
+	})
+}
+
+// runBench is `nova-ci bench run --host <h> [--fallback <h>] --dir <tree> --
+// <command>`. Its exit status is the command's; 2 is a run that never reached
+// the command (usage, no bench answered, the copy failed), said in one REFUSED
+// line. The command's output is its own on stdout and stderr; the run's own
+// lines (CI BENCH PASSED for a host passed over, CI BENCH for the run) go to
+// stderr, so stdout is exactly the command's.
+func runBench(c *tool.Call, t bench.Transport, argv []string) *tool.Out {
 	if len(argv) == 0 {
-		bad = append(bad, "no command after --; give the go command to run, such as -- go test ./cmd/nova-ci/")
+		return tool.Refuse("no command after --; give the go command to run, such as -- go test ./cmd/nova-ci/")
 	}
-	if *fallback != "" && *fallback == *host {
-		bad = append(bad, "--fallback names the same bench as --host")
+	host, fallback := c.Str("host"), c.Str("fallback")
+	hosts := []string{host}
+	if fallback != "" {
+		hosts = append(hosts, fallback)
 	}
-	if len(bad) == 0 {
-		if info, err := os.Stat(*dir); err != nil || !info.IsDir() {
-			bad = append(bad, fmt.Sprintf("--dir %s is not a directory here", oneline.Quote(*dir)))
-		}
-	}
-	hosts := []string{*host}
-	if *fallback != "" {
-		hosts = append(hosts, *fallback)
-	}
-	abs, _ := filepath.Abs(*dir)
-	o := bench.Options{Hosts: hosts, Dir: abs, Root: *root, Cache: *cache, WithGit: *withGit, Argv: argv,
-		Stdout: stdout, Stderr: stderr, Notes: stderr}
-	if len(bad) == 0 {
-		if err := o.Validate(); err != nil {
-			bad = append(bad, err.Error())
-		}
-	}
-	if len(bad) > 0 {
-		return refuse(stderr, where, strings.Join(bad, "; "))
-	}
-	res, err := bench.Run(ctx, t, o)
+	abs, err := filepath.Abs(c.Str("dir"))
 	if err != nil {
-		next := "nova-ci bench run -h"
-		if errors.Is(err, bench.ErrNoBench) {
-			next = "ssh " + *host + " true"
-		}
-		if res.RunDir != "" {
-			fmt.Fprintf(stderr, "CI BENCH host=%s run=%s exit=- removed=%s\n", res.Host, res.RunDir, removedWord(res))
-		}
-		return refuseRun(stderr, where, oneline.Err(err), next)
+		return tool.Refuse(oneline.Err(err))
 	}
-	fmt.Fprintf(stderr, "CI BENCH host=%s run=%s exit=%d removed=%s\n", res.Host, res.RunDir, res.Code, removedWord(res))
-	return res.Code
+	o := bench.Options{Hosts: hosts, Dir: abs, Root: c.Str("root"), Cache: c.Str("cache"), WithGit: c.Bool("with-git"), Argv: argv,
+		Stdout: c.Stdout, Stderr: c.Stderr, Notes: c.Stderr}
+	if err := o.Validate(); err != nil {
+		out := tool.Refuse(err.Error())
+		out.Remedy = "nova-ci bench run -h"
+		return out
+	}
+	res, err := bench.Run(c.Ctx, t, o)
+	if err != nil {
+		if res.RunDir != "" {
+			fmt.Fprintf(c.Stderr, "CI BENCH host=%s run=%s exit=- removed=%s\n", res.Host, res.RunDir, removedWord(res))
+		}
+		out := tool.Refuse(oneline.Err(err))
+		out.Remedy = "nova-ci bench run -h"
+		if errors.Is(err, bench.ErrNoBench) {
+			out.Remedy = "ssh " + host + " true"
+		}
+		return out
+	}
+	fmt.Fprintf(c.Stderr, "CI BENCH host=%s run=%s exit=%d removed=%s\n", res.Host, res.RunDir, res.Code, removedWord(res))
+	return tool.Exit(res.Code)
 }
 
 func removedWord(res bench.Result) string {
