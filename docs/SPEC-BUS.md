@@ -228,7 +228,7 @@ the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: o
 
 ## The deadlines
 
-The finding (2026-10-04, one timeout while the Studio's load average was 35) was
+The finding (2026-10-04, one timeout on a host whose load average was 35) was
 read against the base tip first. The client already set a bound on every network
 step, in `internal/redisconn/open.go`: `OpenTimeout`, `DialTimeout`, `WriteTimeout`,
 `ReadTimeout` and `PoolTimeout`, 5 s each; a command that blocks gets its block
