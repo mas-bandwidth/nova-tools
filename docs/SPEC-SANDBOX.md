@@ -405,6 +405,33 @@ The test requirements are listed under **Tests this spec demands**.
     cache environment variables; `nova-sandbox` derives no cache path from task
     text, creates no default cache, and supplies no cache environment variable.
 
+### deletes-only-in-the-job-dir.w5 — deletes only in the job dir and its tmp
+
+Two children ran `rm -rf` on a variable path, and the wall let it through: every
+`--write` carried the remove rights. The wall refuses unlink, rmdir and rename-away
+of any path outside the **job dir** (the first `--write`) and its **tmp** (`--tmp`,
+or the default under the job dir), even where writing is allowed: a shared cache
+(rule 17) or a config dir may be written, never deleted from, unless it is under
+the job dir or the tmp. `Policy.DeletesIn` is the one test of "under the job".
+
+- **Linux.** A write-set directory outside both gets the write mask minus
+  `REMOVE_FILE` and `REMOVE_DIR` (`writeRuleMask`). Landlock checks a remove right
+  on the parent of the entry removed or renamed away, so this refuses all three,
+  and replacing an existing file by rename is refused there for the same reason.
+  Rules are a union, so a job dir nested under such a write keeps its rights. The
+  `policy` verb prints such a directory as `write-nodelete=` instead of `write=`.
+- **macOS.** After every write grant in the profile (HOME's included) comes one
+  `(deny file-write-unlink (subpath (param "WRITEn")))` for each such `--write`,
+  then `(allow file-write-unlink ...)` for `WRITE0` and, when the tmp is outside
+  it, for `JOBTMP`, because the last matching rule wins. Whether macOS's
+  `file-write-unlink` also covers rename-away has not been measured.
+- **Checked by.** `TestTheWallRefusesDeletesOutsideTheJob`, linux: under the wall,
+  with an outside directory as a second `--write`, `rm -rf` of it, `rm` of a file in
+  it and `mv` of a file out of it are each refused and the files are still there; a
+  write there and a delete in the job dir succeed. `TestWritesOutsideTheJobCarryNoRemoveRights`
+  checks the masks, the printed ruleset and the profile's order
+  (`internal/sandbox/delete_outside_test.go`).
+
 ## The verbs
 
 ```

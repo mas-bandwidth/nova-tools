@@ -406,6 +406,19 @@ func insideAny(path string, dirs []string) bool {
 	return slices.ContainsFunc(dirs, func(d string) bool { return Inside(path, d) })
 }
 
+// DeletesIn reports whether the wall lets the command delete beneath dir: unlink, rmdir
+// and rename-away. Only the job directory (the first --write) and the temp directory
+// qualify. Every other --write, a shared cache or a config dir, may be written and never
+// deleted from, so an rm -rf of a variable path that names one of them is refused by the
+// kernel rather than trusted to the command (docs/SPEC-SANDBOX.md,
+// "deletes-only-in-the-job-dir.w5").
+func (p *Policy) DeletesIn(dir string) bool {
+	if p == nil || len(p.Writes) == 0 {
+		return false
+	}
+	return Inside(dir, p.Writes[0]) || (p.Tmp != "" && Inside(dir, p.Tmp))
+}
+
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
 // literals of the darwin profile put a path INTO the profile text (the -D parameters do
 // not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a
