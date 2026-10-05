@@ -51,7 +51,7 @@ func IsFriendRow(row string) bool {
 
 // WhoOfBrief is the who a brief gives its card (FieldWho): "" when its header names no
 // friend (or its WHO line does not read: add refuses that brief), else WhoFriend or
-// FriendRow(<name>).
+// FriendRow(<name>), with an only. prefix for a hard pin.
 func WhoOfBrief(brief string) string {
 	w, why := cardhdr.ReadWho(brief)
 	switch {
@@ -60,22 +60,28 @@ func WhoOfBrief(brief string) string {
 	case w.Name == "":
 		return WhoFriend
 	}
+	if w.Only {
+		return "only." + FriendRow(w.Name)
+	}
 	return FriendRow(w.Name)
 }
 
-// FriendCard says the primary is a friend's card, and names the friend its WHO line
-// names ("" for any friend).
+// FriendCard says the primary names a friend, and names that friend ("" for any friend).
+// A hard pin (only.friend.<name>) names her too.
 func FriendCard(c *Card) (name string, ok bool) {
-	w := c.F(FieldWho)
+	w := strings.TrimPrefix(c.F(FieldWho), "only.")
 	if w == WhoFriend {
 		return "", true
 	}
 	return FriendOfRow(w)
 }
 
-// friendCardWhy is why the machines' deal leaves a friend's card: the tick deals it to a
-// friend.
-const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick deals it to a friend up with room, never to a machine"
+// OnlyFriend is the explicit hard pin (docs/SPEC-SPRINT.md, WHO preference).
+func OnlyFriend(c *Card) bool { return strings.HasPrefix(c.F(FieldWho), "only.friend.") }
+
+// friendCardWhy is why the machines' deal leaves a hard-pinned card: the tick deals it
+// to that friend, never to a machine or to another friend.
+const friendCardWhy = "a friend's card (its brief says WHO: only friend): the tick deals it to a friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
 // works at once, her friends row's), her status (FriendStatus: up, held or down), her
@@ -128,25 +134,18 @@ func friendLoad(s *Snapshot, name string) int {
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
 }
 
-// FriendDeal deals the friends' cards (in the order given, the deal's stream turns) to
-// the friends up, each within her room, DealAhead times her width, as the machines'
-// deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
-// people busy by having 2X width queued up in ready per-friend"): a card naming a
-// friend goes to her while she is up and below her room, and waits ready otherwise; a
-// card for any friend goes to the friend up with the most room free, the first by name
-// among equals. In batch mode (the default), a friend's room is DealAhead times her width
-// and her lanes are her width; in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
-// a friend's room is 1 and her lanes are 1: she gets one card at a time, straight into
-// working, and the next only after the last one finished.
-// Each is its next attempt's work card, created on the friend's row at generation 1, in
-// working while she has a lane free (her width less her working cards; dealt and taken now:
-// its deadline is the working one) and ready behind them otherwise (her finish takes the next:
-// Finish), carrying the primary's fix, finding and why as a machine's deal does; its primary
-// moves ready -> working. The friend's row is declared by the plan the first time she is dealt to.
+// FriendDeal offers ready cards to the preferred friend, then to friends whose
+// class covers the card's tier (docs/SPEC-SPRINT.md, WHO preference;
+// tla/WhoPreference.tla checks the selection, not the room). In batch mode (the
+// default) a friend's room is DealAhead times her width and her lanes are her
+// width; in one-shot mode her room is 1 and her lanes are 1. A card not selected
+// stays for the fleet unless it says WHO: only friend. Each selected card is its
+// next attempt's work card on her row, working while she has a lane free (its
+// deadline is the working one, including friend_deadline) and ready behind
+// otherwise. The friend's row is declared the first time she is dealt to.
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	var p Plan
 	free, lanes := map[string]int{}, map[string]int{}
-	var up []string
 	for _, f := range seats {
 		if f.Status == Up {
 			room, width := DealAhead*f.Width, f.Width
@@ -155,14 +154,12 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 			}
 			free[f.Name] = room - friendLoad(s, f.Name)
 			lanes[f.Name] = width - s.Fleet.Count(FriendRow(f.Name), Working)
-			up = append(up, f.Name)
 		}
 	}
-	slices.Sort(up)
 	declared := map[string]bool{}
+	up := s.UpMembers()
 	for _, c := range cards {
-		name, ok := FriendCard(c)
-		if !ok || c.Col != Ready || IsSentinel(c) {
+		if c.Col != Ready || IsSentinel(c) {
 			continue
 		}
 		// a card taken back from a friend (friend take) is placed again, never on her (FriendTake)
@@ -170,19 +167,20 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 		if wc != nil && wc.Col != Withdrawn {
 			wc = nil
 		}
+		// A failed attempt's bound and escalation stay with the existing dealer.
+		if wc != nil && redealBound(wc) {
+			continue
+		}
+		if held, _ := AtStagingBound(s, c, up); held != nil {
+			continue
+		}
 		not := ""
 		if wc != nil {
 			not, _ = FriendOfRow(wc.F(FieldTakenFrom))
 		}
+		name := preferredFriend(c, seats, free, not)
 		if name == "" {
-			for _, f := range up {
-				if f != not && free[f] > 0 && (name == "" || free[f] > free[name]) {
-					name = f
-				}
-			}
-		}
-		if name == "" || name == not || free[name] <= 0 {
-			continue // no friend it may go to is up with room: it waits ready
+			continue
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
 		if wc == nil && s.Fleet.Card(card) != nil {
@@ -207,6 +205,30 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 		p.Units = append(p.Units, friendDealUnit(s, c, card, row, col))
 	}
 	return Lawful(p)
+}
+
+// preferredFriend is the one preference ordering (docs/SPEC-SPRINT.md, WHO
+// preference): the named friend first, even when her class does not cover the
+// tier, then tier-covering friends by free room and name. No result leaves the
+// card for the fleet unless it explicitly says only. An empty class covers nothing.
+func preferredFriend(c *Card, seats []FriendSeat, free map[string]int, not string) string {
+	preferred, _ := FriendCard(c)
+	best := ""
+	for _, f := range seats {
+		if f.Status != Up || free[f.Name] <= 0 || f.Name == not {
+			continue
+		}
+		if f.Name == preferred {
+			return f.Name
+		}
+		if OnlyFriend(c) || !slices.Contains(strings.Split(f.Class, ","), cardTierOf(c)) {
+			continue
+		}
+		if best == "" || free[f.Name] > free[best] || (free[f.Name] == free[best] && f.Name < best) {
+			best = f.Name
+		}
+	}
+	return best
 }
 
 // friendDealUnit is one friend's card dealt: its work card on her row, in working (taken
@@ -248,6 +270,10 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 	// kept on a friend's card withdrew it every tick, and each deal again was a new inbox copy)
 	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
 		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
+	if wc.F(FieldTakeEnded) != "" {
+		set["redeals"] = itoa(wc.Int("redeals") + 1)
+		unset = append(unset, FieldTakeEnded, FieldProviderError, FieldDecided, FieldDecidedUsed)
+	}
 	if col == Working {
 		name, _ := FriendOfRow(row)
 		tset, tunset := friendTaken(s, wc, name)

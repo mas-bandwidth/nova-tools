@@ -171,15 +171,16 @@ names the `Stage:` path and the reason.
 
 **The WHO line** (the owner, 2026-10-03: "Could we try expressing the work left for
 nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends where we
-would normally do friend work."). A header line `WHO: friend` makes the card a friend's, dealt to
-any friend up with room; `WHO: friend <name>` deals it to that friend, her name a row of the
-sprint's friends table. A card with no WHO line is a machine's and is framed as this page says;
-a friend's card is never framed or staged: the sprint delivers it to her inbox as
-`inbox/<card>/BRIEF.md` and finishes it from her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md
-section 1, a friend's card; docs/FRIENDS.md, a sprint card). `cardhdr.ReadWho` is the one parser:
-the key in any case, under line 1 and above the first blank line; `nova-sprint add` and `brief`
-refuse any other value, and a name the friends table lacks (`TestReadWhoReadsAFriendOrNone`,
-`TestAddHoldsTheWhoLineToTheFriendsTable`).
+would normally do friend work."; 2026-10-04: pins only by choice). `WHO: friend` prefers any
+friend whose class covers the tier. `WHO: friend <name>` prefers that friend while she is up
+with room, then another covering friend, then the fleet. `WHO: only friend <name>` waits for
+that friend alone. A card with no WHO line, or `WHO: -`, is offered to covering friends and
+then framed for the fleet as this page says. A card placed on a friend is never framed or
+staged: the sprint delivers it to her inbox as `inbox/<card>/BRIEF.md` and finishes it from
+her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md section 1, a friend's card; docs/FRIENDS.md,
+a sprint card). `cardhdr.ReadWho` is the one parser: the key in any case, under line 1 and
+above the first blank line; `nova-sprint add` and `brief` refuse any other value, and a name
+the friends table lacks (`TestReadWhoReadsAFriendOrNone`, `TestAddHoldsTheWhoLineToTheFriendsTable`).
 
 ## 3. The result shape
 

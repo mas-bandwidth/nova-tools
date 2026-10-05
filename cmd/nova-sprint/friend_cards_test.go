@@ -353,6 +353,9 @@ func TestAddHoldsTheWhoLineToTheFriendsTable(t *testing.T) {
 	code, errs := add("friend nobody")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "WHO: friend nobody, and nobody is no row of the friends table (friends: amy)")
+	code, errs = add("only friend nobody")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "nobody is no row")
 	code, errs = add("machine")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "WHO: machine is not `friend` or `friend <name>`")
@@ -412,7 +415,7 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	ta.ok("friend beat amy")
 	dir := t.TempDir()
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy")), 0o644))
 	}
 	ta.ok("add --stream s1 --brief-dir " + dir)
 	ta.ok("start")
