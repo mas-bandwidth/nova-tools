@@ -20,7 +20,7 @@ import (
 func friendWidth(ta *testApp, friend string) string {
 	var w whereView
 	ta.json("where", &w)
-	return w.Tables[sprint.Friends][friend]["width"]
+	return cellText(w.Tables[sprint.Friends][friend]["width"])
 }
 
 func TestFriendUpWidthSetsHerWidthAsFleetUpWidthSetsAMembers(t *testing.T) {

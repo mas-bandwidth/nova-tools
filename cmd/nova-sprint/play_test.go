@@ -82,7 +82,7 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 		ta.coordinate()
 		ta.clean()
 	}
-	t.Fatalf("not landed after 300 rounds: %s", ta.ok("where"))
+	t.Fatalf("not landed after 300 rounds: %s\n%s\n%s", ta.ok("where"), ta.ok("inbox"), ta.ok("card s3-5"))
 }
 
 func TestPlaySaysWhatWaitsForTheCoordinator(t *testing.T) {

@@ -73,6 +73,7 @@ func Abstract(o Observed) State {
 		p.Head = headAttempt(c.F("head"))
 		p.CI, p.CIHead = c.F("ci"), headAttempt(c.F("ci_head"))
 		p.ReturnedAt = c.Int(sprint.FieldReturnedAttempt)
+		p.Finder, p.FindingAttempt = c.F(sprint.FieldFindingReader), c.Int(sprint.FieldFindingAttempt)
 		a.Primaries[id] = p
 	}
 	// A primary ready or waiting whose card at its attempt field is done
@@ -118,7 +119,7 @@ func Abstract(o Observed) State {
 		if c.F("kind") != "read" {
 			continue
 		}
-		r := ReadCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Reader: c.F("reader"), Place: Retired, Verdict: c.F("verdict")}
+		r := ReadCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Reader: c.F("reader"), Place: Retired, Verdict: c.F("verdict"), Finder: c.F(sprint.FieldFinderRead) != ""}
 		if c.Placed() {
 			r.Place = c.Col
 		}

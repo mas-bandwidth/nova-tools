@@ -130,7 +130,7 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	frame = tableOf(ta.frame(), sprint.Friends)
 	assert.Contains(t, frame, "held (resting her, until "+ta.a.clock12(back, ta.now)+")", frame)
 	ta.json("where", &w)
-	assert.True(t, strings.HasPrefix(w.Tables[sprint.Friends]["amy"]["status"], sprint.Held+" ("), "where --json carries the cell as printed")
+	assert.True(t, strings.HasPrefix(cellText(w.Tables[sprint.Friends]["amy"]["status"]), sprint.Held+" ("), "where --json carries the cell as printed")
 	ta.ok("friend up amy")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "the hold lifted, the observation (down) stands")
 	ta.a.sleep(time.Second)

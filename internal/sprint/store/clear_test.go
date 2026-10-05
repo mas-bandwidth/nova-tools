@@ -30,8 +30,7 @@ func midFlight(t *testing.T) *harness {
 	c := s.Fleet.Card("s1-4.w1")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 	h.must(FinishStep(sprint.FinishReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-4"}}}))
-	rs := h.snap().Readers.Of("s1-4")
+	rs := h.pairAsked("s1-4") // one read begun, one asked: both columns mid-flight
 	h.must(ReadStep(sprint.ReadReq{As: rs[0].F("reader"), Begin: true, Sel: sprint.Sel{IDs: []string{rs[0].ID}}}))
 	c = h.snap().Fleet.Card("s1-5.w1")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))

@@ -21,9 +21,7 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 	}
 	w.must(Ask(w.s, AskReq{}))
 	for _, id := range []string{"s1-1", "s1-2"} {
-		for _, rc := range readsAt(w.s, w.s.Work.Card(id), 1) {
-			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-		}
+		readOK(w, id)
 	}
 	notes := w.notesOf(NReadyToAccept)
 	require.Len(t, notes, 2, "ready to accept: %+v", notes)
@@ -101,10 +99,12 @@ func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Ask(w.s, AskReq{}))
-	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	w.tick(time.Minute)
 	for i, verdict := range []string{"ok", "broken"} {
-		rc := reads[i]
+		if i > 0 {
+			w.must(Ask(w.s, AskReq{})) // the second read, once the first came back ok
+		}
+		rc := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[i]
 		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: verdict, Finding: "f:1", Sel: Sel{IDs: []string{rc.ID}}}))
 		require.Equal(t, verdict, rc.Col, "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
 		require.Equal(t, stamp(w.s.Now), rc.F("begun"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)

@@ -35,8 +35,7 @@ func TestAckOfBrokenReadsIsRefused(t *testing.T) {
 	p := newProbe(t)
 	p.setup(1)
 	p.toReview("h", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	rs := p.snap().Readers.Of("s1-1")
+	rs := p.pairAsked("s1-1")
 	p.read(rs[0].F("reader"), rs[0].ID, "broken")
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
 	var nids []string
@@ -60,8 +59,7 @@ func TestCIGreenLeavesTheBrokenReadOpen(t *testing.T) {
 	p := newProbe(t)
 	p.setup(1)
 	p.toReview("h", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	rs := p.snap().Readers.Of("s1-1")
+	rs := p.pairAsked("s1-1")
 	p.read(rs[0].F("reader"), rs[0].ID, "ok")
 	p.do("ci red", CIStep(sprint.CIReq{Sel: ids("s1-1"), Red: true, Run: "r1"}))
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
@@ -102,11 +100,7 @@ func TestTheStreamStateThroughAStreamsLife(t *testing.T) {
 	p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
 	p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask: the finish asks no reader
-	for _, rc := range p.snap().Readers.Of("s1-1") {
-		if rc.Col == sprint.Asked {
-			p.read(rc.F("reader"), rc.ID, "ok")
-		}
-	}
+	p.readAllOK("s1-1")
 	p.do("accept s1-1", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
 	st("accept s1-1 again", sprint.StreamMerging)
 	p.do("merge conflict", MergeStep(sprint.MergeReq{Stream: "s1", Conflict: "s1-1"}))
@@ -185,8 +179,7 @@ func TestAskAnotherAnswersABrokenRead(t *testing.T) {
 	p := newProbe(t)
 	p.setup(1)
 	p.toReview("h", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-	rs := p.snap().Readers.Of("s1-1")
+	rs := p.pairAsked("s1-1")
 	p.read(rs[0].F("reader"), rs[0].ID, "ok")
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
 	br := p.noteOf("s1-1", sprint.NReadBroken)
@@ -208,9 +201,7 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 			p.setup(1)
 			p.toReview("h", "s1-1")
 			p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-			for _, rc := range p.snap().Readers.Of("s1-1") {
-				p.read(rc.F("reader"), rc.ID, "ok")
-			}
+			p.readAllOK("s1-1")
 			p.m.Fail = func(pt string) error {
 				if pt == "apply t-work before" {
 					return errors.New("cut")
@@ -242,11 +233,7 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 				p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 				p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
 				p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask: the finish asks no reader
-				for _, rc := range p.snap().Readers.Of("s1-1") {
-					if rc.Col == sprint.Asked {
-						p.read(rc.F("reader"), rc.ID, "ok")
-					}
-				}
+				p.readAllOK("s1-1")
 			}
 			if res := p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")})); len(res.Moved) != 1 || p.state("s1-1") != sprint.Merging {
 				require.Fail(t, fmt.Sprintf("accept after %s: %+v", verb, res))

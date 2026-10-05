@@ -143,10 +143,10 @@ func TestMachineCoverTick(t *testing.T) {
 			wantErr: true, errWant: "not the next member round the fleet", errChoice: true,
 			cell: Ready, machine: Running,
 		},
-		"the ask's bad pair is refused by the tick": {
+		"the ask's bad choice is refused by the tick": {
 			s:       func() State { s := mcWorked(mcSprint(), "p1"); s.Machine = Running; return s }(),
 			ch:      TickChoices{Ask: map[string][]string{"p1": {"r1", "r1"}}},
-			wantErr: true, errWant: "not two different readers", errChoice: true,
+			wantErr: true, errWant: "not the next 1 round the readers", errChoice: true,
 			cell: Review, machine: Running,
 		},
 	} {
@@ -460,12 +460,13 @@ func TestMachineCoverTickDeal(t *testing.T) {
 	}
 }
 
-// TestMachineCoverTickAsk covers tickAsk (machine.go:209), T2: a primary in
-// review with no read card and work that did not fail is asked of the next
-// two readers, and the named pair is asked when it is the round's; the
-// refusal is a pair that is one reader twice, answered with a
-// *ChoiceError and no read card. The guards pass over a card with a live
-// read and a card whose work came back failed.
+// TestMachineCoverTickAsk covers tickAsk (machine.go), T2: a primary in
+// review with no read card and work that did not fail is asked its first read
+// alone (ReadsWanted), of the least loaded reader (AskChoice), and the named
+// reader is asked when it is the ask's choice; the refusals are a pair asked
+// at once and one reader twice, answered with a *ChoiceError and no read
+// card. The guards pass over a card with a live read and a card whose work
+// came back failed.
 func TestMachineCoverTickAsk(t *testing.T) {
 	t.Parallel()
 	failed := func() State {
@@ -486,11 +487,14 @@ func TestMachineCoverTickAsk(t *testing.T) {
 		wantErr bool
 		asked   int // read cards left asked
 	}{
-		"a primary in review is asked of the next two readers": {
-			s: mcWorked(coverState(), "p1"), asked: 2,
+		"a primary in review is asked its first read alone, of the least loaded reader": {
+			s: mcWorked(coverState(), "p1"), asked: 1,
 		},
-		"the named pair is asked": {
-			s: mcWorked(coverState(), "p1"), choice: map[string][]string{"p1": {"r2", "r1"}}, asked: 2,
+		"the named first read is asked": {
+			s: mcWorked(coverState(), "p1"), choice: map[string][]string{"p1": {"r1"}}, asked: 1,
+		},
+		"a pair asked at once is refused: the reads are asked one at a time": {
+			s: mcWorked(coverState(), "p1"), choice: map[string][]string{"p1": {"r2", "r1"}}, wantErr: true, asked: 0,
 		},
 		"a pair of one reader twice is refused": {
 			s: mcWorked(coverState(), "p1"), choice: map[string][]string{"p1": {"r1", "r1"}}, wantErr: true, asked: 0,
@@ -519,10 +523,9 @@ func TestMachineCoverTickAsk(t *testing.T) {
 				}
 			}
 			assert.Len(t, asked, tc.asked)
-			if tc.asked == 2 {
+			if tc.asked == 1 && tc.choice != nil {
 				assert.Equal(t, Asked, n.Reads[RC("p1", 1, "r1")].Place)
-				assert.Equal(t, Asked, n.Reads[RC("p1", 1, "r2")].Place)
-				assert.Equal(t, []string{"r1", "r2"}, n.Primaries["p1"].Pair)
+				assert.Equal(t, []string{"r1"}, n.Primaries["p1"].Pair)
 			}
 		})
 	}
