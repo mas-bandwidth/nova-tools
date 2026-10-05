@@ -426,6 +426,44 @@ unit as red, failing CI legs on a tool that is working.
 5. A row holds one offender of its kind in its file wherever it now stands.
 6. The rule holds over this repository with an empty allowlist.
 
+## The CI class test against force-push and hard-reset of shared refs
+
+**The test.** The class test is `TestNoForcePushOrHardResetOfASharedRef`
+(`internal/ci/never_force_class_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoForcePushOrHardResetOfASharedRef`. The rule
+is named `never-force`, and its line reads
+``never-force read every .go, shell script, Makefile and .github/workflows/*.yml; refuse patterns that rewrite shared refs without allowlist entry``.
+
+**What it reads and what it writes.** It reads, as text, every `.go` file, every shell script (`.sh`), the `Makefile`, and every `.yml` file under `.github/workflows/` in the repository — tests included, because a test fixture that asserts the refusal must use the patterns under test — and refuses these patterns against shared refs: `push --force`, `push -f`, `--force-with-lease` (unless guarded by `refs/heads/<local-branch>`), `push origin +`, and `reset --hard origin/`. The allowed refs that may be rewritten are the caller's own job branch (any `origin/<anything>`), `dev`, and `main`. It writes nothing. Its only input besides the tree is `internal/ci/never_force_allowlist.txt`: the existing offenders, each with a reason and the date it was written, and that file may only shrink — it holds only test fixtures and reset scripts whose reason permits the pattern per docs/SPEC-CI.md#never-force-patterns. Every file is scanned; `.git`, `testdata`, and `vendor` directories are skipped.
+
+**Patterns refused.** Force-push patterns are refused against shared refs: `push --force` and `push -f` (never guarded by anything); `--force-with-lease` (only when not followed by `=refs/heads/<branch>`); `push origin +` (force push to origin); `reset --hard origin/` (hard reset to origin refs). The heuristic is conservative: a match anywhere in the line is a finding.
+
+**The exception categories.** Sites that must use force patterns are (1) test fixtures that assert the rule (the test code itself, where a `push -f` on a dummy ref is the offender the test checks for), (2) clone-reset scripts in `tools/ci/` that reset private clones to fetched tips for repeatability between runs, and (3) no other category is allowed under this SPEC without a rewording of this paragraph. A site outside these categories is a HOLD until either the site changes to not use force patterns or the SPEC's exception language changes.
+
+**Its one-line output.** On a clean tree it prints one line,
+`CI-NEVER-FORCE OK files=<n> allowlisted=<n> refused=0`. On a refusal it prints one
+line per offender, `CI-NEVER-FORCE file=<path> line=<n> kind=<pattern-kind>
+remedy="remove the force-push pattern; use --force-with-lease=refs/heads/<local-branch> only for local work, never shared refs; cite docs/SPEC-CI.md"`, then closes with `CI-NEVER-FORCE FAIL files=<n>
+allowlisted=<n> refused=<k>`.
+
+**Its refusals (exit 2, one remedy line each).** A force pattern against a shared ref — `remedy="remove the force-push pattern; use --force-with-lease=refs/heads/<local-branch> only for local work, never shared refs; cite docs/SPEC-CI.md"`. A
+row in the allowlist that names no offender —
+`remedy="delete the stale row; the allowlist only shrinks"`.
+
+**The mistake it prevents.** A tool that rewrites a shared ref without guarding it can corrupt the shared branch history. A hard reset to origin, a force push to dev, or a force push to main can undo commits other team members are working from, causing merge conflicts and lost work. `--force-with-lease` mitigates race conditions on personal branches but does not permit rewriting shared refs; the pattern is allowed only when guarding a local branch the caller owns (`refs/heads/<job-id>` or equivalent). The no-force rule is what prevents dev and main becoming corrupted by a script that runs without a human operator, and is the boundary between a tool that is safe to run in automation and one that is not.
+
+**Red tests.**
+
+1. A `push --force` against `dev` is refused with its file, line, pattern kind and the remedy.
+2. A `push -f` against `main` is refused.
+3. A `--force-with-lease=refs/heads/main` is refused; only the unguarded `--force-with-lease` or a guard naming a local branch is allowed.
+4. A `push origin +` is refused.
+5. A `reset --hard origin/main` is refused.
+6. A test fixture that carries `push -f` in its code (a hardcoded string the fixture asserts the rule detects) is allowed when listed in the allowlist with its reason.
+7. A row that names no offender is refused, so the list only shrinks.
+8. A row holds one offender of its kind in its file wherever it now stands.
+9. The rule holds over this repository with a properly populated allowlist.
+
 ## The class tests
 
 The sections above are the class tests written out in full. This section is

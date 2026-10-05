@@ -1,0 +1,12 @@
+# never-force-allowlist.txt: legitimate uses of force-push patterns in test fixtures and scripts.
+# Format: file:line kind date reason
+# This list only shrinks: fixing a site removes its row; adding a new one is a refusal.
+# Each row names a test fixture (test code that asserts the rule) or a reset script
+# that must use force patterns for a documented reason, permitted by docs/SPEC-CI.md.
+internal/swarm/lintchild.go:37 push-force 2026-10-04 comment describing the never-force rule
+internal/swarm/lintchild.go:176 force-with-lease 2026-10-04 regex pattern describing force-with-lease as violation
+internal/swarm/lintchild_test.go:291 push-force 2026-10-04 test fixture asserting the rule
+internal/cardcontract/shims_functional_test.go:103 force-with-lease 2026-10-04 test fixture for card contract
+internal/cardcontract/shims_functional_test.go:368 force-with-lease 2026-10-04 test fixture for card contract
+cmd/nova-sprint/land_prune_test.go:80 force-with-lease 2026-10-04 test fixture exercising prune logic
+tools/ci/revertonred_test.go:280 push-f 2026-10-04 comment about forced push in test
