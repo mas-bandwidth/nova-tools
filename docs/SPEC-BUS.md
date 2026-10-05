@@ -237,7 +237,7 @@ The rule, on every store call:
 Measured on a stalled in-process store (`internal/bus/timeout_test.go`,
 `TestARedisCallThatStallsFailsWithinTheNamedTimeout`, every call named 200 ms
 while the test client's own read and write bounds are 1 ms, so a call cut by
-the connection's bound and not its own fails the test; Linux bench vision):
+the connection's bound and not its own fails the test; a Linux bench):
 a read that changes nothing is refused after its two attempts, 2 dials, 0.40 s
 (2 x 200 ms); a send, 1 dial, 0.20 s; an ack, 1 dial, 0.20 s; a blocking wait
 with a 100 ms block and a 100 ms margin, 1 dial, 0.20 s (block plus margin).
