@@ -101,6 +101,12 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .legend span { display: inline-flex; align-items: center; gap: 0.75rem; }
 .sw { width: 1rem; height: 1rem; border-radius: 1px; display: inline-block; flex: none; }
 
+/* where wall time goes: one bar, a segment per stage, wide as its median */
+.stack { display: flex; gap: 0.125rem; height: 2rem; margin: 1rem 3rem 1.5rem; }
+.stack i { display: block; height: 100%; min-width: 2px; border-radius: 1px; }
+.panel.wall { padding-bottom: 2rem; }
+.panel.wall .legend { margin: 0 3rem; }
+
 /* segmented bars: one cell per unit, 2 px gaps, 1 px radius */
 .cells { display: grid; gap: 0.125rem; grid-auto-rows: var(--cell-h); min-width: 0; }
 .cells.thick { --cell-h: 2rem; }
@@ -316,6 +322,12 @@ footer a:hover { color: var(--text); }
 <section class="panel streams">
   <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
   <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
+</section>
+
+<section class="panel wall" id="wall-panel" hidden>
+  <div class="panel-head"><h2>Where wall time goes</h2><span class="muted" id="wall-sub"></span></div>
+  <div class="stack" id="wall"></div>
+  <div class="legend" id="wall-legend"></div>
 </section>
 
 <section class="panel fleet">

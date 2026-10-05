@@ -290,6 +290,31 @@ function renderOverall(sum, all) {
 }
 window.addEventListener("resize", function () { if (overallLast) renderOverall(overallLast.sum, overallLast.all); });
 
+// Where wall time goes: one stacked bar of the stages' medians over the cards landed in the
+// last 24 h (where --json stage_times, docs/SPEC-SPRINT.md), shown once there is one.
+var WALL_STAGES = [["needs", "waiting on needs"], ["deal", "ready, not dealt"], ["take", "dealt, not taken"], ["work", "work"],
+  ["rework", "rework"], ["read_wait", "waiting for a read"], ["read", "read"], ["accept", "waiting to accept"], ["merge", "merge queue"]];
+var WALL_HUES = [210, 190, 170, 140, 0, 45, 30, 280, 320];
+function wallSpan(s) { return s < 90 ? Math.round(s) + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h"; }
+function renderWall(d) {
+  var panel = $("wall-panel"), st = d.stage_times && d.stage_times.all;
+  var names = st ? WALL_STAGES.filter(function (x) { return st[x[0]]; }) : [];
+  panel.hidden = names.length === 0;
+  if (!names.length) return;
+  var box = $("wall"), lg = $("wall-legend");
+  var total = names.reduce(function (a, x) { return a + st[x[0]].median_s; }, 0);
+  box.textContent = ""; lg.textContent = "";
+  names.forEach(function (x) {
+    var k = x[0], m = st[k], hue = WALL_HUES[WALL_STAGES.findIndex(function (y) { return y[0] === k; })];
+    var seg = el("i"); seg.style.flexGrow = String(Math.max(m.median_s, total / 400)); seg.style.background = "hsl(" + hue + " 60% 55%)";
+    seg.title = x[1] + ": median " + wallSpan(m.median_s) + ", p90 " + wallSpan(m.p90_s) + " over " + m.n + " cards";
+    box.appendChild(seg);
+    var it = el("span"), sw = el("i", "sw"); sw.style.background = seg.style.background;
+    it.appendChild(sw); it.appendChild(el("span", "", x[1] + " " + wallSpan(m.median_s) + " (p90 " + wallSpan(m.p90_s) + ")")); lg.appendChild(it);
+  });
+  $("wall-sub").textContent = ("median per stage, cards landed in the last 24 h · " + wallSpan(total) + " in all");
+}
+
 function fleetLike(box, table, withLoad) {
   var names = Object.keys(table || {});
   var rank = { up: 0, held: 1, down: 2 };
@@ -500,6 +525,7 @@ function render(d) {
   renderOverall(s.sum, s.all);
   renderFleet(d);
   renderFriends(d);
+  renderWall(d);
   renderLanes(d);
   if (SHOW_ALL) renderReaders(d);
   renderHero(d, s);

@@ -485,14 +485,20 @@ type whereView struct {
 	// the tick's where record (sprint.TierCosts); absent before the first tick of an epoch.
 	StreamCosts map[string]sprint.TierCosts `json:"stream_costs,omitempty"`
 	Streams     []sprint.StreamClock        `json:"streams"`
-	Stalled     []string                    `json:"stalled,omitempty"`
-	Critical    []sprint.CriticalCard       `json:"critical,omitempty"` // the five heaviest (weight.go)
-	Coordinator string                      `json:"coordinator,omitempty"`
-	Pending     string                      `json:"pending,omitempty"`
-	Epoch       uint64                      `json:"epoch"`
-	Cleared     time.Time                   `json:"cleared,omitempty"` // when the epoch began
-	Machine     string                      `json:"machine,omitempty"`
-	Goals       []goalView                  `json:"goals,omitempty"`
+	// StageTimes is where a card's wall time goes: the median and p90 in seconds of each
+	// stage (needs, deal, take, work, rework, read_wait, read, accept, merge) over the
+	// cards landed in the last 24 h, overall and per stream, from the tick's where record
+	// (sprint.CycleTimes, docs/SPEC-SPRINT.md, cycle-time-breakdownb.w1); absent before
+	// the first tick of an epoch or with no landing in the window.
+	StageTimes  *sprint.StageTimes    `json:"stage_times,omitempty"`
+	Stalled     []string              `json:"stalled,omitempty"`
+	Critical    []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
+	Coordinator string                `json:"coordinator,omitempty"`
+	Pending     string                `json:"pending,omitempty"`
+	Epoch       uint64                `json:"epoch"`
+	Cleared     time.Time             `json:"cleared,omitempty"` // when the epoch began
+	Machine     string                `json:"machine,omitempty"`
+	Goals       []goalView            `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -880,6 +886,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
 	v.Low = v.Ready < int64(v.Width)
 	v.Tiers = facts.Tiers
+	if len(facts.StageTimes.All) > 0 {
+		v.StageTimes = &facts.StageTimes
+	}
 	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
 	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
 

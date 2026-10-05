@@ -825,20 +825,22 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			}
 		}
 		if m := s.Merge.Placed(c.ID); m != nil {
-			e := moveEntry(m, c.Row, Queued, nil)
+			e := moveEntry(m, c.Row, Queued, map[string]string{FieldQueued: stamp(s.Now)})
 			sc := c.Score
 			e.Move.Score = &sc
 			u.Changes = append(u.Changes, change(Merge, e))
 		} else {
 			u.Changes = append(u.Changes, change(Merge, createEntry(c.ID, c.Row, Queued, c.Score,
-				map[string]string{"kind": "merge", "primary": c.ID, "stream": c.Row})))
+				map[string]string{"kind": "merge", "primary": c.ID, "stream": c.Row, FieldQueued: stamp(s.Now)})))
 		}
 		var names []string
 		for _, o := range oks {
 			names = append(names, o.F("reader"))
 		}
 		readers := strings.Join(names, ",")
-		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, map[string]string{"readers": readers, "accepted": stamp(s.Now)})))
+		accept := map[string]string{"readers": readers, "accepted": stamp(s.Now)}
+		maps.Copy(accept, readStamps(oks))
+		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, accept)))
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s)", c.ID, strings.ReplaceAll(readers, ",", ", "))
 		if retired > 0 {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
