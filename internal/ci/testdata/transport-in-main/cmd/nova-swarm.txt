@@ -1,0 +1,6 @@
+# Transport in main: per-package count of direct transport access outside main() and real*().
+# Shrink-only: NOVA_CI_UPDATE=1 lowers counts and drops rows at zero; it never raises or adds rows.
+# ceiling: 19
+cmd/nova-swarm:clock 17 baseline
+cmd/nova-swarm:env 19 baseline
+cmd/nova-swarm:stdio 11 baseline

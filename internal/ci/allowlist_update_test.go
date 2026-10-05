@@ -42,7 +42,7 @@ var listFilePatterns = []string{"*allowlist*.txt", "*.allow", "*_examples.txt"}
 var countedShardDirectories = []string{
 	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify", "staticcheck", "errcheck",
 	"flagusage", "toolanswers",
-	"no-hand-printing",
+	"no-hand-printing", "transport-in-main",
 }
 
 // TestCountedShardDirectoriesNameEveryLedger: countedShardDirectories is the one

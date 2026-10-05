@@ -1,0 +1,4 @@
+# Transport in main: per-package count of direct transport access outside main() and real*().
+# Shrink-only: NOVA_CI_UPDATE=1 lowers counts and drops rows at zero; it never raises or adds rows.
+# ceiling: 2
+cmd/nova-check:clock 2 baseline
