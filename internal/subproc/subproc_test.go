@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -67,7 +68,7 @@ func TestBudgetsAreTheNamedDefaults(t *testing.T) {
 		{subproc.Go, 300 * time.Second},
 		{subproc.Tool, 60 * time.Second},
 	} {
-		assert.Equal(t, c.want, c.kind.Budget(), "%s budget", c.kind)
+		assert.Equal(t, c.want, c.kind.Budget(), "%v budget", c.kind)
 	}
 	assert.Equal(t, 5*time.Second, subproc.WaitDelay, "WaitDelay")
 }
@@ -91,10 +92,10 @@ func TestBoundForIsTheBudgetUnlessTheCallerIsSooner(t *testing.T) {
 		ctx, cancel := subproc.BoundFor(context.Background(), k.Budget())
 		d, ok := ctx.Deadline()
 		cancel()
-		require.True(t, ok, "%s: a background caller got no deadline", k)
+		require.True(t, ok, "%v: a background caller got no deadline", k)
 		left := time.Until(d)
-		assert.LessOrEqual(t, left, k.Budget(), "%s: deadline is %s away, want about %s", k, left, k.Budget())
-		assert.GreaterOrEqual(t, left, k.Budget()-30*time.Second, "%s: deadline is %s away, want about %s", k, left, k.Budget())
+		assert.LessOrEqual(t, left, k.Budget(), "%v: deadline is %s away, want about %s", k, left, k.Budget())
+		assert.GreaterOrEqual(t, left, k.Budget()-30*time.Second, "%v: deadline is %s away, want about %s", k, left, k.Budget())
 
 		// A caller whose own deadline is sooner than the budget keeps it.
 		sooner := time.Now().Add(k.Budget() / 2)
@@ -103,7 +104,7 @@ func TestBoundForIsTheBudgetUnlessTheCallerIsSooner(t *testing.T) {
 		d, _ = ctx.Deadline()
 		cancel()
 		stop()
-		assert.True(t, d.Equal(sooner), "%s: a caller deadline of %s was replaced by %s", k, sooner, d)
+		assert.True(t, d.Equal(sooner), "%v: a caller deadline of %s was replaced by %s", k, sooner, d)
 
 		// A caller whose deadline is later is cut to the budget.
 		later := time.Now().Add(2 * k.Budget())
@@ -112,7 +113,7 @@ func TestBoundForIsTheBudgetUnlessTheCallerIsSooner(t *testing.T) {
 		d, _ = ctx.Deadline()
 		cancel()
 		stop()
-		assert.True(t, d.Before(later), "%s: a caller deadline of %s past the budget was kept (%s)", k, later, d)
+		assert.True(t, d.Before(later), "%v: a caller deadline of %s past the budget was kept (%s)", k, later, d)
 	}
 }
 
@@ -126,7 +127,7 @@ func TestEveryKindEndsASlowChildAndDoesNotHangOnItsPipe(t *testing.T) {
 
 	script := slowChild(t)
 	for _, k := range []subproc.Kind{subproc.Git, subproc.GH, subproc.SSH, subproc.Go, subproc.Tool} {
-		t.Run(k.String(), func(t *testing.T) {
+		t.Run(strconv.Itoa(int(k)), func(t *testing.T) {
 			t.Parallel()
 
 			cmd, cancel := subproc.Command(context.Background(), k, script)

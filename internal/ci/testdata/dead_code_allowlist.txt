@@ -17,7 +17,6 @@ internal/pkgselect 16
 internal/secrets 6
 internal/sprint 2
 internal/sprint/store 2
-internal/subproc 1
 internal/swarm 41
 internal/testguard 5
 internal/tokens 2
