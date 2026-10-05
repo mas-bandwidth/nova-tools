@@ -110,6 +110,32 @@ func ObserveFriend(s *Snapshot, r HealthReq) Plan {
 	return p
 }
 
+// HealthClearReq is the removal of a friend's observation (friend health --clear): who
+// sends it (the seat's holder) and the friend (Known says the roster has her).
+type HealthClearReq struct {
+	Friend, Who string
+	Known       bool
+}
+
+// ClearFriendHealth is the observation removed: the plan's HealthClear, which the step's
+// commit applies by removing her record, so her status falls back to her beat rule
+// (FriendStatus), or its refusal: the sender is the seat's holder, of a friend on the
+// table. A friend with no observation is cleared all the same (nothing to remove).
+func ClearFriendHealth(s *Snapshot, r HealthClearReq) Plan {
+	var p Plan
+	switch {
+	case !r.Known:
+		p.refuse(r.Friend, "no friend "+r.Friend+" on the friends table; run: nova-sprint friend sync")
+	case s.Coordinator == "":
+		p.refuse(r.Friend, "the sprint has no coordinator; run: nova-sprint init --coordinator <name>")
+	case r.Who != s.Coordinator:
+		p.refuse(r.Friend, "friend health is the seat's: "+s.Coordinator+", not "+orDash(r.Who))
+	default:
+		p.HealthClear = []string{r.Friend}
+	}
+	return p
+}
+
 // FriendHealthWrite is the record a step's commit writes: the friend's health.
 type FriendHealthWrite struct {
 	Friend string       `json:"friend"`

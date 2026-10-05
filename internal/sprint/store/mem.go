@@ -1032,6 +1032,10 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			}
 			m.kv[keyCoordinator], m.kv[keySeat] = op.Seat.Holder, rec
 		}
+		// a clear first, so an observation written by the same commit stands
+		for _, f := range op.HealthClear {
+			delete(m.kv, friendHealthKey(f))
+		}
 		if op.Health != nil {
 			rec, err := json.Marshal(op.Health.Health)
 			if err != nil {

@@ -14,7 +14,7 @@ import (
 // Invariants verified:
 //   NoCardHeldPastBound: no unstarted card is held past stall_after + 4*step (taken back at rung 4).
 //   NoStartedRedealt: started cards stay with friend and finish; only unstarted cards are taken back.
-//   ReleasedOnlyByActivity: a friend marked down for stall is released to up only by session activity,
+//   ReleasedOnlyByActivity: a friend marked down for stall is released to up only by her activity (session, running beat, finish),
 //     never by card progress alone.
 
 func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
@@ -121,9 +121,8 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	assert.Empty(t, rung, "rung reset to 0")
 	downStamp, _ = w.s.Fleet.Prop(PropFriendStallDown("amy"))
 	assert.Empty(t, downStamp, "stall down cleared")
-	require.NotNil(t, pRel.Health)
-	assert.Equal(t, "amy", pRel.Health.Friend)
-	assert.Equal(t, Up, pRel.Health.Health.State)
+	assert.Nil(t, pRel.Health, "the release writes no observation")
+	assert.Equal(t, []string{"amy"}, pRel.HealthClear, "the release removes rung 5's observation: her beat rule decides again")
 }
 
 func TestFriendStallLadderResetsOnProgress(t *testing.T) {
@@ -168,6 +167,7 @@ func TestFriendStallLadderProgressDoesNotReleaseDownFriend(t *testing.T) {
 	w.s.Fleet.Card("s1-1.w1").Fields[FieldProgress] = stamp(w.s.Now)
 	pProg := w.part(TickFriendStall, TickReq{Friends: seats})
 	assert.Nil(t, pProg.Health, "card progress alone does not release a down friend to up")
+	assert.Empty(t, pProg.HealthClear, "card progress alone does not release a down friend to up")
 	_, hasDown := w.s.Fleet.Prop(PropFriendStallDown("amy"))
 	assert.True(t, hasDown, "stall down remains")
 
@@ -181,8 +181,96 @@ func TestFriendStallLadderProgressDoesNotReleaseDownFriend(t *testing.T) {
 		},
 	}
 	pRel := w.part(TickFriendStall, TickReq{Beats: beats, Friends: seats})
-	require.NotNil(t, pRel.Health, "session activity releases her to up")
-	assert.Equal(t, Up, pRel.Health.Health.State)
+	assert.Nil(t, pRel.Health, "the release writes no observation")
+	assert.Equal(t, []string{"amy"}, pRel.HealthClear, "session activity releases her: her observation is removed")
 	downStamp, _ := w.s.Fleet.Prop(PropFriendStallDown("amy"))
 	assert.Empty(t, downStamp, "stall down cleared on session activity")
+}
+
+// A one-shot lane friend, or one whose cards run in child agents, moves no session: her beat
+// naming running cards is her activity at the beat's time. It keeps her at rung 0 while she
+// works, and releases her from a stall down, removing the observation rung 5 wrote and
+// writing none (a written up observation would hold her down ten seconds later for good).
+func TestFriendStallLadderBeatNamingRunningCardsIsActivity(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend"))
+	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up}}
+	dealWith(w, seats...)
+	t0 := w.s.Now
+
+	running := func(at time.Time) map[string]Beat {
+		return map[string]Beat{"amy": {At: at, Friend: &FriendReport{Running: []string{"s1-1.w1"}}}}
+	}
+	idle := func(at time.Time) map[string]Beat {
+		return map[string]Beat{"amy": {At: at, Friend: &FriendReport{}}}
+	}
+
+	// working an hour on a running beat: never stalled
+	for _, m := range []int{21, 26, 31, 36, 41, 60} {
+		w.s.Now = t0.Add(time.Duration(m) * time.Minute)
+		p := w.part(TickFriendStall, TickReq{Beats: running(w.s.Now), Friends: seats})
+		rung, _ := w.s.Fleet.Prop(PropFriendStallRung("amy"))
+		assert.Empty(t, rung, "a beat naming running cards keeps her at rung 0 (minute %d)", m)
+		assert.Nil(t, p.Health)
+	}
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
+
+	// a beat with nothing running is no activity: with no session activity, progress or
+	// finish she climbs (from the deal: a running beat is activity only while it is the beat)
+	last := w.s.Now
+	w.s.Now = last.Add(41 * time.Minute)
+	p5 := w.part(TickFriendStall, TickReq{Beats: idle(w.s.Now), Friends: seats})
+	rung, _ := w.s.Fleet.Prop(PropFriendStallRung("amy"))
+	assert.Equal(t, "5", rung)
+	require.NotNil(t, p5.Health)
+	assert.Equal(t, Down, p5.Health.Health.State)
+
+	// her beat names a running card again: released, the observation removed, none written
+	w.s.Now = w.s.Now.Add(time.Minute)
+	pRel := w.part(TickFriendStall, TickReq{Beats: running(w.s.Now), Friends: seats})
+	_, hasDown := w.s.Fleet.Prop(PropFriendStallDown("amy"))
+	assert.False(t, hasDown, "stall down cleared")
+	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
+	assert.Empty(t, rung)
+	assert.Nil(t, pRel.Health, "the release writes no observation")
+	assert.Equal(t, []string{"amy"}, pRel.HealthClear)
+
+	// and her status is her beat rule again: up on a fresh beat
+	assert.Equal(t, Up, FriendStatus(FriendPresence{Beat: running(w.s.Now)["amy"], Generation: FirstSeatGeneration}, w.s.Now))
+}
+
+// A finish on her row within friend_stall_after is her activity: a friend whose cards run in
+// child agents shows only finishes. It holds her at rung 0 and releases a stall down.
+func TestFriendStallLadderFinishIsActivity(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
+	seats := []FriendSeat{{Name: "amy", Width: 3, Status: Up}}
+	dealWith(w, seats...)
+	t0 := w.s.Now
+	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
+
+	// s1-2 finishes at 15m: at 21m she is not stalled (finish 6m ago)
+	w.place(w.s.Fleet, "s1-2.w1", FriendRow("amy"), DoneOK)
+	w.s.Fleet.Card("s1-2.w1").Fields["finished"] = stamp(t0.Add(15 * time.Minute))
+	w.s.Now = t0.Add(21 * time.Minute)
+	w.part(TickFriendStall, TickReq{Friends: seats})
+	rung, _ := w.s.Fleet.Prop(PropFriendStallRung("amy"))
+	assert.Empty(t, rung, "a finish within friend_stall_after is activity")
+
+	// 41m after that finish she is down
+	w.s.Now = t0.Add(56 * time.Minute)
+	p5 := w.part(TickFriendStall, TickReq{Friends: seats})
+	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
+	require.Equal(t, "5", rung)
+	require.NotNil(t, p5.Health)
+
+	// a finish after the down releases her, removing the observation and writing none
+	w.s.Now = w.s.Now.Add(time.Minute)
+	w.place(w.s.Fleet, "s1-1.w1", FriendRow("amy"), DoneFailed)
+	w.s.Fleet.Card("s1-1.w1").Fields["finished"] = stamp(w.s.Now)
+	pRel := w.part(TickFriendStall, TickReq{Friends: seats})
+	_, hasDown := w.s.Fleet.Prop(PropFriendStallDown("amy"))
+	assert.False(t, hasDown, "a finish after the down releases her")
+	assert.Nil(t, pRel.Health)
+	assert.Equal(t, []string{"amy"}, pRel.HealthClear)
 }

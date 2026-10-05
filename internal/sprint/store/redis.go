@@ -687,6 +687,10 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		p.Set(ctx, r.Names.Key(keyCoordinator), op.Seat.Holder, 0)
 		p.Set(ctx, r.Names.Key(keySeat), rec, 0)
 	}
+	// a clear first, so an observation written by the same commit stands
+	for _, f := range op.HealthClear {
+		p.Del(ctx, r.Names.Key(friendHealthKey(f)))
+	}
 	if op.Health != nil {
 		rec, err := json.Marshal(op.Health.Health)
 		if err != nil {

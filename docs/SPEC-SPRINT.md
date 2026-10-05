@@ -121,9 +121,12 @@ refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). He
 section 11, and `friend down`; `unhold <friend>` and `friend up` release the
 hold), whatever she beats or the coordinator observes; else, once the
 coordinator has observed her (`friend health`, below), the observation's word
-alone, `up` or `down`, and never her beat again; else `up` while her last beat
+alone, `up` or `down`, and never her beat again while the observation stands; else `up` while her last beat
 is under `FriendDownAfter` (15 s) old; else `down`, and `down` when she has
-never beaten (`friend down` holds her and shows `held`, never `down`). A beat
+never beaten (`friend down` holds her and shows `held`, never `down`). An
+observation stands until it is removed: `friend health <friend> --clear` (the
+seat's holder) and the stall ladder's release (section friend-stall-ladder-r.w1)
+remove it, and her status is her beat rule again. A beat
 wakes an unobserved friend at once. `friend up` is not a beat: a friend
 released with no beat in the last 15 s is `down` until she beats. `friend up
 <friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
@@ -255,7 +258,17 @@ word the row keeps (`asleep` is the daemon's, shown as `down`). The first
 valid observation makes her `up` at once. Her own `friend beat` stays what it
 is, the friend's own beat, and once she is observed it decides nothing: the
 observation wins the word. No observation holds a friend: `held` is `friend
-down` by the seat alone, lifted by `friend up`. The model is
+down` by the seat alone, lifted by `friend up`. `friend health <friend> --clear`
+(the seat's holder alone, refused otherwise with nothing written; `--dry-run`
+says what stood and writes nothing; no observation's flag beside it) removes
+her observation (`friend-health:<f>`, by the step's commit,
+`OpRecord.HealthClear`), and her status falls back to her beat rule: `FRIEND-HEALTH
+OK <friend> cleared=true was=<word|none> status=<up|held|down>`, `--json`
+`{friend, cleared, was, status}`; a friend with no observation is cleared all
+the same (`TestFriendHealthClearFallsBackToHerBeat`). It is the way back for a
+friend observed once with no keepalive renewing it, whom her own beat would never
+bring up again (2026-10-05: one write by the stall ladder's release held
+working friends down). The model is
 `tla/SeatHealth.tla` (six reversed witnesses); the tests
 `TestAProofDatedAfterTheServersClockIsRefused`,
 `TestHealthIsFencedBySeatHolderAndGeneration`,
@@ -3403,7 +3416,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready and a card she has started finishes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
 | friend level | even the ready queues of the friends up, idle lanes first and by the card's tier, as fleet level evens the members'; the tick runs it too (friend-deal-idle-lanes-first.w1) |
-| friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer |
+| friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer; `friend health <friend> --clear [--dry-run]` removes her observation, so her status falls back to her beat rule |
 | seat | the seat as the daemons read it every second: `SEAT holder= epoch= generation=`, `--json`; three keys, no table (section 1, a friend's health) |
 | lane take | `lane take go --machine <m> --as <worker> [--wait <duration>]`: a worker's take of one of the machine's Go lanes (section 18); exit 0 granted, exit 1 queued with its place and the next command; --wait asks again every 5 s until granted or the wait is over; through the sprint's server it is `lane take <kind> --machine <m> --as <worker>` and nothing more |
 | lane give | `lane give go --machine <m> --as <worker>`: the worker's lane, or its place in the queue, given back; the head of the queue is granted |
@@ -4329,9 +4342,16 @@ coordinator; the reference model decides it as the duty `friend-stall`
 (`internal/sprint/refmodel`).
 
 A friend holding dealt cards (`Ready` or `Working` on her row) is stalled when neither
-session activity (`FriendReport.Active`, her daemon's report of the newest write under
-her working directory and outbox) nor any card progress stamp (`FieldProgress`) is newer
-than `friend_stall_after` (default 20 minutes, configurable via `nova-sprint set --friend-stall-after`).
+activity of hers nor any card progress stamp (`FieldProgress`) is newer than
+`friend_stall_after` (default 20 minutes, configurable via `nova-sprint set --friend-stall-after`).
+Her activity is any of: her session activity (`FriendReport.Active`, her daemon's report of
+the newest write under her working directory and outbox); a beat whose running list is not
+empty (`friend beat --running`), at the beat's time, since a one-shot lane friend and a
+friend whose cards run in child agents move no session while they work; and a finish of a
+card on her row (`DoneOK` or `DoneFailed`, its `finished` stamp), so a finish within
+`friend_stall_after` holds her at rung 0 (2026-10-05: working friends were stalled and
+marked down on session activity alone). A running beat is activity only while it is her
+beat: nothing remembers it once her beat names nothing running.
 
 While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 minutes,
 configurable via `nova-sprint set --friend-stall-step`):
@@ -4347,14 +4367,23 @@ configurable via `nova-sprint set --friend-stall-step`):
    with her and finishes.
 5. **Friend marked down**: she is marked down with reason `"stalled"` (`p.Health` with
    `State: Down`, `Reason: "stalled"`, and status `down` on her fleet row). She is released to
-   `up` by the tick itself at her first session activity after it.
+   `up` by the tick itself at her first activity after it (session, running beat or
+   finish; never card progress alone): the release clears the stall properties, sets her
+   fleet row `up`, and removes the coordinator's observation of her (`p.HealthClear`, the
+   same removal as `friend health --clear`), writing none, so her status falls back to her
+   beat rule (`sprint.FriendStatus`). It once wrote an `up` observation: that stood for
+   `FriendObservedDownAfter` (10 s) and then held her `down` for good, since nothing renews
+   an observation every ten seconds and her own beat never brings an observed friend up.
 
-Every rung emits a happened note (`Kind: Happened`, `Type: "friend stall"`). Any session
-activity or card progress resets her to rung 0.
+Every rung emits a happened note (`Kind: Happened`, `Type: "friend stall"`). Any activity
+or card progress resets her to rung 0.
 
 The TLA+ specification `tla/StallLadder.tla` verifies three core invariants:
 - `NoCardHeldPastBound`: no unstarted card is held by a stalled friend for more than the bound
   (`friend_stall_after + 4 * friend_stall_step`).
 - `NoStartedRedealt`: no started card is taken back or redealt; started cards stay and finish.
-- `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by session
-  activity, never by card progress alone.
+- `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by her
+  activity (session activity, a beat naming running cards, or a finish on her row), never by
+  card progress alone. The module's words name the wider activity; its actions still model
+  one activity event, which stands for all three, and the TLC rerun on the widened words is
+  owed.

@@ -212,6 +212,9 @@ type OpRecord struct {
 	// Health is a friend's health observed (store/friends.go): its commit
 	// writes it as her friend-health record.
 	Health *sprint.FriendHealthWrite `json:"health,omitempty"`
+	// HealthClear is the friends whose friend-health record its commit removes
+	// (friend health --clear; the stall ladder's release).
+	HealthClear []string `json:"health_clear,omitempty"`
 }
 
 // Tables is the stored table names of the record's manifests, in order.

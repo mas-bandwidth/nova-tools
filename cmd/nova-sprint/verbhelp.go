@@ -70,7 +70,7 @@ var verbEffect = map[string]string{
 	"relink":            "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
 	"friend take":       "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
 	"friend level":      "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",
-	"friend health":     "local write: records the coordinator's observation of the friend in the sprint's store; --dry-run writes nothing",
+	"friend health":     "local write: records the coordinator's observation of the friend in the sprint's store, or removes it with --clear; --dry-run writes nothing",
 	"reader retire":     "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
 	"promoted":          "local write: records the promotion in the sprint's store; --dry-run writes nothing",
 	"preflight":         "inspection: reads the briefs, the table and the repository, writes nothing",
