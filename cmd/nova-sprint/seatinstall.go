@@ -175,9 +175,11 @@ func (a *app) cmdSeatUninstall(args []string, stdout, stderr io.Writer) int {
 }
 
 // loadSeatUnit loads (op load: unloaded first, so a changed unit is read again) or
-// unloads the push loop's unit on this machine: launchctl in the user's gui domain on
-// macOS, systemctl --user on Linux. Under NOVA_TEST_NO_HOST it refuses: a test gives
-// its own loader.
+// unloads the unit at path on this machine, the push loop's or the friend sync loop's
+// (friendsync_install.go), named by its file: launchctl in the user's gui domain on
+// macOS, its label the file's name without .plist, and systemctl --user on Linux, its
+// service the file's name. Under NOVA_TEST_NO_HOST it refuses: a test gives its own
+// loader.
 func loadSeatUnit(goos, op, path string) error {
 	if os.Getenv("NOVA_TEST_NO_HOST") != "" {
 		return errors.New("NOVA_TEST_NO_HOST is set: no service is loaded or unloaded on this machine")
@@ -193,18 +195,19 @@ func loadSeatUnit(goos, op, path string) error {
 		return nil
 	}
 	if goos == "linux" {
+		unit := filepath.Base(path)
 		if op == "unload" {
-			return run("systemctl", "--user", "disable", "--now", sprint.SeatService)
+			return run("systemctl", "--user", "disable", "--now", unit)
 		}
 		if err := run("systemctl", "--user", "daemon-reload"); err != nil {
 			return err
 		}
-		if err := run("systemctl", "--user", "enable", sprint.SeatService); err != nil {
+		if err := run("systemctl", "--user", "enable", unit); err != nil {
 			return err
 		}
-		return run("systemctl", "--user", "restart", sprint.SeatService)
+		return run("systemctl", "--user", "restart", unit)
 	}
-	service := "gui/" + strconv.Itoa(os.Getuid()) + "/" + sprint.SeatLabel
+	service := "gui/" + strconv.Itoa(os.Getuid()) + "/" + strings.TrimSuffix(filepath.Base(path), ".plist")
 	loaded := run("launchctl", "print", service) == nil
 	if loaded {
 		if err := run("launchctl", "bootout", service); err != nil {

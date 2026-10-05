@@ -982,7 +982,9 @@ nova-sprint fleet up <member> [--width <n>]
 nova-sprint fleet down <member>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
-nova-sprint friend sync [--pg <dsn>]
+nova-sprint friend sync [--pg <dsn>] [--root <dir>] [--every <duration>]
+nova-sprint friend sync install --every <duration> [--redis <addr>] [--pg <dsn>] [--root <dir>] [--dir <dir>] [--log <file>] [--dry-run]
+nova-sprint friend sync uninstall [--dir <dir>] [--dry-run]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
