@@ -230,13 +230,19 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 // RouteOf is a route from its hash as nova-config's apply writes it: a field
 // missing or unreadable is its zero, and the price sheet its price fields.
 // First is the hash's first field (docs/SPEC-CONFIG.md, route; docs/SPEC-SPRINT.md,
-// the deal): true draws this route before the others of its tier.
+// the deal): true draws this route before the others of its tier. Applies is the
+// route's mask over the executor classes (config.RouteApplies), all when the
+// hash holds none.
 func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
 	first, _ := strconv.ParseBool(h["first"])
+	applies := h[config.RouteApplies]
+	if applies == "" {
+		applies = config.AllClasses
+	}
 	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Harness: h["harness"], Tokens: n("tokens"), USD: h["usd"],
-		Deadline: n("deadline"), Enabled: enabled, First: first, Prices: cardcost.PricesOf(h)}
+		Deadline: n("deadline"), Enabled: enabled, First: first, Applies: applies, Prices: cardcost.PricesOf(h)}
 }
 
 // Routes is the routes SetRoutes gave the store and the arrays SetTiers gave it.

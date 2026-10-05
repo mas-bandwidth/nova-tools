@@ -55,9 +55,136 @@ type Route struct {
 	// First is the route's first field. A route with it set is drawn before the
 	// others of its tier (preferFirst; docs/SPEC-SPRINT.md, the deal).
 	First bool `json:"first"`
+	// Applies is the route's applies mask: the executor classes it is used by
+	// (config.ExecutorClasses), a comma list, or all (the default, every
+	// class). The deal draws it only for an executor of a class it holds,
+	// never outside it (AppliesTo; docs/SPEC-SPRINT.md, the deal).
+	Applies string `json:"applies,omitempty"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
 	// is priced by (cost.go); every price "" when the route has none.
 	Prices cardcost.Prices `json:"prices"`
+}
+
+// The executor classes a route's applies mask is over (config.ExecutorClasses;
+// docs/SPEC-CONFIG.md, route): a friend's executor row (friend.<name>) and a
+// friend's reader are friends; a fleet machine and its reader are fleet; the
+// coordinator's own machine in a single-machine local sprint is local; all is
+// every class, the default a route with no mask has.
+const (
+	ClassFriends = "friends"
+	ClassFleet   = "fleet"
+	ClassLocal   = "local"
+	ClassAll     = "all"
+)
+
+// AppliesTo says the route is used by an executor of the class: true when the
+// route holds no mask or all, else when the class is one of its words. An
+// unknown class is held by none but all.
+func (r Route) AppliesTo(class string) bool {
+	if r.Applies == "" || r.Applies == ClassAll {
+		return true
+	}
+	return contains(Split(r.Applies), class)
+}
+
+// executorClass is the class of a fleet row an executor works from: a friend's
+// row is friends, every machine of a local single-machine sprint is local, and
+// every other machine is fleet.
+func (s *Snapshot) executorClass(row string) string {
+	switch {
+	case IsFriendRow(row):
+		return ClassFriends
+	case s.Local:
+		return ClassLocal
+	}
+	return ClassFleet
+}
+
+// readerClass is the class of a reader: a reader named for a friend
+// (reader-<friend>, its friend.<name> row on the fleet table) is friends; a
+// reader named for a machine of a local sprint is local; every other reader is
+// fleet.
+func (s *Snapshot) readerClass(reader string) string {
+	m, ok := ReaderMachine(reader)
+	if !ok {
+		return ClassFleet
+	}
+	switch {
+	case s.Fleet != nil && s.Fleet.HasRow(FriendRow(m)):
+		return ClassFriends
+	case s.Local:
+		return ClassLocal
+	}
+	return ClassFleet
+}
+
+// readerApplies says a reader may be asked a primary's read: the store holds no
+// route at all, or some enabled route of the primary's read tier (readTierOf)
+// applies to the reader's class. A reader no route of the tier applies to is
+// never asked, and its read waits with the reason.
+func (s *Snapshot) readerApplies(pr *Card, reader string) bool {
+	if len(s.Routes) == 0 {
+		return true
+	}
+	class := s.readerClass(reader)
+	for _, name := range s.tierArray(s.readTierOf(pr)) {
+		for _, r := range s.Routes {
+			if r.Name == name && r.Enabled && r.AppliesTo(class) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// readFitsReader says a read card's route applies to a reader's class: a read
+// with no route (a store with none, or a tier none serves) fits every reader.
+func (s *Snapshot) readFitsReader(rc *Card, reader string) bool {
+	name := rc.F(FieldRoute)
+	if name == "" {
+		return true
+	}
+	class := s.readerClass(reader)
+	for _, r := range s.Routes {
+		if r.Name == name {
+			return r.AppliesTo(class)
+		}
+	}
+	return true // the store no longer holds the route: the read is not moved by its mask
+}
+
+// noReadClassWhy is why no read of the primary pr can be asked of any reader
+// up for want of a route whose mask holds a reader's class: "" when the store
+// holds no route, when some enabled route of the primary's read tier applies
+// to every class (a mask of all), or when an up reader's class is held by one.
+// The ask refuses a read with it, so the wait names the mask rather than
+// falling back to a reader outside it.
+func (s *Snapshot) noReadClassWhy(pr *Card) string {
+	if len(s.Routes) == 0 {
+		return ""
+	}
+	tier := s.readTierOf(pr)
+	masked := false
+	for _, name := range s.tierArray(tier) {
+		for _, r := range s.Routes {
+			if r.Name != name || !r.Enabled {
+				continue
+			}
+			if r.Applies == "" || r.Applies == ClassAll {
+				return ""
+			}
+			masked = true
+		}
+	}
+	if !masked {
+		return ""
+	}
+	for _, rd := range s.UpReaders() {
+		if s.readerApplies(pr, rd) {
+			return ""
+		}
+	}
+	return "no " + tier + " route applies to the class of any reader up (" + readersText(s) + "): its reads wait, never falling back to a reader outside the route's mask; run: nova-sprint reader add reader-<friend>, or nova-config route set <name> --applies fleet, then nova-config apply"
 }
 
 // The work card's route fields, written at each deal and redeal: the route taken
@@ -105,7 +232,7 @@ func TierSubject(tier string) string { return "tier:" + tier }
 // noRoute is why a primary has no route: "" when it has one (or the store has no
 // route at all), else the tier it is judged under and the sentence. It moves no index.
 func (s *Snapshot) noRoute(c *Card) (tier, why string) {
-	_, tier, why = s.routeOf(c, nil, nil)
+	_, tier, why = s.routeOf(c, nil, "", nil)
 	return tier, why
 }
 
@@ -184,12 +311,16 @@ func preferFirst(arr []string, served map[string]Route, skip []string, hold bool
 }
 
 // routeOf is the route fields of one deal of the primary c; wc is the work card dealt
-// again (nil for a new attempt), whose own route is left out too. With ri the tier's
+// again (nil for a new attempt), whose own route is left out too. class is the
+// executor class the card is dealt to (ExecutorClass): an enabled route whose
+// applies mask does not hold it is left out as a redeal leaves out a route
+// already taken, and the index moves past it; "" leaves the mask out (the coarse
+// "is any route of the tier served" check). With ri the tier's
 // index moves past the entry taken and every entry skipped before it, recorded under
 // c's unit; nil reads the index and moves nothing (tla/RouteIndex.tla: Deal, Redeal, Pin).
 // An entry that names no enabled route of the tier (a route disabled or removed since
 // the array was set) is skipped as an excluded one is.
-func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
+func (s *Snapshot) routeOf(c, wc *Card, class string, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	tier = drawTier(c, m)
 	if tier == "" {
@@ -210,11 +341,17 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	if tier == cardhdr.RouteFrontier {
 		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
 	}
-	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
+	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends;
+	// a route whose applies mask does not hold the executor is never drawn, and the
+	// index moves past it (tla/RouteIndex.tla, the masked walk)
 	served := map[string]Route{}
-	var rested []string
+	var rested, masked []string
 	for _, r := range s.Routes {
 		if r.Tier != tier || !r.Enabled {
+			continue
+		}
+		if class != "" && !r.AppliesTo(class) {
+			masked = append(masked, r.Name)
 			continue
 		}
 		if rest, ok := s.resting(r.Name); ok {
@@ -253,6 +390,9 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
 		}
 		return set, tier, ""
+	}
+	if len(masked) > 0 && len(served) == 0 {
+		return nil, tier, "no " + tier + " route applies to the " + class + " (" + strings.Join(masked, ", ") + " apply elsewhere: nova-config route set <name> --applies " + class + ", then nova-config apply); the card waits, never falling back to a route outside its mask"
 	}
 	if len(rested) > 0 {
 		return nil, tier, "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
@@ -380,15 +520,17 @@ func (s *Snapshot) readTierOf(pr *Card) string {
 // the primary returned on) are left out while another of the tier is served,
 // as a redeal leaves out the routes already taken. The tier alone when the store holds
 // no route or none serves the tier: the read carries no route and its reader runs its
-// own --model.
-func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[string]string {
+// own --model. class is the reader's class (readerClass): a route whose applies
+// mask does not hold it is left out as an avoided route is, so a read is placed
+// only on a reader its route's mask holds.
+func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string, class string) map[string]string {
 	tier, key := s.readTierOf(pr), pr.ID
 	if len(s.Routes) == 0 || ri[tier] == nil {
 		return map[string]string{FieldTier: tier}
 	}
 	served := map[string]Route{}
 	for _, r := range s.Routes {
-		if r.Tier == tier && r.Enabled {
+		if r.Tier == tier && r.Enabled && r.AppliesTo(class) {
 			served[r.Name] = r
 		}
 	}
