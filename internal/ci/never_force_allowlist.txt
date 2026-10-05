@@ -1,0 +1,2 @@
+# allowlist for never-force class test
+# path reason

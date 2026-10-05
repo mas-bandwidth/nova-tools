@@ -713,6 +713,32 @@ function that returns a slice built elsewhere) is not followed. It does not know
 values a card supplies, so every non-literal operand in these two packages is held to
 the rule.
 
+
+### `never-force` — no shared ref is force-pushed or hard-reset
+
+**The rule.** Nothing in nova-tools may rewrite a shared ref. A shared ref is any
+branch under `origin/`, plus `dev` and `main`. Any script, workflow or Go code that
+uses `push --force`, `push -f`, `--force-with-lease`, `push origin +` or `reset --hard origin/`
+against a shared ref is refused. Legitimate uses (a test fixture that asserts the
+refusal, a private clone reset) are listed in the allowlist.
+
+**The mistake it prevents.** A force push to `origin/dev` or `origin/main` that would
+destroy work from other contributors or break downstream integrations.
+
+**The test.** `TestNoForcePushOrHardResetOfASharedRef` (`internal/ci/never_force_class_test.go`),
+which scans the tree for force patterns and refuses any against a shared ref not
+listed in `internal/ci/never_force_allowlist.txt`.
+
+**Its allowlist.** `internal/ci/testdata/never_force/allowlist.txt`, one path per line
+with a reason; shrink-only.
+
+**Its remedy line.** `remedy="remove the force push or reset; if this is a legitimate
+use (test fixture, private clone), add it to internal/ci/never_force_allowlist.txt with
+a reason; docs/SPEC-CI.md#never-force"`.
+
+**Its narrowings.** It reads Go files, shell scripts, Makefiles and workflows; `testdata/`
+and `vendor/` are skipped.
+
 ### `slowtests` — no package over the per-package time budget
 
 **The rule.** A package whose summed `go test -json` package elapsed time is over
