@@ -431,7 +431,7 @@ func TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox(t *testing.T) {
 		assert.Equal(t, []string{"RESULT: c1\n", "RESULT: c2\n", "RESULT: c2\n"}, prompts, "one run per card turn, the brief its prompt")
 		mu.Unlock()
 		assert.Empty(t, state.Sessions, "no session is opened")
-		assert.Equal(t, []string{"c2"}, state.GivenUp)
+		assert.Equal(t, []string{"c2~15"}, state.GivenUp)
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 1, strings.Count(records, " card=done"), records)
 		assert.Contains(t, records, `card=again turn=1/2 reason="claude -p exited 0 and `+filepath.Join(dir, "outbox", "c2~15")+` holds no REPORT.md and no RESULT.md"`)
