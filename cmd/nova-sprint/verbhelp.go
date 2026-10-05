@@ -56,7 +56,7 @@ var verbEffect = map[string]string{
 	"handover":          "inspection: reads the store, writes nothing",
 	"seat check":        "inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing",
 	"seat install":      "local write: writes the push loop's unit (inbox --wait --push seat) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing",
-	"seat uninstall":    "local write: unloads the push loop's unit and removes its file from --dir",
+	"seat uninstall":    "local write: unloads the push loop's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing",
 	"machinery":         "inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing",
 	"needs":             "inspection: reads the waiting cards, writes nothing",
 	"held":              "inspection: reads the held cards of the table, writes nothing",
@@ -77,8 +77,8 @@ var verbEffect = map[string]string{
 	"coordinator":       "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 	"answer":            "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
 	"selftest land":     "inspection: lands a canned card on a scratch clone with this binary, writes nothing to the sprint",
-	"server switch":     "local write: runs <binary> tick --shadow against the store first (read-only, under --tick-deadline) and refuses the swap, nothing changed, when it exits non-zero, panics or misses the deadline; then switches the server binary on disk, keeping the previous binary, the shadow's plan size and time at <target>.shadow.json, and rolling back on land failure in the window",
-	"merge-window open": "store write: the merge window, the merge table's properties; land pauses while it is open",
+	"server switch":     "local write: runs <binary> tick --shadow against the store first (read-only, under --tick-deadline) and refuses the swap, nothing changed, when it exits non-zero, panics or misses the deadline; then switches the server binary on disk, keeping the previous binary, the shadow's plan size and time at <target>.shadow.json, and rolling back on land failure in the window; --dry-run runs the shadow tick only and switches and writes nothing",
+	"merge-window open": "local write: the merge window, the merge table's properties in the sprint's store; land pauses while it is open; --dry-run checks --for and --reason and writes nothing",
 }
 
 // commonExit is the codes of every other verb.
