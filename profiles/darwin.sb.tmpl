@@ -76,19 +76,26 @@
 
 (allow sysctl-read)
 
-;; mach-lookup is NARROWED to the four services the harnesses and the Go toolchain need,
+;; mach-lookup is NARROWED to the five services the harnesses and the Go toolchain need,
 ;; measured 2026-09-11 on this Mac by growing the set until `/bin/sh -c true`, `git status`,
 ;; `curl https://example.com`, `opencode --version` and `node -e 1` all passed, and on
-;; 2026-10-04 on an Intel Mac bench by growing it again until `go mod download` passed:
+;; 2026-10-04 on an Intel Mac bench by growing it again until `go mod download` passed,
+;; and on 2026-10-05 by considering membership: the denial of membership was reported
+;; in fleet activity, and was evaluated on 2026-10-05 on native macOS 27.2 with 20 launches
+;; each. The measurement did not reproduce: sqlite3 mean 0.0100 s with and without the
+;; grant; git status 0.0305 s without, 0.0295 s with. Membership is allowed as a narrow,
+;; named, pbpaste-safe grant:
 ;;   opendirectoryd.libinfo  getpwuid(3)/getaddrinfo(3) -- without it HOME lookup and
 ;;                           name resolution fail;
+;;   opendirectoryd.membership Open Directory membership lookups -- reported stall did not
+;;                           reproduce on macOS 27.2 (measured 2026-10-05);
 ;;   SecurityServer          TLS trust evaluation -- without it curl to an https name fails;
 ;;   system.logger           os_log(3), which libsystem calls on many paths;
 ;;   trustd.agent            SecTrustEvaluateWithError, the call Go's crypto/x509 makes on darwin
 ;;                           for every TLS handshake. curl verifies through SecurityServer
 ;;                           and passed without it; `go mod download` inside the wall failed
 ;;                           every fetch with `tls: failed to verify certificate: x509:
-;;                           OSStatus -26276` under the three-name set, and the same fetch
+;;                           OSStatus -26276` under the four-name set, and the same fetch
 ;;                           passed with this one name added (measured 2026-10-04 on a
 ;;                           darwin/amd64 bench, sandbox-exec -f on the generated profile;
 ;;                           `com.apple.trustd` alone did not help). pbpaste stays rc=1.
@@ -100,6 +107,7 @@
 ;; are denied at every width.
 (allow mach-lookup
   (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
   (global-name "com.apple.SecurityServer")
   (global-name "com.apple.system.logger")
   (global-name "com.apple.trustd.agent"))
