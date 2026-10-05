@@ -594,6 +594,38 @@ card), so today the profile is `run --profile`. A cancelled turn signals the
 wall's group, and the wall passes SIGTERM to the harness's own group; the
 SIGKILL after `KillDelay` reaches the wall only.
 
+## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
+
+The server side of the connection, as the owner designed it: the coordinator
+is the server, both sides ping each second, and a friend is down after ten
+seconds without a pong. `nova-friend serve --as <coordinator>` is the loop,
+installed as a nova-config loop row kept alive, never a hand loop or a hand
+plist. Each second (`PingEvery`) it reads the coordinator's own stream from
+where it left off, in one range: a `daemon-pong <nonce>` or a session
+`pong <nonce>` from a friend counts when the nonce is one the loop sent that
+friend in the last ten seconds (`DownAfter`), once; the sender is the
+message's `from`, never its body, and a stale, replayed or other friend's
+nonce changes nothing. Then each friend whose state changed is said, and every
+friend row but the coordinator's own is sent a `PING` with a fresh nonce and
+the seat line (`since` the loop's start). The friends are nova-config's friend
+rows, read at the start and again each minute (`RowsEvery`), so a friend or a
+bud added as a row is pinged with no list kept anywhere else, and a row
+removed is forgotten. A friend is up on a counted pong and down once ten
+seconds pass without one, counted from the last pong, or from when its row was
+first read; a ping that could not be sent is named in the down line's reason.
+The state is one process's, in memory (a last pong and the nonces of the last
+ten seconds per friend), so a restart starts every friend undecided. It prints
+`SERVE OK friends= every= down_after=` once, then one line per state change and
+never one per ping, `SERVE UP friend= at=` and `SERVE DOWN friend= at=
+last_pong=<RFC3339|never> reason=`; a store or rows read that fails is one
+`SERVE NOTE` until what it says changes, and one when it clears.
+
+This is the connection, not presence: a daemon-pong proves the friend's daemon
+and transport, the way `wait-pong`'s `daemon=` does, and the session's own
+answer is still the session check's (Presence, above). Each `PING` reopens the
+daemon's challenge, so the challenge's `deaf` is not reached while this loop
+runs (Chaos, below); presence is what says a silent session.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the
@@ -629,9 +661,14 @@ daemon does not ask its harness and a closed harness does not yet make its
 friend down; that file is outside the card that built the check. Nor is the
 watch's down and up in `tla/FriendPresence.tla` yet.
 
-The server side of the ping (the coordinator pinging every friend each window
-from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
-here; `ping` and `wait-pong` run the canary by hand. The beat carries no
+The server side of the ping is `serve` (The coordinator's ping, above); the
+daemon's side still waits a window of three minutes for a ping, not ten
+seconds, and pings nobody, so "both sides ping each second" holds on the
+coordinator's side only; the table's `awake` and `deaf` columns are not
+written from `serve`'s states; the keepalive's TLA+ module beside
+`tla/Friend.tla` is owed. The bus trims nothing (SPEC-BUS.md), so each friend
+`serve` pings adds two entries a second to the streams and the log (a ping and
+its daemon-pong), about 170,000 a day per friend, kept until trimming is decided. The beat carries no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
 
