@@ -311,6 +311,39 @@ window's pid and `route=defer` with that line when none does. A wake path
 that is not absolute, or that the process listing cannot show whole, is
 still a refusal and nothing is written.
 
+### fr-delivery-receipts.w1: receipts, the table's columns, the send alarm
+
+The finding of 2026-10-04: the sprint server's notes to friends failed on
+`WRONGPASS` for its bus user for two hours (54 failures in 30 minutes) and
+only a log line said so; earlier a friend's harness got no note for 80
+minutes while her beat said up. A beat proves the daemon, and the daemon's
+ack proves the turn ran; neither proves the session read the message. So
+every message to a friend is owed her session's receipt (SPEC-BUS.md,
+fr-delivery-receipts.w1): her session runs `nova-bus ack --as <f> --id
+<ids>` once it has read them, or answers one (`re`); `ReceiptLine`
+(internal/friend/deliver.go) is that exact line for a turn's text, from its
+`RECV OK id=` lines. The daemon's own ack at exit 0 is unchanged and is no
+receipt.
+
+The friends table's two columns per friend are `DeliveryCells` over
+`bus.Undelivered`: undelivered, the count owed, and oldest, the oldest
+owed message's age (`Age`: `45s`, `12m`, `1h20m`, `3d`; `-` when none).
+
+The sprint server sends its notes through a `Courier`
+(internal/friend/deliver.go): the bus, or a dial per note (`Open`), with a
+`bus.Watch` on each result, so a login refused or a store not reached is
+one alarm to the coordinator naming the store and the user, raised at the
+first failure and cleared at the next success.
+
+Not wired by this card (outside its paths, owed): the daemon putting
+`ReceiptLine` in each turn (daemon.go's `Batch`); `nova-bus recv --ack`
+giving a receipt for a session that reads the bus itself; the friends
+table's columns (cmd/nova-sprint/friends.go); the sprint server's
+`sendBus` becoming a `Courier` whose `Raise` and `Clear` write the alarm
+where the coordinator reads it (a sprint note, like the idle alarm); and
+the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
+a daemon ack that clears it).
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
