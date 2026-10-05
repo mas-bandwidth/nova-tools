@@ -96,7 +96,7 @@
 
 # The last id of the range is start + count - 1 and must stay below 4294967295:
 # the kernel refuses a mapping that reaches (u32)-1.
-- name: a new range fits in the 32-bit id space
+- name: a new range fits in the 32-bit id range
   ansible.builtin.assert:
     quiet: true
     that: container_runtime_subid_new_start | int + container_runtime_subid_count | int < 4294967296
