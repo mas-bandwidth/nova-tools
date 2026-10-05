@@ -150,8 +150,9 @@ within thirty (friend sync's collect of the report her session wrote). Her
 nova-friend daemon still runs `friend beat` once a second: the sprint records
 it and shows its age, and it never makes her up, nor does any other beat sent
 for her. Otherwise she reads down, her row naming the evidence missing and the
-age of the last of each (`where --json`, `friends[].evidence`), and her
-unstarted cards go back to the pool.
+age of the last of each (`where --json`, `friends[].evidence`). Her cards stay
+on her row and count again when she is up; they go back to the pool only by
+`friend down` (a hold) or `friend take`, not because she reads down.
 
 ## Where a job's work lives
 

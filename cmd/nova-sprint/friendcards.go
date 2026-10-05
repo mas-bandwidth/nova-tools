@@ -723,9 +723,15 @@ func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p
 		return false, nil
 	}
 	// a finish from the report her session wrote is her session's evidence: her row reads up
-	// on it for sprint.FriendFinishWindow (docs/SPEC-FRIEND.md, "Presence is her session's
-	// evidence"); a record not written costs her that, never the finish
-	if err := st.FriendFinished(ctx, name, a.now()); err != nil {
+	// on it for sprint.FriendFinishWindow from when her session wrote the report, never from
+	// this collect, so a report collected late is old evidence (docs/SPEC-FRIEND.md, "Presence
+	// is her session's evidence"); a report with no time, or one dated after now, takes now. A
+	// record not written costs her that, never the finish
+	finished := at
+	if now := a.now(); finished.IsZero() || finished.After(now) {
+		finished = now
+	}
+	if err := st.FriendFinished(ctx, name, finished); err != nil {
 		say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the finish is not recorded as her evidence: %s", name, p.Card, oneline.Escape(err.Error())))
 	}
 	result := "ok"

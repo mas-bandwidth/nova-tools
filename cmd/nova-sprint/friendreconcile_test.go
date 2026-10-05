@@ -161,6 +161,7 @@ func TestAFinishFromHerReportIsHerSessionsEvidence(t *testing.T) {
 	assert.Equal(t, sprint.Down, f.Status, "her pong out of its window, and a beat is none")
 	assert.Contains(t, f.Evidence, "no card finished within 30m0s")
 	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nPushed and green.\n")
+	reportAt(t, root, "amy", "s1-1.w1", ta.now)
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok")
 	f = whereFriends(ta)["amy"]
 	assert.Equal(t, sprint.Up, f.Status)
@@ -170,4 +171,27 @@ func TestAFinishFromHerReportIsHerSessionsEvidence(t *testing.T) {
 	f = whereFriends(ta)["amy"]
 	assert.Equal(t, sprint.Down, f.Status, "the finish out of its window")
 	assert.Contains(t, f.Evidence, "no card finished within 30m0s (last 30m0s ago)")
+}
+
+// A finish is her evidence from when her session wrote the report, never from when friend sync
+// collected it: a report written longer than sprint.FriendFinishWindow ago and collected now
+// (the coordinator was down) finishes the card and leaves her down, naming the old finish.
+func TestALateCollectOfAnOldReportIsOldEvidence(t *testing.T) {
+	t.Parallel()
+	ta, root := reconcileApp(t, 1)
+	ta.a.sleep(sprint.FriendPongWindow)
+	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nPushed and green.\n")
+	reportAt(t, root, "amy", "s1-1.w1", ta.now.Add(-sprint.FriendFinishWindow-time.Minute))
+	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok")
+	f := whereFriends(ta)["amy"]
+	assert.Equal(t, sprint.Down, f.Status, "the report was written outside the window")
+	assert.Contains(t, f.Evidence, "no card finished within 30m0s (last 31m0s ago)")
+	assert.Equal(t, ta.now.Add(-sprint.FriendFinishWindow-time.Minute).UTC(), f.Finished.UTC())
+}
+
+// reportAt dates her outbox/<job>/REPORT.md at, the time friend sync reads as when her
+// session wrote it.
+func reportAt(t *testing.T, root, friend, job string, at time.Time) {
+	t.Helper()
+	require.NoError(t, os.Chtimes(filepath.Join(root, friend+"-working", "outbox", job, "REPORT.md"), at, at))
 }
