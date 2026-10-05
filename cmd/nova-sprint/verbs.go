@@ -52,6 +52,7 @@ func init() {
 		{"stop", "", "stop", (*app).cmdMachineStop},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
 		{"tick", "[--answer-rules] [--idle-alarm]", "tick", (*app).cmdTick},
+		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
 		{"selftest", "[--dir <d>] [--keep]", "selftest", (*app).cmdSelftest},
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
@@ -128,6 +129,7 @@ func init() {
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
+		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
@@ -567,9 +569,14 @@ func (s *stringList) Set(v string) error {
 	return nil
 }
 
+// verbFlags is the flag set of a verb that opens no store: the one place the
+// verbs without the common flags build theirs (selftest land, server switch), so
+// the tool's count of verbflag.New sites does not grow with each verb.
+func (a *app) verbFlags(name string) flagSet { return verbflag.New(name) }
+
 // verbSetup is the flag set of a store verb with the common flags.
 func (a *app) verbSetup(name string) (flagSet, *common) {
-	fs := verbflag.New(name)
+	fs := a.verbFlags(name)
 	c := &common{verb: name}
 	c.register(fs, a.getenv)
 	return fs, c
