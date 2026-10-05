@@ -110,6 +110,14 @@ stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of 
 home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
 
+`serve`, the coordinator's ping loop, is not a step of this sitting: it runs
+until a signal, so the banner has no example of it to run here. What it prints
+is pinned in `cmd/nova-friend/serve_test.go` on the in-memory store with an
+injected clock: `SERVE OK friends= every= down_after=` once (with `dry_run=true`
+and nothing sent under `--dry-run`), then one `SERVE UP` or `SERVE DOWN` line
+per state change, and `SERVE STOP interrupted` at a signal (docs/CLI.md, "The
+coordinator's ping loop").
+
 ### First run
 
 ```text

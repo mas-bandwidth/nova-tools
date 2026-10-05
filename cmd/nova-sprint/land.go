@@ -79,7 +79,9 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     in the generated ledgers lands: the tip's side, then their tests' update run
     (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
     the stream, and after resume land merges the head again. The clone is --repo-dir,
-    else the dir= each line names; git uses the caller's environment. After
+    else the dir= each line names; git uses the caller's environment. A kept
+    clone a pass cut short left not clean is restored to the fetched base before
+    the batch (LAND CLEANED names the files); a --repo-dir one is refused. After
     the whole pass each landed merge diff is scored (nova-decide's score
     decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
     decide/score.jsonl under the land root): a batch whose cards' top class meets
@@ -149,6 +151,9 @@ type landBatch struct {
 	// Score is the landed batch's scores (landscore.go): nil for a batch that did not
 	// land, and for a dry run.
 	Score *landScore `json:"score,omitempty"`
+	// Cleaned is every file the lander's restore of its own clone discarded before the
+	// batch (restore), one LAND CLEANED line; nil when the clone was clean.
+	Cleaned []string `json:"cleaned,omitempty"`
 }
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
@@ -429,6 +434,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		return code
 	}
 	for _, b := range l.out {
+		if b.Cleaned != nil {
+			fmt.Fprintf(stdout, "LAND CLEANED stream=%s dir=%s files=%d paths=%s\n", oneline.Field(b.Stream), oneline.Field(b.Dir), len(b.Cleaned), oneline.Field(strings.Join(b.Cleaned, ",")))
+		}
 		w := stdout
 		if b.Status != "ok" {
 			w = stderr
@@ -573,8 +581,15 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	if l.dry {
 		return l.dryBatch(b, cards)
 	}
-	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
-		return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
+	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" || l.repoDir == "" && l.merging(ctx, dir) {
+		if err != nil || l.repoDir != "" {
+			return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
+		}
+		files, why := l.restoreClone(ctx, dir, b.Base)
+		if why != "" {
+			return refuse(why)
+		}
+		b.Cleaned = files
 	}
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
@@ -1287,6 +1302,64 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 		return "", "the clone of " + repo + " into " + dir + " failed: " + firstLine("", err)
 	}
 	return dir, ""
+}
+
+// merging says a merge is in progress in the clone: a pass cut short between a merge and
+// its commit or abort.
+func (l *lander) merging(ctx context.Context, dir string) bool {
+	_, err := l.git(ctx, dir, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+	return err == nil
+}
+
+// restoreClone puts the clone the lander keeps under its root back to the fetched base
+// before a batch, when a pass cut short (a hand land beside the server's, a crash) left it
+// not clean: any merge in progress aborted, the checkout reset to origin's base, untracked
+// files removed, inside that clone only. files is every path it discarded, for the LAND CLEANED
+// line; why is a refusal when the clone could not be restored. A clone given with
+// --repo-dir is the caller's and never comes here (docs/SPEC-SPRINT.md, section 7,
+// land-clone-self-heals-r.w1).
+func (l *lander) restoreClone(ctx context.Context, dir, base string) (files []string, why string) {
+	out, err := l.git(ctx, dir, "status", "--porcelain", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, "the clone " + dir + " is not clean and its status could not be read: " + firstLine("", err)
+	}
+	entries := strings.Split(out, "\x00")
+	for i := 0; i < len(entries); i++ {
+		e := entries[i]
+		if len(e) < 4 {
+			continue
+		}
+		files = append(files, e[3:])
+		if e[0] == 'R' || e[0] == 'C' {
+			i++ // a rename's or copy's source follows it
+		}
+	}
+	slices.Sort(files)
+	files = slices.Compact(files)
+	if files == nil {
+		files = []string{}
+	}
+	fail := func(step string, err error) ([]string, string) {
+		return nil, "the clone " + dir + " is not clean and could not be restored (" + step + ": " + firstLine("", err) + "); commit or discard its changes, then run land again"
+	}
+	if l.merging(ctx, dir) {
+		if _, err := l.git(ctx, dir, "merge", "--abort"); err != nil {
+			return fail("the merge in progress could not be aborted", err)
+		}
+	}
+	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base); err != nil {
+		return fail("the fetch of the base "+base, err)
+	}
+	if _, err := l.git(ctx, dir, "reset", "--hard", "-q", "refs/remotes/origin/"+base); err != nil {
+		return fail("the reset to the base "+base, err)
+	}
+	if _, err := l.git(ctx, dir, "clean", "-f", "-d", "-q"); err != nil {
+		return fail("the removal of untracked files", err)
+	}
+	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
+		return nil, "the clone " + dir + " is not clean after its restore (" + firstLine(out, err) + "); commit or discard its changes, then run land again"
+	}
+	return files, ""
 }
 
 // originIs is why the clone's origin is not where the batch belongs, ""

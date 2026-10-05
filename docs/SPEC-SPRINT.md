@@ -2576,6 +2576,20 @@ never by a resolution on the card's branch, so no change a reader has not read
 lands. The conflict judgment's "resolve and resume" decision says so in its
 `--did` text.
 
+#### land-clone-self-heals-r.w1
+
+The clone land keeps under its root is the lander's own: it computed the path and made the
+clone, so a pass cut short there is the lander's to undo (found by hand, 2026-10-04: a hand
+land beside the server's lander in the same kept clone left modified files, and every later
+pass refused all 11 streams, the clone is not clean). Before each batch, when its kept clone
+is not clean (a tracked change, or a merge in progress), land aborts the merge, fetches the
+batch's base, resets the clone to it and removes its untracked files, inside that clone only,
+and says so on one line before the batch's, `LAND CLEANED stream= dir= files=<n>
+paths=<a,b,...>` (`--json`: the batch item's `cleaned`); a clone it cannot restore refuses
+the batch with the step that failed. A clone the caller gives with `--repo-dir` is the
+caller's: it is never cleaned, and a dirty one is refused as before
+(`TestLanderRestoresItsOwnDirtyCacheClone`, cmd/nova-sprint/land_clean_clone_test.go).
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
@@ -3892,6 +3906,20 @@ candidates that error, panic, hang past the deadline and print no plan
 (`TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary`), the store byte for byte unchanged
 by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
 store refused (`TestShadowTickStoreRefusesEveryWrite`).
+
+#### store-latency-row-r.w2: where shows the store round trip the server measures
+
+The store latency was measured by hand with redis-cli (20 pings, then 500 on one connection) on
+2026-10-04 at 3:26 PM, while landing was slow; the server measures it instead. Every 10 s
+(`store.StoreRTTEvery`) `run` times one round trip to the store, the read of the store round
+trip record, by the injected clock, and writes the record (`store.MeasureStoreRTT`): the samples
+of the last minute (`store.StoreRTTWindow`) and their p50 and p99 in milliseconds, nearest
+rank, to the microsecond. `where` reads the record in the exchange it already makes for the
+machine's records; `where --json` carries `store_rtt_p50_ms` and `store_rtt_p99_ms`, and
+`where` prints them on its store line, `store: rtt p50=<ms>ms p99=<ms>ms`, under the tables.
+With no record, or one whose last sample is older than the window (a server that stopped
+measuring), both fields and the line are left out. Tested on the twin store with the harness's
+clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
 
 ## 15. Reminders
 

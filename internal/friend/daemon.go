@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -82,11 +83,17 @@ type Daemon struct {
 	Store                bus.Store
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
-	// Activity is the newest write of the session's files (NewestWrite over her
-	// directory), run at most once an ActivityEvery and carried on each beat; nil
-	// carries none.
-	Activity func() time.Time
-	Now      func() time.Time
+	// Activity is the newest write of the session's files and Cards the ids of
+	// the cards she holds, oldest first (nil: the queue file's queued and working
+	// tasks under Dir), both read at most once an IdleWalkEvery; IdleAfter is her
+	// row's idle setting, read each step (nil or zero: DefaultIdleAfter). They
+	// drive the idle wake (IdleStep); a nil Activity knows no write, and the
+	// watch is off.
+	// The same Activity, run at most once an ActivityEvery, is carried on each beat.
+	Activity  func() time.Time
+	Cards     func() []string
+	IdleAfter func() time.Duration
+	Now       func() time.Time
 	// Pause waits d when the store did not: after a read that answered at
 	// once (blocked false: an error, or a store that does not block), and
 	// while a delivery runs and the loop only peeks.
@@ -133,8 +140,13 @@ type Daemon struct {
 	written0    Status
 	statusErrAt time.Time
 	active      time.Time // the last walk's answer
+	cards       []string  // the cards she held at it
 	walked      time.Time // when it was
 }
+
+// IdleWalkEvery is how often the idle watch reads the session's newest write
+// and the cards she holds.
+const IdleWalkEvery = time.Minute
 
 // turn is one delivery into the session: the messages it carries (acked
 // together at exit 0) and the daemon's word about the coordinator, if any.
@@ -315,13 +327,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		if storeOK {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
-				d.active, d.walked = d.Activity(), now
+				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}
 			if err := d.Beat(ctx, d.active); err != nil {
 				d.status.BeatError = err.Error()
 			} else {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
+		}
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil {
+			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
+				d.active, d.cards, d.walked = d.Activity(), d.held(), now
+			}
+			l.idle(now)
 		}
 		if d.m.Challenge != Quiet { // the nonce says which challenge a pong answers; its at is the store's clock, never compared with ours
 			if p, found, err := d.Pong(); err == nil && found {
@@ -331,6 +349,60 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.flush(now)
 	}
 	return nil
+}
+
+// held is the cards she holds, oldest first: Cards, else the queue file's
+// queued and working tasks, in its order.
+func (d *Daemon) held() []string {
+	if d.Cards != nil {
+		return d.Cards()
+	}
+	var q Queue
+	path := filepath.Join(d.Dir, filepath.FromSlash(QueueFile))
+	if _, err := read(path, &q); err != nil {
+		if _, err := read(path, &q.Tasks); err != nil {
+			return nil // ignored: a queue file that is no queue names no card to wake her for; status and the sprint's view say it
+		}
+	}
+	var ids []string
+	for _, t := range q.Tasks {
+		if t.State == "queued" || t.State == "" || t.State == "working" {
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids
+}
+
+// idle is the idle watch's step while the session is free in batch mode
+// (docs/SPEC-FRIEND.md, idle wake; Machine.IdleStep): the wake is one turn
+// through the harness's resume naming her cards and the oldest, and the note
+// one blocker to the coordinator naming her and them. In one-shot mode the
+// lanes hand each card themselves, and a passive harness takes no turn: its
+// wake is said on the record, and its note goes as any other.
+func (l *loop) idle(now time.Time) {
+	d := l.d
+	after := DefaultIdleAfter
+	if d.IdleAfter != nil && d.IdleAfter() > 0 {
+		after = d.IdleAfter()
+	}
+	wake, note := d.m.IdleStep(now, d.active, len(d.cards), after)
+	held := strings.Join(d.cards, ", ")
+	switch {
+	case wake && l.passive:
+		d.Record(fmt.Sprintf("%s not delivered: %s has no deliver command: idle wake (%d cards, nothing written for %s)", now.UTC().Format(time.RFC3339), d.Harness, len(d.cards), after))
+	case wake:
+		// the pong line heads it while a challenge is open; the word about the coordinator rides with messages, never in a wake
+		t := &turn{subjects: fmt.Sprintf("%q", "idle wake")}
+		if d.m.Challenge != Quiet && d.PongCommand != nil {
+			t.text = "Run this now, first, exactly as written: " + d.PongCommand(d.m.Nonce) + "\nThen read on.\n\n"
+		}
+		t.text += fmt.Sprintf("nova-friend: you hold %d cards (%s) and your session has written nothing for %s; continue the oldest, %s.\n", len(d.cards), held, after, d.cards[0])
+		l.busy = t
+		l.startTurn(t, now, l.deliverBatch(t))
+	case note:
+		l.tellKind(bus.KindBlocker, fmt.Sprintf("friend %s: idle %s holding %d cards: %s", d.Friend, 2*after, len(d.cards), held),
+			fmt.Sprintf("Her session has written nothing for %s while holding these cards, and a wake turn %s ago changed nothing. Look at her session, or deal the cards to another friend.\n", 2*after, after), now)
+	}
 }
 
 // row is the mode and width the daemon delivers by: the friend's row when
@@ -414,12 +486,17 @@ func (l *loop) coordinator() string {
 // tell sends the coordinator one message, said on the record when there is
 // no one to tell or the send fails.
 func (l *loop) tell(subject, body string, now time.Time) {
+	l.tellKind("", subject, body, now)
+}
+
+// tellKind is tell with the message's kind ("" is status).
+func (l *loop) tellKind(kind, subject, body string, now time.Time) {
 	to := l.coordinator()
 	if to == "" {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " no coordinator to tell: " + subject)
 		return
 	}
-	if _, err := l.b.Send(l.ctx, bus.Message{From: l.d.Friend, To: []string{to}, Subject: subject, Body: subject + "\n" + body}); err != nil {
+	if _, err := l.b.Send(l.ctx, bus.Message{From: l.d.Friend, To: []string{to}, Kind: kind, Subject: subject, Body: subject + "\n" + body}); err != nil {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " telling " + to + " failed: " + err.Error() + ": " + subject)
 	}
 }

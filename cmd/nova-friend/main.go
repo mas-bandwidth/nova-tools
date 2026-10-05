@@ -3,8 +3,10 @@
 // friend's nova-bus stream and pushes each message into the running session
 // as a turn, beats to the sprint server while it does, answers the
 // coordinator's pings at once and pushes them in so the session answers as
-// its own turn, and tells the session when the coordinator goes silent. The
-// verbs are run, install, uninstall, status, pong, ping and wait-pong; the
+// its own turn, and tells the session when the coordinator goes silent; and,
+// on the coordinator's side, the ping loop that pings every friend each
+// second. The verbs are run, install, uninstall, status, pong, ping,
+// wait-pong and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -416,6 +418,29 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 					stateDir(f)
 				},
 				Run: w.status,
+			},
+			{
+				Name:    "serve",
+				Usage:   "serve --as <coordinator> [--redis <addr>] [--dry-run]",
+				Example: "", // a loop: the example block has no line that runs for ever
+				Effect:  tool.Delivery + ": the coordinator's ping loop; a PING to every friend each second, until a signal",
+				DryRun:  true,
+				Detail: `The coordinator's side of the connection, run as a nova-config loop row. Each ` + friend.PingEvery.String() + `: the pongs on
+the coordinator's own stream are read (a daemon-pong or a session pong, the sender the message's from,
+never its body; only a nonce sent to that friend in the last ` + friend.DownAfter.String() + ` answers, once), each friend whose
+state changed is said, and every friend row but --as gets a PING with a fresh nonce. A friend is up on
+a pong and down after ` + friend.DownAfter.String() + ` without one (from the start for a friend never answered). The friend rows
+are nova-config's as the bus store holds them (the set friends), read at the start and again each
+` + friend.RowsEvery.String() + `: a row added is pinged, a row removed is forgotten. Prints SERVE OK friends= every= down_after= once, then one line per state change, never one
+per ping: SERVE UP friend= at=, SERVE DOWN friend= at= last_pong=<RFC3339|never> reason=; a store or rows
+read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or SIGTERM: SERVE STOP.
+--dry-run reads the friend rows and prints SERVE OK friends= every= down_after=: nothing is sent.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator: the pings come from it and the pongs come to it")
+					redis(f)
+					f.Prints()
+				},
+				Run: w.serve,
 			},
 		},
 	}
