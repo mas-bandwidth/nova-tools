@@ -1033,6 +1033,8 @@ nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] |
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint promoted --sha <merge sha> [--answers <note>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup --file <path>
 nova-sprint fleet beat <member> [--load <percent>]
@@ -1100,6 +1102,10 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 ### The seat's store login
 
 `nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
+
+### Promotion
+
+`nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]` cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from the origin sprint tip, fetches the sprint branch and the target branch (`--base`, default `dev`) from origin, refuses when the cut is not ahead of the target, merges the target branch into the cut first, runs the tree gate on the frozen commit, pushes the cut branch, opens its pull request to dev, waits for its checks to pass, puts it in the merge queue, watches the merge queue, and records the promotion when it lands: the `promoted --sha <merge>` step on the sprint's store, as the coordinator the verb runs as (`--actor`, `--redis`), then the `promoted --sha` line. The verb prints each step as it goes and never blocks without a line saying on what. A merge conflict stops the promotion with one judgment naming the files and deletes that local cut branch; a queue failure raises one judgment naming the failing check. `--dry-run` prints the branch and landed cards and changes nothing: it does not cut a branch and does not check one out. The verb runs that pass itself. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#promotion).
 
 ### The sprint backup
 
