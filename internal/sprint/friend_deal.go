@@ -101,6 +101,10 @@ type FriendSeat struct {
 	Tiers   []string
 	Dir     string
 	Running []string
+	// Models is her row's model per tier (config.FriendModels): the deal writes the model
+	// of the card's tier on the work card it places on her row (friend_model.go); a tier
+	// with none is dealt with no model.
+	Models map[string]string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -358,14 +362,17 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			p.Rows = append(p.Rows, RowAdd{Fleet, row})
 			declared[row] = true
 		}
+		var u Unit
 		switch {
 		case escalated:
-			p.Units = append(p.Units, friendEscalateUnit(s, c, wc, card, row, col, tier))
+			u = friendEscalateUnit(s, c, wc, card, row, col, tier)
 		case wc != nil:
-			p.Units = append(p.Units, friendRedealUnit(s, c, wc, row, col))
+			u, card = friendRedealUnit(s, c, wc, row, col), wc.ID
 		default:
-			p.Units = append(p.Units, friendDealUnit(s, c, card, row, col, nil))
+			u = friendDealUnit(s, c, card, row, col, nil)
 		}
+		// her row's model for the card's tier rides on the card she is dealt (friend_model.go)
+		p.Units = append(p.Units, withFriendModel(u, card, tier, friendModelOf(seat[name], tier)))
 	}
 	return Lawful(p), dealt, dealtWorking
 }
@@ -449,9 +456,10 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string, set map[string]
 // ready -> working on it, its attempt as it was: a take-back is no attempt and spends no
 // bound.
 func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
-	// a card the fleet held before carries its fleet route; a friend runs her own model, so
-	// the route comes off as a first deal to her writes none (2026-10-04: a resting route
-	// kept on a friend's card withdrew it every tick, and each deal again was a new inbox copy)
+	// a card the fleet held before carries its fleet route; a friend runs her row's model for
+	// the tier, so the route comes off as a first deal to her writes none, and the deal writes
+	// her model back (withFriendModel) (2026-10-04: a resting route kept on a friend's card
+	// withdrew it every tick, and each deal again was a new inbox copy)
 	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
 		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
 	if left := friendsLeft(wc); len(left) > 0 {

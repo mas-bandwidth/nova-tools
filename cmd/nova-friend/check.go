@@ -136,6 +136,11 @@ func (w world) healthCheckVerb(c *tool.Call) *tool.Out {
 	if summary.Broken+summary.Deaf+summary.Silent+summary.Down+summary.Untrue > 0 {
 		return tool.Exit(1)
 	}
+	for _, fc := range checks {
+		if fc.Models != nil && len(fc.Models.Refused) > 0 {
+			return tool.Exit(1) // her row asks more of her harness than it can do
+		}
+	}
 	return tool.Exit(0)
 }
 
