@@ -105,7 +105,9 @@ func alarmFacts(s *Snapshot) map[string]string {
 // docs/SPEC-SPRINT.md section 8, "Backlog alarms"): a judgment for each alarm whose
 // condition starts, none while it stands (notify keys an alarm by its type alone, so a
 // count that moves is the same episode), and, for each whose judgment or hold the
-// condition's end closes, one cleared note to the coordinator. It writes notes, no table.
+// condition's end closes, one cleared note to the coordinator; and the members' open
+// files over their alarm bounds the same way (tickFiles, fd.go). It writes notes, no
+// table.
 func tickAlarms(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	facts := alarmFacts(s)
@@ -124,7 +126,10 @@ func tickAlarms(s *Snapshot, r TickReq) (Plan, int) {
 		p.Notes = append(p.Notes, Note{Kind: Happened, Type: NAlarmCleared, Who: r.who(), To: s.Coordinator, At: s.Now,
 			What: typ + ": " + alarmNow(s, typ)})
 	}
-	return p, due
+	// each member's open files over its alarm bound, from its beat (fd.go)
+	f, filesDue := tickFiles(s, r)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, f.Notes...), append(p.Closes, f.Closes...), append(p.Updates, f.Updates...)
+	return p, due + filesDue
 }
 
 // alarmNow is what an alarm's cleared note says of the sprint now.
