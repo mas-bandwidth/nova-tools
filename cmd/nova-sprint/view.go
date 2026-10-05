@@ -30,9 +30,11 @@ import (
 //     judgments, notes addressed to the coordinator, alarms, sentinels reached, friends and
 //     machines that need a look), each item with next, the exact command that acts on it;
 //   - view worker --as <member|friend>: my cards in order with their briefs, bases, paths and
-//     deadlines, what is mine to do next, my results not landed, the notes on my cards.
+//     deadlines, what is mine to do next, my results not landed, the notes on my cards;
+//   - view cards: counts or lists primaries filtered by col, stream, holder or counted by tier,
+//     stream, col, holder.
 //
-// Both are reads: they write nothing and need no actor. They are compact for the tokens a
+// They are reads: they write nothing and need no actor. They are compact for the tokens a
 // model pays to read them: short keys, the items that need action only (every friend's and
 // machine's row with --all), counts where a count is enough, a one-line summary first, and
 // --since <cursor>, which leaves out every item the read that printed the cursor showed
@@ -42,6 +44,14 @@ import (
 func init() {
 	verbClasses["view coordinator"] = classRead
 	verbClasses["view worker"] = classRead
+	verbs = append(verbs, verb{
+		name:    "view cards",
+		syntax:  "[--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]",
+		example: "view cards --col review --by tier",
+		run:     (*app).cmdViewCards,
+	})
+	verbClasses["view cards"] = classRead
+	verbEffect["view cards"] = "inspection: counts or lists primaries filtered by col, stream, holder or counted by tier, stream, col, holder, writes nothing"
 }
 
 // viewSchema is the version of both views' JSON: a change that renames or removes a field, or
