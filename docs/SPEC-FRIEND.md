@@ -125,6 +125,53 @@ Presence is therefore the session's, never the daemon's:
   `presence_reason=` (`no session answer`, `no session answer yet`, or
   `no daemon` when the status file is stale).
 
+### The model (tla/FriendPresence.tla)
+
+What the table shows of a friend, and where the friend's cards are,
+modelled as a TLA+ module (card fr-presence-model). The world, per friend:
+the harness (running, closed), the session (answering, silent), the
+provider's limit (none, limited until a reset), the daemon (beating). The
+table: the coordinator's hold, the age of the session's last answer to a
+nonce, and each card's holder. The table's word is derived at every read:
+held is the hold alone; up is a session answer younger than the bound; down
+is the rest. The daemon's beat is never read for it. Only a running harness,
+a session taking turns and a provider not limiting it can answer.
+
+The model's ping is the session check above (a fresh nonce), its answer the
+session's pong with that nonce, and its bound the longest a friend stays up
+with no proof from the session: in the code that is `SessionQuiet` plus
+`SessionBound`, fifteen minutes, since any bus message from the session
+restarts the quiet and the check goes in only after it.
+
+A friend leaves up in two steps only, the coordinator's hold and the tick
+(the last answer reaching the bound), and each takes back every card the
+friend holds in that same step: the hold's withdrawal and the tick's
+rebalance. The dealer deals only to a friend up, and never back to the
+friend a card was last taken from.
+
+The rules, each with a reversed witness TLC catches: a friend shown up has a
+session answer younger than the bound and a harness running or closed less
+than the bound ago; a closed harness is shown down once it has been closed
+for the bound; a held or down friend holds no card; the beat alone never
+makes a friend up. The liveness: a closed harness is shown down on a clock
+that keeps ticking, whatever else never recovers; a card taken back is dealt
+to another friend, assuming disruptions are finite, every recovery comes
+(the app reopens, the session answers again, the limit resets, the hold is
+released) and the checks keep going in.
+
+"A friend shown up has a running harness", read at every state, cannot hold:
+the table cannot see the app close, only the answers stop, so for up to the
+bound after a close the friend is still shown up (the finding case
+`MCFriendPresenceFindingRunningNow`). The bound is the promise.
+
+Where the code today differs: a card stays with a friend who goes down
+(internal/sprint/friend_deal.go: "a friend who goes quiet keeps her card");
+the hold takes back only the cards not yet started
+(internal/sprint/friend_take.go), where the model has no started card; and
+a card the hold took back may be dealt to the same friend again (only
+`friend take` keeps it off them, `taken_from`). The provider's limit only
+stops answers in the model; limit.go's `Down` until the reset is not in it.
+
 ## The loop (internal/friend/daemon.go)
 
 Each second: the clock is stepped; when the session is free, every message
@@ -481,8 +528,8 @@ new one to it. The state files are out of its way, under the home directory;
 until it is granted the daemon beats and answers the daemon pong but cannot
 run the harness on the volume, and the record says so.
 
-Presence has no TLA+ module yet: `tla/` is outside what the card that built
-it could change, and `tla/Presence.tla` is owed. A session check waits for the
+Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
+code is not yet held to it where the two differ. A session check waits for the
 turn under way, so a session in a turn longer than ten minutes that sends
 nothing on the bus is checked only once that turn ends, and keeps its word
 until then. A one-shot friend with no session in its directory at all has
