@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
@@ -100,6 +101,9 @@ type Bars struct {
 	Score                               string // decide_score_bar
 	GateFlaky, GatePreexisting          string // decide_gate_flaky, decide_gate_preexisting
 	Judgment                            string // decide_judgment_bar
+	// RulesOff is the sprint row's rules the machine does not answer by (answer_rules_off: a
+	// comma list of config.AnswerRules); "" turns none off.
+	RulesOff string
 }
 
 // fields is each bar by its sprint row field (config.SprintKey(field) holds it).
@@ -114,6 +118,7 @@ func (b *Bars) fields() map[string]*string {
 		config.FieldDecideGateFlaky:          &b.GateFlaky,
 		config.FieldDecideGatePreexisting:    &b.GatePreexisting,
 		config.FieldDecideJudgment:           &b.Judgment,
+		config.FieldAnswerRulesOff:           &b.RulesOff,
 	}
 }
 
@@ -124,6 +129,7 @@ func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.DecideAttemptNoResult, s.DecideAttemptNothingToDo = rs.Bars.AttemptNoResult, rs.Bars.AttemptNothingToDo
 	s.DecideScoreBar = rs.Bars.Score
 	s.DecideGateFlaky, s.DecideGatePreexisting = rs.Bars.GateFlaky, rs.Bars.GatePreexisting
+	s.RulesOff = sprint.Split(rs.Bars.RulesOff)
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'
@@ -223,11 +229,14 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 
 // RouteOf is a route from its hash as nova-config's apply writes it: a field
 // missing or unreadable is its zero, and the price sheet its price fields.
+// First is the hash's first field (docs/SPEC-CONFIG.md, route; docs/SPEC-SPRINT.md,
+// the deal): true draws this route before the others of its tier.
 func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
-	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Tokens: n("tokens"), USD: h["usd"],
-		Deadline: n("deadline"), Enabled: enabled, Prices: cardcost.PricesOf(h)}
+	first, _ := strconv.ParseBool(h["first"])
+	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Harness: h["harness"], Tokens: n("tokens"), USD: h["usd"],
+		Deadline: n("deadline"), Enabled: enabled, First: first, Prices: cardcost.PricesOf(h)}
 }
 
 // Routes is the routes SetRoutes gave the store and the arrays SetTiers gave it.
@@ -328,4 +337,19 @@ func (st *Store) OutOfCredit(ctx context.Context) (string, error) {
 func (st *Store) JudgmentBar(ctx context.Context) (string, error) {
 	set, err := st.routes(ctx)
 	return set.Bars.Judgment, err
+}
+
+// SetRulesOff gives the store the rules the machine does not answer by, as nova-config's
+// apply does a live one (sprint:answer_rules_off).
+func (m *Mem) SetRulesOff(rules ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bars.RulesOff = strings.Join(rules, ",")
+}
+
+// RulesOff is the rules the machine does not answer by as nova-config applied them, read
+// with the routes: the lander reads base-gate there (cmd/nova-sprint, landgo.go).
+func (st *Store) RulesOff(ctx context.Context) ([]string, error) {
+	set, err := st.routes(ctx)
+	return sprint.Split(set.Bars.RulesOff), err
 }

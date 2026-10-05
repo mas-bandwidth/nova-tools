@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -104,7 +105,7 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	if wall.Bin == "" {
 		fmt.Fprintln(stdout, "STEP NOTE no wall (--no-wall): the card's programs run unconfined, with this process's network, environment and files")
 	} else {
-		wall.Read = stepReads(*dir, bin)
+		wall.Read = stepReads(*dir, bin, benchPasswdHome())
 	}
 	done := cardtree.Walk(t, func(s cardtree.Step) cardtree.Result {
 		r := cardtree.RunScript(*dir, s, cardtree.OSSys(bin, wall))
@@ -153,11 +154,25 @@ func stepWall(sandbox string, noWall bool) (cardtree.Wall, string) {
 	return cardtree.Wall{Bin: abs}, ""
 }
 
+// benchPasswdHome is the bench user's home from the password database, never $HOME.
+// A script step's process has HOME set to the slot's data home (native.go, the step
+// needs no model and no credential). os.UserHomeDir follows that variable, so a
+// toolchain lookup under it finds no sdk and the step's wall never grants the bench
+// go the shim execs. The password entry is the home the toolchain was installed under.
+func benchPasswdHome() string {
+	u, err := user.Current()
+	if err != nil {
+		return ""
+	}
+	return u.HomeDir
+}
+
 // stepReads is what a step's wall lets it read beside the system: the built programs, the
 // bench's toolchain (Go, sbcl) and /opt/homebrew where git and sbcl live, and, never
 // executable, the module cache GOMODCACHE names and the objects the checkout borrows (its
-// alternates).
-func stepReads(dir, bin string) []string {
+// alternates). home is the bench user's password-database home, never this process's HOME:
+// a script step sets HOME to the slot, and a lookup there skips the bench sdk.
+func stepReads(dir, bin, home string) []string {
 	out := []string{"--read", bin}
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		out = append(out, "--read", "/opt/homebrew")
@@ -167,7 +182,6 @@ func stepReads(dir, bin string) []string {
 			out = append(out, "--read", filepath.Dir(real))
 		}
 	}
-	home, _ := os.UserHomeDir() // ignored: no home names no home-relative toolchain root
 	for _, r := range swarm.ToolchainRoots(runtime.GOOS, home) {
 		flag := "--read-noexec"
 		if r.Exec {

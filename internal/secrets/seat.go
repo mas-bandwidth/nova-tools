@@ -82,10 +82,11 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
 	}
+	run := opts.exec()
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return nil, err
 	}
-	if _, err := CheckSopsVersion(opts.SopsPath); err != nil {
+	if _, err := CheckSopsVersion(run, opts.SopsPath); err != nil {
 		return nil, err
 	}
 	recoveryKey, err := ReadRecoveryPub(opts.StoreDir)
@@ -113,7 +114,6 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 
 	// The read. A source this bench cannot open is the whole reason the verb exists, so
 	// its refusal names the seat and the key and stops before anything is written.
-	run := opts.exec()
 	opts.say("reading %s.yaml", opts.From)
 	plaintext, err := sealDecrypt(run, opts.SopsPath, opts.KeyPath, sourceFile)
 	if err != nil {

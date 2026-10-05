@@ -14,9 +14,10 @@ package main
 //     ACL CHECK OK|DRIFT; exit 1 on any drift.
 //   - acl apply is the same comparison, then ACL SETUSER for each user that
 //     differs (ACL SET lines) and ACL SAVE when the store keeps an ACL file;
-//     --dry-run prints ACL WOULD-SET and writes nothing. A password is never
-//     read: a user keeps the one it has, a new user and one the store shows
-//     as nopass get one only from the variable --password-env-for names.
+//     --dry-run prints ACL WOULD-SET for every rendered user from this build
+//     alone, opens no store and writes nothing. A password is never read: a
+//     user keeps the one it has, a new user and one the store shows as nopass
+//     get one only from the variable --password-env-for names.
 //
 // check and apply log in as --user with the password in --password-env, the
 // admin user that may run ACL, through connect as every nova-redis verb does.
@@ -216,9 +217,6 @@ func aclApplyVerb(d deps) tool.Verb {
 	}
 }
 
-// aclOpener opens the store for a login check accepted.
-type aclOpener func(ctx context.Context, store login) (aclServer, func() error, error)
-
 // aclVerbRun is acl render, check and apply over the store d.aclOpen (or connect)
 // opens.
 func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
@@ -246,10 +244,25 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		return tool.Exit(0)
 	}
 	store := loginFrom(c)
+	// Read --dry-run before any refusal or dial: the skeleton fails a
+	// --dry-run call whose verb never read it, and a dry run never reaches
+	// the store (STANDARD "a verb that writes has a dry run"; docs/CLI.md's
+	// acl apply bullet).
+	dryRun := sub == "apply" && c.DryRun()
 	if err := store.check(d); err != nil {
 		return tool.Refuse(err.Error())
 	}
 	at := *store.addr
+	// A dry run prints the plan from this build's rendering alone and dials
+	// nothing: without a store read every rendered user is what apply would
+	// set, and the login flags are still checked above.
+	if dryRun {
+		for _, u := range users {
+			line(c.Stdout, "ACL WOULD-SET", "user", u.Name, "role", u.Role)
+		}
+		line(c.Stdout, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(users), "library", digest, "store", at)
+		return tool.Exit(0)
+	}
 	failed := func(err error) *tool.Out {
 		cause, _, _ := strings.Cut(oneline.Err(err), "; next: ")
 		line(c.Stderr, "ACL "+strings.ToUpper(sub)+" FAILED", "store", at, "err", free(cause), "remedy",
@@ -361,13 +374,6 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			"", why("a live user that carries nopass is mended only with a password from the variable --password-env-for names"),
 			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourcedNoPass[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return tool.Exit(1)
-	}
-	if c.DryRun() {
-		for _, u := range differ {
-			line(c.Stdout, "ACL WOULD-SET", "user", u.Name, "role", u.Role)
-		}
-		line(c.Stdout, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(differ), "library", digest, "store", at)
-		return tool.Exit(0)
 	}
 	for i, u := range differ {
 		rules := u.Rules

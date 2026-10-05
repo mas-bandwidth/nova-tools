@@ -86,7 +86,7 @@ func TestLandRerunsARedCheckOnceWhenItsFailuresAreFlaky(t *testing.T) {
 			r.a.gateBackend = func() (decide.Backend, func() time.Time) {
 				return fake, func() time.Time { return time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC) }
 			}
-			r.ok("add --stream s1 --count 1")
+			r.ok("add --stream s1 --count 1 --one")
 			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --check " + redCheck(t, r.dir, tc.again))
 			assert.Equal(t, tc.code, code, out+errs)
@@ -133,7 +133,7 @@ func TestLandKeepsARedBatchRedWithNoGateDecision(t *testing.T) {
 					return tc.backend, func() time.Time { return time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC) }
 				}
 			}
-			r.ok("add --stream s1 --count 1")
+			r.ok("add --stream s1 --count 1 --one")
 			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --check " + redCheck(t, r.dir, false))
 			assert.Equal(t, 1, code, out+errs)

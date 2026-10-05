@@ -1,6 +1,7 @@
 package memindex
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -30,4 +31,33 @@ func TestRetrievalKeepsSourceLinesAndOriginalText(t *testing.T) {
 			assert.Equal(t, hits[0].Para, trigram[0].Para)
 		})
 	}
+}
+
+// TestBuildRefusesAMarkdownSymlinkLeaf pins the walk-time type check on
+// markdown leaves: a .md name is not a .md file, and os.DirFS follows a
+// leaf symlink on open, so a link pointing at a regular file outside the
+// root was indexed as corpus — its text surfacing as hits, its bytes in
+// stats. Build refuses such a leaf before any open, naming the path and
+// the exclusion that keeps the rest of the corpus building (security#76
+// finding 1, re-filed from security#58 finding 1).
+func TestBuildRefusesAMarkdownSymlinkLeaf(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"a.md":          {Data: []byte("# A\n\nThe one regular file in the corpus.\n")},
+		"notes/link.md": {Data: []byte("../a.md"), Mode: fs.ModeSymlink},
+	}
+	t.Run("a symlink leaf is refused before any open", func(t *testing.T) {
+		t.Parallel()
+		c, err := Build(fsys, nil)
+		require.Error(t, err, "before the walk-time check the link was indexed as corpus: no error")
+		assert.ErrorContains(t, err, "notes/link.md")
+		assert.ErrorContains(t, err, "is not a regular file")
+		assert.Nil(t, c, "a refused build returns no corpus")
+	})
+	t.Run("an excluded symlink is the remedy the refusal names", func(t *testing.T) {
+		t.Parallel()
+		c, err := Build(fsys, func(p string) bool { return p == "notes/link.md" })
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a.md"}, c.Files, "the regular file beside the link is still indexed")
+	})
 }

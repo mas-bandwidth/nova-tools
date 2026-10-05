@@ -92,9 +92,9 @@ func TestStageCoverWriteStageTimeoutResult(t *testing.T) {
 func TestStageCoverStageTimedOut(t *testing.T) {
 	t.Parallel()
 
-	expired, cancelExpired := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	expired, cancelExpired := context.WithDeadline(t.Context(), time.Unix(0, 0))
 	defer cancelExpired()
-	cancelled, cancelCancelled := context.WithCancel(context.Background())
+	cancelled, cancelCancelled := context.WithCancel(t.Context())
 	cancelCancelled()
 
 	for _, tc := range []struct {
