@@ -1136,7 +1136,7 @@ finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --o
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
-### tests-reexec-guard-everywhere.w1
+### tests-reexec-guard-everywhere.w2
 
 A test that runs "this binary" (`os.Executable()`, `os.Args[0]`) runs the TEST binary, and a Go test binary given CLI words it takes for no flags runs the whole suite again: a chain 289 processes deep on one machine in one afternoon. The guard is `internal/testbin.Guard(tool, handled)`, called from a package-level `var _ = testbin.Guard(...)` in each `cmd/<tool>/reexec_test.go` (a package-level var runs before `TestMain`, so it stands before the package's own dispatch and setup). A start of a test binary is one of three things:
 
