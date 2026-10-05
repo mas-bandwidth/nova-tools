@@ -62,13 +62,13 @@ func friendJobOf(p sprint.Packet) string {
 
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
 // epoch and attempt, the branch to push and the report to write), the working-directory
-// line of docs/FRIENDS.md, a later attempt's start and why it exists (as a child's JOB.md
+// line of docs/FRIENDS.md naming dir, her row's (friendWorkDir), a later attempt's start and why it exists (as a child's JOB.md
 // says them), then the brief as a child is handed it (the rules it names injected).
-func friendBrief(name string, p sprint.Packet) string {
+func friendBrief(name, dir string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
-	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
+	fmt.Fprintf(&b, "Work in %[1]s/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=%[1]s/.cache/go-build, and the report goes to %[1]s/outbox/%[2]s/REPORT.md.\n", friendWorkDir(name, dir), job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a twin recut --widen made starts from the held attempt's head (member.Carried)
 		p.BaseHead, p.BaseAttempt = c.Head, c.Attempt
@@ -305,7 +305,7 @@ func friendReadReport(dir, job string) (report, why string, at time.Time, err er
 // inbox/<job> is a symlink or no directory, is refused, a line each: nothing is written
 // outside her working directory. It says what it did, a line each, and how many it
 // delivered and finished.
-func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
+func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir, rowDir string, say func(string)) (delivered, finished int, err error) {
 	// her working cards, then the ready ones dealt behind them (sprint.TickDeal): both are
 	// delivered, and her queue file says which are which
 	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
@@ -374,7 +374,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			if err := os.MkdirAll(in, 0o755); err != nil {
 				return delivered, finished, err
 			}
-			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, p)), 0o644, atomicfile.NoReplace()); {
+			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, rowDir, p)), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
 				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)

@@ -42,6 +42,15 @@ func (a *app) friendDir(friend, dir, root string, note io.Writer) string {
 	return fallback
 }
 
+// friendWorkDir is the friend's working directory as a brief or a view names it to her:
+// dir, her row's, when it is set, so no symlink is needed; else ~/<friend>-working.
+func friendWorkDir(friend, dir string) string {
+	if dir != "" {
+		return dir
+	}
+	return "~/" + friend + "-working"
+}
+
 // friendRowDirs is each friend's dir as nova-config's friend rows say it, by name (a
 // row with none is absent), or nil when the rows cannot be read: the seat's inbox
 // reads it, where no friends table is at hand.

@@ -194,9 +194,9 @@ nova-sprint friend sync
 `--dir` is refused when the path is not an existing directory on the machine running
 nova-config, or is a symlink (the refusal names where the link points); `--dir ''`
 unsets it. friend sync, friend reconcile (the verb and the run loop's), friend clean
-and the seat's inbox read it. The work line above, which friend sync writes into each
-brief, still names `~/<name>-working`: the brief generator reads no row yet
-(friend-dir-from-the-row.w2), so a friend's symlink stays until it does.
+and the seat's inbox read it, and the work line above, which friend sync writes into
+each brief, names it (as do the brief and report paths of `view worker --as <name>`),
+so once every row has its dir no friend needs a symlink.
 
 ## Retention: `nova-sprint friend clean`
 

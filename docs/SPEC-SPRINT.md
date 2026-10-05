@@ -96,10 +96,10 @@ and the first time a run falls back for a friend it says so once, `NOTE friend=<
 has no dir on her nova-config row, so her working directory is <path>; run: nova-config
 friend set <name> --dir <her real working directory>` (on stderr from friend sync and
 friend reconcile, among friend clean's lines, in the run loop's output from its tick). `--root` and HOME are wanted only for a friend whose row
-has no dir. The text of the card brief friend sync writes, and the brief paths of `view
---as <friend>`, still name `~/<friend>-working` (friend-dir-from-the-row.w2: the brief
-generator, `friendBrief` in cmd/nova-sprint/friendcards.go, and view.go were outside that
-card's paths; the symlinks stay until they read the row too).
+has no dir. The card brief friend sync writes (its `Work in <dir>/jobs/<job>/` line,
+`friendBrief`) and the brief and report paths of `view worker --as <friend>` name the
+row's dir too, so no symlink is needed; a row with no dir is named `~/<friend>-working`
+there (`friendWorkDir`).
 
 A friend's counts are her sprint cards' (a friend's card, below), read by
 `where` from her fleet row `friend.<name>`, never from her working directory: a
@@ -3610,7 +3610,7 @@ finished ok. Its fields: `sum`, `at`, `epoch`, `as`, `kind` (`member` or `friend
 `next` (the next step of its first card: a member's `take` or `finish` line with its gen and
 epoch; a friend's brief to start, or the push and the REPORT.md that finish her working card),
 `cards` (working first, then in the order dealt: `id`, `p` its primary, `st`, `brief` (a
-friend's `~/<name>-working/inbox/<job>/BRIEF.md`, a member's `nova-sprint card <id> --brief`),
+friend's `<dir>/inbox/<job>/BRIEF.md` in her row's dir, else `~/<name>-working`, a member's `nova-sprint card <id> --brief`),
 `base` and `paths` (the brief's BASE: and PATHS:), `dl` (when its deadline falls by the clock),
 `att`, `gen`, `br` (its branch), `notes` (the coordinator's words on it: why the attempt
 exists, the reader's finding, the fix, its notes) and `j` (the kinds of the judgments open on
