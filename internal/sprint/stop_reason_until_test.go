@@ -88,7 +88,7 @@ func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
 			{"1h", stopAt.Add(time.Hour)},
 			{"2:04 PM", time.Date(2030, 1, 2, 14, 4, 0, 0, time.UTC)},
 			{"14:04", time.Date(2030, 1, 2, 14, 4, 0, 0, time.UTC)},
-			{"1:04 PM", stopAt.Add(24 * time.Hour)}, // exactly now is tomorrow for a clock-time form
+			{"1:04 PM", stopAt.Add(24 * time.Hour)},                  // exactly now is tomorrow for a clock-time form
 			{"9:00 AM", time.Date(2030, 1, 3, 9, 0, 0, 0, time.UTC)}, // passed today: tomorrow's
 			{"2030-01-02T14:04:00Z", time.Date(2030, 1, 2, 14, 4, 0, 0, time.UTC)},
 		} {
