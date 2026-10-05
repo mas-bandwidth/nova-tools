@@ -3695,6 +3695,20 @@ candidates that error, panic, hang past the deadline and print no plan
 by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
 store refused (`TestShadowTickStoreRefusesEveryWrite`).
 
+#### store-latency-row-r.w2: where shows the store round trip the server measures
+
+The store latency was measured by hand with redis-cli (20 pings, then 500 on one connection) on
+2026-10-04 at 3:26 PM, while landing was slow; the server measures it instead. Every 10 s
+(`store.StoreRTTEvery`) `run` times one round trip to the store, the read of the store round
+trip record, by the injected clock, and writes the record (`store.MeasureStoreRTT`): the samples
+of the last minute (`store.StoreRTTWindow`) and their p50 and p99 in milliseconds, nearest
+rank, to the microsecond. `where` reads the record in the exchange it already makes for the
+machine's records; `where --json` carries `store_rtt_p50_ms` and `store_rtt_p99_ms`, and
+`where` prints them on its store line, `store: rtt p50=<ms>ms p99=<ms>ms`, under the tables.
+With no record, or one whose last sample is older than the window (a server that stopped
+measuring), both fields and the line are left out. Tested on the twin store with the harness's
+clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,
