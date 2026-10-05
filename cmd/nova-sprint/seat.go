@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -527,13 +528,34 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 	return 0
 }
 
+// seat --wrapper writes a file where it is typed and reads NOVA_SPRINT_SERVER
+// on this side. The forwarder runs a verb locally when its waits flag is on
+// (forward.go). Plain seat stays served. A server handed seat --wrapper
+// refuses it with that forwarder's own waits line.
+func init() { waits["seat"] = "wrapper" }
+
+// seatWrapperFile is the name --install writes into the directory. It is the
+// shell file a coordinator used to copy by hand.
+const seatWrapperFile = "ns.sh"
+
+// errWrapperDiffers is an ns.sh whose text is not the wrapper. --replace overwrites it.
+var errWrapperDiffers = errors.New("differs")
+
 // cmdSeat is the seat as the friends' daemons read it every second: the
 // holder, the epoch and the seat's generation, from three keys and no table
 // (store.SeatState), so the keepalive loop never serializes the board.
+// --wrapper prints the seat wrapper instead, and does not read the store.
 func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("seat")
-	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
+	wrapper := fs.Bool("wrapper", false, "print the seat wrapper for the calling actor: NOVA_SPRINT_SERVER, the actor, and a nova-secrets exec that names variables and never a secret")
+	install := fs.String("install", "", "with --wrapper, the directory the wrapper is written into, as ns.sh, mode 0755")
+	replace := fs.Bool("replace", false, "with --install, overwrite ns.sh when its text differs; without it a different file is left untouched")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "seat", argErr("takes no words ", err, pos...))
+	}
+	if *wrapper || *install != "" || *replace {
+		return a.seatWrapper(fs, c, *install, *replace, stdout, stderr)
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -545,4 +567,110 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 	}
 	sayOK(stdout, c.json, "seat", fmt.Sprintf("SEAT holder=%s epoch=%d generation=%d", orDashStr(s.Holder, "-"), s.Epoch, s.Generation), map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation})
 	return 0
+}
+
+// seatWrapper prints the wrapper, or with install writes it into that directory.
+// The text holds the actor and the resolved server address, and names of variables.
+func (a *app) seatWrapper(fs flagSet, c *common, install string, replace bool, stdout, stderr io.Writer) int {
+	if install == "" && replace {
+		return refuse(stderr, "seat", "--replace is only with --install <dir>; nothing was written")
+	}
+	if c.actor == "" {
+		return refuse(stderr, "seat", "--wrapper wants the calling actor (--actor <name>, or NOVA_SPRINT_ACTOR); nothing was written")
+	}
+	server := a.server(fs)
+	if server == "" {
+		return refuse(stderr, "seat", "--wrapper wants the sprint's server ("+ServerEnv+"); nothing was written")
+	}
+	if strings.ContainsAny(c.actor, "\r\n") || strings.ContainsAny(server, "\r\n") {
+		return refuse(stderr, "seat", "the actor and the server address are one line each; nothing was written")
+	}
+	text := seatWrapperText(c.actor, server)
+	if install == "" {
+		if c.json {
+			b, _ := json.Marshal(map[string]any{"actor": c.actor, "server": server, "text": text}) // ignored: strings always encode
+			fmt.Fprintln(stdout, string(b))
+			return 0
+		}
+		fmt.Fprint(stdout, text)
+		return 0
+	}
+	st, err := os.Stat(install)
+	if err != nil || !st.IsDir() {
+		return refuse(stderr, "seat", "--install "+install+" is not a directory; nothing was written")
+	}
+	path := filepath.Join(install, seatWrapperFile)
+	written, err := writeSeatWrapper(path, text, replace)
+	if errors.Is(err, errWrapperDiffers) {
+		return refuse(stderr, "seat", path+" differs from the seat wrapper; pass --replace to overwrite it; nothing was written")
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "%s seat FAILED: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	if c.json {
+		b, _ := json.Marshal(map[string]any{"actor": c.actor, "server": server, "path": path, "written": written, "text": text}) // ignored: strings and a bool always encode
+		fmt.Fprintln(stdout, string(b))
+		return 0
+	}
+	fmt.Fprintf(stdout, "SEAT WRAPPER OK path=%s written=%t\n", oneline.Field(path), written)
+	return 0
+}
+
+// seatWrapperText is the shell file. actor and server are the only values; every
+// credential is a variable name.
+func seatWrapperText(actor, server string) string {
+	return "#!/bin/sh\n" +
+		"# Coordinator seat wrapper. Written by nova-sprint seat --wrapper.\n" +
+		"# No secret value is in this file: names of variables, and the server address.\n" +
+		"export NOVA_SPRINT_SERVER=" + shellQuote(server) + "\n" +
+		"export NOVA_SPRINT_ACTOR=" + shellQuote(actor) + "\n" +
+		"exec nova-secrets exec \\\n" +
+		"  --store \"${NOVA_SECRETS_STORE}\" \\\n" +
+		"  --as \"${NOVA_SECRETS_SEAT}\" \\\n" +
+		"  --key \"${NOVA_SECRETS_KEY}\" \\\n" +
+		"  --sops \"$(command -v sops)\" \\\n" +
+		"  --only \"${NOVA_SPRINT_REDIS_PASSWORD_ENV}\" \\\n" +
+		"  --require \"${NOVA_SPRINT_REDIS_PASSWORD_ENV}\" \\\n" +
+		"  -- env \\\n" +
+		"  NOVA_SPRINT_SERVER=\"${NOVA_SPRINT_SERVER}\" \\\n" +
+		"  NOVA_SPRINT_ACTOR=\"${NOVA_SPRINT_ACTOR}\" \\\n" +
+		"  NOVA_SPRINT_REDIS=\"${NOVA_SPRINT_REDIS}\" \\\n" +
+		"  NOVA_SPRINT_REDIS_USER=\"${NOVA_SPRINT_REDIS_USER}\" \\\n" +
+		"  NOVA_SPRINT_REDIS_PASSWORD_ENV=\"${NOVA_SPRINT_REDIS_PASSWORD_ENV}\" \\\n" +
+		"  nova-sprint \"$@\"\n"
+}
+
+// shellQuote is a single-quoted shell word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// writeSeatWrapper writes text as path, mode 0755. The same text is kept (its mode
+// set to 0755). A different file is left untouched unless replace is set.
+func writeSeatWrapper(path, text string, replace bool) (bool, error) {
+	existing, err := os.ReadFile(path)
+	if err == nil {
+		if string(existing) == text {
+			return false, os.Chmod(path, 0o755)
+		}
+		if !replace {
+			return false, errWrapperDiffers
+		}
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(text), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		_ = os.Remove(tmp) // ignored: a best-effort removal of the temporary file; the chmod error is the one returned
+		return false, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp) // ignored: a best-effort removal of the temporary file; the rename error is the one returned
+		return false, err
+	}
+	return true, nil
 }
