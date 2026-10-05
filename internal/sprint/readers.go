@@ -225,20 +225,111 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// freeReaders is the readers the ask may ask the primary's attempt of: up,
-// with no read card of it at the attempt, placed or retired. A reader is
-// asked an attempt once: one read card per reader per attempt (ReadCardID),
-// so a reader with a card at this attempt (read, or taken back away, levelled
-// or returned) is not asked it again; the next attempt is read on new cards,
-// by every reader.
-func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
-	var out []string
+// noVerdictTakeback says the read card was taken back with no verdict: the
+// reader marked away, a server restart, or a read deadline. A level, a
+// coordinator's instead, a return, an accept or a verdict is not one of these.
+func noVerdictTakeback(c *Card) bool {
+	switch c.F("retired_by") {
+	case "away", "deadline", "restart":
+		return !c.Placed()
+	}
+	return false
+}
+
+// readTakebacks is how many no-verdict take-backs this reader already has of
+// the primary at the attempt, counting from the first ask while each is one.
+func (s *Snapshot) readTakebacks(primary string, attempt int, reader string) int {
+	if s.Readers == nil {
+		return 0
+	}
+	n := 0
+	for take := 1; take <= MaxReadTakebacks; take++ {
+		c := s.Readers.Card(ReadCardIDTake(primary, attempt, reader, take))
+		if c == nil || !noVerdictTakeback(c) {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// nextReadAsk is the id this reader would be asked the attempt on, and
+// whether that ask is their first ("fresh") or a re-ask after take-backs
+// ("again"). A placed card, a verdict, a return, or MaxReadTakebacks
+// take-backs leaves them out.
+func (s *Snapshot) nextReadAsk(primary string, attempt int, reader string) (id, kind string) {
+	if s.Readers == nil || !s.ReaderIsUp(reader) {
+		return "", ""
+	}
+	tb := 0
+	for take := 1; take <= MaxReadTakebacks; take++ {
+		c := s.Readers.Card(ReadCardIDTake(primary, attempt, reader, take))
+		if c == nil {
+			if tb != take-1 {
+				return "", ""
+			}
+			id = ReadCardIDTake(primary, attempt, reader, take)
+			if take == 1 {
+				return id, "fresh"
+			}
+			return id, "again"
+		}
+		if !noVerdictTakeback(c) {
+			return "", ""
+		}
+		tb++
+	}
+	return "", ""
+}
+
+// readCandidate is a reader the ask may ask again, and the new id that ask
+// creates. The removed record is not restored.
+type readCandidate struct {
+	reader string
+	id     string
+}
+
+// readAskPools splits the readers up into those never asked this attempt
+// and those whose earlier ask was taken back with no verdict. The ask fills
+// from the first, then from the second. A reader at MaxReadTakebacks is in
+// neither.
+func (s *Snapshot) readAskPools(pr *Card, attempt int) (fresh []string, again []readCandidate) {
+	if s.Readers == nil || pr == nil {
+		return nil, nil
+	}
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
-			out = append(out, rd)
+		id, kind := s.nextReadAsk(pr.ID, attempt, rd)
+		switch kind {
+		case "fresh":
+			fresh = append(fresh, rd)
+		case "again":
+			again = append(again, readCandidate{reader: rd, id: id})
 		}
 	}
-	return out
+	return fresh, again
+}
+
+// pickAsks chooses up to want readers: the finder first (askPicks), then every
+// reader never asked this attempt before any reader whose read was taken back
+// with no verdict, each by room (round.pickByRoom).
+func pickAsks(rr *round, finder string, want int, fresh []string, again []readCandidate, room map[string]readerRoom) []string {
+	chosen := askPicks(rr, finder, want, fresh, room)
+	if len(chosen) >= want || len(again) == 0 {
+		return chosen
+	}
+	names := make([]string, len(again))
+	for i, a := range again {
+		names[i] = a.reader
+	}
+	return append(chosen, rr.pickByRoom(want-len(chosen), names, room)...)
+}
+
+// freeReaders is the readers up who have never been asked the primary's
+// attempt. A reader taken back with no verdict is not among them; readAskPools
+// names that reader separately, and the ask considers them only after these.
+func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
+	fresh, _ := s.readAskPools(pr, attempt)
+	return fresh
 }
 
 // ReadsWanted is how many reads the ask places on the primary now, at its
@@ -350,29 +441,25 @@ func askPicks(rr *round, finder string, want int, free []string, room map[string
 
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
 // reader that is not up is taken back, retired as the ask takes back a read
-// asked of a reader away
-// (retired_by away: that reader keeps its card at the attempt, so it is not
-// asked that attempt again), and the tick's ask asks it of the readers up. A
-// read stays where it is when the ask could not place it (fewer readers up
-// than its primary needs, ReadsNeeded, or none up without a card at its
-// attempt): it is judged while its reader is away and read when the reader is
-// back (read_return_test.go). A snapshot with no reader states holds every
-// reader up: nothing moves.
+// asked of a reader away (retired_by away). That take-back is not a verdict:
+// the reader may be asked the attempt again, on the next id, after readers
+// never asked (readAskPools). A read stays where it is when the ask could not
+// place it (fewer readers up than its primary needs, ReadsNeeded, or none up
+// the ask can ask): it is judged while its reader is away and read when the
+// reader is back (read_return_test.go). A snapshot with no reader states holds
+// every reader up: nothing moves.
 func sweepReads(s *Snapshot, p *Plan) {
 	up := s.UpReaders()
 	if s.ReaderStates == nil || len(up) == 0 {
 		return
 	}
 	taker := func(c *Card) bool {
-		if pr := s.Work.Card(c.F("primary")); pr == nil || !enoughReadersUp(s, pr) {
+		pr := s.Work.Card(c.F("primary"))
+		if pr == nil || !enoughReadersUp(s, pr) {
 			return false
 		}
-		for _, rd := range up {
-			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
-				return true
-			}
-		}
-		return false
+		fresh, again := s.readAskPools(pr, c.Int("attempt"))
+		return len(fresh)+len(again) > 0
 	}
 	for _, rd := range s.Readers.Rows() {
 		if s.ReaderIsUp(rd) {
