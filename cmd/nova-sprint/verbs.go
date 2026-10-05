@@ -115,6 +115,8 @@ func init() {
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"watch", "--wake [--every <duration>] [--state <file>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]", "watch --wake --state wake.json", (*app).cmdWatch},
+		{"seat check", "", "seat check", (*app).cmdSeatCheck},
+		{"machinery", "", "machinery", (*app).cmdMachinery},
 		{"where", "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows]]", "where", (*app).cmdWhere},
 		{"dashboard", "[--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]", "dashboard --listen 127.0.0.1:7390 --pull 127.0.0.1:7395", (*app).cmdDashboard},
 		{"handover", "", "handover", (*app).cmdHandover},
