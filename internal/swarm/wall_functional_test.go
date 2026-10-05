@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +24,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	testgit.Apply(cmd)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	return strings.TrimSpace(string(out))

@@ -1,0 +1,14 @@
+# Scratch-repository git commits in a _test.go whose own function sets neither
+# an author nor a committer on the command, and does not set local user.name
+# and user.email itself. One file:function per line
+# (internal/ci/git_identity_class_test.go). Each row below is a commit that
+# continues a repository an earlier function already configured, so the commit
+# does not read the runner's global git config; the scanner does not follow
+# that identity across functions. That is what blocks "every test". This list
+# only shrinks. A row is `file:function <why it is judged not a bare commit>`.
+# ceiling: 5
+cmd/nova-secrets/testhelpers_test.go:commitAndPush initGitStore in this file sets local user.name and user.email on the store before this commit
+cmd/nova-swarm/step_functional_test.go:TestAGoVetPostRunsInTheStepsWall stepRepo sets local user.name and user.email on the checkout this commit continues
+internal/secrets/gate_recipients_test.go:gateRemove gateStart sets local user.name and user.email on the store this commit continues
+internal/secrets/gate_test.go:gateCommit gateStart sets local user.name and user.email on the store this commit continues
+internal/secrets/model_invariants_test.go:modelCommit modelGitStore sets local user.name and user.email on the store this commit continues

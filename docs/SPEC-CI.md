@@ -2228,6 +2228,41 @@ not held (`nova-tokens`): it has no seat to fall back to. A
 hand-parsed read counts as covered when its function calls `redisOr` anywhere,
 not necessarily on that value.
 
+### `gitidentity` — a test that commits names its author and its committer
+
+**The rule.** Every `_test.go` that runs `git commit` in a scratch repository
+sets the author and the committer on that command, or in that repository's
+local config when the same function commits and does not clone. The four
+variables are `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and
+`GIT_COMMITTER_EMAIL`. The shared helper is internal/testgit (`Apply`,
+`Env`): the fixture is Test User and test@example.com. A
+`-c user.name=` and `-c user.email=` pair on the same command is the same
+fact. The test does not read or write the runner's global git config.
+**The mistake it prevents.** A hosted runner has no global git identity.
+`git commit` there exits `Author identity unknown`, and a test that passed on
+a bench whose git config already had a name fails on that runner.
+**The test.** `TestNoBareGitCommitInATest`, with its control
+`TestGitIdentityRuleCatchesABareCommit`
+(`internal/ci/git_identity_class_test.go`). The control wants a bare
+`exec.Command("git", "commit")`, a helper with no identity, and a config
+followed by a clone to be red, and the helper, the four variables, a `-c`
+pair, same-function config with no clone, `git commit-tree`, and an error
+string to be green.
+**Its allowlist.** `internal/ci/testdata/git-identity-allowlist.txt`,
+shrink-only, one `file:function` a row, a reason after the key. Empty is the
+goal.
+**Its remedy line.** `set GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL on the command through internal/testgit Apply (Test User, test@example.com), or pass -c user.name and -c user.email; a hosted runner has no global git identity`
+**Its narrowings.** The walk is syntactic. A helper that calls internal/testgit
+anywhere in the function is identified for the whole function. A script string
+the test does not pass to a shell it execs is not read: a child script handed
+to the harness takes the pool identity the harness keeps on the child.
+`git commit-tree` is not `git commit`. Repository config counts only in the
+function that also contains the commit, and a clone earlier in that function
+voids it. Allowlist keys are
+`file:function`, because line numbers move. A function that sets a command
+environment from an identifier or a selector, in a file whose literals name
+all four variables, is identified.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
@@ -2268,6 +2303,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (GitHub is a git remote only). **The mistake it prevents:** one PR can cost ~60 REST calls, and a token's hourly budget spent freezes every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** `internal/swarm/templates.go` and every card fixture under `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a source that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: the verbs that read a brief or a post, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
 40. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — the one-thread form leaves most children of a wrapper at nice 0) BEFORE the exec: `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`) and `cmdNative` (`cmd/nova-swarm/main.go`, `yieldNative(nativeToCI, ...)` before `nativeRun(`: every card a sprint member or reader launches, so the wall, the harness and the card's child inherit it), no production caller sets a `Yield` of its own, and no production file writes `nativeToCI` (read on the parsed tree: any assignment naming it, or its address taken; the test binary's TestMain alone makes it a no-op, because that binary is a CI leg running `cmdNative` in-process) (CI over work is a permanent setting: work creates more CI, so without it the fleet is unstable). **The mistake it prevents:** copies at nice 0 share the cores evenly with the CI legs on the same machines, so with the slots raised the load per core climbs past 4 and a CI shard nears the two-minute cap: more work means slower CI means more work waiting. **The sweep:** the named exec path, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it).
 41. `TestEveryLaunchdAgentLogsUnderTheHome` (`internal/ci/launchd_log_home_test.go`) — every launchd agent this repository installs puts its `StandardOutPath` and `StandardErrorPath` under the user's home, `Library/Logs` (`{{ nova_home | e }}/Library/Logs/nova-loop-<name>.log` for the loops), because launchd cannot open its own log file on a network volume such as `/Volumes/nova`: the agent runs but its job never starts or its output vanishes (measured 2026-10-03/04). **Allowlist:** none. **Narrowings:** a literal plist or template value must start at `{{ nova_home`, `{{ ansible_env.HOME`, `~/`, `$HOME/` or `${HOME}/`; a Go source that builds a plist from a variable (`internal/sprint/seatinstall.go`, `internal/friend/launchd.go`) is pinned by the home-based default of its log in `cmd/nova-sprint/seatinstall.go` and `cmd/nova-friend/main.go`, and a new Go writer must be added to the test's table or it fails; a `--log`/`--launchd-log` override is the operator's choice and is not read. The program's own state and logs stay where they are.
+42. `TestNoBareGitCommitInATest` / `TestGitIdentityRuleCatchesABareCommit` — a `_test.go` that runs `git commit` sets the author and the committer on the command (internal/testgit, or `-c user.name` and `-c user.email`) or in the same function's repository config, and a clone earlier in that function voids that config; the allowlist only shrinks.
 
 ### `cap` — every job two minutes, permanently, on every platform
 
