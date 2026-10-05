@@ -47,6 +47,26 @@ const OutputKept = 2048
 
 // outputKey carries, in a delivery's context, what to call when the command
 // prints: the daemon's watch on a running turn (WithOutputSeen).
+type limitsKey struct{}
+
+type limitsConfig struct {
+	now         time.Time
+	defaultRest time.Duration
+}
+
+// WithLimits puts the clock time and default rest duration into ctx for
+// Deliver to use when checking for usage limits.
+func WithLimits(ctx context.Context, now time.Time, defaultRest time.Duration) context.Context {
+	return context.WithValue(ctx, limitsKey{}, limitsConfig{now: now, defaultRest: defaultRest})
+}
+
+func limitsFromContext(ctx context.Context) (time.Time, time.Duration) {
+	if cfg, ok := ctx.Value(limitsKey{}).(limitsConfig); ok {
+		return cfg.now, cfg.defaultRest
+	}
+	return time.Time{}, DefaultLimitRest
+}
+
 type outputKey struct{}
 
 // WithOutputSeen is ctx carrying seen, called each time the command a
@@ -150,11 +170,26 @@ func ProviderRefusal(out string) (reason string, ok bool) {
 	return reason, true
 }
 
-// refused is the answer of an adapter whose turn exited nonzero: the
-// provider's refusal when the output carries one, else the exit as it was.
-func refused(session string, out string, exit int, err error) (int, error) {
-	if exit != 0 && err == nil {
-		if reason, ok := ProviderRefusal(out); ok {
+func refusedHarness(ctx context.Context, harness, session string, out string, exit int, err error) (int, error) {
+	if exit != 0 {
+		text := out
+		if text == "" && err != nil {
+			text = err.Error()
+		}
+		now, defaultRest := limitsFromContext(ctx)
+		if harness != "" {
+			if lim, ok := ParseLimit(harness, text, now, defaultRest); ok {
+				return exit, UsageLimit{Harness: harness, Session: session, Kind: lim.Kind, Until: lim.Until, Reason: lim.Reason}
+			}
+		} else {
+			var order = []string{"claude", "codex", "opencode", "grok", "antigravity", "dsh", "gemini"}
+			for _, h := range order {
+				if lim, ok := ParseLimit(h, text, now, defaultRest); ok {
+					return exit, UsageLimit{Harness: h, Session: session, Kind: lim.Kind, Until: lim.Until, Reason: lim.Reason}
+				}
+			}
+		}
+		if reason, ok := ProviderRefusal(text); ok {
 			return exit, ProviderRefused{Session: session, Reason: reason}
 		}
 	}
@@ -260,7 +295,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return refused(id, out, exit, err)
+	return refusedHarness(ctx, "opencode", id, out, exit, err)
 }
 
 // Head is the first n bytes of s, with a note when it was cut.
@@ -278,11 +313,13 @@ func Head(s string, n int) string {
 // answered by the daemon at once and the beat is real.
 type Stub struct{ Harness, Reason string }
 
-func (s Stub) Deliver(context.Context, string) (int, error) {
+func (s Stub) Deliver(ctx context.Context, _ string) (int, error) {
 	if s.Reason != "" {
-		return 0, fmt.Errorf("no deliver command for %s: %s; run the session's blocking read: nova-bus recv --as <friend>", s.Harness, s.Reason)
+		err := fmt.Errorf("no deliver command for %s: %s; run the session's blocking read: nova-bus recv --as <friend>", s.Harness, s.Reason)
+		return refusedHarness(ctx, s.Harness, "", err.Error(), 1, err)
 	}
-	return 0, fmt.Errorf("no deliver command for %s yet; run the session's blocking read: nova-bus recv --as <friend>", s.Harness)
+	err := fmt.Errorf("no deliver command for %s yet; run the session's blocking read: nova-bus recv --as <friend>", s.Harness)
+	return refusedHarness(ctx, s.Harness, "", err.Error(), 1, err)
 }
 
 // Passive marks a Deliverer that cannot deliver: the daemon reads nothing

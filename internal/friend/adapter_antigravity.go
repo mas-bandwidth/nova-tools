@@ -171,6 +171,10 @@ func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
 		return 1, fmt.Errorf("conversation %s has no mailbox: %w", session, err)
 	}
 	if _, err = a.agentapi(ctx, port, token, "send-message", "--title="+AntigravityTitle, session, text); err != nil {
+		now, defaultRest := limitsFromContext(ctx)
+		if lim, ok := ParseLimit("antigravity", err.Error(), now, defaultRest); ok {
+			return 1, UsageLimit{Harness: "antigravity", Session: session, Kind: lim.Kind, Until: lim.Until, Reason: lim.Reason}
+		}
 		return 1, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, AntigravityReadBudget)
