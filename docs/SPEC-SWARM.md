@@ -676,6 +676,11 @@ printed. `nova-swarm lint --rules` prints every token below with its remedy. A c
 for a bench worker under the shape rules carries none of the child rules and is linted without
 the flag exactly as before.
 
+The instruction kind is a column of the one kinds list, `internal/hygiene/kinds.txt`
+(docs/SPEC-ISA.md). The card lint resolves a card's `KIND:` through that column, and a
+declared KIND whose row names no instruction kind is `kind-declared`. There is no second
+table of kinds.
+
 **The rule set is the coordinator's, and the tool is general.** The required sentences are not
 one repository's. They come from a rules file, one required sentence per line:
 

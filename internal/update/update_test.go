@@ -637,3 +637,15 @@ func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
 		require.Failf(t, "", "unexpected not_found in output: out=%s errs=%s", out, errs)
 	}
 }
+
+func TestDefaultClientRefusesARedirectToAnotherSchemeOrHost(t *testing.T) {
+	t.Parallel()
+	c := defaultClient()
+	reqHTTPS, _ := http.NewRequest("GET", "https://api.example.test/x", nil)
+	reqHTTP, _ := http.NewRequest("GET", "http://api.example.test/y", nil)
+	reqEvil, _ := http.NewRequest("GET", "https://evil.example.test/y", nil)
+	orig, _ := http.NewRequest("GET", "https://api.example.test/orig", nil)
+	require.Error(t, c.CheckRedirect(reqHTTP, []*http.Request{orig}))
+	require.Error(t, c.CheckRedirect(reqEvil, []*http.Request{orig}))
+	require.NoError(t, c.CheckRedirect(reqHTTPS, []*http.Request{orig}))
+}

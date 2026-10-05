@@ -58,14 +58,14 @@ binaries or from this file, the runs come from receipts, and the gate is one
 exit code a release lane can call.
 
 ```
-$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check dogfood record --tool nova-check --verb links --by Ada --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
-DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
+DOGFOOD RECORD OK tool=nova-check verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-ada-8e9b64a4.json
 
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
-DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-check verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
@@ -98,7 +98,7 @@ finding and the same eight that end the receipt's filename, so a reader with an
 id can find the file:
 
 ```
-DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Stella at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Stella running it again: the verb refused a relative path
+DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Ada at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Ada running it again: the verb refused a relative path
 ```
 
 A `--closes` naming an id nothing carries closes nothing and leaves the edge
@@ -172,12 +172,12 @@ nothing else. A kind the tool does not hold is not answered with
 refused by name, listing the kinds there are:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
 nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 ```
 
@@ -190,10 +190,10 @@ command that prints the rest — the same run with the cap lifted, quoted so it
 can be pasted:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
@@ -207,11 +207,11 @@ travel.
 
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
-    --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/rowan-working/dogfood \
-    --retired ~/rowan-working/bin/retired/README.md \
-    --bin ~/rowan-working/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+    --ledger ~/nova-tools/reports/pitstop-tests-2026-09-17.md \
+    --receipts ~/nova-working/dogfood \
+    --retired ~/nova-working/bin/retired/README.md \
+    --bin ~/nova-working/bin --repo-dir . \
+    --since 2026-09-18T00:00:00Z --state ~/nova-working/convergence.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24
@@ -580,6 +580,25 @@ nothing off the stream (the session's own `nova-bus recv --as <me>` does),
 answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
+
+### The harness's settings
+
+`install` first writes the settings the friend's harness needs in its own
+config, and `check --settings` names what drifted (docs/SPEC-FRIEND.md,
+"Harness settings"):
+
+```sh
+nova-friend install --as <me> --harness codex --dir <real dir> --dry-run   # INSTALL PLAN command="write ~/.codex/config.toml sandbox_workspace_write.writable_roots=<dir>"
+nova-friend install --as <me> --harness claude --dir <d> --config-dir <d>  # the config dir made, and named in the agent
+nova-friend install --as <me> --harness opencode --dir <d> --model <provider/model>
+nova-friend check --settings --as <me> --harness <h> --dir <d>            # CHECK OK ... drift=0, or CHECK DRIFT ... at exit 1
+```
+
+These are codex's writable root, the DeepSeek Harness agent preset
+(`standard`), grok's wake file (`--session`, else `~/.nova-friend/<me>/<me>.wake`),
+claude's config directory, and opencode's directory allow-list and model.
+A friend's directory, writable root, wake directory or config directory that
+is a symlink is refused, and nothing is written or loaded.
 
 ### The friend health check
 
@@ -1030,7 +1049,8 @@ nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint friend level
 nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
-nova-sprint reader add <reader>...
+nova-sprint reader add <reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]
+nova-sprint reader set <reader>... --tiers <flash[,pro,heavy,frontier]|all|default>
 nova-sprint reader away <reader>...
 nova-sprint reader up <reader>...
 nova-sprint reader remove <reader>...
@@ -1854,7 +1874,7 @@ The per-binary deadline is thirty seconds rather than the five every other verb
 takes because of when this verb is run: right after `go install ./cmd/...`, on a
 directory of binaries this machine has never executed. The platform assesses the
 first run of a never-seen executable and charges it to that deadline — measured
-on a darwin/arm64 Studio at 164–571 ms cold against 5 ms warm when idle, and at
+on a darwin/arm64 bench at 164–571 ms cold against 5 ms warm when idle, and at
 a 7.03 s maximum while a tree compiled beside it, which is the state the
 `go install` one command earlier leaves the machine in. At five seconds that
 refused healthy binaries and named a build repair that would have found nothing
@@ -1910,10 +1930,10 @@ rule, the head commit edits `README.md`.
 ```sh
 cd "$(mktemp -d)" && git init -q && git config user.name you && git config user.email you@example.com
 echo age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata > recovery.pub
-printf 'creation_rules:\n  - path_regex: ^mini\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
+printf 'creation_rules:\n  - path_regex: ^bench-a\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
 echo 'the store' > README.md && git add -A && git commit -qm base
 echo 'one seat per machine' >> README.md && git commit -qam head
-printf 'mini\tmini.local\tdarwin/arm64\tbench\tmini\t10\t-\n' > ../machines.tsv
+printf 'bench-a\tbench-a.local\tdarwin/arm64\tbench\tbench-a\t10\t-\n' > ../machines.tsv
 nova-secrets gate --store . --base HEAD~1 --head HEAD --machines ../machines.tsv
 ```
 
@@ -2071,7 +2091,7 @@ its allowlist row (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, where is
 `run<id>` or a bench) names more. A `CI-LOAD load=<n> cpus=<n> per-cpu=<n>:
 measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
-only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
+only the nightly bench legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
 and exits 1 on every leg. A package `go test` served from its test cache reports a
 package elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can
@@ -2151,6 +2171,9 @@ nova-config <kind> <verb> -h                                             # the v
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
 nova-config machine width <name> [--pg <dsn> | --file <path>] [--json]  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member, 0 is none, unset (--width default) is the default, half the machine's cores as fleet sync resolves them from its beat; no Redis
 nova-config machine self [--check] [--json]                              # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
+nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --friend <actor> [--sops <path>]  # record the Postgres login (never the password); a bare verb then connects with it
+nova-config login --check                                                # print the recorded login and whether the secret resolves; the password is never shown
+nova-config logout                                                       # remove the recorded login
 nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --bus <host:port> --as <name>  # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
@@ -2189,7 +2212,7 @@ nova-config apply --dry-run --redis 127.0.0.1:6379
 nova-config apply --redis 127.0.0.1:6379 --as a1
 ```
 
-**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--file <path>` stands in for it and the two are exclusive. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the name a write is recorded under (env `NOVA_FRIEND`), required on every write (omitted on `apply --dry-run`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (its `-h` marks them `required:`) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. `--dry-run` on `add`, `set` and `remove` prints `CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing` with the fields as `history` would print them, from the same checks, and writes nothing; `--json` on every verb but `inventory` (already JSON) prints one object in `internal/tool`'s shape. A run missing several flags names all of them at once; an unknown flag names the flags the verb takes and the nearest one.
+**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--file <path>` stands in for it and the two are exclusive. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the name a write is recorded under (env `NOVA_FRIEND`, else the friend `login` recorded), required on every write (omitted on `apply --dry-run`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (its `-h` marks them `required:`) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. `--dry-run` on `add`, `set` and `remove` prints `CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing` with the fields as `history` would print them, from the same checks, and writes nothing; `--json` on every verb but `inventory` (already JSON) prints one object in `internal/tool`'s shape. A run missing several flags names all of them at once; an unknown flag names the flags the verb takes and the nearest one.
 
 **Ansible inventory.** `inventory` reads the applied state, the Redis view `apply` writes, and never Postgres: what the fleet plays converge machines to is what the running tools read. It makes two round trips whatever the fleet's size: the names (the machines and loops sets, the fleet row, `config:decl`), then every machine's hash, ceiling and beat and every loop's hash. It prints an Ansible dynamic JSON inventory: the groups `all` and `benches` (every machine), `coordinator`, `store` and `store_deployer` (the machines the fleet row names; `store_deployer` is the coordinator machine, whose seat loads the function library and the ACL onto the store; empty when the row names none) `runners` (every machine with at least one runner) and `tla` (every machine whose row says `tla=true`: the TLC record machines, where the tools play holds the pinned TLC jar). Every host's variables are under `_meta.hostvars`: `ansible_host`, `ansible_user`, `nova_seat`, `slots`, `runners`, `nova_tla`, `kind=machine`, `nova_os` and `nova_arch` from the machine's beat when it has one, and `nova_loops`, its loop records typed (`name`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled`, `log`), once the loop kind has been applied (`rev:loop` in `config:decl`; before that the variable is absent, which is not an empty list). `all.vars` holds `nova_store` and `nova_config_rev`. A loop record the plays could not render a unit from (an argv that is not a JSON list, keys without a seat, both or neither of `every` and `keepalive`, a machine with no row) exits 1 naming it. `--redis` is the store (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's); `--fixture <file>` reads a YAML or JSON file of the same rows in its place and opens no store (`fleet/testdata/inventory-fixture.yml` is one), and the two are exclusive. `--list` (the default with no flag) prints all of it; because `_meta.hostvars` is there, ansible never calls `--host <name>`, which prints one machine's variables and exits 1 with the known names when no row has that name. `--list` and `--host` together are refused. `--timeout` (a Go duration, default `10s`) bounds the wait for the store; on expiry, at the connection or the read, the verb exits 2 with `timed out after <d> waiting for the store at <addr> while <stage>` and the command to repeat with a longer timeout. Env `NOVA_MACHINE` names the machine row the command runs on (an empty value counts as unset), matched by exact machine name and refused with exit 1 and the known names when no row has it; unset, the lower-cased first label of the hostname (machine names are lower-case) is matched the same way and nothing is marked local when no row has it. The matched host gets `ansible_connection=local`. Ansible's `-i` wants an executable, so a two-line wrapper carries the tool and its environment:
 
@@ -2218,10 +2241,14 @@ Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova
 
 **Refusals.** Every refusal is one stderr line, `nova-config <verb> REFUSED: <what>; run: <next>`. Exit 1 is the store or Redis saying no, naming the next step: `machine m1 exists; run: nova-config machine set m1 ...`, `--store m9 names no machine row`, `machine m1 is the --coordinator of the fleet`, `friend f1 is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING m1: friend f2 makes the sum 65 over the machine ceiling 64`, `friend f3 has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one, an unknown flag another), and names the verb's `-h`.
 
+### The store login
+
+`nova-config login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --dsn <dsn without password> --friend <actor>` records the store login in `~/.config/nova-config/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the DSN, the friend and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-config <verb>` typed bare reaches that PostgreSQL, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper and no env prefix; `--pg`, `NOVA_PG_DSN` and `NOVA_PG_PASSWORD_ENV` still win. `login --check` prints `LOGIN file=… dsn=… friend=… … resolves=yes|no` (exit 1 on no), the password never shown; `logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-CONFIG.md](SPEC-CONFIG.md#the-store-login).
+
 ## nova-redis
 
 ```
-nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>  # run redis-server in the foreground, loopback and tailnet only, AOF on
+nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <u>[,<u>...]] # run redis-server in the foreground, loopback and tailnet only, AOF on, ACL users kept in <store-dir>/users.acl
 nova-redis spill  <login> --owner <o> --name <n> --ttl <d> --value <v> [--dry-run] # write scratch under <o>:<n> with a required TTL; --dry-run dials nothing
 nova-redis recall <login> --owner <o> --name <n>                              # read it back; exit 1 on a missing or expired key
 nova-redis fn load  <login>                                                   # put this binary's function library on the store unless it holds exactly that code
@@ -2260,7 +2287,9 @@ Each of these is refused (exit 2) before the dial, and the refusal names where t
 **The store's ACL.** The `acl` verbs keep the store's users in the shape this build renders (`internal/redisacl`), one user per role: `coordinator` (every key, every function, `FUNCTION LOAD`), the member's `bench`, the table reader's `ns-table` and the friend's `ns-friend`. A role is its key families (`table:*` and `tables`, `view:*` and `views`, `sprint:*`, `machine:*` and `machines`, `bench:*`, `friend:*` and `friends`, `fleet:*`, `loops` and `loop:*`, `routes` and `route:*`, `config:decl`, `tokens:ledger:*` (nova-tokens, under the seat's user); read and write or read only, by role), its command categories (`-@all +@read +@write ... -@dangerous -@scripting`, the reader `+@read` only) and `FCALL` of exactly the functions the embedded library registers in the role's files, `FCALL_RO` of the no-writes ones, read from the library itself; every role may `FUNCTION LIST`. A function runs its commands under the caller's ACL, so each role is also granted, by name, every Redis command its files' Lua calls (`TIME`, `HSET`, `XINFO STREAM` as `+xinfo|stream`, ...), derived from the Lua text, never listed by hand. No function name is listed by hand, so a function added to a file reaches its roles at the next render.
 - `acl render` prints one `ACL FAMILY name=<f> keys=<patterns>` line per family, one `ACL SETUSER <user> on clearselectors resetkeys resetchannels ...` line per user (pasteable), and `ACL RENDER OK users=<n> functions=<n> library=<digest>`.
 - `acl check` reads the live ACL (`ACL GETUSER` per user, `ACL USERS`, and `ACL CAT` so the categories mean what that store says) and prints `ACL OK`, `ACL MISSING`, or `ACL DRIFT user=<u> role=<r>` with what apply would add (`keys+=`, `commands+=`) and remove (`keys-=`, `commands-=`, `channels-=`), the commands compared as the sets both sides expand to; `NOTE ACL EXTRA user=<u>` for a user no role renders (left as it is) and `NOTE ACL DEFAULT on=<b> nopass=<b>`; then `ACL CHECK OK` (exit 0) or `ACL CHECK DRIFT ... remedy=` (exit 1).
-- `acl apply` makes the same comparison and sets each user that differs with `ACL SETUSER` (`ACL SET user=<u>`), then `ACL SAVE` when the store keeps an ACL file (`saved=acl-file`, else `saved=no-acl-file`): `ACL APPLY OK users=<n> set=<n> saved=<...>`. A user keeps the password it has. A user the store lacks is created only with the password in the variable `--password-env-for <user>=<NAME>` names; without one the run is `ACL APPLY REFUSED ... missing=<users>` (exit 1) and writes nothing. `--dry-run` prints `ACL WOULD-SET` lines and writes nothing.
+- `acl apply` makes the same comparison and sets each user that differs with `ACL SETUSER` (`ACL SET user=<u>`), then `ACL SAVE` when the store keeps an ACL file (`saved=acl-file`, else `saved=no-acl-file` and `NOTE ACL NOT SAVED: ...`, the users lasting until the store restarts): `ACL APPLY OK users=<n> set=<n> saved=<...>`. A store run by `nova-redis serve` keeps one, so the users apply sets survive a restart. A user keeps the password it has. A user the store lacks is created only with the password in the variable `--password-env-for <user>=<NAME>` names; without one the run is `ACL APPLY REFUSED ... missing=<users>` (exit 1) and writes nothing. `--dry-run` prints `ACL WOULD-SET` lines and writes nothing.
+
+**The ACL file.** `serve` names `<store-dir>/users.acl` as the store's ACL file, so the users `acl apply` sets (and saves) are loaded again on a restart. Before each launch `serve` writes the file back with mode 0600: every line as the store saved it, and the default user on the store's password as its SHA-256 (`user default on sanitize-payload #<sha256> ~* &* +@all`), never the password itself, since redis-server ignores `requirepass` once an ACL file is named. `--users <u>[,<u>...]` names the users the file must hold: a file that lacks one is `SERVE REFUSED ... missing the users <u>` (exit 2), in `--dry-run` too, and nothing is written or started. The first run on a new store takes no `--users`; after `acl apply`, the unit that runs the store names them. `SERVE START` and the dry run's `SERVE OK` carry `aclfile=<path> users=<n>`, the users other than default the file held.
 
 **Failures.** A failure of either verb is one `FAILED nova_sprint sha=<d> store=<a> err=<...> remedy="..."` line on stderr, and nothing on stdout. `err` says what was being done, why it failed, and what the store holds after it. `remedy` is the one next step for that cause, and its command carries the verb's login:
 - A function name another library holds: `remedy` names that library and the function.

@@ -199,10 +199,13 @@ row's.
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
 | `bus` | text | | nova-bus: the bus store's address, host:port, read from the applied key when `NOVA_BUS_REDIS` is unset so no friend types it (SPEC-BUS.md, the config); empty until set | `fleet:bus` |
+| `loops_dir` | text | | the inventory and plays: the directory where loop logs are written; seeded to `~/nova-bench/loops` | `fleet:loops_dir` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
-never reproduces a password from the input.
+never reproduces a password from the input. `loops_dir` must be non-empty: a
+store write checks the row it would leave, which carries every field, so a
+fleet that has declared no directory is refused until one is.
 Fleet apply and inventory refuse either endpoint unset, naming one
 `nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
 leaves the port NULL and the DSN empty. Full apply checks both before writing
@@ -268,8 +271,11 @@ Migration 0013 had made a loop's width a field its command ran with;
 migration 0017 removed the field, took `--width` out of every member argv that
 carried one and removed the second reader rows (`reader-<m>-2`), one reader
 per machine.
-The log path is derived from the name, `~/nova-bench/loops/<name>.log`
-(`LoopLog`), and is never typed. A machine a loop names cannot be removed
+The log path is derived from the fleet row's `loops_dir` and the name, `<loops_dir>/<name>.log`
+(`LoopLog`), and is never typed. Apply takes the directory from the store's
+fleet row, so a loop apply needs no fleet apply before it, and refuses a
+fleet row that carries none, naming `nova-config fleet set --loops_dir <path>`.
+A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 
@@ -411,8 +417,9 @@ config.machines          (name PK, "user", seat, slots, runners,
                           default)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
-                          created_at, updated_at;
-                          the one row inserted by the migration)
+                          loops_dir, created_at, updated_at;
+                          the one row inserted by the migration; loops_dir
+                          added by 0033, text NOT NULL DEFAULT '~/nova-bench/loops')
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
                           CHECK (width >= 1))
@@ -663,8 +670,54 @@ refusal naming the known seats.
 one `internal/nsprint/store.Open` makes. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
-open no store. `--as` is the flag, else `NOVA_FRIEND`, else the seat name,
-required on every write.
+open no store. `--as` is the flag, else `NOVA_FRIEND`, else the friend recorded by
+`nova-config login`, else the seat name, required on every write.
+
+### The store login
+
+(the owner, 2026-10-05: "We need to get away from these one shot shell scripts";
+card config-login-built-in, which replaces the wrapper that ran every
+nova-config verb under `nova-secrets exec` with `NOVA_PG_DSN` and
+`NOVA_PG_PASSWORD_ENV` set.)
+
+The tool's own login to PostgreSQL is a setting of nova-config, never a wrapper:
+
+```
+nova-config login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --dsn <dsn without password> --friend <actor> [--sops <path>]
+nova-config login --check
+nova-config logout
+```
+
+`login` records the DSN with no password, the actor, and where the password is
+in nova-secrets (store, seat, key, sops, the secret's NAME; never the password)
+in `$XDG_CONFIG_HOME/nova-config/login.json`, else
+`~/.config/nova-config/login.json`, mode 0600, written whole by a rename. The
+paths are recorded absolute and `--sops` left off is the `sops` on `PATH`. A
+login is recorded only when its secret resolves, and a `--dsn` that carries a
+password is refused without recording and without quoting it.
+
+Every verb after it opens PostgreSQL as follows. The DSN is `--pg`, else
+`NOVA_PG_DSN`, else the recorded DSN. The password is the environment's when
+`NOVA_PG_PASSWORD_ENV` is set (the variable it names), which wins, including
+when the address is the recorded DSN; else, when the DSN is `--pg` or
+`NOVA_PG_DSN`, the variable `NOVA_PG_PASSWORD` when that is set, and the
+recorded secret is not read; else the recorded secret, read in the verb's own
+process through `secrets.ReadLogin` (internal/secrets/login.go), the path
+`nova-secrets exec` takes (`OpenSeatFile`), and put into the connection in
+memory. It is never printed, never written, and never in the process's
+environment, so no child of the verb inherits it. `--as`, else `NOVA_FRIEND`,
+else the recorded friend, is the actor. `--file` and `--seat` are unchanged
+and do not read the recorded secret.
+
+A recorded secret that does not resolve, or a login file that is not a whole
+login, is a refusal naming the file and the remedy (`nova-config login
+--check`, then `login` again or `logout`), and the verb opens no store.
+`login --check` prints the recorded login, which environment source would win
+(`dsn-wins=env:…`, `password-wins=env:…`, `friend-wins=env:…`), and
+`resolves=yes|no` (exit 1 on no). The password is never shown. `logout`
+removes the file (`was=recorded|none`). The code is `cmd/nova-config/login.go`;
+`TestABareVerbConnectsWithTheRecordedLogin` measures it on the fake store with
+a fake secrets reader.
 
 ## Deliberately not configuration
 

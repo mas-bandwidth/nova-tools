@@ -90,6 +90,13 @@ usage:
   nova-config <kind> history <name> [--json]
   nova-config machine width <name> [--json]
   nova-config machine self [--check] [--json]
+  nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
+                    --dsn <dsn> --friend <actor> [--sops <path>]
+                    records the DSN and where the password is; never the password
+  nova-config login --check
+                    prints that login and whether the secret resolves
+  nova-config logout
+                    removes the recorded login
   nova-config fleet set|show|history        one row each, no name:
                                             fleet and sprint have no add, remove or list
   nova-config sprint set|show|history
@@ -100,9 +107,13 @@ The store is --pg <dsn> (or NOVA_PG_DSN; the password is never on the line:
 NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password,
 NOVA_PG_PASSWORD when it is unset, and never the password itself), or --file
 <path>, or --seat <name> (or NOVA_SEAT) which supplies the DSN and password
-variable name from the seat profile. --redis is host:port (NOVA_SPRINT_REDIS,
-then NOVA_REDIS_ADDR, then the seat's address). --as is the name a write is
-recorded under (NOVA_FRIEND, or the seat name).
+variable name from the seat profile, or the login nova-config login records
+(the DSN and friend; the password is read in this process from nova-secrets,
+never recorded and never put in an environment). --pg, NOVA_PG_DSN and
+NOVA_PG_PASSWORD_ENV still win when given. --redis is host:port
+(NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --as is
+the name a write is recorded under (NOVA_FRIEND, the recorded friend, or the
+seat name).
 Lose Redis: run nova-config apply.
 
 Fleet apply and inventory require explicit redis_port and pg_dsn; set both
@@ -251,7 +262,7 @@ func (r redisApplier) Close() error { return r.st.Close() }
 
 func realDeps() deps {
 	return deps{
-		getenv: os.Getenv,
+		getenv: withLogin(os.Getenv, nil),
 		openStore: func(ctx context.Context, dsn string) (pgStore, error) {
 			if path, ok := strings.CutPrefix(dsn, filePrefix); ok {
 				return config.OpenFile(path)
@@ -279,7 +290,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	defer verbflag.RecoverWith(stdout, toolName, banner(), &code, verbExtra)
 	ctx := context.Background()
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, or a kind ("+strings.Join(config.KindNames(), ", ")+") then add|set|remove|list|show|history")
+		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, login, logout, or a kind ("+strings.Join(config.KindNames(), ", ")+") then add|set|remove|list|show|history")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -314,11 +325,13 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return runApply(ctx, args[1:], stdout, stderr, d)
 	case "inventory":
 		return runInventory(ctx, args[1:], stdout, stderr, d)
+	case "login", "logout":
+		return runLoginTool(ctx, args, stdout, stderr, d)
 	}
 	if k, ok := config.Lookup(args[0]); ok {
 		return runKind(ctx, k, args[1:], stdout, stderr, d)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, inventory, or a kind (%s) then add|set|remove|list|show|history", oneline.Quote(args[0]), strings.Join(config.KindNames(), ", ")))
+	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, inventory, login, logout, or a kind (%s) then add|set|remove|list|show|history", oneline.Quote(args[0]), strings.Join(config.KindNames(), ", ")))
 }
 
 // refuse is the exit 2 line: the invocation could not run (a flag, an input,
@@ -425,8 +438,9 @@ func emit(stdout io.Writer, o *tool.Out) int {
 const filePrefix = "file:"
 
 // conn is the store a verb opens, from its flags: --pg (or NOVA_PG_DSN) for
-// PostgreSQL, --file for a local JSON file in its place, or --seat (or NOVA_SEAT)
-// for a seat profile in seats.tsv supplying the DSN and password variable name.
+// PostgreSQL, --file for a local JSON file in its place, --seat (or NOVA_SEAT)
+// for a seat profile in seats.tsv supplying the DSN and password variable name,
+// or the login nova-config login recorded when none of those is given.
 type conn struct {
 	pg   *string
 	file *string
@@ -492,14 +506,11 @@ func (c conn) dsn(getenv func(string) string) (string, error) {
 		}
 		return config.ResolveDSN(dsn, lookup)
 	}
-	if (c.pg == nil || *c.pg == "") && (getenv == nil || getenv(envPG) == "") {
-		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/db (or %s), or --file <path> for a local file with no database", envPG)
-	}
 	pg := ""
 	if c.pg != nil {
 		pg = *c.pg
 	}
-	return config.ResolveDSN(pg, getenv)
+	return resolvePG(pg, getenv)
 }
 
 // again is the store flag a printed command repeats.

@@ -3,9 +3,11 @@
 package fuse
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -166,4 +168,56 @@ func TestWriteBoxRefusesAUserOwnedSymlinkBehindARootOwnedAlias(t *testing.T) {
 	require.Error(t, err, "a user-owned link reached through a root-owned alias must be refused")
 	require.Contains(t, err.Error(), inner)
 	require.Contains(t, err.Error(), filepath.Join(target, "box.json"))
+}
+
+// TestReadBoxRefusesAFifoWithoutBlockingOrTrustingIt pins security#74 finding 7
+// (docs/SPEC.md, nova-fuse: The box): a FIFO is refused before ReadBox opens it.
+func TestReadBoxRefusesAFifoWithoutBlockingOrTrustingIt(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fuses.json")
+	require.NoError(t, syscall.Mkfifo(path, 0o600), "make FIFO: %s", path)
+
+	written := make(chan error, 1)
+	go func() {
+		f, err := os.OpenFile(path, os.O_WRONLY, 0)
+		if err != nil {
+			written <- err
+			return
+		}
+		_, err = io.WriteString(f, `{"lockdown":null,"quarantine":{}}`)
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		written <- err
+	}()
+	t.Cleanup(func() {
+		// Keep a reader open until the writer finishes, releasing it on both the
+		// fixed path and the old path that opens and trusts the FIFO.
+		f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		require.NoError(t, err, "open FIFO reader for cleanup")
+		defer func() {
+			require.NoError(t, f.Close(), "close FIFO reader")
+		}()
+		require.NoError(t, <-written, "write clear FIFO box")
+	})
+
+	_, err := ReadBox(path)
+	require.Error(t, err, "a FIFO cannot prove that the fuse box is clear")
+	require.NotErrorIs(t, err, ErrNoBox, "a FIFO is unreadable, not absent")
+	require.Contains(t, err.Error(), "not a regular file")
+}
+
+// TestReadBoxRefusesABoxOverTheByteLimit pins the bounded read in ReadBox
+// (docs/SPEC.md, nova-fuse: The box): a complete clear JSON value with enough
+// trailing whitespace to exceed the limit is still refused.
+func TestReadBoxRefusesABoxOverTheByteLimit(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fuses.json")
+	data := `{"lockdown":null,"quarantine":{}}` + strings.Repeat(" ", maxBoxBytes)
+	require.NoError(t, os.WriteFile(path, []byte(data), 0o600), "write oversized clear box")
+
+	_, err := ReadBox(path)
+	require.Error(t, err, "an oversized clear box cannot be accepted")
+	require.NotErrorIs(t, err, ErrNoBox, "an oversized box is unreadable, not absent")
+	require.Contains(t, err.Error(), "fuse box limit")
 }

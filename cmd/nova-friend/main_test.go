@@ -37,7 +37,8 @@ type rig struct {
 	home         string
 	answered     map[string]bool // the session checks bob's fake session has answered
 	alive        friend.Aliver
-	deaf         bool // bob's opencode session takes a turn and never runs the pong line
+	deaf         bool          // bob's opencode session takes a turn and never runs the pong line
+	fs           *friend.MemFS // the harness settings' filesystem: bob's directory /w/bob
 }
 
 type fakeAlive struct {
@@ -54,7 +55,9 @@ func (f fakeAlive) Alive(context.Context) friend.Liveness {
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}}
+	fs := friend.NewMemFS()
+	require.NoError(t, fs.MkdirAll("/w/bob", 0o755))
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}, fs: fs}
 }
 
 func (r *rig) world() world {
@@ -86,9 +89,10 @@ func (r *rig) world() world {
 			}
 			return "", errors.New("executable file not found in ")
 		},
-		random: func() string { return "r4nd0m" },
-		alive:  r.alive,
-		exec:   r.opencode,
+		random:   func() string { return "r4nd0m" },
+		alive:    r.alive,
+		exec:     r.opencode,
+		settings: r.fs,
 	}
 }
 

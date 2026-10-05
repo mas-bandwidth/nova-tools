@@ -117,3 +117,7 @@ cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend status --as bob --dir ./bob
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check dogfood record --tool nova-check --verb links --by Ada --ok \
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2

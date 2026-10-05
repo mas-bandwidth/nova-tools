@@ -191,6 +191,17 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 		return 0, []BrokenLink{{File: relFile, Reason: fmt.Sprintf("unreadable (%v)", readCause(err))}}
 	}
 
+	// Resolve the root the same way a target is resolved, before the prefix
+	// test. On macOS the temp root is under /tmp or /var, each a symlink
+	// (/tmp -> /private/tmp, /var -> /private/var), so a resolved target never
+	// has the unresolved root as a prefix. A directory symlink that stays
+	// inside the tree must not look like an escape. If the root cannot be
+	// resolved, the unresolved root is kept.
+	realRoot, rootErr := filepath.EvalSymlinks(root)
+	if rootErr != nil {
+		realRoot = root
+	}
+
 	// Fences use fenceRE, the same CommonMark rule the ledger parser uses: the
 	// opening run records its character and length, and only a run of the SAME
 	// character, at least as long and carrying nothing after it, closes it.
@@ -228,15 +239,15 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 			if reason == "" {
 				// The lexical check in resolveTarget rejects targets that leave
 				// root with "..", but an intermediate directory symlink could
-				// still escape the tree. Resolve symlinks and require the real
-				// path to equal root or sit under root+separator (as attest does
-				// in attest.go:120-123). A non-existent target keeps "does not exist".
+				// still escape the tree. Compare the resolved target to the
+				// resolved root (as attest does in attest.go:120-123). A
+				// non-existent target keeps "does not exist".
 				realPath, evalErr := filepath.EvalSymlinks(resolved)
 				if evalErr != nil {
 					if errors.Is(evalErr, fs.ErrNotExist) || os.IsNotExist(evalErr) {
 						reason = "does not exist"
 					}
-				} else if realPath != root && !strings.HasPrefix(realPath, root+string(filepath.Separator)) {
+				} else if realPath != realRoot && !strings.HasPrefix(realPath, realRoot+string(filepath.Separator)) {
 					reason = "escapes the tree through a symlink; cannot survive the repo travelling alone"
 				}
 				if reason == "" {

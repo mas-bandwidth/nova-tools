@@ -188,11 +188,16 @@ func ReadsNeeded(pr *Card) int {
 	return 2
 }
 
-// enoughReadersUp says as many readers are up as the primary needs
-// (ReadsNeeded), or the snapshot carries no reader states (every reader up):
-// the ask may ask it (TickAsk); else it waits, judged NFewReaders.
+// enoughReadersUp says as many readers of the primary's tier are up as it needs
+// (ReadsNeeded). A reader counts only when it reads that tier (readerReadsTier;
+// an empty tiers cell reads every tier). A snapshot with no reader states and
+// no tiers cell set holds every reader up, as it did before the column: the
+// ask may ask it (TickAsk); else it waits, judged NFewReaders.
 func enoughReadersUp(s *Snapshot, pr *Card) bool {
-	return s.ReaderStates == nil || len(s.UpReaders()) >= ReadsNeeded(pr)
+	if s.ReaderStates == nil && !s.readersCarryTiers() {
+		return true
+	}
+	return len(s.upReadersOf(pr)) >= ReadsNeeded(pr)
 }
 
 // acceptable says the primary has ok reads from ReadsNeeded different readers
@@ -226,15 +231,17 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // freeReaders is the readers the ask may ask the primary's attempt of: up,
-// with no read card of it at the attempt, placed or retired. A reader is
-// asked an attempt once: one read card per reader per attempt (ReadCardID),
+// reading the primary's tier (readerReadsTier; an empty tiers cell reads every
+// tier), with no read card of it at the attempt, placed or retired. A reader
+// is asked an attempt once: one read card per reader per attempt (ReadCardID),
 // so a reader with a card at this attempt (read, or taken back away, levelled
 // or returned) is not asked it again; the next attempt is read on new cards,
-// by every reader.
+// by every reader of the tier.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
+	tier := s.readTierOf(pr)
 	var out []string
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
+		if s.ReaderIsUp(rd) && s.readerReadsTier(rd, tier) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
 			out = append(out, rd)
 		}
 	}
@@ -364,11 +371,13 @@ func sweepReads(s *Snapshot, p *Plan) {
 		return
 	}
 	taker := func(c *Card) bool {
-		if pr := s.Work.Card(c.F("primary")); pr == nil || !enoughReadersUp(s, pr) {
+		pr := s.Work.Card(c.F("primary"))
+		if pr == nil || !enoughReadersUp(s, pr) {
 			return false
 		}
+		tier := s.readTierOf(pr)
 		for _, rd := range up {
-			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+			if s.readerReadsTier(rd, tier) && s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
 				return true
 			}
 		}
@@ -525,8 +534,14 @@ func levelReads(s *Snapshot, p *Plan) {
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
 			avoid := []string{long}
+			pr := s.Work.Card(q[i].F("primary"))
+			tier := ""
+			if pr != nil {
+				tier = s.readTierOf(pr)
+			}
 			for _, rd := range up {
-				if id := ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd); s.Readers.Card(id) != nil || planned[id] {
+				id := ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd)
+				if s.Readers.Card(id) != nil || planned[id] || (tier != "" && !s.readerReadsTier(rd, tier)) {
 					avoid = append(avoid, rd)
 				}
 			}
