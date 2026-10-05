@@ -684,6 +684,7 @@ type Call struct {
 	flags          *Flags
 	given          map[string]bool
 	problems       []string
+	reasons        []string // parallel to problems; "" when Problem, a code when ProblemAs
 	dryRead        bool
 	token          string
 	asJSON         bool
@@ -722,12 +723,31 @@ func (c *Call) Want(name, wants string) string {
 }
 
 // Problem records one reason the invocation cannot run.
-func (c *Call) Problem(what string) { c.problems = append(c.problems, what) }
+func (c *Call) Problem(what string) {
+	c.problems = append(c.problems, what)
+	c.reasons = append(c.reasons, "")
+}
+
+// ProblemAs records one reason with a stable code (skeleton contract 2.10,
+// STANDARD §2). The refusal line carries reason=<code> before the colon, and
+// the JSON result adds "reasons" beside "why": a program reads the code, a
+// person reads the sentence.
+func (c *Call) ProblemAs(reason, what string) {
+	c.problems = append(c.problems, what)
+	c.reasons = append(c.reasons, reason)
+}
 
 // Refused is the refusal naming every problem recorded, or nil when there is none.
 func (c *Call) Refused() *Out {
 	if len(c.problems) == 0 {
 		return nil
 	}
-	return Refuse(c.problems...)
+	o := Refuse(c.problems...)
+	for _, r := range c.reasons {
+		if r != "" {
+			o.Reasons = c.reasons
+			break
+		}
+	}
+	return o
 }
