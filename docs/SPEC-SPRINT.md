@@ -123,7 +123,11 @@ hold), whatever she beats or the coordinator observes; else, once the
 coordinator has observed her (`friend health`, below), the observation's word
 alone, `up` or `down`, and never her beat again; else `up` while her last beat
 is under `FriendDownAfter` (15 s) old; else `down`, and `down` when she has
-never beaten (`friend down` holds her and shows `held`, never `down`). A beat
+never beaten, or when her fresh beat says her session sleeps (`friend beat
+--asleep <friend>` records a contactable sleeping session in the beat's `asleep`
+field; sleeping is shown `down`, the owner's "sleeping = down"; an ordinary beat
+clears it and does not change the daemon's durable session state or invoke its
+wake command) (`friend down` holds her and shows `held`, never `down`). A beat
 wakes an unobserved friend at once. `friend up` is not a beat: a friend
 released with no beat in the last 15 s is `down` until she beats. `friend up
 <friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
@@ -167,7 +171,7 @@ after 15 sec. asleep. better."; the word was `asleep` until the owner,
 machine down has its cards taken back; a friend holds the cards dealt to
 her row (a friend's card, below) and keeps them when she goes down, the
 deadline judging them. The
-rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
+rows are in the shared status order (`FleetOrder`): up, then asleep, then held, then down,
 each by name. The table is drawn by `where` from those records when it draws
 the frame, never stored as a table: no tick, step, epoch or clear touches it,
 `teardown` deletes its records (the roster, each friend's beat), and
@@ -3193,7 +3197,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
-| friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
+| friend beat | a friend's beat, `friend beat [--asleep] <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat [--asleep] <friend>` (the flag before the name) and its report's flags, each once with its value, and nothing more |
 | friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready and a card she has started finishes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
 | friend level | even the ready queues of the friends up within each class, as fleet level evens the members' |
@@ -3762,8 +3766,8 @@ holds the bound.
 
 The server runs the workers' verbs only: `take`, `finish`, `progress`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
-nothing more, `friend beat <friend>` with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`), each once with its value, and nothing more, and `lane take` or `lane give` `<kind>
---machine <m> --as <worker>` and nothing more (a take's `--wait` asks again from the worker's side). No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
+nothing more, `friend beat [--asleep] <friend>` (the flag before the name) with its report's flags (`--running`, `--working`, `--queue`, `--width`, `--load`, `--active`), each once with its value, and nothing more, and `lane take` or `lane give` `<kind>
+--machine <m> --as <worker>` and nothing more (a take's `--wait` asks again from the worker's side). It also runs the coordinator keepalive's three shapes and no other: `seat --json`, `where --json`, and `friend health --actor <coordinator> <friend> --state <up|asleep|down> --seen <RFC3339> --generation <n>` (the health the seat's holder alone may write, at the seat's generation now). No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
 `actor`: the server gives the store and the actor, and puts them before the worker's words. A
 `take`, a `finish`, a `progress` and a `read` name the epoch their worker holds (`--epoch`). A `queue`'s
 `--packets` is a count from 0 to 1024 and its `--have` card ids, each given once: a worker asks

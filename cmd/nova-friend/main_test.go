@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,7 @@ type rig struct {
 	env       map[string]string
 	launchctl []string
 	onPath    map[string]string // what lookPath finds, by name
+	mu        sync.Mutex        // the clock below: the daemon and its keepalive child both read it
 	now       time.Time
 	home      string
 	answered  map[string]bool // the session checks bob's fake session has answered
@@ -53,8 +55,18 @@ func (r *rig) world() world {
 			r.launchctl = append(r.launchctl, strings.Join(args, " "))
 			return "", nil
 		},
-		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
-		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
+		now: func() time.Time {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.answerChecks()
+			r.now = r.now.Add(time.Second)
+			return r.now
+		},
+		sleep: func(context.Context, time.Duration) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.now = r.now.Add(time.Second)
+		},
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
 		home:    r.home,
@@ -65,7 +77,12 @@ func (r *rig) world() world {
 			}
 			return "", errors.New("executable file not found in ")
 		},
-		random: func() string { return "r4nd0m" },
+		random:        func() string { return "r4nd0m" },
+		openKeepalive: openFakeKeepalive,
+		instance:      func() string { return "test-instance" },
+		sprint: func(context.Context, string, ...[]string) ([]sprintwire.Result, error) {
+			return nil, errors.New("no sprint server in this test")
+		},
 	}
 }
 
@@ -111,6 +128,129 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	newRig(t).cli().Do(t).Exit(2).Err("FRIEND REFUSED", "nova-friend help")
 }
 
+func TestSleepNeedsCoordinatorAndWakeCanRecoverIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	cli := r.cli()
+	stateDir := friend.DefaultStateDir(r.home, "bob")
+	cli.Do(t, "sleep", "--as", "bob", "--state-dir", stateDir).Exit(2).Err("sleep needs a coordinator")
+	state, err := friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.False(t, state.Asleep, "a refused sleep changes nothing")
+	cli.Do(t, "sleep", "--as", "bob", "--coordinator", "ada", "--state-dir", stateDir, "--dry-run").Exit(0).Out("SLEEP OK asleep=true coordinator=ada dry_run=true", "plan only; the session state was not changed")
+	state, err = friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.Equal(t, friend.SessionState{}, state, "dry-run does not persist the coordinator or asleep marker")
+	assert.NoDirExists(t, stateDir, "dry-run does not create the state directory or lock")
+
+	cli.Do(t, "sleep", "--as", "bob", "--coordinator", "ada", "--state-dir", stateDir).Exit(0).Out("SLEEP OK asleep=true coordinator=ada")
+	state, err = friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.Equal(t, friend.SessionState{Coordinator: "ada", Asleep: true}, state)
+	cli.Do(t, "wake", "--as", "bob", "--state-dir", stateDir, "--dry-run").Exit(0).Out("WAKE OK asleep=false was_asleep=true dry_run=true", "plan only; the session state was not changed")
+	state, err = friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.True(t, state.Asleep, "dry-run does not clear asleep")
+	cli.Do(t, "wake", "--as", "bob", "--state-dir", stateDir).Exit(0).Out("WAKE OK asleep=false")
+	state, err = friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.Equal(t, friend.SessionState{Coordinator: "ada", Asleep: false}, state)
+}
+
+func TestInvalidStateOwnerNameIsRefusedBeforeCreatingItsDefaultPath(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.cli().Do(t, "sleep", "--as", "../bob").Exit(2).Err("--as", "not lowercase")
+	assert.NoDirExists(t, filepath.Join(r.home, ".nova-friend"), "validate before deriving or creating a state path")
+}
+
+func TestRunRefusesAStateDirectoryOwnedByAnotherFriendBeforeOpeningTheBus(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	stateDir := friend.DefaultStateDir(r.home, "bob")
+	require.NoError(t, friend.WriteStatus(stateDir, friend.Status{Friend: "alice", At: start}))
+	_, err := friend.UpdateSessionState(stateDir, func(s *friend.SessionState) error {
+		s.Coordinator = "ada"
+		return nil
+	})
+	require.NoError(t, err)
+	w := r.world()
+	opens := 0
+	w.open = func(context.Context, string) (bus.Store, func(), error) {
+		opens++
+		return r.store, func() {}, nil
+	}
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--state-dir", stateDir, "--coordinator", "other"}, strings.NewReader(""), io.Discard, io.Discard, w)
+	assert.Equal(t, 2, code)
+	assert.Zero(t, opens)
+	state, err := friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.Equal(t, "ada", state.Coordinator, "refusal did not overwrite another owner's state")
+}
+
+func TestSleepAndWakeRefuseAStateDirectoryOwnedByAnotherFriend(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	stateDir := friend.DefaultStateDir(r.home, "alice")
+	require.NoError(t, friend.WriteStatus(stateDir, friend.Status{Friend: "alice", At: start}))
+	cli := r.cli()
+	cli.Do(t, "sleep", "--as", "bob", "--coordinator", "ada", "--state-dir", stateDir).Exit(2).Err("runs as alice, not bob")
+	cli.Do(t, "wake", "--as", "bob", "--state-dir", stateDir).Exit(2).Err("runs as alice, not bob")
+	state, err := friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.Equal(t, friend.SessionState{}, state)
+}
+
+func TestRunRefusesAnAsleepSessionWithoutCoordinatorWithoutWakingIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	stateDir := friend.DefaultStateDir(r.home, "bob")
+	_, err := friend.UpdateSessionState(stateDir, func(s *friend.SessionState) error {
+		s.Asleep = true
+		return nil
+	})
+	require.NoError(t, err)
+	w := r.world()
+	opens := 0
+	w.open = func(context.Context, string) (bus.Store, func(), error) {
+		opens++
+		return r.store, func() {}, nil
+	}
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--state-dir", stateDir}, strings.NewReader(""), io.Discard, io.Discard, w)
+	assert.Equal(t, 2, code)
+	assert.Zero(t, opens, "refuse before opening the bus")
+	state, err := friend.ReadSessionState(stateDir)
+	require.NoError(t, err)
+	assert.True(t, state.Asleep, "startup does not silently wake the saved session")
+	assert.Empty(t, state.Coordinator)
+}
+
+func TestRunReportsPersistedSleepOnItsBeat(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	stateDir := friend.DefaultStateDir(r.home, "bob")
+	_, err := friend.UpdateSessionState(stateDir, func(s *friend.SessionState) error {
+		s.Coordinator, s.Asleep = "ada", true
+		return nil
+	})
+	require.NoError(t, err)
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	var beatAsleep []bool
+	w.beat = func(_ context.Context, _, _ string, _ time.Time, asleep bool) (string, error) {
+		beatAsleep = append(beatAsleep, asleep)
+		cancel()
+		return "", nil
+	}
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--state-dir", stateDir}, strings.NewReader(""), io.Discard, io.Discard, w)
+	assert.Equal(t, 0, code)
+	assert.Equal(t, []bool{true}, beatAsleep)
+}
+
 func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -128,6 +268,8 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"pong no seat yet", []string{"pong", "--as", "bob", "--nonce", "n1", "--state-dir", t.TempDir()}, []string{"--to is required", "no ping has named a seat yet"}},
 		{"wait-pong nothing given", []string{"wait-pong"}, []string{"--from is required", "--nonce is required"}},
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
+		{"sleep nothing given", []string{"sleep"}, []string{"--as is required"}},
+		{"wake nothing given", []string{"wake"}, []string{"--as is required"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -198,13 +340,19 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	cli := r.cli()
 	dir := t.TempDir()
 	state := friend.DefaultStateDir(r.home, "bob")
-	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
+	_, err := friend.UpdateSessionState(state, func(s *friend.SessionState) error {
+		s.Coordinator, s.Asleep = "ada", true
+		return nil
+	})
+	require.NoError(t, err)
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).
+		Err("STATUS NONE reported_asleep=unknown sleep_requested=true coordinator=ada: no daemon has run as bob (no status file in " + state + "); run: nova-friend install --as bob --harness <h> --dir " + dir)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z pong_age=2m1s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=- reported_asleep=false sleep_requested=true coordinator=ada",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
@@ -218,16 +366,17 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--dry-run").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist+" launchd_log="+filepath.Join(r.home, "Library", "Logs", "nova-friend-bob.log")+" dry_run=true",
 			`INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL PLAN command="launchctl bootstrap gui/501 `+plist+`"`,
-			"NOTE the agent runs: nova-friend run --as bob --harness opencode --dir /w/bob --width 4, with --redis and --server as given here")
+			"NOTE the agent runs: nova-friend run --as bob --harness opencode --dir /w/bob --width 4, with --redis, --server and --coordinator as given here")
 	assert.NoFileExists(t, plist)
 	assert.Empty(t, r.launchctl)
 
-	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1", "--coordinator", "ada").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`, "NOTE check it: nova-friend status --as bob --dir /w/bob")
 	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>--session</string>\n    <string>ses_1</string>")
+	assert.Contains(t, string(raw), "<string>--coordinator</string>\n    <string>ada</string>")
 	assert.Contains(t, string(raw), "<key>PATH</key><string>/usr/bin:/bin</string>")
 
 	cli.Do(t, "uninstall", "--as", "bob", "--dry-run").Exit(0).Out("UNINSTALL OK label=com.nova.friend-bob", `UNINSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `UNINSTALL PLAN command="rm `+plist+`"`)
@@ -249,7 +398,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, bool) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -258,7 +407,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--width", "4", "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
 	assert.NoDirExists(t, filepath.Join(dir, ".nova-friend"), "nothing of the daemon's on the friend's volume")
 	s, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
@@ -270,6 +419,10 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
 	assert.Equal(t, "batch", s.Mode, "the row says one-shot; claude opens no session per lane")
 	assert.Contains(t, out.String(), "cannot open a session per lane; delivering in batch")
+	session, err := friend.ReadSessionState(friend.DefaultStateDir(r.home, "bob"))
+	require.NoError(t, err)
+	assert.Equal(t, "ada", session.Coordinator, "the run's explicit coordinator is saved for sleep/wake")
+
 }
 
 // A store that is down when the daemon starts is no reason to exit: under launchd's
@@ -296,7 +449,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, bool) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -362,7 +515,7 @@ func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
 	wrap := "/opt/nova/bin/nova-secrets exec --store " + filepath.Join(r.home, "nova-bench", "secrets") + " --as studio --key " + filepath.Join(r.home, ".config", "nova-secrets", "studio.key") +
 		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390 --width 0"
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--dry-run").Exit(0).
-		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis and --server as given here")
+		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis, --server and --coordinator as given here")
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
 	raw, err := os.ReadFile(filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
 	require.NoError(t, err)
@@ -387,7 +540,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z reason="invalid_request_error: bad input"`,
+		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z reported_asleep=false sleep_requested=false coordinator=- reason="invalid_request_error: bad input"`,
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
@@ -429,6 +582,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return ctx, cancel
 		}
 		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+		w.openKeepalive = nil // the lane's loop paces itself on the same pause, which would wait on itself in the bubble
 		dir := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
@@ -464,7 +618,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time, bool) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()
@@ -506,7 +660,7 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 		return ctx, cancel
 	}
 	beats, sleeps := 0, 0
-	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time, bool) (string, error) { beats++; return "", nil }
 	w.sleep = func(context.Context, time.Duration) {
 		r.now = r.now.Add(time.Minute)
 		if sleeps++; sleeps == 8 {
@@ -562,7 +716,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		}
 	}
 	var beats []time.Time
-	w.beat = func(context.Context, string, string, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, bool) (string, error) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
