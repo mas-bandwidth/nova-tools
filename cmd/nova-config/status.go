@@ -51,6 +51,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 			emit(stdout, o)
 		} else {
 			fmt.Fprintln(stdout, line)
+			printNotes(stdout, o.Notes)
 		}
 		if code != 0 {
 			return refused(stderr, verb, why, next)
@@ -68,6 +69,13 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	counts, err := st.Counts(ctx)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
+	}
+	if d.probe != nil {
+		loops, err := st.List(ctx, config.KindLoop)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		o.Notes = config.DeadLoops(ctx, loops, d.probe)
 	}
 	revs := map[string]int64{}
 	for _, k := range config.Kinds {

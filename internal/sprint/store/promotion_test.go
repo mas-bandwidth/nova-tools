@@ -83,3 +83,87 @@ func TestTheTickRaisesDevBehindAtTwentyFiveLandingsOrThirtyMinutes(t *testing.T)
 		assert.Equal(t, 1, h.written(sprint.NDevBehind), "once while it holds")
 	})
 }
+
+// promoteBeforeTheDeal makes the one world event of a tick: a part of the work
+// table's update, after the pump's drain and before the deal, records the
+// promotion that answers the open "dev is behind". The machine runs, so the
+// promotion's properties queue for the next tick's pump while its close of the
+// judgment applies at once. The part runs once.
+func (h *harness) promoteBeforeTheDeal(answers string) {
+	h.t.Helper()
+	promoted := false
+	work := sprint.TickTables[0]
+	var parts []sprint.TickPartDef
+	for _, p := range work.Parts {
+		if p.Name == "deal" {
+			parts = append(parts, sprint.TickPartDef{Name: "world", Fn: func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+				if promoted {
+					return sprint.Plan{}, 0
+				}
+				promoted = true
+				h.must(PromotedStep(sprint.PromotedReq{Sha: "0123abc", Answers: []string{answers}, Who: "tester"}))
+				return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "world", At: s.Now}}}, 0
+			}})
+		}
+		parts = append(parts, p)
+	}
+	work.Parts = parts
+	h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
+}
+
+// A promotion recorded while the machine runs, after the pump's drain, is the
+// last promotion to the tick's deal: the deal judges dev against the queued
+// promotion and raises no second "dev is behind" on the landings it covered,
+// which the next tick would close again under the coordinator answering it (the
+// dirty-tick drive of 2026-10-05: "dev is behind: promoted refused", no open
+// judgment). Red without the deal reading the queued promotion
+// (withQueuedPromotion).
+func TestAPromotionQueuedAfterTheDrainRaisesNoSecondDevBehind(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	h.landThrough("s1", "s1-1")
+	h.machine()
+	h.tick(sprint.PromoteAge)
+	h.machine()
+	open := h.openOf(sprint.NDevBehind)
+	require.Len(t, open, 1)
+	h.promoteBeforeTheDeal(open[0].Note.ID)
+	h.machine()
+	assert.Empty(t, h.openOf(sprint.NDevBehind), "the deal raised dev is behind again on the landing the queued promotion covers")
+	assert.Equal(t, 1, h.written(sprint.NDevBehind), "one judgment, answered once")
+	h.machine()
+	at, sha, ok := sprint.Promotion(h.snap())
+	require.True(t, ok, "the next pump wrote the queued promotion")
+	assert.Equal(t, "0123abc", sha)
+	assert.False(t, at.IsZero())
+	assert.Empty(t, h.openOf(sprint.NDevBehind))
+	assert.Equal(t, 1, h.written(sprint.NDevBehind))
+}
+
+// A step on a STOPPED machine drains the queue the machine left before it
+// runs; the drain reads and writes through the twin the step holds, so a step
+// loading no table (the stop's note, the tick-end note's) reads no table whole
+// for it (the dirty-tick drive of 2026-10-05: "/tick end read 1 whole" on the
+// tick the sprint was done). Red without the drain given the held twin.
+func TestADrainBeforeAStepReadsThroughTheTwinTheStepHolds(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	h.landThrough("s1", "s1-1")
+	h.machine()
+	h.machine()
+	// a promotion while the machine runs: its properties queue for the pump
+	h.must(PromotedStep(sprint.PromotedReq{Sha: "0123abc", Who: "tester"}))
+	require.Positive(t, h.queueLen())
+	before := h.st.stats().reads.Load()
+	// the stop's note is a step loading no table: it drains the queue first
+	h.stopMachine()
+	assert.Zero(t, h.queueLen(), "the stop's step drained the queue first")
+	assert.Zero(t, h.st.stats().reads.Load()-before, "the drain read a table whole: the step's twin was not lent to it")
+	_, sha, ok := sprint.Promotion(h.snap())
+	require.True(t, ok)
+	assert.Equal(t, "0123abc", sha)
+}

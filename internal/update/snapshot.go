@@ -258,11 +258,6 @@ func readSnapshot(path string) (*snapshot, error) {
 	return s, nil
 }
 
-// writeSnapshot commits with os.Rename, the atomic commit operation.
-func writeSnapshot(path string, s *snapshot) error {
-	return writeSnapshotWith(path, s, os.Rename)
-}
-
 // writeSnapshotWith commits with rename. The command passes Environment.Rename,
 // which a helper process sets to hold the real writer before committing; shipped
 // commands leave it nil and get os.Rename.

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1036,6 +1037,30 @@ func walkTool(run func(c *Call) *Out) *Tool {
 		Name: "nova-walk", What: "walks", ExitTable: "0 done, 1 said no, 2 could not run.",
 		Verbs: []Verb{{Name: "walk", Usage: "walk", Effect: Inspection, Run: run}},
 	}
+}
+
+// Emit prints one item now, so a long-running verb shows its rows as they
+// happen (skeleton contract 2.4, STANDARD §2: one output structure, two
+// renderings). Text is one item line; --json is one {"item":{...}} line. The
+// Out the verb returns is the closing line, printed after these.
+func (c *Call) Emit(kind string, kv ...any) {
+	o := &Out{token: c.token}
+	o.Item(kind, kv...)
+	it := o.Items[0]
+	if c.asJSON {
+		raw, err := marshal(struct {
+			Item Item `json:"item"`
+		}{it})
+		if err != nil {
+			f := Fail("the result is no JSON, so it is not printed: " + err.Error())
+			f.token = c.token
+			f.Render(c.Stderr, false)
+			return
+		}
+		fmt.Fprintf(c.Stdout, "%s\n", raw)
+		return
+	}
+	fmt.Fprintln(c.Stdout, oneline.Field(c.token)+" "+oneline.Field(strings.ToUpper(it.Kind))+it.Fields.text())
 }
 
 // TestEmitPrintsItemsThenTheClosingLine pins Call.Emit (skeleton contract 2.4,

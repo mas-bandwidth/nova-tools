@@ -105,6 +105,6 @@ func boundedReadFile(path string, cap int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only file
 	return io.ReadAll(io.LimitReader(f, cap+1))
 }

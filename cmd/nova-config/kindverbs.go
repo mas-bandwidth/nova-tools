@@ -192,6 +192,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			next = toolName + " " + k.Name + " show"
 		}
 	}
+	if k.Name == config.KindLoop && d.probe != nil {
+		if err := checkLoopVerb(ctx, st, add, row, changes, d.probe); err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+	}
 	var notes []string
 	if add && k.Name == config.KindMachine && row.Fields["width"] == "" {
 		// width is set apart from slots and is the default when unset: say so where a newcomer meets it
@@ -239,6 +244,21 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	printNotes(stdout, notes)
 	return 0
+}
+
+// checkLoopVerb refuses a loop whose verb is gone (config.CheckLoopVerb), the
+// row as the write leaves it: an add's own, a set's changes over the stored
+// row. A set of a row not there passes here; its update refuses it.
+func checkLoopVerb(ctx context.Context, st pgStore, add bool, row config.Row, changes map[string]string, probe config.VerbProbe) error {
+	if !add {
+		cur, found, err := st.Get(ctx, config.KindLoop, row.Name)
+		if err != nil || !found {
+			return err
+		}
+		row = config.Row{Name: cur.Name, Fields: maps.Clone(cur.Fields)}
+		maps.Copy(row.Fields, changes)
+	}
+	return config.CheckLoopVerb(ctx, row, probe)
 }
 
 // writeRemedy is the command an add or set refusal names: for a ref naming

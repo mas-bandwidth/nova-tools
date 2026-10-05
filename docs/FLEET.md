@@ -90,10 +90,8 @@ the verb leaves the unit exiting at every start (`sprint-table-live` ran
 program in a record's argv `help <verb>` (`internal/config/loop.go`: exit 2
 naming verbs is a verb gone; a program not installed where nova-config runs
 judges nothing): `CheckLoopVerb` is the refusal of an enabled record whose
-verb is gone, and `DeadLoops` the line for each, with its `nova-config loop
-remove <name>`. Until `loop add`, `loop set` and `status` call them, check a
-record by hand with `<program> help <verb>` and remove a dead one with
-`nova-config loop remove <name>`.
+verb is gone (enforced by `loop add` and `loop set`), and `DeadLoops` the line
+for each in `status`, with its `nova-config loop remove <name>`.
 
 Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by

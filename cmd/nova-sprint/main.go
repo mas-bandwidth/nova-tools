@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -103,6 +104,15 @@ type app struct {
 	// (store/twin.go). It is not the mem twin above, which is a store.
 	readTwinsMu sync.Mutex
 	readTwins   map[string]*store.Twin
+	// busWatches is the Watch of each bus store and user sendBus has sent on
+	// (busWatch), and busAlarms the lines its alarms queued for the send that
+	// saw them to say; busOpen dials the store for each send (a test gives a
+	// fake store and opens no socket).
+	busWatchesMu sync.Mutex
+	busWatches   map[string]*bus.Watch
+	busAlarmsMu  sync.Mutex
+	busAlarms    []string
+	busOpen      func(ctx context.Context, addr, user string) (*bus.Bus, func(), error)
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
@@ -273,11 +283,13 @@ func newApp(getenv func(string) string) *app {
 	a.friends = a.readFriends
 	a.tip = a.branchTip
 	a.bus = a.sendBus
+	a.busOpen = a.openBus
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
 	a.briefBar = a.readBriefBar
 	a.mergeQueue = &keptQueue{ask: ghMergeQueue{host: githubHost}, now: func() time.Time { return a.now() }, kept: map[string]keptAnswer{}}
+	a.busWatches = map[string]*bus.Watch{}
 	return a
 }
 

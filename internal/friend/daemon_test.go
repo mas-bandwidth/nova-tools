@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +23,7 @@ import (
 // until the releaseAt-th pause.
 type rig struct {
 	mu        sync.Mutex
-	store     *bus.Fake
+	store     *bustest.Fake
 	bus       *bus.Bus
 	now       time.Time
 	delivered []string
@@ -46,7 +47,7 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	r := &rig{store: bus.NewFake(t0, "ada", "bob"), now: t0, stopAfter: 1 << 20, gate: make(chan struct{}, 1), at: map[int]func(){}}
+	r := &rig{store: bustest.NewFake(t0, "ada", "bob"), now: t0, stopAfter: 1 << 20, gate: make(chan struct{}, 1), at: map[int]func(){}}
 	r.bus = &bus.Bus{Store: r.store}
 	r.d = &Daemon{
 		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store,
