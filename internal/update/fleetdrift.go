@@ -125,11 +125,14 @@ func newer(a, b string) bool {
 // fleetReport is the verb body: one DRIFT line per stale bench, one receipt.
 // Exit 0 when every beating bench is on the newest build, 1 on drift, 2 when
 // the store cannot be read.
-func fleetReport(addr, help string, timeout time.Duration, now func() time.Time) *tool.Out {
+func fleetReport(addr, help string, timeout time.Duration, now func() time.Time, open func(context.Context, string) (*store.Store, error)) *tool.Out {
+	if open == nil {
+		open = store.Open
+	}
 	started := now()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	st, err := store.Open(ctx, addr)
+	st, err := open(ctx, addr)
 	if err != nil {
 		return refused("report", help, fmt.Sprintf("%s (supply a reachable --store host:port)", err))
 	}

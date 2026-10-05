@@ -21,6 +21,8 @@ import (
 // interrupted writer's bytes and a different writer's temporary. The later
 // reporter is the built CLI, with the ordinary production rename operation.
 func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "s.json")
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
@@ -45,7 +47,7 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() { _ = input.Close(); _ = heldOpen.Close() })
-	c := exec.Command(os.Args[0], "-test.run=^TestSnapshotRenameBarrierHelper$")
+	c := exec.Command(os.Args[0])
 	c.Env = append(os.Environ(), "NOVA_SNAPSHOT_BARRIER="+ready,
 		"NOVA_SNAPSHOT_PATH="+snapshot, "NOVA_SNAPSHOT_MANIFEST="+second)
 	c.Stdin = input // the parent never writes or closes this pipe before the kill
@@ -131,7 +133,11 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 // Main runs the same report path as the CLI. On arrival at the rename operation,
 // the writer has synced and closed its actual temporary but cannot rename it
 // until stdin is released. The parent instead kills this process at that point.
-func TestSnapshotRenameBarrierHelper(t *testing.T) {
+// The child is entered from TestMain, before any test runs, so no test swaps the
+// package's rename operation.
+func init() { childMain = snapshotRenameBarrierMain }
+
+func snapshotRenameBarrierMain() {
 	ready := os.Getenv("NOVA_SNAPSHOT_BARRIER")
 	if ready == "" {
 		return

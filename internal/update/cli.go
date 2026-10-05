@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
@@ -33,6 +34,13 @@ type Environment struct {
 	WorkerStart func(id int)
 	JobAttempt  func(index int)
 	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
+	// ChildEnv is KEY=VALUE entries added to the environment of every child the
+	// default process adapter starts; a PATH among them is where the child is
+	// found. Empty is the parent's environment unchanged.
+	ChildEnv []string
+	// OpenStore dials the fleet store of report --store; nil is store.Open, which
+	// takes its login from the process environment.
+	OpenStore func(ctx context.Context, addr string) (*store.Store, error)
 }
 type options struct {
 	file, host, snapshot, as, to, target, adopt, store string
@@ -411,7 +419,7 @@ func storeReport(name string, o options, positional []string, env Environment) *
 	if o.timeout <= 0 {
 		return refused("report", help, "--timeout wants a positive duration")
 	}
-	return fleetReport(o.store, help, o.timeout, env.Now)
+	return fleetReport(o.store, help, o.timeout, env.Now, env.OpenStore)
 }
 
 // checked is a parsed check, apply or report: the flags' own rules, the

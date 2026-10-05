@@ -12,6 +12,7 @@ package update
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,12 +55,13 @@ func treeOf(t *testing.T, root string) []string {
 // Rule 9: a verdict is not an action. check reads, prints and exits; it writes no
 // file, and the apply command of a STALE entry is never the thing it runs.
 func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
-	installed := printer(t, "1.0.0")
-	latest := printer(t, "2.0.0")
 	witness := filepath.Join(dir, "the-apply-ran")
 	calls := filepath.Join(dir, "calls")
-	t.Setenv("NOVA_UPDATE_CALLS", calls)
+	installed := loggedCommand(t, calls, "print", base64.StdEncoding.EncodeToString([]byte("1.0.0")))
+	latest := loggedCommand(t, calls, "print", base64.StdEncoding.EncodeToString([]byte("2.0.0")))
 	// The apply column is a command that would leave a file behind if it ran.
 	p := manifest(t, row("x", "tool", installed, "local:"+latest, command(t, "write", witness, "installed")))
 	before := treeOf(t, filepath.Dir(p))
@@ -129,6 +131,8 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 // Rule 18: a refusal a person cannot act on is not a refusal. Every one of them
 // names a remedy, and the shape is the grammar's: REFUSED: <reason>; run: <command>.
 func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
+	t.Parallel()
+
 	good := row("x", "tool", printer(t, "1.0.0"), "npm:unused", "none")
 	p := manifest(t, good)
 	bad := manifest(t, strings.Replace(good, "tool", "weights", 1))
@@ -168,12 +172,15 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 // from the clock it was handed, a report with recipients named but no --send
 // starts no bus, and a run whose children hang still ends inside its budget.
 func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
+	t.Parallel()
+
 	fixed := time.Date(2026, 9, 9, 12, 34, 56, 0, time.UTC)
 	env := Environment{Now: func() time.Time { return fixed }}
 	snapshot := filepath.Join(t.TempDir(), "s.json")
-	log := fakeBusPath(t)
+	bus := newFakeBus(t)
+	log := bus.Log
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
+	c, out, errs := run(t, bus.Environment("", env), "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	}

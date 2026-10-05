@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -107,6 +108,14 @@ func identity(e Entry, raw string, report bool) Read {
 type ProcessResult struct{ Stdout, Stderr, Path, Reason string }
 
 func process(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+	return processWithEnv(ctx, args, input, cap, nil)
+}
+
+// processWithEnv is process with extra KEY=VALUE entries on the child's
+// environment, after the parent's. A PATH among them is also where args[0] is
+// looked up, so a caller seams one child's tools and variables without touching
+// the process's own environment.
+func processWithEnv(ctx context.Context, args []string, input io.Reader, cap int, extra []string) ProcessResult {
 	r := ProcessResult{}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -116,7 +125,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "empty argv"
 		return r
 	}
-	path, err := exec.LookPath(args[0])
+	path, err := lookPathIn(args[0], extra)
 	if err != nil {
 		r.Reason = "not_found"
 		return r
@@ -126,6 +135,9 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := subproc.Context(child, path, args[1:]...)
+	if len(extra) > 0 {
+		cmd.Env = append(os.Environ(), extra...)
+	}
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and
@@ -454,5 +466,24 @@ func (env Environment) runProcess(ctx context.Context, args []string, input io.R
 	if env.Process != nil {
 		return env.Process(ctx, args, input, cap)
 	}
-	return process(ctx, args, input, cap)
+	return processWithEnv(ctx, args, input, cap, env.ChildEnv)
+}
+
+// lookPathIn is exec.LookPath, looking in the PATH of extra when it names one.
+func lookPathIn(file string, extra []string) (string, error) {
+	dirs := ""
+	for _, kv := range extra {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			dirs = v
+		}
+	}
+	if dirs == "" || strings.ContainsRune(file, filepath.Separator) {
+		return exec.LookPath(file)
+	}
+	for _, d := range filepath.SplitList(dirs) {
+		if p, err := exec.LookPath(filepath.Join(d, file)); err == nil {
+			return p, nil
+		}
+	}
+	return "", exec.ErrNotFound
 }
