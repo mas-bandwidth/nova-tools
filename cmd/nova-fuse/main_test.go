@@ -499,6 +499,38 @@ func TestCheckQuotesTheStoredSpelling(t *testing.T) {
 	assert.Contains(t, errOut, "quarantine=Discord", "quote the file's spelling, not the caller's: %q", errOut)
 }
 
+// TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface: status prints a stored name
+// through oneline.Field, so a spaced name shows as spaced\x20name, and the natural copy
+// of that token into check must not answer CLEAR for a surface that is blown
+// (security#74 finding 2).
+func TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "spaced name", "blown"}, now)
+
+	code, out, _ := capture(t, []string{"status", "--box", box}, now)
+	require.Equal(t, 0, code, "status exit = %d", code)
+	var token string
+	for _, f := range strings.Fields(out) {
+		if v, ok := strings.CutPrefix(f, "quarantine="); ok && v != "" {
+			token = v
+		}
+	}
+	require.Equal(t, `spaced\x20name`, token, "status stdout = %q", out)
+
+	for _, spelling := range []string{token, "spaced name", `spaced\u0020name`} {
+		code, _, errOut := capture(t, []string{"check", "--box", box, spelling}, now)
+		assert.Equal(t, 1, code, "spelling %q must not check clear, exit = %d", spelling, code)
+		assert.Contains(t, errOut, "FUSE FAILED quarantine", "spelling %q: stderr = %q", spelling, errOut)
+	}
+
+	code, out, errOut := capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "an unrelated surface stays clear: stderr = %q", errOut)
+	assert.Contains(t, out, "FUSE OK", "stdout = %q", out)
+}
+
 // TestStatusSurvivesAHandEditedBox. A dropped key must produce an honest sentence, never
 // a crash and never an invented value -- hand-editing is the only lockdown-replacement
 // mechanism, so sparse boxes are normal inputs.
