@@ -1017,6 +1017,12 @@ nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
 
+`friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
+delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
+variable named by `NOVA_BUS_REDIS_PASSWORD_ENV`, separately from the sprint
+store's login. With no bus user it uses the default user; a failed bus send
+leaves the delivered card in her inbox and records that she was not woken.
+
 Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
 verb that writes wants one), `--op <id>` (the same id again returns the recorded
