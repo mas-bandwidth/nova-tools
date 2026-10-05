@@ -374,11 +374,7 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 	a.lanesFor(context.Background())
 	if st, err := a.store(common{redis: redis}); err == nil && st != nil {
 		// ignored: a best-effort read cleanup on server listen; tick takes care of any subsequent lapses
-		_, _ = st.Run(context.Background(), store.Step{
-			Verb: "restart",
-			Load: []string{sprint.Readers, sprint.Work},
-			Plan: sprint.RestartReads,
-		})
+		_ = a.serverStart(context.Background(), st)
 	}
 	for at, h := range lns {
 		ln, err := net.Listen("tcp", at)
