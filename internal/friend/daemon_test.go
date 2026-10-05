@@ -3,6 +3,8 @@ package friend
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -360,41 +362,133 @@ func TestADeferredDeliveryIsTriedAgainAndNeverGivenUpOrAcked(t *testing.T) {
 	})
 }
 
-// The DSH adapter over a session under an agent preset, through the daemon:
-// every delivery is refused by the one-shot runner, the message stays in
-// hand and is never given up (the finding of 2026-10-04: Zhi's session runs
-// preset "minimal", and the third refusal would have acked her message).
-func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
+// refusalWatch is a Deliverer that says each turn's end: the error the
+// adapter under it answered, in order.
+type refusalWatch struct {
+	Deliverer
+	mu   sync.Mutex
+	ends []error
+}
+
+func (w *refusalWatch) Deliver(ctx context.Context, text string) (int, error) {
+	exit, err := w.Deliverer.Deliver(ctx, text)
+	w.mu.Lock()
+	w.ends = append(w.ends, err)
+	w.mu.Unlock()
+	return exit, err
+}
+
+func (w *refusalWatch) turns() []error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]error(nil), w.ends...)
+}
+
+// A dsh turn that prints the agent-preset refusal, or stops at
+// MISSING_CREDENTIAL, and exits 0 is a failed delivery: on the first such
+// turn the session is broken with that reason, said once on the record, no
+// beat goes to the sprint server (the friend's row reads down) and the status
+// says the reason, while the message stays pending and is tried again every
+// RecheckEvery; the next turn that succeeds acks it and brings the friend up
+// (the finding of 2026-10-05: from 2026-10-04 Zhi's turns printed the preset
+// refusal and exited 0, and for four hours every message went nowhere while
+// her row read up). The dsh is this test binary (fakeDSH), run as a process.
+func TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason(t *testing.T) {
 	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		r := newRig(t)
-		var mu sync.Mutex
-		calls := 0
-		refuse := func(context.Context, string, string, []string, string) (string, int, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			calls++
-			if calls == 10 {
-				r.cancel()
+	bin, err := os.Executable()
+	require.NoError(t, err)
+	for _, c := range []struct{ mode, reason string }{
+		{"preset", "dsh session session-zhi: agent preset minimal"},
+		{"credential", "dsh: missing credential"},
+	} {
+		t.Run(c.mode, func(t *testing.T) {
+			t.Parallel()
+			mode := filepath.Join(t.TempDir(), "mode")
+			require.NoError(t, os.WriteFile(mode, []byte(c.mode), 0o600))
+			r := newRig(t)
+			w := &refusalWatch{Deliverer: &DSH{Dir: t.TempDir(), Session: "session-zhi", Program: bin, Run: envExec(fakeDSHEnv + "=" + mode)}}
+			r.d.Deliver, r.d.Harness = w, "dsh"
+			r.d.Pause = func(context.Context, time.Duration) { time.Sleep(2 * time.Millisecond) } // the turn is a real process
+			r.d.Beat = func(context.Context, time.Time) error { r.mu.Lock(); r.beats++; r.mu.Unlock(); return nil }
+			r.send(t, "ada", "hello", "are you there?")
+
+			var down Status       // the status as the second refused turn ended
+			beatsAtDown := -1     // the beats when the status first said broken
+			beatsAtSecond := -1   // and when the second refusal was in
+			var pendingAtDown int // the message, still pending then
+			cleared := -1         // the step the status said ok again
+			steps := 0
+			status := r.d.Status
+			r.d.Status = func(s Status) error {
+				if s.Session == SessionBroken && beatsAtDown < 0 {
+					beatsAtDown = r.beats
+				}
+				return status(s)
 			}
-			return `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 1, nil
-		}
-		r.d.Deliver, r.passive = &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: refuse, Program: "dsh"}, true
-		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
-		r.send(t, "ada", "hello", "x")
-		r.run(t, 10*int(RecheckEvery/BeatEvery)*4) // the ceiling, never reached: the tenth refusal ends the run
-		assert.Equal(t, 10, calls, "handed in again after each refusal, beyond the three a failure gets")
-		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
-		require.NoError(t, err)
-		assert.Len(t, pending, 1, "still in hand: never acked, never given up")
-		assert.Empty(t, fresh)
-		for _, line := range r.records {
-			assert.NotContains(t, line, "given_up")
-			assert.NotContains(t, line, "acked")
-		}
-		require.NotEmpty(t, r.records)
-		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
-	})
+			now := r.d.Now
+			r.d.Now = func() time.Time {
+				steps++
+				ends := w.turns()
+				switch {
+				case len(ends) == 2 && beatsAtSecond < 0 && len(r.status) > 0:
+					down, beatsAtSecond = r.last(), r.beats
+					pending, _, err := r.bus.Peek(context.Background(), "bob")
+					require.NoError(t, err)
+					pendingAtDown = len(pending)
+					require.NoError(t, os.WriteFile(mode, []byte("ok"), 0o600)) // the friend fixes her session
+				case len(ends) >= 3 && cleared < 0 && len(r.status) > 0 && r.last().Session == SessionOK:
+					cleared = steps
+				case cleared >= 0 && steps >= cleared+3, steps > 1_000_000:
+					r.cancel()
+				}
+				return now()
+			}
+			r.run(t, 1<<30)
+
+			ends := w.turns()
+			require.Len(t, ends, 3, "refused, tried again after RecheckEvery and refused, then taken")
+			for _, e := range ends[:2] {
+				var refused SessionRefused
+				require.ErrorAs(t, e, &refused)
+				assert.Equal(t, c.reason, refused.Down())
+			}
+			require.NoError(t, ends[2])
+
+			assert.Equal(t, SessionBroken, down.Session, "broken on the first refused turn, not after a count")
+			assert.Equal(t, c.reason, down.SessionReason)
+			assert.Equal(t, "session-zhi", down.SessionID)
+			assert.False(t, down.BrokenAt.IsZero())
+			assert.Contains(t, down.BeatError, c.reason, "the status says why the friend is down")
+			assert.Equal(t, 0, down.Delivered, "a refused turn delivered nothing")
+			assert.Equal(t, 1, pendingAtDown, "the message stays pending")
+			assert.GreaterOrEqual(t, beatsAtDown, 0)
+			assert.Equal(t, beatsAtDown, beatsAtSecond, "no beat while the session cannot take a turn: the friend's row reads down")
+
+			s := r.last()
+			assert.Equal(t, SessionOK, s.Session, "a turn that succeeds clears it")
+			assert.Empty(t, s.SessionReason)
+			assert.Empty(t, s.BeatError)
+			assert.Equal(t, 1, s.Delivered)
+			assert.Greater(t, r.beats, beatsAtSecond, "beating again: the friend reads up")
+			pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+			require.NoError(t, err)
+			assert.Empty(t, pending, "acked by the turn that took it")
+			assert.Empty(t, fresh)
+
+			said := 0
+			for _, line := range r.records {
+				assert.NotContains(t, line, "sk-fake", "no credential value is ever said")
+				assert.NotContains(t, line, "given_up")
+				if strings.Contains(line, "session=broken") {
+					said++
+					assert.Contains(t, line, c.reason)
+				}
+			}
+			assert.Equal(t, 1, said, "the broken session is recorded once: %v", r.records)
+			assert.Contains(t, r.records[len(r.records)-2], "acked=true")
+			assert.Contains(t, r.records[len(r.records)-1], "session ok: "+c.reason+" cleared by a turn that succeeded")
+		})
+	}
 }
 
 // A wake check is answered by the session, never by the daemon
