@@ -1,24 +1,35 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // promoteScript is the fake git and gh the step talks to. It records every
 // call and answers the failure path: the pull request is opened, admitted with
 // no strategy flag, and a merge-group run has failed.
+const (
+	promoteScriptTree = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	promoteScriptCut  = "cccccccccccccccccccccccccccccccccccccccc"
+)
+
 type promoteScript struct {
 	live, tip, baseSHA, logText, groupLog string
 	gitCalls, ghCalls                     [][]string
 	gated                                 string
 	cfg                                   map[string]string
+	enqueued                              bool
 }
 
 func (s *promoteScript) config(args []string) (string, error) {
@@ -52,9 +63,9 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 	case "rev-parse":
 		rev := args[len(args)-1]
 		switch rev {
-		case s.live, "refs/heads/" + s.live:
+		case "refs/remotes/origin/" + s.live:
 			return s.tip, nil
-		case "dev", "refs/heads/dev":
+		case "refs/remotes/origin/dev":
 			return s.baseSHA, nil
 		case "refs/promoted/last":
 			return "", errors.New("missing")
@@ -66,10 +77,27 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 		}
 	case "log":
 		return s.logText, nil
+	case "rev-list":
+		// origin/dev...tip: one behind, two ahead
+		return "1\t2", nil
+	case "merge-tree":
+		return promoteScriptTree + "\n", nil
+	case "commit-tree":
+		return promoteScriptCut, nil
+	case "ls-remote":
+		return "", nil
 	case "branch":
 		return "", nil
 	case "config":
 		return s.config(args)
+	case "checkout", "switch":
+		return "", nil
+	case "symbolic-ref":
+		return s.live, nil
+	case "merge", "fetch":
+		return "", nil
+	case "ls-files":
+		return "", nil
 	case "push", "update-ref":
 		return "", nil
 	default:
@@ -85,9 +113,15 @@ func (s *promoteScript) gh(_ context.Context, _ string, args ...string) (string,
 		return "https://example.invalid/nova-tools/pull/42", nil
 	case args[0] == "pr" && args[1] == "view":
 		return `{"id":"PR_node_1","state":"OPEN"}`, nil
+	case args[0] == "pr" && args[1] == "checks":
+		return `[]`, nil
 	case strings.Contains(joined, "enqueuePullRequest"):
+		s.enqueued = true
 		return `{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}`, nil
 	case args[0] == "api":
+		if !s.enqueued {
+			return `{"data":{"node":{"mergeQueueEntry":null}}}`, nil
+		}
 		return `{"data":{"node":{"mergeQueueEntry":{"id":"MQE_1","state":"AWAITING_CHECKS"}}}}`, nil
 	case args[0] == "run" && args[1] == "list":
 		return `[{"databaseId":7,"conclusion":"failure","status":"completed","name":"ci"}]`, nil
@@ -152,7 +186,7 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 	require.Equal(t, "promo/2026-10-04-1", out.Branch, "the cut branch")
 	require.Equal(t, "promo/2026-10-04-1", out.Head, "the pull request head")
 	require.NotEqual(t, live, out.Head, "the live sprint branch is never the pull request head")
-	require.Equal(t, tip, s.gated, "the tree gate runs on the frozen commit")
+	require.Equal(t, promoteScriptCut, s.gated, "the tree gate runs on the frozen commit, the tip with dev merged in")
 	require.Equal(t, []string{"s1-1", "s1-2"}, out.Cards)
 	require.Contains(t, out.Body, "s1-1")
 	require.Contains(t, out.Body, "s1-2")
@@ -189,4 +223,457 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 	again, code := p.step(context.Background(), io.Discard, io.Discard)
 	require.Equal(t, 1, code)
 	require.Nil(t, again.Judgment, "the judgment was already raised")
+}
+
+// fakePromoteForge is a fake forge implementation for promote tests.
+type fakePromoteForge struct {
+	prNumber       string
+	prID           string
+	prState        string
+	mergeSHA       string
+	checksPassed   bool
+	failedCheck    string
+	entryID        string
+	groupFailed    bool
+	groupCheckName string
+	groupLogText   string
+
+	createdBase, createdHead, createdTitle, createdBody string
+	createdCount                                        int
+	enqueuedID                                          string
+	onEnqueue                                           func(*fakePromoteForge)
+	onChecks                                            func(*fakePromoteForge)
+}
+
+func (f *fakePromoteForge) CreatePR(_ context.Context, base, head, title, body string) (string, error) {
+	f.createdBase = base
+	f.createdHead = head
+	f.createdTitle = title
+	f.createdBody = body
+	f.createdCount++
+	if f.prNumber == "" {
+		f.prNumber = "42"
+	}
+	return f.prNumber, nil
+}
+
+func (f *fakePromoteForge) PRView(_ context.Context, _ string) (PRView, error) {
+	id := f.prID
+	if id == "" {
+		id = "PR_" + f.prNumber
+	}
+	state := f.prState
+	if state == "" {
+		state = "OPEN"
+	}
+	return PRView{
+		ID:       id,
+		State:    state,
+		MergeSHA: f.mergeSHA,
+	}, nil
+}
+
+func (f *fakePromoteForge) PRChecks(_ context.Context, _ string) (bool, string, error) {
+	if f.onChecks != nil {
+		f.onChecks(f)
+	}
+	return f.checksPassed, f.failedCheck, nil
+}
+
+func (f *fakePromoteForge) Enqueue(_ context.Context, prID string) (string, error) {
+	f.enqueuedID = prID
+	if f.entryID == "" {
+		f.entryID = "MQ_1"
+	}
+	if f.onEnqueue != nil {
+		f.onEnqueue(f)
+	}
+	return f.entryID, nil
+}
+
+func (f *fakePromoteForge) ConfirmEntry(_ context.Context, _ string) (string, error) {
+	if f.enqueuedID == "" {
+		return "", nil
+	}
+	return f.entryID, nil
+}
+
+func (f *fakePromoteForge) MergeGroupStatus(_ context.Context, _ string) (bool, string, string, error) {
+	return f.groupFailed, f.groupCheckName, f.groupLogText, nil
+}
+
+type promoteRig struct {
+	t                 *testing.T
+	dir, remote, work string
+	env               []string
+}
+
+func newPromoteRig(t *testing.T) *promoteRig {
+	t.Helper()
+	dir := t.TempDir()
+	r := &promoteRig{
+		t:      t,
+		dir:    dir,
+		remote: filepath.Join(dir, "origin.git"),
+		work:   filepath.Join(dir, "work"),
+		env: []string{
+			"GIT_CONFIG_GLOBAL=" + os.DevNull,
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_NAME=promoter",
+			"GIT_AUTHOR_EMAIL=promoter@example.invalid",
+			"GIT_COMMITTER_NAME=promoter",
+			"GIT_COMMITTER_EMAIL=promoter@example.invalid",
+		},
+	}
+	r.git("", "init", "-q", "--bare", "-b", "dev", r.remote)
+	r.git("", "clone", "-q", r.remote, r.work)
+	r.commit("README", "base\n", "base commit")
+	r.git(r.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+	return r
+}
+
+func (r *promoteRig) git(where string, args ...string) string {
+	r.t.Helper()
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: where, Env: r.env, OwnRepo: where != ""}, args...)
+	require.NoError(r.t, err, "git %v: %s", args, res.Stderr)
+	return strings.TrimSpace(string(res.Stdout))
+}
+
+func (r *promoteRig) commit(file, text, msg string) string {
+	r.t.Helper()
+	p := filepath.Join(r.work, file)
+	require.NoError(r.t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(r.t, os.WriteFile(p, []byte(text), 0o600))
+	r.git(r.work, "add", file)
+	r.git(r.work, "commit", "-q", "-m", msg)
+	return r.git(r.work, "rev-parse", "HEAD")
+}
+
+// runPromoteVerb runs `nova-sprint promote` for n passes of one verb on a, or on
+// an app with no store when a is nil. The forge is the one the verb reads.
+// promoteArmed stays unset: the verb calls the step.
+func runPromoteVerb(t *testing.T, a *app, rig *promoteRig, forge *fakePromoteForge, now time.Time, passes int, extra ...string) (stdout, stderr string) {
+	t.Helper()
+	promoteForge = forge
+	t.Cleanup(func() { promoteForge = nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	n := 0
+	if a == nil {
+		a = &app{getenv: func(string) string { return "" }, now: func() time.Time { return now }}
+	}
+	a.gitEnv = rig.env
+	a.notify = func(context.Context) (context.Context, context.CancelFunc) {
+		return ctx, func() {}
+	}
+	var out, errb bytes.Buffer
+	a.after = func(d time.Duration) <-chan time.Time {
+		// The verb never waits without a line saying on what (the coordinator's
+		// first run of 2026-10-05 sat 13 minutes with no output).
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		last := lines[len(lines)-1]
+		require.True(t, strings.HasPrefix(last, "PROMOTE SLEEP for="+d.String()+" "), "the line before a wait says it: %q\n%s", last, out.String())
+		require.Contains(t, last, " on=")
+		n++
+		if n >= passes {
+			cancel()
+		}
+		ch := make(chan time.Time, 1)
+		ch <- now
+		return ch
+	}
+	code := a.run(append([]string{
+		"promote", "--every", "1h",
+		"--repo-dir", rig.work,
+		"--branch", "sprint/live",
+		"--base", "dev",
+	}, extra...), &out, &errb)
+	require.Equal(t, 0, code, "stdout:\n%s\nstderr:\n%s", out.String(), errb.String())
+	require.Nil(t, promoteArmed, "the promote verb does not set the land-loop hook")
+	require.NotContains(t, errb.String(), "nova-sprint promote:", "stderr:\n%s", errb.String())
+	return out.String(), errb.String()
+}
+
+func runPromoteDry(t *testing.T, rig *promoteRig, now time.Time) string {
+	t.Helper()
+	a := &app{
+		getenv: func(string) string { return "" },
+		now:    func() time.Time { return now },
+		gitEnv: rig.env,
+	}
+	var out, errb bytes.Buffer
+	code := a.run([]string{
+		"promote", "--dry-run", "--every", "1h",
+		"--repo-dir", rig.work,
+		"--branch", "sprint/live",
+		"--base", "dev",
+	}, &out, &errb)
+	require.Equal(t, 0, code, "stderr: %s", errb.String())
+	require.Nil(t, promoteArmed)
+	return out.String()
+}
+
+// TestPromoteCarriesACutToARecordedPromotion tests the promote verb with a twin
+// repository and a fake forge:
+// 1. A clean cut is merged with the target, opened, queued and recorded.
+// 2. A conflicting target stops with the judgment naming the files.
+// 3. A failed queue run raises one judgment naming the failing check.
+func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+
+	// 1. Clean cut is merged with the target, opened, queued and recorded
+	t.Run("Clean", func(t *testing.T) {
+		rig := newPromoteRig(t)
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		cut := "promo/" + ta.a.now().Format("2006-01-02") + "-1"
+		rig.git(rig.work, "checkout", "-q", "-b", "sprint/live")
+		rig.commit("card-1.txt", "card 1 work\n", "land s1-1 (sprint stream s1)")
+		rig.commit("card-2.txt", "card 2 work\n", "land s1-2 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+
+		// Make a commit on origin's dev so the target branch has work to merge
+		// into the cut; the clone's own dev is left behind it, so only a fetch
+		// of the target brings it in.
+		rig.git(rig.work, "checkout", "-q", "dev")
+		rig.commit("dev-file.txt", "dev base work\n", "target dev commit")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+		rig.git(rig.work, "reset", "-q", "--hard", "HEAD~1")
+		rig.git(rig.work, "update-ref", "-d", "refs/remotes/origin/dev")
+		rig.git(rig.work, "checkout", "-q", "sprint/live")
+
+		forge := &fakePromoteForge{
+			prNumber:     "101",
+			prID:         "PR_node_101",
+			checksPassed: true,
+			entryID:      "MQE_101",
+			onEnqueue: func(f *fakePromoteForge) {
+				f.prState = "MERGED"
+				f.mergeSHA = rig.git(rig.work, "rev-parse", "refs/heads/"+cut)
+			},
+		}
+
+		stdout, _ := runPromoteVerb(t, ta.a, rig, forge, now, 1)
+		recorded := rig.git(rig.work, "rev-parse", "refs/promoted/last")
+		require.Equal(t, forge.mergeSHA, recorded)
+		require.Contains(t, stdout, "promoted the sprint branch into dev", "the promoted step ran on the sprint's store")
+		kept, err := ta.m.Snapshot()
+		require.NoError(t, err)
+		require.Contains(t, string(kept), recorded, "the store holds the merge as promoted --sha records it")
+		rig.git(rig.remote, "cat-file", "-e", "refs/heads/"+cut+":dev-file.txt")
+		require.Contains(t, stdout, "PROMOTE CUT")
+		require.Contains(t, stdout, "PROMOTE QUEUE")
+		// each step is said before it runs, in the order the hand sequence ran
+		at := -1
+		for _, step := range []string{"fetch", "merge", "gate", "push", "pr-create", "checks", "enqueue", "queue", "record"} {
+			i := strings.Index(stdout, "PROMOTE STEP "+step+" ")
+			require.Greater(t, i, at, "step %s is said, after the one before it:\n%s", step, stdout)
+			at = i
+		}
+		require.Contains(t, stdout, "promoted --sha "+recorded)
+		require.NotContains(t, stdout, "JUDGMENT")
+
+		originCut := rig.git(rig.remote, "log", "-1", "--format=%s", "refs/heads/"+cut)
+		require.Contains(t, originCut, "merge dev into "+cut)
+
+		currentBranch := rig.git(rig.work, "symbolic-ref", "--short", "HEAD")
+		require.Equal(t, "sprint/live", currentBranch)
+		require.Equal(t, "dev", forge.createdBase)
+		require.Equal(t, cut, forge.createdHead)
+		require.Equal(t, "PR_node_101", forge.enqueuedID)
+		ta.clean()
+	})
+
+	// 2. Conflicting target stops with the judgment naming the files
+	t.Run("Conflict", func(t *testing.T) {
+		rig := newPromoteRig(t)
+		rig.git(rig.work, "checkout", "-q", "-b", "sprint/live")
+		rig.commit("conflict.txt", "live stream line\n", "land s1-1 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+
+		// Conflicting change on target branch dev
+		rig.git(rig.work, "checkout", "-q", "dev")
+		rig.commit("conflict.txt", "divergent dev line\n", "dev conflicting commit")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+		rig.git(rig.work, "checkout", "-q", "sprint/live")
+
+		reflog := rig.git(rig.work, "reflog", "--format=%gs")
+		dry := runPromoteDry(t, rig, now)
+		require.Contains(t, dry, "PROMOTE DRY-RUN")
+		require.Contains(t, dry, "nothing was cut")
+		require.Equal(t, reflog, rig.git(rig.work, "reflog", "--format=%gs"), "dry-run checks nothing out")
+		require.Empty(t, rig.git(rig.work, "branch", "--list", "promo/*"))
+		require.Equal(t, "sprint/live", rig.git(rig.work, "symbolic-ref", "--short", "HEAD"))
+
+		forge := &fakePromoteForge{checksPassed: true}
+		stdout, _ := runPromoteVerb(t, nil, rig, forge, now, 2)
+		require.Equal(t, 1, strings.Count(stdout, "JUDGMENT conflict"), stdout)
+		require.Contains(t, stdout, "files=conflict.txt")
+		require.Contains(t, stdout, "decisions=fix-and-recut,skip")
+		require.Contains(t, stdout, "judgment=already")
+		require.NotContains(t, stdout, "promo/2026-10-05-2")
+		require.NotContains(t, stdout, "promoted --sha")
+		require.Empty(t, forge.createdHead, "no pull request on a conflict")
+		require.Empty(t, rig.git(rig.work, "branch", "--list", "promo/*"), "the cut branch is deleted")
+		require.Equal(t, "sprint/live", rig.git(rig.work, "symbolic-ref", "--short", "HEAD"))
+		require.Empty(t, rig.git(rig.work, "status", "--porcelain"))
+	})
+
+	// 3. Failed queue run raises one judgment naming the failing check
+	t.Run("FailedQueueRun", func(t *testing.T) {
+		rig := newPromoteRig(t)
+		rig.git(rig.work, "checkout", "-q", "-b", "sprint/live")
+		rig.commit("file.txt", "clean line\n", "land s1-1 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+
+		forge := &fakePromoteForge{
+			prNumber:       "102",
+			prID:           "PR_node_102",
+			prState:        "OPEN",
+			checksPassed:   true,
+			entryID:        "MQE_102",
+			groupFailed:    true,
+			groupCheckName: "ci/functional-gate",
+			groupLogText:   "FAIL: TestFunctionalFailure (1.23s)\n",
+		}
+
+		stdout, _ := runPromoteVerb(t, nil, rig, forge, now, 1)
+		require.Contains(t, stdout, "JUDGMENT merge-group failed")
+		require.Contains(t, stdout, "check=ci/functional-gate")
+		require.Contains(t, stdout, "FAIL: TestFunctionalFailure")
+		require.Contains(t, stdout, "decisions=fix-and-recut,skip")
+		require.NotContains(t, stdout, "promoted --sha")
+		require.Equal(t, "promo/2026-10-05-1", forge.createdHead)
+		require.Equal(t, "PR_node_102", forge.enqueuedID)
+		require.Equal(t, "sprint/live", rig.git(rig.work, "symbolic-ref", "--short", "HEAD"))
+	})
+
+	// 4. The cut is taken from origin's copy of the branch, never the clone's
+	// local ref: on 2026-10-05 a stale local merge commit, 0 ahead of dev, was cut
+	// and pushed. The next name also counts the promotions origin already holds.
+	t.Run("StaleLocalRef", func(t *testing.T) {
+		rig := newPromoteRig(t)
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		day := ta.a.now().Format("2006-01-02")
+		rig.git(rig.work, "checkout", "-q", "-b", "sprint/live")
+		rig.commit("card-1.txt", "card 1 work\n", "land s1-1 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+		rig.commit("card-2.txt", "card 2 work\n", "land s1-2 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+		originTip := rig.git(rig.work, "rev-parse", "HEAD")
+		rig.git(rig.work, "reset", "-q", "--hard", "HEAD~1")
+		stale := rig.git(rig.work, "rev-parse", "HEAD")
+		rig.git(rig.work, "update-ref", "refs/remotes/origin/sprint/live", stale)
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/promo/"+day+"-1")
+		rig.git(rig.work, "update-ref", "-d", "refs/remotes/origin/promo/"+day+"-1")
+		cut := "promo/" + day + "-2"
+
+		forge := &fakePromoteForge{
+			prNumber:     "103",
+			prID:         "PR_node_103",
+			checksPassed: true,
+			entryID:      "MQE_103",
+			onEnqueue: func(f *fakePromoteForge) {
+				f.prState = "MERGED"
+				f.mergeSHA = rig.git(rig.remote, "rev-parse", "refs/heads/"+cut)
+			},
+		}
+		stdout, _ := runPromoteVerb(t, ta.a, rig, forge, now, 1)
+		require.Contains(t, stdout, "PROMOTE CUT branch="+cut+" ")
+		require.Contains(t, stdout, "tip="+originTip)
+		rig.git(rig.remote, "cat-file", "-e", "refs/heads/"+cut+":card-2.txt")
+		require.Equal(t, cut, forge.createdHead)
+		require.Contains(t, forge.createdBody, "s1-2")
+		require.Contains(t, stdout, "promoted --sha "+forge.mergeSHA)
+		require.Equal(t, stale, rig.git(rig.work, "rev-parse", "refs/heads/sprint/live"), "the local branch is left where it was")
+		ta.clean()
+	})
+
+	// 5. A cut that is not ahead of the target is refused: no branch, no push, no
+	// pull request (2026-10-05: gh pr create, "No commits between dev and promo/...").
+	t.Run("NotAhead", func(t *testing.T) {
+		rig := newPromoteRig(t)
+		base := rig.git(rig.work, "rev-parse", "HEAD")
+		rig.git(rig.work, "checkout", "-q", "-b", "sprint/live")
+		rig.commit("card-1.txt", "card 1 work\n", "land s1-1 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+		// the work already reached dev on origin; this clone's dev never saw it
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+		rig.git(rig.work, "update-ref", "refs/remotes/origin/dev", base)
+
+		a := &app{getenv: func(string) string { return "" }, now: func() time.Time { return now }, gitEnv: rig.env}
+		var dry, dryErr bytes.Buffer
+		code := a.run([]string{"promote", "--dry-run", "--repo-dir", rig.work, "--branch", "sprint/live"}, &dry, &dryErr)
+		require.Equal(t, 1, code, "stdout:\n%s\nstderr:\n%s", dry.String(), dryErr.String())
+		require.Contains(t, dry.String(), "PROMOTE REFUSED")
+
+		forge := &fakePromoteForge{checksPassed: true}
+		stdout, _ := runPromoteVerb(t, nil, rig, forge, now, 1)
+		require.Contains(t, stdout, "PROMOTE REFUSED live=sprint/live")
+		require.Contains(t, stdout, "ahead=0")
+		require.Contains(t, stdout, "target=origin/dev")
+		require.NotContains(t, stdout, "PROMOTE CUT")
+		require.Empty(t, forge.createdHead, "no pull request")
+		require.Empty(t, rig.git(rig.remote, "branch", "--list", "promo/*"), "nothing pushed")
+		require.Empty(t, rig.git(rig.work, "branch", "--list", "promo/*"), "nothing cut")
+	})
+
+	// 6. The pull request is queued only once its checks pass, and an open
+	// promotion is looked at again in a minute, not at the next --every.
+	t.Run("ChecksPending", func(t *testing.T) {
+		rig := newPromoteRig(t)
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		cut := "promo/" + ta.a.now().Format("2006-01-02") + "-1"
+		rig.git(rig.work, "checkout", "-q", "-b", "sprint/live")
+		rig.commit("card-1.txt", "card 1 work\n", "land s1-1 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+
+		looks := 0
+		forge := &fakePromoteForge{
+			prNumber: "104",
+			prID:     "PR_node_104",
+			entryID:  "MQE_104",
+			onChecks: func(f *fakePromoteForge) {
+				looks++
+				f.checksPassed = looks > 1
+			},
+			onEnqueue: func(f *fakePromoteForge) {
+				f.prState = "MERGED"
+				f.mergeSHA = rig.git(rig.remote, "rev-parse", "refs/heads/"+cut)
+			},
+		}
+		stdout, _ := runPromoteVerb(t, ta.a, rig, forge, now, 2)
+		require.Contains(t, stdout, "checks=pending")
+		require.Contains(t, stdout, "PROMOTE SLEEP for=1m0s ")
+		require.Less(t, strings.Index(stdout, "checks=pending"), strings.Index(stdout, "PROMOTE STEP enqueue"), "not queued before the checks pass")
+		require.Equal(t, 1, strings.Count(stdout, "PROMOTE CUT"), "the second pass watches the same cut")
+		require.Equal(t, 1, forge.createdCount, "one pull request")
+		require.Contains(t, stdout, "promoted --sha "+forge.mergeSHA)
+		ta.clean()
+	})
+
+	// 7. --check runs on the cut, the live tip with dev merged in, in a worktree
+	// of its own: the clone's checkout is never moved to the cut.
+	t.Run("GateOnTheCut", func(t *testing.T) {
+		rig := newPromoteRig(t)
+		rig.git(rig.work, "checkout", "-q", "-b", "sprint/live")
+		rig.commit("card-1.txt", "card 1 work\n", "land s1-1 (sprint stream s1)")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/sprint/live")
+		rig.git(rig.work, "checkout", "-q", "dev")
+		rig.commit("dev-file.txt", "dev work\n", "target dev commit")
+		rig.git(rig.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+		rig.git(rig.work, "checkout", "-q", "sprint/live")
+		reflog := rig.git(rig.work, "reflog", "--format=%gs")
+
+		forge := &fakePromoteForge{prNumber: "105", prID: "PR_node_105", entryID: "MQE_105"}
+		stdout, _ := runPromoteVerb(t, nil, rig, forge, now, 1, "--check", "test -f card-1.txt && test -f dev-file.txt")
+		require.Contains(t, stdout, "PROMOTE CUT", "the gate passed on the cut")
+		require.Equal(t, "promo/2026-10-05-1", forge.createdHead)
+		require.Equal(t, reflog, rig.git(rig.work, "reflog", "--format=%gs"), "the checkout never moved")
+		require.Empty(t, rig.git(rig.work, "status", "--porcelain"))
+		require.Equal(t, 1, strings.Count(rig.git(rig.work, "worktree", "list"), "\n")+1, "the gate's worktree is removed")
+	})
 }
