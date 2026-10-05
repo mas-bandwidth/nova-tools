@@ -372,9 +372,11 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 	// the lanes are made before the first batch, while the line is free: a batch never
 	// waits for the line to make them (servelanes.go)
 	a.lanesFor(context.Background())
-	if st, err := a.store(common{redis: redis}); err == nil && st != nil {
+	actor := a.getenv("NOVA_SPRINT_ACTOR")
+	if st, err := a.store(common{redis: redis, actor: actor}); err == nil && st != nil {
 		// ignored: a best-effort read cleanup on server listen; tick takes care of any subsequent lapses
 		_ = a.serverStart(context.Background(), st)
+		_ = st.SetServerActor(context.Background(), actor)
 	}
 	for at, h := range lns {
 		ln, err := net.Listen("tcp", at)
