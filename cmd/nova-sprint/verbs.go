@@ -132,6 +132,7 @@ func init() {
 		{"seat install", "[--dir <dir>] [--log <file>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
 		{"seat", "", "seat", (*app).cmdSeat},
+		{"server install", "--listen <address:port> --secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path> [--redis <host:port>] [--redis-user <user>] [--password-env <NAME>] [--only <NAME,...>] [--land] [--decide <dir>] [--dir <dir>] [--log <file>] [--replace-hand-edit] [--dry-run]", "server install --dry-run --dir ./no-unit-here --listen 127.0.0.1:7480 --redis 127.0.0.1:6381 --secrets-store ./secrets --secrets-as coordinator --secrets-key ./coordinator.key --sops /usr/local/bin/sops", (*app).cmdServerInstall},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
 		{"stats", "", "stats", (*app).cmdStats},
