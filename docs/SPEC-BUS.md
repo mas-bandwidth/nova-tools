@@ -59,7 +59,8 @@ it names.
 ## The verbs
 
 `nova-bus help` opens with the loop a harness runs, three lines. Every verb
-takes `--json`; `log` takes `--max`.
+takes `--json`; `log` takes `--max`; every verb takes `--timeout <d>` and
+`recv` takes `--block <d>` (the deadlines).
 
 - `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> |
   --stdin) [--re <id>]` prints `SEND OK id=<id> to=<names> cc=<names>
@@ -80,7 +81,9 @@ takes `--json`; `log` takes `--max`.
   batch stopping at the first command that fails; `--ack` acks each message a
   plain recv printed; none waiting is the one `RECV NONE`. `--forever` loops,
   waiting for messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
-  delivered stays pending) or at the first command that fails. The push into a
+  delivered stays pending) or at the first command that fails; one wait of
+  the loop is `--block <d>` (30 s by default, its deadline the block plus
+  ten seconds, the deadlines). The push into a
   harness is `nova-bus recv --as <me> --forever --exec '<deliver-into-session>'`
   beside the session.
 - `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
@@ -183,6 +186,70 @@ names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` the variable that holds its
 password (`NOVA_REDIS_BENCH_PASSWORD` when it names none); never a password on
 the line or in a message. The known names are nova-config's friend rows plus
 its machine rows; no new kind or field was needed.
+
+## The deadlines
+
+Every network step the client makes is bounded (internal/redisconn): the dial
+5 s, one attempt and no second (the custom dialer, `DialTimeout`); the write of
+every command 5 s; the read of every reply 5 s; the wait for a pool connection
+5 s; the open, the dial and the handshake together, 5 s. A command that asks
+the store to block (a recv wait) is read under the time it asked for and ten
+seconds more (go-redis v9.22.0, `cmdTimeout`); its write is still the 5 s
+write bound. Before the rule below, that was the whole of it: a store that
+accepted and then stalled, a host whose load average is tens, cut one call at
+the connection's own bound and answered go-redis's bare words, `i/o timeout`,
+with no address and no remedy, and a read that could have been sent again
+failed the verb.
+
+go-redis puts a socket deadline of the sooner of the call's context and the
+client's read or write bound on every command. So a deadline longer than the
+connection's own is not the deadline that fires unless the connection's bounds
+move with it, and the rule moves them.
+
+The rule, on every store call:
+
+- A call that answers at once runs under `--timeout <d>` (`bus.CallTimeout`,
+  5 s by default, the same number as the connection's own read bound); the flag
+  is on every verb and wants a Go duration above zero. The deadline is the
+  call's context and also the connection's read and write bound for that call:
+  a `--timeout` above 5 s raises both to it for the call and puts them back
+  after, so the bound that fires is the bound named. The dial is not part of
+  it: it stays `redisconn.DialTimeout` (5 s), and a redial that honors
+  `--timeout` would be a change to internal/redisconn/open.go, proposed and
+  not made here.
+- A blocking recv wait runs under its block plus `bus.BlockMargin` (10 s, the
+  margin the connection gives a blocking command), never under `--timeout`:
+  `--block <d>` (30 s by default) names how long one wait of `recv --forever`
+  looks before it looks again, so a signal is seen within one wait. The
+  write of the wait's command is raised to the same deadline.
+- A deadline that ran out is refused in one line that names the deadline and
+  the address, never a login or a password: `redis did not answer within <d>
+  at <host:port>: the host may be overloaded (load average), try again`.
+- A read that changes nothing (the roster, pending, group info, the log, the
+  entries: what `names`, `peek` and `log` read, and the reads before a write)
+  is sent once more when the first ran past its deadline, under a deadline of
+  its own, and the second answer stands; so a verb that only reads waits at
+  most 2 x `--timeout` before its refusal.
+- A write, a delivery, a release or an ack is sent at most once (`send`'s
+  transaction, a `recv` delivery, an `ack`), so a stalled store can duplicate
+  nothing.
+
+Measured on a stalled in-process store (`internal/bus/timeout_test.go`,
+`TestARedisCallThatStallsFailsWithinTheNamedTimeout`, every call named 200 ms
+while the test client's own read and write bounds are 1 ms, so a call cut by
+the connection's bound and not its own fails the test; Linux bench vision):
+a read that changes nothing is refused after its two attempts, 2 dials, 0.40 s
+(2 x 200 ms); a send, 1 dial, 0.20 s; an ack, 1 dial, 0.20 s; a blocking wait
+with a 100 ms block and a 100 ms margin, 1 dial, 0.20 s (block plus margin).
+In every one the refusal names 200 ms and the longest socket deadline the
+client set was the call's, not the connection's 1 ms. At the shipped numbers
+the same shapes are 10 s for a read, 5 s for a send or an ack, and the block
+plus 10 s for a wait; a `--timeout 30s` is 60 s for a read and 30 s for a
+send. Before the change the same calls answered `i/o timeout` at 1 dial, no
+retry, no address, and a `--timeout` longer than 5 s was cut at 5 s while the
+refusal named the longer one. The worst a verb waits is 2 x `--timeout` (a
+read) or one block plus the margin (a recv wait), plus a dial of at most 5 s
+each; nothing waits unbounded.
 
 ## Round trips
 

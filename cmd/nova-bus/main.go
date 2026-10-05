@@ -52,8 +52,22 @@ const (
 const ExecBudget = bus.ClaimAfter
 
 // ForeverBlock is how long one read of the loop waits before it looks again
-// (so a signal is seen within it).
+// (so a signal is seen within it). It is --block's default; the wait's own
+// deadline is the block plus bus.BlockMargin (SPEC-BUS.md, the deadlines).
 const ForeverBlock = 30 * time.Second
+
+// timeoutFlag declares --timeout on a verb: the deadline one store call runs
+// under (SPEC-BUS.md, the deadlines), bus.CallTimeout by default. It bounds
+// the call's context and the connection's read and write for that call; a
+// store past it is refused as not answering, so a host under load gets more.
+func timeoutFlag(f *tool.Flags) {
+	f.Duration("timeout", bus.CallTimeout, "how long one store call may take, a Go duration above zero; above 5s it raises the connection's read and write bounds for the call; a store past it is refused as not answering (the host may be overloaded), so try again or give a loaded host more")
+	f.Check(func(c *tool.Call) {
+		if c.Dur("timeout") <= 0 {
+			c.Problem("--timeout wants a Go duration above zero, like 5s")
+		}
+	})
+}
 
 // world is what the tool reaches outside itself: the environment, the store
 // it opens for an address, the command --exec runs, and the signals a loop
@@ -166,7 +180,7 @@ first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopba
 		Verbs: []tool.Verb{
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--redis <addr>] [--timeout <d>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
@@ -187,6 +201,7 @@ line with no id, writing nothing.`,
 					f.String("re", "", "the id of the message this one answers")
 					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					timeoutFlag(f)
 					f.Check(func(c *tool.Call) {
 						if c.Given("body") == c.Given("stdin") {
 							c.Problem("the body comes from exactly one of --body <text> or --stdin")
@@ -197,7 +212,7 @@ line with no id, writing nothing.`,
 			},
 			{
 				Name:    "peek",
-				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--redis <addr>]",
+				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--redis <addr>] [--timeout <d>]",
 				Example: "peek --as bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE state=<pending|new> id=<id> from=<name>
@@ -207,12 +222,13 @@ line with no id, writing nothing.`,
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					timeoutFlag(f)
 				},
 				Run: w.peek,
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
+				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--block <d>] [--redis <addr>] [--timeout <d>] [--dry-run]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				DryRun:  true,
@@ -226,7 +242,9 @@ it pending and is RECV FAILED at exit 1. --max <n> takes up to n messages in ord
 one waiting, each printed as its own RECV OK (or handed to --exec and acked on exit 0, stopping
 at the first command that fails); --ack acks each after a plain recv prints it. --forever loops,
 waiting for messages, and needs --exec; it stops on SIGINT or SIGTERM, or at the first command
-that fails. --dry-run moves nothing: it prints RECV OK pending=<n> new=<n> next_new=<id>, what
+that fails; --block <duration> names how long one wait of the loop looks before it looks again (30 s
+by default), and the wait's own deadline is it plus ten seconds, never --timeout (SPEC-BUS.md, the deadlines).
+--dry-run moves nothing: it prints RECV OK pending=<n> new=<n> next_new=<id>, what
 waits (a pending message held past fifteen minutes comes before the oldest new one).
 --kind <k>[,<k>] takes only messages of those kinds, in --all, --max, --forever and --dry-run too: a
 message of another kind is skipped, neither acked nor held, and the next recv without the filter
@@ -240,8 +258,13 @@ before kinds existed.`,
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
+					f.Duration("block", ForeverBlock, "with --forever, how long one wait of the loop looks before it looks again, a Go duration above zero; the wait's deadline is this plus ten seconds")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					timeoutFlag(f)
 					f.Check(func(c *tool.Call) {
+						if c.Bool("forever") && c.Dur("block") <= 0 {
+							c.Problem("--block wants a Go duration above zero when --forever waits, like 30s")
+						}
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
 						}
@@ -263,7 +286,7 @@ before kinds existed.`,
 			},
 			{
 				Name:    "ack",
-				Usage:   "ack [--as <me>] --id <id,...> [--redis <addr>] [--dry-run]",
+				Usage:   "ack [--as <me>] --id <id,...> [--redis <addr>] [--timeout <d>] [--dry-run]",
 				Example: "ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
 				Effect:  tool.Delivery + ": acks the messages on your stream",
 				DryRun:  true,
@@ -275,12 +298,13 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					timeoutFlag(f)
 				},
 				Run: w.ack,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--bodies] [--max <n>] [--redis <addr>]",
+				Usage:   "log [--bodies] [--max <n>] [--redis <addr>] [--timeout <d>]",
 				Example: "log --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
@@ -289,17 +313,19 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					timeoutFlag(f)
 				},
 				Run: w.log,
 			},
 			{
 				Name:    "names",
-				Usage:   "names [--redis <addr>]",
+				Usage:   "names [--redis <addr>] [--timeout <d>]",
 				Example: "names",
 				Effect:  tool.Inspection,
 				Detail:  "Prints NAMES OK count=<n>, then one NAMES NAME name=<name> line per known name: nova-config's friend and machine rows.",
 				Flags: func(f *tool.Flags) {
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					timeoutFlag(f)
 				},
 				Run: w.names,
 			},
@@ -324,6 +350,13 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	st, login, closeStore, err := w.open(ctx, addr)
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
+	}
+	// every call the verb makes on the store runs under its --timeout
+	// (SPEC-BUS.md, the deadlines); a store another hand made (a test's
+	// fake) answers under its own.
+	if rs, ok := st.(bus.Redis); ok {
+		rs.Timeout = c.Dur("timeout")
+		st = rs
 	}
 	return &bus.Bus{Store: st}, login, closeStore, nil
 }
@@ -556,7 +589,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	// the loop: every message in turn, each a line of its own, until a signal
 	// or a command that fails; a NONE is a wait that ran out, not a line
 	for {
-		res, ok := one(ForeverBlock)
+		res, ok := one(c.Dur("block"))
 		switch {
 		case ok:
 			res.Render(c.Stdout, c.Bool("json"))
