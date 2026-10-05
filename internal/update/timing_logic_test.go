@@ -27,7 +27,7 @@ func deadlineFake(t *testing.T, remaining time.Duration) processFunc {
 		require.Equal(t, ChildCap, cap)
 		deadline, ok := ctx.Deadline()
 		require.True(t, ok)
-		require.Equal(t, remaining, deadline.Sub(time.Now()))
+		require.Equal(t, remaining, time.Until(deadline))
 		<-ctx.Done()
 		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 		return ProcessResult{Reason: "timeout"}
@@ -74,7 +74,7 @@ func TestInstalledWholeBudgetOverridesChildTimeout(t *testing.T) {
 		fake := func(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
 			deadline, ok := ctx.Deadline()
 			require.True(t, ok)
-			require.Equal(t, time.Minute, deadline.Sub(time.Now()))
+			require.Equal(t, time.Minute, time.Until(deadline))
 			<-ctx.Done()
 			return ProcessResult{Stdout: "fake 1.2.3", Reason: "timeout"}
 		}
