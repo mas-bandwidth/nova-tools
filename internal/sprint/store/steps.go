@@ -349,3 +349,14 @@ func FriendReturnStep(r sprint.FriendReturnReq) Step {
 		Extras: sprint.NamedExtras(sprint.Fleet, ids),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendReturn(s, r) }}
 }
+
+// ServerRestartStep is the server restart plan (sprint.ServerRestart; docs/SPEC-SPRINT.md
+// section 6): on server start, keep every in-flight read whose lease is live,
+// and only take back reads whose lease has lapsed.
+func ServerRestartStep() Step {
+	return Step{
+		Verb: "restart",
+		Load: tables(sprint.Readers, sprint.Work),
+		Plan: sprint.ServerRestart,
+	}
+}

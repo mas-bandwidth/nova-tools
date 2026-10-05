@@ -2235,14 +2235,15 @@ id (`--op`) returns the original result, with no second counter or notification.
 
 ### restart-keeps-reads-r.w1
 
-- A server restart currently takes back every read in flight because readers haven't
-  reconnected or beaten, stranding cards in review. A read asked of a reader is
-  held by a lease: started by `read --begin` (`begun` + `DefaultReadLease`, 10 minutes),
-  and renewed by the reader's beat (`queue --as <reader>`, setting `lease` to the
-  current time + `DefaultReadLease`). On server start, every in-flight read whose
-  lease is live is kept in `reading`; only reads whose lease has lapsed (past 10
-  minutes without renewal) are taken back (retired by `lapsed`: `sprint.RestartReads`,
-  `tla/ServerLanes.tla` Restart, `LiveLeaseNeverTakenBack`, `EveryLapsedReadTakenBack`).
+- A server restart keeps every read in flight whose lease is live and only takes back
+  reads whose lease has lapsed (retired by `lapsed`: `sprint.RestartReads` / `sprint.ServerRestart`,
+  `store.ServerRestartStep`, `tla/ServerLanes.tla` Restart, `LiveLeaseNeverTakenBack`,
+  `EveryLapsedReadTakenBack`). A read asked of a reader is held by a lease: started by
+  `read --begin` (`begun` + `DefaultReadLease`, 10 minutes), and renewed by the reader's beat
+  (`queue --as <reader>`, setting `lease` to the current time + `DefaultReadLease`).
+  On server start, `store.ServerRestartStep()` is run once before the first tick in `run` and
+  `serve` (and on machine start), ensuring in-flight reads with live leases survive across
+  server restarts while lapsed reads are retired and re-asked.
 
 ## 7. Merging
 
