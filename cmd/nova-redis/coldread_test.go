@@ -61,7 +61,7 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		{"a misspelled flag lists the verb's flags", []string{"spill", "--zzz"},
 			[]string{"SPILL REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis spill -h"}},
 		{"an unknown verb lists the verbs", []string{"zzz"},
-			[]string{`REDIS REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, version; run: nova-redis help`}},
+			[]string{`REDIS REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, install store, install bus, uninstall store, uninstall bus, version; run: nova-redis help`}},
 		{"an unknown fn subverb points at the group's help", []string{"fn", "deploy"},
 			[]string{`REDIS REFUSED: unknown verb "fn deploy" in fn; the verbs are fn load, fn check; run: nova-redis fn -h`}},
 		{"the bare command names its door", nil,
