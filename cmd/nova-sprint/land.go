@@ -579,8 +579,16 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	if l.dry {
 		return l.dryBatch(b, cards)
 	}
+	// the clone is the lander's own cache: tracked changes a step left behind (a ledger
+	// regeneration in a refused batch, 2026-10-04) are undone here, so one refusal never
+	// refuses every stream after it; a clone that will not come clean is still refused
 	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
-		return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
+		if _, cerr := l.git(ctx, dir, "checkout", "--", "."); cerr == nil {
+			out, err = l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no")
+		}
+		if err != nil || out != "" {
+			return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
+		}
 	}
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)

@@ -703,3 +703,22 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 		})
 	}
 }
+
+// A tracked change left in the lander's own clone (a ledger regeneration in a refused batch,
+// 2026-10-04) is undone before the next batch, never a refusal of every stream after it.
+func TestLandRestoresItsOwnCloneBeforeTheNextBatch(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 2")
+	h1 := r.head("s1-1", "main", "s1-1.txt", "s1-1\n")
+	r.queued(map[string]string{"s1-1": h1}, "s1-1")
+	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main"), "LAND OK stream=s1 cards=1")
+	// a step left a tracked file changed in the clone
+	require.NoError(t, os.WriteFile(filepath.Join(r.clone, "s1-1.txt"), []byte("left behind\n"), 0o644))
+	h2 := r.head("s1-2", "main", "s1-2.txt", "s1-2\n")
+	r.queued(map[string]string{"s1-2": h2}, "s1-2")
+	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=1", "the clone was restored, not refused")
+	assert.NotContains(t, out, "is not clean")
+	r.clean()
+}
