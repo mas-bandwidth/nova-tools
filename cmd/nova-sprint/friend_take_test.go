@@ -86,22 +86,29 @@ func TestFriendTakeRefusesAStartedCardAndAnotherFriendsCard(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
 
+	// Default: take what you can, refuse the rest
 	code, _, errs := ta.do("friend take amy s1-1 s1-2")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 has started: a push on its branch sprint/s1-1.w1.g1.e0 at "+landHead+"; it stays with friend amy and finishes")
-	assert.Contains(t, errs, "REFUSED s1-2.w1: not written: the verb names several and applies all or none", "all or none: s1-2 stays too")
+	assert.Contains(t, errs, "FRIEND-TAKE FAILED moved=1 refused=1", "takes s1-2 and refuses s1-1")
 
 	ta.ok("friend beat amy --running s1-2.w1")
 	code, _, errs = ta.do("friend take amy s1-2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 has started: her beat names it running")
+	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 has started: friend amy finished it")
 
 	code, _, errs = ta.do("friend take bob s1-2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is not dealt to friend bob: it is at friend.amy:working")
+	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is not dealt to friend bob")
 	code, _, errs = ta.do("friend take cat s1-2")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "no friend cat on the friends table")
+	// --all-or-nothing takes none when any is refused
+	code, _, errs = ta.do("friend take amy --all-or-nothing s1-1 s1-2")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "REFUSED s1-1")
+	assert.Contains(t, errs, "REFUSED s1-2")
+	assert.Contains(t, errs, "FRIEND-TAKE FAILED moved=0 refused=2")
 	ta.clean()
 }
 

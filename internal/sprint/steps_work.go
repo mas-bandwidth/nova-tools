@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
@@ -855,6 +856,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
 				tier := s.NextTier(c)
+				if _, atCap := AtBriefBound(c, "", s.AttemptsCap(c.Row)); atCap {
+					tier = "" // the attempt cap: not dealt again, the tick's judgment says so (AtRedealBound)
+				}
 				if tier == "" {
 					why := ": rework it with a fix, or drop it"
 					if held, _ := reworkAtTheSameBound(s, c, wc, ""); held != "" {
@@ -967,6 +971,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 		set = map[string]string{}
 	}
 	work, primary := splitRoute(route)
+	s.dealDeadline(m, work) // the member's deadline, from the card's own (deadline.go)
 	for k, v := range work {
 		if v != "" {
 			fields[k] = v
@@ -1026,6 +1031,7 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	maps.Copy(set, bars)
 	unset = append(unset, none...)
 	work, primary := splitRoute(route)
+	s.dealDeadline(m, work) // the member's deadline, from the card's own (deadline.go)
 	for k, v := range work {
 		if v == "" {
 			unset = append(unset, k)
@@ -1200,6 +1206,7 @@ type FinishReq struct {
 	// her report lag from it to the finish (RunWall). Zero is unknown.
 	Reported time.Time `json:",omitzero"`
 	Who      string
+	Friends  []FriendSeat
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -1213,6 +1220,9 @@ type FinishReq struct {
 func Finish(s *Snapshot, r FinishReq) Plan { return Lawful(finishPlan(s, r)) }
 
 func finishPlan(s *Snapshot, r FinishReq) Plan {
+	if len(r.Friends) > 0 {
+		s.Friends = r.Friends
+	}
 	var p Plan
 	if !named(r.Sel) && r.As == "" {
 		p.refuse("finish", "a finish by selection names its member: --as <member>; better, name each card: finish <card>@<gen>")
@@ -1343,7 +1353,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
-		if next := s.NextTier(pr); identical && next != "" {
+		// the brief's bound as this finish leaves the card (brief_bound.go): the same failure
+		// escalates below the ceiling only under the attempt cap
+		bb, atBound := AtBriefBound(withField(pr, FieldCostTotal, set[FieldCostTotal]), r.Report, s.AttemptsCap(pr.Row))
+		if next := s.NextTier(pr); identical && next != "" && !atBound {
 			// the second identical failure below its ceiling (rules 1 and 2, nova-tools#5174:
 			// "Flash first on every card; pro only on escalation"): no judgment; the primary
 			// takes the next tier and its why and goes back to ready, as a rework with no
@@ -1382,17 +1395,18 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				n.What = r.Report
 			}
 			u.Notes = append(u.Notes, n)
+		} else if atBound {
+			// the attempt cap on one brief, whatever this attempt's failure: the brief is
+			// wrong, not the worker (brief_bound.go)
+			n := judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
+			n.Who, n.Attempt, n.What = who, attempt, bb.String()+"; attempt "+itoa(attempt)+" failed: "+r.Report
+			u.Notes = append(u.Notes, n)
 		} else if identical {
 			// the second identical failure (rule 2): the bound's judgment at once, in the words
 			// the tick holds it by (AtIdenticalFailure), never a third try on the same tier
 			n := Note{Kind: Judgment, Type: NBound, Stream: pr.Row, Primaries: []string{pr.ID}, Count: 1, At: s.Now, Who: who, Marked: true,
 				Card: c.ID, Attempt: attempt, What: identicalWorkWhat(c.ID, attempt, set[FieldFailure], pr.ID),
 				Decisions: append([]string(nil), TickDecisions[NBound]...)}
-			u.Notes = append(u.Notes, n)
-		} else if bb, ok := AtBriefBound(pr, ""); ok {
-			// too many attempts on one brief: the brief is wrong, not the worker (brief_bound.go)
-			n := judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
-			n.Who, n.Attempt, n.What = who, attempt, bb.String()+"; attempt "+itoa(attempt)+" failed: "+r.Report
 			u.Notes = append(u.Notes, n)
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
@@ -1407,7 +1421,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
-		friendNext(s, c, &u)
+		friendNext(s, c, &u, p.Units)
 		p.Units = append(p.Units, u)
 	}
 	return p
@@ -1416,22 +1430,70 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 // friendNext is a friend's own take: her finish moves the oldest ready card on her row
 // (the deal dealt it ready behind her working cards: FriendDeal) into working in the
 // same step, taken now, so she never waits for a tick between one card and the next
-// (the owner, 2026-10-04: "just like the fleet"). A machine's finish does nothing of the
-// kind: the member takes.
-func friendNext(s *Snapshot, c *Card, u *Unit) {
+// (the owner, 2026-10-04: "just like the fleet"). In one-shot mode (docs/SPEC-SPRINT.md
+// section 1, "A friend's card"), the next is only after the last finished: already-started
+// work is preserved, but queued promotion is gated until shared work/read occupancy on her
+// row reaches zero. A machine's finish does nothing of the kind: the member takes.
+func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
 	if !IsFriendRow(c.Row) {
 		return
 	}
+	name, _ := FriendOfRow(c.Row)
+	if s.FriendMode(name) == config.FriendModeOneShot {
+		if friendOccupancy(s, c.Row, u, prior) > 0 {
+			return
+		}
+	}
 	ready := append([]*Card(nil), s.Fleet.Cell(c.Row, Ready)...)
+	ready = slices.DeleteFunc(ready, func(rc *Card) bool {
+		return unitPromoted(prior, rc.ID)
+	})
 	if len(ready) == 0 {
 		return
 	}
 	SortCards(ready)
 	next := ready[0]
-	name, _ := FriendOfRow(c.Row)
 	set, unset := friendTaken(s, next, name)
 	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, set, unset...)))
 	u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", next.ID)
+}
+
+func friendOccupancy(s *Snapshot, row string, u *Unit, prior []Unit) int {
+	active := 0
+	for _, card := range s.Fleet.Cell(row, Working) {
+		if card.ID == u.Key || unitFinishes(prior, card.ID) {
+			continue
+		}
+		active++
+	}
+	for _, p := range prior {
+		for _, ch := range p.Changes {
+			if ch.Table == Fleet && ch.Entry.Move != nil && ch.Entry.Move.Row == row && ch.Entry.Move.Col == Working {
+				active++
+			}
+		}
+	}
+	return active
+}
+
+func unitFinishes(units []Unit, cardID string) bool {
+	for _, u := range units {
+		if u.Key == cardID {
+			return true
+		}
+	}
+	return false
+}
+
+func unitPromoted(units []Unit, cardID string) bool {
+	for _, u := range units {
+		for _, ch := range u.Changes {
+			if ch.Table == Fleet && ch.Entry.ID == cardID && ch.Entry.Move != nil && ch.Entry.Move.Col == Working {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // FieldPassedHead is the head of the attempt a rework sent back when a reader had passed
@@ -1597,6 +1659,10 @@ type FleetReq struct {
 	// Drain says the member drains: its width is set to DrainWidth (0).
 	Width int  `json:",omitempty"`
 	Drain bool `json:",omitempty"`
+	// Deadline, above zero, is the member's pinned deadline in seconds set by up or
+	// release (deadline.go); DeadlineOff takes the pin off; neither leaves it as it is.
+	Deadline    int  `json:",omitempty"`
+	DeadlineOff bool `json:",omitempty"`
 	// Sync, with Op sync, is every machine the inventory says is a member
 	// and its width (fleet_sync.go); Member is empty.
 	Sync []SyncMember `json:",omitempty"`
@@ -1720,6 +1786,9 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			if w, ok := r.width(); ok {
 				fields[FieldWidth] = w
 			}
+			if r.Deadline > 0 {
+				fields[FieldMemberDeadline] = itoa(r.Deadline)
+			}
 			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0, fields)))
 		default:
 			set := map[string]string{}
@@ -1730,6 +1799,12 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			}
 			if w, ok := r.width(); ok && ctl.F(FieldWidth) != w {
 				set[FieldWidth] = w
+			}
+			if r.Deadline > 0 && ctl.F(FieldMemberDeadline) != itoa(r.Deadline) {
+				set[FieldMemberDeadline] = itoa(r.Deadline)
+			}
+			if r.DeadlineOff && ctl.F(FieldMemberDeadline) != "" {
+				unset = append(unset, FieldMemberDeadline)
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
 				unset = append(unset, "held", FieldHeldBy, FieldHeldReason, FieldHeldFinish)
@@ -1746,6 +1821,12 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			if r.Drain {
 				line += " (drains: no new deals, its working cards finish)"
 			}
+		}
+		if r.Deadline > 0 && (ctl == nil || ctl.F(FieldMemberDeadline) != itoa(r.Deadline)) {
+			line += " deadline=" + itoa(r.Deadline) + "s (pinned)"
+		}
+		if r.DeadlineOff && ctl != nil && ctl.F(FieldMemberDeadline) != "" {
+			line += " deadline=the card's, or " + itoa(DeadlineK) + " times the member's median run wall (the pin taken off)"
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Members(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
@@ -1862,6 +1943,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 				moves[c.ID] = m
 				q[m]++
 				set := nextGen(c, m, s.Now)
+				s.movedDeadline(m, c, set) // the new member's deadline (deadline.go)
 				if taken {
 					set["redeals"] = itoa(c.Int("redeals") + 1)
 				}
@@ -2023,7 +2105,9 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 		// had ready cards, whatever the target (tla/Level.tla, MovesBounded)
 		queues[long] = append(q[:i:i], q[i+1:]...)
 		moves[c.ID] = to
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, nextGen(c, to, s.Now)))},
+		set := nextGen(c, to, s.Now)
+		s.movedDeadline(to, c, set) // the new member's deadline (deadline.go)
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, set))},
 			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, to, c.Int("gen")+1)})
 	}
 }

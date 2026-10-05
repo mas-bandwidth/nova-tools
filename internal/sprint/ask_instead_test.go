@@ -20,6 +20,7 @@ func askedWithRoute(t *testing.T) (w *world, held []string, free string) {
 	w = setup(t, 2)
 	finished(w, "s1-1", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true})) // reads are asked one at a time: a second reader by --another
 	w.s.Routes = []Route{{Name: "pro-a", Tier: cardhdr.RoutePro, Provider: "p", Model: "m", Enabled: true}}
 	for _, rc := range readsAt(w.s, w.s.Work.Card("s1-1"), 1) {
 		held = append(held, rc.Row)

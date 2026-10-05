@@ -86,12 +86,17 @@ type Beat struct {
 // job names), which friend take and friend down leave with her (FriendTake), and her own
 // counts as her daemon keeps them (working, queued, her width), each absent when not
 // reported. They are her word, shown beside the table's counts, which stay the sprint's
-// own (her row's cards) and her width the roster's.
+// own (her row's cards) and her width the roster's; her last activity is the file system's.
 type FriendReport struct {
 	Running []string `json:"running,omitempty"`
 	Working *int     `json:"working,omitempty"`
 	Queue   *int     `json:"queue,omitempty"`
 	Width   *int     `json:"width,omitempty"`
+	// Active is the newest write under her working directory and outbox as her daemon
+	// last walked them (friend beat --active), zero when it reported none: the signal that
+	// her session moves, which a daemon pong does not say (docs/SPEC-FRIEND.md, last
+	// session activity).
+	Active time.Time `json:"active,omitzero"`
 }
 
 // Beaten says the member has beaten at least once.

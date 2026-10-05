@@ -737,8 +737,14 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 		drop(members, notes)
 	case d == "return":
 		ret(members, notes)
-	case d == "look" || d == "ack":
+	case d == "look" || d == "ack" || d == "keep":
 		ack()
+	case d == "raise":
+		// the stream's read tier rises to the tier the judgment proposes (readtier.go)
+		_, rest, _ := strings.Cut(g.What, " to ")
+		tier, _, _ := strings.Cut(rest, "?")
+		r.run("nova-sprint stream set "+g.Stream+" --read-tier "+tier+" --reason 'the readers disagreed' --answers "+strings.Join(notes, ","),
+			SetStep(sprint.SetReq{Streams: []string{g.Stream}, ReadTier: tier, Reason: "the readers disagreed", Answers: notes, Who: "coord"}))
 	case d == "repair":
 		r.say("nova-sprint repair")
 		if _, err := r.st.Repair(r.ctx); err != nil {

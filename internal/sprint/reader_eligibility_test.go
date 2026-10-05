@@ -25,11 +25,11 @@ func TestTheReadersOfAnEarlierAttemptAreAskedTheNext(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	toReview(w, "s1-1")
-	w.must(Ask(w.s, AskReq{}))
+	// the reads one at a time (ReadsWanted): the first ok, then the second broken
+	askAndRead(w, "s1-1", 1, "ok", "")
+	second := askAndRead(w, "s1-1", 1, "broken", "line 1: off by one")
 	first := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, first, 2)
-	w.must(Read(w.s, ReadReq{As: first[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: first[1].F("reader"), Verdict: "broken", Finding: "line 1: off by one", Sel: Sel{IDs: []string{first[1].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "off by one"}))
 	card := w.s.Work.Card("s1-1").F("work")
 	require.Equal(t, "s1-1.w2", card)
@@ -42,6 +42,12 @@ func TestTheReadersOfAnEarlierAttemptAreAskedTheNext(t *testing.T) {
 		w.s.ReaderStates[rc.F("reader")] = ReaderUp
 	}
 	plan, _ := TickAsk(w.s, TickReq{})
+	w.must(plan)
+	checks := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
+	require.Len(t, checks, 1, "the first read of attempt 2 alone")
+	assert.Equal(t, second.F("reader"), checks[0].F("reader"), "the reader who found attempt 1 broken checks the fix")
+	w.must(Read(w.s, ReadReq{As: checks[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{checks[0].ID}}}))
+	plan, _ = TickAsk(w.s, TickReq{})
 	w.must(plan)
 	assert.Empty(t, w.notesOf(NCannotAsk), "the readers of attempt 1 are eligible at attempt 2")
 	assert.ElementsMatch(t, readerNames(first), readerNames(readsAt(w.s, w.s.Work.Card("s1-1"), 2)))
@@ -119,4 +125,22 @@ func TestThePrimariesNoReaderMayBeAskedAreOneJudgment(t *testing.T) {
 		asked := len(readsAt(w.s, w.s.Work.Card(id), 1))
 		assert.Equal(t, asked == 0, len(w.openOn(id)) == 1, "%s: asked %d, open %v", id, asked, w.openOn(id))
 	}
+}
+
+// askAndRead asks the primary's next read at attempt (one at a time,
+// ReadsWanted) and has its reader give the verdict; it returns the read card.
+func askAndRead(w *world, pr string, attempt int, verdict, finding string) *Card {
+	w.t.Helper()
+	before := readsAt(w.s, w.s.Work.Card(pr), attempt)
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{pr}}}))
+	after := readsAt(w.s, w.s.Work.Card(pr), attempt)
+	require.Len(w.t, after, len(before)+1, "one read asked at a time")
+	for _, rc := range after {
+		if rc.Col == Asked {
+			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: verdict, Finding: finding, Sel: Sel{IDs: []string{rc.ID}}}))
+			return w.s.Readers.Card(rc.ID)
+		}
+	}
+	require.Fail(w.t, "no read asked of "+pr)
+	return nil
 }

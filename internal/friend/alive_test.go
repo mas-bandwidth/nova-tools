@@ -57,7 +57,7 @@ func TestAClosedHarnessMakesItsFriendDownWithinAMinute(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	watched := r.d.Beat
-	r.d.Beat = func(ctx context.Context) error {
+	r.d.Beat = func(ctx context.Context, active time.Time) error {
 		mu.Lock()
 		step++
 		s := step
@@ -81,7 +81,7 @@ func TestAClosedHarnessMakesItsFriendDownWithinAMinute(t *testing.T) {
 			r.mu.Unlock()
 		}
 		before := r.beats
-		err := watched(ctx)
+		err := watched(ctx, active)
 		mu.Lock()
 		stamp[s] = w.Now()
 		switch {

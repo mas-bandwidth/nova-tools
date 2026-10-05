@@ -245,16 +245,20 @@ func reviewedOK(t *testing.T) *world {
 	return w
 }
 
-// readBothOK asks the primary's readers, unless its finish asked them
-// already (a rework's attempt), and reports both ok.
+// readBothOK asks the primary's reads, one at a time as the ask places them
+// (ReadsWanted), and reports each ok until it is acceptable.
 func readBothOK(w *world, id string) {
 	w.t.Helper()
-	pr := w.s.Work.Card(id)
-	if len(readsAt(w.s, pr, pr.Int("attempt"))) == 0 {
-		w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}))
-	}
-	for _, rc := range readsAt(w.s, pr, pr.Int("attempt")) {
-		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+	for !acceptable(w.s, w.s.Work.Card(id)) {
+		pr := w.s.Work.Card(id)
+		if ReadsWanted(w.s, pr) > 0 {
+			w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}))
+		}
+		for _, rc := range readsAt(w.s, pr, pr.Int("attempt")) {
+			if rc.Col == Asked || rc.Col == Reading {
+				w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+			}
+		}
 	}
 	require.Len(w.t, okReaders(w.s, w.s.Work.Card(id)), 2, "%s is acceptable", id)
 }

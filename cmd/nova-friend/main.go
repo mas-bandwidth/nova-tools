@@ -60,9 +60,9 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                           // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	progress  func(ctx context.Context, server string, argv []string) error               // one progress verb to the sprint server (friend.ProgressArgv)
+	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -91,10 +91,14 @@ func realWorld() world {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
-		beat: func(ctx context.Context, server, name string) (string, error) {
+		beat: func(ctx context.Context, server, name string, active time.Time) (string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			res, err := sprintwire.Client{Addr: server}.Do(ctx, []string{"friend", "beat", name})
+			args := []string{"friend", "beat", name}
+			if !active.IsZero() {
+				args = append(args, "--active", active.UTC().Format(time.RFC3339))
+			}
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
 			if err != nil {
 				return "", err
 			}
@@ -579,16 +583,23 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
-		Beat: sc.Beat(fl.Beat(func(ctx context.Context) error {
-			answer, err := w.beat(ctx, server, name)
-			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
-				rowMode, rowWidth = m, wd
-			}
-			if p, ok := friend.ParseProfile(answer); err == nil && ok {
-				rowProfile.Store(&p)
-			}
-			return err
-		})),
+		Activity: func() time.Time {
+			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
+		},
+		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
+		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
+		Beat: func(ctx context.Context, active time.Time) error {
+			return sc.Beat(fl.Beat(func(ctx context.Context) error {
+				answer, err := w.beat(ctx, server, name, active)
+				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
+					rowMode, rowWidth = m, wd
+				}
+				if p, ok := friend.ParseProfile(answer); err == nil && ok {
+					rowProfile.Store(&p)
+				}
+				return err
+			}))(ctx)
+		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
 				return m, rowWidth // the override, for a test

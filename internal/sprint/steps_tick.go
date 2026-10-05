@@ -128,6 +128,7 @@ var TickDecisions = map[string][]string{
 	NStarving:      {"release", "wait"},                          // the first held wave's sentinel, never a single card
 	NOverloaded:    {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
 	NReadersBehind: {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
+	NRaiseReadTier: {"raise", "keep"},                            // readtier.go
 	NDevBehind:     {"promoted", "wait 30m"},                     // promotion.go
 	NNoRoute:       {"route add", "look at the card", "drop", "wait"},
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
@@ -561,7 +562,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 				cd.what += "; a second bound on tier " + cardTierOf(c) + ": not reworked on it again"
 			}
 			cd.decisions = boundDecisions(c, wc, held != "")
-			if bb, ok := AtBriefBound(c, ""); ok {
+			if bb, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row)); ok {
 				// too many attempts on one brief: the brief is wrong, not the worker, and the
 				// judgment offers brief and drop, never rework (brief_bound.go)
 				cd.what = bb.String() + "; " + cd.what
@@ -693,11 +694,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 // asked or begun with no route (asked while no route served its tier): what
 // that tier's no-route judgment holds (TickDeal).
 func readsWithoutRoute(s *Snapshot, pr *Card) bool {
-	live := liveReadsAt(s, pr, pr.Int("attempt"))
-	if len(live) < ReadsNeeded(pr) {
+	if ReadsWanted(s, pr) > 0 {
 		return true
 	}
-	for _, rc := range live {
+	for _, rc := range liveReadsAt(s, pr, pr.Int("attempt")) {
 		if (rc.Col == Asked || rc.Col == Reading) && rc.F(FieldRoute) == "" {
 			return true
 		}
@@ -734,8 +734,11 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc != nil && wc.Col == Withdrawn && redealBound(wc) && s.NextTier(pr) == "" {
-		return wc
+	if wc == nil || wc.Col != Withdrawn || !redealBound(wc) {
+		return nil
+	}
+	if _, atCap := AtBriefBound(pr, "", s.AttemptsCap(pr.Row)); s.NextTier(pr) == "" || atCap {
+		return wc // at its ceiling, or at the attempt cap: not dealt again
 	}
 	return nil
 }
@@ -821,16 +824,17 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }
 
-// T2. TickAsk asks as many different readers as it needs (ReadsNeeded: one
-// for a flash card, two for a pro card; cost rule 4) of every primary in
-// review whose work did not fail and that has fewer read cards than that at
-// its attempt, readers up with room only (each read to the free reader with
-// the greatest share of room, Ask; a primary that lacks as many different
-// readers with room as it needs waits, due for the next tick, with no
-// judgment; a returned read is asked again in place and needs no room); a
-// read asked of a reader that is not up is taken back, and its primary is
-// asked again, in the same step. The primaries that cannot be asked, for want
-// of different readers whatever their room, are one judgment per tick (N1,
+// T2. TickAsk asks the reads wanted now (ReadsWanted: the first read alone,
+// then the rest it needs once the first came back ok; ReadsNeeded: one for a
+// flash card, two for a pro card; cost rule 4) of every primary in review
+// whose work did not fail, readers up with room only (each read to the free
+// reader with the greatest share of room, the finder's first; Ask,
+// askPicks): a primary whose reads wanted now find too few free readers with
+// room waits, due for the next tick, with no judgment; a returned read is
+// asked again in place and needs no room. A read asked of a reader that is
+// not up is taken back, and its primary is asked again, in the same step.
+// The primaries that cannot be asked, for want of as many different readers
+// as they still need whatever their room, are one judgment per tick (N1,
 // NCannotAsk: "no eligible reader for <ids>", cannotAskCond), each closed
 // when its primary is asked; a primary that needs more readers than are up is
 // not asked, and one judgment says so (NFewReaders, the sprint's, once per
@@ -843,23 +847,39 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	due := 0
 	askable := func(c *Card) string {
-		if c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
+		if c.F("result") != "failed" && ReadsWanted(s, c) > 0 {
 			return ""
 		}
 		return "asked, or its work failed"
 	}
 	few := false // a primary waits for more readers than are up
 	// the ask's placement, rehearsed on the same rooms and round (Ask:
-	// round.pickByRoom from the ask's index, each read placed taken off its
-	// reader's room): a primary that lacks as many different readers with
-	// room as it needs is not asked this tick and is due, not a judgment, as
-	// a card waits for a lane on the fleet; a returned read is asked again in
-	// place of its own reader, whose room holds it already
+	// askPicks, the finder first, then round.pickByRoom from the ask's index,
+	// each read placed taken off its reader's room): a primary that lacks as
+	// many free readers with room as the reads it wants now is not asked this
+	// tick and is due, not a judgment, as a card waits for a lane on the fleet;
+	// a returned read is asked again in place of its own reader, whose room
+	// holds it already
 	room := s.readerRooms(s.Readers.Rows())
 	rr := askRound(s)
-	for _, c := range eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)) {
+	cards := eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s))
+	// the finders first, as the ask places them (askFinders), over the
+	// primaries the tick may ask
+	var askNow []*Card
+	for _, c := range cards {
 		attempt := c.Int("attempt")
-		want := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
+		if len(askNow) < TickMaxMoves && enoughReadersUp(s, c) &&
+			len(s.freeReaders(c, attempt))+len(returnedReadsAt(s, c, attempt)) >= ReadsNeeded(c)-len(liveReadsAt(s, c, attempt)) {
+			askNow = append(askNow, c)
+		}
+	}
+	finders := s.askFinders(askNow, false, room)
+	for _, c := range cards {
+		attempt := c.Int("attempt")
+		// the readers it still needs, whatever their room, and the reads asked now:
+		// one at a time (ReadsWanted)
+		need := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
+		want := ReadsWanted(s, c)
 		free := s.freeReaders(c, attempt)
 		returned := len(returnedReadsAt(s, c, attempt))
 		switch {
@@ -868,12 +888,13 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 			few = true
 		case len(ids) >= TickMaxMoves:
 			due++
-		case len(free)+returned < want:
+		case len(free)+returned < need:
 			// no readers to ask it of, whatever their room: Ask refuses it,
 			// and the refusal is the judgment
 			ids = append(ids, c.ID)
 		default:
-			picked := rr.pickByRoom(want, free, room)
+			finder := finders[c.ID]
+			picked := askPicks(rr, finder, want, free, room)
 			if len(picked)+returned < want {
 				for _, rd := range picked {
 					room[rd] = room[rd].after(-1)
@@ -882,7 +903,9 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 				continue
 			}
 			for _, rd := range picked {
-				rr.moved(rd)
+				if rd != finder { // the finder's read is out of turn: the index stays
+					rr.moved(rd)
+				}
 			}
 			ids = append(ids, c.ID)
 		}
@@ -894,12 +917,14 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	// reads asked and not begun for the window: the readers are behind (readers_behind.go)
 	conds = append(conds, readersBehindCond(s)...)
+	// a stream whose read tier should rise: one judgment per stream (readtier.go)
+	conds = append(conds, raiseReadTierConds(s)...)
 	if len(ids) > 0 {
 		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
 	conds = append(conds, cannotAskCond(s, p.Refused)...)
 	p.Refused = nil
-	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind}, r)
+	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier}, r)
 	return p, due
 }
 
@@ -1150,6 +1175,7 @@ type cond struct {
 	streamLevel bool
 	what        string
 	decisions   []string
+	tier        string // the tier a judgment proposes (NRaiseReadTier)
 }
 
 // condKey identifies a condition on one subject: the type, the subject and
@@ -1157,7 +1183,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind,
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet:
 		what = ""
 	case NWorkLate, NReadLate:
@@ -1301,7 +1327,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			primaries = fresh
 		}
 		n := Note{Kind: Judgment, Type: c.typ, Stream: c.stream, Primaries: primaries, Count: len(primaries), What: c.what,
-			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true, Card: c.card}
+			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true, Card: c.card, Tier: c.tier}
 		n.Decisions = append([]string(nil), c.decisions...)
 		if len(n.Decisions) == 0 {
 			n.Decisions = append([]string(nil), TickDecisions[c.typ]...)
@@ -1363,7 +1389,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) && enoughReadersUp(s, c) {
+		if s.Readers != nil && c.F("result") != "failed" && ReadsWanted(s, c) > 0 && enoughReadersUp(s, c) {
 			n++
 		}
 	}

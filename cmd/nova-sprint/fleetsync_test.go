@@ -86,7 +86,11 @@ func (ta *testApp) fleetRows() map[string]fleetRow {
 	ta.json("where", &w)
 	out := map[string]fleetRow{}
 	for name, row := range w.Tables["fleet"] {
-		out[name] = fleetRow(row)
+		cells := fleetRow{}
+		for k, v := range row {
+			cells[k] = cellText(v)
+		}
+		out[name] = cells
 	}
 	return out
 }

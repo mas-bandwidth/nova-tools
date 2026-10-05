@@ -199,7 +199,7 @@ type HarnessWatch struct {
 	Now   func() time.Time
 
 	d        *Daemon
-	beat     func(context.Context) error
+	beat     func(ctx context.Context, active time.Time) error
 	checked  time.Time
 	live     Liveness
 	down     bool
@@ -229,7 +229,7 @@ func WatchHarness(d *Daemon, adapter Deliverer) *HarnessWatch {
 func (w *HarnessWatch) Down() (bool, string) { return w.down, w.live.Why }
 
 // Beat is the daemon's beat behind the check.
-func (w *HarnessWatch) Beat(ctx context.Context) error {
+func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 	now := w.Now()
 	every := w.Every
 	if every <= 0 {
@@ -256,7 +256,7 @@ func (w *HarnessWatch) Beat(ctx context.Context) error {
 	if w.down {
 		return errors.New(HarnessNotRunning)
 	}
-	return w.beat(ctx)
+	return w.beat(ctx, active)
 }
 
 // pongNonce is the nonce the session last answered, from the pong file.

@@ -101,7 +101,7 @@ func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
 	s = h.snap()
 	for _, id := range []string{"s1-1", "s1-2"} {
 		n := len(s.Readers.Of(id))
-		require.Equal(t, 2, n, "%s asked of %d readers", id, n)
+		require.Equal(t, 1, n, "%s asked of %d readers (the first read alone)", id, n)
 	}
 	h.quiet("asked")
 
@@ -128,7 +128,7 @@ func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
 	require.NoError(t, h2.m.RowsAdd(h2.ctx, "t-readers", []string{"reader-b"}))
 	h2.beat()
 	h2.machine()
-	require.Len(t, h2.snap().Readers.Of("s1-1"), 2, "after a reader was added: reads %d, open %d", len(h2.snap().Readers.Of("s1-1")), len(h2.openOf(sprint.NFewReaders)))
+	require.Len(t, h2.snap().Readers.Of("s1-1"), 1, "after a reader was added: reads %d, open %d", len(h2.snap().Readers.Of("s1-1")), len(h2.openOf(sprint.NFewReaders)))
 	require.Empty(t, h2.openOf(sprint.NFewReaders), "after a reader was added: reads %d, open %d", len(h2.snap().Readers.Of("s1-1")), len(h2.openOf(sprint.NFewReaders)))
 }
 
@@ -276,7 +276,7 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	// ask writes: one judgment per read card
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
 	h.machine()
-	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 4 || len(h.openOf(sprint.NReadLate)) != n {
+	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 2 || len(h.openOf(sprint.NReadLate)) != n {
 		require.Failf(t, "", "the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
 	}
 	// N6: a merging stream with no merge step
@@ -376,7 +376,7 @@ func sprintOf(t *testing.T, n, stopAt int) *harness {
 				h.must(FinishStep(sprint.FinishReq{As: m, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: fail, Report: "red", Who: m}))
 			}
 		}
-		h.readAll()
+		h.readOutstanding() // the next round's tick asks the next reads
 		// the coordinator, from the inbox
 		v, err := h.st.Inbox(h.ctx, time.Hour, time.Hour, 10000)
 		require.NoError(t, err)

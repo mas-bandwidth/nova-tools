@@ -198,6 +198,22 @@ one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
 challenge is open; the status file.
 
+**Last session activity** (2026-10-04: the table said up with 8 working while a friend's
+session sat idle from 2:40 to 4:34 PM, and another read working=0 while she was busy; a pong
+shows the daemon answers, not that her session moves). The beat carries the newest file
+write under her working directory (`NewestWrite`, `Daemon.Activity`): her `outbox`, `inbox`
+and `jobs` first, then the rest of the directory, each root once, never descending into
+`.git`, `.cache` or `node_modules`. The walk is one stat pass bounded in files (2000) and in
+time (50 ms, on the daemon's clock), answers with the newest write it read when it reaches
+either, and runs at most once every `ActivityEvery` (10 s); the beats between carry its last
+answer, and a daemon with no `Activity` carries none. The beat is `friend beat <friend>
+--active <RFC3339>`; the sprint keeps it on her beat record, shows it as the friends
+table's `active` column, and raises a `friend idle` alarm when she holds cards and it is
+older than the `friend_idle` setting (docs/SPEC-SPRINT.md, last session activity). Where the
+harness exposes the session's own turn events, they would be a second source; none is read
+yet, so a session that works without writing a file (a long read, a long think) looks idle
+after the setting, and the alarm says "written nothing", not "stuck".
+
 No clock bounds a turn: a turn that prints keeps running however long it
 takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
 (twenty minutes by default) is stopped, its process group signalled, and the
@@ -631,7 +647,8 @@ watch's down and up in `tla/FriendPresence.tla` yet.
 
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
-here; `ping` and `wait-pong` run the canary by hand. The beat carries no
+here; `ping` and `wait-pong` run the canary by hand. The beat carries the
+last session activity (above) and no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
 
@@ -698,7 +715,7 @@ children's; OpenCode is above.
 
 | harness | installed here | push route | command or frame | proven | needs from the owner |
 |---|---|---|---|---|---|
-| dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | the headless profile adopts a persisted session (`~/.dsh/sessions/<key>/<id>`), shared with the desktop app | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | yes, 2026-10-04 on a throwaway session: adopted (turn 2 in the same record, 9 KB to 16 KB); unknown id exit 1; another directory exit 1 ("recorded in"); the turn itself stopped at the provider: `MISSING_CREDENTIAL`, 0 tokens spent | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
+| dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | none into an open desktop session: a session under an agent preset makes `dsh headless` exit 1 before any write, and the adapter returns Deferred (route defer); the session reads the bus itself (`nova-bus recv` or `nova-bus wait`) | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | no live push (route defer). Probed 2026-10-05 on the macOS survey machine against the real friend session `session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b` in `/Volumes/nova/ai/zhi`: `echo "test" \| dsh headless --session-id session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b -` exits 1 with preset `minimal` refusal before any write, transcript `session.v4.jsonl.zstd` hash and timestamp unchanged, `deliver.log` records 1339+ consecutive deferred attempts, desktop app exposes no local listener or IPC socket. 2026-10-04, isolated DSH home, no credentials: under preset `minimal` headless exits 1, transcript SHA-256 unchanged; with no preset the runner appended a turn (turn 2 in the same record, 9 KB to 16 KB), unknown id exit 1, another directory exit 1, the turn stopped at `MISSING_CREDENTIAL` | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
 | gemini (Gemini CLI) | yes: `/opt/homebrew/bin/gemini` 0.46.0 (brew gemini-cli) | `--resume <uuid>` keeps the session id and chat file (`ChatRecordingService.initialize`, read in the bundle); `latest` is the project's newest | `gemini --skip-trust --resume <id\|latest> --prompt=<text>` in the friend's dir | mechanics only, 2026-10-04: a session file was written under `~/.gemini/tmp/<project>/chats/`, `--resume <bad uuid>` exits 42; the turn itself never ran: the account answered 429 `rateLimitExceeded`, then `IneligibleTierError: this client is no longer supported for Gemini Code Assist for individuals`; no token spent | a GEMINI_API_KEY in the daemon's environment, or a Code Assist tier that still serves the CLI (the individual tier no longer does, 8:58 AM ET) |
 | copilot (GitHub Copilot CLI) | no | programmatic mode resumes a session: `-p` with `--resume`; session state under `~/.copilot/session-state/`; an SDK talks JSON-RPC to `copilot --headless` | `copilot -p <text> --resume <id> --allow-all-tools -s` | no | `curl -fsSL https://gh.io/copilot-install \| bash` and `copilot login` |
 | cursor (cursor-agent, the app) | no (no `agent`, no Cursor.app) | the CLI resumes a chat by id; the app has no documented IPC into an open chat | `agent -p --resume <chatId> --output-format text <text>` | no | `curl https://cursor.com/install -fsS \| bash` and `agent login` (or CURSOR_API_KEY) |
@@ -715,9 +732,24 @@ children's; OpenCode is above.
 The two installed harnesses have adapters (`adapter_dsh.go`, `adapter_gemini.go`);
 the rest are `Stub` with a surveyed reason (`adapter_refused.go`): known to
 `install --harness`, passive, refusing every delivery with the one-line reason above.
-Not measured: whether `dsh headless` adopts a session the desktop app holds
-open (a `session.lock` sits in every session directory), and whether the
-desktop app shows the pushed turn live or on its next load.
+Measured 2026-10-04 on a disposable session in an isolated DSH home (no
+credentials, preset `minimal`): `dsh headless --session-id <id> -` exits 1 with
+`runs under agent preset "minimal", which the one-shot runner does not compose`
+before any write, and the transcript's SHA-256 is unchanged. For a session with
+no preset the runner appended the turn to that session's own record as a
+separate process. Probed 2026-10-05 on the macOS survey machine against the
+real friend session (`session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b` in
+`/Volumes/nova/ai/zhi`): `echo "test" | dsh headless --session-id session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b -`
+exits 1 immediately with `dsh: session "session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b" runs under agent preset "minimal", which the one-shot runner does not compose`
+before any write; transcript `session.v4.jsonl.zstd` hash and timestamp are
+unchanged, `deliver.log` records 1339+ consecutive deferred attempts with this
+exact refusal, and DeepSeek Harness exposes no local listening socket or IPC
+into the open session. No push route into the open desktop session exists, so the
+route is defer: `DSH.Route` answers `defer` with the line the session runs
+(`nova-bus wait --as <friend>`), and each refused delivery is a deliver-log
+`deferred=` line. `nova-friend status` prints route only for grok, so presence
+carries no route for dsh until that wiring (cmd/nova-friend, outside this card's
+paths) lands.
 A session that has selected an agent preset is refused by the one-shot runner
 whatever the text (exit 1, "runs under agent preset ..., which the one-shot
 runner does not compose"; measured 2026-10-04 on a "minimal" session), so the

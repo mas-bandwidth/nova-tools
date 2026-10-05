@@ -247,7 +247,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM)
 	defer signal.Stop(term)
-	n, replaced := memberLoop(m, loopRun{every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, deadline: deadline.d}, stdout, stderr)
+	keep := mirrorKeeping(os.Getenv(mirrorsEnv), *root, rn.goBuildCache(), stdout, stderr)
+	if keep != nil {
+		rn.benchHome, _ = os.UserHomeDir()
+	}
+	n, replaced := memberLoop(m, loopRun{keep: keep, every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, deadline: deadline.d}, stdout, stderr)
 	if replaced {
 		return exitReplaced
 	}
@@ -284,6 +288,7 @@ type loopRun struct {
 	deadline time.Duration
 	now      func() time.Time
 	after    func(time.Duration) <-chan time.Time
+	keep     func(time.Time) // refreshes the bench mirrors before a pass (mirrorKeeping); nil: none
 }
 
 // memberLoop ticks m every lr.every (lr.limit > 0: at most limit ticks) and returns the
@@ -372,6 +377,9 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 			return n, draining == "replaced"
 		}
 		n++
+		if lr.keep != nil {
+			lr.keep(now())
+		}
 		acted, err := m.Tick(now())
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-swarm member: tick %d: %s\n", n, oneline.Escape(err.Error()))
@@ -428,6 +436,7 @@ type nativeRunner struct {
 	env                                            []string                     // added to this process's environment: none in production, a test's
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
 	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
+	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -515,7 +524,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		return nil, err
 	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
-	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(swarm.PointCardAtMirrors(card, r.benchHome)), 0o644); err != nil {
 		return nil, err
 	}
 	model, tokens, deadline, err := r.route(p)
@@ -1099,4 +1108,53 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return fmt.Fprint(l.w, string(p))
+}
+
+// mirrorsEnv names the repositories (a `url,...` list) a member keeps a bare mirror of under
+// ~/nova-bench/mirror, fetched at start and after landings, with the shared build cache
+// warmed at each one's HEAD branch tip. An environment word and not a flag: a unit's
+// environment is where a bench's repositories are named, and the usage line stays as it is.
+const mirrorsEnv = "NOVA_SWARM_MIRRORS"
+
+// mirrorEvery is the least time between two refreshes of a member's mirrors: a landing the
+// member sees is fetched at the next pass past it.
+const mirrorEvery = time.Minute
+
+// mirrorKeeping is the member's warm mirrors (docs/SPEC-SWARM.md, the warm clones and caches
+// card): keep, which a pass calls with the time, starts a refresh of every mirror in the
+// background when none runs and mirrorEvery has passed (the first call, at start, always),
+// A card's clone step reaches the mirrors by the path the card names (PointCardAtMirrors),
+// never by an environment word: the harness's environment is rebuilt, and its HOME is the
+// slot's. A refresh that fails is a NOTE and never stops a pass: staging reads the mirror
+// it finds, and a cold cache costs time only.
+func mirrorKeeping(urls, root, gocache string, stdout, stderr io.Writer) (keep func(time.Time)) {
+	home, err := os.UserHomeDir()
+	if urls == "" || err != nil {
+		return nil
+	}
+	var keepers []swarm.MirrorKeeper
+	for _, u := range splitNames(urls) {
+		name := strings.TrimSuffix(filepath.Base(strings.TrimSuffix(u, "/")), ".git")
+		keepers = append(keepers, swarm.MirrorKeeper{Origin: u, Mirror: swarm.MirrorPath(home, name), WarmDir: filepath.Join(root, "cache", "warm", name), GoCache: gocache})
+	}
+	var busy atomic.Bool
+	var last time.Time
+	return func(now time.Time) {
+		if !last.IsZero() && now.Sub(last) < mirrorEvery || !busy.CompareAndSwap(false, true) {
+			return
+		}
+		last = now
+		go func() {
+			defer busy.Store(false)
+			for _, k := range keepers {
+				res, err := k.Refresh(context.Background())
+				switch {
+				case err != nil:
+					fmt.Fprintf(stderr, "nova-swarm member: NOTE mirror %s: %s\n", oneline.Field(k.Mirror), oneline.Escape(err.Error()))
+				case res.Created || res.Moved:
+					fmt.Fprintf(stdout, "MIRROR %s created=%t tip=%s\n", oneline.Field(k.Mirror), res.Created, oneline.Field(res.Tip))
+				}
+			}
+		}()
+	}
 }

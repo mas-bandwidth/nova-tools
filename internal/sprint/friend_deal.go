@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 )
 
 // A friend's card (the owner, 2026-10-03: "Could we try expressing the work left for
@@ -79,16 +80,35 @@ const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick de
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
 // works at once, her friends row's), her status (FriendStatus: up, held or down), her
 // class (the tiers her nova-config row says she can do, sorted and comma joined: friend
-// level evens a class), her tiers (config.friends tiers: flash, frontier, pro; FriendDeal
-// does not read them; a frontier read does, friend_read.go), and Dir, her working
-// directory when the ask writes the read brief itself (empty: friend sync writes it).
+// level evens a class), her delivery mode (Mode: batch or one-shot, default batch), her
+// tiers (config.friends tiers: flash, frontier, pro; FriendDeal does not read them; a
+// frontier read does, friend_read.go), and Dir, her working directory when the ask
+// writes the read brief itself (empty: friend sync writes it).
 type FriendSeat struct {
 	Name   string
 	Width  int
 	Status string
 	Class  string
+	Mode   string
 	Tiers  []string
 	Dir    string
+}
+
+// FriendMode returns the friend's delivery mode (config.FriendModeBatch or
+// config.FriendModeOneShot), defaulting to config.FriendModeBatch if unset or unknown.
+func (s *Snapshot) FriendMode(name string) string {
+	if s == nil {
+		return config.FriendModeBatch
+	}
+	for _, f := range s.Friends {
+		if f.Name == name {
+			if f.Mode != "" {
+				return f.Mode
+			}
+			return config.FriendModeBatch
+		}
+	}
+	return config.FriendModeBatch
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
@@ -114,20 +134,27 @@ func friendLoad(s *Snapshot, name string) int {
 // people busy by having 2X width queued up in ready per-friend"): a card naming a
 // friend goes to her while she is up and below her room, and waits ready otherwise; a
 // card for any friend goes to the friend up with the most room free, the first by name
-// among equals. Each is its next attempt's work card, created on the friend's row at
-// generation 1, in working while she has a lane free (her width less her working cards;
-// dealt and taken now: its deadline is the working one) and ready behind them otherwise
-// (her finish takes the next: Finish), carrying the primary's fix, finding and why as a
-// machine's deal does; its primary moves ready -> working. The friend's row is declared
-// by the plan the first time she is dealt to.
+// among equals. In batch mode (the default), a friend's room is DealAhead times her width
+// and her lanes are her width; in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
+// a friend's room is 1 and her lanes are 1: she gets one card at a time, straight into
+// working, and the next only after the last one finished.
+// Each is its next attempt's work card, created on the friend's row at generation 1, in
+// working while she has a lane free (her width less her working cards; dealt and taken now:
+// its deadline is the working one) and ready behind them otherwise (her finish takes the next:
+// Finish), carrying the primary's fix, finding and why as a machine's deal does; its primary
+// moves ready -> working. The friend's row is declared by the plan the first time she is dealt to.
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	var p Plan
 	free, lanes := map[string]int{}, map[string]int{}
 	var up []string
 	for _, f := range seats {
 		if f.Status == Up {
-			free[f.Name] = DealAhead*f.Width - friendLoad(s, f.Name)
-			lanes[f.Name] = f.Width - s.Fleet.Count(FriendRow(f.Name), Working)
+			room, width := DealAhead*f.Width, f.Width
+			if f.Mode == config.FriendModeOneShot {
+				room, width = 1, 1
+			}
+			free[f.Name] = room - friendLoad(s, f.Name)
+			lanes[f.Name] = width - s.Fleet.Count(FriendRow(f.Name), Working)
 			up = append(up, f.Name)
 		}
 	}

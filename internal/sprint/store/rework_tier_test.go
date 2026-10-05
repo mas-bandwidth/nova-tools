@@ -131,6 +131,7 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 	start := func(t *testing.T) *harness {
 		h := flashAndPro(t)
 		h.addReady("s1", 1, briefOf("flash", ""))
+		h.must(SetStep(sprint.SetReq{Attempts: "8", Who: h.st.Actor})) // the ladder's attempts, over the default attempt cap
 		h.startMachine()
 		h.machine()
 		h.boundBy("s1-1", noResultLine)

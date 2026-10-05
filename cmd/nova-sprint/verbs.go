@@ -104,8 +104,8 @@ func init() {
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
-		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
-		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>]", "set --read-tier pro", (*app).cmdSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
@@ -131,7 +131,7 @@ func init() {
 		{"view worker", "--as <member|friend> [--since <cursor>] [--json]", "view worker --as m1 --json", (*app).cmdViewWorker},
 		{"seat install", "[--dir <dir>] [--log <file>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
-		{"seat", "", "seat", (*app).cmdSeat},
+		{"seat", "[--repair --reason <text>]", "seat", (*app).cmdSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
 		{"stats", "", "stats", (*app).cmdStats},
@@ -946,9 +946,15 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor); the seat then moves by coordinator <name>")
 	owner := fs.String("owner", "", "the sprint's owner, who may give the seat and whose name a take of it carries (coordinator --take --approved-by); set once, never changed (else "+OwnerEnv+")")
 	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
+	attempts := fs.String("attempts", "", fmt.Sprintf("the sprint's attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to %d (default %d; later: nova-sprint set --attempts <n>)", sprint.AttemptsMax, sprint.AttemptsDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "init", err.Error())
+	}
+	if *attempts != "" {
+		if _, err := sprint.ParseAttempts(*attempts); err != nil {
+			return refuse(stderr, "init", err.Error())
+		}
 	}
 	if len(pos) > 0 {
 		return refuse(stderr, "init", "takes no words, found "+pos[0])
@@ -1003,7 +1009,9 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	if err := st.B.SetCoordinator(ctx, *coordinator); err != nil {
+	// the key from the seat's record when the seat has moved, else the first
+	// coordinator: never from an actor that is not the holder (seat-key-follows-record.w2)
+	if _, err := st.InitSeat(ctx, *coordinator); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
@@ -1024,6 +1032,13 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	if *attempts != "" {
+		// the sprint's attempt cap, as set --attempts writes it (the coordinator's: init names them)
+		if res, err := st.Run(ctx, store.SetStep(sprint.SetReq{Attempts: *attempts, Who: *coordinator})); err != nil || len(res.Refused) > 0 {
+			fmt.Fprintf(stderr, "%s init: --attempts: %v %v\n", prog, err, res.Refused)
+			return 1
+		}
+	}
 	readerRows, err := st.ReaderRows(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
@@ -1040,7 +1055,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	var memberNames []string
 	for _, m := range specs {
-		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width, false), steps, stderr); code != 0 {
+		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width, false, 0, false), steps, stderr); code != 0 {
 			return code
 		}
 		memberNames = append(memberNames, m.Name)
@@ -2136,6 +2151,12 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	if *as == "" || n != 1 {
 		return refuse(stderr, "read", "wants --as <reader> and one of --begin, --ok, --broken, --return <card> --reason <text>")
 	}
+	// Attribution is never a finding (docs/SPEC-SPRINT.md, reader-ignores-attribution):
+	// a broken read whose every sentence is about the trailer, the By: line or the
+	// model or harness named is refused before the store is touched.
+	if *broken && sprint.AttributionOnly(*finding) {
+		return refuse(stderr, "read", sprint.AttributionRefusal)
+	}
 	if *ret != "" {
 		if len(ids) > 0 || *reason == "" {
 			return refuse(stderr, "read", "--return names its one card and wants --reason <text>")
@@ -2507,9 +2528,10 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	name := "fleet " + op
 	fs, c := a.verbSetup(name)
-	var width *string
+	var width, deadline *string
 	if op == "up" {
 		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it runs at once; the deal holds it at %d times that, ready and working; 1 to %d (default: as it is, %d for a new member); 0 drains the member: no new deals, its untaken ready cards are levelled away, its working cards finish (fleet down deals them again elsewhere)", sprint.DealAhead, sprint.MaxWidth, sprint.DefaultWidth))
+		deadline = fs.String("deadline", "", fmt.Sprintf("pin the deadline every card dealt to the member gets, a duration (45m, 2700s); default takes the pin off: each card's own deadline, or %d times the member's median run wall over its last %d ok attempts, whichever is larger", sprint.DeadlineK, sprint.DeadlineSamples))
 	}
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -2526,6 +2548,12 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	d, off := 0, false
+	if deadline != nil && *deadline != "" {
+		if d, off, err = sprint.ParseDeadline(*deadline); err != nil {
+			return refuse(stderr, name, err.Error())
+		}
+	}
 	member := ""
 	if len(pos) == 1 {
 		member = pos[0]
@@ -2534,7 +2562,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain), stdout, stderr)
+	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain, d, off), stdout, stderr)
 }
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
@@ -2710,6 +2738,8 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	merging := fs.String("alarm-merging", "", "the backlog alarm on merging: a judgment, once an episode, while more primaries than this whole number are merging; off takes it off (the default)")
 	fleet := fs.String("alarm-fleet", "", "the backlog alarm on the fleet: a judgment, once an episode, while the members up work fewer cards than this percent (1 to 100) of their width with a primary ready or waiting; off takes it off (the default)")
 	readyAlarm := fs.String("alarm-ready", "", "the backlog alarm on the feed: on raises a judgment, once an episode, while no primary is ready and one waits; off takes it off (the default)")
+	attempts := fs.String("attempts", "", fmt.Sprintf("the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect (brief, drop; never dealt again); 1 to %d, or default (%d); a stream's own: nova-sprint stream set <s> --attempts <n>", sprint.AttemptsMax, sprint.AttemptsDefault))
+	idle := fs.String("friend-idle", "", fmt.Sprintf("how long a friend holding cards may show no file write under her working directory and outbox before it is an alarm: a duration, or default (%s)", sprint.FriendIdleDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
@@ -2721,7 +2751,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
 	}
-	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, GoLanes: *lanes,
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, GoLanes: *lanes, Attempts: *attempts, FriendIdle: *idle,
 		AlarmReview: *review, AlarmMerging: *merging, AlarmFleet: *fleet, AlarmReady: *readyAlarm, Who: c.actor}), stdout, stderr)
 }
 
@@ -2733,6 +2763,7 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	sha := fs.String("sha", "", "the merge commit's sha on dev, 7 to 40 hex digits (required)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	dry := fs.Bool("dry-run", false, "check the sha and say what would be recorded; record nothing")
+	returned := fs.String("returned", "", "landed cards dev or an audit returned with this promotion, comma separated: each is marked on the card and the tick asks to raise its stream's read tier")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
@@ -2752,7 +2783,7 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "PROMOTED DRY-RUN sha=%s; nothing was changed\n", sha)
 		return 0
 	}
-	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
+	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Answers: answers(*ans), Returned: sprint.Split(*returned), Who: c.actor}), stdout, stderr)
 }
 
 // cmdFunded is the coordinator's word that a provider was paid: its rest of its funds ends
@@ -2780,18 +2811,21 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
 	mark := fs.String("land-protected", "", "the repositories (owner/name, comma separated; any for every one) on whose protected branches, dev and main, the lander lands the stream's cards; default takes the mark off, and a card based on a protected branch is then refused at land")
 	release := fs.String("release", "", "the release this stream belongs to (default or none clears it)")
+	attempts := fs.String("attempts", "", fmt.Sprintf("the stream's attempt cap, over the sprint's: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to %d, or default (the sprint's)", sprint.AttemptsMax))
+	reason := fs.String("reason", "", "why the read tier is set, recorded on the stream row (the judgment 'raise the read tier of the stream?' names it)")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "") {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default> or --release <name>")
+	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "" && *attempts == "") {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default>, --release <name> or --attempts <n|default>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Who: c.actor}), stdout, stderr)
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Attempts: *attempts, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:

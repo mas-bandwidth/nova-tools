@@ -76,8 +76,9 @@ func FinishStep(r sprint.FinishReq) Step {
 	// with or without its usage: the second identical failure below its ceiling escalates
 	// the card in the finish, by the tiers its routes serve (sprint.NextTier)
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "" || r.Failed,
-		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
-		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
+		Friends: true,
+		Extras:  sprint.NamedExtras(sprint.Fleet, r.IDs),
+		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
 
 // ProgressStep is a holder stamping progress on the work cards it works (sprint.Progress).

@@ -70,9 +70,60 @@ func heldBy(s *sprint.Snapshot, m string) int {
 // readAll plays the readers: every read card asked of them is reported ok.
 func (h *harness) readAll() {
 	h.t.Helper()
+	for {
+		for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
+			h.run(ReadStep(sprint.ReadReq{As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
+		}
+		// reads are asked one at a time (sprint.ReadsWanted): the next read of each
+		// card whose first came back ok is asked here, as the tick's ask would
+		s := h.snap()
+		var want []string
+		for _, c := range s.Work.Column(sprint.Review) {
+			if c.F("result") != "failed" && sprint.ReadsWanted(s, c) > 0 {
+				want = append(want, c.ID)
+			}
+		}
+		if len(want) == 0 {
+			return
+		}
+		if res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{Only: want}})); len(res.Moved) == 0 {
+			return
+		}
+	}
+}
+
+// readOutstanding has the readers read every read asked of them, ok, and asks
+// nothing: the tick asks the next (the drivers that tick between rounds).
+func (h *harness) readOutstanding() {
+	h.t.Helper()
 	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
 		h.run(ReadStep(sprint.ReadReq{As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
 	}
+}
+
+// pairAsked asks the primary its first read and, by --another, a second: two reads
+// outstanding at once, for a test of two verdicts on one attempt (the ask alone
+// places one read at a time, sprint.ReadsWanted). It returns the two read cards.
+func (h *harness) pairAsked(id string) []*sprint.Card {
+	h.t.Helper()
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}, Another: true}))
+	rc := h.snap().Readers.Of(id)
+	require.Len(h.t, rc, 2, "%s asked of two readers", id)
+	return rc
+}
+
+// askedRead is the primary's one read card outstanding (asked or reading).
+func (h *harness) askedRead(id string) *sprint.Card {
+	h.t.Helper()
+	var out []*sprint.Card
+	for _, rc := range h.snap().Readers.Of(id) {
+		if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
+			out = append(out, rc)
+		}
+	}
+	require.Len(h.t, out, 1, "%s: one read outstanding", id)
+	return out[0]
 }
 
 // landAll plays the coordinator's accept and the merger's step for a stream.
@@ -654,7 +705,8 @@ func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.takeAndFinish(false, "p")
-	h.machine() // asks two readers
+	h.machine()                                                                        // asks the first reader
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p"}}, Another: true})) // and one more: two reads outstanding
 	cards := h.snap().Readers.Of("p")
 	require.Len(t, cards, 2, "asked: %d", len(cards))
 	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))

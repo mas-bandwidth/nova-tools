@@ -506,6 +506,44 @@ checkout's alternates and writes only the checkout's own. Nothing forces
 the member fetches them from the checkout into `<root>/push.git` and pushes
 from there, outside the wall, as before.
 
+### warm-clones-and-caches.w2: the mirror and the cache are kept warm
+
+Staging borrows a bench mirror, so the mirror has to exist and be current, and a first
+build has to find a warm cache. `swarm.MirrorKeeper` keeps both. a member
+whose environment holds `NOVA_SWARM_MIRRORS=<url,...>` (the repositories it works on)
+keeps one; for each the keeper
+creates `~/nova-bench/mirror/<name>.git` (`git clone --mirror`, the place `FindBenchMirror`
+looks first), sets `gc.auto=0`, and afterwards only fetches into it. It runs at the member's
+start and in the background before a pass at most once a minute, so a landing the member
+sees is fetched at the next pass past it. When the tip of the mirror's HEAD branch moves it
+fills the member's shared `GOCACHE` (`swarm.GoBuildCacheDir`, the one the cards share): a
+checkout borrowed from the mirror under `<root>/cache/warm/<name>`, moved to the tip, then
+`nice -n 19 go build ./...` and `nice -n 19 go vet ./...`, once per tip (the tip it last
+warmed at is kept in `.warmed`). A failure to fetch or warm is a `NOTE` on stderr and never
+stops a pass: staging reads the mirror it finds, and a cold cache costs time, not
+correctness. Nothing here runs a go command on the machine that hosts the sprint's
+coordinator: the keeper is a member's, and a member is a bench.
+
+A card's STEP 1 in the pulse templates clones with
+`--reference-if-able "$HOME/nova-bench/mirror/<name>.git"`. No environment word carries the
+mirror to the card: the harness runs with `HOME` set to the slot's data home and an
+environment rebuilt from a short list (`keepNativeEnv`), so neither `$HOME` nor an exported
+`NOVA_GIT_MIRROR` would reach the clone step. Instead the member, which keeps the mirrors,
+writes the card the harness reads with the `$HOME/nova-bench/mirror/` prefix replaced by its
+own bench home's directory (`swarm.PointCardAtMirrors`, `swarm.MirrorPath`), for every
+repository it mirrors. Where no mirror exists at that path, `--reference-if-able` skips it
+and the line is a plain `git clone` of the remote. That is the choice over a pre-made
+worktree: a worktree is owned by the member and shared between cards, and a card's STEP 1
+would no longer read as the plain clone it falls back to. The staged clone of a native job
+needs none of it: it already borrows the mirror (`MirrorCloneArgs`).
+
+Measured on a 64-thread bench at load average 94, 2026-10-04, five clones of nova-tools
+each: `git clone` from GitHub 13.4 to 15.5 s (median 14.5 s); `git clone --shared` from the
+mirror 0.95 to 1.21 s (median 1.04 s); the mirror's one creation 19.6 s and its refresh
+1.7 s. On a 64-thread bench at load average 35 (2026-10-04, five each): `git clone` from
+GitHub 10.0 to 12.2 s, from the mirror 1.5 to 2.5 s; `go build ./...` of the clone on a cold
+cache 26.1 to 28.1 s, on the warmed cache 6.2 to 7.7 s.
+
 ### A rework is staged at its base branch's tip
 
 A first attempt is staged at the commit its frame names. A rework (a work

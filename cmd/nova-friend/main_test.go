@@ -249,7 +249,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -296,7 +296,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -464,7 +464,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()
@@ -506,7 +506,7 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 		return ctx, cancel
 	}
 	beats, sleeps := 0, 0
-	w.beat = func(context.Context, string, string) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
 	w.sleep = func(context.Context, time.Duration) {
 		r.now = r.now.Add(time.Minute)
 		if sleeps++; sleeps == 8 {
@@ -562,7 +562,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		}
 	}
 	var beats []time.Time
-	w.beat = func(context.Context, string, string) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time) (string, error) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()

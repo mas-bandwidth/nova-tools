@@ -49,8 +49,8 @@ loop row's verb, docs/FRIENDS.md): a friend
 the store lacks is added, one nova-config no longer has is taken off with her
 beat, and a friend that stays keeps her hold. The same sync writes each friend's width,
 the jobs she works at once: her friend row's width (nova-config friend set
-<friend> --width <n>, at least 1), `+fmt.Sprint(config.DefaultFriendWidth)+` when the row names none; a row whose width is
-below 1 is refused with nothing changed. where counts the cards: ready, working,
+<friend> --width <n>, at least 1), `+fmt.Sprint(config.DefaultFriendWidth)+` when the row names none; and her delivery mode (mode:
+batch|one-shot, default batch); a row whose width is below 1 is refused with nothing changed. where counts the cards: ready, working,
 width, done (ok and failed), ok% (ok over done, pooled in the footer) and
 status, all from the friend's sprint cards — the cards dealt to her fleet row
 friend.<name>, their states and their finish verdicts — never from her
@@ -73,7 +73,8 @@ A friend's card: a card whose brief says WHO: friend (any friend) or
 WHO: friend <name> (a row of the friends table; add and brief refuse any other)
 is dealt by the tick to a friend up below her width, the one it names or the
 one with the most free width, on her own fleet row friend.<name>, straight into
-working; no machine is dealt it, and no presence or rebalance takes it back: friend take
+working (in batch mode, up to her width and ready behind; in one-shot mode,
+one card at a time and the next only after the last one finished); no machine is dealt it, and no presence or rebalance takes it back: friend take
 takes back the cards she has not started, and friend down every one.
 friend sync writes it as <friend>-working/inbox/<job>/BRIEF.md, the job
 directory <card> at epoch 0 and <card>~<epoch> after a clear (its STATUS line
@@ -264,11 +265,19 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	queue := fs.String("queue", "", "how many jobs she holds queued, as her daemon counts them")
 	width := fs.String("width", "", "her width as her daemon has it (the deal's is the roster's: friend up --width)")
 	load := fs.String("load", "", "her load as a percent, as fleet beat --load gives a machine's")
+	active := fs.String("active", "", "the newest write under her working directory and outbox, as her daemon found it, RFC3339: her session's last activity")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
 	}
 	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	if *active != "" {
+		at, err := time.Parse(time.RFC3339, *active)
+		if err != nil {
+			return refuse(stderr, name, "--active wants an RFC3339 time, found "+oneline.Escape(*active))
+		}
+		rep.Active = at.UTC().Truncate(time.Second)
+	}
 	for _, n := range []struct {
 		flag, text string
 		min        int
@@ -323,6 +332,10 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if given != nil {
 		line += fmt.Sprintf(" load=%.1f%%", *given)
 		facts["load"] = *given
+	}
+	if !rep.Active.IsZero() {
+		line += " active=" + rep.Active.Format(time.RFC3339)
+		facts["active"] = rep.Active
 	}
 	if len(rep.Running) > 0 {
 		line += " running=" + strings.Join(rep.Running, ",")
