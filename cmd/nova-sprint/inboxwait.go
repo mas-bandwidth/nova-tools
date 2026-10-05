@@ -407,15 +407,26 @@ func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout
 	if code := p.follow(look.holder, true, stdout, stderr); code != 0 {
 		return code
 	}
+	if p.fixed == "" {
+		a.prove(ctx, src, look.holder, asJSON, stdout)
+	}
 	fresh, err := p.unseen(look)
 	if err != nil {
 		return refuse(stderr, "inbox", "--push: "+err.Error())
 	}
 	for {
+		var texts []string
 		for _, g := range fresh {
-			if code := a.push(ctx, src, p, look.holder, g, asJSON, stdout, stderr); code != 0 {
+			text, code := a.push(ctx, src, p, look.holder, g, asJSON, stdout, stderr)
+			if code != 0 {
 				return code
 			}
+			if text != "" {
+				texts = append(texts, text)
+			}
+		}
+		if p.fixed == "" {
+			a.pushJudgments(ctx, src, look.holder, texts, asJSON, stdout)
 		}
 		if ctx.Err() != nil {
 			return 0
@@ -423,6 +434,9 @@ func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout
 		running := lineRunning(look.machine)
 		fresh, look, err = a.waitNew(ctx, src, func(l inboxLook) ([]sprint.Group, error) {
 			p.follow(l.holder, false, stdout, stderr)
+			if p.fixed == "" {
+				a.prove(ctx, src, l.holder, asJSON, stdout)
+			}
 			return p.unseen(l)
 		}, running, timeout)
 		if err != nil {
@@ -442,27 +456,30 @@ func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout
 // push writes the group's notes its directory does not hold, each as
 // <dir>/<note id>.md, the group read whole first (as inbox --open reads it)
 // so that the file carries its members and needs. A group that closed since
-// the look that found it is nothing to write.
-func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder string, g sprint.Group, asJSON bool, stdout, stderr io.Writer) int {
+// the look that found it is nothing to write. It returns the group's text when
+// it wrote a file: what the push loop then delivers into the holder's session
+// (pushJudgments), the file kept as the record of what was pushed.
+func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder string, g sprint.Group, asJSON bool, stdout, stderr io.Writer) (string, int) {
 	look, err := src.inbox(ctx, g.ID)
 	if err != nil {
-		return a.waitFailed(err, stderr)
+		return "", a.waitFailed(err, stderr)
 	}
 	whole, ok := sprint.FindGroup(look.groups, g.ID)
 	if !ok {
-		return 0
+		return "", 0
 	}
 	dir := p.dirOf(holder, whole)
 	if dir == "" {
-		return 0 // the inbox it goes to went away since the look: the next look finds it
+		return "", 0 // the inbox it goes to went away since the look: the next look finds it
 	}
 	seen, err := p.keys(dir)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s inbox --push: %s\n", prog, oneline.Escape(err.Error()))
-		return 1
+		return "", 1
 	}
 	now := a.now()
 	text := groupText(whole, now, true) + "clock: " + now.UTC().Format(time.RFC3339) + "\n"
+	wrote := false
 	for _, id := range noteKeys(whole) {
 		if seen[id] {
 			continue
@@ -472,8 +489,9 @@ func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder s
 		written, err := writeOnce(path, text)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s inbox --push: %s\n", prog, oneline.Escape(err.Error()))
-			return 1
+			return "", 1
 		}
+		wrote = wrote || written
 		switch {
 		case asJSON:
 			b, _ := json.Marshal(map[string]any{"pushed": id, "group": whole.ID, "file": path, "written": written, "at": now}) // ignored: strings, a bool and a time always encode
@@ -484,7 +502,10 @@ func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder s
 			fmt.Fprintf(stdout, "NOTE %s exists: kept, not written again\n", oneline.Field(path))
 		}
 	}
-	return 0
+	if !wrote {
+		return "", 0
+	}
+	return text, 0
 }
 
 // pushedKeys is the keys of the notes the directory holds: its .md files' stems.
