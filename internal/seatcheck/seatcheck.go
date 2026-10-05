@@ -29,6 +29,8 @@ const (
 	Dashboard = "dashboard"
 	Bus       = "bus"
 	Inbox     = "inbox"
+	Queue     = "queue"
+	Versions  = "versions"
 )
 
 // Token is the first word of every line.
@@ -37,7 +39,8 @@ const Token = "MACHINERY"
 // ServerM is the sprint's server as measured: the address the environment
 // names (NOVA_SPRINT_SERVER), Self when the measure ran in the server's own
 // process (a served coordinator or handover), which measured nothing outside
-// the store (the dashboard, the bus, the friends' agents: NotMeasured), the
+// the store (the dashboard, the bus, the dev merge queue, machine versions
+// and the friends' agents: NotMeasured), the
 // error of one verb round trip, its time, and the pid of a listener on the
 // address when it is local (0 unknown).
 type ServerM struct {
@@ -121,6 +124,28 @@ type InboxM struct {
 	Oldest time.Duration `json:"oldest_ns"`
 }
 
+// QueueM is the dev merge queue as measured: its entries, in queue order, any
+// pull request thrown out since the previous check, and how many open pull
+// requests are green (not a draft, merge state CLEAN).
+type QueueM struct {
+	Entries   []string `json:"entries,omitempty"`
+	Green     int      `json:"green,omitempty"`
+	ThrownOut []string `json:"thrown_out,omitempty"`
+}
+
+// MachineVersionM is one machine's installed nova-tools version, the identity
+// nova-update version prints (buildinfo's field two).
+type MachineVersionM struct {
+	Machine string `json:"machine"`
+	Version string `json:"version"`
+}
+
+// VersionsM is those versions against dev's tip, read the same way.
+type VersionsM struct {
+	Dev      string            `json:"dev"`
+	Machines []MachineVersionM `json:"machines,omitempty"`
+}
+
 // Measures is everything the probes measured, in one struct so a test can
 // hand Judge any state of the machinery.
 type Measures struct {
@@ -132,6 +157,8 @@ type Measures struct {
 	Dashboard DashM     `json:"dashboard"`
 	Bus       BusM      `json:"bus"`
 	Inbox     InboxM    `json:"inbox"`
+	Queue     QueueM    `json:"queue"`
+	Versions  VersionsM `json:"versions"`
 	// Host is the short host name the check ran on: the server's unit is
 	// named by it.
 	Host string `json:"host"`
@@ -178,10 +205,11 @@ func memberDown(m MemberM) bool {
 	return m.Status == "down" || (m.Status != "held" && (!m.Beaten || m.Age > MemberDownAfter))
 }
 
-// NotMeasured is what the dashboard, the bus and a friend's agent say when the
-// check ran in the server (Server.Self): the server's step is single-threaded
-// and waits on no outside probe; nova-sprint machinery, run where it is typed,
-// measures them. None is DOWN for it.
+// NotMeasured is what the dashboard, the bus, the dev merge queue, machine
+// versions and a friend's agent say when the check ran in the server
+// (Server.Self): the server's step is single-threaded and waits on no outside
+// probe; nova-sprint machinery, run where it is typed, measures them. None is
+// DOWN for it.
 const NotMeasured = "not measured: the check ran in the server; run nova-sprint machinery"
 
 // Label is the launchd label that beats the friend on the friends' host today
@@ -197,9 +225,9 @@ func Bootstrap(friend string) string {
 func MemberLoop(member string) string { return "member-" + member }
 
 // Judge turns the measures into the report: one line per thing in the order
-// server, store, loop, fleet, friends, readers, dashboard, bus, inbox, and a
-// DOWN line per friend down before the friends line. A thing whose probe
-// failed is DOWN with the error.
+// server, store, loop, fleet, friends, readers, dashboard, bus, inbox, queue,
+// versions, and a DOWN line per friend down before the friends line. A thing
+// whose probe failed is DOWN with the error.
 func Judge(m Measures, now time.Time) Report {
 	r := Report{At: now, Measures: m}
 	add := func(l Line) {
@@ -377,7 +405,94 @@ func Judge(m Measures, now time.Time) Report {
 		}
 		add(Line{Thing: Inbox, Up: true, Facts: f})
 	}
+
+	// 10. the dev merge queue. Empty while open green pull requests exist is
+	// DOWN, and so is a pull request thrown out since the previous check.
+	if !failed(Queue) {
+		add(queueLine(m))
+	}
+
+	// 11. each machine's installed nova-tools version against dev's tip.
+	// A machine whose version is not dev's is DOWN, named with both.
+	if !failed(Versions) {
+		add(versionsLine(m))
+	}
 	return r
+}
+
+// queueLine is the dev merge queue's one line. A served check did not read it.
+func queueLine(m Measures) Line {
+	if m.Server.Self {
+		return Line{Thing: Queue, Up: true, Facts: []string{"note=" + q(NotMeasured)}}
+	}
+	qm := m.Queue
+	entries := "0"
+	if len(qm.Entries) > 0 {
+		entries = strings.Join(qm.Entries, ",")
+	}
+	switch {
+	case len(qm.ThrownOut) > 0:
+		names := strings.Join(qm.ThrownOut, ",")
+		return Line{Thing: Queue, Facts: []string{"entries=" + entries, "thrown=" + names, "why=" + q("pull request "+names+" thrown out")},
+			Remedy: "gh pr view " + qm.ThrownOut[0]}
+	case len(qm.Entries) == 0 && qm.Green > 0:
+		return Line{Thing: Queue, Facts: []string{"entries=0", "green=" + fmt.Sprint(qm.Green), "why=" + q("empty queue with open green PRs")},
+			Remedy: "gh pr list"}
+	default:
+		facts := []string{"entries=" + entries}
+		if qm.Green > 0 {
+			facts = append(facts, "green="+fmt.Sprint(qm.Green))
+		}
+		return Line{Thing: Queue, Up: true, Facts: facts}
+	}
+}
+
+// versionsLine is one line for every machine's installed version. A served
+// check did not read them.
+func versionsLine(m Measures) Line {
+	if m.Server.Self {
+		return Line{Thing: Versions, Up: true, Facts: []string{"note=" + q(NotMeasured)}}
+	}
+	v := m.Versions
+	var stale []MachineVersionM
+	for _, mv := range v.Machines {
+		if v.Dev != "" && mv.Version != v.Dev {
+			stale = append(stale, mv)
+		}
+	}
+	if len(stale) == 0 {
+		return freshVersions(v)
+	}
+	return staleVersions(v.Dev, stale)
+}
+
+func freshVersions(v VersionsM) Line {
+	dev := v.Dev
+	if dev == "" {
+		dev = "none"
+	}
+	facts := []string{"dev=" + dev}
+	if len(v.Machines) > 0 {
+		facts = append(facts, "fresh="+fmt.Sprint(len(v.Machines)))
+	}
+	return Line{Thing: Versions, Up: true, Facts: facts}
+}
+
+func staleVersions(dev string, stale []MachineVersionM) Line {
+	var remedies []string
+	for _, sm := range stale {
+		remedies = append(remedies, "nova-update apply "+sm.Machine)
+	}
+	if len(stale) == 1 {
+		return Line{Thing: Versions, Facts: []string{"machine=" + stale[0].Machine, "version=" + stale[0].Version, "dev=" + dev},
+			Remedy: remedies[0]}
+	}
+	var names []string
+	for _, sm := range stale {
+		names = append(names, sm.Machine+":"+sm.Version)
+	}
+	return Line{Thing: Versions, Facts: []string{"stale=" + strings.Join(names, ","), "dev=" + dev},
+		Remedy: strings.Join(remedies, "; ")}
 }
 
 // Text is the report as printed: one line per Line, then the summary,

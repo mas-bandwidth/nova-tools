@@ -40,7 +40,9 @@ func TestEverythingUp(t *testing.T) {
 		"MACHINERY dashboard OK addr=127.0.0.1:7390 status=200 build=3f2a",
 		`MACHINERY bus OK redis=none note="not configured: NOVA_BUS_REDIS is not set"`,
 		`MACHINERY inbox OK open=2 oldest=42m0s next="nova-sprint inbox"`,
-		"MACHINERY OK n=9",
+		"MACHINERY queue OK entries=0",
+		"MACHINERY versions OK dev=none",
+		"MACHINERY OK n=11",
 	}, "\n")+"\n", lines(r))
 }
 
@@ -124,13 +126,13 @@ func TestSummaryAndNeverDown(t *testing.T) {
 	assert.Contains(t, lines(r), "MACHINERY bus OK redis=127.0.0.1:6381\n")
 	assert.Contains(t, lines(r), "MACHINERY inbox OK open=0\n")
 	assert.Equal(t, 3, r.Down)
-	assert.Equal(t, "MACHINERY DOWN n=3 of=11", r.Summary())
+	assert.Equal(t, "MACHINERY DOWN n=3 of=13", r.Summary())
 	assert.Contains(t, r.JSON(), `"down":3`)
 }
 
 // A check that ran in the server's own process (Server.Self) measured nothing
-// outside the store: the dashboard, the bus and a friend's agent say so, and
-// are not DOWN for it.
+// outside the store: the dashboard, the bus, the dev merge queue, machine
+// versions and a friend's agent say so, and are not DOWN for it.
 func TestServedCheckSaysNotMeasured(t *testing.T) {
 	t.Parallel()
 	m := up()
@@ -144,7 +146,85 @@ func TestServedCheckSaysNotMeasured(t *testing.T) {
 	assert.Contains(t, lines(r), "MACHINERY friends DOWN friend=friend-a beat_age=never label=com.nova.loop.friend-beat-friend-a agent="+note+" remedy=")
 	assert.Contains(t, lines(r), "MACHINERY dashboard OK addr=127.0.0.1:7390 note="+note+"\n")
 	assert.Contains(t, lines(r), "MACHINERY bus OK redis=127.0.0.1:6381 note="+note+"\n")
+	assert.Contains(t, lines(r), "MACHINERY queue OK note="+note+"\n")
+	assert.Contains(t, lines(r), "MACHINERY versions OK note="+note+"\n")
 	assert.Equal(t, 2, r.Down, lines(r))
 	m.Bus = BusM{}
 	assert.Contains(t, lines(Judge(m, t0)), `MACHINERY bus OK redis=none note="not configured: NOVA_BUS_REDIS is not set"`+"\n")
+}
+
+// The seat check judges the dev merge queue and each machine's installed
+// version. Each case is measures handed to Judge, never a socket or a clock.
+func TestTheSeatCheckJudgesTheMergeQueueAndEachMachinesInstalledVersion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("queue healthy", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Queue = QueueM{Entries: []string{"5281", "5282"}}
+		m.Versions = VersionsM{Dev: "v2.0.0", Machines: []MachineVersionM{{Machine: "m1", Version: "v2.0.0"}}}
+		r := Judge(m, t0)
+		assert.Equal(t, 0, r.Down)
+		assert.Contains(t, lines(r), "MACHINERY queue OK entries=5281,5282\n")
+		assert.Equal(t, "MACHINERY OK n=11", r.Summary())
+	})
+
+	t.Run("queue empty with open green PRs", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Queue = QueueM{Green: 2}
+		r := Judge(m, t0)
+		assert.Equal(t, 1, r.Down)
+		assert.Contains(t, lines(r), `MACHINERY queue DOWN entries=0 green=2 why="empty queue with open green PRs" remedy="gh pr list"`+"\n")
+		assert.Equal(t, "MACHINERY DOWN n=1 of=11", r.Summary())
+	})
+
+	t.Run("a PR thrown out", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Queue = QueueM{Entries: []string{"5281"}, ThrownOut: []string{"5280"}}
+		r := Judge(m, t0)
+		assert.Equal(t, 1, r.Down)
+		assert.Contains(t, lines(r), `MACHINERY queue DOWN entries=5281 thrown=5280 why="pull request 5280 thrown out" remedy="gh pr view 5280"`+"\n")
+		assert.Equal(t, "MACHINERY DOWN n=1 of=11", r.Summary())
+	})
+
+	t.Run("a stale machine", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Versions = VersionsM{Dev: "v2.0.0", Machines: []MachineVersionM{
+			{Machine: "m1", Version: "v1.0.0"},
+			{Machine: "m2", Version: "v2.0.0"},
+		}}
+		r := Judge(m, t0)
+		assert.Equal(t, 1, r.Down)
+		assert.Contains(t, lines(r), `MACHINERY versions DOWN machine=m1 version=v1.0.0 dev=v2.0.0 remedy="nova-update apply m1"`+"\n")
+		assert.Equal(t, "MACHINERY DOWN n=1 of=11", r.Summary())
+	})
+
+	t.Run("two stale machines", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Versions = VersionsM{Dev: "v2.0.0", Machines: []MachineVersionM{
+			{Machine: "m1", Version: "v1.0.0"},
+			{Machine: "m2", Version: "v1.5.0"},
+		}}
+		r := Judge(m, t0)
+		assert.Equal(t, 1, r.Down)
+		assert.Contains(t, lines(r), `MACHINERY versions DOWN stale=m1:v1.0.0,m2:v1.5.0 dev=v2.0.0 remedy="nova-update apply m1; nova-update apply m2"`+"\n")
+		assert.Equal(t, "MACHINERY DOWN n=1 of=11", r.Summary())
+	})
+
+	t.Run("all fresh", func(t *testing.T) {
+		t.Parallel()
+		m := up()
+		m.Versions = VersionsM{Dev: "v2.0.0", Machines: []MachineVersionM{
+			{Machine: "m1", Version: "v2.0.0"},
+			{Machine: "m2", Version: "v2.0.0"},
+		}}
+		r := Judge(m, t0)
+		assert.Equal(t, 0, r.Down)
+		assert.Contains(t, lines(r), "MACHINERY versions OK dev=v2.0.0 fresh=2\n")
+		assert.Equal(t, "MACHINERY OK n=11", r.Summary())
+	})
 }

@@ -94,7 +94,7 @@ func TestTheSeatIsTheHoldersOrTheOwnersToGive(t *testing.T) {
 
 	out := ta.ok("coordinator rowan --reason 'glenn moves the seat' --actor glenn --dry-run")
 	assert.True(t, strings.HasPrefix(out, "MACHINERY server OK "), "the seat check comes first, dry run or not:\n%s", out)
-	assert.True(t, strings.HasSuffix(out, "MACHINERY OK n=9\nCOORDINATOR DRY-RUN holder=rowan from=coordinator by=glenn given; nothing was changed\n"), out)
+	assert.True(t, strings.HasSuffix(out, "MACHINERY OK n=11\nCOORDINATOR DRY-RUN holder=rowan from=coordinator by=glenn given; nothing was changed\n"), out)
 	assert.Equal(t, "coordinator", ta.holder(), "--dry-run moved the seat")
 	out = ta.ok("coordinator rowan --reason 'glenn moves the seat' --actor glenn")
 	assert.Contains(t, out, "COORDINATOR OK holder=rowan from=coordinator by=glenn given\n", out)
