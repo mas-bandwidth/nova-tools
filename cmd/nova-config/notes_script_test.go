@@ -9,40 +9,76 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
-// The seed of 2026-10-02 (tools/notes-2026-10-02.sh): the reasons the first
+// The seed of 2026-10-02 (tools/notes20261002): the reasons the first
 // real sprint disabled eight routes, and why one machine is held, written as
-// notes through nova-config. The script runs with a stand-in nova-config that
+// notes through nova-config. The program runs with a Go stand-in nova-config that
 // records each call and answers `route show` from a state file; the calls it
 // recorded are then replayed through the real grammar and the in-process store,
 // so every flag the script passes is the tool's own and every refusal the
 // tool's.
 
-const standIn = `#!/bin/sh
-printf '%s\037' "$@" >> calls.log
-printf '\n' >> calls.log
-if [ "$1 $2" = "route show" ]; then
-	state=$(grep "^$3 " state.txt | cut -d' ' -f2)
-	case "$state" in
-	disabled) echo "ROUTE name=$3 enabled=false note=-" ;;
-	enabled) echo "ROUTE name=$3 enabled=true note=-" ;;
-	*) echo "nova-config route show REFUSED: route $3 not found" >&2; exit 1 ;;
-	esac
-fi
+const standIn = `package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	f, _ := os.OpenFile("calls.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+	fmt.Fprintf(f, "%s\n", strings.Join(os.Args[1:], "\x1f")+"\x1f")
+	f.Close()
+	a := os.Args[1:]
+	if len(a) < 3 || a[0] != "route" || a[1] != "show" {
+		return
+	}
+	state, _ := os.ReadFile("state.txt")
+	for _, line := range bytes.Split(state, []byte("\n")) {
+		name, st, _ := strings.Cut(string(line), " ")
+		if name != a[2] {
+			continue
+		}
+		fmt.Printf("ROUTE name=%s enabled=%t note=-\n", a[2], st == "enabled")
+		return
+	}
+	fmt.Fprintf(os.Stderr, "nova-config route show REFUSED: route %s not found\n", a[2])
+	os.Exit(1)
+}
 `
 
-// runSeed runs the script in dir as the stand-in and returns its output, its
-// exit code and the calls it made, each as its arguments.
+// goBuild builds the Go package or file at target into out, from the repository root.
+func goBuild(t *testing.T, out, target string) {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	cmd := exec.Command("go", "build", "-o", out, target)
+	cmd.Dir = root
+	cmd.Env = goenv.Clean(os.Environ())
+	if b, err := cmd.CombinedOutput(); err != nil {
+		require.NoError(t, err, string(b))
+	}
+}
+
+// runSeed runs the program in dir against the stand-in and returns its output,
+// its exit code and the calls it made, each as its arguments.
 func runSeed(t *testing.T, dir string, args ...string) (string, int, [][]string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-config"), []byte(standIn), 0o755))
+	src := filepath.Join(t.TempDir(), "standin.go")
+	require.NoError(t, os.WriteFile(src, []byte(standIn), 0o644))
+	standInBin := filepath.Join(dir, "nova-config")
+	goBuild(t, standInBin, src)
+	notes := filepath.Join(dir, "notes20261002")
+	goBuild(t, notes, "./tools/notes20261002")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "calls.log"), nil, 0o644))
-	script, err := filepath.Abs(filepath.Join("..", "..", "tools", "notes-2026-10-02.sh"))
-	require.NoError(t, err)
-	cmd := exec.Command("/bin/bash", append([]string{script}, args...)...)
+	cmd := exec.Command(notes, args...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "NOVA_CONFIG=" + filepath.Join(dir, "nova-config"), "NOTES_CONN=--pg " + dsn, "NOTES_AS=a1"}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "NOVA_CONFIG=" + standInBin, "NOTES_CONN=--pg " + dsn, "NOTES_AS=a1"}
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
