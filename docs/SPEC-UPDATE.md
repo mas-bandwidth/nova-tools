@@ -134,7 +134,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
    and reads `[0].name` **through the fixed version read**, so a tag `v0.11.0` against an installed
    `0.11.0` is EQUAL, never a false STALE — two bounded GETs at most — and an empty `[]` is
    UNKNOWN, reason `no release and no tag`. Otherwise no second request, no redirect beyond
-   three hops, no pagination; the body is capped at 256 KB, one reaching the cap being
+   three hops, no redirect to another host or to http (those are UNKNOWN), no pagination; the body is capped at 256 KB, one reaching the cap being
    UNKNOWN, not parsed from a prefix; `npm:` asks `/latest`, never the packument. Every
    line carries `source=`: the scheme and locator asked, and the endpoint that answered
    when the tags read did. **No credentials**: a source needing a token is a new spec.

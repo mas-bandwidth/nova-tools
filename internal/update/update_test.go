@@ -637,3 +637,32 @@ func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
 		require.Failf(t, "", "unexpected not_found in output: out=%s errs=%s", out, errs)
 	}
 }
+
+func TestDefaultClientRefusesARedirectToAnotherSchemeOrHost(t *testing.T) {
+	t.Parallel()
+
+	client := defaultClient()
+	baseURL := "https://api.github.com/x"
+	req, _ := http.NewRequest("GET", baseURL, nil)
+	via := []*http.Request{req}
+
+	t.Run("rejects redirect to http scheme", func(t *testing.T) {
+		redirectReq, _ := http.NewRequest("GET", "http://api.github.com/y", nil)
+		err := client.CheckRedirect(redirectReq, via)
+		require.Error(t, err, "want error for redirect to http")
+		require.Contains(t, err.Error(), "redirect")
+	})
+
+	t.Run("rejects redirect to different host", func(t *testing.T) {
+		redirectReq, _ := http.NewRequest("GET", "https://evil.example/y", nil)
+		err := client.CheckRedirect(redirectReq, via)
+		require.Error(t, err, "want error for redirect to different host")
+		require.Contains(t, err.Error(), "redirect")
+	})
+
+	t.Run("allows redirect to same host", func(t *testing.T) {
+		redirectReq, _ := http.NewRequest("GET", "https://api.github.com/y", nil)
+		err := client.CheckRedirect(redirectReq, via)
+		require.NoError(t, err, "want nil for redirect to same host")
+	})
+}
