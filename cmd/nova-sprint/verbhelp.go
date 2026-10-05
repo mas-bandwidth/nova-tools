@@ -59,6 +59,7 @@ var verbEffect = map[string]string{
 	"view worker":      "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
 	"seat":             "inspection: reads the seat (holder, epoch, generation), writes nothing",
 	"rules":            "inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing",
+	"backup":           "local write: writes the store to a verified file in --dir (checksummed, restored into a twin and compared, scanned for secrets; a file that fails is removed) and prunes the older ones to --keep",
 	"relink":           "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
 	"friend take":      "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
 	"friend level":     "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",
