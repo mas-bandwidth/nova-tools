@@ -610,6 +610,10 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
+	// Reject binaries on removable volumes (they can be unmounted, leaving launchd with a broken path).
+	if strings.HasPrefix(a.Binary, "/Volumes/") && !dry {
+		return tool.Refuse("binary on removable volume; move it into your home directory and retry")
+	}
 	if dry {
 		return tool.Done().Fact("label", a.Label()).Fact("plist", a.PlistPath()).Fact("launchd_log", a.LaunchdLog).
 			Item("plan", "command", tool.Text("write "+a.PlistPath())).

@@ -331,6 +331,17 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK")
 }
 
+func TestInstallRefusesABinaryOnARemovableVolume(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	w.binary = func() (string, error) { return "/Volumes/nova/bin/nova-friend", nil }
+	cli := testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		return run(args, stdin, stdout, stderr, w)
+	})
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(2).Err("INSTALL REFUSED", "binary on removable volume")
+}
+
 // run over the fake store, a stub harness and a cancelled context: the
 // daemon's own tests are internal/friend's; here, that the verb wires it.
 func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
