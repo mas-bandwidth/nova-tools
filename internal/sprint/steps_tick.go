@@ -277,8 +277,8 @@ var TickEnd = []TickPartDef{
 }
 
 // TickEndWith is the tick's end with the machine's own answers (run's defaults): with
-// rules (TickReq.AnswerRules, run --answer-rules), the rule parts (TickRules) after the
-// deadlines, so a judgment the end raises is answered in its own tick, and before the
+// rules (TickReq.AnswerRules, run --answer-rules), the rule parts (TickRules, with the widen
+// rule's part, PartRuleWiden, after the rule resume) after the deadlines, so a judgment the end raises is answered in its own tick, and before the
 // overdue part, each a step that may write any table, as a coordinator's verb does, its
 // work-table changes queued for the next pump; with idle (TickReq.IdleAlarm, run
 // --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part.
@@ -286,7 +286,15 @@ var TickEnd = []TickPartDef{
 func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {
-		out = append(out, TickRules...)
+		// the widen rule (widen.go) after the conflict rule's return and resume and before
+		// the rule rework: a card held only for adjacent files outside its PATHS is twinned
+		// wider, never reworked as well
+		for _, p := range TickRules {
+			out = append(out, p)
+			if p.Name == PartRuleResume {
+				out = append(out, TickPartDef{PartRuleWiden, TickRuleWiden})
+			}
+		}
 	}
 	out = append(out, TickEnd[2])
 	if idle {

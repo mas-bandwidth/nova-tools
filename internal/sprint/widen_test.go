@@ -132,3 +132,46 @@ func TestACardHeldOnlyForAdjacentPathsIsTwinnedWider(t *testing.T) {
 		r.clean("left")
 	})
 }
+
+// The rule's reading of a finding: the files it names, held for its PATHS or not, adjacent
+// or not, and the brief it widens.
+func TestTheWidenRuleReadsTheFilesAFindingNames(t *testing.T) {
+	t.Parallel()
+	e12 := "the head h1 of s1-2 fails the lander's checks: it changes files outside its PATHS (E12): internal/y/y_test.go, docs/SPEC-X.md"
+	assert.True(t, sprint.HeldForPaths(e12))
+	assert.Equal(t, []string{"internal/y/y_test.go", "docs/SPEC-X.md"}, sprint.WidenFiles(e12))
+	assert.True(t, sprint.HeldForPaths("PATHS-PROPOSED: internal/x/*_test.go"))
+	assert.False(t, sprint.HeldForPaths("verdict not-done; the tests fail at internal/x/a_test.go:12"))
+	assert.Equal(t, []string{"internal/x/a.go", "internal/x/*_test.go"},
+		sprint.WidenFiles("Branch: sprint/c.w1.g3.e15 `internal/x/a.go:12:3` /Volumes/n/x/b.go ~/w/c.go ../x/d.go ./internal/x/ https://github.com/o/r/e.go mas-bandwidth/nova-tools PATHS-PROPOSED: internal/x/*_test.go."))
+
+	paths := []string{"internal/x/a.go", "internal/z/"}
+	for _, tc := range []struct {
+		file string
+		hold bool
+		adj  bool
+	}{
+		{"internal/x/a_test.go", false, true},
+		{"internal/z/z_test.go", false, true},
+		{"internal/x/testdata/golden.txt", false, true},
+		{"internal/ci/testdata/deleted-tests.txt", false, true},
+		{"docs/SPEC-SPRINT.md", false, true},
+		{"internal/x/b.go", true, true},
+		{"internal/x/b.go", false, false},
+		{"internal/other/b.go", true, false},
+		{"internal/other/b_test.go", true, false},
+	} {
+		adj, why := sprint.WidenAdjacent(tc.file, paths, tc.hold)
+		assert.Equal(t, tc.adj, adj, "%s hold=%v: %s", tc.file, tc.hold, why)
+	}
+
+	carry := sprint.WidenCarry("w-1", 2, widenHead)
+	got := sprint.WidenBrief("c: x (w)\nREPO: o/r\nPATHS: internal/x/a.go\n\nThe task.\n", []string{"internal/x/a_test.go"}, carry)
+	assert.Equal(t, "c: x (w)\n"+carry+"\nREPO: o/r\nPATHS: internal/x/a.go,internal/x/a_test.go\nSHARED: internal/x/a_test.go\n\nThe task.\n", got, "a SHARED line added after PATHS")
+	again := sprint.WidenBrief(got, []string{"internal/x/a_test.go", "docs/X.md"}, sprint.WidenCarry("w-1b", 1, widenHead))
+	assert.Equal(t, 1, strings.Count(again, "CARRY:"), "the CARRY line replaced")
+	assert.Contains(t, again, "PATHS: internal/x/a.go,internal/x/a_test.go,docs/X.md\nSHARED: internal/x/a_test.go,docs/X.md\n")
+	c, ok := member.CarryOf(again)
+	require.True(t, ok)
+	assert.Equal(t, "w-1b", c.Card)
+}
