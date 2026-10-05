@@ -3,30 +3,35 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are send, peek, recv, ack, log and names; the dispatch, the banner, the
-// help, the version verb, the refusals and the output envelope are
+// are wait, send, peek, recv, ack, log and names; the dispatch, the banner,
+// the help, the version verb, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/bus's.
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -56,9 +61,10 @@ const ExecBudget = bus.ClaimAfter
 const ForeverBlock = 30 * time.Second
 
 // world is what the tool reaches outside itself: the environment, the store
-// it opens for an address, the command --exec runs, and the signals a loop
-// stops on. main passes the real one; a test passes its own over
-// internal/bus's Fake, so no test opens a socket.
+// it opens for an address, the command --exec runs, the signals a loop
+// stops on, the clock a wait reads and the wake file it watches. main passes
+// the real one; a test passes its own over internal/bus's Fake, so no test
+// opens a socket or waits real time.
 type world struct {
 	getenv func(string) string
 	// open dials the store and says which user it logged in as ("" when the
@@ -70,10 +76,19 @@ type world struct {
 	// fleetBus reads the applied fleet row's bus address from the sprint store
 	// at addr ("" when the row has none).
 	fleetBus func(ctx context.Context, addr string) (string, error)
+	// now is the clock a wait reads: the real one, or a test's.
+	now func() time.Time
+	// fileSize is a wake file's end when a wait arms (0 when the file is not
+	// there): the offset a later line must lie past.
+	fileSize func(path string) (int64, error)
+	// fileLine reads a wake file from an offset, answering its first line
+	// past it and the offset past everything read ("" when nothing new).
+	fileLine func(path string, from int64) (line string, end int64, err error)
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, run: runShell,
+	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
+		fileSize: realFileSize, fileLine: realFileLine,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -161,9 +176,50 @@ recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, 
 ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
-		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
-		Words:     []string{"NONE"},
+		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
+		Words:     []string{"NONE", "WAKE", "ARMED"},
 		Verbs: []tool.Verb{
+			{
+				Name:    "wait",
+				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>]",
+				Example: "wait --as bob --timeout 1s",
+				Effect:  tool.Inspection,
+				ExitTable: "0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; " +
+					"2 could not run (a flag, an input, a store that did not answer).",
+				Detail: `Prints WAIT ARMED after=<id> first: the cursor the wait starts past, --after <id> when given (a stream
+entry id, <ms>-<seq>), else the stream's last id read once at start, 0-0 when the stream is empty.
+Re-arm the next run with the id WAIT OK or WAIT NONE printed, and nothing between two runs is missed.
+The wait takes nothing: it reads your stream past the cursor with XREAD, never the consumer group,
+so a later recv still delivers and acks what it saw. It ends on the first entries past the cursor
+that are not from you and whose subject starts with none of --skip-subject's prefixes (matched
+without case; default PING,PONG): one WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n> line
+each, at most 5, then WAIT OK after=<last id seen> at exit 0. Skipped entries move the cursor and
+are not printed. --wake-file <path> also ends the wait when a line is appended to the file after the
+start (a harness's deliver adapter appends one per message): WAIT WAKE file=<path> line=<first line>
+at exit 0. Past --timeout <duration> (a Go duration; 0, the default, is for ever) it is WAIT NONE
+after=<cursor> waited=<duration> on standard error at exit 1. --json prints one object when the
+wait ends: {"status":"ok","word":"OK|NONE|WAKE","after":<id>,"messages":[{"id":<id>,"from":<name>,
+"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>}} (messages is empty and wake left
+out when they hold nothing; the ARMED line is the text form's). Exit 2 when a flag is wrong, the
+name is not on the roster, or the store does not answer.`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("after", "", "the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it")
+					f.Duration("timeout", 0, "how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever")
+					f.String("skip-subject", "PING,PONG", "subjects starting with one of these prefixes, comma-separated, are skipped; matched without case")
+					f.String("wake-file", "", "a file whose lines, appended after the start, also end the wait (one line per message)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus)")
+					f.Check(func(c *tool.Call) {
+						if v := c.Str("after"); v != "" && !streamID(v) {
+							c.Problem(fmt.Sprintf("--after wants a stream entry id, <ms>-<seq> as WAIT ARMED and WAIT OK print it; %q is not one", v))
+						}
+						if c.Dur("timeout") < 0 {
+							c.Problem("--timeout wants a duration of at least 0, 0 for ever (a negative wait is no wait)")
+						}
+					})
+				},
+				Run: w.wait,
+			},
 			{
 				Name:    "send",
 				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--redis <addr>] [--dry-run]",
@@ -693,4 +749,228 @@ func (w world) address(ctx context.Context, c *tool.Call) (string, *tool.Out) {
 		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row is empty; set it once: nova-config fleet set --bus <host:port> --as <you>, then nova-config apply")
 	}
 	return addr, nil
+}
+
+// The wait verb: the wake a harness runs beside a session, made general for
+// any AI on the bus (docs/SPEC-BUS.md, the verbs: wait). A wait takes
+// nothing: it reads the recipient's stream past a cursor with XREAD, never
+// the consumer group, so a later recv still delivers and acks what the wait
+// saw, and its cursor is the only state, the caller's to hold between runs.
+// The decision over one batch is bus.WaitPick, a pure function; the blocking
+// read is the store's; the clock and the wake file are the world's, so no
+// test opens a socket or waits real time.
+
+// WaitTick is how long one blocking read of a wait with a --wake-file is: the
+// file is looked at once a tick, so a line appended to it is returned within
+// one. A wait with neither a wake file nor a timeout parks on one read that
+// never runs out (docs/SPEC-BUS.md, the verbs: wait).
+const WaitTick = time.Second
+
+// wakeLineMax bounds one read of a wake file: a harness appends one line a
+// message, and one line a reader can use is far under this.
+const wakeLineMax = 64 << 10
+
+// waitMessage is one message of a wait's JSON, the fields the help names.
+type waitMessage struct {
+	ID      string `json:"id"`
+	From    string `json:"from"`
+	Subject string `json:"subject"`
+	Bytes   int    `json:"bytes"`
+}
+
+// waitWake is the wake of a wait's JSON.
+type waitWake struct {
+	File string `json:"file"`
+	Line string `json:"line"`
+}
+
+// waitJSON is the --json rendering of one wait: one object, printed when the
+// wait ends (the ARMED line is the text form's). The subject and the wake
+// line are oneline-escaped, so nothing they hold can reorder the line a
+// reader reads.
+type waitJSON struct {
+	Status   string        `json:"status"`
+	Word     string        `json:"word"`
+	After    string        `json:"after"`
+	Messages []waitMessage `json:"messages"`
+	Wake     *waitWake     `json:"wake,omitempty"`
+}
+
+// realFileSize is a wake file's end when the wait arms: 0 when the file is
+// not there yet, so its first line, whenever it appears, is past the start.
+func realFileSize(path string) (int64, error) {
+	st, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return st.Size(), nil
+}
+
+// realFileLine reads a wake file from an offset, answering its first line
+// past the offset and the offset just past that line's newline: "" and the
+// same offset when no newline is there yet (a fragment is not a line). A
+// file that is not there is no wake yet, never an error.
+func realFileLine(path string, from int64) (string, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", from, nil
+		}
+		return "", 0, err
+	}
+	defer f.Close() // ignored: read-only, nothing to flush
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return "", 0, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, wakeLineMax))
+	if err != nil {
+		return "", 0, err
+	}
+	if i := bytes.IndexByte(raw, '\n'); i >= 0 {
+		return string(raw[:i]), from + int64(i) + 1, nil
+	}
+	return "", from, nil
+}
+
+// streamID is whether s is a stream entry id (<ms>-<seq>, both numbers): the
+// cursor a wait re-arms with, as WAIT ARMED and WAIT OK print it.
+func streamID(s string) bool {
+	ms, seq, ok := strings.Cut(s, "-")
+	if !ok {
+		return false
+	}
+	_, errMS := strconv.ParseUint(ms, 10, 64)
+	_, errSeq := strconv.ParseUint(seq, 10, 64)
+	return errMS == nil && errSeq == nil
+}
+
+// waitSkips is --skip-subject: the prefixes a subject starting with none of
+// counts, lower-case, empty words dropped; the flag's default is PING,PONG
+// (docs/SPEC-BUS.md, the verbs: wait).
+func waitSkips(csv string) []string {
+	var out []string
+	for _, p := range names(csv) {
+		out = append(out, strings.ToLower(p))
+	}
+	return out
+}
+
+// waitLine prints one wait line on stdout: the verb prints as it goes (the
+// ARMED line first, so a caller that re-arms with that id misses nothing
+// between two runs), as recv --forever prints each message.
+func waitLine(c *tool.Call, o *tool.Out) {
+	o.Verb = "wait"
+	o.Render(c.Stdout, false)
+}
+
+// waitObject prints the wait's one JSON object and stands for its exit.
+func waitObject(c *tool.Call, v waitJSON, exit int) *tool.Out {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return tool.Refuse("the wait's result is no JSON: " + err.Error())
+	}
+	fmt.Fprintf(c.Stdout, "%s", b.String())
+	return tool.Exit(exit)
+}
+
+// wait is the verb: it arms, prints WAIT ARMED, and returns on the first
+// entries past the cursor that count, on a wake line, or at the timeout
+// (docs/SPEC-BUS.md, the verbs: wait).
+func (w world) wait(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	ctx := context.Background()
+	cursor, err := b.WaitArm(ctx, as, c.Str("after"))
+	if err != nil {
+		return answer(err)
+	}
+	jsonOut := c.Bool("json")
+	if !jsonOut {
+		waitLine(c, tool.Done().As("ARMED").Fact("after", cursor))
+	}
+	wakePath := c.Str("wake-file")
+	var offset int64
+	if wakePath != "" {
+		size, err := w.fileSize(wakePath)
+		if err != nil {
+			return tool.Refuse("the wake file cannot be read: " + err.Error())
+		}
+		offset = size
+	}
+	skips := waitSkips(c.Str("skip-subject"))
+	start := w.now()
+	timeout := c.Dur("timeout")
+	for {
+		if wakePath != "" {
+			text, end, err := w.fileLine(wakePath, offset)
+			if err != nil {
+				return tool.Refuse("the wake file cannot be read: " + err.Error())
+			}
+			offset = end
+			if text != "" {
+				if jsonOut {
+					return waitObject(c, waitJSON{Status: "ok", Word: "WAKE", After: cursor,
+						Messages: []waitMessage{}, Wake: &waitWake{File: wakePath, Line: oneline.Escape(text)}}, 0)
+				}
+				waitLine(c, tool.Done().As("WAKE").Fact("file", wakePath).Fact("line", tool.Text(text)))
+				return tool.Exit(0)
+			}
+		}
+		block := time.Duration(0) // park for ever: nothing else is watched
+		if wakePath != "" {
+			block = WaitTick // the file is looked at once a tick
+		}
+		if timeout > 0 {
+			left := timeout - w.now().Sub(start)
+			if left <= 0 {
+				if jsonOut {
+					return waitObject(c, waitJSON{Status: "ok", Word: "NONE", After: cursor, Messages: []waitMessage{}}, 1)
+				}
+				o := tool.Fail().As("NONE").Fact("after", cursor).Fact("waited", timeout.String())
+				o.Verb = "wait"
+				o.Render(c.Stderr, false)
+				return tool.Exit(1)
+			}
+			if block == 0 || left < block {
+				block = left
+			}
+		}
+		got, err := b.Store.BlockRead(ctx, bus.StreamOf(as), cursor, block, bus.WaitRead)
+		if err != nil {
+			return answer(err)
+		}
+		kept, after := bus.WaitPick(got, as, skips)
+		if after != "" {
+			cursor = after
+		}
+		if len(kept) == 0 {
+			continue // a skipped entry moved the cursor; the wait goes on
+		}
+		if jsonOut {
+			msgs := make([]waitMessage, 0, len(kept))
+			for _, e := range kept {
+				m := e.Message()
+				msgs = append(msgs, waitMessage{ID: m.ID, From: m.From, Subject: oneline.Escape(m.Subject), Bytes: len(m.Body)})
+			}
+			return waitObject(c, waitJSON{Status: "ok", Word: "OK", After: cursor, Messages: msgs}, 0)
+		}
+		for _, e := range kept {
+			m := e.Message()
+			waitLine(c, tool.Done().As("MESSAGE").Fact("id", m.ID).Fact("from", m.From).Fact("subject", m.Subject).Fact("bytes", len(m.Body)))
+		}
+		waitLine(c, tool.Done().Fact("after", cursor))
+		return tool.Exit(0)
+	}
 }

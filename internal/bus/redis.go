@@ -149,6 +149,51 @@ func (r Redis) Get(ctx context.Context, stream string, ids []string) ([]Entry, e
 	return out, nil
 }
 
+// Tail is the stream's last entry id (XINFO STREAM's last-generated-id);
+// a stream that is not there answers so, and the caller arms at "0-0"
+// (SPEC-BUS.md, the verbs: wait).
+func (r Redis) Tail(ctx context.Context, stream string) (string, bool, error) {
+	info, err := r.C.XInfoStream(ctx, stream).Result()
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "ERR no such key") {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return info.LastGeneratedID, true, nil
+}
+
+// blockArg is the BLOCK a wait's read sends: 0 is for ever (the store holds
+// the read until an entry is there), a positive duration is that long, and
+// -1 is never sent -- that is recv's "do not block", not the wait's
+// (SPEC-BUS.md, the verbs: wait).
+func blockArg(block time.Duration) time.Duration {
+	if block > 0 {
+		return block
+	}
+	return 0
+}
+
+// BlockRead is XREAD past the id after, waiting up to block (0 is for ever:
+// one read the store holds until an entry is there), never the consumer
+// group, so a later recv still delivers and acks what it handed out
+// (SPEC-BUS.md, the verbs: wait).
+func (r Redis) BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]Entry, error) {
+	args := &redis.XReadArgs{Streams: []string{stream, after}, Count: int64(count), Block: blockArg(block)}
+	res, err := r.C.XRead(ctx, args).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil // the block ran out with nothing: not an error
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []Entry
+	for _, s := range res {
+		out = append(out, entries(s.Stream, s.Messages)...)
+	}
+	return out, nil
+}
+
 func toValues(fields map[string]string) map[string]any {
 	v := make(map[string]any, len(fields))
 	for k, s := range fields {
