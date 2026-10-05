@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -79,4 +80,31 @@ func TestFleetBeatMeasuresOpenFilesBesideTheLoad(t *testing.T) {
 	ta.a.meter.OpenFiles = nil
 	out = ta.ok("fleet beat m1")
 	require.NotContains(t, out, "fds=", "no reading, no word")
+}
+
+// A served beat must never attach the server's descriptors to a remote member
+// (docs/SPEC-SPRINT.md section 5, fleet).
+func TestServedBeatDoesNotMeasureTheServersFiles(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+	r.a.meter.OpenFiles = func() (int, int, error) { return 1000, 491520, nil }
+	r.a.meter.Holders = nil
+	r.boss("fleet beat m1 --load 5") // seed a reading that the served beat must clear
+	st, err := r.a.store(common{redis: r.a.serveAddr, actor: "m1"})
+	require.NoError(t, err)
+	beats, err := st.Beats(context.Background(), []string{"m1"})
+	require.NoError(t, err)
+	require.NotNil(t, beats["m1"].Meter.Files)
+	require.Equal(t, 1000, beats["m1"].Meter.Files.Open)
+	r.a.meter.OpenFiles = func() (int, int, error) { return 200000, 491520, nil }
+	r.a.meter.Holders = func() ([]hostload.Holder, error) {
+		t.Error("the server must not read its holders for a member")
+		return nil, nil
+	}
+	res := r.one("fleet", "beat", "m1", "--load", "5")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	require.NotContains(t, res.Stdout, "fds=", "no caller reading was sent")
+	beats, err = st.Beats(context.Background(), []string{"m1"})
+	require.NoError(t, err)
+	require.Nil(t, beats["m1"].Meter.Files, "the stored beat clears the previous server reading")
 }

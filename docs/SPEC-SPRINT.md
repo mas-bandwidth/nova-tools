@@ -1988,9 +1988,9 @@ and it is the coordinator's decision, receipted.
   (darwin: the sysctl `kern.num_files` and `kern.maxfiles`; Linux:
   `/proc/sys/fs/file-nr`), against the member's warn and alarm bounds:
   `--fd-warn <n>` and `--fd-alarm <n>`, else the environment's `NOVA_FD_WARN` and
-  `NOVA_FD_ALARM` (so a member's own beats, which give their load, take them from
-  its environment), else 50000 and 150000, the bounds of the workshop tool this
-  replaces; an alarm under the warn is refused. Over the warn bound the beat lists
+  `NOVA_FD_ALARM` for a local beat, else 50000 and 150000, the bounds of the
+  workshop tool this replaces; an alarm under the warn is refused. Over the warn
+  bound the beat lists
   the top ten holders, most first (darwin: `lsof -n -P -F pcLf`; Linux:
   `/proc/<pid>/fd`), a walk of every process the beat's user can see, read at most
   once every 30 s (`HoldersEvery`) and bounded by 10 s (`HoldersTimeout`), a read
@@ -1998,8 +1998,10 @@ and it is the coordinator's decision, receipted.
   the beat record's measuring state (`meter.files`); the beat line adds `fds=<n>
   fds-max=<limit> fds-level=ok|warn|alarm` and, over the warn bound, one line per
   holder, and `--json` carries it whole. A machine that cannot count them says
-  nothing of them. The member's files word (`sprint.FilesText`) is the count and
-  warn or alarm while a fresh reading is over its warn bound, else empty.
+  nothing of them. A served beat carries no files reading until the member
+  sends its own: the server cannot measure another machine. The member's files
+  word (`sprint.FilesText`) is the count and warn or alarm while a fresh reading
+  is over its warn bound, else empty.
 - A member's status is derived, never typed: up until it has missed three beat
   windows of 15 s in a row (`MissedBeatsDown`, `BeatDeadline`; one missed beat,
   such as a store round trip that timed out, marks nothing, and a beat resets

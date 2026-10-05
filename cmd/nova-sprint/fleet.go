@@ -175,6 +175,10 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "fleet beat", fmt.Sprintf("--cores wants a count of logical cores of at least 1, found %d", *cores))
 	}
 	src := a.meter
+	if a.serving {
+		// A served beat names a remote member: this process cannot read its files.
+		src.OpenFiles, src.Holders = nil, nil
+	}
 	if *cores > 0 {
 		src.NCPU = *cores
 	}
