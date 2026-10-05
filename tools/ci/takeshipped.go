@@ -76,15 +76,18 @@ func takeShipped(e env, r cmdRunner, args []string) int {
 	in, err := os.Open(src)
 	if err != nil {
 		fmt.Fprintf(e.stdout, "%s is not in the artifact: ls -R %s\n", src, flags["dist"])
-		filepath.WalkDir(flags["dist"], func(p string, d os.DirEntry, err error) error {
-			if err == nil {
-				fmt.Fprintln(e.stdout, p)
+		if err := filepath.WalkDir(flags["dist"], func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
+			fmt.Fprintln(e.stdout, p)
 			return nil
-		})
+		}); err != nil {
+			fmt.Fprintf(e.stderr, "take-shipped: cannot list %s: %v\n", flags["dist"], err)
+		}
 		return 1
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }() // ignored: in is open only for reading and the copy's error is the one reported
 	out := flags["out"]
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		fmt.Fprintf(e.stderr, "take-shipped: %v\n", err)
@@ -96,7 +99,7 @@ func takeShipped(e env, r cmdRunner, args []string) int {
 		return 1
 	}
 	if _, err := io.Copy(dst, in); err != nil {
-		dst.Close()
+		_ = dst.Close() // ignored: the copy error is the one returned, and the close cannot add to it
 		fmt.Fprintf(e.stderr, "take-shipped: %v\n", err)
 		return 1
 	}
@@ -109,7 +112,11 @@ func takeShipped(e env, r cmdRunner, args []string) int {
 		return 1
 	}
 	// The binary's own verdict on "version" is not this verb's: the smoke
-	// assertions decide what it must do.
-	r.Run(cmdSpec{Name: out, Args: []string{"version"}, Stdout: e.stdout, Stderr: e.stderr})
+	// assertions decide what it must do. A runner that cannot start it is
+	// this verb's, and is reported.
+	if _, err := r.Run(cmdSpec{Name: out, Args: []string{"version"}, Stdout: e.stdout, Stderr: e.stderr}); err != nil {
+		fmt.Fprintf(e.stderr, "take-shipped: %v\n", err)
+		return 1
+	}
 	return 0
 }
