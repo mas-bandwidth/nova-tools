@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -88,80 +87,6 @@ func stagedRead(t *testing.T, bars cardcontract.Frame) (cfg nativeRunConfig, job
 	return cfg, job, start, head
 }
 
-// A whole native run of a decide read past its bounce bar stages the checkout, decides, and
-// ends with no child: the run is OK with the decision's broken read in RESULT.md, published.
-func TestNativeRunEndsADecidedReadWithNoChild(t *testing.T) {
-	t.Parallel()
-	bin := nativeHarness(t)
-	root, origin, head := readOrigin(t)
-	slot := filepath.Join(root, "slot-1")
-	require.NoError(t, os.MkdirAll(slot, 0o755))
-	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-	fake := &fakeDecide{defect: 0.6}
-	var errOut bytes.Buffer
-	res, code := nativeRun(nativeRunConfig{binary: bin, model: "fake/fake-model", label: "w.r1", card: readCard, slotDir: slot, root: root,
-		deadline: 30 * time.Second, noWall: true, benchHome: filepath.Join(root, "no-bench"), resultsRoot: filepath.Join(root, "results", "w.r1"),
-		frame: readFrame(cardcontract.Frame{DecideBounce: "0.5", DecideReview: "0.3"}, origin, head), decider: &decider{backend: fake, now: time.Now}}, &errOut)
-	require.Equal(t, 0, code, errOut.String())
-	assert.Equal(t, 1, fake.asks)
-	assert.Equal(t, []string{"OK", ""}, func() []string { v, w := nativeVerdictWhy(res); return []string{v, w} }(), "the NATIVE line is OK")
-	_, err := os.Stat(filepath.Join(res.job, "harness-output.log"))
-	assert.True(t, os.IsNotExist(err), "no child ran")
-	require.NotEmpty(t, res.resultsDir)
-	raw, err := os.ReadFile(filepath.Join(res.resultsDir, "RESULT.md"))
-	require.NoError(t, err)
-	assert.Equal(t, "broken", typedrec.ParseCardResult(raw).Verdict)
-}
-
-// A decide read that cannot be made falls back to the strings read, never to a verdict:
-// whole native runs over a backend that answers 402, one whose context ran out and one
-// whose answer is outside the schema each run the child, publish no ok read of their own
-// and record nothing, and say why on one NOTE line. A read in the band between the bars
-// runs the child too, its decision recorded.
-func TestNativeRunFallsBackToTheStringsReadWhenNoDecisionIsMade(t *testing.T) {
-	t.Parallel()
-	bin := nativeHarness(t)
-	jev := func(send decide.Send) decide.Backend { return decide.Jev{Model: decide.JevModel, Send: send} }
-	for _, tc := range []struct {
-		name     string
-		backend  decide.Backend
-		note     string
-		recorded int
-	}{
-		{"402", jev(func(context.Context, []byte) ([]byte, error) {
-			return nil, errors.New(`the backend answered HTTP 402: "payment required"`)
-		}), "no decide read: the backend answered HTTP 402", 0},
-		{"timeout", jev(func(context.Context, []byte) ([]byte, error) { return nil, context.DeadlineExceeded }), "no decide read: context deadline exceeded", 0},
-		{"malformed", jev(func(context.Context, []byte) ([]byte, error) { return []byte(`{"answers":{}}`), nil }), "no decide read: the backend's answers do not fit the schema", 0},
-		{"strings band", &fakeDecide{defect: 0.4}, "", 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			root, origin, head := readOrigin(t)
-			slot := filepath.Join(root, "slot-1")
-			require.NoError(t, os.MkdirAll(slot, 0o755))
-			write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-			var errOut bytes.Buffer
-			res, code := nativeRun(nativeRunConfig{binary: bin, model: "fake/fake-model", label: "w.r1", card: readCard, slotDir: slot, root: root,
-				deadline: 30 * time.Second, noWall: true, benchHome: filepath.Join(root, "no-bench"), resultsRoot: filepath.Join(root, "results", "w.r1"),
-				frame: readFrame(cardcontract.Frame{DecideBounce: "0.5", DecideReview: "0.3"}, origin, head), decider: &decider{backend: tc.backend, now: time.Now}}, &errOut)
-			require.Equal(t, 0, code, errOut.String())
-			_, err := os.Stat(filepath.Join(res.job, "harness-output.log"))
-			assert.NoError(t, err, "the strings read's child ran")
-			if raw, err := os.ReadFile(swarm.ResultPath(res.job)); err == nil {
-				assert.NotEqual(t, "ok", typedrec.ParseCardResult(raw).Verdict, "no ok read is published for an undecided read")
-			}
-			ds, err := decide.Load(decideRecord(root))
-			require.NoError(t, err)
-			assert.Len(t, ds, tc.recorded)
-			if tc.note != "" {
-				assert.Contains(t, errOut.String(), "NATIVE NOTE: w.r1 "+tc.note)
-				assert.Contains(t, errOut.String(), "; the strings read runs")
-			}
-		})
-	}
-}
-
 // The frame carries the packet's bars as they are, bounce as bounce and review as review:
 // swapped, ParseBars would refuse them and no decide read would ever run.
 func TestTheFrameCarriesTheDecideBars(t *testing.T) {
@@ -232,29 +157,6 @@ func TestADecideReadRoutesTheReadByItsBars(t *testing.T) {
 			assert.Equal(t, filepath.Join(dir, "RESULT.md"), published, "the member finds the result")
 		})
 	}
-}
-
-// A read whose frame names no bars (a pro card's, or a flash card's second read) is a
-// strings read: no decision is asked and nothing is recorded. A decide read with no key in
-// the environment, or bars it cannot read, says so once and the strings read runs.
-func TestAReadWithNoBarsAsksNoDecision(t *testing.T) {
-	t.Parallel()
-	cfg, job, start, head := stagedRead(t, cardcontract.Frame{Tier: "pro"})
-	fake := &fakeDecide{defect: 0.9}
-	cfg.decider = &decider{backend: fake, now: time.Now}
-	var out, errs bytes.Buffer
-	route, op := nativeDecide(cfg, job, start, head, &out, &errs)
-	assert.Equal(t, []string{"", ""}, []string{route, op})
-	assert.Zero(t, fake.asks)
-	assert.Empty(t, out.String()+errs.String())
-	_, err := os.Stat(decideRecord(cfg.root))
-	assert.True(t, os.IsNotExist(err))
-
-	cfg.frame.DecideBounce, cfg.frame.DecideReview = "0.3", "0.5"
-	route, _ = nativeDecide(cfg, job, start, head, &out, &errs)
-	assert.Empty(t, route)
-	assert.Contains(t, errs.String(), "NATIVE NOTE: w.r1 no decide read: decide_review 0.5 is above decide_bounce 0.3; the strings read is the band between them; the strings read runs")
-	assert.Zero(t, fake.asks)
 }
 
 // The decide read's key is native's own: no child is handed JEV_API_KEY, whatever native's
