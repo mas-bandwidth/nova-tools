@@ -22,14 +22,16 @@ const DSHProgram = "/Applications/DeepSeek Harness.app/Contents/Resources/runtim
 // unknown id, a session recorded in another directory, and a missing
 // provider key each exit 1. Without a session named, the newest session of
 // Dir from the store (DSH_HOME, else ~/.dsh). The desktop app the friend
-// sits in shares the store. Measured 2026-10-04 (docs/SPEC-FRIEND.md, the
-// dsh row): a session under an agent preset is refused by the one-shot
+// sits in shares the store. Measured 2026-10-04 and 2026-10-05 (docs/SPEC-FRIEND.md,
+// the dsh row): a session under an agent preset is refused by the one-shot
 // runner whatever the text, exit 1 before any write, its transcript hash
 // unchanged (the runner adopts only a session with no preset, and a session
 // never returns to none): that delivery is Deferred, so the message stays
-// pending instead of being given up after three refusals. No route into a
-// session the desktop app holds open was found, so Route answers defer; what
-// the app does with a turn appended by the runner is not measured.
+// pending instead of being given up after three refusals. On the survey machine,
+// deliver.log records 1339+ deferred deliveries against Zhi's real open session,
+// and the desktop app exposes no local listener or IPC socket. No route into
+// the open desktop session exists, so Route answers defer; the session reads the
+// bus itself with nova-bus wait or nova-bus recv.
 type DSH struct {
 	Dir, Session string
 	Run          Exec
