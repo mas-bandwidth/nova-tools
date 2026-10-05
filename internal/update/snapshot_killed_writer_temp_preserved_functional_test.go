@@ -25,7 +25,6 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	dir := t.TempDir()
 	snapA := filepath.Join(dir, "a.json")
 	snapB := filepath.Join(dir, "b.json")
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	runReport := func(m, snap string) {
 		t.Helper()
 		if out, err := exec.Command(bin, "report", "--file", m, "--snapshot", snap).CombinedOutput(); err != nil {

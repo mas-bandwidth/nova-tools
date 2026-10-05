@@ -21,6 +21,8 @@ import (
 // interrupted writer's bytes and a different writer's temporary. The later
 // reporter is the built CLI, with the ordinary production rename operation.
 func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "s.json")
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
