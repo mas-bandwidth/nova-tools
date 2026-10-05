@@ -177,7 +177,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	_ = st.Close() // ignored: close after read
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -338,7 +338,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	_ = st.Close() // ignored: close after read
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -392,7 +392,7 @@ func beats(ctx context.Context, addr string, names []string, d deps) (map[string
 	if err != nil {
 		return nil, err
 	}
-	defer rs.Close()
+	_ = rs.Close() // ignored: close after read
 	return rs.Beats(ctx, names)
 }
 
@@ -447,7 +447,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	_ = st.Close() // ignored: close after read
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -518,7 +518,7 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	_ = st.Close() // ignored: close after read
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code

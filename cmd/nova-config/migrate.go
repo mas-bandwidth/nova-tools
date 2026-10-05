@@ -55,7 +55,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	_ = st.Close() // ignored: close after read
 	key, value := where(dsn)
 	have, err := st.Version(ctx)
 	if err != nil {
