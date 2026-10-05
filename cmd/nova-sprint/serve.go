@@ -410,6 +410,14 @@ var friendBeatFlags = map[string]func(string) bool{
 		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
 		return err == nil && f >= 0
 	},
+	"--active": rfc3339,
+	"--pong":   rfc3339,
+}
+
+// rfc3339 is the shape of a time.
+func rfc3339(v string) bool {
+	_, err := time.Parse(time.RFC3339, v)
+	return err == nil
 }
 
 // wholeAtLeast is the shape of a count of at least min.
