@@ -201,7 +201,8 @@ after=<cursor> waited=<duration> on standard error at exit 1. --json prints one 
 wait ends: {"status":"ok","word":"OK|NONE|WAKE","after":<id>,"messages":[{"id":<id>,"from":<name>,
 "subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>}} (messages is empty and wake left
 out when they hold nothing; the ARMED line is the text form's). Exit 2 when a flag is wrong, the
-name is not on the roster, or the store does not answer.`,
+name is not on the roster, or the store does not answer.
+example: nova-bus wait --as bob --timeout 1s`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("after", "", "the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it")
