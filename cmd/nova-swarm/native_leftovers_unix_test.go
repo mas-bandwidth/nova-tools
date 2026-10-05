@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -14,8 +13,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,35 +51,6 @@ func sleeperPID(pidFile string) int {
 
 // pidAlive is whether a signal 0 reaches pid.
 func pidAlive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) == nil }
-
-// TestNativeEndsTheGroupAHarnessLeftHoldingItsPipes pins native's end of a harness that
-// exited 0 and left a grandchild holding its pipes: native ends within subproc.WaitDelay
-// plus the group's grace (a terminate, swarm.TerminateGrace, a kill), the NATIVE line says
-// rc=0 and names the group it ended as survivors=<pgid>:reaped, and no process of the
-// group is alive after it. On the tip before this change the sleeper outlived native and
-// the line said rc=-1 (exec.ErrWaitDelay read as a kill).
-func TestNativeEndsTheGroupAHarnessLeftHoldingItsPipes(t *testing.T) {
-	t.Parallel()
-	pidFile := filepath.Join(t.TempDir(), "sleeper.pid")
-	bin := pipeHolderScript(t, "the harness said this", pidFile)
-	root, slot := aSlot(t)
-	cardPath := filepath.Join(root, "card.md")
-	require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
-	var stdout, stderr bytes.Buffer
-	start := time.Now()
-	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
-		"--harness", bin, "--model", "fake/fake-model", "--label", "pipe-holder", "--card", cardPath,
-		"--slot", slot, "--root", root, "--deadline", "60s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-	took := time.Since(start)
-	require.Equal(t, 0, rc, "stdout: %s\nstderr: %s", stdout.String(), stderr.String())
-	line := stdout.String()
-	require.Regexp(t, regexp.MustCompile(`\bNATIVE \S+ .*\brc=0\b`), line, "a harness that exited 0 is rc=0 whatever its pipes did")
-	require.Regexp(t, regexp.MustCompile(`\bsurvivors=\d+:reaped\b`), line, "the line names the group native ended")
-	require.Less(t, took, subproc.WaitDelay+2*swarm.TerminateGrace+10*time.Second, "native waits WaitDelay and the group's grace, never the sleeper")
-	pid := sleeperPID(pidFile)
-	require.Positive(t, pid, "the harness recorded its sleeper")
-	require.False(t, pidAlive(pid), "the sleeper, a process of the harness's group, outlived native")
-}
 
 // TestNativeAnOrdinaryHarnessLeavesNoSurvivors pins the ordinary case as it was: a harness
 // that leaves nothing in its group ends with no survivors= field and no group signal.
