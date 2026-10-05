@@ -2007,7 +2007,13 @@ makes a waiting stream merging; the merge step (when it lands the last queued
 card of a stream not done), return and drop make a merging stream with nothing
 queued or stuck waiting, with `since` then, and a stream landed when every
 primary of it left on the table has landed. A stopped stream stays stopped
-until it resumes. accept closes the open card judgments of the primaries it
+until it resumes, except a stop by a rejected push, a transient refusal: land
+tries that stream again each round, and the landing report of a push that
+succeeds resumes it (merging, waiting or landed as the landing settles it), its
+cause unset and the stop's judgment closed. While the push keeps refusing, the
+stop keeps its one judgment (a second rejected fact is refused), so a person is
+asked once and is not needed when the push succeeds
+(`TestAStreamStoppedByARejectedPushResumesWhenThePushSucceeds`). accept closes the open card judgments of the primaries it
 accepts.
 
 `since` is the clock time the state last changed. The merge step is mechanical
@@ -2266,7 +2272,7 @@ the tick would make, no other open judgment on it).
 | stream stopped: conflict on a card | resume (resolved), rework, drop | no |
 | stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
 | stream stopped: needs a card of another stream first | rank that card first (the tick resumes when it lands), wait, card (look at both), return, drop | no |
-| stream stopped: the merge queue rejected | resume, return, drop | no |
+| stream stopped: the merge queue rejected | resume, return, drop; or wait: land tries again and resumes the stream when the push succeeds | no |
 | stream stopped: the base fails its tree gate (land's base-gate rule, its third failure; section 8, answered by rule) | resume (the base passes again), wait | no |
 | ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
 | a primary came back a second time for the same cause | card (stop and look) | no |

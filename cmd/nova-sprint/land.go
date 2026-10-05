@@ -339,7 +339,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	var order []string
 	for _, name := range s.Streams() {
 		named := slices.Contains(streams, name)
-		if named || len(streams) == 0 && s.StreamCtl(name) != nil && s.StreamCtl(name).F("state") != sprint.StreamStopped && len(landQueue(s, name)) > 0 {
+		if named || len(streams) == 0 && s.StreamCtl(name) != nil && (s.StreamCtl(name).F("state") != sprint.StreamStopped || retriesPush(s.StreamCtl(name))) && len(landQueue(s, name)) > 0 {
 			order = append(order, name)
 		}
 	}
@@ -479,7 +479,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	switch {
 	case ctl == nil:
 		return refused("no such stream; run: nova-sprint where")
-	case ctl.F("state") == sprint.StreamStopped:
+	case ctl.F("state") == sprint.StreamStopped && !retriesPush(ctl):
 		return refused("stopped (" + ctl.F("cause") + "); run: nova-sprint resume --stream " + stream)
 	}
 	queue := landQueue(s, stream)
@@ -514,6 +514,14 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		cards = cards[n:]
 	}
 	return true
+}
+
+// retriesPush says a stopped stream is one the lander tries again: a stop by a
+// rejected push is transient, and the landing report of a push that succeeds
+// resumes the stream (sprint.MergeStep, tla/Land.tla); every other stop waits
+// for the coordinator.
+func retriesPush(ctl *sprint.Card) bool {
+	return ctl.F("state") == sprint.StreamStopped && ctl.F("cause") == "rejected"
 }
 
 // shaRE is a commit id as a head names it: hex, abbreviated or whole.
@@ -885,8 +893,9 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 // gone from the queue, or reworked to another head, still refuses.
 func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 	// a stream stopped since land read it (a red recorded while an earlier stream of the
-	// same run landed) is not pushed: a stopped stream moves only after resume
-	if ctl := s.StreamCtl(stream); ctl != nil && ctl.F("state") == sprint.StreamStopped {
+	// same run landed) is not pushed: a stopped stream moves only after resume, a stop
+	// by a rejected push excepted (retriesPush)
+	if ctl := s.StreamCtl(stream); ctl != nil && ctl.F("state") == sprint.StreamStopped && !retriesPush(ctl) {
 		return "stopped (" + ctl.F("cause") + ") since it was read; run: nova-sprint resume --stream " + stream
 	}
 	queued := map[string]bool{}
