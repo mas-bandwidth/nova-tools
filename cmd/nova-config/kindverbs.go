@@ -125,6 +125,19 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 		values[f.Name] = fs.String(f.Name, "", fieldUsage(f, add))
 	}
+	// --read-slots and --read-wait are the owner's spellings of a friend's
+	// read_slots and read_wait fields (docs/SPEC-CONFIG.md, friend). The
+	// generated flags are --read_slots and --read_wait; each pair writes its one
+	// field, and the two spellings together must agree.
+	dashes := map[string]*string{}
+	if k.Name == config.KindFriend {
+		for _, f := range k.Fields {
+			if f.Name == "read_slots" || f.Name == "read_wait" {
+				dash := strings.ReplaceAll(f.Name, "_", "-")
+				dashes[dash] = fs.String(dash, "", "the same field as --"+f.Name+": "+f.Help)
+			}
+		}
+	}
 	name, rest := nameAndRest(k, args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
 		return code
@@ -134,12 +147,24 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return refuse(stderr, verb, err.Error())
 	}
 	given := map[string]string{}
+	aliases := map[string]string{}
 	fs.Visit(func(f *stdflag.Flag) {
 		if v, ok := values[f.Name]; ok {
 			given[f.Name] = *v
 		}
+		if v, ok := dashes[f.Name]; ok {
+			aliases[f.Name] = *v
+		}
 	})
 	var problems []string
+	for _, dash := range slices.Sorted(maps.Keys(aliases)) {
+		field, v := strings.ReplaceAll(dash, "-", "_"), aliases[dash]
+		if prev, ok := given[field]; ok && prev != v {
+			problems = append(problems, fmt.Sprintf("--%s %s and --%s %s disagree; pass one", dash, v, field, prev))
+			continue
+		}
+		given[field] = v
+	}
 	seatVal := ""
 	if c.seat != nil {
 		seatVal = *c.seat
