@@ -132,8 +132,10 @@ count against it): the friend it names, or for `WHO: friend` the friend up
 with the most free width, the first by name among equals, as the machines'
 rule fills the member with room; with none it waits ready, held by the
 no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
-friends' records (the roster, then the beats: two round trips) only when a
-friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
+friends' records (the roster, then the beats: two round trips) whenever the
+roster has a friend, a card of hers ready or not, since the overload alarm
+holds a friend up to a machine's rule (`friendSeats`; a roster with none is
+the roster's one read). Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
 holds, so it is no machine's and no fleet verb names it), straight into
 `working` at generation 1, dealt and taken at once (nothing takes it), member

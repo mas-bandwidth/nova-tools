@@ -898,9 +898,10 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err := pinned.readerStatesInto(ctx, &first); err != nil {
 		return last, err
 	}
-	// the friends the deal may give a friend's card to, read only when one is ready
-	// (sprint.FriendDeal): a sprint with none reads nothing more
-	if req.Friends, err = pinned.friendSeats(ctx, &first, now); err != nil {
+	// the friends of the roster, for the deal of a friend's card (sprint.FriendDeal) and
+	// the overload alarm (overload.go), read whenever the roster has one, a card ready or
+	// not: a sprint with none reads the roster alone
+	if req.Friends, err = pinned.friendSeats(ctx, now); err != nil {
 		return last, err
 	}
 	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
