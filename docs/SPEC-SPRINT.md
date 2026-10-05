@@ -663,6 +663,16 @@ written with the moves. A step whose write committed and whose display copies
 then failed to sync reports OK, for every verb, with the sync's error on its own
 line, never FAILED: the table holds what the step wrote.
 
+### who-dash-is-fleet.w1
+
+**`WHO: -` is the fleet** (the owner, 2026-10-04: "Keep looking for verbs you
+are missing"; an add was refused for a brief whose header said `WHO: -`).
+`cardhdr.ReadWho` reads `WHO: -` as no WHO line: the card is a machine's,
+dealt to the fleet, and `add` and `brief` take it with no refusal. Every other
+WHO value is held to a friend's card's rule as before: `WHO: friend` and
+`WHO: friend <name>` read as they did, and any other value (`WHO: - -`,
+`WHO: friend -`, `WHO: junk`) is refused (`TestWhoDashIsTheFleet`).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
