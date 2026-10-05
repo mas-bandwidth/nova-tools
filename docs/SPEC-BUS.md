@@ -83,6 +83,32 @@ takes `--json`; `log` takes `--max`.
   delivered stays pending) or at the first command that fails. The push into a
   harness is `nova-bus recv --as <me> --forever --exec '<deliver-into-session>'`
   beside the session.
+- `wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject
+  <prefix,...>] [--wake-file <path>] [--redis <addr>] [--json]` is the wake a
+  harness runs beside a session, general for any AI on the bus. It takes
+  nothing: it reads the recipient's stream past a cursor (XREAD, never the
+  consumer group), so a later recv still delivers and acks what it saw. The
+  cursor is `--after <id>`, else the stream's last id read once at start
+  (`Tail`, `0-0` when the stream is not there); the verb prints `WAIT ARMED
+  after=<id>` first, so a caller that re-arms with that id misses nothing
+  between two runs. It returns on the first entries past the cursor that are
+  not from the waiter and whose subject starts with none of the
+  `--skip-subject` prefixes (matched without case; default `PING,PONG`): one
+  `WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n>` line each, up to
+  `WaitMax` (5), then `WAIT OK after=<last id seen>` at exit 0. Skipped
+  entries move the cursor and are not printed. `--wake-file <path>` also
+  returns when a line is appended to the file after the start (a harness's
+  deliver adapter appends one per message): `WAIT WAKE file=<path>
+  line=<first line>` at exit 0. Past `--timeout` (0, the default, is for
+  ever) it is `WAIT NONE after=<cursor> waited=<duration>` on standard error
+  at exit 1. `--json` is one object, `{"status":"ok","word":"OK|NONE|WAKE",
+  "after":..,"messages":[{"id":..,"from":..,"subject":..,"bytes":..}],
+  "wake":{"file":..,"line":..}}`. The decision over one batch (which entries
+  count, the cursor) is `WaitPick`, a pure function; the blocking read is the
+  store's (`BlockRead`), and the clock and the wake file are the command's
+  world, so every test runs on no real time. A wait with a wake file reads it
+  once a `WaitTick`; with neither a wake file nor a timeout it parks on one
+  blocking read that never runs out.
 - `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
   `ACK ID id= acked=true|false` line per id.
 - `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one `PEEK MESSAGE
@@ -93,8 +119,8 @@ takes `--json`; `log` takes `--max`.
 - `version`, `help`, `help <verb>`.
 
 Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
-`--exec`: the command failed); 2 could not run (a flag, an input, a store that
-did not answer).
+`--exec`: the command failed; wait: nothing came before `--timeout`); 2 could
+not run (a flag, an input, a store that did not answer).
 
 ### bus-message-kinds.w1: the kind of a message
 
@@ -172,6 +198,7 @@ INFO` on Redis 8 answers):
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
 | send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC` | `friends`, `machines` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re) |
 | recv | `SMEMBERS`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:to:<f>` |
+| wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
@@ -192,7 +219,7 @@ The least set per friend, one line:
 ```
 ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall
+  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hgetall
 ```
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
@@ -223,5 +250,7 @@ its machine rows; no new kind or field was needed.
 ## Round trips
 
 send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
-four (the roster, the group, the claim, the read). ack: five (group, pending,
+four (the roster, the group, the claim, the read). wait: two to arm (the
+roster, the stream's tail), then one `XREAD` per block (one parked read when
+nothing else is watched). ack: five (group, pending,
 the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.

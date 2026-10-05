@@ -439,6 +439,7 @@ A Redis whose nova-config rows name ada and bob, its address in `--redis` or
 `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus)):
 
 ```sh
+nova-bus wait --as bob --timeout 1s
 nova-bus send --as ada --to bob --subject hello --body "are you there?"
 nova-bus peek --as bob
 nova-bus recv --as bob --exec true
@@ -446,6 +447,23 @@ nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 nova-bus log --max 5
 nova-bus names
 ```
+
+`wait` prints `WAIT ARMED after=<id>` first — the cursor it starts past,
+`--after <id>` when given (a stream entry id, `<ms>-<seq>`), else the stream's
+last id read once at start — then takes nothing: it reads your stream past the
+cursor with XREAD, never the consumer group, so a later `recv` still delivers
+and acks what it saw. It ends on the first entries past the cursor that are
+not from you and whose subject starts with none of `--skip-subject`'s prefixes
+(matched without case; default `PING,PONG`): one `WAIT MESSAGE id= from=
+subject= bytes=` line each, at most 5, then `WAIT OK after=<last id seen>` at
+exit 0; skipped entries move the cursor and are not printed. Re-arm the next
+run with the `after=` the last one printed and nothing between two runs is
+missed. `--wake-file <path>` also ends the wait when a line is appended to the
+file after the start: `WAIT WAKE file= line=` at exit 0. Past `--timeout
+<duration>` (0, the default, is for ever) it is `WAIT NONE after= waited=` on
+standard error at exit 1. `--json` prints one object when the wait ends:
+`{"status":"ok","word":"OK|NONE|WAKE","after":<id>,"messages":[{"id":<id>,
+"from":<name>,"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>}}`.
 
 `send` prints `SEND OK id= to= cc= at= bytes= sha256=`: the id is the message's for ever, the
 count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). Who you
@@ -479,12 +497,23 @@ nova-bus ack --as <me> --id <id>
 The second line runs beside a session: every message in, each handed to the
 command on its stdin and acked when the command exits 0; it stops on SIGINT or
 SIGTERM, or at the first command that fails (the message stays pending for the
-next run). The third is by hand, after a plain `recv`.
+next run). The third is by hand, after a plain `recv`. A session whose
+background task exits is woken by a wait:
+
+```sh
+nova-bus wait --as <me> [--after <id>] [--wake-file <path>]
+```
+
+It parks beside the session, taking nothing, and ends on the first message for
+you that is not your own and not a PING or a PONG (or whatever
+`--skip-subject` names), or on a line a deliver adapter appends to the wake
+file, so the next turn of the session is the message that arrived.
 
 ### Commands
 
 | Command | What it does |
 | --- | --- |
+| `wait [--as <me>] [--after <id>] [--timeout <d>] [--skip-subject <p,...>] [--wake-file <path>]` | Watches your stream without taking anything, past a cursor; up to 5 `WAIT MESSAGE id= from= subject= bytes=` lines, then `WAIT OK after=<last id seen>`, or `WAIT WAKE` on a line appended to the wake file, or `WAIT NONE after= waited=` at exit 1 when `--timeout` runs out |
 | `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction |
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
 | `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0 |
