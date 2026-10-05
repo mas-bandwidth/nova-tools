@@ -357,13 +357,16 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 }
 
 // friendSeats is every friend of the roster as the tick's deal gives her a friend's card
-// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
-// holds a friend's card ready; nil, and no read, when it holds none.
+// (sprint.FriendDeal, and the attempt cap's default answer, sprint.AttemptCapDeal): her
+// name, width, status and class at now, read only when the snapshot holds ready a
+// friend's card or a card past its attempt cap; nil, and no read, when it holds neither.
 func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
 	if s != nil {
 		ready := false
 		for _, c := range s.Work.Column(sprint.Ready) {
-			if _, ok := sprint.FriendCard(c); ok {
+			_, friend := sprint.FriendCard(c)
+			_, capped := sprint.AtBriefBound(c, "", s.AttemptsCap(c.Row))
+			if friend || capped {
 				ready = true
 				break
 			}

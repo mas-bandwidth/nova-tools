@@ -20,13 +20,12 @@ import (
 // bounded a card and one that failed differently each time ran for ever): after the cap's
 // attempts on one brief (AttemptsCap: the stream's setting, else the sprint's, else
 // AttemptsDefault) the card is not dealt to a machine again. Its default answer is a friend
-// card (AttemptCapDeal; the tier ladder settled 2026-10-04: escalation is by attempt cap): a
-// ready primary past the cap is dealt to a frontier or heavy-class friend up with room
-// (FriendOfClass), the plan counting her free width as it deals, one width one such card, and
-// a card that no longer fits stays ready. With no such friend up with room it goes to the
-// coordinator as one judgment, "brief defect after N attempts, $X spent", with the findings
-// of every attempt listed, and the decisions brief and drop (FriendDecision beside them when
-// AttemptCapDeal raises it).
+// card (AttemptCapDeal, the tick's part before the deal; the tier ladder settled 2026-10-04:
+// escalation is by attempt cap): a ready primary past the cap is dealt to a frontier or
+// heavy-class friend up with room, the plan counting her free width as it deals, one width
+// one such card, and a card that no longer fits stays ready. With no such friend up with
+// room it goes to the coordinator as one judgment, "brief defect after N attempts, $X
+// spent", with the findings of every attempt listed, and the decisions brief and drop.
 
 // FieldFindingAttempt is the attempt whose broken reads' finding the primary's `finding`
 // carries (Rework writes both: the attempt it sends back and what its readers found). A
@@ -212,27 +211,22 @@ func AtBriefBound(c *Card, finding string, cap int) (BriefBound, bool) {
 	return BriefBound{}, false
 }
 
-// FriendDecision is the attempt cap's default answer as one decision of its
-// judgment: deal the card past the cap to a friend (AttemptCapDeal). The
-// judgment the cap raises for the coordinator lists it beside brief and drop.
-const FriendDecision = "friend"
-
-// AttemptCapDeal is the attempt cap's default answer, the step (the tier ladder
-// settled 2026-10-04: escalation is by attempt cap): every primary ready and
-// past its stream's cap on the brief it carries (AtBriefBound with no finding,
-// asked with AttemptsCap) is dealt as a friend card (friend_deal.go) to the
-// frontier or heavy-class friend up with room. Room is her free width, width
-// less the cards she already holds, counted across this plan the way FriendDeal
-// counts free: each deal decrements it and the next card is picked again, so
-// two capped cards cannot both land on one friend whose width is 1. A card
-// that no longer fits is left ready. The card keeps its work and findings; its
-// brief gains the WHO line of the friend chosen by the fields the brief edit
-// writes (FieldWho from WhoOfBrief, the brief's text, and FieldBriefAttempt at
-// the attempt it is dealt, so the cap count resets as a replaced brief does);
-// and its next attempt's work card is created on her row in working, closing
-// the judgment the cap raised. With no such friend up with room the card is
-// left ready and the cap's judgment is raised for the coordinator — the default
-// stays the judgment — with FriendDecision, brief and drop as its decisions.
+// AttemptCapDeal is the attempt cap's default answer, the tick's part before the deal
+// (TickCapDeal; the tier ladder settled 2026-10-04: escalation is by attempt cap): every machine's
+// primary ready and past its stream's cap on the brief it carries (AtBriefBound with no
+// finding, asked with AttemptsCap), in a stream not held, is dealt as a friend card
+// (friend_deal.go) to the frontier or heavy-class friend up with room. Room is her free
+// width, width less the cards she already holds, counted across this plan the way
+// FriendDeal counts free: each deal decrements it and the next card is picked again, the
+// most free first and the first by name among equals, so two capped cards cannot both
+// land on one friend whose width is 1. The card keeps its work and findings; its brief
+// gains the WHO line of the friend chosen by the fields the brief edit writes (FieldWho
+// from WhoOfBrief, the brief's text, and FieldBriefAttempt at the attempt it is dealt, so
+// the cap count resets as a replaced brief does); and its next attempt's work card is
+// created on her row in working, closing a brief-defect judgment open on it. A card it
+// does not deal (no such
+// friend up with room) is the deal's as before: at its redeal bound the tick raises the
+// cap's judgment, the findings of every attempt and the spend, decisions brief and drop.
 func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 	var p Plan
 	p.on(s)
@@ -245,22 +239,15 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 		}
 	}
 	for _, c := range s.Work.Column(Ready) {
-		if _, friend := FriendCard(c); friend || IsSentinel(c) {
-			continue // a friend's card is FriendDeal's, and a sentinel never moves
+		if _, friend := FriendCard(c); friend || IsSentinel(c) || StreamHeld(s, c.Row) {
+			continue // a friend's card is FriendDeal's, a sentinel never moves, a held stream is dealt nothing
 		}
-		bb, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row))
-		if !ok {
+		if _, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row)); !ok {
 			continue
 		}
 		name := friendWithFree(r.Friends, free, classes...)
 		if name == "" {
-			if len(capJudgments(s, c.ID)) == 0 {
-				n := judgment(NBriefWrong, c.Row, s.Now, 0, c.ID)
-				n.Who, n.Attempt, n.What = r.who(), c.Int("attempt"), bb.String()
-				n.Decisions = []string{FriendDecision, "brief", "drop"}
-				p.Notes = append(p.Notes, n)
-			}
-			continue
+			continue // no frontier or heavy friend up with room: the deal's, and its judgment
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
 		if s.Fleet.Card(card) != nil {
@@ -291,9 +278,8 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 	return Lawful(p)
 }
 
-// capJudgments is the attempt cap's judgments open on the primary (the
-// brief-defect judgment, NBriefWrong): raised by the cap's fallback, closed
-// by its default answer.
+// capJudgments is the brief-defect judgments open on the primary (NBriefWrong):
+// closed by the attempt cap's default answer, which changes the brief.
 func capJudgments(s *Snapshot, id string) []Open {
 	var out []Open
 	for _, o := range s.Open {

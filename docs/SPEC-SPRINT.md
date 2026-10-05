@@ -960,22 +960,25 @@ finding, else its failed report, else its bound's class, the latest kept under t
 8 KiB bound), decisions brief and drop
 (`TestTheAttemptCapIsOneJudgmentWithEveryFindingAndTheSpend`,
 `TestFailedWorkReachesTheAttemptCapToo`, `TestTheAttemptCapIsASettingOfTheSprintAndTheStream`).
-**The attempt cap's default answer is a friend card** (`sprint.AttemptCapDeal`,
-brief_bound.go; `TestTheAttemptCapJudgmentsDefaultAnswerDealsAFriendCard`,
-`TestTwoCappedCardsDoNotExceedAFriendsWidth`): a primary ready and past its cap
-(`sprint.AtBriefBound` asked with `sprint.AttemptsCap`) is dealt as a friend card
-(section 1) to a frontier or heavy-class friend up with room (`sprint.FriendOfClass`
-over her seat's class), the friend up with the most free width (her width less the
-cards she holds), the first by name among equals. The plan counts that free width as it
-deals, decremented per card and picked again, so one friend's width takes one such card
-and a card that no longer fits stays ready. The card keeps its work and findings, its
-brief gains `WHO: friend <name>` for the friend chosen (the fields the brief edit
-writes, so the cap count resets as a replaced brief does), its next attempt's work card
-is created on her row in working and the judgment the cap raised closes. With no such
-friend up with room the card stays ready and the step raises the cap's judgment above,
-with friend, brief and drop as its decisions. The tick's deal does not call this step,
-and a friend's roster class is the tiers her row names, comma joined, which this
-chooser matches whole. Then `rework` is refused, nothing written, one line: `<id> has failed the
+**The attempt cap's default answer is a friend card** (`sprint.AttemptCapDeal`, the
+pump's part `cap deal` before the deal, `sprint.TickCapDeal`, decided in the reference
+model as the duty `cap deal`;
+`TestTheAttemptCapJudgmentsDefaultAnswerDealsAFriendCard`,
+`TestTwoCappedCardsDoNotExceedAFriendsWidth`): a machine's primary ready and past its cap
+(`sprint.AtBriefBound` asked with `sprint.AttemptsCap`), in a stream not held, is dealt
+as a friend card (section 1) to a frontier or heavy-class friend up with room (her
+seat's class), the friend up with the most free width (her width less the cards she
+holds), the first by name among equals. The plan counts that free width as it deals,
+decremented per card and picked again, so one friend's width takes one such card; the
+deal after it reads the cards it gave her. The card keeps its work and
+findings, its brief gains `WHO: friend <name>` for the friend chosen (the fields the
+brief edit writes, so the cap count resets as a replaced brief does), its next
+attempt's work card is created on her row in working, and a brief-defect judgment open
+on it closes. With no such friend up with room the card is the deal's as before: at its
+redeal bound it is not dealt again and the tick raises the cap's judgment above (brief
+and drop), which closes once a friend takes it; below its bound its attempt is dealt
+again to a machine. The tick reads the friends' seats when a friend's card or a card
+past its cap is ready. Then `rework` is refused, nothing written, one line: `<id> has failed the
 same way twice (attempts <n> and <m>: <the finding's first sentence>); the brief is
 wrong, not the worker; run: nova-sprint brief <id> --brief-file <path> (a waiting card)
 or drop <id> and add it again with the brief corrected` (or the cap's line, then the
@@ -4179,7 +4182,9 @@ gives one at a time beside the store, so no two steps of the record interleave.
 **The friend stall ladder** (docs/SPEC-SPRINT.md, `internal/sprint/friend_stall.go`;
 the model is `tla/StallLadder.tla`). When a friend stalls while holding dealt sprint cards,
 recovery is fully mechanical as a tick part (`PartFriendStall = "friend-stall"`) in the
-fleet update pass (`TickTables`, `TickParts`), with no step needing the coordinator.
+fleet update pass, after presence (`TickTables`, `TickParts`), with no step needing the
+coordinator; the reference model decides it as the duty `friend-stall`
+(`internal/sprint/refmodel`).
 
 A friend holding dealt cards (`Ready` or `Working` on her row) is stalled when neither
 session activity (`FriendReport.Active`, her daemon's report of the newest write under
@@ -4188,8 +4193,9 @@ than `friend_stall_after` (default 20 minutes, configurable via `nova-sprint set
 
 While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 minutes,
 configurable via `nova-sprint set --friend-stall-step`):
-1. **Wake turn 1**: a bus message to her (`wakeFriendStall` / `a.sendBus`) pushed into her
-   daemon as a turn.
+1. **Wake turn 1**: a bus message to her (`wakeFriendStall`, the store's `WakeFriend` that
+   `tick` and `run` set) pushed into her daemon as a turn; a message not sent is said on
+   stderr and the rung climbs the same.
 2. **Wake turn 2**: a second wake bus message.
 3. **Coordinator note**: a pushed judgment (`Kind: Judgment`, `Type: NStalled`,
    `"friend <f> stalled <d>: two wakes unanswered"`).

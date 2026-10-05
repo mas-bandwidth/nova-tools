@@ -49,6 +49,7 @@ type walk struct {
 	running bool
 	since   time.Time
 	spans   []sprint.Span
+	friends []sprint.FriendSeat // the friends' seats a scenario gives the sprint; none in a walk
 }
 
 // newWalk is the sprint of a seed: two or three streams, two or three members
@@ -364,7 +365,7 @@ func (k *walk) wholeTick() bool {
 
 // req is what the tick is given beside the tables.
 func (k *walk) req() sprint.TickReq {
-	return sprint.TickReq{Who: sprint.MachineActor, Stopped: func(from, to time.Time) time.Duration { return sprint.StoppedBetween(k.spans, from, to) }, Beats: k.beats}
+	return sprint.TickReq{Who: sprint.MachineActor, Stopped: func(from, to time.Time) time.Duration { return sprint.StoppedBetween(k.spans, from, to) }, Beats: k.beats, Friends: k.friends}
 }
 
 // clock moves the time on: seconds mostly, minutes now and then, and hours
@@ -482,7 +483,7 @@ type sample struct {
 
 func (k *walk) sample() sample {
 	k.s.Now = time.Time{} // the tables' own clock is not read
-	snap := refmodel.Snapshot{Tables: k.s, Running: k.running, Since: k.since, Stopped: k.spans, Beats: k.beats, Goals: k.goals(), Untold: k.untold()}
+	snap := refmodel.Snapshot{Tables: k.s, Running: k.running, Since: k.since, Stopped: k.spans, Beats: k.beats, Goals: k.goals(), Untold: k.untold(), Friends: k.friends}
 	return sample{snap: snap.Clone(), now: k.now}
 }
 

@@ -192,6 +192,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "tick", err.Error())
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
+	st.WakeFriend = a.stallWaker(st, stderr)
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
 	err = noSprintYet(err)
@@ -299,6 +300,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
+	st.WakeFriend = a.stallWaker(st, stderr)
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}

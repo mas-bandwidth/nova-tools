@@ -209,23 +209,6 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	return Lawful(p)
 }
 
-// FriendOfClass is the friend the attempt cap's default answer deals a card past the
-// cap to (brief_bound.go): one up, of one of the classes named (a friend's class is
-// the class on her seat), with room — the most free width, width less the cards she
-// holds, the first by name among equals. ok is false with no such friend up with room,
-// and the default stays the judgment for the coordinator. The snapshot is unchanged:
-// a plan that deals more than one card tracks room itself (friendWithFree).
-func FriendOfClass(s *Snapshot, seats []FriendSeat, classes ...string) (string, bool) {
-	free := map[string]int{}
-	for _, f := range seats {
-		if f.Status == Up && slices.Contains(classes, f.Class) {
-			free[f.Name] = f.Width - friendLoad(s, f.Name)
-		}
-	}
-	name := friendWithFree(seats, free, classes...)
-	return name, name != ""
-}
-
 // friendWithFree is the up friend of one of the classes with the most free width in
 // free, the first by name among equals; "" when none has room. AttemptCapDeal passes
 // the free width it has left in this plan, decremented after each deal.
