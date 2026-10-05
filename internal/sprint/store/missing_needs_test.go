@@ -52,6 +52,43 @@ func seedMissingNeeds(h *harness, id, needs string) {
 	table.rev++
 }
 
+// seedDroppedNeed marks a primary's record dropped off the table without a
+// drop step: the state the verbs now refuse to make (add refuses a dropped
+// need, and drop refuses a needed card without Cascade), kept for the
+// recovery and waiver rules that must still read a stored dropped record
+// (docs/SPEC-SPRINT.md section 11). A resolve after it opens the blocked
+// judgment. The log gets the removed line the engine would have written, so
+// the store's replay stays true.
+func seedDroppedNeed(h *harness, id string) { seedDroppedNeedWhy(h, id, "") }
+
+// seedDroppedNeedWhy is seedDroppedNeed with the reason the record keeps.
+func seedDroppedNeedWhy(h *harness, id, why string) {
+	h.t.Helper()
+	s := h.snap()
+	c := s.Work.Card(id)
+	if c == nil {
+		return
+	}
+	from := c.Row + ":" + c.Col
+	h.m.mu.Lock()
+	t := h.m.tables["t-work"]
+	mm := t.members[id]
+	if mm == nil {
+		mm = t.members[fmt.Sprintf("%s~%d", id, s.Epoch)]
+	}
+	if mm != nil {
+		mm.placed, mm.row, mm.col = false, "", ""
+		mm.fields["outcome"] = "dropped"
+		if why != "" {
+			mm.fields["reason"] = why
+		}
+		mm.rev++
+		t.rev++
+	}
+	h.m.mu.Unlock()
+	h.m.AtEpoch(s.Epoch, false).(*Mem).appendLine(sprint.Line{Kind: sprint.LineMove, At: s.Now, Epoch: s.Epoch, Card: id, Table: sprint.Work, From: from, Removed: true, Verb: "drop", Actor: "tester"})
+}
+
 func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
 	t.Parallel()
 	const missing = "a primary is blocked on something missing"
@@ -145,7 +182,7 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 			case "resolve":
 				h.must(ResolveStep(sprint.ResolveReq{}))
 			case "dropped":
-				h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"later"}}, Reason: "not needed"}))
+				seedDroppedNeed(h, "later")
 				h.must(ResolveStep(sprint.ResolveReq{}))
 				require.Len(t, h.nOpenOf(sprint.NBlocked, "waiter"), 1, "dropped need was hidden by former missing judgment")
 			}
