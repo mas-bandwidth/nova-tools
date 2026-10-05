@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -571,10 +572,20 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 		return 1
 	}
 
-	if name, f, ok := b.Quarantined(surface); ok {
-		fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
-			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
-		return 1
+	// Fail closed on both spellings (security#74 finding 2): status prints a stored name
+	// through oneline.Field, so the token a person copies from it is the escaped one, and
+	// typed back verbatim it matches nothing. Test the typed surface and its decoded form;
+	// only a surface clear in both may print FUSE OK.
+	spellings := []string{surface}
+	if decoded := unfield(surface); decoded != surface {
+		spellings = append(spellings, decoded)
+	}
+	for _, sp := range spellings {
+		if name, f, ok := b.Quarantined(sp); ok {
+			fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
+				oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
+			return 1
+		}
 	}
 
 	if surface == "" {
@@ -586,6 +597,41 @@ func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	}
 	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
 	return 0
+}
+
+// unfield is the inverse of oneline.Field: it decodes the \xNN (a byte) and \uNNNN (a
+// rune) escapes Field writes, so the spelling status displays maps back to the stored
+// name. A backslash not opening a well-formed escape stays literal. Used by cmdCheck
+// (security#74 finding 2).
+func unfield(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			n := 0
+			switch s[i+1] {
+			case 'x':
+				n = 2
+			case 'u':
+				n = 4
+			}
+			if n > 0 && i+2+n <= len(s) {
+				if v, err := strconv.ParseUint(s[i+2:i+2+n], 16, 32); err == nil {
+					if n == 2 {
+						b.WriteByte(byte(v))
+					} else {
+						b.WriteRune(rune(v))
+					}
+					i += 1 + n
+					continue
+				}
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
