@@ -89,7 +89,7 @@ func sourceString(s buildinfo.Source) string {
 // digit timestamp from being mistaken for the revision.
 func revisionOf(stamp string) string {
 	for _, part := range strings.FieldsFunc(stamp, func(r rune) bool {
-		return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F')
+		return (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F')
 	}) {
 		if len(part) == 12 {
 			return strings.ToLower(part)

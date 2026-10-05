@@ -294,7 +294,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 			need(t, r.Remedy, "123")
 		}
 	}
-	c, done := testClient(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, r.URL.Path+"x", 302) })
+	c, done := testClient(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, r.URL.Path+"x", http.StatusFound) })
 	r = Latest(context.Background(), Entry{Kind: "tool", Latest: "npm:pkg"}, time.Second, c)
 	done()
 	if r.Known() {
