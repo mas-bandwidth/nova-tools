@@ -52,7 +52,8 @@ func TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick(t *testing.T) {
 		require.NoError(t, err)
 		h.machine()
 		snap := h.snap()
-		assert.Equal(t, 2, snap.Fleet.Count(bob, sprint.Working), "his idle lanes first")
+		assert.Equal(t, 0, snap.Fleet.Count(bob, sprint.Working), "a level is not a start")
+		assert.Equal(t, 4, snap.Fleet.Count(bob, sprint.Ready), "evened to his room, ready")
 		assert.Equal(t, 4, held(snap, bob), "then evened to his room")
 		assert.Equal(t, 12, held(snap, amy))
 		assert.Equal(t, amy, snap.Fleet.Placed(newest).Row)
@@ -87,9 +88,20 @@ func fullAmy(t *testing.T) (*harness, string) {
 	h.machine()
 	amy := sprint.FriendRow("amy")
 	snap := h.snap()
-	require.Equal(t, 8, snap.Fleet.Count(amy, sprint.Working))
-	require.Equal(t, 8, snap.Fleet.Count(amy, sprint.Ready))
 	queue := snap.Fleet.Cell(amy, sprint.Ready)
+	sprint.SortCards(queue)
+	require.GreaterOrEqual(t, len(queue), 8)
+	var running []string
+	for _, c := range queue[:8] {
+		running = append(running, c.ID)
+	}
+	_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: running}, nil)
+	require.NoError(t, err)
+	h.machine()
+	snap = h.snap()
+	require.Equal(t, 8, snap.Fleet.Count(amy, sprint.Working), "she starts her width")
+	require.Equal(t, 8, snap.Fleet.Count(amy, sprint.Ready))
+	queue = snap.Fleet.Cell(amy, sprint.Ready)
 	sprint.SortCards(queue)
 	newest := queue[len(queue)-1].ID
 	_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{newest}}, nil)

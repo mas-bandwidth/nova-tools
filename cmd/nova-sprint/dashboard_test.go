@@ -140,8 +140,8 @@ func TestWhereCardsIsWhatThePullRoutesRead(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &v))
 	require.Len(t, v.Cards, 1, out)
 	c := v.Cards[0]
-	assert.Equal(t, dealtCard{ID: "s1-1.w1", Primary: "s1-1", Stream: "s1", Member: "friend.amy", State: "working",
-		Since: c.Since, Deadline: c.Since.Add(2 * time.Hour), Branch: "sprint/s1-1.w1.g1.e0"}, c)
+	assert.Equal(t, dealtCard{ID: "s1-1.w1", Primary: "s1-1", Stream: "s1", Member: "friend.amy", State: "ready",
+		Since: c.Since, Deadline: c.Since.Add(6 * time.Hour), Branch: "sprint/s1-1.w1.g1.e0"}, c)
 	assert.False(t, c.Since.IsZero())
 
 	srv := &sprintdash.Server{Read: func() ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}
@@ -151,5 +151,5 @@ func TestWhereCardsIsWhatThePullRoutesRead(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
 	require.Len(t, lines, 3, w.Body.String())
 	assert.True(t, strings.HasPrefix(lines[1], "friend amy up "), lines[1])
-	assert.Equal(t, "s1-1.w1 s1 working 0s due 2h0m sprint/s1-1.w1.g1.e0", lines[2])
+	assert.Equal(t, "s1-1.w1 s1 ready 0s due 6h0m sprint/s1-1.w1.g1.e0", lines[2])
 }

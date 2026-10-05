@@ -15,7 +15,7 @@ import (
 // ok attempts. A friend's card has no route deadline of its own: its own is
 // DeadlineUnfinished, and the friend's is FriendDeadlineK times her median run wall over
 // her last FriendDeadlineSamples ok attempts (RunWall: her take to her report), set on the
-// card (FieldFriendDeadline) as it goes into working on her row, so a friend whose cards
+// card (FieldFriendDeadline) when she starts it (friendStart), so a friend whose cards
 // take long is not judged late on the fleet's number.
 
 const (
@@ -50,7 +50,7 @@ func FriendMedianWall(s *Snapshot, name string) (median float64, n int) {
 }
 
 // FieldFriendDeadline is a friend's work card's working deadline in seconds, set when it is
-// placed on her row (friendDeal, FriendLevel: friendDeadline), as #5300 sets a machine's
+// placed into working (friendStart: friendDeadline), as #5300 sets a machine's
 // card's when it is dealt: absent while she has no ok attempt, and DeadlineUnfinished holds.
 const FieldFriendDeadline = "friend_deadline"
 

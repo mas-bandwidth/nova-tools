@@ -2,7 +2,6 @@ package sprint
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -15,8 +14,8 @@ import (
 // where we would normally do friend work."; docs/SPEC-SPRINT.md section 1, a friend's
 // card). A brief whose header carries `WHO: friend` (any friend) or `WHO: friend <name>`
 // (cardhdr.ReadWho) is dealt by the tick to a friend instead of a machine: its work card
-// is placed on the friend's own fleet row, FriendRow(<name>), straight into working
-// (nothing takes it: friend sync delivers it into her inbox), within her width, and is
+// is placed on the friend's own fleet row, FriendRow(<name>), ready until she starts it
+// (friendStart; friend sync delivers it into her inbox), within her width, and is
 // finished from her outbox by friend sync. The friend's row is a fleet row no machine
 // can be: its name holds a dot, which no member name holds (ValidID), so no fleet verb
 // names it, and the fleet's members (Members) leave it out: no presence, rebalance,
@@ -264,15 +263,14 @@ func friendLoad(s *Snapshot, name string) int {
 // attempt retired (friendEscalateUnit). A friend at or over her room is never
 // dealt. In batch mode (the default), a friend's room is DealAhead times her width and
 // her lanes are her width; in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's
-// card"), a friend's room is 1 and her lanes are 1: she gets one card at a time, straight
-// into working, and the next only after the last one finished.
-// Each is its next attempt's work card, created on the friend's row at generation 1, in
-// working while she has a lane free (her width less her working cards; dealt and taken now:
-// its deadline is the working one) and ready behind them otherwise (her finish takes the next:
-// Finish), carrying the primary's fix, finding and why as a machine's deal does; its primary
-// moves ready -> working. The friend's row is declared by the plan the first time she is dealt to.
-// It answers the cards it places on each friend's row and how many of them go into
-// working: the tick levels the friends after it.
+// card"), a friend's room is 1 and her lanes are 1: she gets one card at a time, ready
+// until she starts it, and the next only after the last one finished.
+// Each is its next attempt's work card, created on the friend's row at generation 1, ready
+// (a deal is not a start: friendStart moves it to working when her beat names it, and stamps
+// the deadline then), carrying the primary's fix, finding and why as a machine's deal does;
+// its primary moves ready -> working. The friend's row is declared by the plan the first time
+// she is dealt to. It answers the cards it places on each friend's row. dealtWorking stays
+// empty: nothing dealt is working yet. The tick levels the friends after it.
 func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
@@ -347,12 +345,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		}
 		free[name]--
 		dealt[name]++
-		col := Ready
-		if lanes[name] > 0 {
-			lanes[name]--
-			dealtWorking[name]++
-			col = Working
-		}
+		col := Ready // working only once she starts it (friendStart)
 		row := FriendRow(name)
 		if !s.Fleet.HasRow(row) && !declared[row] {
 			p.Rows = append(p.Rows, RowAdd{Fleet, row})
@@ -409,29 +402,20 @@ func friendWithFree(seats []FriendSeat, free map[string]int, classes ...string) 
 	return name
 }
 
-// friendDealUnit is one friend's card dealt: its work card on her row, in working (taken
-// now) or ready behind her working cards, and its primary ready -> working on it. set
-// rides the primary's move beside the deal's own fields (the attempt cap's default
-// answer writes the WHO line and the count reset, brief_bound.go).
+// friendDealUnit is one friend's card dealt: its work card on her row, ready until she
+// starts it (friendStart), and its primary ready -> working on it. col is ignored: a deal
+// is never a start. set rides the primary's move beside the deal's own fields (the attempt
+// cap's default answer writes the WHO line and the count reset, brief_bound.go).
 func friendDealUnit(s *Snapshot, c *Card, card, row, col string, set map[string]string) Unit {
+	col = Ready
 	attempt := c.Int("attempt") + 1
 	now := stamp(s.Now)
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": row,
-		"dealt": now, "first_dealt": now}
-	if col == Working {
-		fields["taken"], fields["first_taken"] = now, now
-	} else {
-		fields["untaken_since"] = now
-	}
+		"dealt": now, "first_dealt": now, "untaken_since": now}
 	for _, k := range []string{"fix", "finding", "why"} {
 		if v := c.F(k); v != "" {
 			fields[k] = v
 		}
-	}
-	if col == Working {
-		name, _ := FriendOfRow(row)
-		dl, _ := friendDeadline(s, name)
-		maps.Copy(fields, dl)
 	}
 	prim := map[string]string{"attempt": itoa(attempt), "work": card}
 	for k, v := range set {
@@ -445,15 +429,15 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string, set map[string]
 
 // friendRedealUnit is a friend's card taken back (FriendTake) placed again: the same work
 // card, withdrawn, on her row at its next generation (its own branch, and its own job:
-// friendJobOf), in working (taken now) or ready behind her working cards, and its primary
-// ready -> working on it, its attempt as it was: a take-back is no attempt and spends no
-// bound.
+// friendJobOf), ready until she starts it, and its primary ready -> working on it, its
+// attempt as it was: a take-back is no attempt and spends no bound. col is ignored.
 func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
+	col = Ready
 	// a card the fleet held before carries its fleet route; a friend runs her own model, so
 	// the route comes off as a first deal to her writes none (2026-10-04: a resting route
 	// kept on a friend's card withdrew it every tick, and each deal again was a new inbox copy)
 	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
-		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
+		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline, FieldFriendDeadline}
 	if left := friendsLeft(wc); len(left) > 0 {
 		set[FieldFriendsLeft] = strings.Join(left, ",") // the friend it was taken from, kept past the take
 	}
@@ -462,15 +446,6 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 		// against the bound as the machines' deal counts it
 		set["redeals"] = itoa(wc.Int("redeals") + 1)
 		unset = append(unset, FieldTakeEnded, FieldProviderError, FieldDecided, FieldDecidedUsed)
-	}
-	if col == Working {
-		name, _ := FriendOfRow(row)
-		tset, tunset := friendTaken(s, wc, name)
-		maps.Copy(set, tset)
-		delete(set, "untaken_since")
-		unset = append(unset, tunset...)
-	} else {
-		unset = append(unset, FieldFriendDeadline) // set when she takes it
 	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, row, col, set, unset...)),

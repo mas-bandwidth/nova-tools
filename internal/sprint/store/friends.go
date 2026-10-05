@@ -23,7 +23,8 @@ import (
 // never stored, by the friends' rule (sprint.FriendStatus): held, else up
 // while her last beat is within sprint.FriendDownAfter (15 s), else down. Her
 // counts are her sprint cards' (the cards dealt to her fleet row friend.<name>,
-// read from the fleet table by where, never stored as a record here):
+// read from the fleet table by where, never stored as a record here). Working is
+// the fleet working column: cards she has started, not cards merely dealt:
 // (the owner, 2026-10-02: "give friends in the friends table the same ready,
 // working, width, done, ok%, status that we have for machines, but no load").
 

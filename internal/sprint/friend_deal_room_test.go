@@ -15,8 +15,8 @@ import (
 // no verb run.
 
 // fullWorld is a world whose friend amy holds her room at width 8: sixteen cards of brief
-// who on her row, eight working and eight ready; then n cards for any friend, each of
-// brief line 1 line1, added ready on the work table as s2-1, s2-2, ...
+// who on her row, the oldest eight started (working) and eight ready; then n cards for
+// any friend, each of brief line 1 line1, added ready on the work table as s2-1, s2-2, ...
 func fullWorld(t *testing.T, who, line1 string, n int) *world {
 	briefs := make([]string, 16)
 	for i := range briefs {
@@ -24,6 +24,11 @@ func fullWorld(t *testing.T, who, line1 string, n int) *world {
 	}
 	w := friendWorld(t, briefs...)
 	dealWith(w, FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro"})
+	var started []string
+	for i := 1; i <= 8; i++ {
+		started = append(started, "s1-"+itoa(i)+".w1")
+	}
+	startCards(w, "amy", started...)
 	require.Equal(t, 8, w.s.Fleet.Count(FriendRow("amy"), Working))
 	require.Equal(t, 8, w.s.Fleet.Count(FriendRow("amy"), Ready))
 	var cards []CardAdd
@@ -53,8 +58,9 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 			assert.Equal(t, want, wc.Row, "s2-%d", i+1)
 		}
 		assert.Equal(t, 16, friendLoad(w.s, "amy"), "amy at her room is dealt nothing")
-		assert.Equal(t, 2, w.s.Fleet.Count(bob, Working))
-		assert.Equal(t, 2, w.s.Fleet.Count(cat, Working))
+		assert.Equal(t, 3, w.s.Fleet.Count(bob, Ready), "unstarted cards do not fill a lane, so room alternates them")
+		assert.Equal(t, 2, w.s.Fleet.Count(cat, Ready))
+		assert.Equal(t, 0, w.s.Fleet.Count(bob, Working)+w.s.Fleet.Count(cat, Working), "a deal is not a start")
 		assert.Empty(t, Check(w.s, nil))
 	})
 
@@ -72,7 +78,13 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 		}
 		w.must(Add(w.s, AddReq{Stream: "s3", Cards: hers}))
 		dealWith(w, full, mas)
-		require.Equal(t, 8, w.s.Fleet.Count(FriendRow("mas"), Working))
+		var hersRunning []string
+		for i := 1; i <= 8; i++ {
+			hersRunning = append(hersRunning, "s3-"+itoa(i)+".w1")
+		}
+		mas.Running = hersRunning
+		w.must(FriendStart(w.s, []FriendSeat{mas}))
+		require.Equal(t, 8, w.s.Fleet.Count(FriendRow("mas"), Working), "she starts her width: her lanes are full")
 		require.Equal(t, 3, w.s.Fleet.Count(FriendRow("mas"), Ready))
 		w.must(Add(w.s, AddReq{Stream: "s2", Cards: []CardAdd{
 			{ID: "s2-1", Brief: friendBrief("friend")},
@@ -95,8 +107,8 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 		require.Equal(t, 16, friendLoad(w.s, "amy"), "bob down: nothing moves")
 
 		p := dealWith(w, running, bobUp)
-		assert.Equal(t, 2, w.s.Fleet.Count(bob, Working), "his idle lanes first")
-		assert.Equal(t, 2, w.s.Fleet.Count(bob, Ready), "then evened to his room")
+		assert.Equal(t, 0, w.s.Fleet.Count(bob, Working), "a level is not a start")
+		assert.Equal(t, 4, w.s.Fleet.Count(bob, Ready), "evened to his room, ready")
 		assert.Equal(t, 12, friendLoad(w.s, "amy"))
 		assert.Equal(t, amy, w.s.Fleet.Card("s1-16.w1").Row, "a card her beat names running stays")
 		moved := 0
@@ -113,7 +125,7 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 		w2 := fullWorld(t, "friend", "", 0)
 		dealWith(w2, running, bobUp)
 		left := w2.s.Fleet.Cell(bob, Ready)
-		require.Len(t, left, 2)
+		require.Len(t, left, 4, "the four levelled cards are ready")
 		for _, c := range left {
 			assert.Equal(t, "amy", c.F(FieldFriendsLeft))
 		}
@@ -129,7 +141,8 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 		t.Parallel()
 		w := fullWorld(t, "friend", "", 0)
 		p := dealWith(w, full, FriendSeat{Name: "cat", Width: 16, Status: Up, Class: "flash"})
-		assert.Equal(t, FriendLevelPerTick, w.s.Fleet.Count(cat, Working), "no more than FriendLevelPerTick moves a tick")
+		assert.Equal(t, FriendLevelPerTick, w.s.Fleet.Count(cat, Ready), "no more than FriendLevelPerTick moves a tick, and a level is not a start")
+		assert.Equal(t, 0, w.s.Fleet.Count(cat, Working))
 		assert.Len(t, p.Units, FriendLevelPerTick)
 	})
 }

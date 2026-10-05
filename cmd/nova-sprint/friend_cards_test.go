@@ -74,7 +74,7 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	ta.json("card s1-1", &c)
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "the card is dealt to amy's row")
-	assert.Equal(t, sprint.Working, c.Work[0].Col)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col, "a deal is not a start")
 	assert.Equal(t, "friend.amy", c.Who)
 	assert.Contains(t, ta.ok("card s1-1"), "who=friend.amy", "card shows who")
 
@@ -94,12 +94,13 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	assert.Contains(t, ta.ok("friend sync --root "+root), "nothing to do")
 	// the friends table counts it under working; the fleet table names no friend
 	frame := ta.frame()
-	assert.Contains(t, tableOf(frame, sprint.Friends), "amy     |     0 |       1 |     8 |    0 | 0.0% | up")
+	assert.Contains(t, tableOf(frame, sprint.Friends), "amy     |     1 |       0 |     8 |    0 | 0.0% | up")
 	assert.NotContains(t, tableOf(frame, sprint.Fleet), "friend")
 	var w whereView
 	ta.json("where", &w)
 	assert.NotContains(t, w.Tables[sprint.Fleet], sprint.FriendRow("amy"))
-	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
 	ta.clean()
 }
 
@@ -108,6 +109,8 @@ func TestFriendSyncFinishesALandReportAndTheCardReachesReview(t *testing.T) {
 	ta, root := friendCardApp(t, "friend", "amy")
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy --running s1-1.w1")
+	ta.ok("tick")
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed and the gate is green.\nTwo files.\n\nMore detail.\n")
 	out := ta.ok("friend sync --root " + root)
 	assert.Contains(t, out, "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok head="+landHead+": friend amy LAND: The change is pushed and the gate is green. Two files.")
@@ -129,6 +132,8 @@ func TestAHoldReportRaisesTheWorkCameBackFailedJudgment(t *testing.T) {
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy --running s1-1.w1")
+	ta.ok("tick")
 	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: HOLD\n\nThe gate is red: TestX fails at the base too.\n\nDetail.\n")
 	assert.Contains(t, ta.ok("friend sync --root "+root), "result=failed")
 	ta.ok("tick")
@@ -195,6 +200,8 @@ func TestALandWhoseHeadIsNotOriginsTipIsRefused(t *testing.T) {
 		}
 		ta.ok("tick")
 		ta.ok("friend sync --root " + root)
+		ta.ok("friend beat amy --running s1-1.w1")
+		ta.ok("tick") // she starts it; a ready card cannot finish
 		outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nPushed.\n")
 		out := ta.ok("friend sync --root " + root)
 		assert.Contains(t, out, "FRIEND-CARD REFUSED friend=amy card=s1-1.w1: "+c.say+"; the card is not finished, and the next sync reads the report again", c.name)
@@ -336,7 +343,7 @@ func TestFleetSyncLeavesAFriendsRowAndCard(t *testing.T) {
 	ta.json("card s1-1", &c)
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "her card stays on her row")
-	assert.Equal(t, sprint.Working, c.Work[0].Col)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col, "a deal is not a start, and fleet sync does not take it")
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
 }
 
@@ -420,9 +427,11 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	ta.ok("add --stream s1 --brief-dir " + dir)
 	ta.ok("start")
 	ta.ok("tick")
+	ta.ok("friend beat amy --running s1-1.w1")
+	ta.ok("tick")
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"], "her width working")
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"], "she started her width")
 	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"], "and as many again ready behind")
 	var third cardView
 	ta.json("card s1-3", &third)

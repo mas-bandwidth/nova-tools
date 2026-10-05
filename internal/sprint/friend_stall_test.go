@@ -22,13 +22,14 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}}
 	dealWith(w, seats...)
+	startCards(w, "amy", "s1-1.w1")
 
 	wc1 := w.s.Fleet.Card("s1-1.w1")
 	wc2 := w.s.Fleet.Card("s1-2.w1")
 	require.NotNil(t, wc1)
 	require.NotNil(t, wc2)
-	require.Equal(t, Working, wc1.Col)
-	require.Equal(t, Working, wc2.Col)
+	require.Equal(t, Working, wc1.Col, "she started the first")
+	require.Equal(t, Ready, wc2.Col, "the second is dealt and not started")
 
 	// Friend amy starts s1-1 (progress stamped)
 	wc1.Fields[FieldProgress] = stamp(w.s.Now)
@@ -56,7 +57,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	assert.Equal(t, "1", rung)
 	assert.Equal(t, []int{1}, woken)
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
-	assert.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col)
+	assert.Equal(t, Ready, w.s.Fleet.Card("s1-2.w1").Col)
 
 	// Rung 2: at t0 + 26m (between 25m and 30m)
 	w.s.Now = t0.Add(26 * time.Minute)
@@ -65,7 +66,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	assert.Equal(t, "2", rung)
 	assert.Equal(t, []int{1, 2}, woken)
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
-	assert.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col)
+	assert.Equal(t, Ready, w.s.Fleet.Card("s1-2.w1").Col)
 
 	// Rung 3: at t0 + 31m (between 30m and 35m)
 	w.s.Now = t0.Add(31 * time.Minute)
@@ -196,6 +197,7 @@ func TestFriendStallLadderBeatNamingRunningCardsIsActivity(t *testing.T) {
 	w := friendWorld(t, friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}}
 	dealWith(w, seats...)
+	startCards(w, "amy", "s1-1.w1")
 	t0 := w.s.Now
 
 	running := func(at time.Time) map[string]Beat {
@@ -246,6 +248,7 @@ func TestFriendStallLadderFinishIsActivity(t *testing.T) {
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 3, Status: Up, Class: "flash,pro"}}
 	dealWith(w, seats...)
+	startCards(w, "amy", "s1-1.w1")
 	t0 := w.s.Now
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 

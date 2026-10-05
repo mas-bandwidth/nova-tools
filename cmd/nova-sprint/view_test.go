@@ -164,7 +164,7 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 			row = r
 		}
 	}
-	assert.Equal(t, viewRow{K: "f:amy", St: sprint.Up, W: 1, Wd: row.Wd, Rep: row.Rep}, row, "her row: one card working")
+	assert.Equal(t, viewRow{K: "f:amy", St: sprint.Up, R: 1, Wd: row.Wd, Rep: row.Rep}, row, "her row: one card ready, not started")
 
 	ta.a.sleep(viewStaleReport + time.Minute)
 	v = ta.coordView("")
@@ -172,7 +172,7 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 	require.True(t, ok, "a friend holding a card with no report for 16m: %+v", v.Items)
 	assert.Equal(t, itemFriend, f.T)
 	assert.Equal(t, 1, f.B)
-	assert.Contains(t, f.S, "holds 0 ready, 1 working")
+	assert.Contains(t, f.S, "holds 1 ready, 0 working")
 	assert.True(t, strings.HasPrefix(f.Next, "nova-sprint friend take amy --all-unstarted --reason 'amy "), "%s", f.Next)
 
 	// her beat answers it
@@ -243,7 +243,7 @@ func TestTheWorkerViewOfAMember(t *testing.T) {
 }
 
 // A friend's view: her card's brief is the BRIEF.md friend sync writes, and next is the
-// report that finishes it.
+// start, because a deal leaves the card ready.
 func TestTheWorkerViewOfAFriend(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
@@ -254,7 +254,7 @@ func TestTheWorkerViewOfAFriend(t *testing.T) {
 	require.Len(t, v.Cards, 1)
 	assert.Equal(t, "~/amy-working/inbox/s1-1.w1/BRIEF.md", v.Cards[0].Brief)
 	assert.Equal(t, "sprint/s1-1.w1.g1.e0", v.Cards[0].Br)
-	assert.Equal(t, "finish s1-1.w1: push to sprint/s1-1.w1.g1.e0, then write ~/amy-working/outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", v.Next)
+	assert.Equal(t, "start s1-1.w1: its brief is ~/amy-working/inbox/s1-1.w1/BRIEF.md", v.Next)
 }
 
 // The server serves both views read-only on GET, through the handler with no socket: JSON,

@@ -12,14 +12,16 @@ import (
 // friend take withdraws the cards named that she has not started, friend down every one,
 // and the friends' deal places the same card again, never on the friend it was taken from.
 
-// takeWorld is amy at width 1 with s1-1 working and s1-2 ready behind it on her row, both
-// cards for any friend, and bob down.
+// takeWorld is amy at width 1 with s1-1 started (working) and s1-2 ready behind it on her
+// row, both cards for any friend, and bob down. The deal leaves both ready; her beat
+// starts the first.
 func takeWorld(t *testing.T) *world {
 	t.Helper()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
 	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"}, FriendSeat{Name: "bob", Width: 1, Status: Down})
+	startCards(w, "amy", "s1-1.w1")
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 	require.Equal(t, Ready, w.s.Fleet.Card("s1-2.w1").Col)
 	return w
@@ -72,6 +74,7 @@ func TestTakeAllUnstartedTakesEveryOneSheHasNotStarted(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"))
 	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash"})
+	startCards(w, "amy", "s1-2.w1")
 	w.must(FriendTake(w.s, FriendTakeReq{Friend: "amy", All: true, Started: map[string]string{"s1-2.w1": "her beat names it running"}}))
 	amy := FriendRow("amy")
 	assert.Equal(t, Withdrawn, w.s.Fleet.Card("s1-1.w1").Col)
@@ -118,9 +121,9 @@ func TestATakenCardIsDealtAgainToAnotherFriend(t *testing.T) {
 	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"}, FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash"})
 	wc := w.s.Fleet.Card("s1-2.w1")
 	assert.Equal(t, FriendRow("bob"), wc.Row, "dealt to the other friend")
-	assert.Equal(t, Working, wc.Col)
+	assert.Equal(t, Ready, wc.Col, "a deal again is not a start")
 	assert.Equal(t, "3", wc.F("gen"), "the same card at its next generation: its own branch")
-	assert.NotEmpty(t, wc.F("taken"))
+	assert.Empty(t, wc.F("taken"), "the deadline waits for his start")
 	assert.Empty(t, wc.F(FieldTakenFrom))
 	assert.Equal(t, Working, w.s.StateOf("s1-2"))
 	assert.Equal(t, "s1-2.w1", w.s.Primary("s1-2").F("work"))

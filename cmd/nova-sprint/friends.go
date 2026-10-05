@@ -75,9 +75,12 @@ WHO: friend <name> prefers a known friend while she is up with room.
 WHO: only friend <name> waits for that friend alone. Other work, including
 cards with no WHO line, goes first to subscription friends whose tiers cover
 it, then to the fleet. Among eligible friends, most free room wins and name
-breaks ties. In batch mode her room is twice her width: she works at width and
-queues the rest. In one-shot mode she holds one card, and the next only after
-the last one finished. nova-sprint unpin <id>... --reason <text> removes an
+breaks ties. In batch mode her room is twice her width, dealt ready until she starts a card.
+Working is started cards only: her beat names one running and the tick moves it
+to working, and the deadline runs from that start. A card she has not started
+within friend_start_bound (default 20 minutes) while she reports no running job
+is levelled to an eligible friend with an idle lane. In one-shot mode she is dealt
+one card, ready until she starts it, and the next only after the last one finished. nova-sprint unpin <id>... --reason <text> removes an
 unstarted card's stored WHO choice without editing its brief; --stream <s>
 selects a stream, and --dry-run only previews it. Work assigned to a friend
 uses her fleet row friend.<name>; presence never takes it back. friend take

@@ -54,7 +54,7 @@ func TestAFriendHoldingCardsWhoseSessionWritesNothingIsAnAlarm(t *testing.T) {
 	assert.Equal(t, itemFriend, f.T)
 	assert.Equal(t, "friend idle", f.W)
 	assert.Contains(t, f.S, "a daemon that answers and a session that has written nothing for 21m")
-	assert.Contains(t, f.S, "holds 0 ready, 1 working")
+	assert.Contains(t, f.S, "holds 1 ready, 0 working")
 
 	// a longer setting takes it off, default puts it back
 	ta.ok("set --friend-idle 1h")

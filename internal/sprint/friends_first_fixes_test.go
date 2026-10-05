@@ -16,8 +16,9 @@ func TestTheLevelMovesUnpinnedCardsToAnIdleFriend(t *testing.T) {
 	w := friendWorld(t, "c: no WHO\n\nThe task.", friendBrief("friend amy"), friendBrief("only friend amy"))
 	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFlash}}
 	dealWith(w, amy, FriendSeat{Name: "bob", Width: 1, Status: Held, Tiers: []string{cardhdr.RouteFlash}})
+	startCards(w, "amy", "s1-1.w1")
 	require.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Working))
-	require.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Ready), "room 2: one working, one ready behind")
+	require.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Ready), "room 2: one started, one ready behind")
 	ready := w.s.Fleet.Cell(FriendRow("amy"), Ready)[0]
 	require.False(t, OnlyFriend(w.s.Primary(ready.F("primary"))), "the ready card behind her is not the hard pin")
 
@@ -25,7 +26,7 @@ func TestTheLevelMovesUnpinnedCardsToAnIdleFriend(t *testing.T) {
 	dealWith(w, amy, FriendSeat{Name: "bob", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFlash}})
 	moved := w.s.Fleet.Card(ready.ID)
 	assert.Equal(t, FriendRow("bob"), moved.Row, "an unpinned card is levelled to the idle friend")
-	assert.Equal(t, Working, moved.Col)
+	assert.Equal(t, Ready, moved.Col, "a level is not a start")
 	assert.Equal(t, "amy", moved.F(FieldFriendsLeft))
 	assert.Empty(t, Check(w.s, nil))
 }
@@ -78,7 +79,7 @@ func TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute(t *testing.
 			next := w.s.Fleet.Card("s1-1.w2")
 			require.NotNil(t, next, "a new attempt")
 			assert.Equal(t, FriendRow("amy"), next.Row, "the friend with the escalated tier, pro")
-			assert.Equal(t, Working, next.Col)
+			assert.Equal(t, Ready, next.Col, "a deal is not a start")
 			assert.Equal(t, cardhdr.RoutePro, w.s.Primary("s1-1").F(FieldTierNow), "escalated to pro")
 			assert.Nil(t, w.s.Fleet.Placed("s1-1.w1"), "the bound attempt is retired")
 			assert.Empty(t, w.notesOf(NNoRoute), "no no-route hold while a friend has room")

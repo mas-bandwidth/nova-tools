@@ -17,16 +17,27 @@ import (
 // friend and a judgment late on the coordinator, each raised once, raised again with a
 // push every ten minutes of running time while it holds, and closed when it stops.
 
-// passRig is the hold rig with each friend's session pong kept on her beat.
+// passRig is the hold rig with each friend's session pong kept on her beat, and the
+// cards her beat names running so a dealt card becomes working (friendStart).
 type passRig struct {
 	*holdRig
-	pongs map[string]time.Time
+	pongs   map[string]time.Time
+	running map[string][]string
 }
 
 func newPassRig(t *testing.T) *passRig {
 	t.Helper()
-	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0, "bob": holdT0}}
+	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0, "bob": holdT0}, running: map[string][]string{}}
 	r.tick(0)
+	s := r.snap()
+	for _, f := range []string{"amy", "bob"} {
+		for _, c := range s.Fleet.Cell(sprint.FriendRow(f), sprint.Ready) {
+			if c.F("kind") == "" || c.F("kind") == "work" {
+				r.running[f] = append(r.running[f], c.ID)
+			}
+		}
+	}
+	r.tick(0) // her beat names the dealt cards running: friendStart moves them to working
 	return r
 }
 
@@ -45,7 +56,7 @@ func (r *passRig) tick(d time.Duration) {
 		require.NoError(r.t, err)
 	}
 	for f, pong := range r.pongs {
-		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil, pong)
+		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock(), Running: r.running[f]}, nil, pong)
 		require.NoError(r.t, err)
 	}
 	_, err := r.st.Tick(r.ctx)

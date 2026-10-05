@@ -86,11 +86,11 @@ refused (exit 3) and changes nothing.
 
 A friend's counts are her sprint cards' (a friend's card, below), read by
 `where` from her fleet row `friend.<name>`, never from her working directory: a
-card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
+card dealt to her is `ready` until she starts it, and `working` once she has
+(friend-working-means-started.w1, below); a `Verdict: LAND` report (with its `Head:` the
 tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
 report done failed, and a report with no verdict word is done failed too,
-never ok. `ready` is never a friend's card's state: the tick deals a card
-straight into `working` (`sprint.TickDeal`). A hand-written inbox job that is
+never ok. `where`'s working count is started cards only. A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
 is its pointer. `ready` and `working` count her cards in those states; `width`
@@ -303,16 +303,14 @@ batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, count against it; the owner,
 2026-10-04: "Do it just like the fleet, you keep people busy by having 2X width
-queued up in ready per-friend"): on her row the card is `working` while she has a
-lane free (her width less her working cards; dealt and taken at once) and `ready`
-behind her working cards otherwise, so her inbox holds her width working and as
-many again ready; her finish of a card takes the oldest ready card on her row
-into working in the same step (`sprint.Finish`, `friendNext`), no tick between,
-as a machine's lane that frees takes its next; the next tick fills her room
+queued up in ready per-friend"): on her row the card is `ready` until she starts
+it, within her room (DealAhead times her width; her started cards are `working`
+and do not fill a second lane). Her inbox holds that room, ready and working
+together. A finish does not start the next card; the next tick fills her room
 again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`: width 8 with 30
-waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
-(`mode: one-shot`), the machine deals one card at a time, straight into
-`working` (room 1, lane 1), and the next only after the last one finished
+waiting is 16 ready and none working until she starts one). In one-shot mode
+(`mode: one-shot`), the machine deals one card at a time, ready until she starts
+it (room 1, lane 1), and the next only after the last one finished
 (item 22 of tmp/manual-to-verbs-2026-10-04.md;
 `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
 first, before the machines' deal) offers every ready card to its named friend
@@ -326,8 +324,8 @@ route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`)
 The tick reads the friends' records every tick while the roster has a friend.
 Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
-holds, so it is no machine's and no fleet verb names it), straight into
-`working` at generation 1, dealt and taken at once (nothing takes it), member
+holds, so it is no machine's and no fleet verb names it), ready at generation 1
+(nothing takes it; she starts it), member
 `friend.<name>`, with the primary's fix, finding and why as a machine's deal
 carries them; its primary moves ready -> working. The fleet's members are its
 rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
@@ -336,12 +334,11 @@ touch a friend's row, so a friend who goes quiet keeps her card (no
 take-back by presence; the coordinator takes back what she has not started,
 below), the no-stall rule holds it as hers whatever her status, and
 the deadline rule judges it as it judges any work card, its working deadline
-by friend: the larger of 2 hours from its deal (`DeadlineUnfinished`) and
+by friend: the larger of 2 hours from its start (`DeadlineUnfinished`) and
 `FriendDeadlineK` (three) times her median run wall over her last
 `FriendDeadlineSamples` (fifty) ok attempts, her run wall being her take to
 her report (`sprint.RunWall`), set on the card as `friend_deadline` (seconds)
-when it goes into working on her row (her deal, her next on a finish, a level
-or a redeal), and absent while she has no ok attempt: nova-tools#5300's member
+when she starts it (`sprint.friendTaken`), and absent while she has no ok attempt: nova-tools#5300's member
 rule, written here for friends under its own names because #5300 was not on
 dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
 `TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
@@ -398,8 +395,7 @@ cards on her row, ready and working, less her width) of a friend with a card
 that may move and the smallest of the friends below their room (DealAhead
 times their width) differ by more than one, the newest card that may move of
 the first goes to the second at its next generation (its own branch, and its
-own job, `<card>.g<gen>`), into `working` when she has a lane free and `ready`
-behind her working cards otherwise. A card may move when its WHO line is
+own job, `<card>.g<gen>`), ready on her row: a level is not a start. A card may move when its WHO line is
 `friend` (any friend), it is ready on her row, and she has not started it (a
 push on its branch, her beat naming it running); a card naming her and a
 working card stay. Each move lowers the sum of squared backlogs and a card
@@ -873,8 +869,8 @@ not level the friends":
   levelled on the same tick. An unstarted ready card that is not a hard pin (no
   WHO line, `WHO: friend`, or one preferring a friend; never `WHO: only friend`,
   `TestTheLevelMovesUnpinnedCardsToAnIdleFriend`) on a friend
-  with no idle lane moves to a friend it may go to with an idle lane, into
-  working; then backlogs even as before (a card moves from a backlog to one
+  with no idle lane moves to a friend it may go to with an idle lane, ready
+  (a level is not a start); then backlogs even as before (a card moves from a backlog to one
   smaller by more than one, below her room), across every friend it may go to.
   The friends with no idle lane give first, the largest backlog first, the
   newest card first; the friend it goes to is `preferredFriend`'s. The cards the
@@ -888,6 +884,25 @@ not level the friends":
 
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
+
+### friend-working-means-started.w1
+
+**A friend's card is working only once she starts it** (the owner, 2026-10-05:
+"They are not working unless work turns from working to done."; that morning the
+friends table showed a friend working 8 of 8 who had started none, and ready cards
+on friend rows showed a running clock from the deal). The deal places the card
+ready (`sprint.friendDeal`). It moves to working when her beat names it running
+(`sprint.FriendStart`; `FriendSeat.Running` is the work card, its job or its
+primary; a progress stamp counts as started, `sprint.friendStarted`). The deadline
+is stamped then (`sprint.friendTaken`: `taken`, and `friend_deadline` when she has
+an ok attempt), and the clock runs from that start. `where`'s working count is
+those started cards. A card dealt and not started for `friend_start_bound` (a
+work-table property, a duration; the default is 20 minutes,
+`sprint.FriendStartBound`) while her beat names no running job is levelled to an
+eligible friend with an idle lane, never back to her (`friends_left`), ready, one
+log line (`sprint.friendUnstarted`, from `sprint.friendLevel`). A hard pin stays.
+The start the tree carries is the beat, not a look at `jobs/<job>`.
+`TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt`.
 
 ## 2. The cards
 

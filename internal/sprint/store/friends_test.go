@@ -70,23 +70,27 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	amyRow := sprint.FriendRow("amy")
 	bobRow := sprint.FriendRow("bob")
 
-	// Amy (batch mode): 2 working, 2 ready behind
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Working))
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Ready))
+	// Amy (batch mode): her room of 4, ready until she starts them
+	assert.Equal(t, 0, snap.Fleet.Count(amyRow, sprint.Working), "a deal is not a start")
+	assert.Equal(t, 4, snap.Fleet.Count(amyRow, sprint.Ready))
 
-	// Bob (one-shot mode): 1 working, 0 ready behind, s1-6 and s1-7 wait ready on work table
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
+	// Bob (one-shot mode): 1 ready, s1-6 and s1-7 wait ready on the work table
+	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Working))
+	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Ready), "one card at a time, ready until he starts it")
 	assert.Equal(t, sprint.Ready, snap.StateOf("s1-6"))
 	assert.Equal(t, sprint.Ready, snap.StateOf("s1-7"))
 
-	// Another tick without finish: bob still holds 1 card
+	// Another tick without a start: bob still holds that one card ready
 	h.machine()
 	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
+	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Working))
+	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Ready))
 
-	// Bob finishes his card: finish step moves it out of working
+	// He starts it, then finishes: no ready card auto-advances for a one-shot friend
+	_, err = h.st.FriendBeatReport(h.ctx, "bob", sprint.FriendReport{Running: []string{"s1-5.w1"}}, nil)
+	require.NoError(t, err)
+	h.machine()
+	require.Equal(t, 1, h.snap().Fleet.Count(bobRow, sprint.Working))
 	h.must(FinishStep(sprint.FinishReq{
 		As: bobRow, Sel: sprint.Sel{IDs: []string{"s1-5.w1"}},
 		Gens: map[string]int{"s1-5.w1": 1}, Head: "abc",
@@ -94,11 +98,11 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	snap = h.snap()
 	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Working), "no ready card auto-advances for one-shot friend")
 
-	// Next tick deals the next card to bob
+	// Next tick deals the next card to bob, ready
 	h.machine()
 	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
+	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Working))
+	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.StateOf("s1-6"))
 	assert.Equal(t, sprint.Ready, snap.StateOf("s1-7"))
 }
@@ -132,11 +136,14 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 
 	h.startMachine()
 	h.machine()
+	_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{"s1-1.w1", "s1-2.w1"}}, nil)
+	require.NoError(t, err)
+	h.machine()
 
 	snap := h.snap()
 	amyRow := sprint.FriendRow("amy")
 
-	// Amy has 2 working, 2 ready behind
+	// She started her width: 2 working, 2 ready behind
 	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Working))
 	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.StateOf("s1-1"))

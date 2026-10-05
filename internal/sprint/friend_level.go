@@ -3,7 +3,6 @@ package sprint
 import (
 	"cmp"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 )
@@ -43,8 +42,8 @@ type FriendLevelReq struct {
 // with no idle lane to one with an idle lane, and otherwise from a larger backlog to one
 // smaller by more than one; its friend is the one preferredFriend picks among those below
 // their room that may take it, and the friends with no idle lane give first, the largest
-// backlog first. It goes at its next generation (its own branch and job), into working
-// when she has a lane free and ready behind her working cards otherwise. Each move lowers
+// backlog first. It goes at its next generation (its own branch and job), ready: a level
+// is not a start (friendStart). Each move lowers
 // the idle lanes, or keeps them and lowers the sum of squared backlogs, and a card moves at
 // most once, so it ends. Each move is one line; the first unit's line also says where the
 // cards went: "moved=N to <friend>(n),... from <friend>(n),...".
@@ -53,8 +52,10 @@ func FriendLevel(s *Snapshot, r FriendLevelReq) Plan {
 }
 
 // friendLevel is FriendLevel after a deal not yet applied: dealt is the cards the deal
-// places on each friend's row, and dealtWorking those of them that go into working; they
-// count against her room and her lanes, and none of them moves.
+// places on each friend's row, and dealtWorking those of them that go into working (none:
+// a deal is ready); they count against her room and her lanes, and none of them moves.
+// A card dealt and not started past FriendStartBound, on a friend who reports no running
+// job, is levelled here too (friendUnstarted).
 func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]int) Plan {
 	var p Plan
 	var seats []FriendSeat
@@ -130,14 +131,6 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		col := Ready
 		set, unset := nextGen(c, FriendRow(short), s.Now), []string{FieldFriendDeadline}
 		set[FieldFriendsLeft] = strings.Join(append(friendsLeft(c), long), ",")
-		if working[short] < width[short] {
-			working[short]++
-			col = Working
-			tset, tunset := friendTaken(s, c, short)
-			maps.Copy(set, tset)
-			delete(set, "untaken_since")
-			unset = tunset
-		}
 		if row := FriendRow(short); !s.Fleet.HasRow(row) && !slices.Contains(p.Rows, RowAdd{Fleet, row}) {
 			p.Rows = append(p.Rows, RowAdd{Fleet, row}) // her row, the first time a card is placed on it
 		}
@@ -147,6 +140,17 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	if len(p.Units) > 0 {
 		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))
 	}
+	skip := map[string]bool{}
+	for _, u := range p.Units {
+		skip[u.Key] = true
+	}
+	extra := friendUnstarted(s, r.Seats, skip, r.Max)
+	for _, row := range extra.Rows {
+		if !slices.Contains(p.Rows, row) {
+			p.Rows = append(p.Rows, row)
+		}
+	}
+	p.Units = append(p.Units, extra.Units...)
 	return p
 }
 

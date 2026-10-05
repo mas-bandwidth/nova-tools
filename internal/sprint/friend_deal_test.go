@@ -40,6 +40,13 @@ func dealWith(w *world, seats ...FriendSeat) Plan {
 	return w.must(p)
 }
 
+// startCards is her beat naming these work cards running (FriendStart): they move
+// ready to working and the deadline is stamped then. It does not deal and it does not level.
+func startCards(w *world, name string, ids ...string) Plan {
+	w.t.Helper()
+	return w.must(FriendStart(w.s, []FriendSeat{{Name: name, Running: ids}}))
+}
+
 func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("only friend amy"))
@@ -56,9 +63,9 @@ func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 	require.NotNil(t, wc)
 	assert.Equal(t, FriendRow("amy"), wc.Row)
 	assert.Equal(t, FriendRow("amy"), wc.F("member"))
-	assert.Equal(t, Working, wc.Col, "nothing takes a friend's card: it is working once dealt")
+	assert.Equal(t, Ready, wc.Col, "a deal is not a start: it is ready until her beat names it")
 	assert.Equal(t, "1", wc.F("gen"))
-	assert.NotEmpty(t, wc.F("taken"), "its deadline is the working one, from its deal")
+	assert.Empty(t, wc.F("taken"), "the deadline is stamped when she starts it, not at the deal")
 	assert.Equal(t, Working, w.s.StateOf("s1-1"))
 	assert.Equal(t, "s1-1.w1", w.s.Primary("s1-1").F("work"))
 	assert.NotContains(t, w.s.Members(), FriendRow("amy"), "her row is no machine of the fleet")
@@ -77,14 +84,20 @@ func TestAFriendIsDealtHerRoomWorkingAtHerWidthAndReadyBehind(t *testing.T) {
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
 	dealWith(w, seats...)
 	amy := FriendRow("amy")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy works her width")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "and holds as many again ready behind them (DealAhead times her width)")
-	assert.Equal(t, 1, w.s.Fleet.Count(FriendRow("bob"), Working), "WHO: friend goes to the friend with room")
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Working), "a deal is not a start")
+	assert.Equal(t, 4, w.s.Fleet.Count(amy, Ready), "her room is DealAhead times her width, all of it ready")
+	assert.Equal(t, 1, w.s.Fleet.Count(FriendRow("bob"), Ready), "WHO: friend goes to the friend with room, ready")
+	assert.Equal(t, 0, w.s.Fleet.Count(FriendRow("bob"), Working))
 	assert.Equal(t, Ready, w.s.StateOf("s1-5"), "the fifth card for amy waits for room on her row")
 	ready := w.s.Fleet.Card("s1-3.w1")
 	assert.Equal(t, Ready, ready.Col)
 	assert.Empty(t, ready.F("taken"), "a card dealt ready is not taken")
 	assert.Equal(t, Working, w.s.StateOf("s1-3"), "its primary is working on it, as a machine's dealt primary is")
+
+	// she starts her width: two working, two ready behind them
+	startCards(w, "amy", "s1-1.w1", "s1-2.w1")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy works her width once she starts them")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 
 	// a tick later nothing has freed: nothing more is dealt
 	dealWith(w, seats...)
@@ -117,7 +130,14 @@ func TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt(t *testing.T) {
 	seat := FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro"}
 	dealWith(w, seat)
 	amy := FriendRow("amy")
-	require.Equal(t, 8, w.s.Fleet.Count(amy, Working))
+	require.Equal(t, 0, w.s.Fleet.Count(amy, Working), "sixteen dealt, none started")
+	require.Equal(t, 16, w.s.Fleet.Count(amy, Ready))
+	var started []string
+	for i := 1; i <= 8; i++ {
+		started = append(started, "s1-"+itoa(i)+".w1")
+	}
+	startCards(w, "amy", started...)
+	require.Equal(t, 8, w.s.Fleet.Count(amy, Working), "she starts her width")
 	require.Equal(t, 8, w.s.Fleet.Count(amy, Ready))
 	assert.Equal(t, 14, len(w.s.Work.Column(Ready)), "fourteen wait on the work table")
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: amy, Gens: gensOf(w.s, "s1-1.w1"), Head: "abc"}))
@@ -131,12 +151,25 @@ func TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt(t *testing.T) {
 func TestWhoFriendGoesToTheUpFriendWithTheMostFreeWidth(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
-	// room is DealAhead times width: amy has two places, bob four
-	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"}, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash"}, FriendSeat{Name: "cat", Width: 8, Status: Held})
-	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "bob has four free, amy two")
-	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-2.w1").Row, "bob still has three free")
-	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-3.w1").Row, "amy and bob have two each: amy is first by name")
-	assert.Equal(t, 0, w.s.Fleet.Count(FriendRow("cat"), Working), "a held friend is dealt nothing")
+	// unstarted cards do not fill a lane. bob's two idle lanes beat amy's one, and his
+	// room (DealAhead times width, four) holds all three. A held friend is dealt nothing.
+	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"}
+	bob := FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash"}
+	cat := FriendSeat{Name: "cat", Width: 8, Status: Held}
+	dealWith(w, amy, bob, cat)
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row)
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-2.w1").Row)
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-3.w1").Row)
+	assert.Equal(t, Ready, w.s.Fleet.Card("s1-1.w1").Col)
+	assert.Equal(t, 0, w.s.Fleet.Count(FriendRow("cat"), Ready)+w.s.Fleet.Count(FriendRow("cat"), Working), "a held friend is dealt nothing")
+
+	// she starts her width: those lanes are taken, so the next card goes to amy
+	bob.Running = []string{"s1-1.w1", "s1-2.w1"}
+	w.must(FriendStart(w.s, []FriendSeat{amy, bob}))
+	w.must(Add(w.s, AddReq{Stream: "s1", Cards: []CardAdd{{ID: "s1-4", Brief: friendBrief("friend")}}}))
+	dealWith(w, amy, bob, cat)
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
+	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-4.w1").Row, "bob's lanes are full; amy has an idle lane")
 }
 
 func TestACardWithNoWhoIsDealtToAMachine(t *testing.T) {
@@ -154,6 +187,7 @@ func TestAFriendWhoGoesQuietKeepsHerCardAndTheDeadlineHoldsIt(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"))
 	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
+	startCards(w, "amy", "s1-1.w1")
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 
 	// she goes quiet: the presence, the rebalance and the level move nothing of hers
@@ -184,6 +218,7 @@ func TestAReworkOfAFriendsCardWaitsReadyForAFriend(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"))
 	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
+	startCards(w, "amy", "s1-1.w1")
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: FriendRow("amy"), Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "friend amy HOLD: the gate is red"}))
 	require.Equal(t, Review, w.s.StateOf("s1-1"))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "make the gate green"}))
@@ -229,39 +264,43 @@ func TestDealingRespectsAFriendDeliveryMode(t *testing.T) {
 	dealWith(w, seats...)
 
 	amy := FriendRow("amy")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy works her width")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "amy holds 2 ready behind (batch mode)")
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Working), "a deal is not a start")
+	assert.Equal(t, 4, w.s.Fleet.Count(amy, Ready), "amy holds her room, ready until she starts them (batch mode)")
 
 	bob := FriendRow("bob")
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working), "bob gets exactly one card at a time in one-shot mode")
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready), "bob holds no cards ready behind in one-shot mode")
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready), "bob gets exactly one card at a time in one-shot mode, ready until he starts it")
 	assert.Equal(t, Ready, w.s.StateOf("s1-6"), "the 2nd card for bob waits ready on the work table")
 	assert.Equal(t, Ready, w.s.StateOf("s1-7"), "the 3rd card for bob waits ready on the work table")
 	assert.Equal(t, Ready, w.s.StateOf("s1-8"), "the 4th card for bob waits ready on the work table")
 
 	// A tick later without bob finishing: nothing more is dealt to bob
 	dealWith(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready))
 	assert.Equal(t, Ready, w.s.StateOf("s1-6"))
 
-	// Bob finishes his first card: finish moves it out of working; at finish 0 are working
-	// (no ready card auto-advances, unlike batch mode where friendNext takes the next)
+	// He starts it, then finishes: at finish 0 are working (no ready card auto-advances,
+	// unlike batch mode where friendNext takes the next)
+	startCards(w, "bob", "s1-5.w1")
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-5.w1"}}, As: bob, Gens: gensOf(w.s, "s1-5.w1"), Head: "abc"}))
 	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working), "bob has no ready card to auto-advance at finish")
 
-	// The next deal/tick deals the next card to bob (and only one)
+	// The next deal/tick deals the next card to bob (and only one), ready until he starts it
 	dealWith(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working), "the next card is dealt after the last one finished")
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working), "the next card is dealt ready after the last one finished")
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready))
 	assert.Equal(t, Working, w.s.StateOf("s1-6"))
 	assert.Equal(t, Ready, w.s.StateOf("s1-7"))
 
-	// Bob finishes the 2nd card, next deal gives the 3rd
+	// Bob starts and finishes the 2nd card, next deal gives the 3rd ready
+	startCards(w, "bob", "s1-6.w1")
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-6.w1"}}, As: bob, Gens: gensOf(w.s, "s1-6.w1"), Head: "def"}))
 	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
 	dealWith(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready))
 	assert.Equal(t, Working, w.s.StateOf("s1-7"))
 	assert.Equal(t, Ready, w.s.StateOf("s1-8"))
 
@@ -272,10 +311,10 @@ func TestDealingRespectsAFriendDeliveryMode(t *testing.T) {
 		FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash"},
 		FriendSeat{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash"},
 	)
-	assert.Equal(t, 2, w2.s.Fleet.Count(amy, Working), "amy gets 2 working")
-	assert.Equal(t, 2, w2.s.Fleet.Count(amy, Ready), "amy gets 2 ready (fills her room 4)")
-	assert.Equal(t, 1, w2.s.Fleet.Count(bob, Working), "5th card goes to bob who has free room 1")
-	assert.Equal(t, 0, w2.s.Fleet.Count(bob, Ready), "bob holds none ready")
+	assert.Equal(t, 0, w2.s.Fleet.Count(amy, Working), "none of it is a start")
+	assert.Equal(t, 4, w2.s.Fleet.Count(amy, Ready), "amy fills her room 4, ready")
+	assert.Equal(t, 0, w2.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 1, w2.s.Fleet.Count(bob, Ready), "5th card goes to bob, who has free room 1, ready")
 }
 
 // In one-shot mode, friendNext gates promotion of ready cards until shared work/read occupancy
@@ -291,8 +330,10 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 		friendBrief("friend amy"),
 	}
 	w := friendWorld(t, briefs...)
-	// amy initially dealt in batch mode at width 2: s1-1 and s1-2 working, s1-3 and s1-4 ready
+	// amy dealt in batch mode at width 2, then she starts her width: s1-1 and s1-2 working,
+	// s1-3 and s1-4 ready behind
 	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash,pro"})
+	startCards(w, "amy", "s1-1.w1", "s1-2.w1")
 	amy := FriendRow("amy")
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))

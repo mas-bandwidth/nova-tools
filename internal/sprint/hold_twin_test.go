@@ -264,8 +264,8 @@ func TestHoldTakesNoNewCardsAndUnholdResumesForMembersFriendsAndStreams(t *testi
 		r := newHoldRig(t, 0, 2)
 		r.tick()
 		s := r.snap()
-		amy := onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working)
-		require.Len(t, amy, 1, "a card for any friend goes to the one with the most free width, the first by name among equals")
+		amy := onRow(s, sprint.FriendRow("amy"), "f1", sprint.Ready, sprint.Working)
+		require.Len(t, amy, 1, "a card for any friend goes to the one with the most free width, the first by name among equals, ready until she starts it")
 		r.hold(sprint.HoldReq{Names: []string{"amy"}, Reason: "out of credits"})
 		assert.Equal(t, sprint.Held, r.friendStatus("amy"))
 		hv, ok := r.heldView("amy")
@@ -274,7 +274,7 @@ func TestHoldTakesNoNewCardsAndUnholdResumesForMembersFriendsAndStreams(t *testi
 		r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-9", Brief: friendsBrief("only friend amy")}}}))
 		r.tick()
 		s = r.snap()
-		assert.Equal(t, amy, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working), "a held friend keeps her cards to finish and is dealt no new one")
+		assert.Equal(t, amy, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Ready, sprint.Working), "a held friend keeps her cards and is dealt no new one")
 		assert.Equal(t, sprint.Ready, s.StateOf("f1-9"), "her card waits ready while she is held")
 
 		r.hold(sprint.HoldReq{Names: []string{"amy"}, Release: true, Reason: "credits back"})
@@ -284,7 +284,7 @@ func TestHoldTakesNoNewCardsAndUnholdResumesForMembersFriendsAndStreams(t *testi
 
 		r.hold(sprint.HoldReq{Names: []string{"amy"}, Reason: "away for the night", Return: true})
 		s = r.snap()
-		assert.Empty(t, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working), "--return withdraws the cards she holds")
+		assert.Empty(t, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Ready, sprint.Working), "--return withdraws the cards she holds")
 		r.tick()
 		assert.Equal(t, sprint.Ready, r.snap().StateOf("f1-9"), "her card waits for her again")
 	})

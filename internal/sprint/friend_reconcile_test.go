@@ -22,6 +22,7 @@ func TestFriendReconcileCollectsOrReturnsEachCard(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"))
 	dealWith(w, FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash,pro"})
+	startCards(w, "amy", "s1-1.w1", "s1-2.w1", "s1-3.w1", "s1-4.w1")
 	for _, id := range []string{"s1-1.w1", "s1-2.w1", "s1-3.w1", "s1-4.w1"} {
 		require.Equal(t, Working, w.s.Fleet.Card(id).Col, "every card is working on her row")
 	}
@@ -86,7 +87,7 @@ func TestFriendReconcileCollectsOrReturnsEachCard(t *testing.T) {
 
 	// the tick deals a returned card again, as its next attempt, to a friend up with room
 	dealWith(w, FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash,pro"})
-	assert.Equal(t, Working, w.s.Fleet.Card("s1-3.w2").Col, "a returned card is dealt again at its next attempt")
+	assert.Equal(t, Ready, w.s.Fleet.Card("s1-3.w2").Col, "a returned card is dealt again at its next attempt, ready until she starts it")
 	w.clean("after the deal again")
 
 	// a second return of the same card, a card on another row, and a stale generation are refused

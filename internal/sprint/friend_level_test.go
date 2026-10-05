@@ -18,20 +18,23 @@ func TestFriendLevelEvensTheReadyQueuesOfAClass(t *testing.T) {
 		briefs = append(briefs, friendBrief("friend"))
 	}
 	w := friendWorld(t, briefs...)
-	// amy alone up at width 2: her room of 4 is filled, s1-1 (hers by name) and s1-2 working
+	// amy alone up at width 2: her room of 4 is filled ready, then she starts her width,
+	// s1-1 (hers by name) and s1-2 working, two ready behind
 	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash"})
+	startCards(w, "amy", "s1-1.w1", "s1-2.w1")
 	amy, bob, cat := FriendRow("amy"), FriendRow("bob"), FriendRow("cat")
+	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}, {Name: "bob", Width: 2, Status: Up, Class: "flash"}, {Name: "cat", Width: 2, Status: Up, Class: "pro"}}
 
 	// s1-4 is started (her beat names it running): it stays
 	p := w.must(FriendLevel(w.s, FriendLevelReq{Seats: seats, Started: map[string]string{"s1-4.w1": "her beat names it running"}}))
 	require.Len(t, p.Units, 1, "amy's backlog 2 against bob's -2: one card moves; 1 against -1 would move s1-4, but she started it")
-	assert.Contains(t, p.Units[0].Moved, "s1-3.w1 friend.amy:ready -> friend.bob:working gen=2; moved=1 to bob(1) from amy(1)")
+	assert.Contains(t, p.Units[0].Moved, "s1-3.w1 friend.amy:ready -> friend.bob:ready gen=2; moved=1 to bob(1) from amy(1)")
 	wc := w.s.Fleet.Card("s1-3.w1")
 	assert.Equal(t, bob, wc.Row)
-	assert.Equal(t, Working, wc.Col, "bob had a lane free")
-	assert.NotEmpty(t, wc.F("taken"))
+	assert.Equal(t, Ready, wc.Col, "a level is not a start")
+	assert.Empty(t, wc.F("taken"))
 	assert.Equal(t, Ready, w.s.Fleet.Card("s1-4.w1").Col)
 	assert.Equal(t, amy, w.s.Fleet.Card("s1-4.w1").Row, "the started one stays")
 	assert.Equal(t, 0, w.s.Fleet.Count(cat, Working)+w.s.Fleet.Count(cat, Ready), "cat is of another class")
@@ -40,7 +43,8 @@ func TestFriendLevelEvensTheReadyQueuesOfAClass(t *testing.T) {
 	// not started now, s1-4 moves too (1 against -1); then they are even and nothing moves
 	w.must(FriendLevel(w.s, FriendLevelReq{Seats: seats}))
 	assert.Equal(t, bob, w.s.Fleet.Card("s1-4.w1").Row)
-	assert.Equal(t, 2, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Ready), "both levelled cards stay ready")
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
 	p = FriendLevel(w.s, FriendLevelReq{Seats: seats})
 	assert.Empty(t, p.Units)
 }
@@ -55,8 +59,9 @@ func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 		briefs = append(briefs, friendBrief("friend"))
 	}
 	w := friendWorld(t, briefs...)
-	// amy alone up at width 2: her room of 4 is filled, s1-1 (hers by name) and s1-2 working, s1-3 and s1-4 ready
+	// amy alone up at width 2: her room of 4 is filled ready, then she starts her width
 	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash", Mode: config.FriendModeBatch})
+	startCards(w, "amy", "s1-1.w1", "s1-2.w1")
 	amy, bob := FriendRow("amy"), FriendRow("bob")
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
@@ -68,14 +73,13 @@ func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 	}
 
 	// amy's backlog is 4 - 2 = 2. bob's backlog is 0 - 1 = -1.
-	// 1 card moves to bob into working (room 1, width 1).
-	// bob now holds 1 (his room is full).
+	// 1 card moves to bob, ready (a level is not a start; his room is 1).
 	// amy holds 3 (backlog 1). bob holds 1 (backlog 0).
 	// No more cards move to bob because bob has reached his room of 1.
 	p := w.must(FriendLevel(w.s, FriendLevelReq{Seats: seats}))
 	require.Len(t, p.Units, 1)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready), "one-shot friend holds no ready cards")
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready), "the levelled card is ready until he starts it")
 	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready), "amy keeps her remaining ready card")
 	assert.Empty(t, Check(w.s, nil))

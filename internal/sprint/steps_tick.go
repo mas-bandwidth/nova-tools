@@ -580,6 +580,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		offer = append(offer, c)
 	}
 	fp, dealt, dealtWorking := friendDeal(s, streamTurns(offer, streamRound(s, PropStreamIndex)), r.Friends)
+	sp := friendStart(s, r.Friends)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -717,6 +718,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
+	p.Units = append(p.Units, sp.Units...)
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most

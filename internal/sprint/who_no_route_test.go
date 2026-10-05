@@ -46,7 +46,7 @@ func TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier(t *testing.T) {
 	wc := w.s.Fleet.Card("s1-1.w1")
 	require.NotNil(t, wc, "dealt")
 	assert.Equal(t, FriendRow("amy"), wc.Row, "the friend whose tiers hold pro, not the one with more room")
-	assert.Equal(t, Working, wc.Col, "a lane free: working at once")
+	assert.Equal(t, Ready, wc.Col, "a lane free, and ready until she starts it")
 	assert.Equal(t, Working, w.s.StateOf("s1-1"))
 	assert.False(t, heldForTier(w), "no no-route hold for a card a friend took")
 }

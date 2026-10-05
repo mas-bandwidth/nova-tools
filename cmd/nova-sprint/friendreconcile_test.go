@@ -41,6 +41,13 @@ func reconcileApp(t *testing.T, n int) (*testApp, string) {
 	ta.ok("add --stream s1 --brief-dir " + dir)
 	ta.ok("start")
 	ta.ok("tick")
+	// she starts every card the deal left ready: reconcile compares the cards she is working
+	var ids []string
+	for i := 1; i <= n; i++ {
+		ids = append(ids, "s1-"+strconv.Itoa(i)+".w1")
+	}
+	ta.ok("friend beat amy --running " + strings.Join(ids, ","))
+	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
 	return ta, root
 }
@@ -99,6 +106,9 @@ func TestFriendReconcileSettlesEachCardOnTheTwin(t *testing.T) {
 	c := card("s1-3")
 	assert.Equal(t, sprint.Working, c.Primary.Col, "the returned card is dealt again by the tick")
 	assert.Equal(t, "s1-3.w2", c.Primary.F("work"), "at its next attempt")
+	// the redeal left them ready; she starts them so the next reconcile still sees them working
+	ta.ok("friend beat amy --running s1-3.w2,s1-4.w2")
+	ta.ok("tick")
 	ta.clean()
 
 	// the cards dealt again, s1-3.w2 and s1-4.w2, were dealt after her account was written:
