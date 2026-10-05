@@ -837,6 +837,43 @@ facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `w
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
 internal/friend/check.go; each cites this section.
 
+## Reach
+
+`nova-friend reach --as <coordinator> <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--dry-run]`
+is the escalation ladder that gets a silent friend's attention. The name is reach, not wake: wake is the
+sleep pair (`nova-friend sleep` / `wake --as <me>`), a friend ending its own recorded sleep, and one verb
+doing both fails the one-thing rule.
+
+The ladder is `climb` in cmd/nova-friend/reach.go, a function of (step, proof seen, clock). Each side effect
+is an injected function, so a test uses a fake bus, a fake clock and a fake command and opens no socket.
+The steps, in order, each recorded before the next starts:
+
+1. bus. One message to the friend, subject `REACH <nonce>`, body the nonce and the exact pong line
+   (`nova-friend pong --as <friend> --nonce <n> --to <coordinator>`). `reachFX.send` is `Bus.Send`.
+2. push. The same text, a real message and never a PING, through the harness deliver command
+   (`pushTurn`, `NewDeliverer`). The daemon is up when `daemonUp` reads a status file newer than
+   `DaemonStale`. Otherwise the step is `REACH SKIP step=push reason=daemon-down` and the ladder climbs.
+3. window. `FindWindow` and `SubmitWindow` (internal/friend/window.go). A TUI is the tmux pane whose
+   session or command is the friend, and only when `pane_in_mode` is 0; the text goes by `send-keys -l`
+   and Enter. A pane in a mode is not typed into (`pane-not-idle`). A GUI harness is the app of its bundle
+   (`GUIBundles`; antigravity is `com.google.antigravity-ide`). Typing needs the accessibility permission
+   a person grants to this binary. The check is `AXIsProcessTrusted` and the tool never prompts. Absent
+   permission is exit 2, with the Settings remedy, and the ladder does not say FAILED.
+
+Proof is `proofBy`: a pong for that step's nonce (`ParsePong`) is `by=pong`, and any other real message
+from the friend is `by=message`. A daemon-pong, a PING and a keepalive are not proof. A step waits at most
+`--step-timeout` (default 60s). `--from` starts at a later step. `--dry-run` prints the STEP lines and
+sends nothing.
+
+The end is `REACH OK friend=<f> step=<s>` at exit 0, or `REACH FAILED friend=<f> tried=<steps>` at exit 1,
+said once on the coordinator's own stream, or exit 2 when it could not run.
+
+The model is tla/Reach.tla. The states are bus, push, window, ok and failed. It proves no step after a
+proof (`NoStepAfterProof`), every step's clock within the bound (`EveryStepBounded`), and failed only
+after all three (`FailedOnlyAfterAllThree`). One reversed witness, `MCReachBrokenStepAfterProof`, takes a
+step after a proof. A skipped push and an accessibility refusal are outside the model: the skip is a guard
+before the push action, and the refusal is exit 2, which does not enter failed.
+
 ## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
 
 The server side of the connection, as the owner designed it: the coordinator

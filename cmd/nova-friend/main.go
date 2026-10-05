@@ -5,7 +5,8 @@
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, install, uninstall, check, status, pong, ping,
+// second, and reach, the ladder that gets a silent friend's attention.
+// The verbs are run, install, uninstall, check, reach, status, pong, ping,
 // wait-pong and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
@@ -76,6 +77,12 @@ type world struct {
 	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
 	alive     friend.Aliver // the harness check, when set (a test's fake harness); nil watches the adapter
+	// Reach seams, nil on the real world: the ladder's injected side effects,
+	// so a test uses fakes and never a live friend (docs/SPEC-FRIEND.md, Reach).
+	reachDaemonUp func(name string) (up bool, reason string)
+	reachPush     func(ctx context.Context, name, text string) error
+	reachWindow   func(ctx context.Context, name, text string) error
+	reachOnStep   func(step, nonce string)
 }
 
 func realWorld() world {
@@ -162,7 +169,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 		// does not carry, so it is dispatched here (internal/friend RunWall)
 		return friend.RunWall(args[1:], os.Environ(), stdin, stdout, stderr)
 	}
-	return friendTool(w).Run(args, stdin, stdout, stderr)
+	return friendTool(w).Run(withReachFriend(args), stdin, stdout, stderr)
 }
 
 // openRedis dials the bus store the way nova-bus does (internal/redisconn,
@@ -424,6 +431,44 @@ example: nova-friend check --as ada bob`,
 					})
 				},
 				Run: w.check,
+			},
+			{
+				Name:      "reach",
+				Usage:     "reach --as <coordinator> <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--dry-run]",
+				Example:   "", // the ladder talks to a friend; -h carries the dry-run example, which sends nothing
+				Effect:    tool.Delivery + ": the ladder; a message to the friend, a push into the session, then the friend's own window",
+				DryRun:    true,
+				ExitTable: "0 the friend answered (REACH OK), 1 the ladder climbed and nothing answered (REACH FAILED, one note on the coordinator's own stream), 2 could not run (a flag, a store, or the accessibility permission).",
+				Detail: `The escalation ladder that gets a silent friend's attention. The friend is the argument after the flags; --friend names the same friend. Each step carries its own nonce and the exact pong line, is recorded before the next starts, and waits up to --step-timeout (default 60s) for proof: a pong for that nonce, or any other real message, from the friend's own stream (the message's from). A daemon-pong, a PING and a keepalive are not proof. The lines, in order:
+REACH STEP step=<bus|push|window> sent=<id|-> nonce=<n>
+then either REACH PROOF step=<s> after=<seconds> by=<pong|message>, and the ladder stops, or REACH NONE step=<s> waited=<d>, and it climbs. A step that cannot be taken is REACH SKIP step=<s> reason=<token>.
+1. bus: one message to the friend, subject "REACH <nonce>", body the nonce and the pong line the session runs (nova-friend pong --as <friend> --nonce <n> --to <coordinator>).
+2. push: that text pushed into the session as a turn, a real message, never a PING. The daemon must be up by its status file, written within the daemon's stale bound; otherwise REACH SKIP step=push reason=daemon-down and the ladder climbs.
+3. window: the friend's own window. A TUI in tmux gets the text by send-keys into an idle pane (pane_in_mode is 0; a pane in a mode is not typed into). A GUI harness is the app of its bundle, the message typed into its composer and submitted, which needs the accessibility permission a person grants to this binary. When it is absent the verb refuses and does not ask: grant it to this binary in System Settings > Privacy & Security > Accessibility.
+--from <bus|push|window> starts at that step (default bus). --dry-run prints the STEP lines from there and sends nothing (sent=-).
+The end is REACH OK friend=<f> step=<s> at exit 0, or REACH FAILED friend=<f> tried=<steps> at exit 1, and that FAILED line is said once on the coordinator's own stream. Exit 2 when it could not run.
+--json is one object: result{verb, status, exit, why, remedy}, facts{friend, step or tried, dry_run}, items[] of {kind: step|proof|none|skip, fields: {step, sent, nonce, after, by, waited, reason}}.
+see also: nova-friend wake --as <me> ends that friend's own recorded sleep; reach is this ladder, not that verb.
+example: nova-friend reach --as ada bob --dry-run`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator")
+					f.Required("friend", "the silent friend; also the argument after the flags")
+					f.Duration("step-timeout", 60*time.Second, "how long each step waits for proof")
+					f.String("from", "bus", "the step the ladder starts at: bus, push or window")
+					f.String("state-dir", "", "the friend's state directory (default: ~/.nova-friend/<friend>)")
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						switch c.Str("from") {
+						case "bus", "push", "window":
+						default:
+							c.Problem("--from wants bus, push or window")
+						}
+						if c.Dur("step-timeout") <= 0 {
+							c.Problem("--step-timeout wants a positive duration, such as 60s")
+						}
+					})
+				},
+				Run: w.reach,
 			},
 			{
 				Name:    "ping",

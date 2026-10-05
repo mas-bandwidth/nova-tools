@@ -637,6 +637,36 @@ the check once after loading the agent (its `--within`) and says the line in a
 NOTE; a fail never undoes the install. It runs once a night on each friend's
 machine as a nova-config loop record ([TESTING.md](TESTING.md)).
 
+### Reach
+
+The help of `nova-friend reach -h` says, and this is the same text:
+
+```
+The escalation ladder that gets a silent friend's attention. The friend is the argument after the flags; --friend names the same friend. Each step carries its own nonce and the exact pong line, is recorded before the next starts, and waits up to --step-timeout (default 60s) for proof: a pong for that nonce, or any other real message, from the friend's own stream (the message's from). A daemon-pong, a PING and a keepalive are not proof. The lines, in order:
+REACH STEP step=<bus|push|window> sent=<id|-> nonce=<n>
+then either REACH PROOF step=<s> after=<seconds> by=<pong|message>, and the ladder stops, or REACH NONE step=<s> waited=<d>, and it climbs. A step that cannot be taken is REACH SKIP step=<s> reason=<token>.
+1. bus: one message to the friend, subject "REACH <nonce>", body the nonce and the pong line the session runs (nova-friend pong --as <friend> --nonce <n> --to <coordinator>).
+2. push: that text pushed into the session as a turn, a real message, never a PING. The daemon must be up by its status file, written within the daemon's stale bound; otherwise REACH SKIP step=push reason=daemon-down and the ladder climbs.
+3. window: the friend's own window. A TUI in tmux gets the text by send-keys into an idle pane (pane_in_mode is 0; a pane in a mode is not typed into). A GUI harness is the app of its bundle, the message typed into its composer and submitted, which needs the accessibility permission a person grants to this binary. When it is absent the verb refuses and does not ask: grant it to this binary in System Settings > Privacy & Security > Accessibility.
+--from <bus|push|window> starts at that step (default bus). --dry-run prints the STEP lines from there and sends nothing (sent=-).
+The end is REACH OK friend=<f> step=<s> at exit 0, or REACH FAILED friend=<f> tried=<steps> at exit 1, and that FAILED line is said once on the coordinator's own stream. Exit 2 when it could not run.
+--json is one object: result{verb, status, exit, why, remedy}, facts{friend, step or tried, dry_run}, items[] of {kind: step|proof|none|skip, fields: {step, sent, nonce, after, by, waited, reason}}.
+see also: nova-friend wake --as <me> ends that friend's own recorded sleep; reach is this ladder, not that verb.
+example: nova-friend reach --as ada bob --dry-run
+```
+
+Flags: `--as` (required), `--friend` (required; also the argument after the flags), `--step-timeout` (default 60s), `--from` (`bus`, `push` or `window`, default `bus`), `--state-dir`, `--redis`, `--dry-run`, `--json`.
+
+```
+exit codes: 0 the friend answered (REACH OK), 1 the ladder climbed and nothing answered (REACH FAILED, one note on the coordinator's own stream), 2 could not run (a flag, a store, or the accessibility permission).
+```
+
+Example, as written:
+
+```
+nova-friend reach --as ada bob --dry-run
+```
+
 ### The coordinator's ping loop
 
 ```sh
@@ -671,6 +701,7 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
+| `reach --as <coordinator> <friend> [--step-timeout <d>] [--from <bus\|push\|window>] [--dry-run]` | The ladder: a bus message, then a push into the session, then the friend's own window, stopping at the first proof |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the

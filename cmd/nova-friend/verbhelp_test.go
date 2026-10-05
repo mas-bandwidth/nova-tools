@@ -22,13 +22,14 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "install", Flags: store},
 		{Verb: "uninstall"},
 		{Verb: "check", Flags: store},
+		{Verb: "reach", Flags: store},
 		{Verb: "ping", Flags: store},
 		{Verb: "pong", Flags: store},
 		{Verb: "wait-pong", Flags: store},
 		{Verb: "status"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "reach", "ping", "pong", "wait-pong", "status", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -75,6 +76,45 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 		"summary{friends, ok, broken, deaf, silent, down, untrue}",
 		"Exit 0 when every verdict is ok, 1 when any is not", "2 when it could not run",
 		"--since", "--shown", "--json", "example: nova-friend check --as ada bob",
+	} {
+		require.Contains(t, help, text)
+		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))
+	}
+}
+
+// The reach verb's help names every ladder line, every flag, the JSON fields
+// and the exit codes, and docs/CLI.md carries the same lines.
+func TestReachHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "reach", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	doc := string(raw)
+
+	var lines []string
+	for _, line := range strings.Split(help, "\n") {
+		if strings.HasPrefix(line, "REACH ") {
+			lines = append(lines, line)
+		}
+	}
+	require.NotEmpty(t, lines)
+	for _, line := range lines {
+		require.Contains(t, doc, line, "docs/CLI.md carries the help's line")
+	}
+	for _, text := range []string{
+		"--as", "--friend", "--step-timeout", "--from", "--state-dir", "--redis", "--dry-run", "--json",
+		"REACH STEP step=<bus|push|window> sent=<id|-> nonce=<n>",
+		"REACH PROOF step=<s> after=<seconds> by=<pong|message>",
+		"REACH NONE step=<s> waited=<d>",
+		"REACH SKIP step=<s> reason=<token>",
+		"REACH OK friend=<f> step=<s>",
+		"REACH FAILED friend=<f> tried=<steps>",
+		"result{verb, status, exit, why, remedy}",
+		"facts{friend, step or tried, dry_run}",
+		"items[] of {kind: step|proof|none|skip, fields: {step, sent, nonce, after, by, waited, reason}}",
+		"exit codes: 0 the friend answered (REACH OK), 1 the ladder climbed and nothing answered (REACH FAILED, one note on the coordinator's own stream), 2 could not run (a flag, a store, or the accessibility permission).",
+		"example: nova-friend reach --as ada bob --dry-run",
+		"see also: nova-friend wake --as <me>",
 	} {
 		require.Contains(t, help, text)
 		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))
