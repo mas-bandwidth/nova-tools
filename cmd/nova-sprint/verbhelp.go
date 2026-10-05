@@ -82,6 +82,9 @@ var verbEffect = map[string]string{
 	"merge-window open": "local write: the merge window, the merge table's properties in the sprint's store; land pauses while it is open; --dry-run checks --for and --reason and writes nothing",
 	// a store write, the collect's tip read and its directory reads said
 	"friend reconcile": "store write: finishes each card she reported on and returns each she abandoned, in the sprint's store; reads her inbox/QUEUE.json and outbox, writes nothing in her directory, and reads origin's tip (one git ls-remote) for each LAND it collects; --dry-run writes nothing and reads no tip",
+	"lane list":        "inspection: lists every machine's lanes and holders, writes nothing",
+	"lane take":        "store write: takes one lane on the machine for the worker, or joins the queue; --dry-run checks availability and writes nothing",
+	"lane give":        "store write: gives the worker's lane or queue position back; --dry-run checks whether a lane is held and writes nothing",
 }
 
 // commonExit is the codes of every other verb.

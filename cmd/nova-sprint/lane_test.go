@@ -80,6 +80,39 @@ func TestTheLaneVerbsTakeGiveAndListTheMachinesGoLanes(t *testing.T) {
 		assert.Contains(t, errs, "--as wants")
 		assert.Contains(t, ta.ok("lane list"), "LANE-LIST OK machines=0")
 	})
+	t.Run("dry run writes nothing", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1,m2")
+
+		// dry run take when available
+		out := ta.ok("lane take go --machine m1 --as a --dry-run")
+		assert.Contains(t, out, "LANE-TAKE DRY-RUN go machine=m1 as=a would_grant=yes held=0/1; nothing was written")
+		assert.Contains(t, ta.ok("lane list"), "LANE-LIST OK machines=0", "dry-run take wrote no lane hold")
+
+		// actually take lane
+		ta.ok("lane take go --machine m1 --as a")
+		assert.Contains(t, ta.ok("lane list"), "held=a")
+
+		// dry run take when held (would queue)
+		out = ta.ok("lane take go --machine m1 --as b --dry-run")
+		assert.Contains(t, out, "LANE-TAKE DRY-RUN go machine=m1 as=b would_grant=no place=1 held=1/1; nothing was written")
+		assert.NotContains(t, ta.ok("lane list"), "waiting=b", "dry-run take wrote no queue entry")
+
+		// dry run give when held
+		out = ta.ok("lane give go --machine m1 --as a --dry-run")
+		assert.Contains(t, out, "LANE-GIVE DRY-RUN go machine=m1 as=a would_give=yes held=1/1; nothing was written")
+		assert.Contains(t, ta.ok("lane list"), "held=a", "dry-run give did not release the lane")
+
+		// dry run give when not held
+		out = ta.ok("lane give go --machine m1 --as b --dry-run")
+		assert.Contains(t, out, "LANE-GIVE DRY-RUN go machine=m1 as=b would_give=no held=1/1; nothing was written")
+
+		// json dry run
+		out = ta.ok("lane take go --machine m1 --as c --dry-run --json")
+		assert.Contains(t, out, `"dry_run":true`)
+		assert.Contains(t, out, `"would_grant":false`)
+	})
 }
 
 // The server runs a lane's take and give for a worker, exactly as `lane <verb> <kind>
