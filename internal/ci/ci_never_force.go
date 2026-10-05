@@ -20,7 +20,7 @@ import (
 const NeverForceVerbLine = "never-force read every .go, shell script, Makefile and .github/workflows/*.yml; refuse patterns that rewrite shared refs without allowlist entry"
 
 const (
-	NeverForceRemedy = "remove the force-push pattern; use --force-with-lease=refs/heads/<local-branch> only for local work, never shared refs; cite docs/SPEC-CI.md"
+	NeverForceRemedy      = "remove the force-push pattern; use --force-with-lease=refs/heads/<local-branch> only for local work, never shared refs; cite docs/SPEC-CI.md"
 	NeverForceRemedyAllow = "delete the stale row; the allowlist only shrinks"
 )
 
@@ -69,7 +69,7 @@ var patternRules = []struct {
 }{
 	{regexp.MustCompile(`\bpush\s+--force\b`), "push-force"},
 	{regexp.MustCompile(`\bpush\s+-f\b`), "push-f"},
-	{regexp.MustCompile(`--force-with-lease(?![ \t]*=\s*refs/heads/)`), "force-with-lease"},
+	{regexp.MustCompile(`--force-with-lease`), "force-with-lease"},
 	{regexp.MustCompile(`push\s+origin\s+\+`), "push-origin-plus"},
 	{regexp.MustCompile(`reset\s+--hard\s+origin/`), "reset-hard-origin"},
 }
@@ -193,6 +193,10 @@ func scanNeverForceFile(rel string, src []byte) []NeverForceFinding {
 			if !rule.pattern.MatchString(line) {
 				continue
 			}
+			// Special handling for force-with-lease: only flag if not used safely
+			if rule.kind == "force-with-lease" && isSafeForceWithLease(line) {
+				continue
+			}
 			key := fmt.Sprintf("%d:%s", lineNum, rule.kind)
 			if seen[key] {
 				continue
@@ -208,6 +212,16 @@ func scanNeverForceFile(rel string, src []byte) []NeverForceFinding {
 	}
 
 	return findings
+}
+
+// isSafeForceWithLease checks if a force-with-lease is used safely (with refs/heads/)
+func isSafeForceWithLease(line string) bool {
+	// Safe patterns:
+	// --force-with-lease=refs/heads/...
+	// --force-with-lease = refs/heads/...
+	// Must have refs/heads/ immediately following (with optional spaces around =)
+	return strings.Contains(line, "--force-with-lease=refs/heads/") ||
+		regexp.MustCompile(`--force-with-lease\s*=\s*refs/heads/`).MatchString(line)
 }
 
 func matchNeverForceAllow(entries []waitAllow, used []bool, f NeverForceFinding) int {

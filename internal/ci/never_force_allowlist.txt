@@ -1,12 +1,41 @@
-# never-force-allowlist.txt: legitimate uses of force-push patterns in test fixtures and scripts.
+# never-force-allowlist.txt: legitimate uses of force-push patterns in test fixtures and inline documentation.
 # Format: file:line kind date reason
 # This list only shrinks: fixing a site removes its row; adding a new one is a refusal.
-# Each row names a test fixture (test code that asserts the rule) or a reset script
-# that must use force patterns for a documented reason, permitted by docs/SPEC-CI.md.
-internal/swarm/lintchild.go:37 push-force 2026-10-04 comment describing the never-force rule
-internal/swarm/lintchild.go:176 force-with-lease 2026-10-04 regex pattern describing force-with-lease as violation
-internal/swarm/lintchild_test.go:291 push-force 2026-10-04 test fixture asserting the rule
+# Each row names a test fixture (test code that asserts the rule) or inline documentation
+# that must mention force patterns for a documented reason, permitted by docs/SPEC-CI.md.
+cmd/nova-sprint/lintbrief_test.go:41 push-force 2026-10-04 test fixture asserting the rule
+cmd/nova-swarm/lintchild_test.go:111 push-force 2026-10-04 test fixture asserting the rule
+cmd/nova-swarm/memberpush_test.go:205 force-with-lease 2026-10-04 test fixture with assertion
+internal/cardcontract/openai_functional_test.go:198 push-force 2026-10-04 test fixture
+internal/cardcontract/shims_functional_test.go:103 push-force 2026-10-04 test fixture for card contract
 internal/cardcontract/shims_functional_test.go:103 force-with-lease 2026-10-04 test fixture for card contract
+internal/cardcontract/shims_functional_test.go:368 push-force 2026-10-04 test fixture for card contract
 internal/cardcontract/shims_functional_test.go:368 force-with-lease 2026-10-04 test fixture for card contract
-cmd/nova-sprint/land_prune_test.go:80 force-with-lease 2026-10-04 test fixture exercising prune logic
-tools/ci/revertonred_test.go:280 push-f 2026-10-04 comment about forced push in test
+internal/ci/ci_never_force.go:16 push-force 2026-10-04 checker implementation: pattern description in comment
+internal/ci/ci_never_force.go:16 push-f 2026-10-04 checker implementation: pattern description in comment
+internal/ci/ci_never_force.go:16 force-with-lease 2026-10-04 checker implementation: pattern description in comment
+internal/ci/ci_never_force.go:17 push-origin-plus 2026-10-04 checker implementation: pattern description in comment
+internal/ci/ci_never_force.go:17 reset-hard-origin 2026-10-04 checker implementation: pattern description in comment
+internal/ci/ci_never_force.go:72 force-with-lease 2026-10-04 checker implementation: pattern in regexp
+internal/ci/ci_never_force.go:224 force-with-lease 2026-10-04 checker implementation: pattern in regex function
+internal/ci/never_force_class_test.go:16 push-force 2026-10-04 test comment describing patterns
+internal/ci/never_force_class_test.go:16 push-f 2026-10-04 test comment describing patterns
+internal/ci/never_force_class_test.go:16 force-with-lease 2026-10-04 test comment describing patterns
+internal/ci/never_force_class_test.go:17 push-origin-plus 2026-10-04 test comment describing patterns
+internal/ci/never_force_class_test.go:17 reset-hard-origin 2026-10-04 test comment describing patterns
+internal/swarm/lint_patterns_block_test.go:24 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lint_patterns_block_test.go:47 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lint_patterns_block_test.go:52 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lintbase_test.go:110 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild.go:37 push-force 2026-10-04 comment describing the never-force rule
+internal/swarm/lintchild.go:177 force-with-lease 2026-10-04 Remedy string describing --force-with-lease in rule
+internal/swarm/lintchild_test.go:291 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild_test.go:291 push-f 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild_test.go:291 force-with-lease 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild_test.go:291 push-origin-plus 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild_test.go:292 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild_test.go:367 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild_test.go:383 push-force 2026-10-04 test fixture asserting the rule
+internal/swarm/lintchild_test.go:416 push-force 2026-10-04 test fixture asserting the rule
+tools/ci/revertonred_test.go:279 push-f 2026-10-04 test comment about forced push
+tools/ci/revertonred_test.go:316 push-f 2026-10-04 test fixture

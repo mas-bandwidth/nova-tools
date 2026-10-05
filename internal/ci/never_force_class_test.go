@@ -3,7 +3,6 @@ package ci
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
@@ -18,7 +17,7 @@ import (
 // `push origin +`, and `reset --hard origin/`. The allowlist holds legitimate uses found
 // in fixtures (test code) and scripts that must use these patterns for specific reasons.
 
-const neverForceAllowlistPath = "testdata/never-force-allowlist.txt"
+const neverForceAllowlistPath = "internal/ci/never_force_allowlist.txt"
 
 // TestNeverForceVerbLineMatchesTheSpec asserts the verb line appears in docs/SPEC-CI.md.
 func TestNeverForceVerbLineMatchesTheSpec(t *testing.T) {
