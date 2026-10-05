@@ -28,7 +28,10 @@ import (
 // this tree that reaches a host calls internal/testguard's RefuseHosts with the
 // command line it is about to run; under NOVA_TEST_NO_HOST, which `make test`
 // sets, that call panics. A test that wants a child installs its own fake on
-// PATH and declares it with testguard.AllowHosts().
+// PATH, and the guard sees that for itself: a program under a temp directory
+// is a fake. A fake the guard cannot see -- one that lives anywhere else, or
+// an injected runner with no fake program on PATH at all -- declares itself
+// with testguard.AllowHosts().
 //
 // This file is the half that reads the tree: it finds the seams and refuses one
 // that does not call the guard. It runs no ssh and writes nothing.
