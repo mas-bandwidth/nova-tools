@@ -1157,6 +1157,24 @@ section 5), end, the tokens, wait, run, predicted, actual and
 card retired and no consumer record cleaned up can lose cost: the record is
 already in the card. A figure not known prints `-`, never 0.
 
+Every paid call at run's end records its cost whatever the outcome (`landed`,
+`failed`, `no result`, `timed out`, `killed at the cap`, `a read of any verdict`),
+from provider reported cost or tokens × route prices, tagged with route, tier,
+card or read, and outcome. If a native child terminates early, ends without a
+result, or dies before emitting its summary line, `receiptSpend` recovers the
+per-attempt accounting from durable rows in `usage.tsv` so token counts and
+provider spend are preserved on the attempt record and in `--usage`.
+
+**Provider cost reconciliation.** Hourly reconciliation against provider usage
+endpoints where available (OpenRouter: `GET /api/v1/key`, reading `usage_daily`
+or `usage`), comparing internal spend across all work and read consumers against
+reported provider usage (`CostReconcile`). The reconciliation record and gap are
+recorded on the fleet table (`cost_reconcile_<provider>`), and when the gap
+exceeds 5% (`NCostGap`), ONE judgment is raised without duplicate notifications.
+The dashboard cost tile displays the complete total spend (accounting for all cards
+and in-flight work), a sub-line for unreconciled spend, and cost per landed card
+counting every attempt and read behind it.
+
 **A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
 script card, when it is anything that is not an LLM", "preference: lisp, or golang obv.", a
