@@ -311,6 +311,27 @@ answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
 
+### friend-idle-wake-r.w2: idle wake
+
+A friend holding cards whose session writes nothing gets one wake, then the coordinator one
+note (`Machine.IdleStep`, `loop.idle`). The cards she holds are the queue file's queued and
+working tasks, oldest first (`Daemon.Cards` stands in for it), read with her newest write
+(`Daemon.Activity`) at most once a minute (`IdleWalkEvery`); with no `Activity` the watch is off;
+the setting is her row's idle setting (`Daemon.IdleAfter`), ten minutes when it says none
+(`DefaultIdleAfter`). The watch is `awake`, `woken` or `noted`: awake with no write for the
+setting (measured from her newest write, the daemon's start, or the step she first held a
+card, whichever is latest) gives one wake turn through the harness's resume, `you hold <n>
+cards (<ids>) and your session has written nothing for <setting>; continue the oldest, <id>`,
+headed by the pong line while a challenge is open and never carrying the word about the
+coordinator; woken for the setting again with no write newer than the one the wake was given
+on sends one `blocker` to the coordinator (the seat the last ping named, else
+`--coordinator`), `friend <name>: idle <2 x setting> holding <n> cards: <ids>`; noted says
+nothing more. A newer write, or holding no card, is awake again, and the next idle stretch
+gets its own wake and note. The watch steps only while the session is free in batch mode: in
+one-shot mode the lanes hand each card themselves, and a passive harness's wake is said on the
+record while its note goes as any other. Tests: `TestAnIdleFriendWithCardsGetsAWakeTurnThenANote`
+(a fake clock and harness: ten idle minutes give one wake, twenty one note, a write resets both).
+
 ### Codex
 
 The adapter resolves the named thread, or the newest saved thread for its
