@@ -1766,8 +1766,9 @@ portability — not at cut time, where it would have cost nothing.
 `CardTemplateDirs` as text, and over the card and pulse templates selected from
 `swarm.TemplateNames()` (a name that is `models.tsv`, or that is neither
 `swarm.IsCardTemplate` nor `swarm.IsPulseTemplate`, is skipped), each read through
-`swarm.Template`. Neither directory in `CardTemplateDirs` exists in the tree, so
-the templates the rule reads are those selected ones; a directory that is not there is skipped, and a run that reads NO template
+`swarm.Template`. `CardTemplateDirs` is empty — a directory joins the list on
+the day a template is written into it — so the templates the rule reads are
+those selected ones; a directory that is not there is skipped, and a run that reads NO template
 at all is red, because that is how the list goes stale.
 **Its allowlist.** `internal/ci/testdata/cardtemplate_allowlist.txt`, one
 `file spell date reason` per row — empty, matched by file and spelling and never by line; shrink-only in both
