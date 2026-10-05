@@ -20,6 +20,7 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 	rollback := fs.Bool("rollback", false, "roll back to previous binary, or enable automatic rollback on failed land in window")
 	windowStr := fs.String("window", "15m", "rollback window duration: if a land fails within this window, roll back")
 	target := fs.String("target", "", "target binary to replace (default: this binary or NOVA_SPRINT_SERVER_BIN)")
+	dry := fs.Bool("dry-run", false, "run the candidate's shadow tick (read-only) and say what would be switched; switch, roll back and write nothing")
 	tickDeadline := fs.Duration("tick-deadline", TickDeadline, "the candidate's shadow tick (<binary> tick --shadow, read-only, against the store --redis names) must end in this long, or the switch is refused")
 
 	pos, err := parse(fs, args)
@@ -45,6 +46,13 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 
 	// Case 1: Manual rollback requested with no binary
 	if len(pos) == 0 && *rollback {
+		if *dry {
+			if _, err := os.Stat(targetPath + ".prev"); err != nil {
+				return refuse(stderr, "server switch", "no previous binary to roll back to: "+oneline.Err(err)+"; nothing was changed")
+			}
+			fmt.Fprintf(stdout, "SERVER SWITCH DRY-RUN rollback target=%s from=%s.prev; nothing was changed\n", targetPath, targetPath)
+			return 0
+		}
 		if err := sprint.ServerRollback(context.Background(), targetPath); err != nil {
 			fmt.Fprintf(stderr, "%s server switch: rollback failed: %s\n", prog, oneline.Escape(err.Error()))
 			return 1
@@ -80,6 +88,11 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "SHADOW TICK OK binary=%s epoch=%d state=%s parts=%d size=%d took=%s wall=%s\n", candidate, plan.Epoch, plan.State, len(plan.Parts), plan.Size, plan.Took.Round(time.Millisecond), wall.Round(time.Millisecond))
+
+	if *dry {
+		fmt.Fprintf(stdout, "SERVER SWITCH DRY-RUN target=%s binary=%s rollback=%t window=%s; nothing was switched or written\n", targetPath, candidate, *rollback, window)
+		return 0
+	}
 
 	err = sprint.ServerSwitch(context.Background(), sprint.ServerSwitchOptions{
 		Binary:   candidate,

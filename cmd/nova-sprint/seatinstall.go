@@ -129,6 +129,7 @@ func (a *app) cmdSeatUninstall(args []string, stdout, stderr io.Writer) int {
 	const name = "seat uninstall"
 	fs, c := a.verbSetup(name)
 	dir := fs.String("dir", "", "the directory the unit was written into (default: as seat install's)")
+	dry := fs.Bool("dry-run", false, "say which unit would be unloaded and removed, and unload and remove nothing")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
@@ -138,6 +139,22 @@ func (a *app) cmdSeatUninstall(args []string, stdout, stderr io.Writer) int {
 		if *dir, err = a.seatDir(goos); err != nil {
 			return refuse(stderr, name, "--dir names no directory and the home cannot be read: "+err.Error())
 		}
+	}
+	if *dry {
+		file := sprint.SeatUnitFile(goos)
+		if file == "" {
+			return refuse(stderr, name, "seat uninstall removes a launchd agent (macOS) or a systemd user unit (Linux), and "+goos+" has neither")
+		}
+		path := filepath.Join(*dir, file)
+		_, serr := os.Stat(path)
+		there := serr == nil
+		if c.json {
+			b, _ := json.Marshal(map[string]any{"path": path, "present": there, "dry_run": true}) // ignored: a string and bools always encode
+			fmt.Fprintln(stdout, string(b))
+			return 0
+		}
+		fmt.Fprintf(stdout, "SEAT UNINSTALL DRY-RUN unit=%s present=%t; nothing was unloaded or removed\n", oneline.Field(path), there)
+		return 0
 	}
 	r, err := a.seatInstaller(goos, *dir).Uninstall(goos)
 	if err != nil {
