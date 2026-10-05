@@ -406,6 +406,23 @@ func insideAny(path string, dirs []string) bool {
 	return slices.ContainsFunc(dirs, func(d string) bool { return Inside(path, d) })
 }
 
+// CanDelete reports whether path is permitted to have files or directories deleted
+// (unlink, rmdir, rename-away) from under it. Deletes are permitted only within the job
+// directory (the first --write) and the temp directory (p.Tmp).
+func (p *Policy) CanDelete(path string) bool {
+	if p == nil || len(p.Writes) == 0 {
+		return false
+	}
+	jobDir := p.Writes[0]
+	if Inside(path, jobDir) {
+		return true
+	}
+	if p.Tmp != "" && Inside(path, p.Tmp) {
+		return true
+	}
+	return false
+}
+
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
 // literals of the darwin profile put a path INTO the profile text (the -D parameters do
 // not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a

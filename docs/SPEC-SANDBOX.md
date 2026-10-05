@@ -492,6 +492,20 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
   its group), `TestWallCapsLeaveANormalRunAlone` and `TestPolicyOverNamesTheCapPast`
   (`cmd/nova-sandbox/nproc_cap_test.go`).
 
+### deletes-only-in-the-job-dir.w1 — deletes are refused outside the job directory
+
+The wall refuses unlink, rmdir, and rename-away of any path outside the job directory
+(the first `--write`) and its temporary directory (`p.Tmp`), even where writes are
+otherwise allowed (a config dir or shared cache may be written, never deleted from,
+unless it is under the job).
+
+- **Linux (Landlock):** Remove rights (`fsRemoveDir`, `fsRemoveFile`) are withheld
+  from any path outside the job directory and its temp directory, while preserving write
+  rights (`fsWriteFile`, `fsTruncate`, `fsMakeReg`, etc.).
+- **macOS (Darwin sandbox-exec):** The sandbox profile emits `(deny file-write-unlink (subpath (param "WRITE...")))`
+  for every `--write` path that lies outside the job directory and its temp directory.
+- **Checked by:** `TestTheWallRefusesDeletesOutsideTheJob` in `internal/sandbox/delete_outside_test.go`.
+
 ## The run verb — a disposable place, on darwin
 
 ```

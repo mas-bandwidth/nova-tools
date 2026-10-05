@@ -85,6 +85,9 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		// /private/tmp, the launchd Listeners socket and a sibling job's socket are all
 		// denied — which (allow network*) would not have been.
 		writes = append(writes, fmt.Sprintf("(allow network-outbound (subpath (param %q)))", name))
+		if !p.CanDelete(w) {
+			writes = append(writes, fmt.Sprintf("(deny file-write-unlink (subpath (param %q)))", name))
+		}
 		params = append(params, name+"="+w)
 	}
 	// The template names (param "HOME") unconditionally, so HOME is always passed. Build
@@ -174,6 +177,12 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// device grant here: the minimum Metal mechanisms are still unmeasured, so
 	// the profile stays closed and the GPU probe classifies the outcome.
 	text = out.String()
+	for i, w := range p.Writes {
+		if !p.CanDelete(w) {
+			name := fmt.Sprintf("WRITE%d", i)
+			text += fmt.Sprintf("(deny file-write-unlink (subpath (param %q)))\n", name)
+		}
+	}
 	if p.GPUMode == GPUMetal {
 		text += ";; gpu=metal requested: no mach-lookup or device grant added; Metal stays denied until measured\n"
 	}

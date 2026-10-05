@@ -92,6 +92,8 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 		return ExitRefused, refuse("sandbox_failed", "the profile could not be generated: %v", err)
 	}
 
+	// DarwinProfile enforces that file-write-unlink is denied for all writes outside the
+	// job directory and its tmp directory (docs/SPEC-SANDBOX.md "deletes-only-in-the-job-dir.w1").
 	// The profile is passed inline, so there is no profile file in the
 	// write set to race with and nothing to unlink on a signal death.
 	argv := []string{"-p", text}

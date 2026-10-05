@@ -65,7 +65,11 @@ func LandlockPolicyText(p *Policy) (string, error) {
 		fmt.Fprintf(&b, "read-noexec=%s\n", r)
 	}
 	for _, w := range writePaths(p) {
-		fmt.Fprintf(&b, "write=%s\n", w)
+		if p.CanDelete(w) {
+			fmt.Fprintf(&b, "write=%s\n", w)
+		} else {
+			fmt.Fprintf(&b, "write-nodelete=%s\n", w)
+		}
 	}
 	// The two writable device files of the roots table. They are FILES, so they
 	// are their own grant, not a recursive write beneath a directory.
@@ -77,4 +81,16 @@ func LandlockPolicyText(p *Policy) (string, error) {
 	}
 	fmt.Fprintf(&b, "gpu=%s\n", string(p.GPUMode))
 	return b.String(), nil
+}
+
+// LandlockWriteSubset returns the filesystem access mask granted to dir under
+// Landlock ABI abi. Remove rights (fsRemoveDir, fsRemoveFile) are granted ONLY
+// under the job directory and its temporary directory; any path outside has
+// those rights withheld, preventing unlink, rmdir, and rename-away.
+func LandlockWriteSubset(p *Policy, dir string, abi int) uint64 {
+	base := writeSubset(abi)
+	if p != nil && !p.CanDelete(dir) {
+		return base &^ (fsRemoveDir | fsRemoveFile)
+	}
+	return base
 }
