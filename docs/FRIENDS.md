@@ -24,6 +24,16 @@ without `REPORT.md`, and done once `REPORT.md` exists. `nova-sprint friend
 sync` reads these directories (writing in them only a sprint card's brief, below)
 into the friends table's `ready`, `working`, `done` and `ok%`.
 
+## Is she doing work: `nova-friend status`
+
+`nova-friend status --as <name> --dir <dir>` decides her status from evidence,
+never from her daemon's beat alone, and shows the evidence beside it
+(docs/SPEC-FRIEND.md, "A friend's status, from evidence"):
+
+```
+status=down why="no session answer 12m" evidence="harness unknown; no session answer 12m; no limit; 2 undelivered; last result 40m exit=0"
+```
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is
