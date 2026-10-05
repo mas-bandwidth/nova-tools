@@ -541,7 +541,7 @@ Progress ==
 CopiesEnd ==
   \A i \in CopyId : (cw[i] \in Live) ~> (cw[i] \in {"ok", "fail"})
 
-\* Ready means READY: a card in ready is dealt, not returned (Glenn
+\* Ready means READY: a card in ready is dealt, not returned (a friend
 \* 2026-09-25 1:40 PM ET: waiting -> ready is one way); stated as: from
 \* ready, the next place is working
 ReadyIsOneWay ==

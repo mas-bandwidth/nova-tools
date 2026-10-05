@@ -1,6 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 11
-tla/CardMachine.tla:glenn 1
+# ceiling: 10
 tla/README.md:glenn 1
 tla/README.md:rowan 2
 tla/README.md:space 5
