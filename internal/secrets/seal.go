@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
+
+// errSeatFileAbsent is the typed refusal `seal` makes for a seat file the store does
+// not hold (SPEC-SECRETS rule 12; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15,
+// the Seal action): a new seat is given its first values by seat add, never by seal,
+// because the decrypt before the write is the only step that proves the caller's key
+// opens the target, and an absent file gives it nothing to prove.
+var errSeatFileAbsent = errors.New("a new seat is given its first values by seat add, never by seal (SPEC-SECRETS rule 12)")
 
 // execCommand runs one helper process and returns its stdout. The encrypt step
 // takes it as a parameter so a test can supply a pure-Go fake on every platform
@@ -157,6 +165,19 @@ func RunSeal(opts SealOptions) (line string, err error) {
 
 	if opts.DryRun {
 		return sealDryRun(opts, carry, targetFile)
+	}
+
+	// A seat file the store does not hold is never written by seal (SPEC-SECRETS
+	// rule 12; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15, the Seal action):
+	// the decrypt is the only step that proves the caller's key opens the target, and
+	// an absent file gives it nothing to prove, so a rule for the name alone would let
+	// any store key's holder write the file. The refusal lands before the value is
+	// read, so nothing is taken for a write that will not happen.
+	if _, err := os.Stat(targetFile); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%s does not exist in the store; %w", seatFile, errSeatFileAbsent)
+		}
+		return "", err
 	}
 
 	value, err := readSealValue(opts)
@@ -428,6 +449,9 @@ func sealRecipients(storeDir, seatFile string) ([]string, error) {
 // takes, and nothing written. The value is never read (a dry run takes no stdin and
 // opens no terminal prompt); the one sops call is the decrypt the real run also
 // makes, to say whether NAME is added or replaced, and no value reaches a line.
+// An absent seat file is the same typed refusal the real run makes (SPEC-SECRETS
+// rule 12; tla/SecretsSeat.tla, Seal): a dry run never plans the write the real
+// run will not take.
 func sealDryRun(opts SealOptions, carry sealCarry, targetFile string) (string, error) {
 	seatFile := carry.seatFile
 	recipients, err := sealRecipients(opts.StoreDir, seatFile)
@@ -435,6 +459,10 @@ func sealDryRun(opts SealOptions, carry sealCarry, targetFile string) (string, e
 		return "", err
 	}
 	action := "add"
+	home, err := carry.preflight()
+	if err != nil {
+		return "", err
+	}
 	if _, statErr := os.Stat(targetFile); statErr == nil {
 		opts.say("reading %s", seatFile)
 		existing, err := sealDecrypt(carry.run, opts.SopsPath, opts.KeyPath, targetFile)
@@ -444,10 +472,10 @@ func sealDryRun(opts SealOptions, carry sealCarry, targetFile string) (string, e
 		if sealHas(existing, opts.Name) {
 			action = "replace"
 		}
-	}
-	home, err := carry.preflight()
-	if err != nil {
-		return "", err
+	} else if os.IsNotExist(statErr) {
+		return "", fmt.Errorf("%s does not exist in the store; %w", seatFile, errSeatFileAbsent)
+	} else {
+		return "", statErr
 	}
 	lines := []string{fmt.Sprintf("SECRETS SEAL PLAN write=%s action=%s name=%s seat=%s recipients=%s value=not read (dry run)",
 		oneline.Field(targetFile), action, oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(strings.Join(recipients, ",")))}
@@ -549,11 +577,15 @@ func runStty(tty *os.File, arg string) error {
 }
 
 // sealDecrypt reads the seat file's plaintext through a sops pipe, never a file in the
-// clear. An absent seat file starts from nothing, so a new name can be added.
+// clear. An absent seat file is the typed not-exist refusal, never an empty document:
+// the decrypt is the only step that proves the caller's key opens the file, and a new
+// seat's first values come from seat add (SPEC-SECRETS rule 12; tla/SecretsSeat.tla,
+// Seal). Without it, a rule for the name alone would let any store key's holder write
+// the file.
 func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, error) {
 	if _, err := os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, fmt.Errorf("%s does not exist in the store; %w", filepath.Base(filePath), errSeatFileAbsent)
 		}
 		return nil, err
 	}
