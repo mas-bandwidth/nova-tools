@@ -48,15 +48,15 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			assert.Contains(t, out, "UNIT server missing unit="+file("server")+"; run: nova-sprint install server")
 			assert.Contains(t, out, "UNITS CHECK DIFFERENT installed=0 missing=9 different=0")
 
-			code, out, errs = do((*app).cmdInstall, "server", "--listen", "100.64.0.9:6390", "--land", "--decide", "/srv/decide", "--dry-run")
+			code, out, errs = do((*app).cmdInstall, "server", "--listen", "127.0.0.1:6390", "--land", "--decide", "/srv/decide", "--dry-run")
 			require.Equal(t, 0, code, errs)
 			assert.Contains(t, out, "INSTALL SERVER DRY-RUN unit="+file("server"))
 			assert.NoFileExists(t, file("server"), "a dry run writes nothing")
 			assert.Empty(t, calls)
 
 			for _, line := range [][]string{
-				{"server", "--listen", "100.64.0.9:6390", "--land", "--decide", "/srv/decide"},
-				{"member", "--as", "m1", "--server", "100.64.0.9:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"},
+				{"server", "--listen", "127.0.0.1:6390", "--land", "--decide", "/srv/decide"},
+				{"member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"},
 				{"seat-push"},
 				{"friend-sync", "--every", "15s"},
 				{"table", "--out", "/srv/table.txt"},
@@ -73,13 +73,13 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			require.NoError(t, err)
 			args, err := sprint.UnitArgs(goos, b)
 			require.NoError(t, err)
-			assert.Equal(t, []string{"/opt/nova/bin/nova-sprint", "run", "--listen", "100.64.0.9:6390", "--redis", "127.0.0.1:6380", "--land", "--decide", "/srv/decide"}, args)
+			assert.Equal(t, []string{"/opt/nova/bin/nova-sprint", "run", "--listen", "127.0.0.1:6390", "--redis", "127.0.0.1:6380", "--land", "--decide", "/srv/decide"}, args)
 			assert.Contains(t, string(b), "owner-a", "the owner's name rides in the unit's environment")
 			b, err = os.ReadFile(file("member"))
 			require.NoError(t, err)
 			args, err = sprint.UnitArgs(goos, b)
 			require.NoError(t, err)
-			assert.Equal(t, []string{"/opt/nova/bin/nova-swarm", "member", "--as", "m1", "--server", "100.64.0.9:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"}, args)
+			assert.Equal(t, []string{"/opt/nova/bin/nova-swarm", "member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"}, args)
 			b, err = os.ReadFile(file("table"))
 			require.NoError(t, err)
 			args, err = sprint.UnitArgs(goos, b)
@@ -90,8 +90,8 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			// the units nova-sprint installs are in; the store, the bus and the upkeep are
 			// missing; a hand-written wrapper in the server's place is different
 			k, _ := sprint.UnitKindOf("server")
-			wrapped := sprint.Unit{Kind: sprint.UnitKind{Kind: "x", Label: k.Label, Service: k.Service, Tool: "nova-secrets", Verb: []string{"exec"}}, OS: goos,
-				Args: []string{"/usr/local/bin/nova-secrets", "exec", "--", "/opt/nova/bin/nova-sprint", "run", "--listen", "100.64.0.9:6390"}}
+			wrapped := sprint.ServiceUnit{Kind: sprint.UnitKind{Kind: "x", Label: k.Label, Service: k.Service, Tool: "nova-secrets", Verb: []string{"exec"}}, OS: goos,
+				Args: []string{"/usr/local/bin/nova-secrets", "exec", "--", "/opt/nova/bin/nova-sprint", "run", "--listen", "127.0.0.1:6390"}}
 			text, err := wrapped.Text()
 			require.NoError(t, err)
 			require.NoError(t, os.WriteFile(file("server"), []byte(text), 0o644))
@@ -145,7 +145,7 @@ func TestInstallRefusesAKindItDoesNotOwnAndAStoreTheUnitCannotLogInTo(t *testing
 		{(*app).cmdUninstall, []string{"disk-guard"}, "run: nova-swarm uninstall disk-guard"},
 		{(*app).cmdInstall, []string{"nope"}, "no unit kind nope"},
 		{(*app).cmdInstall, []string{"server"}, "--listen <address:port> is required"},
-		{(*app).cmdInstall, []string{"server", "--listen", "100.64.0.9:6390"}, "nova-sprint seat login --redis 127.0.0.1:6380 --user coordinator"},
+		{(*app).cmdInstall, []string{"server", "--listen", "127.0.0.1:6390"}, "nova-sprint seat login --redis 127.0.0.1:6380 --user coordinator"},
 		{(*app).cmdInstall, []string{"table", "--out", "/srv/t.txt", "--redis", "mem:0"}, "the in-memory twin"},
 		{(*app).cmdInstall, []string{"member", "--as", "m1"}, "--server <address:port> are required"},
 		{(*app).cmdUnits, nil, "units wants --check"},

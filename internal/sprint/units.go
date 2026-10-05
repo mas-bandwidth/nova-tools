@@ -29,13 +29,14 @@ import (
 // UnitKind is one kind of unit a running sprint needs: its file names, the nova tool it
 // runs, the words every such unit starts with after the tool, and the verb that installs it.
 type UnitKind struct {
-	Kind    string   `json:"kind"`    // the word the install verb takes
-	Label   string   `json:"label"`   // the launchd label; its plist is Label.plist
-	Service string   `json:"service"` // the systemd user unit
-	Tool    string   `json:"tool"`    // the nova binary the unit runs, by its base name
-	Verb    []string `json:"verb"`    // the words after the binary every such unit starts with
-	Install string   `json:"install"` // the verb line that writes and loads it
-	What    string   `json:"what"`    // one line: what the unit is
+	Kind    string   `json:"kind"`           // the word the install verb takes
+	Label   string   `json:"label"`          // the launchd label; its plist is Label.plist
+	Service string   `json:"service"`        // the systemd user unit
+	Tool    string   `json:"tool"`           // the nova binary the unit runs, by its base name
+	Verb    []string `json:"verb"`           // the words after the binary every such unit starts with
+	Install string   `json:"install"`        // the verb line that writes and loads it
+	What    string   `json:"what"`           // one line: what the unit is
+	Owed    string   `json:"owed,omitempty"` // what the install verb still waits on, "" when it is there
 }
 
 // UnitKinds is every unit a running sprint needs on its coordinator's machine, in the
@@ -57,9 +58,11 @@ var UnitKinds = []UnitKind{
 	{Kind: "table", Label: "nova-sprint.table", Service: "nova-sprint-table.service", Tool: "nova-sprint", Verb: []string{"where", "--watch"},
 		Install: "nova-sprint install table", What: "the live sprint table written to a file (nova-sprint where --watch)"},
 	{Kind: "disk-guard", Label: "nova-swarm.disk-guard", Service: "nova-swarm-disk-guard.service", Tool: "nova-swarm", Verb: []string{"disk-guard"},
-		Install: "nova-swarm install disk-guard", What: "the machine's disk upkeep, one pass every --every (nova-swarm disk-guard)"},
+		Install: "nova-swarm install disk-guard", What: "the machine's disk upkeep, one pass every --every (nova-swarm disk-guard)",
+		Owed: "nova-swarm has no install verb yet, and a worker's binary may not import the unit code here, which reaches the store"},
 	{Kind: "mirror-refresh", Label: "nova-swarm.mirror-refresh", Service: "nova-swarm-mirror-refresh.service", Tool: "nova-swarm", Verb: []string{"mirror"},
-		Install: "nova-swarm install mirror-refresh", What: "the bench's repository mirrors kept fresh (nova-swarm mirror)"},
+		Install: "nova-swarm install mirror-refresh", What: "the bench's repository mirrors kept fresh (nova-swarm mirror)",
+		Owed: "nova-swarm has no mirror verb for the unit to run, and no install verb"},
 }
 
 // UnitKindOf is the kind named k.
@@ -98,12 +101,12 @@ func (k UnitKind) File(goos string) string {
 // runs is the verb line every unit of the kind runs, the tool by its base name.
 func (k UnitKind) runs() string { return strings.Join(append([]string{k.Tool}, k.Verb...), " ") }
 
-// Unit is one unit of a kind as a service: its command line, the binary first by its
+// ServiceUnit is one unit of a kind as a service: its command line, the binary first by its
 // absolute path; its environment, names and addresses and never a secret; the file its
 // lines go to (launchd; systemd keeps them in its journal); and Every, the least time
 // between two starts, so a verb that does one pass and exits runs once every Every
 // (launchd's ThrottleInterval, systemd's RestartSec; 0 is 10 s).
-type Unit struct {
+type ServiceUnit struct {
 	Kind  UnitKind
 	OS    string
 	Args  []string
@@ -117,7 +120,7 @@ type Unit struct {
 var secretWords = []string{"PASSWORD", "SECRET", "TOKEN", "API_KEY", "_KEY"}
 
 // refusal is why the unit is not written, "" is it may be.
-func (u Unit) refusal() string {
+func (u ServiceUnit) refusal() string {
 	k := u.Kind
 	if k.File(u.OS) == "" {
 		return k.Install + " installs a launchd agent (macOS) or a systemd user unit (Linux), not a service on " + orDash(u.OS) + "; run the verb by hand: " + k.runs()
@@ -171,7 +174,7 @@ func hasPrefix(words, prefix []string) bool {
 }
 
 // throttle is the least time between two starts in whole seconds, 10 when Every is 0.
-func (u Unit) throttle() int {
+func (u ServiceUnit) throttle() int {
 	if u.Every <= 0 {
 		return 10
 	}
@@ -183,7 +186,7 @@ func (u Unit) throttle() int {
 }
 
 // Text is the unit's file: a launchd plist, or a systemd user unit.
-func (u Unit) Text() (string, error) {
+func (u ServiceUnit) Text() (string, error) {
 	if why := u.refusal(); why != "" {
 		return "", errors.New(why)
 	}
@@ -306,7 +309,7 @@ func (in SeatInstaller) removeUnit(path string) (SeatResult, error) {
 
 // InstallUnit writes the unit into the installer's directory unless the file there is
 // already this text, and loads it either way, as Install does the push loop's.
-func (in SeatInstaller) InstallUnit(u Unit) (SeatResult, error) {
+func (in SeatInstaller) InstallUnit(u ServiceUnit) (SeatResult, error) {
 	text, err := u.Text()
 	if err != nil {
 		return SeatResult{}, err
@@ -332,9 +335,11 @@ const (
 )
 
 // UnitState is one needed unit as units --check found it: its kind, the file it is
-// looked for at, its state, why it is different, and the verb that installs it.
+// looked for at, its state, why it is different, the verb that installs it, and what
+// that verb still waits on when it is not there yet.
 type UnitState struct {
 	Kind    string `json:"kind"`
+	Owed    string `json:"owed,omitempty"`
 	Path    string `json:"path"`
 	State   string `json:"state"`
 	Why     string `json:"why,omitempty"`
@@ -352,7 +357,7 @@ func CheckUnits(dir, goos string, kinds []UnitKind) ([]UnitState, error) {
 		if name == "" {
 			return nil, errors.New("units --check reads launchd agents (macOS) or systemd user units (Linux), and " + orDash(goos) + " has neither")
 		}
-		s := UnitState{Kind: k.Kind, Path: filepath.Join(dir, name), Install: k.Install}
+		s := UnitState{Kind: k.Kind, Path: filepath.Join(dir, name), Install: k.Install, Owed: k.Owed}
 		b, err := os.ReadFile(s.Path)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):

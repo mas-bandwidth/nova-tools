@@ -15,7 +15,8 @@ import (
 )
 
 // install, uninstall and units (card every-unit-installed-by-a-verb; the owner,
-// 2026-10-05: "Please convert any scripts to real tools/verbs"): every unit a running
+// 2026-10-05: "We cannot release a product, when parts of it needed to use it
+// effectively are still locked up for you only"): every unit a running
 // sprint needs on its coordinator's machine is written and loaded by a verb, in place
 // of a unit written by hand around nova-secrets exec, zsh or a single-instance wrapper.
 // nova-sprint installs its own (server, member, seat-push, friend-sync, table); the
@@ -28,7 +29,7 @@ import (
 
 // installVerbs are the verbs' rows of the verb table (verbs.go appends them).
 var installVerbs = []verb{
-	{"install", "<server|member|seat-push|friend-sync|table> [--dir <dir>] [--log <file>] [--dry-run] (and the kind's own flags: install <kind> -h)", "install table --dry-run --redis 127.0.0.1:6380 --out /tmp/nova-sprint-table.txt", (*app).cmdInstall},
+	{"install", "<server|member|seat-push|friend-sync|table> [--dir <dir>] [--log <file>] [--dry-run] (each kind's own flags are listed by install <kind> -h)", "install friend-sync --dry-run --every 15s --redis 127.0.0.1:6380", (*app).cmdInstall},
 	{"uninstall", "<server|member|seat-push|friend-sync|table> [--dir <dir>] [--dry-run]", "uninstall table --dry-run --dir ./no-unit-here", (*app).cmdUninstall},
 	{"units", "--check [--dir <dir>]", "units --check --dir ./no-units-here", (*app).cmdUnits},
 }
@@ -55,6 +56,14 @@ func sprintKinds() string { return strings.Join(sprint.UnitKindNames("nova-sprin
 // (code 2) when it names none, or one another tool installs.
 func (a *app) kindOf(verb string, args []string, stderr io.Writer) (sprint.UnitKind, int) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		// -h with no kind is the verb's help (parse prints it); anything else is refused
+		fs, _ := a.verbSetup(verb)
+		fs.String("dir", "", "the directory the unit is in (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
+		fs.Bool("dry-run", false, "print what would be done, and write, load, unload and remove nothing")
+		if verb == "install" {
+			fs.String("log", "", "the file the unit's lines go to, macOS (default: ~/Library/Logs/nova-sprint-<kind>.log); on Linux they are in the journal")
+		}
+		_, _ = parse(fs, args) // ignored: the kind is refused below whatever the flags say
 		return sprint.UnitKind{}, refuse(stderr, verb, verb+" wants the unit's kind first: "+sprintKinds()+"; run: nova-sprint "+verb+" table --dry-run")
 	}
 	k, ok := sprint.UnitKindOf(args[0])
@@ -184,7 +193,7 @@ func (a *app) installUnit(k sprint.UnitKind, args []string, stdout, stderr io.Wr
 	if err != nil {
 		return refuse(stderr, name, "the path of this nova-sprint cannot be read: "+err.Error()+"; nothing was written")
 	}
-	u := sprint.Unit{Kind: k, OS: goos, Log: *logf}
+	u := sprint.ServiceUnit{Kind: k, OS: goos, Log: *logf}
 	// the store: the sprint's server when one is named and no --redis is, else the Redis
 	// the unit opens with the seat login, in its own process
 	store := func() ([]string, string) {
@@ -364,7 +373,9 @@ func (a *app) cmdUnits(args []string, stdout, stderr io.Writer) int {
 			if s.Why != "" {
 				line += " why=" + oneline.Field(s.Why)
 			}
-			if s.State != sprint.UnitInstalled {
+			if s.State != sprint.UnitInstalled && s.Owed != "" {
+				line += "; owed: " + s.Install + " (" + s.Owed + ")"
+			} else if s.State != sprint.UnitInstalled {
 				line += "; run: " + s.Install
 			}
 			fmt.Fprintln(stdout, line)

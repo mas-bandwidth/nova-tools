@@ -17,7 +17,7 @@ import (
 // user's gui domain on macOS, its label the file's name without .plist, and
 // systemctl --user on Linux, its service the file's name. It is the loader of every
 // unit a nova verb installs (seat install, friend sync install, nova-sprint install,
-// nova-redis install, nova-swarm install). Under NOVA_TEST_NO_HOST it refuses: a
+// nova-redis install). Under NOVA_TEST_NO_HOST it refuses: a
 // test gives its own loader.
 func LoadUnit(goos, op, path string) error {
 	if os.Getenv("NOVA_TEST_NO_HOST") != "" {

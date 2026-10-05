@@ -56,7 +56,7 @@ func TestEveryUnitASprintNeedsIsInstalledByAVerb(t *testing.T) {
 			}
 
 			for _, k := range UnitKinds {
-				u := Unit{Kind: k, OS: goos, Args: append([]string{"/opt/nova/bin/" + k.Tool}, append(k.Verb, "--a b", `50%$"`)...),
+				u := ServiceUnit{Kind: k, OS: goos, Args: append([]string{"/opt/nova/bin/" + k.Tool}, append(k.Verb, "--a b", `50%$"`)...),
 					Env: [][2]string{{"NOVA_SPRINT_ACTOR", "seat"}, {"NOVA_PG_PASSWORD_ENV", "NOVA_PG_CONFIG_PASSWORD"}}, Every: 5 * time.Minute}
 				r, err := in.InstallUnit(u)
 				require.NoError(t, err, k.Kind)
@@ -129,21 +129,21 @@ func TestEveryUnitASprintNeedsIsInstalledByAVerb(t *testing.T) {
 func TestAUnitRefusesAWrapperAVerbNotItsOwnAndASecret(t *testing.T) {
 	t.Parallel()
 	server, _ := UnitKindOf("server")
-	ok := Unit{Kind: server, OS: "linux", Args: []string{"/opt/nova/bin/nova-sprint", "run", "--listen", "100.64.0.1:6390"}}
+	ok := ServiceUnit{Kind: server, OS: "linux", Args: []string{"/opt/nova/bin/nova-sprint", "run", "--listen", "127.0.0.1:6390"}}
 	_, err := ok.Text()
 	require.NoError(t, err)
 	for name, tc := range map[string]struct {
-		mut  func(*Unit)
+		mut  func(*ServiceUnit)
 		want string
 	}{
-		"windows":  {func(u *Unit) { u.OS = "windows" }, "not a service on windows"},
-		"relative": {func(u *Unit) { u.Args = []string{"nova-sprint", "run", "--listen", "x"} }, "by its absolute path"},
-		"wrapper":  {func(u *Unit) { u.Args = []string{"/usr/bin/nova-secrets", "exec", "--", "nova-sprint", "run"} }, "never a wrapper"},
-		"verb":     {func(u *Unit) { u.Args = []string{"/opt/nova/bin/nova-sprint", "where"} }, "runs nova-sprint run --listen, not nova-sprint where"},
-		"secret":   {func(u *Unit) { u.Env = [][2]string{{"JEV_API_KEY", "x"}} }, "carries no secret, and JEV_API_KEY is one"},
-		"password": {func(u *Unit) { u.Env = [][2]string{{"NOVA_REDIS_PASSWORD", "x"}} }, "carries no secret"},
-		"env name": {func(u *Unit) { u.Env = [][2]string{{"NOVA_PG_PASSWORD_ENV", "x y"}} }, "does not name a variable"},
-		"every":    {func(u *Unit) { u.Every = -time.Second }, "zero or more"},
+		"windows":  {func(u *ServiceUnit) { u.OS = "windows" }, "not a service on windows"},
+		"relative": {func(u *ServiceUnit) { u.Args = []string{"nova-sprint", "run", "--listen", "x"} }, "by its absolute path"},
+		"wrapper":  {func(u *ServiceUnit) { u.Args = []string{"/usr/bin/nova-secrets", "exec", "--", "nova-sprint", "run"} }, "never a wrapper"},
+		"verb":     {func(u *ServiceUnit) { u.Args = []string{"/opt/nova/bin/nova-sprint", "where"} }, "runs nova-sprint run --listen, not nova-sprint where"},
+		"secret":   {func(u *ServiceUnit) { u.Env = [][2]string{{"JEV_API_KEY", "x"}} }, "carries no secret, and JEV_API_KEY is one"},
+		"password": {func(u *ServiceUnit) { u.Env = [][2]string{{"NOVA_REDIS_PASSWORD", "x"}} }, "carries no secret"},
+		"env name": {func(u *ServiceUnit) { u.Env = [][2]string{{"NOVA_PG_PASSWORD_ENV", "x y"}} }, "does not name a variable"},
+		"every":    {func(u *ServiceUnit) { u.Every = -time.Second }, "zero or more"},
 	} {
 		u := ok
 		tc.mut(&u)

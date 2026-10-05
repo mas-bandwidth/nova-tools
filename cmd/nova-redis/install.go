@@ -10,9 +10,9 @@ package main
 // persistence and eviction rules) and hands it over stdin, and reads the password in
 // its own process from the login the unit names (--secret and the seat it is in), so
 // neither the unit nor any file holds it. The unit's text, its install and its loader
-// are internal/sprint's (sprint.Unit, sprint.SeatInstaller, sprint.LoadUnit), shared
-// with nova-sprint install and nova-swarm install, and nova-sprint units --check
-// names both units installed, missing or different.
+// are internal/sprint's (sprint.ServiceUnit, sprint.SeatInstaller, sprint.LoadUnit), shared
+// with nova-sprint install, and nova-sprint units --check names both units installed,
+// missing or different.
 
 import (
 	"errors"
@@ -59,7 +59,8 @@ func installVerb(d deps, kind string, port int) tool.Verb {
 store directory and the login named here, into --units (default: ~/Library/LaunchAgents on
 macOS, ~/.config/systemd/user on Linux) and loads it with launchctl or systemctl --user.
 The unit carries no password: serve reads it in its own process from --secret in the seat
---as of the secrets store --secrets. --dry-run prints the unit and writes and loads nothing.`,
+--as of the secrets store --secrets. --dry-run prints the unit and writes and loads nothing.
+example: nova-redis install ` + kind + ` --dry-run --secrets ~/nova-bench/secrets --as <seat> --key <file> --sops <path> --secret <NAME>`,
 		Flags: func(f *tool.Flags) {
 			f.Prints()
 			f.String("bind", "127.0.0.1", "comma-separated IP addresses the server listens on, loopback or tailnet only (serve --bind)")
@@ -81,7 +82,8 @@ func uninstallVerb(d deps, kind string) tool.Verb {
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
 		Detail: `unloads the ` + kind + `'s unit and removes its file from --units; the store directory and its data
-are kept. --dry-run names the unit and unloads and removes nothing.`,
+are kept. --dry-run names the unit and unloads and removes nothing.
+example: nova-redis uninstall ` + kind + ` --dry-run`,
 		Flags: func(f *tool.Flags) {
 			f.Prints()
 			f.String("units", "", "the directory the unit was written into (default: as install's)")
@@ -96,7 +98,7 @@ func loginUnitFlags(f *tool.Flags) {
 	f.String("secrets", "", "the secrets store's working copy the password is in (nova-secrets --store)")
 	f.String("as", "", "the seat of the secrets store the password is sealed for (nova-secrets --as)")
 	f.String("key", "", "the seat's age key file (nova-secrets --key)")
-	f.String("sops", "", "the sops binary (nova-secrets --sops)")
+	f.String("sops", "", "the sops binary the seat's file is decrypted with (nova-secrets --sops)")
 	f.String("secret", "", "the `NAME` of the password in the seat; with it, serve reads the password in its own process rather than from "+PasswordEnv)
 }
 
@@ -181,7 +183,7 @@ func installRun(c *tool.Call, d deps, kind string) *tool.Out {
 	if err != nil {
 		return tool.Refuse("the path of this nova-redis cannot be read: " + err.Error() + "; nothing was written")
 	}
-	u := sprint.Unit{Kind: k, OS: goos, Log: c.Str("log"),
+	u := sprint.ServiceUnit{Kind: k, OS: goos, Log: c.Str("log"),
 		Args: append([]string{bin, "serve", "--bind", strings.Join(binds, ","), "--port", strconv.Itoa(port), "--dir", filepath.Clean(dir)}, login...)}
 	if u.Log == "" && goos == "darwin" {
 		if herr != nil {
