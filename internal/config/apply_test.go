@@ -373,15 +373,17 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 
 // TestApplyRefusesToMoveTheSeat: a publish never moves the coordinator seat
 // (docs/SPEC-CONFIG.md, "sprint"): apply holds a sprint:coordinator the live
-// store disagrees with, writes every other sprint field, says the one
-// APPLY HELD line and exits 0. The seat moves by the sprint seat verb, or by
-// --move-seat (apply's moveSeat), the owner's word. A first apply, with no
-// live key, writes the row's coordinator.
+// store disagrees with, writes every other sprint field, reports one OpHeld
+// whose SaidLine is the one APPLY HELD line, and exits 0. The seat moves by
+// nova-sprint's seat verb. ApplyMovingSeat writes a differing coordinator;
+// nova-config does not parse --move-seat. A first apply, with no live key,
+// writes the row's coordinator. A check reports the same line and writes nothing.
 func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	friend, _ := Lookup(KindFriend)
+	const held = "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator a to make the row agree"
 	// The live seat holds a; the row names b and an unrelated field.
 	st := NewMem()
 	fb, err := friend.NewRow("b", map[string]string{"slots": "8", "tiers": "flash"})
@@ -392,8 +394,25 @@ func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	require.NoError(t, err)
 	ap := newFake()
 	ap.views[KindSprint] = map[string]View{KindSprint: {"coordinator": "a", FieldDecideBounce: ""}}
-	var said []string
-	report := func(op Op) { said = append(said, op.Name) }
+	var said []Op
+	report := func(op Op) { said = append(said, op) }
+	heldSaid := func() []string {
+		t.Helper()
+		var lines []string
+		for _, op := range said {
+			if op.Op == OpHeld {
+				lines = append(lines, SaidLine("APPLY", KindSprint, op))
+			}
+		}
+		return lines
+	}
+
+	// A check says the held line and writes nothing.
+	_, err = Apply(ctx, st, ap, KindSprint, "rowan", true, report)
+	require.NoError(t, err)
+	require.Equal(t, []string{held}, heldSaid(), "a check says the one held line: %v", said)
+	require.Empty(t, ap.log, "a check wrote: %v", ap.log)
+	said = nil
 
 	// A publish holds the seat: every other sprint field is written, the
 	// one APPLY HELD line is said, and the call exits 0.
@@ -401,12 +420,15 @@ func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "a", ap.views[KindSprint][KindSprint]["coordinator"], "the live coordinator is moved: %v", ap.views[KindSprint])
 	require.Equal(t, "0.9", ap.views[KindSprint][KindSprint][FieldDecideBounce], "the other sprint field is written: %v", ap.views[KindSprint])
-	require.Contains(t, said, "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator a to make the row agree, or apply --move-seat", "the one held line: %v", said)
+	require.Equal(t, []string{held}, heldSaid(), "the one held line: %v", said)
+	require.NotContains(t, held, "--move-seat", "the line names a flag the binary does not parse")
 
-	// --move-seat (the owner's word) writes the differing coordinator.
-	_, err = apply(ctx, st, ap, KindSprint, "rowan", false, true, report)
+	// ApplyMovingSeat (the owner's word) writes the differing coordinator.
+	said = nil
+	_, err = ApplyMovingSeat(ctx, st, ap, KindSprint, "rowan", false, report)
 	require.NoError(t, err)
 	require.Equal(t, "b", ap.views[KindSprint][KindSprint]["coordinator"], "the seat move the owner names: %v", ap.views[KindSprint])
+	require.Empty(t, heldSaid(), "a named seat move says no held line: %v", said)
 
 	// A first apply, with no live key, writes the row's coordinator.
 	st2 := NewMem()

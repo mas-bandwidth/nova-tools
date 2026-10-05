@@ -557,16 +557,24 @@ and wake path stay, they are hers.
 <friend>`), `DEL` when empty — except the seat: the coordinator is written
 only when `sprint:coordinator` is absent (a first apply) or already equal to
 the row. When the live value differs, apply writes every other sprint field,
-leaves `sprint:coordinator` as it is, says one `APPLY HELD kind=sprint
-field=coordinator live=<a> row=<b>: the seat moves by nova-sprint's seat
-verb; run nova-config sprint set --coordinator <a> to make the row agree, or
-apply --move-seat` line and exits 0; `apply --move-seat` writes the
-differing coordinator, the case the owner means it. The seat moves only by
-the sprint seat verb, on the owner's word; a configuration publish never
-moves it. Never removed. The handover is `nova-config sprint set
---coordinator <friend> --as <friend>` then `apply --move-seat`, or the seat
-verb: the sprint kind's own revision moves and the friend kind's plan is
-two `SET ... changed=roles`, the new coordinator's first.
+leaves `sprint:coordinator` as it is, and the library reports one
+`APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: the seat moves by
+nova-sprint's seat verb; run nova-config sprint set --coordinator <a> to make
+the row agree` line and exits 0. A configuration publish never moves the
+seat. `ApplyMovingSeat` writes the differing coordinator. `nova-config apply`
+does not parse `--move-seat` (an unknown flag, exit 2). The seat moves by
+nova-sprint's seat verb. `nova-config apply` prints every op through
+`OpLine`, which wraps an OpHeld name as `APPLY HELD kind=sprint name=<the
+line>` (and `CHECK HELD` on `--dry-run`). `--json` emits `op=held` with
+`name` equal to that line. When the only difference is the coordinator, the
+plan still reports `SET` `changed=coordinator`, the set count includes it,
+and the write stores the live value; the revision stamp advances, so
+`status` reads in sync while the row's coordinator still disagrees with
+Redis. The held line is the signal. Never removed. The handover of the row
+is `nova-config sprint set --coordinator <friend> --as <friend>`; `apply`
+holds `sprint:coordinator` and still writes the friend roles from the row.
+The Redis key moves by the seat verb, or by `ApplyMovingSeat`. The friend
+kind's plan is two `SET ... changed=roles`, the new coordinator's first.
 
 **loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
 (the derived path), `rev` and `at`, written whole in one transaction with

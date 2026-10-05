@@ -41,15 +41,16 @@ type Applier interface {
 // Op is one line of a plan.
 type Op struct {
 	Op      string   // OpAdd, OpSet, OpRemove or OpHeld
-	Name    string   // the row's name, or the whole held line for OpHeld
+	Name    string   // the row's name, or the whole held line for OpHeld (SaidLine prints it verbatim)
 	Changed []string // the fields that differ, for OpSet
 	Row     Row      // the row to write, for OpAdd and OpSet
 	Prev    View     // Redis's row, for OpSet and OpRemove
 }
 
 // OpHeld is the held write a publish reports instead of moving the sprint
-// seat (docs/SPEC-CONFIG.md, "sprint"): its Name is the one line, said
-// whole, so the caller's line is the card's one line.
+// seat (docs/SPEC-CONFIG.md, "sprint"): its Name is the one line. SaidLine
+// prints that name verbatim. nova-config apply prints through OpLine, which
+// wraps the name; OpLine is outside this change.
 const OpHeld = "held"
 
 // Plan diffs the kind's rows against Redis's views: an add for a row Redis
@@ -134,16 +135,24 @@ func Idem(kind string, rev int64) string { return fmt.Sprintf("config:%s:%d", ki
 // is written, so a refusal part way names what was written before it.
 // A publish never moves the sprint seat (docs/SPEC-CONFIG.md, "sprint"): a
 // sprint:coordinator the live store disagrees with is held, every other
-// sprint field is written and one OpHeld line is said; the seat moves by the
-// sprint seat verb, or by the seat move the caller names (moveSeat).
+// sprint field is written and one OpHeld line is said. The seat moves by
+// nova-sprint's seat verb, or by ApplyMovingSeat. nova-config does not parse
+// --move-seat.
 func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
 	return apply(ctx, st, ap, kind, actor, check, false, report)
 }
 
-// apply is Apply with the seat move named: moveSeat (the --move-seat flag's
-// case, the owner's word) writes a sprint:coordinator the live store
-// disagrees with; without it the publish holds it, keeps the live value and
-// says the one OpHeld line (docs/SPEC-CONFIG.md, "sprint").
+// ApplyMovingSeat is Apply with the seat move named (docs/SPEC-CONFIG.md,
+// "sprint"): it writes a sprint:coordinator the live store disagrees with.
+// nova-config does not parse --move-seat.
+func ApplyMovingSeat(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
+	return apply(ctx, st, ap, kind, actor, check, true, report)
+}
+
+// apply is Apply with the seat move named: moveSeat (ApplyMovingSeat, the
+// owner's word) writes a sprint:coordinator the live store disagrees with;
+// without it the publish holds it, keeps the live value and says the one
+// OpHeld line (docs/SPEC-CONFIG.md, "sprint").
 func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check, moveSeat bool, report func(Op)) (Result, error) {
 	k, ok := Lookup(kind)
 	if !ok {
@@ -191,6 +200,7 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 	if check {
 		for _, op := range res.Ops {
 			report(op)
+			reportSeatHold(kind, moveSeat, op, report)
 		}
 		return res, nil
 	}
@@ -220,16 +230,11 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 	for _, op := range res.Ops {
 		report(op)
 		var err error
-		row := op.Row
 		// A publish never moves the sprint seat (docs/SPEC-CONFIG.md,
 		// "sprint"): a live coordinator the row disagrees with is held —
 		// every other field is written, the live value stands and the one
 		// OpHeld line is said — unless the caller names the seat move.
-		if live := op.Prev["coordinator"]; kind == KindSprint && !moveSeat && live != "" && live != row.Fields["coordinator"] {
-			report(Op{Op: OpHeld, Name: heldLine(live, row.Fields["coordinator"])})
-			row = op.Row.Clone()
-			row.Fields["coordinator"] = live
-		}
+		row, _ := reportSeatHold(kind, moveSeat, op, report)
 		switch op.Op {
 		case OpAdd, OpSet:
 			err = ap.Write(ctx, kind, row, op.Prev, actor, idem)
@@ -249,8 +254,42 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 }
 
 // heldLine is the one line a held seat says: the live coordinator and the
-// row's, and the two ways to make them agree (docs/SPEC-CONFIG.md,
-// "sprint") — the seat verb, or the seat move the owner names.
+// row's, and how to make the row agree (docs/SPEC-CONFIG.md, "sprint").
+// It does not name apply --move-seat: that flag is not parsed.
 func heldLine(live, row string) string {
-	return fmt.Sprintf("APPLY HELD kind=sprint field=coordinator live=%s row=%s: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator %s to make the row agree, or apply --move-seat", live, row, live)
+	return fmt.Sprintf("APPLY HELD kind=sprint field=coordinator live=%s row=%s: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator %s to make the row agree", live, row, live)
+}
+
+// SaidLine is the line a caller prints for one op. An OpHeld name is the
+// whole line, said verbatim, so a publish's held seat is one line
+// (docs/SPEC-CONFIG.md, "sprint") and not wrapped. Every other op is OpLine.
+// nova-config apply prints through OpLine, which wraps an OpHeld name.
+func SaidLine(word, kind string, op Op) string {
+	if op.Op == OpHeld {
+		return op.Name
+	}
+	return OpLine(word, kind, op)
+}
+
+// reportSeatHold says the one OpHeld line and returns the row to write when
+// a publish must leave sprint:coordinator as the live store has it
+// (docs/SPEC-CONFIG.md, "sprint"). A first apply (no live value), a row that
+// already agrees, and ApplyMovingSeat write the row's coordinator.
+func reportSeatHold(kind string, moveSeat bool, op Op, report func(Op)) (Row, bool) {
+	row := op.Row
+	if kind != KindSprint || moveSeat || (op.Op != OpAdd && op.Op != OpSet) || op.Prev == nil {
+		return row, false
+	}
+	live := op.Prev["coordinator"]
+	want := ""
+	if row.Fields != nil {
+		want = row.Fields["coordinator"]
+	}
+	if live == "" || live == want {
+		return row, false
+	}
+	report(Op{Op: OpHeld, Name: heldLine(live, want)})
+	row = op.Row.Clone()
+	row.Fields["coordinator"] = live
+	return row, true
 }
