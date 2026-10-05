@@ -216,17 +216,20 @@ func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 }
 
 // TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly: the password is never a flag and
-// no variable is consulted unless --password-env names it.
+// no variable is consulted unless --password-env names it. The variables are the test's
+// own, handed to run() through the injected environment rather than set on the process.
 func TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly(t *testing.T) {
+	t.Parallel()
+
 	addr, mr := ledgerRedis(t)
 	mr.RequireAuth("sesame")
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
-	t.Setenv("NOVA_REDIS_BENCH_PASSWORD", "sesame")
-	r := invoke(t, "report", "--redis", addr, "--month", "2026-09")
+	vars := map[string]string{"NOVA_SPRINT_REDIS_USER": "", "NOVA_REDIS_BENCH_PASSWORD": "sesame"}
+	env := envOf(vars)
+	r := invokeEnv(t, env, foldStamp, "report", "--redis", addr, "--month", "2026-09")
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "REPORT FAILED store=redis")
-	t.Setenv("LEDGER_TEST_PW", "sesame")
-	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
+	vars["LEDGER_TEST_PW"] = "sesame"
+	r = invokeEnv(t, env, foldStamp, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
 	wantExit(t, r, 1)
 	wantContains(t, r.stdout, "REPORT FAILED month=2026-09 source=redis indexed=0")
 }
@@ -262,11 +265,12 @@ func TestReportRedisPartialMonthNamesIndexedMissing(t *testing.T) {
 // comes from NOVA_SPRINT_REDIS_USER when no --user is given (the one config nova-sprint
 // uses); a user whose password variable is empty is refused before any dial.
 func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
+	t.Parallel()
+
 	addr, mr := ledgerRedis(t)
 	mr.RequireUserAuth("bench", "sesame")
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
-	t.Setenv("NOVA_SPRINT_REDIS_PASSWORD_ENV", "")
-	t.Setenv("LEDGER_TEST_PW", "sesame")
+	vars := map[string]string{"NOVA_SPRINT_REDIS_USER": "", "NOVA_SPRINT_REDIS_PASSWORD_ENV": "", "LEDGER_TEST_PW": "sesame"}
+	env := envOf(vars)
 	out := t.TempDir()
 	var c tokens.Counts
 	c.Set(tokens.Input, 10)
@@ -280,26 +284,26 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 
-	r := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
+	r := invokeEnv(t, env, foldStamp, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "REPORT FAILED store=redis")
 
-	r = invoke(t, "ledger", "--out", out, "--day", "2026-09-11", "--redis", addr, "--user", "bench", "--password-env", "LEDGER_TEST_PW")
+	r = invokeEnv(t, env, foldStamp, "ledger", "--out", out, "--day", "2026-09-11", "--redis", addr, "--user", "bench", "--password-env", "LEDGER_TEST_PW")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "LEDGER OK day=2026-09-11 days=1")
-	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--user", "bench", "--password-env", "LEDGER_TEST_PW")
+	r = invokeEnv(t, env, foldStamp, "report", "--redis", addr, "--month", "2026-09", "--user", "bench", "--password-env", "LEDGER_TEST_PW")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "REPORT OK month=2026-09 source=redis groups=1")
 
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "bench")
-	t.Setenv("NOVA_SPRINT_REDIS_PASSWORD_ENV", "LEDGER_TEST_PW")
-	r = invoke(t, "report", "--redis", addr, "--month", "2026-09")
+	vars["NOVA_SPRINT_REDIS_USER"] = "bench"
+	vars["NOVA_SPRINT_REDIS_PASSWORD_ENV"] = "LEDGER_TEST_PW"
+	r = invokeEnv(t, env, foldStamp, "report", "--redis", addr, "--month", "2026-09")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "REPORT OK month=2026-09 source=redis groups=1")
 
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
-	t.Setenv("LEDGER_EMPTY_PW", "")
-	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--user", "bench", "--password-env", "LEDGER_EMPTY_PW")
+	vars["NOVA_SPRINT_REDIS_USER"] = ""
+	vars["LEDGER_EMPTY_PW"] = ""
+	r = invokeEnv(t, env, foldStamp, "report", "--redis", addr, "--month", "2026-09", "--user", "bench", "--password-env", "LEDGER_EMPTY_PW")
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "--user bench but LEDGER_EMPTY_PW is empty; run under nova-secrets exec --only LEDGER_EMPTY_PW")
 	require.False(t, strings.Contains(r.stderr+r.stdout, "sesame"), "a refusal printed the password")

@@ -82,5 +82,5 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 }
 
 func tokensRun(args []string, stdout, stderr io.Writer) int {
-	return run(args, stdout, stderr, time.Now().UTC())
+	return run(args, stdout, stderr, time.Now().UTC(), testEnv())
 }

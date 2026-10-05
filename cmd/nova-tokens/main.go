@@ -26,10 +26,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -235,12 +237,67 @@ func effectOf(verb string) string {
 	return ""
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) }
+func main() {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = "" // an empty wd resolves a relative path to itself, which every os call resolves against the process's own working directory
+	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC(), toolenv{getenv: os.Getenv, wd: wd}))
+}
 
-// run is the whole tool, with its streams and clock injected so the tests can drive it.
-// The clock is an argument and NOT a flag: the stamp on a day file is when the tool
-// computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+// toolenv is the process state the tool reads, injected so that every test runs in
+// parallel with its own (docs/STANDARD.md section 8: the environment and the working
+// directory come in through the code's config, never t.Setenv or a Chdir): getenv is the
+// environment the two Redis verbs read their seat's login from, and wd is the directory a
+// relative flag path resolves against. main passes the process's own os.Getenv and
+// os.Getwd, so the production path reads exactly the environment it always read.
+type toolenv struct {
+	getenv func(string) string
+	wd     string
+}
+
+// resolve is a flag's path as the run sees it: absolute paths and the empty string are
+// untouched, and a relative path is taken against the run's working directory. Only an
+// OPERATION is ever resolved; every line the tool prints names the flag exactly as the
+// caller typed it, so the output is the same environment the tool has always printed.
+func (e toolenv) resolve(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(e.wd, p)
+}
+
+// reroot rewrites an operation's error about a resolved path back onto the path as the
+// caller typed it: resolve moved the operation into the run's working directory, and the
+// printed line stays the one the typed flag has always produced.
+func reroot(err error, resolved, typed string) error {
+	if err == nil || resolved == typed {
+		return err
+	}
+	text := err.Error()
+	if !strings.Contains(text, resolved) {
+		return err
+	}
+	return errors.New(strings.ReplaceAll(text, resolved, typed))
+}
+
+// typedUnder re-roots a path a reader built under the resolved directory back onto the
+// directory as the caller typed it, so a finding names the flag's own path.
+func typedUnder(resolvedRoot, typedRoot, p string) string {
+	if resolvedRoot == typedRoot {
+		return p
+	}
+	rel, err := filepath.Rel(resolvedRoot, p)
+	if err != nil {
+		return p
+	}
+	return filepath.Join(typedRoot, rel)
+}
+
+// run is the whole tool, with its streams, clock and environment injected so the tests can
+// drive it. The clock is an argument and NOT a flag: the stamp on a day file is when the
+// tool computed it, and a stamp a caller could set would be a stamp nobody could trust.
+func run(args []string, stdout, stderr io.Writer, now time.Time, env toolenv) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
@@ -253,26 +310,26 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
 			// --help goes right after the verb: after a word or a -- it would be one.
-			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now)
+			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now, env)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "fold":
-		return cmdFold(rest, stdout, stderr, now)
+		return cmdFold(rest, stdout, stderr, now, env)
 	case "report":
-		return cmdReport(rest, stdout, stderr, now)
+		return cmdReport(rest, stdout, stderr, now, env)
 	case "ledger":
-		return cmdLedger(rest, stdout, stderr)
+		return cmdLedger(rest, stdout, stderr, env)
 	case "sum":
-		return cmdSum(rest, stdout, stderr, now)
+		return cmdSum(rest, stdout, stderr, now, env)
 	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
+		return cmdCheck(rest, stdout, stderr, now, env)
 	case "sources":
-		return cmdSources(rest, stdout, stderr, now)
+		return cmdSources(rest, stdout, stderr, now, env)
 	case "profiles":
-		return cmdProfiles(rest, stdout, stderr, now)
+		return cmdProfiles(rest, stdout, stderr, now, env)
 	case "session":
-		return cmdSession(rest, stdout, stderr, now)
+		return cmdSession(rest, stdout, stderr, now, env)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
@@ -366,8 +423,9 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
 }
 
-// check validates the declared sources without reading any of them.
-func (s *sourceFlags) check(r *refusals) {
+// check validates the declared sources without reading any of them. A path is STATted
+// resolved against the run's working directory (env.resolve) and printed as typed.
+func (s *sourceFlags) check(r *refusals, env toolenv) {
 	r.required("repos", s.repos, wantsRepos)
 	seen := map[string]bool{}
 	any := false
@@ -405,23 +463,24 @@ func (s *sourceFlags) check(r *refusals) {
 					r.add("--provider " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
 				}
 			}
+			resolved := env.resolve(it.value)
 			switch l.kind {
 			case "claude":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
+				if fi, err := os.Stat(resolved); err != nil || !fi.IsDir() {
 					if err != nil && os.IsNotExist(err) {
 						r.add("--claude " + it.label + "=" + it.value + " does not exist; it wants the directory the transcripts live under")
 					} else if err != nil {
-						r.add("--claude " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the directory the transcripts live under")
+						r.add("--claude " + it.label + "=" + it.value + ": " + reroot(err, resolved, it.value).Error() + "; it wants the directory the transcripts live under")
 					} else {
 						r.add("--claude " + it.label + "=" + it.value + " is not a directory; it wants the directory the transcripts live under")
 					}
 				}
 			case "swarm":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
+				if fi, err := os.Stat(resolved); err != nil || !fi.IsDir() {
 					if err != nil && os.IsNotExist(err) {
 						r.add("--swarm " + it.label + "=" + it.value + " does not exist; it wants the swarm pool directory")
 					} else if err != nil {
-						r.add("--swarm " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the swarm pool directory")
+						r.add("--swarm " + it.label + "=" + it.value + ": " + reroot(err, resolved, it.value).Error() + "; it wants the swarm pool directory")
 					} else {
 						r.add("--swarm " + it.label + "=" + it.value + " is not a directory; it wants the swarm pool directory")
 					}
@@ -431,11 +490,12 @@ func (s *sourceFlags) check(r *refusals) {
 	}
 	if s.bus != "" {
 		any = true
-		if fi, err := os.Stat(s.bus); err != nil || !fi.IsDir() {
+		resolved := env.resolve(s.bus)
+		if fi, err := os.Stat(resolved); err != nil || !fi.IsDir() {
 			if err != nil && os.IsNotExist(err) {
 				r.add("--bus does not exist: " + s.bus + "; it wants the bus directory")
 			} else if err != nil {
-				r.add("--bus " + s.bus + ": " + err.Error() + "; it wants the bus directory")
+				r.add("--bus " + s.bus + ": " + reroot(err, resolved, s.bus).Error() + "; it wants the bus directory")
 			} else {
 				r.add("--bus is not a directory: " + s.bus + "; it wants the bus directory")
 			}
@@ -478,9 +538,13 @@ func (s *sourceFlags) check(r *refusals) {
 // (.nova-tokens-dry-run-*, new and private to the run, so no file there is ever truncated)
 // and removes it before returning, so --scratch is as it was. A copy it could not remove
 // is named in the returned notes.
-func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
+//
+// The --opencode file, the --provider file and --scratch stay AS TYPED: internal/tokens
+// uses each one string for both the operation and the path its report names, so resolving
+// them here would change the printed lines; splitting the two needs a seam there.
+func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool, env toolenv) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(env.resolve(it.value)), rules))
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
@@ -508,14 +572,14 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 		out = append(out, tokens.ReadOpenCode(it.label, it.value, scratch, time.Duration(s.timeout)*time.Second, rules))
 	}
 	for _, it := range s.swarm.items {
-		out = append(out, tokens.ReadSwarm(it.label, it.value, os.DirFS(it.value), rules))
+		out = append(out, tokens.ReadSwarm(it.label, it.value, os.DirFS(env.resolve(it.value)), rules))
 	}
 	for _, it := range s.provider.items {
 		kind, name, _ := strings.Cut(it.label, ":")
 		out = append(out, tokens.ReadProvider(kind, name, it.value, rules))
 	}
 	if s.bus != "" {
-		out = append(out, tokens.ReadBus(s.bus, os.DirFS(s.bus), rules, now)...)
+		out = append(out, tokens.ReadBus(s.bus, os.DirFS(env.resolve(s.bus)), rules, now)...)
 	}
 	for _, src := range out {
 		keys := map[tokens.Key]bool{}

@@ -29,16 +29,47 @@ type result struct {
 
 func (r result) all() string { return r.stdout + r.stderr }
 
-// invoke runs the binary in process, with the clock injected.
+// noEnv is the environment a test hands run() by default: no variable at all, so the
+// two Redis verbs resolve their seat to no login and every test dials its own store the
+// same way, whatever the machine's environment holds (docs/STANDARD.md section 8).
+func noEnv(string) string { return "" }
+
+// testEnv is the environment invoke runs under: no variables, and an empty working
+// directory, which resolves a relative path against the process cwd like every os call.
+func testEnv() toolenv { return toolenv{getenv: noEnv} }
+
+// processEnv is the environment the tool re-entered through TestMain runs under: the
+// process's own, exactly what main() passes.
+func processEnv() toolenv {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = ""
+	}
+	return toolenv{getenv: os.Getenv, wd: wd}
+}
+
+// envOf is a test's own environment: the variables it would have set with t.Setenv, as
+// a map the test mutates between invocations, read through the injected getenv.
+func envOf(vars map[string]string) toolenv {
+	return toolenv{getenv: func(k string) string { return vars[k] }}
+}
+
+// invoke runs the binary in process, with the clock and the environment injected.
 func invoke(t *testing.T, args ...string) result {
 	t.Helper()
-	return invokeAt(t, foldStamp, args...)
+	return invokeEnv(t, testEnv(), foldStamp, args...)
 }
 
 func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	t.Helper()
+	return invokeEnv(t, testEnv(), now, args...)
+}
+
+// invokeEnv runs the binary in process under the test's own environment.
+func invokeEnv(t *testing.T, env toolenv, now time.Time, args ...string) result {
+	t.Helper()
 	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, now)
+	exit := run(args, &out, &errb, now, env)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
@@ -217,7 +248,7 @@ func TestMain(m *testing.M) {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
 	if os.Getenv(asToolEnv) != "" {
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp, processEnv()))
 	}
 	os.Exit(m.Run())
 }
