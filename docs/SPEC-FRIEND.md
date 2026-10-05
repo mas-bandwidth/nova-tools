@@ -326,14 +326,28 @@ seconds), the last one anywhere in the output, is the measured usage, and a
 rejection is a limit until the spent window resets; otherwise a line in the
 last 2 KiB that says a limit or credits (`insufficient ... credits`, `usage
 limit`, `limit reached`, `hit your limit`, `quota exceeded`) with its reset
-beside it (a clock time, today or else tomorrow in the daemon's zone; `in N
-hours`; an epoch after `limit reached|`) is a limit. A line with no reset is
-no limit, and a provider's transient `rate_limit_error` is no limit, so a
-reply that only talks about limits sends no one down. A harness on paid
+beside it is a limit. The reset is read from the provider's text, not guessed:
+a clock time (`resets 8pm`), today or else tomorrow when that time has already
+passed, in the zone the line names in parentheses (`America/New_York`) or else
+the daemon's zone; a calendar day (`resets Oct 10 at 5am`) in that zone, in
+the daemon's current year there; `in N hours` or `in N minutes`; or an epoch
+(`resets 1760072400`, ten digits of seconds or thirteen of milliseconds, or
+the older `limit reached|<epoch>`). A usage-limit refusal that names no
+readable reset (`you've hit your limit`, `usage limit reached`, `quota
+exceeded`, `limit reached`, and the reset does not parse) holds the friend
+and is one judgment naming that text (`Limits.Judge`, `LimitHoldText`, a
+blocker to the seat); no hour is guessed, and a second copy of the refusal
+does not judge again. A line that only mentions limits, and a reset that
+parses but is already past, is no limit, and a provider's transient
+`rate_limit_error` is no limit, so a reply that only talks about limits sends
+no one down. A harness on paid
 overage reads down, until the spent window resets, unless the owner allows
 overage for that friend (`AllowOverage`). Each new limit calls `Down` once
 with its reset (`friend down --until`, the status cell `down (<reason>, until
-<time>)`). `Limits.Gate` holds the session: a delivery while it is down is
+<time>)`). She comes back at that reset by herself: the next delivery once
+the reset has passed is the wake, not a retry at a guessed hour, and the
+session's answer is what lets her beat again (the row's return at `--until`
+is friend-back-up-automatic). `Limits.Gate` holds the session: a delivery while it is down is
 `Deferred` without running the harness, so its messages stay in hand, counted
 toward nothing; a turn that hits a limit is `Deferred` the same way; the
 first delivery after the reset is a wake turn (`WakeText`) whose output must
@@ -919,17 +933,18 @@ last session activity (above) and no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
 
-The limit layer (`limit.go`) is built and tested, not yet wired: the daemon
-and `nova-friend run` do not yet wrap the adapter's Exec in `Limits.Watch` or
-the Deliverer in `Limits.Gate` (a wrap must keep the `LaneHarness` lanes and
-the OpenCode `Allow` setting, and gate the lanes' turns), do not call `Down`
-and `Up` at the sprint (a friend's own `down --until` and `up`, which the
-server today takes as the coordinator's hold), and the beat sends no flags;
-`friend beat` takes no `--five-hour` or `--seven-day` until the sprint
-records them for pacing. Claude has no deliver command, so its
-`rate_limit_event` is read only once a Claude run's output passes through
-`Watch`. The state machine (up, down until a reset, waking on a nonce) wants
-its TLA+ module beside `tla/Friend.tla`.
+The limit layer is wired in `nova-friend run`: `Limits.Watch` wraps the
+adapter's Exec and `Limits.Gate` the Deliverer (a `LaneHarness` stays one; its
+lanes are not held, which `gatedLanes` records as owed to the lanes' loop).
+`Down` and `Up` tell the seat, with the `nova-sprint friend down --until` line
+and `friend up`; they do not call the sprint (the server still takes that
+down as the coordinator's hold). The beat sends no `--five-hour` or
+`--seven-day` until the sprint records them for pacing. Claude has no deliver
+command, so its `rate_limit_event` is read only once a Claude run's output
+passes through `Watch`. The state machine (up, down until the reset the
+message stated, waking on a nonce, held with one judgment when that reset
+cannot be read) is `tla/FriendLimit.tla`: down only until the stated reset,
+and a hold judged once. The model is not in the TLC gate.
 
 ## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
 

@@ -260,11 +260,13 @@ on --broken-after turns in a row marks the session broken: nothing more is deliv
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
 bus; a restart clears it. A turn whose harness says it is out of credits or at a usage limit (a Claude
 Code rate_limit_event rejected, "Insufficient AI Credits ... will refresh 6:52 PM", "usage limit ...
-try again at") makes the friend down until the reset: the presence file says down with the limit,
+try again at", "resets 8pm (America/New_York)", "resets Oct 10 at 5am (America/New_York)", an epoch)
+makes the friend down until that reset: the presence file says down with the limit,
 no beat goes to the sprint server (her row reads down), nothing is delivered, and the seat (else
 --coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
-nonce from inside the session before she beats again, and the seat is told she is back. The friend
+nonce from inside the session before she beats again, and the seat is told she is back. A usage-limit
+refusal that names no readable reset holds her, with one blocker naming the text, and no hour is guessed. The friend
 row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
@@ -648,7 +650,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// the presence file says a limit while there is one, whatever the session check saw
 	writePresence := func(p friend.PresenceStatus) error {
 		if until, reason, limited := fl.Limited(); limited {
-			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
+			if text, held := fl.Held(); held {
+				p.Presence, p.Reason = friend.PresenceDown, "usage limit, no readable reset: "+text
+			} else {
+				p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
+			}
 		} else if watch != nil {
 			if down, why := watch.Down(); down {
 				p.Presence, p.Reason = friend.PresenceDown, friend.HarnessNotRunning+": "+why
@@ -657,13 +663,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return friend.WritePresence(state, p)
 	}
 	// the seat (else --coordinator) is told of each limit and each wake; set once the store is open
-	tellSeat := func(subject, body string) {}
+	sendSeat := func(kind, subject, body string) {}
+	tellSeat := func(subject, body string) { sendSeat("", subject, body) }
 	fl.Down = func(until time.Time, reason string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns and beats held until then, then a wake")
 		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
 		}
 		tellSeat(friend.LimitDownText(name, until, reason))
+	}
+	fl.Judge = func(text string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: held, no readable reset: " + text)
+		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
+			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
+		}
+		subject, body := friend.LimitHoldText(name, text)
+		sendSeat(bus.KindBlocker, subject, body)
 	}
 	fl.Up = func(nonce string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
@@ -700,13 +715,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	sc.Deliver = sc.Gate(fl.Gate(deliver))
-	tellSeat = func(subject, body string) {
+	sendSeat = func(kind, subject, body string) {
 		to := answerTo()
 		if to == "" {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: no seat or coordinator to tell: " + subject)
 			return
 		}
-		if _, err := (&bus.Bus{Store: sc.DaemonStore()}).Send(ctx, bus.Message{From: name, To: []string{to}, Subject: subject, Body: body}); err != nil {
+		if _, err := (&bus.Bus{Store: sc.DaemonStore()}).Send(ctx, bus.Message{From: name, To: []string{to}, Kind: kind, Subject: subject, Body: body}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
 		}
 	}

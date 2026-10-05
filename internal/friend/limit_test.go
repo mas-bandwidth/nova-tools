@@ -295,3 +295,157 @@ func TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset(t *testing.T) {
 	_, body = LimitUpText("bob")
 	assert.Contains(t, body, "nova-sprint friend up bob")
 }
+
+// A usage-limit refusal sets the friend down until the reset the message
+// states, not until a guessed hour. The forms are the provider's human text
+// (a clock time, a calendar day, an epoch), in the zone the message names.
+// A clock time that has already passed is tomorrow. The next delivery at that
+// instant is the wake, so she comes back then by herself. A refusal with no
+// readable reset holds her, with one judgment that names the text.
+func TestAUsageLimitMessageSetsDownUntilItsStatedReset(t *testing.T) {
+	t.Parallel()
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	// 15:42 UTC is 11:42 in New York, the morning the runner guessed an hour.
+	now := time.Date(2026, 10, 5, 15, 42, 0, 0, time.UTC)
+	epoch := time.Date(2026, 10, 8, 1, 0, 0, 0, ny)
+	forms := []struct {
+		name, msg string
+		until     time.Time
+	}{
+		{
+			"a dated reset in the named zone",
+			"You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)",
+			time.Date(2026, 10, 10, 5, 0, 0, 0, ny),
+		},
+		{
+			"a clock time in the named zone",
+			"You've hit your weekly limit · resets 8pm (America/New_York)",
+			time.Date(2026, 10, 5, 20, 0, 0, 0, ny),
+		},
+		{
+			"an epoch",
+			"You've hit your weekly limit · resets " + strconv.FormatInt(epoch.Unix(), 10),
+			epoch,
+		},
+	}
+	for _, tc := range forms {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clock := &limitClock{t: now}
+			var downs []time.Time
+			var woken []string
+			l := &Limits{
+				Now:   clock.now,
+				Nonce: func() string { return "back22" },
+				Down:  func(until time.Time, _ string) { downs = append(downs, until) },
+				Up:    func(nonce string) { woken = append(woken, nonce) },
+			}
+			se := &scriptExec{
+				outs:  []string{tc.msg + "\n", "back22\n", "I ran the card.\n"},
+				exits: []int{1, 0, 0},
+			}
+			d := l.Gate(&OpenCode{Dir: "/w/bud", Session: "s", Run: l.Watch(se.run)})
+
+			_, err := d.Deliver(context.Background(), "card")
+			var deferred Deferred
+			require.ErrorAs(t, err, &deferred)
+			require.Len(t, downs, 1, tc.msg)
+			assert.True(t, tc.until.Equal(downs[0]), "got %s want %s", downs[0].Format(time.RFC3339), tc.until.Format(time.RFC3339))
+			assert.Contains(t, deferred.Reason, downs[0].Format(time.RFC3339))
+
+			clock.t = now.Add(time.Hour) // the hour the runner used to guess
+			_, err = d.Deliver(context.Background(), "card")
+			require.ErrorAs(t, err, &deferred, "a guessed hour is still inside the reset")
+			assert.Len(t, se.texts, 1, "the harness is not run at the guessed hour")
+			_, _, limited := l.Limited()
+			assert.True(t, limited)
+
+			clock.t = tc.until.Add(time.Second)
+			exit, err := d.Deliver(context.Background(), "card")
+			require.NoError(t, err)
+			assert.Equal(t, 0, exit)
+			require.Len(t, se.texts, 3)
+			assert.Contains(t, se.texts[1], "back22", "at the stated reset the wake goes in by itself")
+			assert.Equal(t, "card", se.texts[2])
+			assert.Equal(t, []string{"back22"}, woken)
+			_, _, limited = l.Limited()
+			assert.False(t, limited, "she is back once the session answers the wake")
+			assert.Len(t, downs, 1)
+		})
+	}
+
+	t.Run("a clock time already passed rolls to tomorrow", func(t *testing.T) {
+		t.Parallel()
+		late := time.Date(2026, 10, 5, 21, 30, 0, 0, ny)
+		clock := &limitClock{t: late}
+		var downs []time.Time
+		l := &Limits{Now: clock.now, Down: func(until time.Time, _ string) { downs = append(downs, until) }}
+		msg := "You've hit your weekly limit · resets 8pm (America/New_York)"
+		se := &scriptExec{outs: []string{msg + "\n"}, exits: []int{1}}
+		d := l.Gate(&OpenCode{Dir: "/w/bud", Session: "s", Run: l.Watch(se.run)})
+		_, err := d.Deliver(context.Background(), "card")
+		var deferred Deferred
+		require.ErrorAs(t, err, &deferred)
+		want := time.Date(2026, 10, 6, 20, 0, 0, 0, ny)
+		require.Len(t, downs, 1)
+		assert.True(t, want.Equal(downs[0]), "got %s", downs[0].Format(time.RFC3339))
+		clock.t = late.Add(time.Hour)
+		_, err = d.Deliver(context.Background(), "card")
+		require.ErrorAs(t, err, &deferred)
+		assert.Len(t, se.texts, 1)
+	})
+
+	t.Run("an unreadable reset holds with one judgment", func(t *testing.T) {
+		t.Parallel()
+		clock := &limitClock{t: now}
+		msg := "You've hit your weekly limit · resets sometime soon"
+		var judged []string
+		var downs []time.Time
+		l := &Limits{
+			Now:   clock.now,
+			Judge: func(text string) { judged = append(judged, text) },
+			Down:  func(until time.Time, _ string) { downs = append(downs, until) },
+		}
+		se := &scriptExec{outs: []string{msg + "\n", msg + "\n"}, exits: []int{1, 1}}
+		d := l.Gate(&OpenCode{Dir: "/w/bud", Session: "s", Run: l.Watch(se.run)})
+		_, err := d.Deliver(context.Background(), "card")
+		var deferred Deferred
+		require.ErrorAs(t, err, &deferred)
+		assert.Contains(t, deferred.Reason, "no readable reset")
+		require.Len(t, judged, 1)
+		assert.Contains(t, judged[0], "You've hit your weekly limit")
+		assert.Contains(t, judged[0], "resets sometime soon")
+		assert.Empty(t, downs, "no --until is guessed")
+		subject, body := LimitHoldText("bud", judged[0])
+		assert.Contains(t, subject, msg)
+		assert.Contains(t, body, "nova-sprint friend down bud")
+		assert.NotContains(t, body, now.Add(time.Hour).Format(time.RFC3339))
+
+		clock.t = now.Add(time.Hour)
+		_, err = d.Deliver(context.Background(), "card")
+		require.ErrorAs(t, err, &deferred)
+		assert.Len(t, se.texts, 1, "held: the harness is not asked again")
+		assert.Len(t, judged, 1, "one judgment")
+		text, held := l.Held()
+		assert.True(t, held)
+		assert.Contains(t, text, msg)
+		_, _, limited := l.Limited()
+		assert.True(t, limited)
+	})
+
+	t.Run("a reply that only mentions a limit holds nobody", func(t *testing.T) {
+		t.Parallel()
+		clock := &limitClock{t: now}
+		var judged []string
+		l := &Limits{Now: clock.now, Judge: func(text string) { judged = append(judged, text) }}
+		se := &scriptExec{outs: []string{"I read the card about usage limits and credits.\n"}, exits: []int{0}}
+		d := l.Gate(&OpenCode{Dir: "/w/bud", Session: "s", Run: l.Watch(se.run)})
+		exit, err := d.Deliver(context.Background(), "card")
+		require.NoError(t, err)
+		assert.Equal(t, 0, exit)
+		assert.Empty(t, judged)
+		_, _, limited := l.Limited()
+		assert.False(t, limited)
+	})
+}

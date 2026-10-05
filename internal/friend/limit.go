@@ -41,22 +41,34 @@ type Usage struct {
 // Limit is what a command's output says of the harness's limit: Limited,
 // until when and why; Usage when the output measured it; Overage when the
 // harness is spending paid overage (a limit only if the owner does not allow
-// it, Limits.AllowOverage).
+// it, Limits.AllowOverage). Unreadable is a usage-limit refusal whose reset
+// could not be read: the friend is held, Reason is the text, and Until is zero.
 type Limit struct {
-	Limited bool
-	Until   time.Time
-	Reason  string
-	Usage   Usage
-	Overage bool
+	Limited    bool
+	Until      time.Time
+	Reason     string
+	Usage      Usage
+	Overage    bool
+	Unreadable bool
 }
 
 var (
 	// limitWords is a line that says the harness is at its limit or out of
-	// credits; a line counts only with its reset beside it (limitReset).
+	// credits. A reset beside it is the limit; a refusal with no readable
+	// reset holds (limitRefusal); a mention is neither.
 	limitWords = regexp.MustCompile(`(?i)insufficient [a-z ]{0,20}credits|out of (?:ai )?credits|credits? (?:exhausted|ran out)|usage limit|limit reached|hit your (?:[a-z-]+ )?limit|quota (?:exceeded|exhausted)`)
-	limitEpoch = regexp.MustCompile(`(?i)limit reached\|(\d{10})\b`)
-	limitAt    = regexp.MustCompile(`(?i)(?:refresh(?:es)?|resets?|try again|available again)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b`)
-	limitAfter = regexp.MustCompile(`(?i)(?:refresh(?:es)?|resets?|try again|available again)\s+in\s+(\d{1,3})\s*(hours?|hrs?|h|minutes?|mins?|m)\b`)
+	// limitRefusal is the provider refusing, not a reply that mentions a limit.
+	// With no reset that parses, the friend is held and the text is one judgment.
+	limitRefusal = regexp.MustCompile(`(?i)you(?:'ve| have) hit your (?:[a-z0-9-]+ )?limit\b|usage limit reached|quota (?:exceeded|exhausted)|\blimit reached\b`)
+	limitEpoch   = regexp.MustCompile(`(?i)limit reached\|(\d{10})\b`)
+	// limitEpochWord is an epoch the reset words name: ten digits of seconds,
+	// or thirteen of milliseconds.
+	limitEpochWord = regexp.MustCompile(`(?i)(?:refresh(?:es)?|resets?|try again|available again|until)\s+(?:at\s+)?(\d{10}|\d{13})\b`)
+	limitDated     = regexp.MustCompile(`(?i)(?:refresh(?:es)?|resets?|try again|available again)\s+(?:on\s+)?((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,)?(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b`)
+	limitAt        = regexp.MustCompile(`(?i)(?:refresh(?:es)?|resets?|try again|available again)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b`)
+	limitAfter     = regexp.MustCompile(`(?i)(?:refresh(?:es)?|resets?|try again|available again)\s+in\s+(\d{1,3})\s*(hours?|hrs?|h|minutes?|mins?|m)\b`)
+	// limitZone is the IANA zone a provider puts in parentheses.
+	limitZone = regexp.MustCompile(`\(([A-Za-z]+(?:/[A-Za-z0-9_+-]+)+|UTC|GMT)\)`)
 )
 
 // rateLimitEvent is Claude Code's stream-json rate_limit_event, printed per
@@ -80,10 +92,15 @@ type rateLimitEvent struct {
 
 // ReadLimit reads a command's output at now for the harness's limit: the
 // last rate_limit_event anywhere in it (Claude Code), else a limit line in
-// its tail with the reset beside it (a clock time, today or else tomorrow
-// in now's zone; "in N hours"; an epoch after "limit reached|"). found is
-// whether the output said anything of the limit at all. A provider's
-// transient rate_limit_error is no limit (ProviderRefusal passes it).
+// its tail with the reset beside it. The reset is a clock time ("resets
+// 8pm"), today or else tomorrow when that time has passed, in the zone the
+// line names ("America/New_York") or else now's zone; a calendar day
+// ("resets Oct 10 at 5am") in that zone; "in N hours"; or an epoch ("resets
+// 1760072400", or after "limit reached|"). A usage-limit refusal with no
+// readable reset is Unreadable, not a guessed hour. found is whether the
+// output said anything of the limit at all. A provider's transient
+// rate_limit_error is no limit (ProviderRefusal passes it). A line that only
+// mentions limits is not one.
 func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 	if strings.Contains(out, `"rate_limit_event"`) {
 		for _, line := range strings.Split(out, "\n") {
@@ -101,38 +118,59 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 	if len(tail) > LimitTail {
 		tail = tail[len(tail)-LimitTail:]
 	}
+	var unread string
 	for _, line := range strings.Split(tail, "\n") {
 		if !limitWords.MatchString(line) {
 			continue
 		}
 		if until, ok := resetOf(line, now); ok && until.After(now) {
 			lim = Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
-			found = true
+			found, unread = true, ""
+			continue
+		} else if ok {
+			continue // the reset was readable and has already passed
 		}
+		if !lim.Limited && unread == "" && limitRefusal.MatchString(line) {
+			unread = oneLine(line, 200)
+		}
+	}
+	if lim.Limited {
+		return lim, true
+	}
+	if unread != "" {
+		return Limit{Unreadable: true, Reason: unread}, true
 	}
 	return lim, found
 }
 
-// resetOf is the reset a limit line names.
+// resetOf is the reset a limit line names. A clock time that has passed is
+// the next day. A named zone that does not load is no reset.
 func resetOf(line string, now time.Time) (time.Time, bool) {
 	if m := limitEpoch.FindStringSubmatch(line); m != nil {
 		n, _ := strconv.ParseInt(m[1], 10, 64) // ignored: ten digits always parse
 		return time.Unix(n, 0).In(now.Location()), true
 	}
-	if m := limitAt.FindStringSubmatch(line); m != nil {
-		h, _ := strconv.Atoi(m[1]) // ignored: digits always parse
-		mins := 0
-		if m[2] != "" {
-			mins, _ = strconv.Atoi(m[2]) // ignored: digits always parse
+	if m := limitEpochWord.FindStringSubmatch(line); m != nil {
+		n, _ := strconv.ParseInt(m[1], 10, 64) // ignored: the pattern is digits
+		if len(m[1]) == 13 {
+			return time.UnixMilli(n).In(now.Location()), true
 		}
-		if h < 1 || h > 12 || mins > 59 {
+		return time.Unix(n, 0).In(now.Location()), true
+	}
+	loc, ok := limitLocation(line, now)
+	if !ok {
+		return time.Time{}, false
+	}
+	if m := limitDated.FindStringSubmatch(line); m != nil {
+		return datedReset(m, loc, now)
+	}
+	if m := limitAt.FindStringSubmatch(line); m != nil {
+		h, mins, ok := clockOf(m[1], m[2], m[3])
+		if !ok {
 			return time.Time{}, false
 		}
-		h %= 12
-		if strings.EqualFold(m[3], "p") {
-			h += 12
-		}
-		t := time.Date(now.Year(), now.Month(), now.Day(), h, mins, 0, 0, now.Location())
+		day := now.In(loc)
+		t := time.Date(day.Year(), day.Month(), day.Day(), h, mins, 0, 0, loc)
 		if !t.After(now) {
 			t = t.AddDate(0, 0, 1)
 		}
@@ -147,6 +185,73 @@ func resetOf(line string, now time.Time) (time.Time, bool) {
 		return now.Add(time.Duration(n) * unit), true
 	}
 	return time.Time{}, false
+}
+
+// limitLocation is the zone the line names, or now's zone when it names none.
+// ok is false when it names a zone that does not load.
+func limitLocation(line string, now time.Time) (*time.Location, bool) {
+	m := limitZone.FindStringSubmatch(line)
+	if m == nil {
+		if now.Location() == nil {
+			return time.UTC, true
+		}
+		return now.Location(), true
+	}
+	loc, err := time.LoadLocation(m[1])
+	if err != nil {
+		return nil, false
+	}
+	return loc, true
+}
+
+// clockOf is a 12-hour clock as hours and minutes from midnight.
+func clockOf(hour, mins, ap string) (int, int, bool) {
+	h, _ := strconv.Atoi(hour) // ignored: the pattern is digits
+	m := 0
+	if mins != "" {
+		m, _ = strconv.Atoi(mins) // ignored: the pattern is digits
+	}
+	if h < 1 || h > 12 || m > 59 {
+		return 0, 0, false
+	}
+	h %= 12
+	if strings.EqualFold(ap, "p") {
+		h += 12
+	}
+	return h, m, true
+}
+
+// datedReset is a calendar day and a clock time in loc, in now's year there.
+// A day that is not one (February 31) is no reset. It is not rolled forward:
+// a date that has passed is a reset that has passed.
+func datedReset(m []string, loc *time.Location, now time.Time) (time.Time, bool) {
+	month, ok := monthOf(m[1])
+	if !ok {
+		return time.Time{}, false
+	}
+	day, _ := strconv.Atoi(m[2]) // ignored: the pattern is digits
+	h, mins, ok := clockOf(m[3], m[4], m[5])
+	if !ok || day < 1 || day > 31 {
+		return time.Time{}, false
+	}
+	t := time.Date(now.In(loc).Year(), month, day, h, mins, 0, 0, loc)
+	if t.Month() != month || t.Day() != day {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+func monthOf(name string) (time.Month, bool) {
+	name = strings.ToLower(name)
+	if len(name) < 3 {
+		return 0, false
+	}
+	const months = "janfebmaraprmayjunjulaugsepoctnovdec"
+	i := strings.Index(months, name[:3])
+	if i < 0 || i%3 != 0 {
+		return 0, false
+	}
+	return time.Month(i/3 + 1), true
 }
 
 // claudeLimit is a rate_limit_event as a Limit: its windows the usage; a
@@ -206,17 +311,21 @@ func claudeLimit(ev rateLimitEvent, now time.Time) Limit {
 	return lim
 }
 
-// Limits is one friend's harness limit: up, or down until a reset, then
-// waking until a turn answers the current nonce (tla/FriendLimit.tla is
-// owed). Watch reads every command's output for it; Gate holds deliveries
-// while it is down and wakes the session after the reset. The hooks say the
-// change to the sprint: Down once per limit with its reset (friend down
-// --until), Up when a wake answered.
+// Limits is one friend's harness limit: up, or down until the reset the
+// message stated, then waking until a turn answers the current nonce, or
+// held when that reset cannot be read (tla/FriendLimit.tla). Watch reads
+// every command's output for it; Gate holds deliveries while it is down and
+// wakes the session after the reset. The hooks say the change: Down once per
+// limit with its reset (friend down --until), Judge once when the reset
+// cannot be read, Up when a wake answered.
 type Limits struct {
 	Now   func() time.Time
 	Nonce func() string // six random characters when nil
 	Down  func(until time.Time, reason string)
 	Up    func(nonce string)
+	// Judge is told once when a usage-limit refusal names no readable reset.
+	// The text is the provider's line. The friend is held, not guessed an hour.
+	Judge func(text string)
 	// AllowOverage is the owner's word that this friend may spend paid
 	// overage; without it a harness on overage reads down.
 	AllowOverage bool
@@ -225,16 +334,26 @@ type Limits struct {
 	limited  bool
 	until    time.Time
 	reason   string
-	episodes int // limits seen, so a turn knows it hit one
+	held     string // the unreadable refusal; "" when the friend is not held for one
+	episodes int    // limits seen, so a turn knows it hit one
 	waking   string
 	answered bool
 }
 
 // Limited is the limit now: until when and why, and whether there is one.
+// A hold for an unreadable reset is limited with a zero until.
 func (l *Limits) Limited() (until time.Time, reason string, limited bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.until, l.reason, l.limited
+}
+
+// Held is the usage-limit refusal whose reset could not be read, and whether
+// the friend is held for it. One judgment named it; nothing was guessed.
+func (l *Limits) Held() (text string, held bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.held, l.held != ""
 }
 
 // Watch is run reading every command's output for a limit and, while a wake
@@ -254,14 +373,30 @@ func (l *Limits) see(out string) {
 	if l.waking != "" && strings.Contains(out, l.waking) {
 		l.answered = true
 	}
-	if found && lim.Overage && !l.AllowOverage && !lim.Limited {
+	if found && lim.Overage && !l.AllowOverage && !lim.Limited && !lim.Unreadable {
 		lim.Limited = true
 		lim.Reason += "; overage is not allowed for this friend"
 	}
-	if !found || !lim.Limited || (l.limited && l.until.Equal(lim.Until)) {
+	if found && lim.Unreadable && !lim.Limited {
+		if l.held != "" || l.limited {
+			l.mu.Unlock()
+			return // already held, or already down until a reset that did parse: one judgment
+		}
+		l.held = lim.Reason
+		l.limited, l.until, l.reason, l.waking, l.answered = true, time.Time{}, lim.Reason, "", false
+		l.episodes++
+		text := lim.Reason
+		l.mu.Unlock()
+		if l.Judge != nil {
+			l.Judge(text)
+		}
+		return
+	}
+	if !found || !lim.Limited || (l.limited && l.held == "" && l.until.Equal(lim.Until)) {
 		l.mu.Unlock()
 		return
 	}
+	l.held = ""
 	l.limited, l.until, l.reason, l.waking, l.answered = true, lim.Until, lim.Reason, "", false
 	l.episodes++
 	l.mu.Unlock()
@@ -278,6 +413,9 @@ func (l *Limits) see(out string) {
 func (l *Limits) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		if until, reason, limited := l.Limited(); limited {
+			if until.IsZero() {
+				return fmt.Errorf("not beating: the harness named a usage limit with no readable reset, so the friend is held: %s", reason)
+			}
 			return fmt.Errorf("not beating: the harness is at its limit until %s, then until a wake is answered: %s", until.UTC().Format(time.RFC3339), reason)
 		}
 		return beat(ctx)
@@ -291,6 +429,16 @@ func LimitDownText(friend string, until time.Time, reason string) (subject, body
 	subject = fmt.Sprintf("friend %s down: her harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
 	body = fmt.Sprintf("%s: %s\nHer daemon has stopped beating and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
 		subject, reason, friend, shellQuote("harness limit: "+reason), until.UTC().Format(time.RFC3339))
+	return subject, body
+}
+
+// LimitHoldText is the one judgment when a usage-limit refusal names no
+// readable reset. The subject names the text. Nothing in it is a guessed hour.
+func LimitHoldText(friendName, text string) (subject, body string) {
+	text = oneLine(text, 200)
+	subject = fmt.Sprintf("friend %s: usage limit, no readable reset: %s", friendName, text)
+	body = fmt.Sprintf("%s\nHer harness refused for a usage limit and the reset could not be read from that text. She is held, not down for a guessed hour, and nothing is delivered. One judgment. When the reset is known: nova-sprint friend down %s --reason %s --until <RFC3339>\n",
+		subject, friendName, shellQuote("usage limit: "+text))
 	return subject, body
 }
 
@@ -361,8 +509,11 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 	l := g.l
 	now := l.Now()
 	l.mu.Lock()
-	limited, until, reason := l.limited, l.until, l.reason
+	limited, until, reason, held := l.limited, l.until, l.reason, l.held
 	l.mu.Unlock()
+	if held != "" {
+		return 0, Deferred{Reason: fmt.Sprintf("held: the harness named a usage limit and no readable reset: %s", reason)}
+	}
 	if limited && now.Before(until) {
 		return 0, Deferred{Reason: fmt.Sprintf("the harness is at its limit until %s: %s", until.Format(time.RFC3339), reason)}
 	}
@@ -381,6 +532,9 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		until, reason = l.until, l.reason
 		l.mu.Unlock()
 		if again {
+			if until.IsZero() {
+				return 0, Deferred{Reason: fmt.Sprintf("held: the harness named a usage limit and no readable reset: %s", reason)}
+			}
 			return 0, Deferred{Reason: fmt.Sprintf("the wake hit the limit again; down until %s: %s", until.Format(time.RFC3339), reason)}
 		}
 		if !answered {
@@ -399,6 +553,9 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 	until, reason = l.until, l.reason
 	l.mu.Unlock()
 	if hit {
+		if until.IsZero() {
+			return 0, Deferred{Reason: fmt.Sprintf("held: the harness named a usage limit and no readable reset: %s", reason)}
+		}
 		return 0, Deferred{Reason: fmt.Sprintf("the turn hit the harness's limit; down until %s: %s", until.Format(time.RFC3339), reason)}
 	}
 	return exit, err
