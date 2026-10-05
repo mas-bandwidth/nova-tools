@@ -20,7 +20,7 @@ func TestMoveTakesUnstartedPrimariesToAnotherStreamOnAStoppedSprint(t *testing.T
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream a --count 2")
-	ta.ok("add --stream b b-1 --needs a-2")
+	ta.ok("add --stream b b-1 --one --needs a-2")
 
 	ta.ok("start")
 	code, _, errs := ta.do("move a-2 --stream c")

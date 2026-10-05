@@ -57,7 +57,7 @@ func TestATwinNotTickingIsRunningAndItsRemedyIsTheTick(t *testing.T) {
 	where := twinOK(t, file, later, "where")
 	assert.Contains(t, where, "SPRINT TABLE  coordinator boss\n\n0/2 0.0% -> ETA -\n\n", "where's header shows the progress of a running machine")
 
-	add := twinOK(t, file, later, "add --stream s1 --count 1")
+	add := twinOK(t, file, later, "add --stream s1 --count 1 --one")
 	assert.Contains(t, add, "-> ETA -  machine: running\n", "a verb's sprint line")
 	assert.NotContains(t, add, "\nSTOPPED")
 

@@ -12,8 +12,8 @@ import (
 func TestReviewLandDoesNotPushALaterStreamStoppedDuringTheFirstBatch(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 first")
-	r.ok("add --stream s2 held")
+	r.ok("add --stream s1 first --one")
+	r.ok("add --stream s2 held --one")
 	r.queued(map[string]string{
 		"first": r.head("first", "main", "first.txt", "first\n"),
 		"held":  r.head("held", "main", "held.txt", "held\n"),

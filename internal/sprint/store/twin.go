@@ -94,6 +94,8 @@ type View struct {
 	Shapes      []ntable.Table
 	Open        []sprint.Open
 	Coordinator string
+	// SeatGeneration is the seat's generation read with the coordinator (seat.go).
+	SeatGeneration uint64
 }
 
 // ViewReader is a store that reads a View in fewer exchanges than one each.
@@ -122,7 +124,10 @@ func (st *Store) readView(ctx context.Context, load []string, mine string) (View
 	if v.Open, err = st.B.OpenNotes(ctx); err != nil {
 		return v, err
 	}
-	v.Coordinator, err = st.B.Coordinator(ctx)
+	if v.Coordinator, err = st.B.Coordinator(ctx); err != nil {
+		return v, err
+	}
+	v.SeatGeneration, err = st.seatGeneration(ctx)
 	return v, err
 }
 
@@ -393,7 +398,7 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 		}
 	}
 	s.Open, s.Acked = sprint.SplitOpen(v.Open)
-	s.Coordinator = v.Coordinator
+	s.Coordinator, s.SeatGeneration = v.Coordinator, v.SeatGeneration
 	if err := st.showExtras(ctx, tw, s, load, extras); err != nil {
 		return nil, err
 	}
@@ -809,8 +814,8 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 	if twin.QueueLen != fresh.QueueLen || twin.Running != fresh.Running {
 		out = append(out, fmt.Sprintf("the queue %d/%d, running %v/%v", twin.QueueLen, fresh.QueueLen, twin.Running, fresh.Running))
 	}
-	if twin.Coordinator != fresh.Coordinator {
-		out = append(out, "the coordinator differs")
+	if twin.Coordinator != fresh.Coordinator || twin.SeatGeneration != fresh.SeatGeneration {
+		out = append(out, "the coordinator or the seat's generation differs")
 	}
 	slices.Sort(out)
 	if len(out) > 8 {

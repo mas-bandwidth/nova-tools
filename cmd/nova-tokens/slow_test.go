@@ -1,8 +1,9 @@
 //go:build slow
 
 // The fold-lock test, whose cost is a real clock: the second fold has to wait the
-// production `tokens.LockWait` out before it refuses, and the assertion is that it
-// waited. Ten seconds of this package's 13 s.
+// production `tokens.LockWait` out before it refuses, and the assertion is the
+// refusal's own record -- the holder's pid and the bound it waited out. Ten seconds
+// of this package's 13 s.
 //
 // These tests are behind the `slow` build tag: the PR test jobs do not build them and
 // .github/workflows/nightly-slow.yml does (#516, Glenn's two-minute rule -- a package's
@@ -11,6 +12,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -32,16 +34,15 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 	require.NoError(t, err, err)
 	defer release()
 	// The second one waits its bounded time and refuses rather than writing beside the
-	// first: two folds on one --out write one fixed temp name.
-	start := time.Now()
+	// first: two folds on one --out write one fixed temp name. The event the test asserts
+	// on is the refusal's own record, not the machine's clock (docs/SPEC-CI.md `waits`):
+	// it names the holder it read out of the lock file -- this process, which holds the
+	// lock -- and states the bound it waited out.
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr)
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "fold.lock")
-	wantContains(t, r.stderr, "pid ")
-	{
-		waited := time.Since(start)
-		assert.False(t, waited < 500*time.Millisecond, "the second fold refused after %s; it is supposed to wait for the first", waited)
-	}
+	wantContains(t, r.stderr, fmt.Sprintf("(pid %d)", os.Getpid()))
+	wantContains(t, r.stderr, fmt.Sprintf("this run waited %s and will not write beside it", tokens.LockWait))
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.False(t, err == nil, "the refused fold wrote a day file")

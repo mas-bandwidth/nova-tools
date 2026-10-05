@@ -200,9 +200,11 @@ func (st *Store) putMachine(ctx context.Context, m Machine) error {
 }
 
 // MachineLine is the machine's part of the sprint line: the state word alone,
-// running, STOPPED (also a RUNNING machine that has not ticked for
-// MachineSilence) or DONE, with no suffix of any kind: a silent loop, a failing
-// tick and moves due are the inbox's judgments.
+// running, STOPPED or DONE, with no suffix of any kind but a RUNNING machine's
+// late tick: "running (tick late 16s)", the whole seconds since its last tick,
+// once that is longer ago than MachineSilence (docs/SPEC-SPRINT.md section 14).
+// STOPPED is a stop's alone, the record's state; a late tick is never one. A
+// silent loop, a failing tick and moves due are the inbox's judgments.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Done() {
 		return "machine: " + DoneState
@@ -217,8 +219,10 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Since.After(last) {
 		last = m.Since
 	}
-	if now.Sub(last) > MachineSilence {
-		return "machine: STOPPED"
+	if late := now.Sub(last); late > MachineSilence {
+		// running, late: the server ticks 7 to 16 s apart at times, and a gap
+		// is not a stop (section 14)
+		return fmt.Sprintf("machine: running (tick late %ds)", int64(late/time.Second))
 	}
 	return "machine: running"
 }
@@ -595,7 +599,9 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 // new epoch.
 func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	began := time.Now()
-	defer func() { res.Said = append(res.Said, st.stats().takeNotes()...) }()
+	// the store the tick was given, never the one repin makes: a repin that fails returns
+	// nil, and the notes are on the counters both share
+	defer func(given *Store) { res.Said = append(res.Said, given.stats().takeNotes()...) }(st)
 	st.stats()
 	st.twin() // made on the store the run loop keeps: its ticks share it
 	defer func() { res.Took = time.Since(began) }()
@@ -889,7 +895,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	at := snap.Epoch
 	res.Tables = newTables()
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
 	// the first read as it was: the twin it came from moves on with every
 	// part's writes, and with any other writer in this process
 	first := *snap
@@ -943,7 +949,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// 4. The end: the checks, the deadlines, the overdue judgments and the
 	// done part, once the tables are settled.
 	t.res.Order = append(t.res.Order, "end")
-	if out := t.parts("", sprint.TickEnd); out != tickOn && out != tickDone {
+	// the machine's own answers, when the loop gives them: the rule parts and the idle alarm
+	end := sprint.TickEndWith(t.req.AnswerRules, t.req.IdleAlarm)
+	if out := t.parts("", end); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
 	}
 	if t.unshown {
@@ -982,7 +990,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 
 // routesPart says a tick part plans with the routes: the deal and the ask draw
 // from them, and the check asks what the next deal does.
-func routesPart(name string) bool { return name == "deal" || name == "ask" || name == "check" }
+func routesPart(name string) bool {
+	return name == "deal" || name == "ask" || name == "check" || sprint.IsRulePart(name)
+}
 
 // MaxSettle bounds the updates a tick makes past its first pass while the
 // readers', merge's and fleet's updates write each other's tables: a tick

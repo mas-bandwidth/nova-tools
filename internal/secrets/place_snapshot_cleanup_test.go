@@ -46,7 +46,7 @@ func TestDecryptSnapshotJoinsAFailedRemovalWithTheDecryptError(t *testing.T) {
 	file, sealed := sealedRowan(t, f)
 	remove, removed := failSnapshotRemoval(t)
 
-	out, err := decryptSnapshotWithRemoval(f.sopsPath, f.airKey, file, sealed, remove)
+	out, err := decryptSnapshotWithRemoval(realExecCommand, f.sopsPath, f.airKey, file, sealed, remove)
 	require.Error(t, err)
 	assert.Empty(t, out, "no plaintext comes back from a place whose snapshot was not removed")
 	assert.ErrorIs(t, err, errRemovalRefused, "the removal failure is kept beside the decrypt's")
@@ -73,12 +73,12 @@ func TestDecryptSnapshotFailsAndClearsWhenOnlyTheRemovalFails(t *testing.T) {
 
 	// Guard: with the real remover this decrypt succeeds, so the failure below is the
 	// removal's alone.
-	out, err := decryptSnapshot(f.sopsPath, f.rowanKey, file, sealed)
+	out, err := decryptSnapshot(realExecCommand, f.sopsPath, f.rowanKey, file, sealed)
 	require.NoError(t, err)
 	require.Contains(t, string(out), "GH_TOKEN")
 
 	remove, removed := failSnapshotRemoval(t)
-	out, err = decryptSnapshotWithRemoval(f.sopsPath, f.rowanKey, file, sealed, remove)
+	out, err = decryptSnapshotWithRemoval(realExecCommand, f.sopsPath, f.rowanKey, file, sealed, remove)
 	require.Error(t, err)
 	assert.Empty(t, out, "no plaintext comes back from a place whose snapshot was not removed")
 	assert.ErrorIs(t, err, errRemovalRefused)

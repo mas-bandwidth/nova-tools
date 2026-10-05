@@ -40,7 +40,7 @@ func TestStreamRemoveTakesStreamsOffAStoppedSprint(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	for _, st := range []string{"a", "b", "c"} {
-		ta.ok("add --stream " + st + " --count 1")
+		ta.ok("add --stream " + st + " --count 1 --one")
 	}
 	ta.ok("clear --confirm sprint")
 	all := map[string][]string{sprint.Work: {"a", "b", "c"}, sprint.Merge: {"a", "b", "c"}}
@@ -54,7 +54,7 @@ func TestStreamRemoveTakesStreamsOffAStoppedSprint(t *testing.T) {
 	assert.Equal(t, all, ta.streamRows(), "refused on RUNNING: nothing changed")
 	ta.ok("stop")
 
-	ta.ok("add --stream c --count 1")
+	ta.ok("add --stream c --count 1 --one")
 	before := ta.applies()
 	code, _, errs = ta.do("stream remove a b c")
 	assert.Equal(t, 1, code)
@@ -74,14 +74,14 @@ func TestStreamRemoveTakesStreamsOffAStoppedSprint(t *testing.T) {
 
 	// the control card the merge row took with it is never placed again in
 	// this epoch: add refuses the name until the next clear, nothing changed
-	code, _, errs = ta.do("add --stream a --count 1")
+	code, _, errs = ta.do("add --stream a --count 1 --one")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "stream a was removed in this epoch")
 	assert.Equal(t, map[string][]string{sprint.Work: {"c"}, sprint.Merge: {"c"}}, ta.streamRows())
 
 	ta.ok("clear --confirm sprint")
 	assert.Equal(t, map[string][]string{sprint.Work: {"c"}, sprint.Merge: {"c"}}, ta.streamRows(), "a clear does not bring a removed stream back")
-	assert.Contains(t, ta.ok("add --stream a --count 1"), "MOVED a-1 -> ready stream=a")
+	assert.Contains(t, ta.ok("add --stream a --count 1 --one"), "MOVED a-1 -> ready stream=a")
 	assert.Equal(t, map[string][]string{sprint.Work: {"a", "c"}, sprint.Merge: {"a", "c"}}, ta.streamRows())
 	ta.clean()
 }

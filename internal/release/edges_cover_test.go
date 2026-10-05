@@ -1,7 +1,10 @@
 package release
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,5 +193,30 @@ func TestEdgesCoverAPIErrorReportsTheCeilingBeforeTheChildError(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})
+	}
+}
+
+// TestReadTarForcesMode0755WhateverTheHeaderSays pins security#72 finding 7:
+// fetched artifacts must land with the installed mode 0755, never with modes
+// chosen by the far side.
+func TestReadTarForcesMode0755WhateverTheHeaderSays(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, mode := range []int64{0o600, 0o777} {
+		name := fmt.Sprintf("f%o", mode)
+		body := "binary"
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(body)), Typeflag: tar.TypeReg}))
+		_, err := tw.Write([]byte(body))
+		require.NoError(t, err)
+	}
+	require.NoError(t, tw.Close())
+	dest := t.TempDir()
+	require.NoError(t, readTar(bytes.NewReader(buf.Bytes()), dest))
+	for _, mode := range []int64{0o600, 0o777} {
+		name := fmt.Sprintf("f%o", mode)
+		fi, err := os.Stat(filepath.Join(dest, name))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o755), fi.Mode().Perm(), "%s: mode", name)
 	}
 }

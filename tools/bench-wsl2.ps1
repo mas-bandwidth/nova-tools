@@ -145,7 +145,7 @@ fi
 ln -sf "/home/nova/sdk/${NOVA_GO}/bin/go" /home/nova/go/bin/go
 install -m 600 -o nova -g nova /tmp/fleet_authorized_keys /home/nova/.ssh/authorized_keys
 rm -f /tmp/fleet_authorized_keys
-printf '[user]\n\tname = Rowan Claude\n\temail = rowan@mas-bandwidth.com\n' > /home/nova/.gitconfig
+printf '[user]\n\tname = A Worker\n\temail = worker@example.com\n' > /home/nova/.gitconfig
 chown -R nova:nova /home/nova
 systemctl enable --now ssh
 '@
