@@ -390,6 +390,35 @@ word carries part of the separation (the third row); the sprint asks over the br
 as it is, and a grade raises no card above its ceiling. The sprint row's `decide_grade`
 is empty by default, the grade a hint; 0.7 is the starting point.
 
+### 11.1 Few-shot calibration
+
+`grade --examples <jsonl> [--held-out <ids>] [--seed <s>]` puts ten landed cards per class
+ahead of the card under grade (`GradeStateWith`, `PickExamples`, `internal/decide/gradefewshot.go`).
+Each example is one line: the brief's heading, its `PATHS`, its `KIND` and the label of its
+outcome, never the brief's text. The labels are `flash` (landed on flash within 2 attempts),
+`pro` (needed pro) and `heavy` (needed heavy). The library reads no sprint store: the caller
+builds the examples file from the record, one JSON object per line
+(`{"card","heading","paths","kind","label"}`), and `ParseExamples` names every bad line.
+
+The pick is deterministic: cards in `--held-out` leave the pool, a card's rank is the SHA-256
+of `--seed` and its id, and the ten lowest ranks of each class are taken, in class order
+(flash, pro, heavy) then rank; the pool's order moves nothing. A class with fewer than ten
+cards outside the held-out set is refused, naming it. `TestTheGradePromptCarriesTenExamplesPerClassFromTheRecord`
+fakes the backend and pins exactly ten per class, the order, and no held-out card.
+
+Score on a held-out set, before and after, with the jev-score program
+(the coordinator's scratch program, `go run . --grades grade.jsonl --cards <dir>`):
+
+| grades | held-out cards | result |
+| --- | --- | --- |
+| before (no examples) | not measured | not measured by this change |
+| after (`--examples`) | not measured | not measured: needs the Jev key and a held-out re-grade |
+
+Neither number is measured here: a bud holds no Jev key and the jev-score input is the
+shadow grade record, which has to be re-run with `--examples` over the held-out cards.
+The all-cards figure of 2026-10-04 (first-attempt tier flash, Jev grade flash: 111 cards,
+87% landed within 2 attempts; Jev grade pro: 161 cards, 58%) is the baseline to compare with.
+
 ## 12. The gate decision
 
 `gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>]` reads a red
