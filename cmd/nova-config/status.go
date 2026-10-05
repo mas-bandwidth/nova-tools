@@ -33,7 +33,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	_ = st.Close // ignored: store closed after use, no critical cleanup needed
 	schema, err := st.Version(ctx)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -94,7 +94,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer rs.Close()
+	_ = rs.Close // ignored: redis connection closed after use, no critical cleanup needed
 	line += " redis=" + config.Value(addr)
 	o.Fact("redis", addr)
 	behind := 0

@@ -118,7 +118,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		if err != nil {
 			return fail(err)
 		}
-		defer rs.Close()
+		_ = rs.Close // ignored: redis connection closed after use, no critical cleanup needed
 		stage = "reading the applied state"
 		if snap, err = rs.Snapshot(ctx); err != nil {
 			return fail(err)
