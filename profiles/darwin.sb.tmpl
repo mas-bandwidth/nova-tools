@@ -81,11 +81,10 @@
 ;; until `/bin/sh -c true`, `git status`, `curl https://example.com`, `opencode --version`
 ;; and `node -e 1` all passed, and on 2026-10-04 on an Intel Mac bench by growing it again
 ;; until `go mod download` passed, and on 2026-10-05 by considering membership: the
-;; denial of membership was reported in superman's sampler kills and git hangs, and was
-;; evaluated on 2026-10-05 on native macOS 27.2 with 20 launches each. The measurement
-;; did not reproduce: sqlite3 mean 0.0100 s with and without the grant; git status
-;; 0.0305 s without, 0.0295 s with. Membership is allowed as a narrow, named,
-;; pbpaste-safe grant:
+;; denial of membership was reported in fleet activity, and was evaluated on 2026-10-05 on
+;; native macOS 27.2 with 20 launches each. The measurement did not reproduce: sqlite3 mean
+;; 0.0100 s with and without the grant; git status 0.0305 s without, 0.0295 s with.
+;; Membership is allowed as a narrow, named, pbpaste-safe grant:
 ;;   opendirectoryd.libinfo  getpwuid(3)/getaddrinfo(3) -- without it HOME lookup and
 ;;                           name resolution fail;
 ;;   opendirectoryd.membership Open Directory membership lookups -- reported stall did not
