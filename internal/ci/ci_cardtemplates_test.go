@@ -251,7 +251,7 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 	// the templates directory went with cmd/nova-pulse (#3801) they are the ones
 	// the estate cuts from, so they are read here as text under the same rule.
 	for _, name := range swarm.TemplateNames() {
-		if name == "models.tsv" || !(swarm.IsCardTemplate(name) || swarm.IsPulseTemplate(name)) {
+		if name == "models.tsv" || (!swarm.IsCardTemplate(name) && !swarm.IsPulseTemplate(name)) {
 			continue
 		}
 		text, err := swarm.Template(name)

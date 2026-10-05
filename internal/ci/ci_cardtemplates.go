@@ -180,9 +180,10 @@ func attachedOrFallback(rest string) bool {
 			return false
 		case len(stack) > 0:
 			// Inside a nested $(...): its separators are its own.
-			if c == '(' {
+			switch c {
+			case '(':
 				stack = append(stack, '(')
-			} else if c == ')' {
+			case ')':
 				stack = stack[:len(stack)-1]
 			}
 		case c == '|' && at(i+1) == '|':
