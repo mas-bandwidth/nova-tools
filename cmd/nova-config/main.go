@@ -236,6 +236,10 @@ type deps struct {
 	// tailscale is `tailscale status --json --peers=false`, config.ErrNoTailnet
 	// when no tailnet is installed: machine self reads its name from it.
 	tailscale func(ctx context.Context) ([]byte, error)
+	// probe asks a nova program whether it still has a verb (config.HelpProbe):
+	// loop add and set refuse, and status names, a loop whose verb is gone. Nil
+	// asks nothing.
+	probe config.VerbProbe
 }
 
 type redisApplier struct {
@@ -264,6 +268,7 @@ func realDeps() deps {
 		now:       time.Now,
 		hostname:  os.Hostname,
 		tailscale: config.TailscaleStatus,
+		probe:     config.HelpProbe,
 	}
 }
 
