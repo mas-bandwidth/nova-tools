@@ -25,6 +25,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -98,6 +99,11 @@ type Verb struct {
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
+	// RefuseExit is the code a refusal of this verb exits, 0 meaning 2: a
+	// wrapper whose own refusal stands apart from the child it runs (a
+	// missing store, a bad flag) states it once here, and both the exit and
+	// the verb's exit table in its help follow (skeleton contract 2.5).
+	RefuseExit int
 }
 
 // Effect is what running a verb does beyond printing: one of the three below,
@@ -384,7 +390,8 @@ func (t *Tool) help(stdout, stderr io.Writer, code *int) {
 
 // writeHelp prints one verb's help: its lines quoted from the banner with its
 // flags and the exit codes (the verb's own, Verb.ExitTable, where it states
-// them), then the verb's effect, on stdout.
+// them, and the code its own refusal exits, Verb.RefuseExit, where it declares
+// one), then the verb's effect, on stdout.
 func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 	effect, detail, exit := Effect("unstated"), "", []string{"exit codes: " + t.ExitTable}
 	for _, v := range t.verbs() {
@@ -393,8 +400,13 @@ func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 			if v.Effect != "" {
 				effect = v.Effect
 			}
+			table := t.ExitTable
 			if v.ExitTable != "" {
-				exit = []string{"exit codes: " + v.ExitTable}
+				table = v.ExitTable
+			}
+			exit = []string{"exit codes: " + table}
+			if v.RefuseExit != 0 {
+				exit = append(exit, "  "+name+": refused, exit "+strconv.Itoa(v.RefuseExit))
 			}
 		}
 	}
@@ -631,6 +643,16 @@ func (v Verb) flags() *Flags {
 // JSON always on stdout. A status word the tool does not declare is a tool
 // bug its own tests meet, never printed as if it were one.
 func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int {
+	if o.printed && (v == nil || !v.flags().prints) {
+		// A raw exit is the one a verb that declared Prints returns; from any
+		// other it escapes the one envelope, a tool bug (skeleton contract
+		// 2.5 and 1.3).
+		name := "the verb"
+		if v != nil {
+			name = v.Name
+		}
+		o = Fail("verb " + name + " returned a raw exit without Prints")
+	}
 	if o.Word != "" && (o.Status == Refused || !slices.Contains(t.Words, o.Word)) {
 		o = Fail(fmt.Sprintf("the verb answered %s %s, a status word %s does not declare (Tool.Words) or one on a refusal",
 			o.Status, o.Word, t.Name))
@@ -642,6 +664,9 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 	}
 	if o.Status == Refused && o.Remedy == "" {
 		o.Remedy = Cmd(t.Name, "help")
+	}
+	if !o.printed && o.Status == Refused && v != nil && v.RefuseExit != 0 {
+		o.Exit = v.RefuseExit
 	}
 	if o.printed {
 		return o.Exit
