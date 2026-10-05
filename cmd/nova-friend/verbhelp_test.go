@@ -18,6 +18,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	cli := newRig(t).cli().NoStdin()
 	testverbhelp.Check(t, cli, []testverbhelp.Case{
 		{Verb: "run", Flags: store},
+		{Verb: "beat"},
 		{Verb: "install", Flags: store},
 		{Verb: "uninstall"},
 		{Verb: "ping", Flags: store},
@@ -26,7 +27,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "status"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "ping", "pong", "wait-pong", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "ping", "pong", "wait-pong", "status", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {

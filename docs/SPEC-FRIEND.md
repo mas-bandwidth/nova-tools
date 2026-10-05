@@ -347,6 +347,22 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+## The beat verb
+
+The beat is the daemon's, and the daemon's alone: the agent `install` writes
+runs the daemon, and the daemon beats each time round while it runs (its
+session's whole life, launchd keeping it up), so the beat needs no agent of
+its own and none is written — the one plist a friend needs is the daemon's. The beat is also a verb of the tool,
+`nova-friend beat --as <me> [--server <addr>]`: the daemon's own call, on
+its own, the canary run by hand. A server that does not answer is exit 2.
+
+The hand plists are retired (the finding of 2026-10-04): a friend-beat
+agent copied in by hand, for a friend whose harness is the ChatGPT app,
+failed to bootstrap — launchd answered Input/output error on a plist that
+lints fine — where the daemon's own `install` already retries that
+bootstrap (`BootstrapTries`, internal/friend/launchd.go). No hand plist is
+written or kept for the beat: `install` covers it.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the

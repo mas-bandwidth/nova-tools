@@ -27,6 +27,8 @@ type rig struct {
 	store     *bus.Fake
 	env       map[string]string
 	launchctl []string
+	beats     []string          // "server friend" for each beat the fake answered, in order
+	beatErr   error             // what the fake beat answers instead, when set
 	onPath    map[string]string // what lookPath finds, by name
 	now       time.Time
 	home      string
@@ -49,6 +51,10 @@ func (r *rig) world() world {
 		launchctl: func(_ context.Context, args ...string) (string, error) {
 			r.launchctl = append(r.launchctl, strings.Join(args, " "))
 			return "", nil
+		},
+		beat: func(_ context.Context, server, friend string) (string, error) {
+			r.beats = append(r.beats, server+" "+friend)
+			return "FRIEND-BEAT " + friend, r.beatErr
 		},
 		now:     func() time.Time { r.now = r.now.Add(time.Second); return r.now },
 		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
@@ -207,6 +213,36 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK label=com.nova.friend-bob", `UNINSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`)
 	assert.NoFileExists(t, plist)
 	cli.Do(t, "uninstall", "--as", "bob").Exit(0).Out("UNINSTALL OK")
+}
+
+// The beat is a verb of the tool the daemon's agent runs, and the agent
+// install writes is the only plist a friend needs: the daemon beats while it
+// runs (docs/SPEC-FRIEND.md, the loop), so the beat needs no agent of its
+// own and the hand plists are retired. The finding of 2026-10-04: a
+// friend-beat agent copied in by hand, for a friend whose harness is the
+// ChatGPT app, fails to bootstrap (launchd answers Input/output error on a
+// plist that lints fine), where the daemon's own install already retries that
+// bootstrap; the verb is the daemon's own call, on its own, for the canary.
+func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	agents := filepath.Join(r.home, "Library", "LaunchAgents")
+	plist := filepath.Join(agents, "com.nova.friend-bob.plist")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--server", "127.0.0.1:6390").Exit(0).
+		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
+	raw, err := os.ReadFile(plist)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "<string>run</string>", "the agent runs the daemon, and the daemon beats while it runs (docs/SPEC-FRIEND.md, the loop)")
+	assert.Contains(t, string(raw), "<string>--server</string>", "the beat's server is the agent's own flag")
+	assert.NotContains(t, string(raw), "StartInterval", "the agent is the daemon's RunAtLoad shape, never a hand plist's timer")
+	written, err := os.ReadDir(agents)
+	require.NoError(t, err)
+	assert.Len(t, written, 1, "install writes the daemon's agent alone; the beat needs no plist of its own")
+	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390")
+	assert.Equal(t, []string{"127.0.0.1:6390 bob"}, r.beats, "the verb makes the same call the daemon's loop makes")
+	r.beatErr = errors.New("the sprint server at 127.0.0.1:6390 did not answer")
+	cli.Do(t, "beat", "--as", "bob").Exit(2).Err("BEAT REFUSED", "did not answer")
 }
 
 // run over the fake store, a stub harness and a cancelled context: the
