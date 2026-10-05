@@ -131,7 +131,7 @@ func (a *app) selftestEnv(d string) []string {
 // the forge and a clone work whose base commit holds the go module, then init
 // with two readers and one member, one card, start, ticks, take, a commit
 // pushed to the card's branch, finish at its head, a read ok, land and a tick,
-// and the landing read back from origin's main. It returns the land step's
+// and the landing read back from origin's sprint/selftest. It returns the land step's
 // duration and the cards it landed, or the step that failed and why.
 func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed int, step, why string) {
 	ctx := context.Background()
@@ -166,6 +166,7 @@ func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed i
 		{"-C", "work", "add", "--", "go.mod", "main.go"},
 		{"-C", "work", "commit", "-q", "-m", "base"},
 		{"-C", "work", "push", "-q", "origin", "HEAD:main"},
+		{"-C", "work", "push", "-q", "origin", "HEAD:refs/heads/sprint/selftest"}, // the landing branch: every stream lands on a sprint branch, never main (docs/SPEC-SPRINT.md section 7)
 	} {
 		if _, err := git(args...); err != nil {
 			step, why = "base", err.Error()
@@ -238,7 +239,7 @@ func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed i
 	}
 	// the landing, timed: the tree gate runs here, on the base the flow built
 	began := time.Now()
-	code, out, errs := verb("land", "--repo-dir", work, "--base", "main")
+	code, out, errs := verb("land", "--repo-dir", work, "--base", "sprint/selftest")
 	land = time.Since(began)
 	if code != 0 {
 		step, why = "land", selftestLandWhy(out, errs)
@@ -248,14 +249,14 @@ func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed i
 	if step, why = stepVerb("tick", "tick"); step != "" {
 		return
 	}
-	// the landing is on origin's main: the card, landed for real
-	subjects, err := git("-C", "origin.git", "log", "--format=%s", "main")
+	// the landing is on origin's sprint branch: the card, landed for real
+	subjects, err := git("-C", "origin.git", "log", "--format=%s", "sprint/selftest")
 	if err != nil {
 		step, why = "check", err.Error()
 		return
 	}
 	if !strings.Contains(subjects, "land s1-1 (sprint stream s1)") {
-		step, why = "check", "origin's main holds no landing of the card, whose subjects are "+firstLine(subjects, nil)
+		step, why = "check", "origin's sprint/selftest holds no landing of the card, whose subjects are "+firstLine(subjects, nil)
 		return
 	}
 	return

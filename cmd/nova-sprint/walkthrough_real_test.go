@@ -61,7 +61,7 @@ func TestTheHelpsWalkthroughLandsACardForReal(t *testing.T) {
 		last = out.String()
 	}
 	assert.Contains(t, last, "\nDONE\n", "the walkthrough ends with the card landed")
-	assert.Contains(t, git("-C", "origin.git", "log", "--format=%s", "main"), "land s1-1 (sprint stream s1)", "the base holds the landing")
+	assert.Contains(t, git("-C", "origin.git", "log", "--format=%s", "sprint/s1"), "land s1-1 (sprint stream s1)", "the base, the sprint branch, holds the landing")
 	// the twin's own flow (no git) differs in the finish and the land alone,
 	// and the help shows its two lines beside the walkthrough
 	for _, l := range twinSteps {
