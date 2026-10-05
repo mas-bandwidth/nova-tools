@@ -103,3 +103,50 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 	var refused ProviderRefused
 	assert.ErrorAs(t, err, &refused, "a provider refusing the seed is said as such")
 }
+
+// An OpenCode lane's turn is priced from opencode's own session record: the
+// session's running cost and tokens (`opencode export <id>`, its info) before
+// the turn and after, the difference said in one OPENCODE RUN line, with the
+// provider's rate limit when the output carries one, and the turn answered
+// RateLimited for the lanes' governor. An export cut short after its info
+// still prices the turn.
+func TestAnOpenCodeLaneTurnIsPricedFromTheSessionRecord(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	exports := []string{
+		`{"info":{"id":"ses_1","cost":0.0125,"tokens":{"input":1000,"output":100,"reasoning":10,"cache":{"read":5000,"write":0}}},"messages":[]}`,
+		`{"info":{"id":"ses_1","cost":0.0211,"tokens":{"input":1800,"output":160,"reasoning":12,"cache":{"read":9000,"write":40}}},"messages":[{"info":{"role":"assistant","cost":0.0086`,
+	}
+	run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		if args[0] == "export" {
+			assert.Equal(t, []string{"export", "ses_1"}, args)
+			e := exports[0]
+			exports = exports[1:]
+			return e, 0, nil
+		}
+		return "done\n", 0, nil
+	}
+	var out strings.Builder
+	o := &OpenCode{Dir: dir, Run: run, Out: &out}
+	lt, err := o.DeliverTo(context.Background(), "ses_1", "one card")
+	require.NoError(t, err)
+	assert.Equal(t, 0, lt.Exit)
+	assert.Contains(t, out.String(), "OPENCODE RUN session=ses_1 exit=0 cost_usd=0.0086 tokens_in=800 tokens_out=60 reasoning=2 cache_read=4000 cache_write=40 limit=-")
+
+	limited := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		if args[0] == "export" {
+			return `{"info":{"cost":0}}`, 0, nil
+		}
+		return `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`, 1, nil
+	}
+	out.Reset()
+	lt, err = (&OpenCode{Dir: dir, Run: limited, Out: &out}).DeliverTo(context.Background(), "ses_1", "one card")
+	var rl RateLimited
+	require.ErrorAs(t, err, &rl, "a rate limit is the lanes' governor's to answer, never a refusal of the session")
+	assert.Equal(t, "ses_1", rl.Session)
+	assert.Equal(t, 1, lt.Exit)
+	assert.Contains(t, out.String(), "OPENCODE RUN session=ses_1 exit=1 cost_usd=0 tokens_in=0 tokens_out=0 reasoning=0 cache_read=0 cache_write=0 limit=rate_limit_error")
+
+	_, err = ReadSessionSpend(`{"messages":[]}`)
+	assert.EqualError(t, err, "opencode export: no session info")
+}
