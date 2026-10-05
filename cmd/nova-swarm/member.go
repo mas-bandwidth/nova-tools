@@ -159,11 +159,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 			f.add(fmt.Sprintf("--pass %q is not an environment name (letters, digits, _)", n))
 		}
 	}
+	workerSecret := ""
 	if *workerFile != "" {
 		// the worker description names the secret its harness reads: that one name is
 		// handed through too (docs/SPEC-CARD-CONTRACT.md, the child's environment)
 		if w, problems := swarm.LoadWorker(*workerFile); len(problems) == 0 && w.Secret != "" {
-			pass = append(pass, w.Secret)
+			workerSecret = w.Secret
 		}
 	}
 	if f.refused(stderr) {
@@ -179,7 +180,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	// a name --pass lists that this environment does not hold is read here, in
 	// this process, before any directory is made (keys.go)
-	held, extra, err := prepareMemberKeys(pass, os.Getenv)
+	keyNames := append([]string{}, pass...)
+	if workerSecret != "" {
+		keyNames = append(keyNames, workerSecret)
+	}
+	held, extra, err := prepareMemberKeys(keyNames, os.Getenv)
 	if err != nil {
 		return refuse(stderr, " member", err.Error())
 	}
@@ -212,7 +217,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, held: held, identity: *identity,
+		worker: *workerFile, workerSecret: workerSecret, noWall: *noWall, stderr: stderr, pass: nativePass, held: held, identity: *identity,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
@@ -452,11 +457,12 @@ type nativeRunner struct {
 	self, harness, model, root, slots, resultsRoot string
 	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
+	workerSecret                                   string // the worker description secret, independent of provider selection
 	noWall                                         bool
 	stderr                                         io.Writer
 	env                                            []string                     // added to this process's environment: none in production, a test's
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
-	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
+	pass                                           []string                     // the provider and decision secret names handed to native (--pass)
 	held                                           map[string]secrets.Secret    // secrets read in this process; nil when the environment already held every name
 	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
 	load                                           hostload.Source
@@ -537,6 +543,20 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		r.started(name)
 		return c, nil
 	}
+	model, tokens, deadline, err := r.route(p)
+	if err != nil {
+		return nil, err
+	}
+	// SPEC-SECRETS: an explicit provider set must serve this route before launch.
+	providerPass := r.providerPass()
+	if secrets.RouteKey(model, providerPass) == "" {
+		for _, name := range providerPass {
+			if name = strings.TrimSpace(name); name != "" && name != decide.JevSecret {
+				provider, _, _ := strings.Cut(strings.TrimSpace(model), "/")
+				return nil, fmt.Errorf("route %q names none of the listed provider keys; run: nova-swarm member --pass %s_API_KEY with that name in the seat login's keys", model, strings.ToUpper(provider))
+			}
+		}
+	}
 	// SPEC-FRIEND "The local child load gate": the configured raw one-minute load
 	// decides admission immediately before a new local child is created.
 	if r.maxLoad > 0 && r.load.Load1 != nil {
@@ -561,10 +581,6 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
 	if err := os.WriteFile(cardPath, []byte(swarm.PointCardAtMirrors(card, r.benchHome)), 0o644); err != nil {
-		return nil, err
-	}
-	model, tokens, deadline, err := r.route(p)
-	if err != nil {
 		return nil, err
 	}
 	bin, err := r.harnessFor(p)
@@ -1208,7 +1224,7 @@ var localProviders = map[string]bool{"ollama": true, "lmstudio": true, "llamacpp
 // its model is not a local one: the children start with no provider key and
 // fail at the provider (docs/SPEC-CARD-CONTRACT.md, the child's environment).
 func passNote(model string, pass []string, auth string) string {
-	provider, _, _ := strings.Cut(model, "/")
+	provider, _, _ := strings.Cut(strings.TrimSpace(model), "/")
 	if len(pass) > 0 || auth != "" || localProviders[strings.ToLower(provider)] {
 		return ""
 	}

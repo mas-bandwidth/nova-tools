@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -190,4 +193,81 @@ func secretEquals(s secrets.Secret, got string) bool {
 		return nil
 	})
 	return ok
+}
+
+// The worker description secret is independent of the route's provider key.
+func TestWorkerSecretSurvivesProviderSelection(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, workerSecret string
+		held               bool
+	}{
+		{"read in process", "MY_HARNESS_TOKEN", true},
+		{"inherited", "MY_HARNESS_TOKEN", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := &nativeRunner{
+				pass:         []string{"OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", decide.JevSecret},
+				workerSecret: tc.workerSecret,
+				env:          []string{tc.workerSecret + "=fixture-worker"},
+			}
+			if tc.held {
+				r.held = map[string]secrets.Secret{
+					"OPENROUTER_API_KEY": secrets.NewSecret("fixture-route"),
+					"DEEPSEEK_API_KEY":   secrets.NewSecret("fixture-other"),
+					tc.workerSecret:      secrets.NewSecret("fixture-worker"),
+				}
+			}
+			names := map[string]int{}
+			for _, kv := range r.childEnv("openrouter/example") {
+				name, _, _ := strings.Cut(kv, "=")
+				names[name]++
+			}
+			assert.Equal(t, 1, names[tc.workerSecret], "the worker description secret was dropped or duplicated")
+			assert.Zero(t, names["DEEPSEEK_API_KEY"])
+		})
+	}
+
+}
+
+// A worker secret repeated in configured names does not consume the custom
+// single-provider fallback. Both independent secrets reach the child once.
+func TestConfiguredWorkerSecretIsNotAProviderCandidate(t *testing.T) {
+	t.Parallel()
+	r := &nativeRunner{
+		pass:         []string{"CUSTOM_API_KEY", "MY_HARNESS_TOKEN", decide.JevSecret},
+		workerSecret: "MY_HARNESS_TOKEN",
+		held: map[string]secrets.Secret{
+			"CUSTOM_API_KEY":   secrets.NewSecret("fixture-custom"),
+			"MY_HARNESS_TOKEN": secrets.NewSecret("fixture-worker"),
+		},
+	}
+	assert.Equal(t, "CUSTOM_API_KEY", secrets.RouteKey("opencode/example", r.providerPass()))
+	names := map[string]int{}
+	for _, kv := range r.childEnv("opencode/example") {
+		name, _, _ := strings.Cut(kv, "=")
+		names[name]++
+	}
+	assert.Equal(t, 1, names["CUSTOM_API_KEY"])
+	assert.Equal(t, 1, names["MY_HARNESS_TOKEN"])
+}
+
+// A listed provider set that cannot serve the route refuses before launching.
+func TestUnmatchedProviderKeysRefuseNativeLaunch(t *testing.T) {
+	t.Parallel()
+	r := &nativeRunner{
+		slots: t.TempDir(), resultsRoot: t.TempDir(),
+		model: "opencode/big", tokens: "100", deadline: time.Minute,
+		pass: []string{"OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", decide.JevSecret},
+	}
+	child, err := r.Start(member.Packet{Card: "example"})
+	require.Error(t, err)
+	assert.Nil(t, child)
+	assert.Contains(t, err.Error(), "opencode/big")
+	assert.Contains(t, err.Error(), "OPENCODE_API_KEY")
+	assert.Contains(t, err.Error(), "--pass")
+	entries, readErr := os.ReadDir(r.slots)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries, "the refused launch wrote into its slot")
 }

@@ -729,6 +729,9 @@ seal`); the value is never an empty key and is never printed. `nova-sprint run -
 `keys.json` beside the seat login name the server's list; `nova-swarm member --pass` names the
 member's, read in process when the environment does not already hold them. The unit's own
 environment carries no key value, and no `exec` wrapper is required for those names.
+The member hands the worker description secret independently of provider selection, even
+when the configured names list it too. An explicit provider set with no route match refuses
+the launch before staging, naming the route and the required provider name with a remedy.
 
 ### Refused, by name, with where it lives
 

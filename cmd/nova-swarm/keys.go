@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
@@ -139,13 +140,29 @@ func oneRoutePass(pass []string, model string) []string {
 	return out
 }
 
+// providerPass excludes the worker description secret even when configured names
+// list it too: SPEC-SECRETS selects the provider independently of that secret.
+func (r *nativeRunner) providerPass() []string {
+	names := make([]string, 0, len(r.pass))
+	for _, name := range r.pass {
+		if strings.TrimSpace(name) != r.workerSecret {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // childEnv is the environment one native child starts with. Held secrets are
 // dropped from the inherited environment and appended only when the route's
 // pass names them, so the child receives the decision key and the one route
-// key, never the whole set. The value is not printed.
+// key plus the worker description secret, never the whole provider set.
+// The value is not printed.
 func (r *nativeRunner) childEnv(model string) []string {
 	base := append(os.Environ(), r.env...)
-	pass := oneRoutePass(r.pass, model)
+	pass := oneRoutePass(r.providerPass(), model)
+	if r.workerSecret != "" && !slices.Contains(pass, r.workerSecret) {
+		pass = append(pass, r.workerSecret)
+	}
 	if len(r.held) == 0 {
 		return childEnviron(base, pass)
 	}
