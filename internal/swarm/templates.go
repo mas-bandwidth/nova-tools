@@ -107,7 +107,7 @@ const GateNamesWhoseFile = "When a test fails, name its file and say whether tha
 // the writer fills it. It is what `nova-sprint add` holds every brief to under the general rules: a
 // card without the paragraph is refused
 // before anything is written. The <angle> words are the writer's to fill.
-var templateCard ="RESULT: <label> sha=<sha12>\n" +
+var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"REPO: <owner>/<name>\n" +
 	"BASE: <branch>\n" +
 	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
