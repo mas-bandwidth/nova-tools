@@ -118,7 +118,20 @@ rate limited, until 6:00 PM)`: `friend down <friend> [--reason <text>]
 [--until <RFC3339>]` records why and when the coordinator expects her back
 (the owner, 2026-10-04 11:30 AM ET: a friend's model allowance "can run
 out"), and an observation carries the same (`friend health --reason --until`);
-`where --json` carries the cell as printed. A
+`where --json` carries the cell as printed. A friend whose harness says it is
+out of credits or at a usage limit is down by her own daemon (the owner,
+2026-10-04: "stopped on credits means she should automatically be DOWN";
+`internal/friend/limit.go`, docs/SPEC-FRIEND.md, a harness at its limit): from
+the turn that said it, `nova-friend run` sends no beat, so her row reads
+`down`, delivers nothing, and tells the seat (else `--coordinator`) once with
+the line that shows why, `friend down <friend> --reason <its words> --until
+<the reset>`; after the reset a wake turn must be answered from inside her
+session before she beats again (a harness not running at the reset keeps her
+down), and the seat is told she is back (`friend up`).
+`TestAHarnessOutOfCreditsMakesItsFriendDownUntilTheReset`. Not yet: her
+measured utilization on the beat (`friend beat` takes no usage flags), and a
+Claude Code friend's `rate_limit_event` (the claude harness has no deliver
+command, so no run's output passes through the daemon). A
 friend `down` shows `working` 0 in the table, its footer and `where --json`:
 her cards stay on her row and count again when she beats, and `ready` and
 `done` are as they were (the owner, 2026-10-02 9:48 PM ET: "[a friend] being down,

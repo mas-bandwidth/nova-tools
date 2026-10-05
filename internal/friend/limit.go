@@ -14,7 +14,8 @@ import (
 )
 
 // A harness at its usage limit or out of credits is down until its reset,
-// and woken after it (SPEC-FRIEND.md, a harness at its limit). The finding of 2026-10-04: a friend's harness
+// and woken after it (docs/SPEC-FRIEND.md, a harness at its limit; the
+// friend's side in docs/SPEC-SPRINT.md, friend down). The finding of 2026-10-04: a friend's harness
 // stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while her row
 // read up with six working cards, and four Claude accounts ran out of their
 // weekly usage unseen.
@@ -268,6 +269,41 @@ func (l *Limits) see(out string) {
 		l.Down(lim.Until, lim.Reason)
 	}
 }
+
+// Beat is beat held back while the harness is at its limit: no beat goes
+// to the sprint server, so her row reads down, from the turn that hit the
+// limit until a wake after the reset answers its nonce (Gate). A reset that
+// passes with no answer (the harness not running, say) keeps her down: only
+// the session's answer brings her up.
+func (l *Limits) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		if until, reason, limited := l.Limited(); limited {
+			return fmt.Errorf("not beating: the harness is at its limit until %s, then until a wake is answered: %s", until.UTC().Format(time.RFC3339), reason)
+		}
+		return beat(ctx)
+	}
+}
+
+// LimitDownText is what the seat is told when friend's harness hits its
+// limit: the subject, and a body with the line that shows why and until when
+// on her row (nova-sprint friend down --reason --until).
+func LimitDownText(friend string, until time.Time, reason string) (subject, body string) {
+	subject = fmt.Sprintf("friend %s down: her harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
+	body = fmt.Sprintf("%s: %s\nHer daemon has stopped beating and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
+		subject, reason, friend, shellQuote("harness limit: "+reason), until.UTC().Format(time.RFC3339))
+	return subject, body
+}
+
+// LimitUpText is what the seat is told when friend's session answered the
+// wake after the reset.
+func LimitUpText(friend string) (subject, body string) {
+	subject = fmt.Sprintf("friend %s back: her harness answered the wake after its reset", friend)
+	body = fmt.Sprintf("%s\nHer daemon beats and delivers again. If you held her with friend down: nova-sprint friend up %s\n", subject, friend)
+	return subject, body
+}
+
+// shellQuote is s in single quotes for a line to paste.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // WakeText is the turn that wakes a session after its reset: one word back,
 // the nonce, so only a session that ran this turn answers it.

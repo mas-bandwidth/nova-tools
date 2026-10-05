@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -560,7 +561,11 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 			cancel() // a bound on the test, never reached when it passes
 		}
 	}
+	var beats []time.Time
 	w.beat = func(context.Context, string, string) (string, error) {
+		mu.Lock()
+		beats = append(beats, clock)
+		mu.Unlock()
 		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 	}
 	type turn struct {
@@ -611,6 +616,26 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	assert.Equal(t, friend.PresenceDown, turns[1].presence.Presence, "down on the presence file until woken")
 	assert.Contains(t, turns[1].presence.Reason, "harness limit until ")
 	assert.Contains(t, out.String(), "limit: woken: the session answered r4nd0m after the reset")
+	// down from the record of it (a beat while the limited turn still ran was before anyone knew), to the wake
+	_, rest, ok := strings.Cut(out.String(), "RUN ")
+	for ok && !strings.Contains(strings.SplitN(rest, "\n", 2)[0], " limit: down until ") {
+		_, rest, ok = strings.Cut(rest, "RUN ")
+	}
+	require.True(t, ok, "the limit is on the record")
+	downAt, err := time.Parse(time.RFC3339, strings.Fields(rest)[0])
+	require.NoError(t, err)
+	assert.False(t, slices.ContainsFunc(beats, func(b time.Time) bool { return b.After(downAt) && b.Before(turns[1].at) }),
+		"no beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
+	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
+	require.NoError(t, err)
+	var told []string
+	for _, e := range got {
+		told = append(told, e.Fields["subject"]+"\n"+e.Fields["body"])
+	}
+	all := strings.Join(told, "\n")
+	assert.Contains(t, all, "friend bob down: her harness is at its limit until ", "the coordinator is told she is down")
+	assert.Contains(t, all, "nova-sprint friend down bob --reason 'harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.' --until ")
+	assert.Contains(t, all, "friend bob back", "and that she is back")
 }
 
 // lockedBuilder is a strings.Builder under the test's lock: the daemon writes
