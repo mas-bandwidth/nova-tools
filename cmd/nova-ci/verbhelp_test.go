@@ -51,7 +51,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	assert.NotContains(t, stdout, "go test -json <packages> | nova-ci slowtests --budget 60")
 	assert.Contains(t, stdout, "In your own module, slowtests reads the events of the packages you name, at a\n60-second budget; the commands under example: are what runs.")
 	row := allowlistRowInHelp(t, stdout)
-	assert.Equal(t, "pkg\tTestA\t4.5\t3s@run1", row)
+	assert.Equal(t, "internal/pkg\tTestA\t4.5\t3s@run1", row)
 	slowtestsHonorsTheHelpRow(t, row)
 	exitOneMatchesTheSummary(t)
 	examples, err := onboarding.ExampleLines(stdout, "nova-ci")
@@ -139,8 +139,8 @@ func slowtestsHonorsTheHelpRow(t *testing.T, row string) {
 	t.Helper()
 	allow := filepath.Join(t.TempDir(), "allow.txt")
 	require.NoError(t, os.WriteFile(allow, []byte(row+"\n"), 0o644))
-	stdin := "{\"Action\":\"pass\",\"Package\":\"example.com/pkg\",\"Test\":\"TestA\",\"Elapsed\":3.2}\n" +
-		"{\"Action\":\"pass\",\"Package\":\"example.com/pkg\",\"Elapsed\":3.2}\n"
+	stdin := "{\"Action\":\"pass\",\"Package\":\"example.com/m/internal/pkg\",\"Test\":\"TestA\",\"Elapsed\":3.2}\n" +
+		"{\"Action\":\"pass\",\"Package\":\"example.com/m/internal/pkg\",\"Elapsed\":3.2}\n"
 	code, _, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--test-budget", "1", "--enforce", "--load", "1", "--cpus", "2"}, stdin)
 	require.Equal(t, 1, code, "without the row the test is over budget: stderr %s", stderr)
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--test-budget", "1", "--allowlist", allow, "--enforce", "--load", "1", "--cpus", "2"}, stdin)
