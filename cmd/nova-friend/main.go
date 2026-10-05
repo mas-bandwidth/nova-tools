@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -219,7 +220,7 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--config-dir <d>] [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--mode <m>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -238,16 +239,28 @@ bus; a restart clears it. The friend row's mode and width come with each beat's 
 row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. Prints
-one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported.
+With --harness claude --config-dir <d> the friend is a headless Claude Code account: each turn is one
+claude -p run on that account, the trimmed call (--strict-mcp-config --disable-slash-commands --no-chrome
+--tools Bash Read Write Edit Grep Glob), the model the card's tier names, --output-format stream-json read
+for the run's price and its rate_limit_event, said as RUN CLAUDE RUN cost_usd= limit=<window>:<status>:
+<utilization>:<resets_at> and kept in claude-limits.json in the state directory (status reads it). A run
+that meets the limit stops the daemon until the limit's own resetsAt: no beat (out of credits is down),
+no card, the card under way handed again after (RUN LIMIT, then RUN RESUME). Without --config-dir claude
+is passive: its session reads the bus itself. Prints one RUN line per delivery on stdout; stops on SIGINT
+or SIGTERM, a delivery under way left pending.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
 dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.String("config-dir", "", "harness claude: the account's Claude Code config directory (CLAUDE_CONFIG_DIR); each turn is one headless claude -p run on it")
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
+						}
+						if c.Str("config-dir") != "" && c.Str("harness") != "claude" {
+							c.Problem(fmt.Sprintf("--config-dir is a Claude Code account's; --harness is %q", c.Str("harness")))
 						}
 					})
 					f.Prints()
@@ -374,7 +387,8 @@ last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|->
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. STATUS NONE at
+harnesses omit route. A headless Claude Code account (run --config-dir) adds runs= cost_usd= limits=, from claude-limits.json in
+the state directory, and limited_until= with a NOTE while a limit it met lasts. STATUS NONE at
 exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
@@ -459,9 +473,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
 	rowMode, rowWidth := "", 0
+	var recording sync.Mutex // the lanes' runs say their lines from their own goroutines
 	record := func(line string) {
+		recording.Lock()
+		defer recording.Unlock()
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
+	}
+	var claude *friend.Claude
+	if cfg := c.Str("config-dir"); cfg != "" {
+		// a headless Claude Code account (docs/SPEC-FRIEND.md, the headless Claude lane)
+		claude = &friend.Claude{Dir: dir, ConfigDir: cfg, StateDir: state, Run: w.exec, Out: lineWriter(record), Now: w.now}
+		deliver = claude
 	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
@@ -470,22 +493,66 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(0) // a signal while the store was down
 	}
 	defer closeStore()
-	d := &friend.Daemon{
+	for ctx.Err() == nil {
+		if claude != nil {
+			if l, limited := claude.Limited(w.now()); limited {
+				// out of credits is down: no beat and no card until the limit's own reset
+				record(fmt.Sprintf("%s LIMIT %s until %s: the daemon stops, no beat and no card, until then", w.now().UTC().Format(time.RFC3339), l.Type, l.ResetsAt.UTC().Format(time.RFC3339)))
+				w.sleep(ctx, l.ResetsAt.Sub(w.now()))
+				if ctx.Err() != nil {
+					break
+				}
+				record(fmt.Sprintf("%s RESUME after the %s limit's reset", w.now().UTC().Format(time.RFC3339), l.Type))
+				continue
+			}
+		}
+		dctx, dcancel := context.WithCancel(ctx)
+		if claude != nil {
+			claude.OnLimit = func(friend.ClaudeLimit) { dcancel() }
+		}
+		d := w.daemon(c, name, dir, server, state, st, deliver, record, &rowMode, &rowWidth)
+		err := d.Run(dctx)
+		dcancel()
+		if err != nil {
+			fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
+			return tool.Exit(1)
+		}
+		if claude == nil {
+			break // the daemon ends only with ctx: a signal
+		}
+	}
+	return tool.Exit(0)
+}
+
+// lineWriter is the record as a writer: each line written is one record line.
+type lineWriter func(string)
+
+func (r lineWriter) Write(p []byte) (int, error) {
+	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+		r(line)
+	}
+	return len(p), nil
+}
+
+// daemon is one run of the friend's loop over the store; the row it reads is
+// kept across runs (a limit stops one and starts the next).
+func (w world) daemon(c *tool.Call, name, dir, server, state string, st bus.Store, deliver friend.Deliverer, record func(string), rowMode *string, rowWidth *int) *friend.Daemon {
+	return &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Beat: func(ctx context.Context) error {
 			answer, err := w.beat(ctx, server, name)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
-				rowMode, rowWidth = m, wd
+				*rowMode, *rowWidth = m, wd
 			}
 			return err
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
-				return m, rowWidth // the override, for a test
+				return m, *rowWidth // the override, for a test
 			}
-			return rowMode, rowWidth
+			return *rowMode, *rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Progress: func(ctx context.Context, cards []friend.Card) error {
@@ -521,11 +588,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
 	}
-	if err := d.Run(ctx); err != nil {
-		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
-		return tool.Exit(1)
-	}
-	return tool.Exit(0)
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
@@ -660,6 +722,16 @@ func (w world) status(c *tool.Call) *tool.Out {
 		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
+	}
+	if l, found, lerr := friend.ReadClaudeLimits(state); lerr != nil {
+		o.Note("the claude limits file: " + lerr.Error())
+	} else if found {
+		// a headless Claude Code account (run --config-dir): its runs, their price, its limits
+		o.Fact("runs", l.Runs).Fact("cost_usd", dash(l.CostUSD)).Fact("limits", tool.Text(friend.SaidLimits(l.Limits)))
+		if now.Before(l.Until) {
+			o.Fact("limited_until", stamp(l.Until))
+			o.Note("the account met its " + l.Met + " limit: the daemon takes no card and does not beat until " + stamp(l.Until))
+		}
 	}
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
