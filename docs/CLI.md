@@ -581,6 +581,33 @@ answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
 
+### The friend health check
+
+`nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]`
+checks the health of one or more friends from evidence: the launchd daemon, the harness adapter,
+real bus traffic, and the working directory's inbox and outbox.
+
+Per friend, lines in order:
+- `CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<s|-> presence=<up|asleep|down> seen_age=<s|->`
+- `CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->`
+- `CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->` (real: not ping, pong, daemon-pong or keepalive)
+- `CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->` (under its directory)
+- `CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>`
+
+The verdict is a pure function of the facts:
+- `broken` when the session is marked broken or every delivery in window failed;
+- `deaf` when deliveries succeed but no session pong or real message came back;
+- `silent` when no delivery was due and nothing came back;
+- `down` by presence;
+- `untrue` when `--shown` says up or working and facts say otherwise;
+- else `ok`.
+
+Summary line:
+`CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>`
+Exit codes: 0 when all ok, 1 when any not ok, 2 on error.
+
+When `--harness` is provided, `nova-friend check` runs the delivery check (below).
+
 ### The delivery check
 
 `nova-friend check --as <me> --harness <h> --dir <d> [--session <id>]

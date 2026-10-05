@@ -732,6 +732,30 @@ each friend's machine (docs/TESTING.md). Not covered: a lane's
 turn is under way goes in beside it, not after it (the check runs in its own
 process and does not hold the daemon's turn).
 
+### The friend health check (fg-friend-check-verb-now.w1)
+
+The friend health check is formalized into `nova-friend check` as a verb any coordinator
+uses:
+`nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]`
+
+Gathers facts across five seams:
+1. Daemon facts: agent load state in launchd, daemon process PID, status file freshness, bus connection, challenge, pong age, presence, seen age.
+2. Harness facts: adapter route (push, defer, passive), last delivery timestamp and exit code, failure count of last 20 turns, deferred delivery count, broken timestamp and reason.
+3. Bus facts: count of real turns (excluding ping, pong, daemon-pong, keepalive) on the friend's stream since `--since`, and timestamp of newest real message.
+4. Work facts: number of pending entries in inbox/ (excluding QUEUE.json and dotfiles), number of entries in outbox/, newest outbox file name and modification time.
+5. Verdict facts: deciding the health verdict as a pure function of gathered facts:
+   - `broken` when session is marked broken or every delivery in window failed;
+   - `deaf` when deliveries succeed but no session pong or real message came back;
+   - `silent` when no delivery was due and nothing came back;
+   - `down` by presence;
+   - `untrue` when `--shown` says up or working and facts say otherwise;
+   - else `ok`.
+
+Renders one summary line:
+`CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>`
+Exits 0 when all friends are ok, 1 when any not ok, 2 on error.
+With `--json`, outputs a single JSON object containing `friends` (list of fact sheets) and `summary`.
+
 ## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
 
 The server side of the connection, as the owner designed it: the coordinator
