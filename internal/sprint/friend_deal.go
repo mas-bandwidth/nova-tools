@@ -101,9 +101,8 @@ type FriendSeat struct {
 	Tiers   []string
 	Dir     string
 	Running []string
-	// Why is why her Status is not up, as FriendDownWhy says it (held, observed down,
-	// silent past FriendDownAfter, or her session's proof lapsed), "" while she is up:
-	// the words a take refused for her names.
+	// Why is why her Status is not up, as FriendDownWhy says it (held, or the session
+	// evidence she lacks), "" while she is up: the words a take refused for her names.
 	Why string
 }
 
