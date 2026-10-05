@@ -89,6 +89,9 @@ type Queue struct {
 
 // Task is one record of the queue file.
 type Task struct {
+	Gen int    `json:"gen,omitempty"` // assignment generation; absent means 1 (docs/FRIENDS.md)
+	Job string `json:"job,omitempty"` // delivered inbox directory, when recorded
+
 	ID          string `json:"id"`
 	State       string `json:"state"` // queued, working, done
 	Deliverable string `json:"deliverable,omitempty"`
