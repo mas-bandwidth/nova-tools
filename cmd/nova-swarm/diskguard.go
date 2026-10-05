@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -97,6 +98,7 @@ type guard struct {
 	cleanMod                   func(dir string) error
 	dirty                      func(dir string) (bool, error)
 	out                        io.Writer
+	start                      []string // said once before any rule: what the run lacks or found off PATH
 	freed                      int64
 	failed                     int
 	list                       []string // the process list, read once a run
@@ -218,6 +220,9 @@ func holding(open []string, paths ...string) string {
 // run is one pass of every rule, then the floor and the closing line: exit 0, or 1 when
 // something could not be done (each said on its NOTE line).
 func (g *guard) run() int {
+	for _, line := range g.start {
+		g.say(line)
+	}
 	g.logs()
 	g.buildCaches()
 	g.modules()
@@ -825,6 +830,13 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
 	}
+	if runtime.GOOS != "linux" {
+		lsof, note := findLsof(exec.LookPath, lsofAt, isExecutable)
+		g.held = func() ([]string, error) { return lsofHeld(lsof) }
+		if note != "" {
+			g.start = append(g.start, note)
+		}
+	}
 	if *land != "" {
 		g.landDir = tilde(*land)
 	} else if cache, err := os.UserCacheDir(); err == nil {
@@ -918,12 +930,42 @@ func processList() ([]string, error) {
 // heldPaths is every path a process other than this one holds, its working directory and
 // its open files, links resolved by the kernel: on Linux from /proc (lsof is not on every
 // machine), elsewhere from lsof's -F listing (about a second and a half on a desktop with
-// 750 processes).
+// 750 processes), the lsof findLsof finds.
 func heldPaths() ([]string, error) {
 	if runtime.GOOS == "linux" {
 		return procPaths("/proc", os.Getpid())
 	}
-	cmd, cancel := subproc.CommandFor(context.Background(), time.Minute, "lsof", "-n", "-P", "-w", "-F", "pn")
+	lsof, _ := findLsof(exec.LookPath, lsofAt, isExecutable)
+	return lsofHeld(lsof)
+}
+
+// lsofAt is where lsof is installed when it is not on PATH: macOS ships it in /usr/sbin,
+// which a launch agent's PATH (/usr/bin:/bin by default) leaves out, and a run that could
+// not find it read no open file and freed nothing that needed one (found
+// 2026-10-04).
+var lsofAt = []string{"/usr/sbin/lsof", "/usr/bin/lsof", "/sbin/lsof", "/bin/lsof"}
+
+// findLsof is the lsof the guard runs: PATH's, else the first of at that is an executable
+// file, else "". note is the line the run says once at its start: nothing when PATH has
+// it, the path taken when PATH did not, and what the run cannot do when there is none.
+func findLsof(look func(string) (string, error), at []string, executable func(string) bool) (path, note string) {
+	if p, err := look("lsof"); err == nil {
+		return p, ""
+	}
+	for _, p := range at {
+		if executable(p) {
+			return p, "NOTE lsof is not on PATH; the open files of live processes are read with " + p
+		}
+	}
+	return "", "NOTE lsof is not on PATH nor at " + strings.Join(at, ", ") + ": the open files of live processes cannot be read, so nothing a live process may hold is removed this run; install lsof or put its directory on the loop's PATH"
+}
+
+// lsofHeld is heldPaths read with the lsof at path; "" is the lsof findLsof did not find.
+func lsofHeld(lsof string) ([]string, error) {
+	if lsof == "" {
+		return nil, fmt.Errorf("lsof is not on PATH nor at %s", strings.Join(lsofAt, ", "))
+	}
+	cmd, cancel := subproc.CommandFor(context.Background(), time.Minute, lsof, "-n", "-P", "-w", "-F", "pn")
 	defer cancel()
 	b, err := cmd.Output()
 	if err != nil {
