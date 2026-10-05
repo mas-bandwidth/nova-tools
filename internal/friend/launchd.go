@@ -183,3 +183,38 @@ func (a Agent) Said() string {
 	}
 	return wrap + " -- " + said
 }
+
+// WakePingPlist generates the launchd plist for the coordinator's wake ping loop.
+func WakePingPlist(label string, args []string, env [][2]string, log string) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>` + esc(label) + `</string>
+	<key>ProgramArguments</key>
+	<array>
+`)
+	for _, a := range args {
+		b.WriteString("		<string>" + esc(a) + "</string>\n")
+	}
+	b.WriteString("	</array>\n")
+	if len(env) > 0 {
+		b.WriteString("	<key>EnvironmentVariables</key>\n	<dict>\n")
+		for _, kv := range env {
+			b.WriteString("		<key>" + kv[0] + "</key>\n")
+			b.WriteString("		<string>" + esc(kv[1]) + "</string>\n")
+		}
+		b.WriteString("	</dict>\n")
+	}
+	b.WriteString("	<key>RunAtLoad</key>\n	<true/>\n	<key>KeepAlive</key>\n	<true/>\n	<key>ThrottleInterval</key>\n	<integer>10</integer>\n")
+	if log != "" {
+		b.WriteString("	<key>StandardOutPath</key>\n")
+		b.WriteString("	<string>" + esc(log) + "</string>\n")
+		b.WriteString("	<key>StandardErrorPath</key>\n")
+		b.WriteString("	<string>" + esc(log) + "</string>\n")
+	}
+	b.WriteString("</dict>\n</plist>\n")
+	return b.String()
+}

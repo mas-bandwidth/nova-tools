@@ -603,6 +603,9 @@ machine as a nova-config loop record ([TESTING.md](TESTING.md)).
 ```sh
 nova-friend serve --as <coordinator> --dry-run
 nova-config loop add friend-serve --machine <m> --argv '["/usr/bin/env","NOVA_BUS_REDIS=127.0.0.1:6381","nova-friend","serve","--as","<coordinator>"]' --keepalive true --as <coordinator>
+nova-friend ping --wake --every 30s --to-friends --as <coordinator>
+nova-friend ping install --as <coordinator> --every 30s
+nova-friend ping uninstall
 ```
 
 `serve` is the coordinator's side of the connection: each second it reads the
@@ -620,6 +623,12 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 `NOVA_BUS_REDIS` (refused); no friend row but its own (refused, with
 `nova-config friend add`).
 
+`ping --wake --every <d> --to-friends` runs the coordinator's wake ping loop
+over every up friend row, skipping held, down, or never-wake friends, and alerts
+the coordinator via bus note when friends go deaf. `ping install` installs this loop
+as a service on the machine (`nova-friend.wake-ping` launchd agent on macOS,
+`nova-friend-wake-ping.service` systemd user unit on Linux); `ping uninstall` removes it.
+
 ### Commands
 
 | Command | What it does |
@@ -627,7 +636,9 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
 | `install --as <me> --harness <h> --dir <d> [...] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
 | `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
-| `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
+| `ping --as <coordinator> (--to <friend> | --to-friends) [--wake] [--every <d>] [--bound <d>]` | One `PING` on a friend's stream, or a wake ping loop over all up friends |
+| `ping install --as <coordinator> [--every <d>] [--bound <d>] [--dir <dir>] [--dry-run]` | Installs the coordinator wake ping loop service (launchd on macOS, systemd on Linux) |
+| `ping uninstall [--dir <dir>] [--dry-run]` | Unloads the coordinator wake ping loop service and removes its file |
 | `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
