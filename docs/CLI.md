@@ -1118,6 +1118,18 @@ uncalibrated: nova-config's `sprint` row `decide_brief_bar` stays empty, which r
 only, until the brief record's own outcomes support a bar
 ([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 14).
 
+### install-canary-shadow-tick-r.w1: the shadow tick before a server swap
+
+`nova-sprint tick --shadow` plans one tick on the store and applies nothing: the store is
+opened read-only, every write a refusal, and each part's plan is printed (`SHADOW PLAN
+<table>/<part> size= due=`, then `SHADOW TICK OK epoch= state= parts= size= took= wrote=nothing`;
+`--json` prints the plan as one line). `nova-sprint server switch <binary>` runs `<binary> tick
+--shadow --json` against the store first and refuses the swap, exit 1 with nothing changed and
+the old server running, when the shadow exits non-zero, panics, misses `--tick-deadline`
+(default 10s) or prints no plan; on a pass it switches and keeps the shadow's plan size and time
+at `<target>.shadow.json`, beside the switch record. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
+
 ### Exit codes
 
 | exit | meaning |

@@ -36,7 +36,7 @@ var verbExit = map[string]string{
 	"answer":        "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
 	"dashboard":     "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
 	"selftest land": "exit codes: 0 done, 1 failed (lander broken or card did not land), 2 usage",
-	"server switch": "exit codes: 0 done, 1 failed, 2 usage",
+	"server switch": "exit codes: 0 done, 1 failed or refused (the candidate's shadow tick failed: nothing changed), 2 usage",
 }
 
 // verbEffect is a verb's effect line, the last line of its -h, where the verb
@@ -77,7 +77,7 @@ var verbEffect = map[string]string{
 	"coordinator":      "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 	"answer":           "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
 	"selftest land":    "inspection: lands a canned card on a scratch clone with this binary, writes nothing to the sprint",
-	"server switch":    "local write: switches the server binary on disk, keeping the previous binary and rolling back on land failure in the window",
+	"server switch":    "local write: runs <binary> tick --shadow against the store first (read-only, under --tick-deadline) and refuses the swap, nothing changed, when it exits non-zero, panics or misses the deadline; then switches the server binary on disk, keeping the previous binary, the shadow's plan size and time at <target>.shadow.json, and rolling back on land failure in the window",
 }
 
 // commonExit is the codes of every other verb.

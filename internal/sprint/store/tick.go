@@ -1582,3 +1582,322 @@ func (st *Store) undone(ctx context.Context) error {
 	m.Cause = ""
 	return st.putMachine(ctx, m)
 }
+
+// ErrReadOnly is the refusal of every write a read-only store is asked for
+// (ReadOnly): a shadow tick's store holds no write it can reach.
+var ErrReadOnly = errors.New("a read-only store writes nothing: this is a shadow tick's store (nova-sprint tick --shadow), which plans and applies nothing")
+
+// readOnly is a backend with every write refused (ReadOnly). It holds the
+// backend unexported and has no Unwrap, so nothing reaches the writes beneath
+// it; the reads pass through. Of the optional interfaces it keeps only the
+// reads (KV's and KeysGetter's gets, RouteReader, PriceReader): the optional
+// writers (BatchApplier, Relocker, RowsSetter, TableChanger, ...) are not
+// there to be found.
+type readOnly struct{ b Backend }
+
+// ReadOnly is the backend b with every write refused with ErrReadOnly, its
+// reads as they were: the store user of a shadow tick (docs/SPEC-SPRINT.md
+// section 14, install-canary-shadow-tick-r.w1). A read-only backend given
+// again is itself.
+func ReadOnly(b Backend) Backend {
+	if r, ok := b.(readOnly); ok {
+		return r
+	}
+	return readOnly{b: b}
+}
+
+// IsReadOnly says the backend refuses every write (ReadOnly).
+func IsReadOnly(b Backend) bool { _, ok := b.(readOnly); return ok }
+
+var (
+	_ Backend    = readOnly{}
+	_ KV         = readOnly{}
+	_ KeysGetter = readOnly{}
+)
+
+func (r readOnly) Shapes(ctx context.Context, tables []string) ([]ntable.Table, error) {
+	return r.b.Shapes(ctx, tables)
+}
+func (r readOnly) CellIDs(ctx context.Context, shapes []ntable.Table) (map[string][]string, error) {
+	return r.b.CellIDs(ctx, shapes)
+}
+func (r readOnly) ReadSet(ctx context.Context, table string, ids []string) (ntable.ReadSetResult, error) {
+	return r.b.ReadSet(ctx, table, ids)
+}
+func (r readOnly) Apply(context.Context, ntable.BatchManifest) (ntable.Receipt, error) {
+	return ntable.Receipt{}, ErrReadOnly
+}
+func (r readOnly) Create(context.Context, ntable.Table) error       { return ErrReadOnly }
+func (r readOnly) RowsAdd(context.Context, string, []string) error  { return ErrReadOnly }
+func (r readOnly) RowsHide(context.Context, string, []string) error { return ErrReadOnly }
+func (r readOnly) RowsDel(context.Context, string, []string) error  { return ErrReadOnly }
+func (r readOnly) RowsDelIf(context.Context, string, []RowGuard) ([]string, error) {
+	return nil, ErrReadOnly
+}
+func (r readOnly) KeysDelIf(context.Context, string, []RowGuard) ([]string, error) {
+	return nil, ErrReadOnly
+}
+func (r readOnly) Place(context.Context, string, string, string, string, float64) error {
+	return ErrReadOnly
+}
+func (r readOnly) RowSet(context.Context, string, string, map[string]string) error {
+	return ErrReadOnly
+}
+func (r readOnly) ViewSet(context.Context, ntable.View) error { return ErrReadOnly }
+func (r readOnly) ViewDelete(context.Context, string) error   { return ErrReadOnly }
+func (r readOnly) DropTable(context.Context, string) error    { return ErrReadOnly }
+func (r readOnly) CheckTable(context.Context, string) error   { return ErrReadOnly }
+func (r readOnly) Epoch(ctx context.Context) (EpochState, error) {
+	return r.b.Epoch(ctx)
+}
+func (r readOnly) AdvanceEpoch(context.Context, uint64, time.Time) (bool, error) {
+	return false, ErrReadOnly
+}
+func (r readOnly) SettleEpoch(context.Context, uint64) error { return ErrReadOnly }
+func (r readOnly) AtEpoch(epoch uint64, old bool) Backend {
+	return readOnly{b: r.b.AtEpoch(epoch, old)}
+}
+func (r readOnly) ReadFence(ctx context.Context) (Fence, error) { return r.b.ReadFence(ctx) }
+func (r readOnly) QueueRead(ctx context.Context) ([]sprint.QueuedChange, error) {
+	return r.b.QueueRead(ctx)
+}
+func (r readOnly) Acquire(context.Context, uint64, OpRecord) (bool, error) {
+	return false, ErrReadOnly
+}
+func (r readOnly) Release(context.Context, OpRecord, bool) error { return ErrReadOnly }
+func (r readOnly) Done(ctx context.Context, callerOp string) (string, bool, error) {
+	return r.b.Done(ctx, callerOp)
+}
+func (r readOnly) DoneBefore(ctx context.Context, callerOp string, before uint64) (uint64, bool, error) {
+	return r.b.DoneBefore(ctx, callerOp, before)
+}
+func (r readOnly) SetReview(context.Context, string, time.Time, time.Time) error {
+	return ErrReadOnly
+}
+func (r readOnly) Progress(ctx context.Context) (map[string]time.Time, error) {
+	return r.b.Progress(ctx)
+}
+func (r readOnly) OpenNotes(ctx context.Context) ([]sprint.Open, error) { return r.b.OpenNotes(ctx) }
+func (r readOnly) Aliases(ctx context.Context, aliases []string) (map[string]string, error) {
+	return r.b.Aliases(ctx, aliases)
+}
+func (r readOnly) Answered(ctx context.Context, ids []string) (map[string]string, error) {
+	return r.b.Answered(ctx, ids)
+}
+func (r readOnly) NotesSince(ctx context.Context, after string, max int) ([]sprint.Note, []string, error) {
+	return r.b.NotesSince(ctx, after, max)
+}
+func (r readOnly) LogSince(ctx context.Context, after string, max int) ([]sprint.Line, []string, error) {
+	return r.b.LogSince(ctx, after, max)
+}
+func (r readOnly) Tails(ctx context.Context) (string, string, error) { return r.b.Tails(ctx) }
+func (r readOnly) Cursor(ctx context.Context) (string, error)        { return r.b.Cursor(ctx) }
+func (r readOnly) SetCursor(context.Context, string) error           { return ErrReadOnly }
+func (r readOnly) Coordinator(ctx context.Context) (string, error)   { return r.b.Coordinator(ctx) }
+func (r readOnly) SetCoordinator(context.Context, string) error      { return ErrReadOnly }
+func (r readOnly) RecordIDs(ctx context.Context, table string) ([]string, error) {
+	return r.b.RecordIDs(ctx, table)
+}
+func (r readOnly) DeleteKeys(context.Context, []string) (int, error) { return 0, ErrReadOnly }
+
+// GetKey reads a machine record; a backend that keeps none reads none.
+func (r readOnly) GetKey(ctx context.Context, name string) (string, bool, error) {
+	kv, ok := r.b.(KV)
+	if !ok {
+		return "", false, nil
+	}
+	return kv.GetKey(ctx, name)
+}
+
+// GetKeys reads machine records, as GetKey each.
+func (r readOnly) GetKeys(ctx context.Context, names []string) ([]string, []bool, error) {
+	kv, ok := r.b.(KV)
+	if !ok {
+		return make([]string, len(names)), make([]bool, len(names)), nil
+	}
+	return getKeys(ctx, kv, names)
+}
+func (r readOnly) SetKey(context.Context, string, string) error { return ErrReadOnly }
+func (r readOnly) SetKeyShowing(context.Context, string, string, string, string) error {
+	return ErrReadOnly
+}
+func (r readOnly) ShowState(context.Context, string, string) error { return ErrReadOnly }
+
+// Routes reads the routes, as the backend beneath does; none when it keeps none.
+func (r readOnly) Routes(ctx context.Context) (RouteSet, int64, error) {
+	rr, ok := r.b.(RouteReader)
+	if !ok {
+		return RouteSet{Routes: []sprint.Route{}}, 0, nil
+	}
+	return rr.Routes(ctx)
+}
+
+// PriceRoutes reads the routes a worker's step prices with; none when it keeps none.
+func (r readOnly) PriceRoutes(ctx context.Context) ([]sprint.Route, int64, error) {
+	pr, ok := r.b.(PriceReader)
+	if !ok {
+		return []sprint.Route{}, 0, nil
+	}
+	return pr.PriceRoutes(ctx)
+}
+
+// ShadowPart is one part of a shadow tick's plan: its table's update ("" for
+// the start and the end), its name, the plan's size (units, notes, rows,
+// closes and updates it would write) and what it would leave due.
+type ShadowPart struct {
+	Table string `json:"table"`
+	Name  string `json:"name"`
+	Size  int    `json:"size"`
+	Due   int    `json:"due,omitempty"`
+}
+
+// ShadowPlan is what a shadow tick planned: the epoch and the machine's state
+// it read, each part with something to do, the plan's whole size, and how
+// long it took.
+type ShadowPlan struct {
+	Epoch uint64        `json:"epoch"`
+	State string        `json:"state"`
+	Parts []ShadowPart  `json:"parts"`
+	Size  int           `json:"size"`
+	Took  time.Duration `json:"took_ns"`
+}
+
+// planSize is how much a plan would write: its units, notes, rows, closes and
+// updates.
+func planSize(p sprint.Plan) int {
+	return len(p.Units) + len(p.Notes) + len(p.Rows) + len(p.Closes) + len(p.Updates)
+}
+
+// ShadowTick is the tick's plan with nothing applied (docs/SPEC-SPRINT.md
+// section 14, install-canary-shadow-tick-r.w1): on a read-only copy of the
+// store (ReadOnly), one fenced read of the sprint, and every part of the
+// tick's start, its tables' updates in order and its end planned on that one
+// read, as the tick's first pass plans them. It writes nothing: no heartbeat,
+// no repair of a pending operation, no restore a clear owes, no beat; each of
+// those is a refusal, and a read that meets one says so. It plans whether the
+// machine is RUNNING or STOPPED (the state is reported): it is the canary of
+// the planning code a server would run. A part that panics is not recovered:
+// the shadow is the canary of a crash too.
+func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
+	began := time.Now()
+	c := st.clone()
+	root := c.root
+	if root == nil {
+		root = c.B
+	}
+	c.root, c.B, c.pinned = ReadOnly(root), ReadOnly(root), false
+	c.tw, c.CheckTwin = nil, nil
+	ro, es, err := c.pinOnly(ctx)
+	if err != nil {
+		return ShadowPlan{}, err
+	}
+	if es.Owed {
+		return ShadowPlan{}, fmt.Errorf("the clear of %s still owes the restore of epoch %d's shape: a shadow tick writes nothing and does not perform it; run: nova-sprint tick", es.Cleared.UTC().Format(time.RFC3339), es.N-1)
+	}
+	m, _, err := ro.Machine(ctx)
+	if err != nil {
+		return ShadowPlan{}, err
+	}
+	out := ShadowPlan{Epoch: ro.epoch, State: m.StateWord(), Parts: []ShadowPart{}}
+	snap, err := ro.shadowRead(ctx)
+	if err != nil {
+		return out, err
+	}
+	first := *snap
+	first.Work, first.Readers, first.Merge, first.Fleet = snap.Work.Frozen(), snap.Readers.Frozen(), snap.Merge.Frozen(), snap.Fleet.Frozen()
+	if err := ro.readerStatesInto(ctx, &first); err != nil {
+		return out, err
+	}
+	now := ro.now()
+	_, beats, err := ro.fleetBeats(ctx, nil)
+	if err != nil {
+		return out, fmt.Errorf("fleet: %w", err)
+	}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(first.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
+	if req.Friends, err = ro.friendSeats(ctx, &first, now); err != nil {
+		return out, err
+	}
+	var routes RouteCache
+	plan := func(table string, parts []sprint.TickPartDef) error {
+		for _, part := range parts {
+			view := &first
+			var p sprint.Plan
+			due := 0
+			if part.Name == sprint.PartDrain && part.Fn == nil {
+				if view.QueueLen == 0 {
+					continue
+				}
+				q, err := ro.B.QueueRead(ctx)
+				if err != nil {
+					return fmt.Errorf("shadow %s: %w", part.Name, err)
+				}
+				p = sprint.Drain(sprint.WithQueue(view, q), q, sprint.MachineActor)
+			} else {
+				if view.Routes == nil && routesPart(part.Name) {
+					set, err := ro.cached(ctx, &routes)
+					if err != nil {
+						return fmt.Errorf("shadow %s: %w", part.Name, err)
+					}
+					v := *view
+					set.into(&v)
+					view = &v
+				}
+				p, due = part.Fn(view, req)
+			}
+			if p.Empty() && due == 0 {
+				continue
+			}
+			n := planSize(p)
+			out.Parts = append(out.Parts, ShadowPart{Table: table, Name: part.Name, Size: n, Due: due})
+			out.Size += n
+		}
+		return nil
+	}
+	updates := st.Updates
+	if updates == nil {
+		updates = sprint.TickTables
+	}
+	if err := plan("", sprint.TickStart); err != nil {
+		return out, err
+	}
+	for _, u := range updates {
+		if err := plan(u.Table, u.Parts); err != nil {
+			return out, err
+		}
+	}
+	if err := plan("", sprint.TickEndWith(st.AnswerRules, st.IdleAlarm)); err != nil {
+		return out, err
+	}
+	out.Took = time.Since(began)
+	return out, nil
+}
+
+// shadowRead is the shadow tick's one read: the tables between two reads of
+// the fence at one generation with no operation pending. An operation in
+// flight is waited for, as a fenced read waits; one pending past the tries is
+// a failure, never repaired here (a repair writes).
+func (st *Store) shadowRead(ctx context.Context) (*sprint.Snapshot, error) {
+	r := st.retry(ctx)
+	for r.next(st.attempts()) {
+		f, err := st.B.ReadFence(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if f.Pending != nil {
+			continue
+		}
+		snap, f2, err := st.PipelinedLoadWithFence(ctx, All, tickExtras)
+		if errors.Is(err, errCleared) {
+			return nil, errors.New("the sprint was cleared as the shadow tick read it; run it again")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if f2.Pending != nil || f2.Gen != f.Gen {
+			continue
+		}
+		snap.QueueLen, snap.Running = f2.Queued, f2.Running
+		return snap, nil
+	}
+	return nil, fmt.Errorf("the sprint is busy: an operation was pending or the fence moved on each of %d reads in %s; a shadow tick repairs nothing; run it again", r.tries, r.slept().Round(time.Millisecond))
+}
