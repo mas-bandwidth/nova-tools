@@ -556,3 +556,12 @@ func TestAFriendRowsModeDefaultsToBatch(t *testing.T) {
 	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "one-shot"}}))
 	assert.Equal(t, []string{"batch", "one-shot"}, FriendModes)
 }
+
+func TestFriendStreamRestrictionRejectsMalformedGlob(t *testing.T) {
+	t.Parallel()
+	friend, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	err := friend.Check(Row{Name: "friend-a", Fields: map[string]string{"width": "1", "streams": "["}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid stream glob")
+}

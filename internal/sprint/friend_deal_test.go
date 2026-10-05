@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"testing"
+	"strings"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -205,4 +206,21 @@ func TestAFriendsRowIsNoMemberOfTheClearsShape(t *testing.T) {
 	sh := ShapeOf(w.s)
 	assert.Equal(t, []string{"m1", "m2"}, sh.Members)
 	assert.Equal(t, map[string]string{"m1": Up, "m2": Up}, sh.Status)
+}
+
+func TestDealerNeverDealsAFriendOutsideHerStreams(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"))
+	brief := "c: in-scope friend work\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\nKIND: fix\n\nThe task."
+	w.must(Add(w.s, AddReq{Stream: "security-a", Cards: []CardAdd{{ID: "security-a-1", Brief: brief}, {ID: "security-a-2", Brief: strings.Replace(brief, "KIND: fix", "KIND: test", 1)}}}))
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Streams: []string{"security*"}, Kinds: []string{"fix"}})
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"), "outside the stream restriction remains ready")
+	assert.Equal(t, Working, w.s.StateOf("security-a-1"), "matching stream and kind are dealt")
+	assert.Equal(t, Ready, w.s.StateOf("security-a-2"), "a kind outside the restriction remains ready")
+}
+
+func TestFriendRestrictionsTrimConfigWhitespace(t *testing.T) {
+	t.Parallel()
+	why := FriendRestrictionWhy(SplitFriendRestriction(" security* "), SplitFriendRestriction(" fix-red, review "), "security-a", "review")
+	assert.Empty(t, why, "comma-separated config values with surrounding spaces match after sync")
 }

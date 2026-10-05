@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 
@@ -89,6 +90,8 @@ type FriendSeat struct {
 	Class  string
 	Tiers  []string
 	Dir    string
+	Streams []string
+	Kinds []string
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
@@ -149,12 +152,13 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 		}
 		if name == "" {
 			for _, f := range up {
-				if f != not && free[f] > 0 && (name == "" || free[f] > free[name]) {
+				seat := friendSeat(seats, f)
+				if f != not && free[f] > 0 && friendRestrictionAllows(seat, c) && (name == "" || free[f] > free[name]) {
 					name = f
 				}
 			}
 		}
-		if name == "" || name == not || free[name] <= 0 {
+		if name == "" || name == not || free[name] <= 0 || !friendRestrictionAllows(friendSeat(seats, name), c) {
 			continue // no friend it may go to is up with room: it waits ready
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
@@ -230,4 +234,43 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 		change(Fleet, moveEntry(wc, row, col, set, unset...)),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, col)}
+}
+
+// friendSeat finds the configuration for a friend.
+func friendSeat(seats []FriendSeat, name string) FriendSeat {
+	for _, seat := range seats { if seat.Name == name { return seat } }
+	return FriendSeat{}
+}
+
+
+// SplitFriendRestriction canonicalizes the comma-separated values carried from nova-config.
+func SplitFriendRestriction(raw string) []string {
+	var out []string
+	for _, item := range strings.Split(raw, ",") { if item = strings.TrimSpace(item); item != "" { out = append(out, item) } }
+	return out
+}
+
+// FriendRestrictionWhy applies configured stream globs and KIND values to one card
+// (docs/SPEC-SPRINT.md, section 1, friend restrictions).
+func FriendRestrictionWhy(streams, kinds []string, stream, kind string) string {
+	if len(streams) > 0 {
+		matched := false
+		for _, glob := range streams { if ok, err := path.Match(strings.TrimSpace(glob), stream); err == nil && ok { matched = true; break } }
+		if !matched { return fmt.Sprintf("stream %q is outside this friend's streams restriction (%s)", stream, strings.Join(streams, ",")) }
+	}
+	if len(kinds) > 0 {
+		for _, allowed := range kinds { if strings.TrimSpace(allowed) == kind { return "" } }
+		return fmt.Sprintf("KIND %q is outside this friend's kinds restriction (%s)", kind, strings.Join(kinds, ","))
+	}
+	return ""
+}
+
+func friendRestrictionAllows(seat FriendSeat, c *Card) bool {
+	return FriendRestrictionWhy(seat.Streams, seat.Kinds, c.F("stream"), BriefKind(c.F("brief"))) == ""
+}
+
+// BriefKind reads the task kind from a card brief header.
+func BriefKind(brief string) string {
+	for _, line := range strings.Split(brief, "\n") { if value, ok := strings.CutPrefix(strings.TrimSpace(line), "KIND:"); ok { return strings.TrimSpace(value) } }
+	return ""
 }

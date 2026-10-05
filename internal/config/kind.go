@@ -18,6 +18,7 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -230,6 +231,11 @@ func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
 	}
+	for _, pattern := range strings.Split(r.Fields["streams"], ",") {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" { continue }
+		if _, err := path.Match(pattern, ""); err != nil { return fmt.Errorf("friend %s has invalid stream glob %q: %v", r.Name, pattern, err) }
+	}
 	return nil
 }
 
@@ -402,13 +408,15 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, and her delivery mode",
+		Doc:   "an AI friend: her slots, tiers, roles, width, delivery mode and optional work restrictions",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns for stream names this friend may work; empty means any stream"},
+			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may work; empty means any kind"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {

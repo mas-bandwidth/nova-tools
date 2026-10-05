@@ -220,7 +220,7 @@ no row of the friends table, and `WHO: friend` while the table has no row
 (exit 2, nothing written); the primary's field `who` is `friend` or
 `friend.<name>`, written with its brief, and `card` prints `who=` on its
 `CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
-as before. The tick's deal deals a friend's card ready, in the deal's stream
+as before. A named friend receives a card only when its stream matches one of her configured `streams` globs and its `KIND:` value is in her configured `kinds`; an empty restriction allows every value. An any-friend card skips friends whose restrictions do not match and remains ready when none qualify. `add` and `brief` refuse a named friend card outside her configured restrictions and name the restriction. The tick's deal deals a friend's card ready, in the deal's stream
 turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
 her room, DealAhead (two) times her friends row's `width`, as the machines'
 rule fills a member (section 5; the cards on her row, ready and working, count

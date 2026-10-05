@@ -125,3 +125,7 @@ friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet
 view-all work readers merge friends fleet
+
+# Note, 2026-10-04: friend restrictions (`streams` and `kinds`) travel with the
+# friends roster record and filter dealing; the locked friends display table remains
+# unchanged because the restrictions are configuration, not displayed table columns.
