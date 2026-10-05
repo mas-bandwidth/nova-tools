@@ -276,7 +276,7 @@ One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under the fleet row's `loops_dir` (migration 0027 seeds it to
+record's log under the fleet row's `loops_dir` (migration 0033 seeds it to
 `~/nova-bench/loops`), which the play creates (on darwin, launchd agents log under the user's home,
 `~/Library/Logs/nova-loop-<name>.log`, because launchd cannot open log files on
 network volumes such as `/Volumes/nova`). Every unit

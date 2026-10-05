@@ -216,12 +216,12 @@ func TestRedisCoverWriteDispatch(t *testing.T) {
 		a, c, _ := coverStore(t)
 		row := Row{Name: "l1", Fields: map[string]string{
 			"machine": "m1", "argv": `["/bin/true"]`, "seat": "", "keys": "",
-			"every": "5", "keepalive": "false", "enabled": "true",
+			"every": "5", "keepalive": "false", "enabled": "true", "log": LoopLog("~/nova-bench/loops", "l1"),
 		}}
 		require.NoError(t, a.Write(ctx, KindLoop, row, nil, "ada", "config:loop:1"))
 		assert.True(t, c.SIsMember(ctx, LoopsKey, "l1").Val())
 		assert.Equal(t, "1", c.HGet(ctx, LoopKey("l1"), "rev").Val())
-		assert.Equal(t, LoopLog("l1"), c.HGet(ctx, LoopKey("l1"), "log").Val())
+		assert.Equal(t, LoopLog("~/nova-bench/loops", "l1"), c.HGet(ctx, LoopKey("l1"), "log").Val())
 	})
 
 	t.Run("a friend with nobody to charge refuses", func(t *testing.T) {
@@ -594,12 +594,14 @@ func TestRedisCoverHashes(t *testing.T) {
 	t.Run("writeHash writes every field and the derived log", func(t *testing.T) {
 		t.Parallel()
 		a, c, _ := coverStore(t)
-		require.NoError(t, a.writeHash(ctx, h, row, "config:loop:1"))
+		logged := row.Clone()
+		logged.Fields["log"] = LoopLog("~/nova-bench/loops", "l1")
+		require.NoError(t, a.writeHash(ctx, h, logged, "config:loop:1"))
 		got := c.HGetAll(ctx, LoopKey("l1")).Val()
 		assert.Equal(t, "l1", got["name"])
 		assert.Equal(t, "1", got["rev"])
 		assert.Equal(t, "5", got["every"])
-		assert.Equal(t, LoopLog("l1"), got["log"])
+		assert.Equal(t, LoopLog("~/nova-bench/loops", "l1"), got["log"])
 		assert.True(t, c.SIsMember(ctx, LoopsKey, "l1").Val())
 	})
 
