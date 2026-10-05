@@ -42,6 +42,7 @@ var verbEffect = map[string]string{
 	"unhold":           "local write: releases the named holds in the sprint's store; --dry-run writes nothing",
 	"check":            "inspection: reads the sprint's tables and prints each violation, writes nothing",
 	"routes":           "inspection: reads the route table and prints each route, writes nothing",
+	"backup":           "local write: writes the store to a file and its checksum in --dir, restores the file into a twin and compares, scans it for secrets, and prunes older backups past --keep; a file that fails any check is removed and the older ones stay",
 	"promote":          "delivery: promotes the landed cards toward the development branch and records the promotion in the sprint's store; --dry-run prints the branch and the landed cards and changes nothing",
 	"friend clean":     "local write: removes the friends' finished job directories and listings past --days under --root; --dry-run prints every removal with the bytes it would free and removes nothing",
 	"where":            "inspection: reads the sprint table and its rows, writes nothing",
