@@ -150,13 +150,13 @@ func friendStarted(s *Snapshot, f FriendSeat, c *Card) bool {
 	return false
 }
 
-// friendRoom is the friend's room and her lanes: DealAhead times her width and her width
+// friendRoom is the friend's room and her lanes: deal_ahead (policy.go) times her width and her width
 // in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card").
-func friendRoom(f FriendSeat) (room, width int) {
+func friendRoom(s *Snapshot, f FriendSeat) (room, width int) {
 	if f.Mode == config.FriendModeOneShot {
 		return 1, 1
 	}
-	return DealAhead * f.Width, f.Width
+	return s.PolicyCount(PolicyDealAhead) * f.Width, f.Width
 }
 
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
@@ -250,7 +250,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 	var up []string
 	for _, f := range seats {
 		if f.Status == Up {
-			room, width := friendRoom(f)
+			room, width := friendRoom(s, f)
 			free[f.Name] = room - friendLoad(s, f.Name)
 			lanes[f.Name] = width - s.Fleet.Count(FriendRow(f.Name), Working)
 			seat[f.Name] = f

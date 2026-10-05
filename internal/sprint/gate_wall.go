@@ -61,7 +61,7 @@ func gatePackage(brief string) string {
 // gateWalls): FieldTierNow pro and FieldGateWall when the median is over FlashGateBound, with
 // the sentence its unit says; nothing for a card whose tier is pinned (pinnedTier: a
 // frontier card, a model pin), one never measured, or one at or under the bound.
-func gateTier(walls map[string][]float64, brief string) (set map[string]string, said string) {
+func gateTier(walls map[string][]float64, brief string, bound time.Duration) (set map[string]string, said string) {
 	m, bad := cardhdr.ReadModel(brief)
 	pkg := gatePackage(brief)
 	if bad != "" || pkg == "" || pinnedTier(&Card{}, m) || len(walls[pkg]) == 0 {
@@ -69,9 +69,9 @@ func gateTier(walls map[string][]float64, brief string) (set map[string]string, 
 	}
 	got := measure(walls[pkg])
 	median := (time.Duration(got.Median) * time.Second).Round(time.Second)
-	if median <= FlashGateBound {
+	if median <= bound {
 		return nil, ""
 	}
-	set = map[string]string{FieldTierNow: cardhdr.RoutePro, FieldGateWall: fmt.Sprintf("%s n=%d over %s", median, got.N, FlashGateBound)}
-	return set, fmt.Sprintf("admitted pro: gate %s measured %s (median of %d ok takes) over the flash bound %s", pkg, median, got.N, FlashGateBound)
+	set = map[string]string{FieldTierNow: cardhdr.RoutePro, FieldGateWall: fmt.Sprintf("%s n=%d over %s", median, got.N, bound)}
+	return set, fmt.Sprintf("admitted pro: gate %s measured %s (median of %d ok takes) over the flash bound %s", pkg, median, got.N, bound)
 }

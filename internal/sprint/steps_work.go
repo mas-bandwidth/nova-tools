@@ -420,7 +420,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 				if walls == nil {
 					walls = gateWalls(s)
 				}
-				set, said := gateTier(walls, a.brief)
+				set, said := gateTier(walls, a.brief, s.PolicyDuration(PolicyFlashGateBound))
 				maps.Copy(fields, set)
 				gateSaid = said
 			}
@@ -854,7 +854,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			roomWhy = benchRoom(bench)
 		}
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
-			if redealBound(wc) {
+			if redealBound(s, wc) {
 				tier := s.NextTier(c)
 				if _, atCap := AtBriefBound(c, "", s.AttemptsCap(c.Row)); atCap {
 					tier = "" // the attempt cap: not dealt again, the tick's judgment says so (AtRedealBound)
@@ -1931,7 +1931,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
-		if len(up) > 0 && (!taken || c.Int("redeals") < MaxRedeals) {
+		if len(up) > 0 && (!taken || c.Int("redeals") < s.PolicyCount(PolicyMaxRedeals)) {
 			// the next member round the fleet below its width (round.go), the
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a

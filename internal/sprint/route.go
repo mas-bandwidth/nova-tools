@@ -531,7 +531,7 @@ func (t ProviderTake) String() string {
 // ProviderTakes is the takes of the work card the provider failed, in the order they ended,
 // each with its number.
 func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
-	for n := 1; n <= MaxRedeals+1; n++ {
+	for n := 1; n <= policyCap(PolicyMaxRedeals)+1; n++ {
 		v := wc.F(FieldProviderTake + itoa(n))
 		if v == "" {
 			continue
