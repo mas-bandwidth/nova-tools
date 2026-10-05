@@ -910,6 +910,7 @@ nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coor
 nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]]
 nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
 nova-sprint release <sentinel>... --reason <text> [--answers <note>]
+nova-sprint backup --dir <dir> [--keep <n>]   (the store written to a checksummed file, restored into a twin and compared, scanned for secrets; the coordinator's, on the store's host)
 nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
 nova-sprint start
 nova-sprint stop
