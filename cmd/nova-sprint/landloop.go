@@ -122,7 +122,9 @@ func (a *app) queuedToMerge(ctx context.Context, addr string) (queued bool, coor
 		return false, "", err
 	}
 	for _, row := range s.Merge.Rows() {
-		if s.Merge.Count(row, sprint.Queued) > 0 {
+		ctl := s.StreamCtl(row)
+		retryRejected := ctl != nil && ctl.F("state") == sprint.StreamStopped && ctl.F("cause") == "rejected"
+		if s.Merge.Count(row, sprint.Queued) > 0 && (ctl == nil || ctl.F("state") != sprint.StreamStopped || retryRejected) {
 			return true, coordinator, nil
 		}
 	}
