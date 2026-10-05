@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -418,10 +419,21 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	}
 	bar, _ := strconv.ParseFloat(c.Str("bar"), 64) // checked by the verb's flag rule
 	from, _ := since(c.Str("since"), w.now())      // checked by the verb's flag rule
-	clusters, scored := decide.Findings(ds, from, bar)
+	clusters, scored, unparsed := decide.Findings(ds, from, bar)
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
 		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cl.Cards, ","))
+	}
+	if len(unparsed) > 0 {
+		named := make([]string, 0, 3)
+		for _, id := range unparsed[:min(3, len(unparsed))] {
+			named = append(named, oneline.Field(id))
+		}
+		more := ""
+		if len(unparsed) > len(named) {
+			more = fmt.Sprintf(" (and %d more)", len(unparsed)-len(named))
+		}
+		o.Note(fmt.Sprintf("%d score decisions skipped: at is not RFC 3339: %s%s", len(unparsed), strings.Join(named, " "), more))
 	}
 	if c.Str("shadow") == "" {
 		return o

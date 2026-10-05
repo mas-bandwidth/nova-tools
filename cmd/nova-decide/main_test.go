@@ -289,6 +289,26 @@ func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
 	})
 }
 
+// A score decision whose at does not parse is neither counted nor silent: findings counts the
+// valid one, and a note names the skipped one's id and the count (security#79 finding 3).
+func TestFindingsNamesAScoreDecisionWhoseAtDoesNotParse(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevScoreReply(0.83))).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	jev.Do(t, "score", "--card", td+"card.md", "--diff", td+"card.diff", "--backend", "jev", "--record", rec, "--op", "c1@landed@0123456789ab").Exit(0)
+	bad, err := json.Marshal(map[string]any{"decision": decide.Decision{ID: "bad@landed@0123456789ab", Decision: decide.ScoreName, At: "yesterday"}})
+	require.NoError(t, err)
+	f, err := os.OpenFile(rec, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.Write(append(bad, '\n'))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	jev.Do(t, "findings", "--record", rec, "--since", "2026-10-02").Exit(0).Out(
+		"FINDINGS OK scored=1 classes=1",
+		"FINDINGS NOTE 1 score decisions skipped: at is not RFC 3339: bad@landed@0123456789ab")
+}
+
 // jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
 // the mass on the other options.
 func jevChoice(question, option string, p float64) func([]byte) ([]byte, error) {
