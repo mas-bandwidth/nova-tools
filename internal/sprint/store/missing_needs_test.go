@@ -59,7 +59,10 @@ func seedMissingNeeds(h *harness, id, needs string) {
 // (docs/SPEC-SPRINT.md section 11). A resolve after it opens the blocked
 // judgment. The log gets the removed line the engine would have written, so
 // the store's replay stays true.
-func seedDroppedNeed(h *harness, id string) {
+func seedDroppedNeed(h *harness, id string) { seedDroppedNeedWhy(h, id, "") }
+
+// seedDroppedNeedWhy is seedDroppedNeed with the reason the record keeps.
+func seedDroppedNeedWhy(h *harness, id, why string) {
 	h.t.Helper()
 	s := h.snap()
 	c := s.Work.Card(id)
@@ -76,6 +79,9 @@ func seedDroppedNeed(h *harness, id string) {
 	if mm != nil {
 		mm.placed, mm.row, mm.col = false, "", ""
 		mm.fields["outcome"] = "dropped"
+		if why != "" {
+			mm.fields["reason"] = why
+		}
 		mm.rev++
 		t.rev++
 	}

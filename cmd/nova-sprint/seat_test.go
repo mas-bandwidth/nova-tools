@@ -235,7 +235,7 @@ func TestHandoverPrintsWhatTheNextSeatNeeds(t *testing.T) {
 	assert.Equal(t, "s1-stop", h.Sentinels[0].ID)
 	assert.Len(t, h.Sentinels[0].Behind, 2)
 	require.Len(t, h.Decisions, 1)
-	assert.Equal(t, "fleet down", h.Decisions[0].Verb)
+	assert.Equal(t, "hold", h.Decisions[0].Verb)
 	assert.Len(t, h.First, 3)
 }
 

@@ -21,18 +21,18 @@ func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 
 	// A need on the dropped card is refused, naming it and its outcome; a
 	// need on no record at all is refused, naming the id.
-	code, out, errs := ta.do("add --stream s2 b --needs s1-1")
+	code, out, errs := ta.do("add --stream s2 b --one --needs s1-1")
 	require.NotEqual(t, 0, code, "add on a dropped need: %s%s", out, errs)
 	require.NotContains(t, out, "MOVED", "add on a dropped need wrote: %s", out)
 	assert.Contains(t, errs, "s1-1", "add on a dropped need: %s", errs)
 	assert.Contains(t, errs, "dropped", "add on a dropped need: %s", errs)
-	code, out, errs = ta.do("add --stream s2 b --needs ghost")
+	code, out, errs = ta.do("add --stream s2 b --one --needs ghost")
 	require.NotEqual(t, 0, code, "add on a missing need: %s%s", out, errs)
 	assert.Contains(t, errs, "ghost", "add on a missing need: %s", errs)
 
 	// A chain: b waits on s1-2, and c waits on b.
-	ta.ok("add --stream s2 b --needs s1-2")
-	ta.ok("add --stream s2 c --needs b")
+	ta.ok("add --stream s2 b --one --needs s1-2")
+	ta.ok("add --stream s2 c --one --needs b")
 
 	// Dropping s1-2 while b waits on it is refused for that card, naming the
 	// dependants, and nothing is written: s1-2 stays ready.

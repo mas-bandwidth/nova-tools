@@ -24,7 +24,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, aLateCardRedealt} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, aLateCardRedealt, aMemberWithFreeLanes, aReaderWithFreeLanes} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -114,6 +114,41 @@ func unevenQueues(k *walk) []sample {
 	}
 	k.wholeTick()
 	if !k.unlevel() {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// aMemberWithFreeLanes has one member take all of its ready cards and finish
+// them, while the others hold ready backlogs: its lanes are free beside them, the
+// case the tick's level evens.
+func aMemberWithFreeLanes(k *walk) []sample {
+	for range 4 * len(k.members) {
+		k.addTo(k.streams[0])
+	}
+	k.wholeTick()
+	if !k.unlevel() || !k.emptyLanes() {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// aReaderWithFreeLanes has primaries finished and asked of the readers, and one
+// reader report on all of its reads while the others hold asked reads it could
+// take: the case the tick's read level evens.
+func aReaderWithFreeLanes(k *walk) []sample {
+	var ids []string
+	for range 4 * len(k.members) {
+		if id := k.addTo(k.streams[0]); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	k.wholeTick()
+	for _, id := range ids {
+		k.advance(id, sprint.Review)
+	}
+	k.wholeTick()
+	if !k.readAll() {
 		return nil
 	}
 	return []sample{k.sample()}
