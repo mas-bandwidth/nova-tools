@@ -713,86 +713,12 @@ type nativeChild struct {
 	result                      member.Result
 }
 
-// receiptSpend reads this launch's durable per-attempt usage rows (docs/SPEC-SPRINT.md,
-// "What a card cost"). The job directory is
+// receiptSpend is this launch's durable per-attempt usage rows read back
+// (member.ReceiptUsage; docs/SPEC-SPRINT.md, "What a card cost"). The job directory is
 // unique to one card generation or read attempt, so rows from another attempt cannot enter
 // the consumer's cost. Native writes these rows before it prints its final summary; they
 // recover accounting when that summary is cut off.
-func receiptSpend(job string) (cardcost.Usage, bool, error) {
-	f, err := os.Open(filepath.Join(job, "usage.tsv"))
-	if os.IsNotExist(err) {
-		return cardcost.NoUsage(), false, nil
-	}
-	if err != nil {
-		return cardcost.NoUsage(), false, err
-	}
-	defer f.Close() // ignored: a read-only usage receipt needs no close result
-	scanner := bufio.NewScanner(f)
-	if !scanner.Scan() {
-		if scanErr := scanner.Err(); scanErr != nil {
-			return cardcost.NoUsage(), false, scanErr
-		}
-		return cardcost.NoUsage(), false, nil
-	}
-	header := strings.Split(scanner.Text(), "\t")
-	columns := make(map[string]int, len(header))
-	for i, name := range header {
-		columns[name] = i
-	}
-	for _, name := range []string{"provider", "model", "tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd"} {
-		if _, ok := columns[name]; !ok {
-			return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv has no %s column", name)
-		}
-	}
-	var runs []cardcost.Usage
-	rows := 0
-	completeCost := true
-	for scanner.Scan() {
-		row := strings.Split(scanner.Text(), "\t")
-		if len(row) != len(header) {
-			return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv row has %d fields; header has %d", len(row), len(header))
-		}
-		value := func(name string) string { return row[columns[name]] }
-		rows++
-		for _, name := range []string{"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning"} {
-			v := value(name)
-			if v != "" && v != swarm.Dash {
-				n, parseErr := strconv.ParseInt(v, 10, 64)
-				if parseErr != nil || n < 0 {
-					return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv row has invalid %s value %q", name, v)
-				}
-			}
-		}
-		spend := map[string]string{
-			"tokens_in": value("tokens_in"), "tokens_out": value("tokens_out"),
-			"cache_write": value("cache_write"), "cache_read": value("cache_read"),
-			"reasoning": value("reasoning"), "provider": value("provider"), "model": value("model"),
-		}
-		if usd := value("usd"); usd != "" && usd != swarm.Dash {
-			if _, ok := cardcost.Sum(usd, "0"); !ok {
-				return cardcost.NoUsage(), false, fmt.Errorf("usage.tsv row has invalid usd value %q", usd)
-			}
-			spend["cost"] = usd // a measured zero is present, not an absent cost
-		} else {
-			completeCost = false
-		}
-		u := launchSpend(spend)
-		runs = append(runs, u)
-	}
-	if scanErr := scanner.Err(); scanErr != nil {
-		return cardcost.NoUsage(), false, scanErr
-	}
-	if rows == 0 {
-		return cardcost.NoUsage(), false, nil
-	}
-	usage := cardcost.ParseSpend(spendWord(runs))
-	// A missing dollar value on any durable attempt is unknown, even if another
-	// attempt reported a price. Do not expose a partial aggregate as full spend.
-	if !completeCost {
-		usage.Actual, usage.ActualBy = "", ""
-	}
-	return usage, true, nil
-}
+func receiptSpend(job string) (cardcost.Usage, bool, error) { return member.ReceiptUsage(job) }
 
 // mergeReceiptSpend keeps native's final timing and budget words while filling the per-call
 // usage fields from the durable receipt written before that summary (docs/SPEC-SPRINT.md,

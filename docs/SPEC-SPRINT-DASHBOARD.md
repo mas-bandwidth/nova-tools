@@ -110,7 +110,10 @@ from the owner edits one line here and nothing else moves.
 ## Hero row: five tiles, one row at 2000 px, three and two below, two per row below 1100 px, large figure (72 px)
 1. LANDED: n of all; sub-line "<pct>% complete". Narrow: the number alone, sub-line "of <all> · <pct>%".
 2. ETA: "2h 9m"; sub-line "around 9:06 PM".
-3. COST: total to the cent; sub-line "$0.24 per card" (never "per landed card").
+3. COST: the complete total to the cent, every take and read of every card plus what is
+   unreconciled (docs/SPEC-SPRINT.md, "What a card cost"); sub-line "$0.24 per card" (never
+   "per landed card"), the recorded total over the cards landed; a second sub-line "$0.00
+   unreconciled", with " · <n> runs unpriced" when a run carries no cost.
 4. IN FLIGHT: n; sub-line "14 working · 9 review" on one line.
 5. THROUGHPUT: cards landed per hour over the last 60 min; "—" until ten minutes of samples; sub-line "cards / hour".
    A lone tile on its row spans the width with its figure centered.

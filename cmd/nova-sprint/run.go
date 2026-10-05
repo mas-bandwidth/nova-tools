@@ -342,6 +342,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	}
 	// the providers' balances, read outside every tick (balance.go)
 	go a.balanceLoop(context.Background(), st, stdout)
+	// the providers' usage set beside the sprint's cost records, hourly (cost_reconcile.go)
+	go a.costReconcileLoop(context.Background(), st, stdout)
 	// the store round trip, timed every 10 s for where (store-latency-row-r.w2)
 	go a.storeRTTLoop(context.Background(), st)
 	if decideDir != "" {
