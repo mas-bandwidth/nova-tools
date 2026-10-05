@@ -110,6 +110,15 @@
 # or row changes, so the lines below are unchanged. Held by
 # TestHoldAndUnholdServeMembersReadersFriendsAndStreams and
 # TestTheHoldVerbsHoldAndReleaseWithTheReason.
+# Change, 2026-10-04, the where view's machine line, not a table: Glenn, ~1:52 PM ET:
+# "look over all of today's work, what is manual? what needs new verbs in nova-sprint?
+# add cards for this." Whether a stop was the coordinator's had to be asked. A stop by
+# hand carries --reason and --until, and the machine line under where's title (the
+# dashboard's machine line, the inbox's and every verb's sprint line) reads
+# "STOPPED by <actor>: <reason>, back by 2:04 PM" until the tick starts the machine at
+# --until. No column, fold or row changed, so the lines below are unchanged. Held by
+# TestStopCarriesReasonAndUntilAndTheMachineRestartsItself (internal/sprint) and
+# TestStopByHandSaysWhoWhyAndWhenEverywhere (cmd/nova-sprint).
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

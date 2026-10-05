@@ -119,7 +119,7 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 	assert.Equal(t, "$0.03", cells[""])
 
 	// clear empties it with the tables
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 	ta.ok("clear --confirm sprint")
 	for row, cell := range ta.costCells() {
 		assert.NotContains(t, cell, "$", "after clear, row %q", row)
