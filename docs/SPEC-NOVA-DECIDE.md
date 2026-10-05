@@ -406,7 +406,7 @@ cards outside the held-out set is refused, naming it. `TestTheGradePromptCarries
 fakes the backend and pins exactly ten per class, the order, and no held-out card.
 
 Score on a held-out set, before and after, with the jev-score program
-(`/Volumes/nova/ai/rowan/working/tmp/jev-score`, `go run . --grades grade.jsonl --cards <dir>`):
+(the coordinator's scratch program, `go run . --grades grade.jsonl --cards <dir>`):
 
 | grades | held-out cards | result |
 | --- | --- | --- |
