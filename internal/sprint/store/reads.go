@@ -158,10 +158,25 @@ type CardInfo struct {
 	// Needs is each need with its state; NeededBy the primaries that need it.
 	Needs    []sprint.NeedState
 	NeededBy []string
+	// Held is what holds the primary now and Line the work table's cards, both set by
+	// CardOfHeld from the one load that gave Needs.
+	Held *sprint.Hold
+	Line []*sprint.Card
 }
 
 // CardOf reads a primary and every card of it by identity.
 func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
+	return st.cardOf(ctx, id, false)
+}
+
+// CardOfHeld is CardOf with what holds the primary (Held) and the work table's cards
+// (Line), from one whole read of the tables where CardOf, Held and a Load of the work
+// table were three.
+func (st *Store) CardOfHeld(ctx context.Context, id string) (CardInfo, error) {
+	return st.cardOf(ctx, id, true)
+}
+
+func (st *Store) cardOf(ctx context.Context, id string, held bool) (CardInfo, error) {
 	var v CardInfo
 	st, err := st.pin(ctx)
 	if err != nil {
@@ -176,13 +191,41 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 		return v, nil
 	}
 	v.Primary = card(m)
-	s, err := st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
+	pending := false
+	if held {
+		f, err := st.B.ReadFence(ctx)
+		if err != nil {
+			return v, err
+		}
+		if f.Pending != nil {
+			pending = true
+			h := sprint.Hold{ID: id, Place: id, Why: "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}
+			v.Held = &h
+		}
+	}
+	tables, extras := []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
 		return map[string][]string{sprint.Work: append([]string{id}, sprint.Split(v.Primary.F("needs"))...)}
-	})
+	}
+	if held && !pending {
+		tables, extras = All, func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Work: append(append(sprint.ResolveExtras(s), id), sprint.Split(v.Primary.F("needs"))...)}
+		}
+	}
+	s, err := st.Load(ctx, tables, extras)
 	if err != nil {
 		return v, err
 	}
 	v.Needs, v.NeededBy = sprint.NeedsOf(s, id)
+	if held {
+		v.Line = s.Work.Column(sprint.States...)
+		if !pending {
+			// a card is still shown when what holds it cannot be worked out
+			if hs, err := st.heldState(ctx, s, nil); err == nil {
+				h := sprint.Holder(hs, s.Now, id)
+				v.Held = &h
+			}
+		}
+	}
 	attempts := v.Primary.Int("attempt")
 	if attempts > 0 {
 		var ids []string
