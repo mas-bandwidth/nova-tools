@@ -73,11 +73,32 @@ func (b *chaosBus) Roster(ctx context.Context) ([]string, time.Time, error) {
 	return b.Fake.Roster(ctx)
 }
 
-func (b *chaosBus) AddAll(ctx context.Context, streams []string, fields map[string]string) error {
+func (b *chaosBus) Members(ctx context.Context) ([]string, []string, time.Time, error) {
+	if err := b.refuse(); err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	return b.Fake.Members(ctx)
+}
+
+func (b *chaosBus) AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...bus.Mark) error {
 	if err := b.refuse(); err != nil {
 		return err
 	}
-	return b.Fake.AddAll(ctx, streams, fields)
+	return b.Fake.AddAll(ctx, streams, fields, marks...)
+}
+
+func (b *chaosBus) Unmark(ctx context.Context, key string, fields ...string) (int64, error) {
+	if err := b.refuse(); err != nil {
+		return 0, err
+	}
+	return b.Fake.Unmark(ctx, key, fields...)
+}
+
+func (b *chaosBus) Marks(ctx context.Context, keys ...string) ([]map[string]string, error) {
+	if err := b.refuse(); err != nil {
+		return nil, err
+	}
+	return b.Fake.Marks(ctx, keys...)
 }
 
 func (b *chaosBus) EnsureGroup(ctx context.Context, stream, group string) error {
@@ -215,6 +236,7 @@ type chaosRig struct {
 	status  []Status
 	nonce   int
 	cards   int
+	amyBeat *time.Ticker // amy's machinery: one beat each FriendBeatEvery
 	done    chan struct{}
 }
 
@@ -224,7 +246,8 @@ type chaosRig struct {
 func newChaosRig(t *testing.T) *chaosRig {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &chaosRig{t: t, ctx: ctx, fake: bus.NewFake(time.Now(), "coord", "amy", "bob"), done: make(chan struct{})}
+	r := &chaosRig{t: t, ctx: ctx, fake: bus.NewFake(time.Now(), "coord", "amy", "bob"), done: make(chan struct{}),
+		amyBeat: time.NewTicker(sprint.FriendBeatEvery)}
 	r.bobBus = &chaosBus{Fake: r.fake}
 	r.coord, r.session = &bus.Bus{Store: r.fake}, &bus.Bus{Store: r.fake}
 	r.harness = &fakeHarness{r: r}
@@ -268,7 +291,7 @@ func newChaosRig(t *testing.T) *chaosRig {
 		PongCommand: func(nonce string) string { return "nova-friend pong --as bob --nonce " + nonce },
 	}
 	go func() { defer close(r.done); _ = d.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-r.done })
+	t.Cleanup(func() { cancel(); <-r.done; r.amyBeat.Stop() })
 
 	r.addCards(4)
 	r.step(2 * time.Second)
@@ -326,12 +349,15 @@ func (r *chaosRig) addCards(n int) []string {
 	return ids
 }
 
-// step moves fake time by d a second at a time: amy beats each second, the
-// tick runs each second.
+// step runs the world for d of the bubble's fake time, one of amy's beats at a
+// time (FriendBeatEvery, a second): at each, amy beats and the tick runs. The
+// wait is amy's beat ticker, the fake clock of the synctest bubble, never the
+// wall clock (the waits check of internal/ci reads a time.Sleep here as a
+// wall-clock wait: it does not see the bubble).
 func (r *chaosRig) step(d time.Duration) {
 	r.t.Helper()
 	for end := time.Now().Add(d); time.Now().Before(end); {
-		time.Sleep(time.Second)
+		<-r.amyBeat.C
 		r.mu.Lock()
 		_, err := r.st.FriendBeat(r.ctx, "amy")
 		require.NoError(r.t, err)
@@ -341,19 +367,18 @@ func (r *chaosRig) step(d time.Duration) {
 	}
 }
 
-// within steps until cond holds or bound passes; it answers how long it took
-// and whether it held.
+// within steps a beat at a time until cond holds or bound has been stepped;
+// it answers how long was stepped and whether cond held.
 func (r *chaosRig) within(bound time.Duration, cond func() bool) (time.Duration, bool) {
 	r.t.Helper()
-	start := time.Now()
-	for {
+	for took := time.Duration(0); ; took += sprint.FriendBeatEvery {
 		if cond() {
-			return time.Since(start), true
+			return took, true
 		}
-		if time.Since(start) >= bound {
-			return time.Since(start), false
+		if took >= bound {
+			return took, false
 		}
-		r.step(time.Second)
+		r.step(sprint.FriendBeatEvery)
 	}
 }
 
@@ -443,11 +468,10 @@ func (o *owed) settle(t *testing.T) {
 		return
 	}
 	said := strings.Join(o.parts, "\n")
-	if os.Getenv(chaosStrict) != "" {
-		t.Error(said)
-		return
+	if os.Getenv(chaosStrict) == "" {
+		t.Skip(said + "\n(" + chaosStrict + "=1 fails these)")
 	}
-	t.Skip(said + "\n(" + chaosStrict + "=1 fails these)")
+	assert.Fail(t, said)
 }
 
 // dealtElsewhere is the movement every down or held case asserts: the two
@@ -472,7 +496,9 @@ func (r *chaosRig) dealtElsewhere(o *owed, card string) {
 // fail and asserts the bound and the card movement (docs/SPEC-FRIEND.md,
 // "Chaos"). Which card turns each owed part green is named in the part.
 func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
+	t.Parallel()
 	t.Run("harness closed: down within 1 minute", func(t *testing.T) {
+		t.Parallel()
 		var o owed
 		synctest.Test(t, func(t *testing.T) {
 			r := newChaosRig(t)
@@ -485,6 +511,7 @@ func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
 	})
 
 	t.Run("session silent: down within 15 minutes of bus silence", func(t *testing.T) {
+		t.Parallel()
 		var o owed
 		synctest.Test(t, func(t *testing.T) {
 			r := newChaosRig(t)
@@ -513,6 +540,7 @@ func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
 	})
 
 	t.Run("usage limit: down until the reset, woken after", func(t *testing.T) {
+		t.Parallel()
 		var o owed
 		synctest.Test(t, func(t *testing.T) {
 			r := newChaosRig(t)
@@ -538,13 +566,16 @@ func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
 	})
 
 	t.Run("bus credential revoked: an alarm on the first failed send", func(t *testing.T) {
+		t.Parallel()
 		var o owed
 		synctest.Test(t, func(t *testing.T) {
 			r := newChaosRig(t)
 			r.bobBus.revoked.Store(true)
-			_, said := r.within(2*time.Second, func() bool { return strings.Contains(r.lastStatus().StoreError, "WRONGPASS") })
+			// a read in flight when the credential goes finishes its block (a beat), the
+			// next command fails, and the status is written after the step's pause (a beat)
+			_, said := r.within(3*sprint.FriendBeatEvery, func() bool { return strings.Contains(r.lastStatus().StoreError, "WRONGPASS") }) // wall-ok: fake time in the synctest bubble
 			assert.True(t, said, "the daemon's status names the refusal at its first failed command: %q", r.lastStatus().StoreError)
-			took, down := r.within(sprint.FriendDownAfter+2*time.Second, func() bool { return r.friendStatus("bob") == sprint.Down })
+			took, down := r.within(sprint.FriendDownAfter+2*time.Second, func() bool { return r.friendStatus("bob") == sprint.Down }) // wall-ok: fake time in the synctest bubble
 			assert.True(t, down, "a daemon whose bus refuses it stops beating, and the table says down within %s: after %s it says %s", sprint.FriendDownAfter, took, r.friendStatus("bob"))
 			alarms := r.openNotes("bob", "WRONGPASS")
 			o.check(len(alarms) == 1, "fr-delivery-receipts", "one alarm to the coordinator naming bob, the store and the user on the first failed send (%d failed): the twin holds %d: %v", r.bobBus.fails.Load(), len(alarms), alarms)
@@ -554,6 +585,7 @@ func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
 	})
 
 	t.Run("hold: no card left on him, his cards dealt elsewhere", func(t *testing.T) {
+		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
 			r := newChaosRig(t)
 			his := r.cardsOf("bob")
