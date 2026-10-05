@@ -21,7 +21,9 @@ import (
 // A directory generated from a ledger in a fixture checkout is admitted whole by
 // `nova-sprint add --brief-dir` into a twin store, and the waves' dependencies
 // hold there: a wave 1 card is ready, a wave 2 card waits on its neighbours. A
-// build is the functional tier's (nova-tools#4328).
+// build is the functional tier's (nova-tools#4328). The checkout is on the sprint
+// branch its stream lands on, since add refuses a card cut on dev outside the
+// promotion stream (docs/SPEC-SPRINT.md section 7, the sprint branch).
 func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	t.Parallel()
 	repo := t.TempDir()
@@ -42,7 +44,7 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	write("cmd/b/b_test.go", "package main\n")
 	write("internal/c/c_test.go", "package c\n")
 	write("internal/ci/testdata/serial-tests_allowlist.txt", "# ceiling: 3\ncmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ninternal/c/c_test.go:TestC serial: os.Setenv\n")
-	git("init", "-q", "-b", "dev")
+	git("init", "-q", "-b", "sprint/s")
 	git("remote", "add", "origin", filepath.Join(t.TempDir(), "example", "repo.git"))
 	git("add", ".")
 	git("commit", "-q", "-m", "fixture")
@@ -56,7 +58,7 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	assert.Contains(t, string(manifest), "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t2\tserial-tests-cmd-a-a,serial-tests-internal-c-c\n")
 	brief, err := os.ReadFile(filepath.Join(out, "serial-tests-cmd-a-a.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(brief), "REPO: example/repo\nBASE: dev\n")
+	assert.Contains(t, string(brief), "REPO: example/repo\nBASE: sprint/s\n")
 
 	sprint := filepath.Join(t.TempDir(), "nova-sprint")
 	if runtime.GOOS == "windows" {
