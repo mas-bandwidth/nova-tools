@@ -9,24 +9,25 @@ package main
 // card's finding.
 //
 // The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
-// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
-// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
-// is gated once a batch before any head is merged, so a base that is red refuses the
-// batch and blames no card. A head whose merged tree is red is taken off the batch branch
-// and ends the batch as a head that does not merge does, the gate's run and output its
-// finding. A clone with no go.mod has no module and no gate.
+// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when tests
+// are asked (a Go file, a document, or testdata: .go, .md, testdata/, go.mod, go.sum),
+// tests run for every package touched by the batch's changed files plus every package
+// that imports them, plus the tree tests (treeTests, where the clone has them:
+// internal/docs, internal/ci), plus the whole-tree functional checks on internal/ci
+// (TestUncheckedErrors, TestStaticcheckFindings, TestDeadCode, TestEveryCommandMeetsTheOnboardingStandard).
+// The base's tip is gated once a batch before any head is merged, so a base that is red
+// refuses the batch and blames no card. A head whose merged tree is red is taken off
+// the batch branch and ends the batch as a head that does not merge does, the gate's run
+// and output its finding. A clone with no go.mod has no module and no gate.
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
@@ -37,7 +38,7 @@ const landGoBudget = 15 * time.Minute
 
 // treeTests are the packages that test the tree itself (its docs and its tests), run by
 // the gate when a head changes a .md or a _test.go file; one the clone lacks is not run.
-var treeTests = []string{"internal/docs", "internal/ci"}
+var treeTests = sprint.TreeTests
 
 // goRun runs one go command (run) in the clone, in the lander's environment with
 // GOFLAGS=-mod=readonly (caller flags preserved) and set (NAME=value each); its combined output.
@@ -59,77 +60,31 @@ func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...str
 // readonlyGoFlags returns GOFLAGS=... with -mod=readonly set, preserving any other
 // flags from env's GOFLAGS entries and dropping any existing -mod or -mod=... flag.
 func readonlyGoFlags(env []string) string {
-	var terms []string
-	for _, e := range env {
-		if val, ok := strings.CutPrefix(e, "GOFLAGS="); ok {
-			for _, term := range strings.Fields(val) {
-				if !strings.HasPrefix(term, "-mod=") && term != "-mod" {
-					terms = append(terms, term)
-				}
-			}
-		}
-	}
-	terms = append(terms, "-mod=readonly")
-	return "GOFLAGS=" + strings.Join(terms, " ")
+	return sprint.ReadonlyGoFlags(env)
 }
 
 // withEnv is env with each of set (NAME=value) in place of the NAME it held, else added;
 // duplicate entries of NAME in env are dropped.
 func withEnv(env []string, set ...string) []string {
-	out := slices.Clone(env)
-	for _, kv := range set {
-		name, _, _ := strings.Cut(kv, "=")
-		prefix := name + "="
-		first := slices.IndexFunc(out, func(e string) bool { return strings.HasPrefix(e, prefix) })
-		if first >= 0 {
-			out[first] = kv
-			seen := false
-			out = slices.DeleteFunc(out, func(e string) bool {
-				if strings.HasPrefix(e, prefix) {
-					if !seen {
-						seen = true
-						return false
-					}
-					return true
-				}
-				return false
-			})
-		} else {
-			out = append(out, kv)
-		}
-	}
-	return out
+	return sprint.WithEnv(env, set...)
 }
 
 // treeTested says a change to p is one the tree tests read: a Go file, a document, or
-// under testdata.
+// under testdata, go.mod, or go.sum.
 func treeTested(p string) bool {
-	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
+	return sprint.TreeTested(p)
 }
 
 // gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
-// the tree tests (have: the ones the clone holds) when tests is asked.
+// the packages to test when tests is asked, plus the functional whole-tree checks on
+// internal/ci when the clone holds it.
 func gateRuns(tests bool, have []string) [][]string {
-	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}
-	if tests && len(have) > 0 {
-		run := []string{"go", "test"}
-		for _, p := range have {
-			run = append(run, "./"+p+"/")
-		}
-		runs = append(runs, run)
-	}
-	return runs
+	return sprint.GateRuns(tests, have)
 }
 
 // gateWhy is a red run as a finding, one line: the run, how it ended and its output.
 func gateWhy(run []string, err error, out string) string {
-	var lines []string
-	for _, l := range strings.Split(out, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
-		}
-	}
-	return strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500)
+	return sprint.GateWhy(run, err, out)
 }
 
 // baseGateFail is a base commit's failures of its tree gate under the base-gate rule: how
@@ -168,7 +123,7 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why str
 	case f != nil && now.Before(f.next):
 		return f.said(), false
 	}
-	why = l.treeGate(ctx, dir, true)
+	why = l.treeGate(ctx, dir, nil, true)
 	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
@@ -229,28 +184,22 @@ func (l *lander) offRules(ctx context.Context) []string {
 // no .go file in it (the nova-sprint repo's internal/ci holds only data, 2026-10-05) is no
 // package, and `go test` of it fails every batch on that base, so it is not run.
 func treePackages(dir string) []string {
-	var have []string
-	for _, p := range treeTests {
-		matches, _ := filepath.Glob(filepath.Join(dir, filepath.FromSlash(p), "*.go"))
-		if len(matches) > 0 {
-			have = append(have, p)
-		}
-	}
-	return have
+	return sprint.TreePackages(dir)
 }
 
-// treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
+// gatePackages finds the packages to test for the gate: every package touched by changed
+// files plus every package that imports one of them (direct and transitive importers),
+// plus the tree tests the clone holds (treeTests).
+// If go list fails, it returns (nil, why) with the go list error as the gate's finding.
+func (l *lander) gatePackages(ctx context.Context, dir string, changed []string, tests bool) ([]string, string) {
+	return sprint.GatePackages(ctx, dir, changed, tests, l.goRun)
+}
+
+// treeGate runs the gate on the clone's tree, the tests too when tests: "" when it
 // is green or the clone has no module, else the finding (gateWhy).
-func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
-	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
-		return ""
-	}
-	for _, run := range gateRuns(tests, treePackages(dir)) {
-		if out, err := l.goRun(ctx, dir, run); err != nil {
-			return gateWhy(run, err, out)
-		}
-	}
-	return ""
+// (docs/SPEC-SPRINT.md section 7, the tree gate).
+func (l *lander) treeGate(ctx context.Context, dir string, changed []string, tests bool) string {
+	return sprint.TreeGate(ctx, dir, changed, tests, l.goRun)
 }
 
 // gateCard is the tree gate on one card merged onto the batch branch at before: red, the
@@ -267,7 +216,8 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if err != nil {
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	files := strings.Split(changed, "\n")
+	why := l.treeGate(ctx, dir, files, slices.ContainsFunc(files, treeTested))
 	if why == "" {
 		return "", ""
 	}

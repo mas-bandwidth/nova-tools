@@ -29,8 +29,12 @@ func TestTreeGateWords(t *testing.T) {
 		readonlyGoFlags([]string{"GOFLAGS=-tags=custom", "PATH=/bin", "GOFLAGS=-count=1 -mod=vendor"}))
 	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(false, []string{"internal/docs"}))
 	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(true, nil))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "test", "./internal/docs/", "./internal/ci/"}},
-		gateRuns(true, []string{"internal/docs", "internal/ci"}))
+	assert.Equal(t, [][]string{
+		{"go", "build", "./..."},
+		{"go", "vet", "./..."},
+		{"go", "test", "./internal/docs/", "./internal/ci/"},
+		{"go", "test", "-tags", "functional", "-run", "^(TestUncheckedErrors|TestStaticcheckFindings|TestDeadCode|TestEveryCommandMeetsTheOnboardingStandard)$", "./internal/ci/"},
+	}, gateRuns(true, []string{"internal/docs", "internal/ci"}))
 	for p, want := range map[string]bool{
 		"docs/CLI.md":            true,
 		"a/b_test.go":            true,
@@ -109,9 +113,9 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 		{"a build failure", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"bad.go": buildRed},
 			"fails the tree gate: go build ./...: exit status 1: # example.com/m | ./bad.go:3:14: syntax error:", ""},
 		{"a document the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "BAD\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: go test ./ ./internal/docs/: exit status 1: ", ""},
 		{"a Go file the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"forbidden.go": "package main\n\nfunc forbidden() {}\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: go test ./ ./internal/docs/: exit status 1: ", ""},
 		{"a plain file the tree tests would refuse is not tested", nil, map[string]string{"forbidden.txt": "plain\n"}, map[string]string{"notes.txt": "more plain\n"},
 			"", ""},
 		{"a red base refuses the batch", map[string]string{"bad.go": vetRed}, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "still fine\n"},
