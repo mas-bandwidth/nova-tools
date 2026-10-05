@@ -705,6 +705,9 @@ usage:
                         A reader uses its machine's width; --width overrides it. This machine opens no store.
                         Each card runs as one native child with its frame and an allowlist environment.
                         Its packet supplies the model, budget and deadline; the flags fill missing route values.
+                        Seat secrets declared in login.json are read in process; --pass names environment secrets.
+                        A child is handed only the one key its route needs (never the whole set), and neither
+                        other provider keys nor JEV_API_KEY leak to the child.
                         --reader runs reads from the readers table; its flags override the read's route.
                         A flash card's first read is a decide read, asked by native with JEV_API_KEY
                         from the reader's environment; children do not receive that key (docs/SPEC-SPRINT.md section 6).
@@ -1039,7 +1042,7 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 
 ### The seat's store login
 
-`nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
+`nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. The record can also name more than the store password via `secrets []string` (such as `JEV_API_KEY` for the sprint server decision loop and provider keys for swarm members), read in process where used; if any named secret cannot be read, the tool refuses at start naming the secret and remedy. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
 
 ### The sprint backup
 

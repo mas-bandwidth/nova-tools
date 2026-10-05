@@ -344,10 +344,21 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	go a.balanceLoop(context.Background(), st, stdout)
 	// the store round trip, timed every 10 s for where (store-latency-row-r.w2)
 	go a.storeRTTLoop(context.Background(), st)
+	if err := a.checkServerLoginSecrets(); err != nil {
+		return refuse(stderr, "run", err.Error())
+	}
+	var jevKey string
+	if decideDir != "" && a.decide == nil {
+		k, err := a.serverDecisionKey()
+		if err != nil {
+			return refuse(stderr, "run", err.Error())
+		}
+		jevKey = k
+	}
 	if decideDir != "" {
 		var b decide.Backend
-		if key := a.getenv(decide.JevSecret); key != "" {
-			b = decide.JevHTTP(key, decide.JevTimeout)
+		if jevKey != "" {
+			b = decide.JevHTTP(jevKey, decide.JevTimeout)
 		}
 		if a.decide == nil { // a test's lane, with its backend, is kept
 			a.decide = newDecideLane(decideDir, b, a.now, GradeWait)

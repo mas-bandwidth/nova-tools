@@ -275,7 +275,10 @@ names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
 One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
-<keys> --require=<key>...` when the record names keys; its output goes to the
+<keys> --require=<key>...` when the record names keys; when a unit reads its keys in
+process from seat login (`nova-sprint run` reading decision keys, `nova-swarm member`
+reading provider keys and handing each child only the one key its route needs), the unit
+runs directly without an exec wrapper. Its output goes to the
 record's log under the fleet row's `loops_dir` (migration 0027 seeds it to
 `~/nova-bench/loops`), which the play creates (on darwin, launchd agents log under the user's home,
 `~/Library/Logs/nova-loop-<name>.log`, because launchd cannot open log files on

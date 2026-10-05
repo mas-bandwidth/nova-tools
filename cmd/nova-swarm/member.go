@@ -31,6 +31,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -156,6 +157,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if f.refused(stderr) {
 		return 2
 	}
+	memSecrets, err := loadAndCheckMemberSecrets(*as)
+	if err != nil {
+		return refuse(stderr, " member", err.Error())
+	}
 	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
 	// is one line at a time
 	stderr = &lockedWriter{w: stderr}
@@ -194,6 +199,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
 		cacheLimit: int64(*gocacheGiB) * gib,
+		secrets:    memSecrets,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -235,7 +241,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s stage-wall=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord), oneline.Field(stageWall.d.String()))
 	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
 	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
-	if note := passNote(*model, pass, *auth); note != "" {
+	effectivePass := append([]string{}, pass...)
+	for k := range memSecrets {
+		effectivePass = append(effectivePass, k)
+	}
+	if note := passNote(*model, effectivePass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
 	if removed, kept := rn.prune(time.Now()); removed > 0 {
@@ -437,6 +447,7 @@ type nativeRunner struct {
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
 	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
 	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
+	secrets                                        map[string]secrets.Secret
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -566,7 +577,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
-	cmd.Env = childEnviron(append(os.Environ(), r.env...), r.pass)
+	cmd.Env = r.childEnvFor(model)
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
