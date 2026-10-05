@@ -125,6 +125,7 @@ var TickDecisions = map[string][]string{
 	NCannotAsk:     {"reader add", "rework", "drop", "wait"},
 	NFewReaders:    {"reader up", "reader add", "wait"},
 	NNoMember:      {"fleet beat", "fleet up", "wait"},
+	NAdoptFailed:   {"fleet up <m>", "wait"},                     // named per member (fleet_back.go)
 	NStarving:      {"release", "wait"},                          // the first held wave's sentinel, never a single card
 	NOverloaded:    {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
 	NReadersBehind: {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
@@ -658,6 +659,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, pc...)
 	// a member whose cards are timing out, three within the window (overload.go)
 	conds = append(conds, overloadConds(s)...)
+	// a member back from down whose adoption of the latest failed (fleet_back.go)
+	conds = append(conds, adoptConds(s)...)
 	// landings on the sprint branch not promoted into dev (promotion.go)
 	conds = append(conds, devBehindCond(s)...)
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
@@ -723,7 +726,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -1236,7 +1239,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
+	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind:
 		what = ""
 	case NWorkLate, NReadLate:

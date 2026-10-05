@@ -306,7 +306,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: "", sprint.FieldWidth: sprint.WidthText(ctl)}
 		if beats != nil {
 			b := beats[row.Key]
-			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)
+			want[sprint.Status], want[sprint.Load] = sprint.FleetRowStatus(ctl, b, now), sprint.LoadText(b, now)
 		}
 		status[row.Key] = want[sprint.Status]
 		if d := rowDiff(row, want); len(d) > 0 {
@@ -466,7 +466,7 @@ func statusRank(status string) int {
 	switch status {
 	case sprint.Up:
 		return 0
-	case sprint.Held:
+	case sprint.Held, sprint.Adopting:
 		return 1
 	case sprint.Down:
 		return 2
@@ -474,9 +474,9 @@ func statusRank(status string) int {
 	return 3
 }
 
-// FleetOrder is the fleet's rows by name, then stably by status: up, held,
-// down, anything else last. status is each row's status cell. The friends
-// table is ordered by it too (FriendRows): one order for both.
+// FleetOrder is the fleet's rows by name, then stably by status: up, held
+// (adopting with it), down, anything else last. status is each row's status
+// cell. The friends table is ordered by it too (FriendRows): one order for both.
 func FleetOrder(rows []string, status map[string]string) []string {
 	out := slices.Clone(rows)
 	slices.Sort(out)
