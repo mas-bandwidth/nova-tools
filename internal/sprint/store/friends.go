@@ -343,7 +343,8 @@ func (st *Store) friendNames(ctx context.Context) []string {
 	return slices.Sorted(maps.Keys(r))
 }
 
-// FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status, Class, Mode).
+// FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status,
+// Class, Mode, and Running: the cards her last beat names running).
 func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
 	rows, err := st.FriendRows(ctx, now)
 	if err != nil {
@@ -352,26 +353,20 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
 		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode}
+		if r.Report != nil {
+			seats[i].Running = r.Report.Running
+		}
 	}
 	return seats, nil
 }
 
-// friendSeats is every friend of the roster as the tick's deal gives her a friend's card
-// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
-// holds a friend's card ready; nil, and no read, when it holds none.
-func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
-	if s != nil {
-		ready := false
-		for _, c := range s.Work.Column(sprint.Ready) {
-			if _, ok := sprint.FriendCard(c); ok {
-				ready = true
-				break
-			}
-		}
-		if !ready {
-			return nil, nil
-		}
-	}
+// friendSeats is every friend of the roster as the tick's deal and level see her
+// (sprint.FriendDeal, sprint.FriendLevel): her name, width and status at now and what her
+// beat names running, read every tick while the roster has a friend, whether or not a
+// friend's card is ready, so a friend coming up is levelled on the same tick
+// (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1); nil when it has none.
+// The snapshot no longer gates the read; it stays in the signature for its callers.
+func (st *Store) friendSeats(ctx context.Context, _ *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
 	return st.FriendSeats(ctx, now)
 }
 

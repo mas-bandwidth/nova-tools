@@ -1,0 +1,135 @@
+package sprint
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The friends' deal and level go to idle lanes first (docs/SPEC-SPRINT.md section 1,
+// friend-deal-idle-lanes-first.w1): eligibility is by the card's tier, never by class; a
+// friend with an idle lane is preferred over every friend with none, then the most room;
+// a friend at her room is never dealt; and every tick levels the friends after its deal,
+// no verb run.
+
+// fullWorld is a world whose friend amy holds her room at width 8: sixteen cards of brief
+// who on her row, eight working and eight ready; then n cards for any friend, each of
+// brief line 1 line1, added ready on the work table as s2-1, s2-2, ...
+func fullWorld(t *testing.T, who, line1 string, n int) *world {
+	briefs := make([]string, 16)
+	for i := range briefs {
+		briefs[i] = friendBrief(who)
+	}
+	w := friendWorld(t, briefs...)
+	dealWith(w, FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro"})
+	require.Equal(t, 8, w.s.Fleet.Count(FriendRow("amy"), Working))
+	require.Equal(t, 8, w.s.Fleet.Count(FriendRow("amy"), Ready))
+	var cards []CardAdd
+	for i := range n {
+		cards = append(cards, CardAdd{ID: "s2-" + itoa(i+1), Brief: strings.Replace(friendBrief("friend"), "c: a friend's card", line1, 1)})
+	}
+	if n > 0 {
+		w.must(Add(w.s, AddReq{Stream: "s2", Cards: cards}))
+	}
+	return w
+}
+
+func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
+	t.Parallel()
+	amy, bob, cat := FriendRow("amy"), FriendRow("bob"), FriendRow("cat")
+	full := FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro"}
+
+	t.Run("five new cards go to the two idle friends, none to the full one", func(t *testing.T) {
+		t.Parallel()
+		w := fullWorld(t, "friend amy", "c: a friend's card", 5)
+		dealWith(w, full, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"}, FriendSeat{Name: "cat", Width: 2, Status: Up, Class: "flash,pro"})
+		// idle lanes first (bob 2, cat 2: bob by name), then the most idle lanes, then by
+		// room when neither has a lane (bob 2, cat 2: bob by name)
+		for i, want := range []string{bob, cat, bob, cat, bob} {
+			wc := w.s.Fleet.Card("s2-" + itoa(i+1) + ".w1")
+			require.NotNil(t, wc, "s2-%d is dealt", i+1)
+			assert.Equal(t, want, wc.Row, "s2-%d", i+1)
+		}
+		assert.Equal(t, 16, friendLoad(w.s, "amy"), "amy at her room is dealt nothing")
+		assert.Equal(t, 2, w.s.Fleet.Count(bob, Working))
+		assert.Equal(t, 2, w.s.Fleet.Count(cat, Working))
+		assert.Empty(t, Check(w.s, nil))
+	})
+
+	t.Run("an idle lane beats more room, and eligibility is the card's tier, never the class", func(t *testing.T) {
+		t.Parallel()
+		// 2026-10-05 9:40 AM: rowan-mas at working 8 of 8, ready 3 (room 16 - 11 = 5),
+		// stella up at width 2 with both lanes idle (room 4) and of another class: a flash
+		// card goes to stella; a pro card, a tier her row does not name, never does
+		w := fullWorld(t, "friend amy", "c: a friend's card", 0)
+		mas := FriendSeat{Name: "mas", Width: 8, Status: Up, Class: "flash,heavy,pro"}
+		stella := FriendSeat{Name: "stella", Width: 2, Status: Up, Class: "flash"}
+		var hers []CardAdd
+		for i := range 11 {
+			hers = append(hers, CardAdd{ID: "s3-" + itoa(i+1), Brief: friendBrief("friend mas")})
+		}
+		w.must(Add(w.s, AddReq{Stream: "s3", Cards: hers}))
+		dealWith(w, full, mas)
+		require.Equal(t, 8, w.s.Fleet.Count(FriendRow("mas"), Working))
+		require.Equal(t, 3, w.s.Fleet.Count(FriendRow("mas"), Ready))
+		w.must(Add(w.s, AddReq{Stream: "s2", Cards: []CardAdd{
+			{ID: "s2-1", Brief: friendBrief("friend")},
+			{ID: "s2-2", Brief: strings.Replace(friendBrief("friend"), "c: a friend's card", "c: a friend's card tier: pro", 1)},
+		}}))
+		dealWith(w, full, mas, stella)
+		assert.Equal(t, FriendRow("stella"), w.s.Fleet.Card("s2-1.w1").Row, "an idle lane first, though mas has more room")
+		assert.Equal(t, FriendRow("mas"), w.s.Fleet.Card("s2-2.w1").Row, "a pro card goes to a friend whose tiers hold pro")
+		assert.Equal(t, 16, friendLoad(w.s, "amy"))
+	})
+
+	t.Run("a tick levels a backlog onto a friend coming up, without a verb", func(t *testing.T) {
+		t.Parallel()
+		// amy holds eight unstarted cards for any friend ready behind her full width, one of
+		// them running by her beat; bob comes up idle at width 2, of another class
+		w := fullWorld(t, "friend", "", 0)
+		running := FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro", Running: []string{"s1-16.w1"}}
+		bobUp := FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash"}
+		dealWith(w, running, FriendSeat{Name: "bob", Width: 2, Status: Down, Class: "flash"})
+		require.Equal(t, 16, friendLoad(w.s, "amy"), "bob down: nothing moves")
+
+		p := dealWith(w, running, bobUp)
+		assert.Equal(t, 2, w.s.Fleet.Count(bob, Working), "his idle lanes first")
+		assert.Equal(t, 2, w.s.Fleet.Count(bob, Ready), "then evened to his room")
+		assert.Equal(t, 12, friendLoad(w.s, "amy"))
+		assert.Equal(t, amy, w.s.Fleet.Card("s1-16.w1").Row, "a card her beat names running stays")
+		moved := 0
+		for _, u := range p.Units {
+			if strings.Contains(u.Moved, "friend.amy:ready -> friend.bob:") {
+				moved++
+			}
+		}
+		assert.Equal(t, 4, moved, "each move is one line")
+		assert.Empty(t, dealWith(w, running, bobUp).Units, "level: the next tick moves nothing")
+
+		// a card moved off amy never goes back to her: bob's ready cards stay with him
+		// while amy's lanes open and cat, idle, takes them
+		w2 := fullWorld(t, "friend", "", 0)
+		dealWith(w2, running, bobUp)
+		left := w2.s.Fleet.Cell(bob, Ready)
+		require.Len(t, left, 2)
+		for _, c := range left {
+			assert.Equal(t, "amy", c.F(FieldFriendsLeft))
+		}
+		dealWith(w2, FriendSeat{Name: "amy", Width: 16, Status: Up, Class: "flash,pro"}, FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash"})
+		for _, c := range left {
+			assert.Equal(t, bob, w2.s.Fleet.Card(c.ID).Row, "%s was taken from amy: not levelled back to her", c.ID)
+		}
+		assert.Empty(t, Check(w.s, nil))
+		assert.Empty(t, Check(w2.s, nil))
+	})
+
+	t.Run("the tick's level is bounded", func(t *testing.T) {
+		t.Parallel()
+		w := fullWorld(t, "friend", "", 0)
+		p := dealWith(w, full, FriendSeat{Name: "cat", Width: 16, Status: Up, Class: "flash"})
+		assert.Equal(t, FriendLevelPerTick, w.s.Fleet.Count(cat, Working), "no more than FriendLevelPerTick moves a tick")
+		assert.Len(t, p.Units, FriendLevelPerTick)
+	})
+}

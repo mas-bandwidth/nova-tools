@@ -795,6 +795,56 @@ would have been taken is refused too, "not taken: --all-or-nothing, and <n> of
 the cards named <was|were> refused"
 (`TestFriendTakeTakesTheTakeableAndNamesTheRest`).
 
+### friend-deal-idle-lanes-first.w1
+
+**The friends' deal and level fill idle lanes first, by tier, every tick**
+(the owner, 2026-10-05: "You should automatically rebalance queues", "This
+should not require you to remember, it should just happen mechanically." and
+"The machine should do this."; `sprint.FriendDeal`, `sprint.FriendLevel`,
+`sprint.TickDeal`). Two failures led here: on 2026-10-04 at 3:57 PM eight
+unstarted cards taken back from three full friends for two idle ones were dealt
+back to the full friends by the next tick; on 2026-10-05 at 9:40 AM a friend
+came up at width 2 with both lanes idle while three friends held 15 ready cards
+at full width, `friend level` moved nothing (it levelled within a class, and
+hers differed), and two cards taken back were dealt to a friend working 8 of 8
+(room 2 x 8 - 11 = 5) over her (room 2 x 2 - 0 = 4). This replaces "the friend
+up with the most room free" and "within each class" above, and "the tick does
+not level the friends":
+
+- **Eligibility is by tier, never by class.** A card for any friend (`WHO:
+  friend`) may go to a friend up whose tiers (her `FriendSeat.Tiers`, else her
+  class's) hold the card's tier; a card with no tier is the dealer's default,
+  flash (`cardTierOf`). A friend whose row names no tier takes every tier.
+  There is no fallback to any friend: a card no friend up may take waits ready.
+- **Idle lanes first.** Among the friends it may go to, a friend with an idle
+  lane (width - working > 0) is preferred over every friend with none, the most
+  idle lanes first, then the most room (DealAhead x width - working - ready),
+  then the first by name (`preferredFriend`). A friend at or over DealAhead x
+  width is never dealt.
+- **Never back to a friend it left.** A work card carries `friends_left`, the
+  friends it has left: each the level moved it off, and the one the coordinator
+  took it back from (`taken_from`, kept past the deal that places it again).
+  Neither the deal nor the level places it on any of them.
+- **The level runs inside every tick, after the deal.** The tick reads the
+  friends' records whenever the roster has a friend, not only when a friend's
+  card is ready, so a friend coming up (friend up, or a hold released) is
+  levelled on the same tick. An unstarted ready card for any friend on a friend
+  with no idle lane moves to a friend it may go to with an idle lane, into
+  working; then backlogs even as before (a card moves from a backlog to one
+  smaller by more than one, below her room), across every friend it may go to.
+  The friends with no idle lane give first, the largest backlog first, the
+  newest card first; the friend it goes to is `preferredFriend`'s. The cards the
+  deal placed that tick count against room and lanes and do not move. At most
+  `FriendLevelPerTick` (4) cards move a tick, each one MOVED line. "Started" is
+  the store's own data, never a read of a branch in the tick: her last beat
+  names the card running (`FriendSeat.Running`: the card, its job or its
+  primary), or it carries a progress stamp (`progress`); a started card stays.
+  `friend level`, the verb, runs the same plan with no bound, and also keeps a
+  card it reads pushed on its branch.
+
+`TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
+`TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
@@ -3280,7 +3330,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
 | friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready and a card she has started finishes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
-| friend level | even the ready queues of the friends up within each class, as fleet level evens the members' |
+| friend level | even the ready queues of the friends up, idle lanes first and by the card's tier, as fleet level evens the members'; the tick runs it too (friend-deal-idle-lanes-first.w1) |
 | friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer |
 | seat | the seat as the daemons read it every second: `SEAT holder= epoch= generation=`, `--json`; three keys, no table (section 1, a friend's health) |
 | lane take | `lane take go --machine <m> --as <worker> [--wait <duration>]`: a worker's take of one of the machine's Go lanes (section 18); exit 0 granted, exit 1 queued with its place and the next command; --wait asks again every 5 s until granted or the wait is over; through the sprint's server it is `lane take <kind> --machine <m> --as <worker>` and nothing more |

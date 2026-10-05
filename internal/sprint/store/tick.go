@@ -977,8 +977,8 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err := pinned.readerStatesInto(ctx, &first); err != nil {
 		return last, err
 	}
-	// the friends the deal may give a friend's card to, read only when one is ready
-	// (sprint.FriendDeal): a sprint with none reads nothing more
+	// the friends the deal may give a friend's card to and the level evens, read every
+	// tick while the roster has one (sprint.FriendDeal, sprint.FriendLevel)
 	if req.Friends, err = pinned.friendSeats(ctx, &first, now); err != nil {
 		return last, err
 	}
