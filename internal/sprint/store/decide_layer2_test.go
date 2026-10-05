@@ -302,7 +302,7 @@ func TestAGradeIsWrittenOnlyOnAnUngradedCardNeverDealt(t *testing.T) {
 	assert.Empty(t, s.Work.Card("s1-1").F(sprint.FieldGrade))
 	assert.Equal(t, g(0.8).String(), s.Work.Card("s1-2").F(sprint.FieldGrade))
 	assert.Equal(t, g(0.5).String(), s.Work.Card("s1-3").F(sprint.FieldGrade))
-	h.must(BriefStep(sprint.BriefReq{ID: "s1-3", Brief: briefOf("flash", "PATHS: other")}))
+	h.must(BriefStep(sprint.BriefReq{Cards: []sprint.BriefCard{{ID: "s1-3", Brief: briefOf("flash", "PATHS: other")}}}))
 	assert.Empty(t, h.snap().Work.Card("s1-3").F(sprint.FieldGrade), "a brief replaced is graded again")
 	h.clean("grades")
 }
