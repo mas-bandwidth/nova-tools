@@ -187,7 +187,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return verdictJSON(report, load, *enforce, code, *maxFlag).Render(stdout, true)
 	}
 	for _, line := range capSlowLines(lines, *maxFlag) {
-		fmt.Fprintln(stdout, line)
+		fmt.Fprintln(stdout, line) // ignored: stdout write
 	}
 	return code
 }

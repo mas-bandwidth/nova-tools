@@ -49,14 +49,14 @@ func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " functional", oneline.Err(err))
 	}
 	if len(pkgs) == 0 {
-		fmt.Fprintf(stdout, "CI FUNCTIONAL OK packages=0 reason=no-functional-tag-in-%d-dirs\n", len(dirs))
+		fmt.Fprintf(stdout, "CI FUNCTIONAL OK packages=0 reason=no-functional-tag-in-%d-dirs\n", len(dirs)) // ignored: stdout write
 		return 0
 	}
 	dirs = make([]string, 0, len(pkgs))
 	for _, p := range pkgs {
 		dirs = append(dirs, p.Dir)
 	}
-	fmt.Fprintln(stdout, strings.Join(dirs, " "))
-	fmt.Fprintln(stdout, functional.RunPattern(pkgs))
+	fmt.Fprintln(stdout, strings.Join(dirs, " ")) // ignored: stdout write
+	fmt.Fprintln(stdout, functional.RunPattern(pkgs)) // ignored: stdout write
 	return 0
 }

@@ -203,24 +203,24 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 		return refuse(stderr, " local", fmt.Sprintf("git status could not read the working tree (%s)", localWhy(code, errText, err)))
 	}
 	if n := localCountLines(dirty); n > 0 {
-		fmt.Fprintf(stderr, "nova-ci local: NOTE %d uncommitted Go file(s): go test reads them, but the selection reads only committed history, as CI does; commit them so the packages chosen are CI's\n", n)
+		fmt.Fprintf(stderr, "nova-ci local: NOTE %d uncommitted Go file(s): go test reads them, but the selection reads only committed history, as CI does; commit them so the packages chosen are CI's\n", n) // ignored: stderr write
 	}
 
 	pkgs, err := selectPackages(root, mergeBase)
 	if err != nil {
 		return refuse(stderr, " local", fmt.Sprintf("the package selection against %s failed (%s)", mergeBase, oneline.Cap(strings.TrimSpace(err.Error()), oneline.TailBytes)))
 	}
-	fmt.Fprintf(stdout, "nova-ci local: base=%s merge-base=%s packages=%d %s\n", oneline.Field(*base), localShort(mergeBase), len(pkgs), strings.Join(pkgs, " "))
+	fmt.Fprintf(stdout, "nova-ci local: base=%s merge-base=%s packages=%d %s\n", oneline.Field(*base), localShort(mergeBase), len(pkgs), strings.Join(pkgs, " ")) // ignored: stdout write
 	if len(pkgs) == 0 {
 		// CI's own words for the same answer, and its exit.
-		fmt.Fprintln(stdout, "nothing to test for this change")
+		fmt.Fprintln(stdout, "nothing to test for this change") // ignored: stdout write
 		return 0
 	}
 	pkgArg := "PKGS=" + strings.Join(pkgs, " ")
 	makeLine := fmt.Sprintf("nice -n %s make test %q GOTEST_P=%s GOTEST_COUNT_FLAG=-count=1 GOTEST_TAGS=%s (GOMAXPROCS=%s)", localNice, pkgArg, localCores, tags, localCores)
 	if *dryRun {
-		fmt.Fprintf(stdout, "nova-ci local: would run %s\n", makeLine)
-		fmt.Fprintln(stdout, "nova-ci local: NOTE --dry-run ran no test; run it again without --dry-run to run them")
+		fmt.Fprintf(stdout, "nova-ci local: would run %s\n", makeLine) // ignored: stdout write
+		fmt.Fprintln(stdout, "nova-ci local: NOTE --dry-run ran no test; run it again without --dry-run to run them") // ignored: stdout write
 		return 0
 	}
 
@@ -231,11 +231,11 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 	}
 	defer func() {
 		if err := safepath.RemoveUnder(tmpRoot, tmp); err != nil {
-			fmt.Fprintf(stderr, "nova-ci local: NOTE could not remove its private RUNNER_TEMP %s: %s\n", oneline.Field(tmp), oneline.Err(err))
+			fmt.Fprintf(stderr, "nova-ci local: NOTE could not remove its private RUNNER_TEMP %s: %s\n", oneline.Field(tmp), oneline.Err(err)) // ignored: stderr write
 		}
 	}()
 
-	fmt.Fprintf(stdout, "nova-ci local: %s\n", makeLine)
+	fmt.Fprintf(stdout, "nova-ci local: %s\n", makeLine) // ignored: stdout write
 	col := &localCollector{out: stdout, pkgs: map[string]*localPkg{}}
 	lines := &localLines{line: col.line}
 	unitArgv := append(append([]string{}, nice...), "make", "test", pkgArg, "GOTEST_P="+localCores, "GOTEST_COUNT_FLAG=-count=1", "GOTEST_TAGS="+tags)
@@ -245,7 +245,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 		return refuse(stderr, " local", fmt.Sprintf("could not start make test: %s", oneline.Err(err)))
 	}
 	exit := col.finish(unitCode)
-	fmt.Fprintf(stdout, "nova-ci local: exit=%d\n", exit)
+	fmt.Fprintf(stdout, "nova-ci local: exit=%d\n", exit) // ignored: stdout write
 	return exit
 }
 
@@ -345,7 +345,7 @@ func (c *localCollector) line(b []byte) {
 	if bytes.HasPrefix(bytes.TrimSpace(b), []byte("CI-SLEEPS ")) {
 		c.sleeps++
 	}
-	fmt.Fprintf(c.out, "%s\n", b)
+	fmt.Fprintf(c.out, "%s\n", b) // ignored: stdout write
 }
 
 func (c *localCollector) event(ev slowtests.Event) {
@@ -377,7 +377,7 @@ func (c *localCollector) event(ev slowtests.Event) {
 		}
 		pkg.seconds += ev.Elapsed
 		pkg.result = ev.Action
-		fmt.Fprintf(c.out, "PKG %-4s %7s %s\n", localResult(ev.Action), slowtests.Seconds(ev.Elapsed), oneline.Field(ev.Package))
+		fmt.Fprintf(c.out, "PKG %-4s %7s %s\n", localResult(ev.Action), slowtests.Seconds(ev.Elapsed), oneline.Field(ev.Package)) // ignored: stdout write
 	}
 }
 
@@ -417,29 +417,29 @@ func (c *localCollector) finish(makeCode int) int {
 		total += pkg.seconds
 		for _, test := range pkg.failed {
 			reds++
-			fmt.Fprintf(c.out, "RED package=%s test=%s\n", oneline.Field(name), oneline.Field(test))
+			fmt.Fprintf(c.out, "RED package=%s test=%s\n", oneline.Field(name), oneline.Field(test)) // ignored: stdout write
 			for _, line := range localTail(pkg.output[test]) {
-				fmt.Fprintf(c.out, "    %s\n", line)
+				fmt.Fprintf(c.out, "    %s\n", line) // ignored: stdout write
 			}
 		}
 		if pkg.result == "fail" && len(pkg.failed) == 0 {
 			reds++
-			fmt.Fprintf(c.out, "RED package=%s test=- (the package failed outside a test: a build error, a panic, TestMain or the -timeout)\n", oneline.Field(name))
+			fmt.Fprintf(c.out, "RED package=%s test=- (the package failed outside a test: a build error, a panic, TestMain or the -timeout)\n", oneline.Field(name)) // ignored: stdout write
 			for _, line := range localTail(pkg.output[""]) {
-				fmt.Fprintf(c.out, "    %s\n", line)
+				fmt.Fprintf(c.out, "    %s\n", line) // ignored: stdout write
 			}
 		}
 	}
 	if len(c.build) > 0 {
-		fmt.Fprintln(c.out, "RED build:")
+		fmt.Fprintln(c.out, "RED build:") // ignored: stdout write
 		for _, line := range localTail(c.build) {
-			fmt.Fprintf(c.out, "    %s\n", line)
+			fmt.Fprintf(c.out, "    %s\n", line) // ignored: stdout write
 		}
 		if reds == 0 {
 			reds++
 		}
 	}
-	fmt.Fprintf(c.out, "nova-ci local: packages=%d seconds=%s red=%d make-exit=%d\n", len(c.order), slowtests.Seconds(total), reds, makeCode)
+	fmt.Fprintf(c.out, "nova-ci local: packages=%d seconds=%s red=%d make-exit=%d\n", len(c.order), slowtests.Seconds(total), reds, makeCode) // ignored: stdout write
 	switch {
 	case makeCode == 0:
 		return 0
@@ -447,10 +447,10 @@ func (c *localCollector) finish(makeCode int) int {
 		return 1
 	case c.sleeps > 0:
 		// The check said no, as slowtests says it: exit 1.
-		fmt.Fprintf(c.out, "nova-ci local: make test failed on %d CI-SLEEPS line(s) above: a SLEEPS skip off the ledger; inject a clock or tag the test //go:build functional and remove the skip\n", c.sleeps)
+		fmt.Fprintf(c.out, "nova-ci local: make test failed on %d CI-SLEEPS line(s) above: a SLEEPS skip off the ledger; inject a clock or tag the test //go:build functional and remove the skip\n", c.sleeps) // ignored: stdout write
 		return 1
 	default:
-		fmt.Fprintln(c.out, "nova-ci local: make test failed with no red test and no CI-SLEEPS line: a step could not run (its words are above)")
+		fmt.Fprintln(c.out, "nova-ci local: make test failed with no red test and no CI-SLEEPS line: a step could not run (its words are above)") // ignored: stdout write
 		return 2
 	}
 }

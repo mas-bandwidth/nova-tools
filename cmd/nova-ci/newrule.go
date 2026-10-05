@@ -21,7 +21,7 @@ func cmdNewRule(args []string, stdout, stderr io.Writer) int {
 func cmdNewVerb(args []string, stdout, stderr io.Writer) int {
 	return cmdScaffold("new-verb", "two arguments, the tool (its directory under cmd/) and the new verb's name", 2, args, stdout, stderr,
 		func(root string, a []string) ([]scaffold.Planned, error) { return scaffold.VerbFiles(root, a[0], a[1]) },
-		func(a []string) { fmt.Fprint(stdout, scaffold.DispatchNote(a[0], a[1])) })
+		func(a []string) { fmt.Fprint(stdout, scaffold.DispatchNote(a[0], a[1])) }) // ignored: stdout write
 }
 
 // cmdScaffold is the one body of the two scaffolding verbs: parse, render the
@@ -56,9 +56,9 @@ func cmdScaffold(verb, wants string, nargs int, args []string, stdout, stderr io
 			return refuse(stderr, where, err.Error())
 		}
 		for _, p := range rels {
-			fmt.Fprintln(stdout, "would write "+p)
+			fmt.Fprintln(stdout, "would write "+p) // ignored: stdout write
 		}
-		fmt.Fprintf(stdout, "nova-ci%s NOTE --dry-run wrote nothing; run it again without --dry-run to write these %d files\n", where, len(rels))
+		fmt.Fprintf(stdout, "nova-ci%s NOTE --dry-run wrote nothing; run it again without --dry-run to write these %d files\n", where, len(rels)) // ignored: stdout write
 		return 0
 	}
 	written, err := scaffold.Write(abs, outs)
@@ -66,7 +66,7 @@ func cmdScaffold(verb, wants string, nargs int, args []string, stdout, stderr io
 		return refuse(stderr, where, err.Error())
 	}
 	for _, p := range written {
-		fmt.Fprintln(stdout, "wrote "+p)
+		fmt.Fprintln(stdout, "wrote "+p) // ignored: stdout write
 	}
 	if after != nil {
 		after(fs.Args())

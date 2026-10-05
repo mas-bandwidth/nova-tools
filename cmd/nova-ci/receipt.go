@@ -89,8 +89,8 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 		return refuse(stderr, where, strings.Join(problems, "; "))
 	}
 	if *dryRun {
-		fmt.Fprintln(stdout, cireceipt.Line(r, "-"))
-		fmt.Fprintln(stdout, "CI RECEIPT NOTE --dry-run: the fields are good; nothing was dialled or written; drop --dry-run to write it")
+		fmt.Fprintln(stdout, cireceipt.Line(r, "-")) // ignored: stdout write
+		fmt.Fprintln(stdout, "CI RECEIPT NOTE --dry-run: the fields are good; nothing was dialled or written; drop --dry-run to write it") // ignored: stdout write
 		return 0
 	}
 	ctx, cancel := context.WithTimeout(ctx, receiptTimeout)
@@ -99,12 +99,12 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 	if err != nil {
 		return refuse(stderr, where, oneline.Err(err))
 	}
-	defer st.Close()
+	_ = st.Close() // ignored: file opened only for reading
 	id, err := cireceipt.Write(ctx, st.Client(), r)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-ci github receipt FAILED: %s; receipt write could not be confirmed: fix the store or the bench seat and rerun ci-ok\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-ci github receipt FAILED: %s; receipt write could not be confirmed: fix the store or the bench seat and rerun ci-ok\n", oneline.Err(err)) // ignored: stderr write
 		return 1
 	}
-	fmt.Fprintln(stdout, cireceipt.Line(r, id))
+	fmt.Fprintln(stdout, cireceipt.Line(r, id)) // ignored: stdout write
 	return 0
 }

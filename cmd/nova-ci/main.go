@@ -166,7 +166,7 @@ func refuse(stderr io.Writer, where, what string) int {
 // refuseRun is refuse with a remedy of the verb's choosing: a command that
 // fixes the call, where the help would only describe it.
 func refuseRun(stderr io.Writer, where, what, next string) int {
-	fmt.Fprintf(stderr, "nova-ci%s REFUSED: %s; run: %s\n", where, oneline.Escape(what), oneline.Escape(next))
+	fmt.Fprintf(stderr, "nova-ci%s REFUSED: %s; run: %s\n", where, oneline.Escape(what), oneline.Escape(next)) // ignored: stderr write
 	return 2
 }
 
@@ -215,7 +215,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		verb := verbflag.Verb("nova-ci", h.FS)
 		verbflag.Print(stdout, "nova-ci", exitTable(verb), h.FS)
 		if e, ok := verbEffect[verb]; ok {
-			fmt.Fprintf(stdout, "effect: %s\n", e)
+			fmt.Fprintf(stdout, "effect: %s\n", e) // ignored: stdout write
 		}
 		code = 0
 	}()
@@ -241,7 +241,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return run(append(args[1:], "--help"), stdin, stdout, stderr)
 		}
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, usage) // ignored: stdout write
 		return 0
 	default:
 		return refuse(stderr, "", fmt.Sprintf("unknown verb %q; the verbs are %s", args[0], verbs))
