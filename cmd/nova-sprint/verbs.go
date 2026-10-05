@@ -2308,9 +2308,13 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	info, infoErr := st.CardOf(context.Background(), ids[0])
-	if infoErr != nil { return a.readFailed("brief", infoErr, stderr) }
+	if infoErr != nil {
+		return a.readFailed("brief", infoErr, stderr)
+	}
 	stream := ""
-	if info.Primary != nil { stream = info.Primary.F("stream") }
+	if info.Primary != nil {
+		stream = info.Primary.F("stream")
+	}
 	if code := a.holdWho("brief", st, stderr, stream, *brief); code != 0 {
 		return code
 	}

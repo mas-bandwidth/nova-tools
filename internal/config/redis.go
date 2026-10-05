@@ -19,7 +19,7 @@ import (
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
 // for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
-// width and delivery mode, plain fields of friend:<f>:desired no function touches. Her
+// width, delivery mode, and optional work restrictions are plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "streams", "kinds")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -250,11 +250,13 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	for i, f := range names {
 		d := desired[i].Val()
 		views[f] = View{
-			"slots": intText(str(d, 0)),
-			"tiers": sortedList(str(d, 1)),
-			"roles": sortedList(roles[i].Val()),
-			"width": intText(str(d, 2)),
-			"mode":  str(d, 3),
+			"slots":   intText(str(d, 0)),
+			"tiers":   sortedList(str(d, 1)),
+			"roles":   sortedList(roles[i].Val()),
+			"width":   intText(str(d, 2)),
+			"mode":    str(d, 3),
+			"streams": str(d, 4),
+			"kinds":   str(d, 5),
 		}
 	}
 	return views, revValue(rev), nil
@@ -424,16 +426,19 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 		}
 		return fmt.Errorf("redis: friend %s slots: %s", f, strings.Join(words, " "))
 	}
-	// 2. her width, the desired hash's own field beside slots and tiers that
-	// ns_capacity_desired neither reads nor writes, and 3. roles
+	// 2. her width, delivery mode, and optional restrictions, plain desired-hash
+	// fields beside slots and tiers that ns_capacity_desired neither reads nor
+	// writes, and 3. roles
 	// (ns_friend_roles: the actor must be a coordinator, or nobody is one
 	// yet and this row makes the first; the sprint row's coordinator carries
 	// the role here, derived by Kind.Derive): each only when it differs,
 	// both in one round trip, after slots registered her.
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
+	writeStreams := prev == nil || prev["streams"] != row.Fields["streams"]
+	writeKinds := prev == nil || prev["kinds"] != row.Fields["kinds"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeRoles {
+	if !writeWidth && !writeMode && !writeStreams && !writeKinds && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -444,6 +449,12 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
 		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
 	}
+	if writeStreams {
+		pipe.HSet(ctx, "friend:"+f+":desired", "streams", row.Fields["streams"])
+	}
+	if writeKinds {
+		pipe.HSet(ctx, "friend:"+f+":desired", "kinds", row.Fields["kinds"])
+	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
 	}
@@ -451,7 +462,7 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// carries (its refusal, or the connection's, which every command of the
 	// pipe carries) is read below with the roles call's words.
 	if err := redisconn.Exec(ctx, pipe); err != nil && (roles == nil || roles.Err() == nil) {
-		return fmt.Errorf("redis: friend %s width: %w", f, err)
+		return fmt.Errorf("redis: friend %s desired fields: %w", f, err)
 	}
 	if roles != nil {
 		reply, err := roles.Result()

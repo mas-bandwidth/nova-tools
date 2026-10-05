@@ -233,8 +233,12 @@ func checkFriend(r Row) error {
 	}
 	for _, pattern := range strings.Split(r.Fields["streams"], ",") {
 		pattern = strings.TrimSpace(pattern)
-		if pattern == "" { continue }
-		if _, err := path.Match(pattern, ""); err != nil { return fmt.Errorf("friend %s has invalid stream glob %q: %v", r.Name, pattern, err) }
+		if pattern == "" {
+			continue
+		}
+		if _, err := path.Match(pattern, ""); err != nil {
+			return fmt.Errorf("friend %s has invalid stream glob %q: %v", r.Name, pattern, err)
+		}
 	}
 	return nil
 }

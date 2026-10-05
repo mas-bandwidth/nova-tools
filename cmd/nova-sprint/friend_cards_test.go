@@ -466,7 +466,7 @@ func TestAddAndBriefRefuseNamedFriendOutsideRestrictions(t *testing.T) {
 	brief := passingBrief("s1-1: restricted friend card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\nKIND: fix-red")
 	briefPath := filepath.Join(t.TempDir(), "brief.md")
 	require.NoError(t, os.WriteFile(briefPath, []byte(brief), 0o644))
-	code, _, errs := ta.do("add --stream s1 --brief-file " + briefPath)
+	code, _, errs := ta.do("add --stream s1 --one --brief-file " + briefPath)
 	assert.NotZero(t, code)
 	assert.Contains(t, errs, "streams restriction")
 
@@ -474,7 +474,7 @@ func TestAddAndBriefRefuseNamedFriendOutsideRestrictions(t *testing.T) {
 	_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"streams": "security*"}, "test")
 	require.NoError(t, err)
 	ta.ok("friend sync")
-	ta.ok("add --stream s1 --one")
+	ta.ok("add --stream s1 --count 1 --one")
 	code, _, errs = ta.do("brief s1-1 --brief-file " + briefPath)
 	assert.NotZero(t, code)
 	assert.Contains(t, errs, "streams restriction")

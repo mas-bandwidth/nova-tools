@@ -47,9 +47,9 @@ type friendEntry struct {
 	Class string `json:"class,omitempty"`
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
-	Mode string `json:"mode,omitempty"`
+	Mode    string `json:"mode,omitempty"`
 	Streams string `json:"streams,omitempty"`
-	Kinds string `json:"kinds,omitempty"`
+	Kinds   string `json:"kinds,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until): why,
 	// and when the coordinator expects her back.
 	Reason string    `json:"reason,omitempty"`
@@ -59,14 +59,13 @@ type friendEntry struct {
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
 // of nova-config), her width and her class.
 type FriendSpec struct {
-	Name  string
-	Width int
-	Class string
-	Mode  string // her delivery mode, config.FriendMode of her row
+	Name    string
+	Width   int
+	Class   string
+	Mode    string // her delivery mode, config.FriendMode of her row
 	Streams string
-	Kinds string
+	Kinds   string
 }
-
 
 // RestrictionWhy explains why the configured stream and kind do not fit this friend.
 func (s FriendSpec) RestrictionWhy(stream, kind string) string {
@@ -86,7 +85,7 @@ type FriendRow struct {
 	Status  string `json:"status"`
 	Class   string `json:"class,omitempty"`
 	Streams string `json:"-"`
-	Kinds string `json:"-"`
+	Kinds   string `json:"-"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -351,14 +350,18 @@ func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.T
 	return seats, nil
 }
 
-
 // FriendSpecs reads the synced roster once for admission checks.
 func (st *Store) FriendSpecs(ctx context.Context) ([]FriendSpec, error) {
 	r, _, err := st.roster(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	names := slices.Sorted(maps.Keys(r))
 	out := make([]FriendSpec, 0, len(names))
-	for _, name := range names { e := r[name]; out = append(out, FriendSpec{Name: name, Width: e.Width, Class: e.Class, Mode: e.Mode, Streams: e.Streams, Kinds: e.Kinds}) }
+	for _, name := range names {
+		e := r[name]
+		out = append(out, FriendSpec{Name: name, Width: e.Width, Class: e.Class, Mode: e.Mode, Streams: e.Streams, Kinds: e.Kinds})
+	}
 	return out, nil
 }
 

@@ -85,14 +85,14 @@ const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick de
 // does not read them; a frontier read does, friend_read.go), and Dir, her working
 // directory when the ask writes the read brief itself (empty: friend sync writes it).
 type FriendSeat struct {
-	Name   string
-	Width  int
-	Status string
-	Class  string
-	Tiers  []string
-	Dir    string
+	Name    string
+	Width   int
+	Status  string
+	Class   string
+	Tiers   []string
+	Dir     string
 	Streams []string
-	Kinds []string
+	Kinds   []string
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
@@ -238,11 +238,14 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, col)}
 }
 
-
 // SplitFriendRestriction canonicalizes the comma-separated values carried from nova-config.
 func SplitFriendRestriction(raw string) []string {
 	var out []string
-	for _, item := range strings.Split(raw, ",") { if item = strings.TrimSpace(item); item != "" { out = append(out, item) } }
+	for _, item := range strings.Split(raw, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
 	return out
 }
 
@@ -251,11 +254,22 @@ func SplitFriendRestriction(raw string) []string {
 func FriendRestrictionWhy(streams, kinds []string, stream, kind string) string {
 	if len(streams) > 0 {
 		matched := false
-		for _, glob := range streams { if ok, err := path.Match(strings.TrimSpace(glob), stream); err == nil && ok { matched = true; break } }
-		if !matched { return fmt.Sprintf("stream %q is outside this friend's streams restriction (%s)", stream, strings.Join(streams, ",")) }
+		for _, glob := range streams {
+			if ok, err := path.Match(strings.TrimSpace(glob), stream); err == nil && ok {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Sprintf("stream %q is outside this friend's streams restriction (%s)", stream, strings.Join(streams, ","))
+		}
 	}
 	if len(kinds) > 0 {
-		for _, allowed := range kinds { if strings.TrimSpace(allowed) == kind { return "" } }
+		for _, allowed := range kinds {
+			if strings.TrimSpace(allowed) == kind {
+				return ""
+			}
+		}
 		return fmt.Sprintf("KIND %q is outside this friend's kinds restriction (%s)", kind, strings.Join(kinds, ","))
 	}
 	return ""

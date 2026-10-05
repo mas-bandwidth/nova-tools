@@ -1,8 +1,8 @@
 package sprint
 
 import (
-	"testing"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
