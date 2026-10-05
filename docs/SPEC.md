@@ -1729,10 +1729,15 @@ with the same bytes, and refuses before writing anything if one has other
 bytes; `--dry-run` writes nothing. It is the tool's only write.
 
 **Findings.** Each finding line carries `match="<words>"`: the words its rule
-matched. **`--json`** prints the run as one JSON object on stdout (`result`,
-`facts` with the closing line's counts, `items` one per finding, skip and
-banner, `more`, `notes`), capped by `--max` the same way; a refusal under
-`--json` is the same object with `status` `refused`.
+matched. For INSTALLATION findings both `match` and sentence `text` are capped
+at `oneline.TailBytes` (500 bytes) inside the scan, so typed lines and `--json`
+items agree and neither can grow unbounded. STANDING findings are not capped
+by this rule: their `match` and `text` are whole in `--json` and `match` is
+whole in the FAIL line. **`--json`** prints the run
+as one JSON object on stdout (`result`, `facts` with the closing line's counts,
+`items` one per finding, skip and banner, `more`, `notes`), capped by `--max`
+the same way; a refusal under `--json` is the same object with `status`
+`refused`.
 
 **`--max <n>`, default 20, `0` for all.** At most n finding lines per CLASS —
 `standing` and `installation` capped separately, so six hundred of the first

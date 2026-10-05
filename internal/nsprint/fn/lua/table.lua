@@ -636,6 +636,13 @@ do
   function T.memberkey(d, id) return d.cfg.member_prefix .. id end
   function T.member(d, id)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
+    -- a member id over the batch's member-id bound is refused before any read,
+    -- naming the bound and the count found, never the id (docs/SPEC-NOVA-TABLE.md,
+    -- the bounds of the batch section; the single-call paths hold it too).
+    do
+      local lim = T.over('member_id_bytes', #id, '')
+      if lim then return nil, nil, lim end
+    end
     local mkey = T.memberkey(d, id)
     local flat = redis.pcall('HGETALL', mkey)
     if type(flat) == 'table' and flat.err then
@@ -855,6 +862,13 @@ do
     local h = {}
     for _, k in ipairs({'label', 'exclude', 'owner'}) do
       if spec[k] and type(spec[k]) ~= 'string' then return nil, T.refuse('ROW', row) end
+      -- a label, exclude or owner over the batch's field-value bound is refused
+      -- before the row is written, naming the bound and the count found
+      -- (docs/SPEC-NOVA-TABLE.md, the bounds of the batch section).
+      if spec[k] then
+        local lim = T.over('field_value_bytes', #spec[k], row)
+        if lim then return nil, lim end
+      end
       if spec[k] and spec[k] ~= '' then h[k] = spec[k] end
     end
     if spec.binds and type(spec.binds) ~= 'table' then return nil, T.refuse('BINDKEY', row) end
@@ -1219,6 +1233,13 @@ do
       local c = T.col(d, col)
       if not c then return nil, T.refuse('NOCOL', row, col) end
       if c.projection ~= 'text' then return nil, T.refuse('NOTTEXT', row, col) end
+      -- a text value over the batch's field-value bound is refused before the
+      -- payload is staged, naming the bound and the count found (docs/
+      -- SPEC-NOVA-TABLE.md, the bounds of the batch section).
+      do
+        local lim = T.over('field_value_bytes', #value, row)
+        if lim then return nil, lim end
+      end
     end
     local columns = T.sortedkeys(values)
     for _, col in ipairs(columns) do
@@ -1646,6 +1667,15 @@ do
   -- Validate every referenced table and every command before publishing the view.
   redis.register_function('ns_view_set', function(keys, args)
     if #args ~= 4 or not T.name(args[1]) then return T.refuse('ARGS', 'view_set') end
+    -- a title or summary over the batch's field-value bound is refused before
+    -- the view is written, naming the bound and the count found (docs/
+    -- SPEC-NOVA-TABLE.md, the bounds of the batch section).
+    do
+      local lim = T.over('field_value_bytes', #args[3], '')
+      if lim then return lim end
+      lim = T.over('field_value_bytes', #args[4], '')
+      if lim then return lim end
+    end
     local names = {}
     for name in string.gmatch(args[2], '[^,]+') do
       local d, err = T.def(name)

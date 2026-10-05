@@ -133,14 +133,14 @@ func TestFindingsClustersTheClassesAtTheBar(t *testing.T) {
 		score("old@landed@5", -48*time.Hour, map[string]float64{"cut_citation": 0.99}),
 		{ID: "r", Decision: ReadName, At: stamp(0), Answers: scoreAnswers(map[string]float64{"defect": 0.9})},
 	}
-	clusters, scored := Findings(ds, at.Add(-time.Hour), 0.5)
+	clusters, scored, _ := FindingsSkipped(ds, at.Add(-time.Hour), 0.5)
 	assert.Equal(t, 4, scored)
 	assert.Equal(t, []Cluster{
 		{Class: "cut_citation", Count: 2, Cards: []string{"a", "b"}},
 		{Class: "stranded_fragment", Count: 1, Cards: []string{"a"}},
 		{Class: Unnamed, Count: 1, Cards: []string{"c"}},
 	}, clusters)
-	none, _ := Findings(ds, at.Add(2*time.Hour), 0.5)
+	none, _, _ := FindingsSkipped(ds, at.Add(2*time.Hour), 0.5)
 	assert.Empty(t, none)
 }
 

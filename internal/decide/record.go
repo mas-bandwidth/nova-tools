@@ -100,6 +100,19 @@ func parse(r io.Reader, path string) ([]Decision, error) {
 		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
 			return nil, fmt.Errorf("%s:%d is not a record line: %w", path, n, err)
 		}
+		count := 0
+		if l.Decision != nil {
+			count++
+		}
+		if l.Outcome != nil {
+			count++
+		}
+		if l.Act != nil {
+			count++
+		}
+		if count > 1 {
+			return nil, fmt.Errorf("%s:%d holds more than one of decision, outcome and act; a line is one record", path, n)
+		}
 		switch {
 		case l.Decision != nil:
 			if _, dup := at[l.Decision.ID]; dup {
