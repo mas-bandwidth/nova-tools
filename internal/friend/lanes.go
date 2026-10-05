@@ -47,9 +47,13 @@ type Card struct {
 	ID, Brief, Outbox string
 }
 
-// Epoch is the sprint epoch the card was delivered at, its directory's <id>~<epoch>.
+// Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md).
 func (c Card) Epoch() string {
-	_, epoch, _ := strings.Cut(filepath.Base(c.Outbox), "~")
+	_, epoch, found := strings.Cut(filepath.Base(c.Outbox), "~")
+	if !found {
+		return "0"
+	}
+	epoch, _, _ = strings.Cut(epoch, ".g")
 	return epoch
 }
 
@@ -78,18 +82,44 @@ func ProgressArgv(friend string, cards []Card) [][]string {
 // Result is the card's RESULT.md, whose presence after a turn is the card done.
 func (c Card) Result() string { return filepath.Join(c.Outbox, "RESULT.md") }
 
-// cardDir is the card's directory under root (inbox or outbox): <id>~<epoch>,
-// the highest epoch when friend sync delivered more than one.
-func cardDir(root, id string) (string, bool) {
+// cardDir selects the exact generation and recorded job when present, otherwise
+// its highest epoch (docs/FRIENDS.md, generation-specific jobs).
+func cardDir(root string, task Task) (string, bool) {
+	gen := task.Gen
+	if gen == 0 {
+		gen = 1
+	}
+	if gen < 1 {
+		return "", false
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return "", false
 	}
 	best, bestEpoch := "", -1
 	for _, e := range entries {
-		name, epoch, ok := strings.Cut(e.Name(), "~")
+		epoch, ok := strings.CutPrefix(e.Name(), task.ID)
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(epoch, "~") {
+			epoch = strings.TrimPrefix(epoch, "~")
+		} else if epoch == "" || strings.HasPrefix(epoch, ".g") {
+			epoch = "0" + epoch
+		} else {
+			continue
+		}
+		epoch, generation, hasGeneration := strings.Cut(epoch, ".g")
+		g := 1
+		if hasGeneration {
+			var err error
+			g, err = strconv.Atoi(generation)
+			if err != nil || g <= 1 {
+				continue
+			}
+		}
 		n, err := strconv.Atoi(epoch)
-		if !ok || name != id || !e.IsDir() || err != nil {
+		if !e.IsDir() || err != nil || n < 0 || g != gen || (task.Job != "" && task.Job != e.Name()) {
 			continue
 		}
 		if n > bestEpoch {
@@ -103,7 +133,7 @@ func cardDir(root, id string) (string, bool) {
 // order) that is queued, delivered (inbox/<id>~<epoch>/BRIEF.md), not done
 // (no outbox/<id>~<epoch>/RESULT.md) and not skipped (held by another lane,
 // or set aside); found is false when there is none.
-func NextCard(dir string, skip func(id string) bool) (c Card, found bool, err error) {
+func NextCard(dir string, skip func(Card) bool) (c Card, found bool, err error) {
 	var q Queue
 	path := filepath.Join(dir, filepath.FromSlash(QueueFile))
 	if _, err := read(path, &q); err != nil {
@@ -112,15 +142,15 @@ func NextCard(dir string, skip func(id string) bool) (c Card, found bool, err er
 		}
 	}
 	for _, t := range q.Tasks {
-		if (t.State != "queued" && t.State != "") || skip(t.ID) {
+		if t.State != "queued" && t.State != "" {
 			continue
 		}
-		base, ok := cardDir(filepath.Join(dir, "inbox"), t.ID)
+		base, ok := cardDir(filepath.Join(dir, "inbox"), t)
 		if !ok {
 			continue
 		}
 		c := Card{ID: t.ID, Brief: filepath.Join(dir, "inbox", base, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", base)}
-		if !exists(c.Brief) || exists(c.Result()) {
+		if skip(c) || !exists(c.Brief) || exists(c.Result()) {
 			continue
 		}
 		return c, true, nil
@@ -268,11 +298,13 @@ func (l *loop) laneStep(now time.Time, width int) {
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
 	lh := d.Deliver.(LaneHarness)
-	held := func(id string) bool {
-		if s.given[id] {
+	held := func(c Card) bool {
+		id := filepath.Base(c.Outbox)
+		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
+		if s.given[id] || (legacy && s.given[c.ID]) {
 			return true
 		}
-		return slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.ID == id })
+		return slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox })
 	}
 	for _, ln := range s.lanes {
 		if ln.t != nil || ln.opening || ln.n > width {
@@ -381,8 +413,9 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q", ln.attempts, CardTurns, why))
-	s.given[card.ID] = true
-	s.state.GivenUp = append(s.state.GivenUp, card.ID)
+	job := filepath.Base(card.Outbox)
+	s.given[job] = true
+	s.state.GivenUp = append(s.state.GivenUp, job)
 	l.saveLanes(now)
 	ln.card, ln.attempts = nil, 0
 	l.tell(fmt.Sprintf("friend %s: card %s not finished after %d turns (lane %d): %s", d.Friend, card.ID, CardTurns, ln.n, oneLine(why, 200)),

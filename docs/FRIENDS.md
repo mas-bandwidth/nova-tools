@@ -34,6 +34,23 @@ never from her daemon's beat alone, and shows the evidence beside it
 status=down why="no session answer 12m" evidence="harness unknown; no session answer 12m; no limit; 2 undelivered; last result 40m exit=0"
 ```
 
+## Generation-specific jobs
+
+The queue file, `inbox/QUEUE.json`, records each task's `id`, `state`, `gen`
+(assignment generation) and `job` (the delivered directory name). A job is
+`<id>~<epoch>` at generation 1 and `<id>~<epoch>.g<gen>` at later generations.
+Epoch zero omits `~0`, matching the delivered job name. A legacy task with no
+`gen` means generation 1; with no `job`, the lane selects the highest epoch
+of that generation. It never falls back to another generation. With `job`
+present, the lane requires that exact directory and matching generation.
+
+A completed old job does not finish a new generation or epoch: queue sync
+resets its state and clears its old deliverable for the new assignment.
+Completion of the same job is preserved. Lane reservations and set-aside records
+name the job, so an older generation cannot suppress or reserve a newer one. Legacy
+set-aside records containing only a card id apply to generation 1. Progress passes only the numeric
+sprint epoch, without the generation suffix.
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is
