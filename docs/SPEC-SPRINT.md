@@ -2068,6 +2068,19 @@ id (`--op`) returns the original result, with no second counter or notification.
   asks the readers its tier needs at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
   With no pass at the head it is failed work for the coordinator, as before.
 
+### reader-ignores-attribution.w5
+
+- Attribution is never a finding and never decides a verdict. The By: line, the
+  Co-Authored-By trailer and the model or harness a worker names are its own
+  honest account of what ran, which may differ from what a brief guessed, so a
+  reader's packet carries that one standing sentence. The verb holds it too:
+  `read --broken` whose finding is attribution-only (every sentence is about the
+  trailer, the By: line, the model or harness named, or a request to amend them;
+  `sprint.AttributionOnly`) is refused, `read REFUSED: attribution is never a
+  finding (docs/SPEC-SPRINT.md); read --ok, or name the defect in the work`,
+  and nothing is written; a finding with a real defect and an attribution remark
+  passes (`TestAttributionOnlyFindingsNeverBounce`).
+
 ## 7. Merging
 
 1. In work order, never random: the head of the stream's queued cell first.
