@@ -935,6 +935,7 @@ nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] |
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint backup --dir <dir> [--keep <n>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint fleet beat <member> [--load <percent>]
 nova-sprint fleet up <member> [--width <n>]
@@ -990,6 +991,19 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### The sprint backup
+
+`nova-sprint backup --dir <dir> [--keep <n>]` writes the store to a checksummed
+file in `<dir>`, restores the file into a twin and compares its counts with the
+store's, and scans the file for credentials (private keys, age keys, cloud and
+GitHub tokens, API keys, bearer headers, passwords in URLs; the kind and count
+are printed, never the value). A copy that fails a step is removed and the older
+backups stay; the directory is pruned to `--keep` (default 7) once the new copy
+passes. It prints `BACKUP OK file=... sha256=... keys=... cards=... restored=twin
+compared=counts secrets=none` and exits 0, or `nova-sprint backup FAILED: ...`
+and exits 1. On a Redis it runs on the store's host. Contract:
+[SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).
 
 ### A card re-cut as its twin
 
