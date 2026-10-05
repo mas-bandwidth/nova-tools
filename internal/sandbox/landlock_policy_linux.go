@@ -64,13 +64,9 @@ func LandlockPolicyText(p *Policy) (string, error) {
 	for _, r := range p.ReadsNoExec {
 		fmt.Fprintf(&b, "read-noexec=%s\n", r)
 	}
-	// A write outside the job dir, its tmp and the cwd carries no REMOVE rights, and says so.
+	// Every write root carries the remove rights with the write ones (Policy.DeletesIn).
 	for _, w := range writePaths(p) {
-		if p.DeletesIn(w) {
-			fmt.Fprintf(&b, "write=%s\n", w)
-		} else {
-			fmt.Fprintf(&b, "write-nodelete=%s\n", w)
-		}
+		fmt.Fprintf(&b, "write=%s\n", w)
 	}
 	// The two writable device files of the roots table. They are FILES, so they
 	// are their own grant, not a recursive write beneath a directory.
@@ -84,13 +80,12 @@ func LandlockPolicyText(p *Policy) (string, error) {
 	return b.String(), nil
 }
 
-// writeRuleMask is the mask one write-set directory gets: the whole handled set beneath
-// the job dir, its tmp and the cwd (Policy.DeletesIn), and the same set minus REMOVE_FILE
-// and REMOVE_DIR everywhere else. Landlock checks a remove right on the PARENT of the entry removed or renamed
-// away, so withholding both is what refuses unlink, rmdir and rename-away beneath a
-// shared cache or a config dir while writing there still works. Rules are a union, so
-// a job dir nested under such a write keeps its remove rights from its own rule
-// (docs/SPEC-SANDBOX.md, "deletes-only-in-the-job-dir-p.w1").
+// writeRuleMask is the mask one write-set directory gets: the whole handled set,
+// REMOVE_FILE and REMOVE_DIR included, beneath every write root (Policy.DeletesIn), and
+// the same set minus those two for a directory under none, which addRules never passes.
+// Landlock checks a remove right on the PARENT of the entry removed or renamed away, so a
+// write root without them refuses unlink, rmdir and rename-away -- SQLite's rollback
+// journal among them (docs/SPEC-SANDBOX.md, "wall-deletes-in-every-write-root.w1").
 func writeRuleMask(p *Policy, dir string, abi int) uint64 {
 	if p.DeletesIn(dir) {
 		return writeSubset(abi)

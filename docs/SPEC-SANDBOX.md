@@ -405,39 +405,34 @@ The test requirements are listed under **Tests this spec demands**.
     cache environment variables; `nova-sandbox` derives no cache path from task
     text, creates no default cache, and supplies no cache environment variable.
 
-### deletes-only-in-the-job-dir-p.w1 — deletes only in the job's own write roots
+### wall-deletes-in-every-write-root.w1 — deletes in every write root
 
-Two children ran `rm -rf` on a variable path, and the wall let it through: every
-`--write` carried the remove rights. The wall refuses unlink, rmdir and rename-away
-of any path outside the job's own write roots, even where writing is allowed: the
-**job dir** (the first `--write`), its **tmp** (`--tmp`, or the default under the job
-dir) and the **working directory** (`--cwd`, which is always inside the write set: the
-checkout a step was given to write, where `git commit` renames a new index over
-`.git/index`). A shared cache (rule 17) or a config dir may be written, never deleted
-from, unless it is under one of those three. `Policy.DeletesIn` is the one test of
-"the job's own".
+What the wall lets a command create it lets it remove: unlink, rmdir and
+rename-away are allowed beneath every write root — each `--write` (the job dir, the
+data home, a shared cache), the tmp (`--tmp`) and the working directory (`--cwd`).
+`Policy.DeletesIn` is the one test, and it is true for every path under any of them.
 
-- **Linux.** A write-set directory outside all three gets the write mask minus
-  `REMOVE_FILE` and `REMOVE_DIR` (`writeRuleMask`). Landlock checks a remove right
-  on the parent of the entry removed or renamed away, so this refuses all three,
-  and replacing an existing file by rename is refused there for the same reason.
-  Rules are a union, and the cwd is always its own rule, so a job dir or a cwd nested
-  under such a write keeps its rights. The `policy` verb prints such a directory as
-  `write-nodelete=` instead of `write=`.
-- **macOS.** After every write grant in the profile (HOME's included) comes one
-  `(deny file-write-unlink (subpath (param "WRITEn")))` for each such `--write`,
-  then `(allow file-write-unlink ...)` for `WRITE0`, for `JOBTMP` when the tmp is
-  outside it, and for `JOBCWD` when the cwd is outside both, because the last
-  matching rule wins. Whether macOS's `file-write-unlink` also covers rename-away has
-  not been measured.
-- **Checked by.** `TestTheWallRefusesDeletesOutsideTheJob`, linux: under the wall,
-  with an outside directory as a second `--write`, `rm -rf` of it, `rm` of a file in
-  it and `mv` of a file out of it are each refused and the files are still there; a
-  write there and a delete in the job dir succeed. `TestAStepsGitCommitInsideItsWallSucceeds`,
-  linux: a step's wall (its tmp the first `--write`, its checkout the second and the
-  cwd, a shared directory a third) lets `git commit` in the checkout succeed and still
-  refuses an `rm` in the shared directory. `TestWritesOutsideTheJobCarryNoRemoveRights`
-  checks the masks, the printed ruleset and the profile's order
+This replaces deletes-only-in-the-job-dir-p.w1, which withheld the remove rights from
+every `--write` but the first, the tmp and (from c1f14be710) the cwd. The member's wall
+(`--write <slot>/jobs/<card> --write <slot>/data --write <slot>/tmp/<card> --write
+<root>/cache`, `HOME=<slot>/data`) left the data home without them, and opencode's
+SQLite database in `$HOME/opencode` could not unlink its rollback journal at a commit:
+on 2026-10-05 every child ended NATIVE INCOMPLETE in under a second on `disk I/O error`.
+
+- **Linux.** Every write-set directory gets the whole handled set, `REMOVE_FILE` and
+  `REMOVE_DIR` included (`writeRuleMask`). Landlock checks a remove right on the parent
+  of the entry removed or renamed away. The `policy` verb prints each as `write=`.
+- **macOS.** Each `--write`'s `file-write*` grant carries `file-write-unlink`; the
+  profile denies none.
+- **Checked by.** `TestTheWallAllowsDeletesInEveryWriteRoot`, linux: under the member's
+  wall a file is created and unlinked in the data home and in the shared cache (neither
+  the cwd nor the tmp), a file is renamed within the data home and a directory is
+  `rm -rf`'d in the cache, each with status 0. `TestTheWallLetsSQLiteCommitInTheDataHome`
+  (`cmd/nova-sandbox`, linux): the real tool with the member's flags runs `sqlite3` on a
+  database in `$HOME/opencode` in rollback-journal mode, both transactions commit and
+  no `-journal` is left. `TestAStepsGitCommitInsideItsWallSucceeds` keeps a step's
+  `git commit` in its checkout green, and `TestEveryWriteRootCarriesTheRemoveRights`
+  checks the masks, the printed ruleset and the profile
   (`internal/sandbox/delete_outside_test.go`).
 
 ## The verbs
