@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/stretchr/testify/assert"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,4 +137,18 @@ func TestProfilesTreatsAnOversizeCardFileAsUnreadable(t *testing.T) {
 	r2 := invoke(t, "profiles", "--swarm-root", root2)
 	wantExit(t, r2, 0)
 	wantContains(t, r2.stdout, "PROFILES OK models=1 cards=1 overshoot=0")
+}
+
+// TestMedianOutDoesNotOverflowOnTwoLargeCounts verifies that medianOut handles overflow correctly
+// when computing the median of two large int64 values near MaxInt64.
+func TestMedianOutDoesNotOverflowOnTwoLargeCounts(t *testing.T) {
+	t.Parallel()
+
+	// Two MaxInt64 values should yield MaxInt64, not -1 from overflow
+	assert.Equal(t, "9223372036854775807", medianOut([]int64{math.MaxInt64, math.MaxInt64}))
+	// Standard cases
+	assert.Equal(t, "1", medianOut([]int64{1, 2}))
+	assert.Equal(t, "2", medianOut([]int64{1, 3}))
+	assert.Equal(t, "5", medianOut([]int64{5}))
+	assert.Equal(t, "-", medianOut([]int64{}))
 }

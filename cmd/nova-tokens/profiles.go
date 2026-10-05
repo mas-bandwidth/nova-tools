@@ -129,7 +129,8 @@ func medianOut(outs []int64) string {
 	if n%2 == 1 {
 		return strconv.FormatInt(outs[n/2], 10)
 	}
-	return strconv.FormatInt((outs[n/2-1]+outs[n/2])/2, 10)
+	lo, hi := outs[n/2-1], outs[n/2]
+	return strconv.FormatInt(lo+(hi-lo)/2, 10)
 }
 
 // cmdProfiles parses the `profiles` verb's one flag and folds the root.
