@@ -319,6 +319,27 @@ dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
 
+**A card pinned to a friend who is not up** (2026-10-04: 212 cards sat pinned
+to executors that were down or held, 65 of them ready, while the fleet idled,
+and the coordinator un-pinned them by hand; `sprint.friendPins`, run by the
+friend stall part of the tick). A card for any friend (`WHO: friend`) already
+goes to the next friend up with room. A ready card whose WHO line names a
+friend who is down, held or not on the roster waits for her, and is told: the
+first tick that finds cards waiting for her while she is not up stamps
+`friend_pin_since:<name>` on the fleet table, and `FriendPinWaitAfter` (30
+minutes) later the tick raises ONE judgment for her, `cards wait for a friend
+who is not up`, naming her, her status, the wait and every card that waits for
+her (its primaries), with the decisions wait for her (`friend up`), brief them
+for another friend or the fleet, or drop; `friend_pin_judged:<name>` stamps it
+so no later tick raises it again while the wait lasts. A card of a held stream
+waits for unhold, not for her, and is not counted. Both stamps clear the first
+tick she is up (room or not) or no card waits for her, and a later wait counts
+afresh (`TestACardPinnedToADownFriendFallsToTheNextExecutor`). A WHO line
+naming a friend is a pin here; dealing it past her to the next friend up and
+then the fleet, with `WHO: only friend <name>` as the one pin that waits, is the
+WHO preference (sprint/port-friends-first-dealing), and once it lands this
+judgment is narrowed to the `only` pins (`pinnedTo`).
+
 **A friend's card taken back** (the owner, 2026-10-04, on cards dealt to a
 friend who would not start them, which could only be dropped and added again:
 "sounds bad, we should fix this"; `sprint.FriendTake`). `friend take <friend>

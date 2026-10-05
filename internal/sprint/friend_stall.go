@@ -351,5 +351,7 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 
+	// cards pinned to a friend who is not up: one judgment per friend (friend_pin.go)
+	friendPins(s, r, &p, write)
 	return p, 0
 }
