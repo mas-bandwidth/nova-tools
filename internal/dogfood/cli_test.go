@@ -92,7 +92,8 @@ func TestParseCLIRefusesTheShapesThatAreNotDeclarations(t *testing.T) {
 		case "nova-fixture lift lockdown REFUSED", "nova-fixture lift":
 			require.Fail(t, fmt.Sprintf("the description after a flagless synopsis leaked into the verb: %q", v.Verb))
 		}
-		require.False(t, strings.HasPrefix(v.Verb, "-") || strings.Contains(v.Verb, "<"), "a flag or a placeholder became a verb: %q", v.Verb)
+		require.False(t, strings.HasPrefix(v.Verb, "-"), "a flag or a placeholder became a verb: %q", v.Verb)
+		require.False(t, strings.Contains(v.Verb, "<"), "a flag or a placeholder became a verb: %q", v.Verb)
 	}
 }
 

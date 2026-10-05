@@ -162,7 +162,7 @@ func TestTheServerRunsWorkersVerbsOnly(t *testing.T) {
 	log := func() string { return r.boss("nova-sprint log") }
 	before := log()
 	for name, argv := range map[string][]string{
-		"a coordinator's verb":                      {"add", "--stream", "s1", "--count", "1"},
+		"a coordinator's verb":                      {"add", "--stream", "s1", "--count", "1", "--one"},
 		"clear":                                     {"clear", "--confirm", "sprint"},
 		"another fleet verb":                        {"fleet", "up", "m1", "--width", "64"},
 		"no verb at all":                            {},
@@ -534,7 +534,7 @@ func TestTheServerDoesNotListenOnEveryNetwork(t *testing.T) {
 // coordinator got no answer at all while the server lived on.
 func TestBriefWithRulesThroughTheServer(t *testing.T) {
 	t.Parallel()
-	r := newServerRig(t, "init --readers reader-a,reader-b --members m1", "add --stream a --count 1 --brief-file "+writeBrief(t, "the old work"))
+	r := newServerRig(t, "init --readers reader-a,reader-b --members m1", "add --stream a --count 1 --one --brief-file "+writeBrief(t, "the old work"))
 	srv := httptest.NewServer(localHandler{r.a})
 	t.Cleanup(srv.Close)
 	dir := t.TempDir()
@@ -547,4 +547,30 @@ func TestBriefWithRulesThroughTheServer(t *testing.T) {
 	require.Len(t, res, 1)
 	assert.Equal(t, 0, res[0].Code, "%s%s", res[0].Stdout, res[0].Stderr)
 	assert.Contains(t, res[0].Stdout, "a-1 brief replaced")
+}
+
+// A progress stamp sent to the server is taken from the card's holder alone
+// (docs/SPEC-SPRINT.md section 8, the rules table's row late): another member's
+// is refused and writes nothing, the holder's stamps the server's time, and one
+// with no epoch is refused as every worker's write is.
+func TestTheServerTakesAProgressStampFromTheHolderAlone(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2,m2:2", "nova-sprint add --stream s1 --count 6", "nova-sprint start", "nova-sprint tick", "nova-sprint tick")
+	cards := taken(t, r.one("take", "--as", "m1", "--limit", "1", "--epoch", "0", "--json"))
+	require.Len(t, cards, 1)
+	primary, _, _ := strings.Cut(cards[0], ".w")
+	fields := func() string { return r.boss("nova-sprint card " + primary + " --fields") }
+
+	other := r.one("progress", "--as", "m2", cards[0], "--epoch", "0")
+	assert.Equal(t, 1, other.Code, other.Stdout+other.Stderr)
+	assert.Contains(t, other.Stdout+other.Stderr, "only its holder stamps its progress")
+	assert.NotContains(t, fields(), " progress=")
+
+	none := r.one("progress", "--as", "m1", cards[0])
+	assert.Equal(t, 2, none.Code, none.Stderr)
+	assert.NotContains(t, fields(), " progress=")
+
+	mine := r.one("progress", "--as", "m1", cards[0], "--epoch", "0")
+	require.Equal(t, 0, mine.Code, mine.Stdout+mine.Stderr)
+	assert.Contains(t, fields(), " progress=")
 }

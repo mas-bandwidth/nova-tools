@@ -238,7 +238,7 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 
 		if slices.Contains(fileRecipients, seatPubKey) {
 			mineCount++
-			_, decErr := DecryptFile(sopsPath, keyPath, filePath)
+			_, decErr := DecryptFile(nil, sopsPath, keyPath, filePath)
 			if decErr != nil {
 				failures = append(failures, CheckFailure{
 					Kind:   "decrypt-failed",
@@ -248,7 +248,7 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 			}
 		} else {
 			foreignCount++
-			_, decErr := DecryptFile(sopsPath, keyPath, filePath)
+			_, decErr := DecryptFile(nil, sopsPath, keyPath, filePath)
 			if decErr == nil {
 				failures = append(failures, CheckFailure{
 					Kind:   "foreign-openable",
@@ -471,7 +471,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, err
 	}
 
-	if _, err := CheckSopsVersion(sopsPath); err != nil {
+	if _, err := CheckSopsVersion(nil, sopsPath); err != nil {
 		return "", nil, nil, "", 2, err
 	}
 

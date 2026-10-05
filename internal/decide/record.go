@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
+	"slices"
 
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
@@ -72,8 +74,9 @@ type ConflictError struct{ What string }
 func (e *ConflictError) Error() string { return e.What }
 
 // Load reads the record; a record that does not exist yet is empty. A line
-// that does not parse, a decision id seen twice, or an outcome for an id with
-// no decision before it is an error naming the line.
+// that does not parse, a decision id seen twice, an outcome for an id with
+// no decision before it, or an answer whose probability is outside [0, 1]
+// or not a number, is an error naming the line (SPEC-NOVA-DECIDE section 4).
 func Load(path string) ([]Decision, error) {
 	f, err := lockedfile.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -102,6 +105,9 @@ func parse(r io.Reader, path string) ([]Decision, error) {
 			if _, dup := at[l.Decision.ID]; dup {
 				return nil, fmt.Errorf("%s:%d records decision %s a second time", path, n, l.Decision.ID)
 			}
+			if err := recordedProbabilities(path, n, l.Decision.Answers); err != nil {
+				return nil, err
+			}
 			at[l.Decision.ID] = len(out)
 			out = append(out, *l.Decision)
 		case l.Outcome != nil:
@@ -125,6 +131,34 @@ func parse(r io.Reader, path string) ([]Decision, error) {
 		}
 	}
 	return out, sc.Err()
+}
+
+// recordedProbabilities refuses an answer whose probability is outside [0, 1]
+// or not a number. The record is the calibration's input, so a hand-edited
+// line does not load (SPEC-NOVA-DECIDE section 4).
+func recordedProbabilities(path string, line int, answers map[string]Answer) error {
+	names := make([]string, 0, len(answers))
+	for name := range answers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		opts := make([]string, 0, len(answers[name].P))
+		for opt := range answers[name].P {
+			opts = append(opts, opt)
+		}
+		slices.Sort(opts)
+		for _, opt := range opts {
+			v := answers[name].P[opt]
+			if math.IsNaN(v) {
+				return fmt.Errorf("%s:%d: question %s gives %s a probability that is not a number", path, line, name, opt)
+			}
+			if v < 0 || v > 1 {
+				return fmt.Errorf("%s:%d: question %s gives %s the probability %v, outside [0, 1]", path, line, name, opt, v)
+			}
+		}
+	}
+	return nil
 }
 
 // Find is the decision with id, or nil.

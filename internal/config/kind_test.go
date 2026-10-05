@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width", scopedGot97, "friend fields %s, want slots,tiers,roles,width", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -107,12 +107,12 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		if !assert.Equal(t, "builder,may-hold,reader", strings.Join(FriendRoles, ","), assertionMsg98...) {
 			return
 		}
-		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
+		assert.Equal(t, "flash,frontier,heavy,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar and the brief bar", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar, the brief bar and the rules turned off", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 11, assertionMsg100...)
+	require.Len(t, sprint.Fields, 12, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -261,7 +261,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.True(t, fleet.Singleton, assertionMsg144...)
 	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
 	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
-	require.Equal(t, "store,coordinator,redis_port,pg_dsn", scopedGot169, "fleet fields %s", scopedGot169)
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn,bus", scopedGot169, "fleet fields %s", scopedGot169)
 	for _, name := range []string{"store", "coordinator"} {
 		f, ok := fleet.Field(name)
 		require.True(t, ok)
@@ -359,7 +359,7 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 		{field(friend, "roles"), "king", "", "want a comma list of builder, may-hold, reader"},
 		{field(friend, "tiers"), "pro,frontier", "frontier,pro", ""},
 		{field(friend, "tiers"), "a=b", "", "holds no ="},
-		{field(friend, "tiers"), "ultra", "", "want a comma list of flash, frontier, pro"},
+		{field(friend, "tiers"), "ultra", "", "want a comma list of flash, frontier, heavy, pro"},
 		{field(sprint, "coordinator"), "stella", "stella", ""},
 		{field(sprint, "coordinator"), "", "", ""},
 		{field(sprint, "coordinator"), "Stella", "", "lower-case"},
@@ -546,4 +546,42 @@ func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
 	assert.Equal(t, TypeDecimal, bar.Type)
 	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "0.9"}}))
 	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
+}
+
+// A friend row's mode is batch unless it says one-shot: FriendMode reads a row
+// written before migration 0030 (no field) as the default.
+func TestAFriendRowsModeDefaultsToBatch(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, FriendModeBatch, FriendMode(Row{Name: "amy", Fields: map[string]string{}}))
+	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "one-shot"}}))
+	assert.Equal(t, []string{"batch", "one-shot"}, FriendModes)
+}
+
+func TestCheckFleetRefusesASpacePaddedPasswordKey(t *testing.T) {
+	t.Parallel()
+
+	fleet, _ := Lookup(KindFleet)
+
+	// Space before "password" key
+	row := Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova? password=x"}}
+	err := fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries a password")
+
+	// Space after "password" key
+	row = Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova?password =x"}}
+	err = fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries a password")
+
+	// Un-padded password should also be refused
+	row = Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova?password=x"}}
+	err = fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries a password")
+
+	// No password should be accepted
+	row = Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova"}}
+	err = fleet.Check(row)
+	require.NoError(t, err)
 }

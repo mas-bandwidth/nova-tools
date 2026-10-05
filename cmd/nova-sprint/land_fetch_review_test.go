@@ -52,7 +52,7 @@ func TestLandLandsAHeadBehindItsBranchTipFromARemoteThatServesOnlyAdvertisedRefs
 	r := newLandRig(t)
 	r.env = append(r.env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=protocol.version", "GIT_CONFIG_VALUE_0=0")
 	r.a.gitEnv = r.env
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	heads := map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n")}
 	r.queued(heads, "s1-1")
 	// the branch moves on past the head the card finished at

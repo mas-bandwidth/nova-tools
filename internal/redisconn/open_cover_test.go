@@ -47,7 +47,7 @@ func TestOpenCoverRefusesWhatResolveRefuses(t *testing.T) {
 // no connection.
 func TestOpenCoverFailsACallerWhoCancelled(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	conn, err := Open(ctx, Options{Addr: "127.0.0.1:1"}, nothing)
 	assert.Nil(t, conn, "Open = %v; want no connection", conn)
@@ -78,7 +78,7 @@ func TestOpenCoverNetDialRefusesBeforeItConnects(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			conn, err := netDial(ctx, c.network, c.addr(t))
 			assert.Nil(t, conn, "%s: netDial = %v; want no connection", c.name, conn)

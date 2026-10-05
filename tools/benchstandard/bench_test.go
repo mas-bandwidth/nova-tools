@@ -31,7 +31,6 @@ type fakeHost struct {
 	environ    []string
 	sourced    map[string]string
 	sourceSaid string // what sourcing the sdk env file printed
-	sourceEr   error
 	answers    []answer
 	cgroups    map[string]string
 	ran        []string // every process started: "base arg arg"
@@ -45,7 +44,7 @@ func (f *fakeHost) OS() string        { return f.osName }
 func (f *fakeHost) Environ() []string { return f.environ }
 
 func (f *fakeHost) SourceEnv(file string, environ []string) (map[string]string, string, error) {
-	return f.sourced, f.sourceSaid, f.sourceEr
+	return f.sourced, f.sourceSaid, nil
 }
 
 func (f *fakeHost) ProcCgroup(pid string) (string, bool) {
@@ -114,7 +113,7 @@ func (f *fakeHost) on(base string, prefix []string, res runResult) {
 
 // reply is on, but ahead of every answer already scripted.
 func (f *fakeHost) reply(base string, prefix []string, res runResult) {
-	f.answers = append([]answer{{match: matchBase(base, prefix), res: res}}, f.answers...)
+	f.first(matchBase(base, prefix), res)
 }
 
 // first scripts a reply for any process the function matches, ahead of every
@@ -208,13 +207,8 @@ func (b *bench) sdkTool(name, ver string) string {
 // setEnv sets one variable of the process environment, replacing an earlier one.
 func (b *bench) setEnv(kv string) {
 	k, _, _ := strings.Cut(kv, "=")
-	kept := b.h.environ[:0:0]
-	for _, e := range b.h.environ {
-		if !strings.HasPrefix(e, k+"=") {
-			kept = append(kept, e)
-		}
-	}
-	b.h.environ = append(kept, kv)
+	b.unsetEnv(k)
+	b.h.environ = append(b.h.environ, kv)
 }
 
 func (b *bench) unsetEnv(k string) {
@@ -297,7 +291,6 @@ func (b *bench) standard(args ...string) (int, string) {
 	return code, buf.String()
 }
 
-// drifts is the DRIFT lines of an output.
 func drifts(output string) []string {
 	var lines []string
 	for _, l := range strings.Split(output, "\n") {

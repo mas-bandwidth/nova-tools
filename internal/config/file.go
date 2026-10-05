@@ -83,6 +83,19 @@ func OpenFile(path string) (*FileStore, error) {
 		}
 		f.rows[kind] = map[string]Row{}
 		for name, r := range rows {
+			// the kind's row-name pattern (ValidateName in kind.go),
+			// refused at add (Kind.NewRow), is refused at open too, so a
+			// hand-edited file holds no row the tool itself refuses to add
+			// (security#69 finding 2); both halves of the row's name are
+			// checked, the map key it is filed under and the row's own
+			// Name, the half list, apply and the Redis keys read; the rows
+			// a migration makes (the fleet and sprint singletons, the
+			// tiers) match the pattern
+			for _, n := range []string{name, r.Name} {
+				if err := ValidateName(n); err != nil {
+					return nil, fmt.Errorf("--file %s holds a %s row named %q, which is not a row name", path, kind, n)
+				}
+			}
 			// a field a later migration added reads as its default, as the column would
 			for _, fl := range k.Fields {
 				if _, has := r.Fields[fl.Name]; !has {
@@ -118,10 +131,10 @@ func (f *FileStore) save() error {
 	if err != nil {
 		return err
 	}
-	f.Mem.mu.Lock()
+	f.mu.Lock()
 	st := fileState{Schema: len(all), Rows: f.rows, History: f.history}
 	raw, err := json.MarshalIndent(st, "", "  ")
-	f.Mem.mu.Unlock()
+	f.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("--file %s: encode: %w", f.path, err)
 	}
@@ -165,8 +178,8 @@ func (f *FileStore) List(ctx context.Context, kind string) ([]Row, error) {
 // staged keeps a write private until save replaces the file: a failed
 // encode, write or rename leaves both the open store and its file unchanged.
 func (f *FileStore) staged() *FileStore {
-	f.Mem.mu.Lock()
-	defer f.Mem.mu.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	m := &Mem{rows: map[string]map[string]Row{}, Now: f.Now, history: append([]Change(nil), f.history...)}
 	for kind, rows := range f.rows {
 		m.rows[kind] = map[string]Row{}

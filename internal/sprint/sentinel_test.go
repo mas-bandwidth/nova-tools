@@ -62,7 +62,7 @@ func TestASentinelIsAStopTheCoordinatorReleases(t *testing.T) {
 	p := release(w, "looked", "stop")
 	require.Empty(t, p.Units, "release before reached: %+v", p)
 	require.Len(t, p.Refused, 1, "release before reached: %+v", p)
-	require.Equal(t, "not reached: it waits for s1-1 (ready), s1-2 (ready), s1-3 (ready), s1-4 (ready), s1-5 (ready)", p.Refused[0].Why, "release before reached: %+v", p)
+	require.Equal(t, "not reached: it waits for s1-1 (ready); release lands a sentinel whose waits have each landed, been dropped, or are in flight (taken, in review or merging)", p.Refused[0].Why, "release before reached: %+v", p)
 	accepted(w, "s1-1", "s1-2", "s1-3", "s1-4", "s1-5")
 	for i := 1; i <= 4; i++ {
 		p := mergeOne(w, "s1")

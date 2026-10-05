@@ -1,16 +1,14 @@
 package secrets
 
 import (
-	"bytes"
-	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 const MinSopsVersion = "3.13.3"
@@ -19,16 +17,36 @@ const MinAgeKeygenVersion = "1.3.2"
 var sopsVersionRegex = regexp.MustCompile(`^sops (\d+)\.(\d+)\.(\d+)`)
 var ageKeygenVersionRegex = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)`)
 
+// runOr is the one seam every helper process runs through: the scripted fake a verb
+// supplies, or the real child. The fake travels as a field of the verb's options (or a
+// parameter), never as a package variable, so no test can leave one armed for another.
+func runOr(run execCommand) execCommand {
+	if run != nil {
+		return run
+	}
+	return realExecCommand
+}
+
+// exitCoder is the exit code of a child error: an *exec.ExitError from the real runner,
+// or any error carrying ExitCode() from a scripted fake whose codes are the real tool's.
+type exitCoder interface{ ExitCode() int }
+
+// exitCodeOf reads a child error's exit code, or def when it carries none.
+func exitCodeOf(err error, def int) int {
+	var ec exitCoder
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	return def
+}
+
 // CheckSopsVersion probes the sops binary with --disable-version-check to prevent network calls.
-func CheckSopsVersion(sopsPath string) (string, error) {
+func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 	if !filepathIsExecutable(sopsPath) {
 		return "", fmt.Errorf("sops binary %s is absent or not executable; run: brew install sops", sopsPath)
 	}
 
-	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sopsPath, "--version", "--disable-version-check")
-	defer cancel()
-	cmd.Env = []string{"PATH=/usr/bin:/bin"} // Isolated environment with no proxies or egress helpers
-	out, err := cmd.Output()
+	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", sopsPath, "--version", "--disable-version-check")
 	if err != nil {
 		return "", fmt.Errorf("sops version probe failed: %w", err)
 	}
@@ -55,15 +73,12 @@ func CheckSopsVersion(sopsPath string) (string, error) {
 }
 
 // CheckAgeKeygenVersion probes the age-keygen binary.
-func CheckAgeKeygenVersion(ageKeygenPath string) (string, error) {
+func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error) {
 	if !filepathIsExecutable(ageKeygenPath) {
 		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: brew install age", ageKeygenPath)
 	}
 
-	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, ageKeygenPath, "--version")
-	defer cancel()
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	out, err := cmd.Output()
+	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", ageKeygenPath, "--version")
 	if err != nil {
 		return "", fmt.Errorf("age-keygen version probe failed: %w", err)
 	}
@@ -99,15 +114,12 @@ func filepathIsExecutable(path string) bool {
 // DecryptFile invokes sops -d on a file using an isolated environment.
 // It sets SOPS_AGE_KEY_FILE to keyPath, strips all other SOPS_* variables,
 // and sets HOME and XDG_CONFIG_HOME to an empty temporary directory.
-func DecryptFile(sopsPath, keyPath, filePath string) ([]byte, error) {
+func DecryptFile(run execCommand, sopsPath, keyPath, filePath string) ([]byte, error) {
 	tmpDir, err := os.MkdirTemp("", "nova-secrets-sops-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
-
-	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sopsPath, "-d", filePath)
-	defer cancel()
+	defer safepath.RemoveUnder(os.TempDir(), tmpDir)
 
 	// Build isolated environment: do not inherit caller's AWS_*, VAULT_*, GNUPGHOME, etc.
 	cleanEnv := []string{
@@ -122,21 +134,13 @@ func DecryptFile(sopsPath, keyPath, filePath string) ([]byte, error) {
 	if sysroot := os.Getenv("SYSTEMROOT"); sysroot != "" {
 		cleanEnv = append(cleanEnv, "SYSTEMROOT="+sysroot)
 	}
-	cmd.Env = cleanEnv
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
-	err = cmd.Run()
+	out, err := runOr(run)(nil, cleanEnv, "", sopsPath, "-d", filePath)
 	if err != nil {
-		exitCode := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
+		exitCode := exitCodeOf(err, 1)
 		// Sanitize sops error: do NOT pass raw stderr through
 		return nil, fmt.Errorf("sops failed: exit %d (transcript withheld: run 'sops -d %s' to inspect)", exitCode, filePath)
 	}
 
-	return stdoutBuf.Bytes(), nil
+	return out, nil
 }

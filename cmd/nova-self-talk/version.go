@@ -22,11 +22,19 @@ var version string
 // cmdVersion prints the one line. It takes no flags and no arguments: there is no
 // --short, no --json and no --long, because a second output shape is a second thing to
 // agree about and this verb exists to end an argument rather than to start one.
+// The stamp is the package var a release writes with -ldflags, which this passes
+// through (docs/STANDARD.md section 8).
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	return cmdVersionWith(args, stdout, stderr, version)
+}
+
+// cmdVersionWith prints the one line for stamp. A test passes its own stamp
+// instead of writing the package var (docs/STANDARD.md section 8).
+func cmdVersionWith(args []string, stdout, stderr io.Writer, stamp string) int {
 	if len(args) > 0 {
 		fmt.Fprintf(stderr, "nova-self-talk version REFUSED: takes no flags and no arguments, got %d; run: nova-self-talk version -h\n", len(args))
 		return 2
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-self-talk", version))
+	fmt.Fprintln(stdout, buildinfo.Line("nova-self-talk", stamp))
 	return 0
 }
