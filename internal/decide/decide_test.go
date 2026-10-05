@@ -265,6 +265,26 @@ func TestLoadNamesTheBadLine(t *testing.T) {
 	}
 }
 
+// A line holding more than one of decision, outcome, and act is refused.
+func TestLoadRefusesALineHoldingMoreThanOneKind(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		name, body, says string
+	}{
+		{"decision and outcome", `{"decision":{"id":"a"},"outcome":{"id":"a","label":"ok"}}` + "\n", "holds more than one of decision, outcome and act"},
+		{"outcome and act", `{"outcome":{"id":"a","label":"ok"},"act":{"id":"a","act":"applying"}}` + "\n", "holds more than one of decision, outcome and act"},
+		{"all three", `{"decision":{"id":"a"},"outcome":{"id":"a","label":"ok"},"act":{"id":"a","act":"applying"}}` + "\n", "holds more than one of decision, outcome and act"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name+".jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+			_, err := Load(path)
+			assert.ErrorContains(t, err, tc.says)
+		})
+	}
+}
+
 func labelled(id, schema string, defect float64, verdict, label string) Decision {
 	d := Decision{ID: id, Decision: ReadName, Schema: schema, Answers: map[string]Answer{
 		"defect":  noulAnswer(defect),

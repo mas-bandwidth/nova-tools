@@ -95,6 +95,8 @@ its decision's `acts`.
 - Loading refuses, by file and line, a line that does not parse, a decision id
   recorded twice, an outcome or an act for an id with no decision before it, and a
   second outcome line for one id (a hand-edited record never has its last line win).
+- Loading refuses, by file and line, a line holding more than one of decision,
+  outcome, and act; a line is one record.
 - Loading refuses, by file, line and question, an answer whose probability is
   below 0, above 1, or not a number. A hand-edited record does not calibrate
   until that line is fixed.
