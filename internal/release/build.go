@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -33,6 +34,14 @@ const SumsFile = "SHA256SUMS"
 // being adopted from is not evidence about a fetch.
 const DigestFile = "SUMS.digest"
 
+// platformHalf is one half of a --platform value. A goos or a goarch is
+// lower-case letters and digits, never a separator, a dot or a second dash, so
+// a split on the first dash alone is not the whole rule: `q-a/../b` would name
+// the goarch `a/../b`, and ArtifactDir's filepath.Join would clean it into a
+// directory the --from tree never named. Both halves are held to this, so
+// exactly one dash separates them.
+var platformHalf = regexp.MustCompile(`^[a-z0-9]+$`)
+
 // Platform is the goos-goarch an artifact directory is named for. A release
 // built here for this host is the fleet's common case, and --platform is the
 // flag for the other one: cross-compiling to a bench from wherever the release
@@ -45,6 +54,10 @@ func Platform(flagValue string) (string, string, error) {
 	if !ok || goos == "" || goarch == "" {
 		return "", "", refuse("pass --platform <goos>-<goarch>, for example linux-amd64",
 			"%q is not a goos-goarch", flagValue)
+	}
+	if !platformHalf.MatchString(goos) || !platformHalf.MatchString(goarch) {
+		return "", "", refuse("pass --platform <goos>-<goarch>, for example linux-amd64",
+			"%q is not a goos-goarch: each half is lower-case letters and digits", flagValue)
 	}
 	return goos, goarch, nil
 }

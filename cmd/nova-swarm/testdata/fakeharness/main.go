@@ -762,7 +762,7 @@ func writeUsage(data, arg string) {
 //
 // THE ROW IS AN ASSISTANT ROW with a provider and a model, because the final read
 // (ReadCardUsage) selects `role = 'assistant'` and groups by provider and model, while the
-// live read (ReadJobUsageLive) takes every row with tokens. One shape answers both.
+// live read (ReadJobUsageLiveWithin) takes every row with tokens. One shape answers both.
 //
 // A `-` IS SQL NULL, which prints as the empty string through `sqlite3 -tabs` and is read
 // back as an absence -- never as a zero (rule 12). `0` is written as a real zero, because

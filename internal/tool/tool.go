@@ -565,11 +565,6 @@ func (f *Flags) Max() {
 	f.Int("max", bounded.Default, "items listed before one MORE line stands for the rest; 0 lists all")
 }
 
-// Op adds --op: the caller's operation id, for a write retried safely.
-func (f *Flags) Op() {
-	f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
-}
-
 // Prints marks a verb that writes its own output (a payload a program reads,
 // a child's stream, or a body shared with a tool not yet on this package): it
 // gets no --json, and returns Exit(code) after writing to c.Stdout and c.Stderr.

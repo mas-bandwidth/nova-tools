@@ -211,3 +211,32 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is corrupt")
 }
+
+func TestReopenOfASessionWhoseOpenWasInterruptedLogsTheOpenRecord(t *testing.T) {
+	t.Parallel()
+
+	store := t.TempDir()
+	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC)
+
+	sessionDir := filepath.Join(store, "sessions")
+	require.NoError(t, os.MkdirAll(sessionDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sessionDir, "s1.md"), []byte("# cairn s1\n"), 0o644))
+
+	plan, err := PlanOpen(store, "s1", "session:x", now, "manual")
+	require.NoError(t, err, "PlanOpen")
+	require.True(t, plan.Found, "PlanOpen must report Found=true for interrupted session")
+	require.Equal(t, "session:x", plan.Source)
+	require.Equal(t, "manual", plan.Publish)
+
+	require.NoError(t, Open(store, "s1", "session:x", now, "manual"), "Open")
+
+	rec, err := ReadOpen(store, "s1")
+	require.NoError(t, err, "ReadOpen")
+	require.True(t, rec.Found, "ReadOpen must return Found=true")
+	require.Equal(t, "session:x", rec.Source)
+	require.Equal(t, "manual", rec.Publish)
+
+	res, err := Append(store, "s1", "e1", "hello", "", now, "")
+	require.NoError(t, err, "Append")
+	require.Equal(t, "session:x", res.Source, "Append with empty source must inherit Source session:x")
+}

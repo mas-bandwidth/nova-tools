@@ -5,8 +5,6 @@
 # leaves cmd/ and gains its line here in the same change; a name here is never
 # also a cmd/ directory (TestFleetPlaysReadOnlyTheInventory).
 nova-board
-nova-card
-nova-friend
 nova-merge
 nova-message-bus
 nova-play
@@ -15,3 +13,5 @@ nova-pulse
 nova-review
 nova-test
 nova-wake
+# nova-bus (git) retired 2026-10-04, replaced by the Redis bus, which takes the name:
+# the line is a comment because nova-bus is a cmd/ directory again.

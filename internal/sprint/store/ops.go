@@ -258,7 +258,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 			costs[row.Key] = ctl.Fields[sprint.FieldCost]
 			want := map[string]string{
 				sprint.CI:       dash(ctl.Fields["ci"]),
-				sprint.StateCol: dash(ctl.Fields["state"]),
+				sprint.StateCol: dash(sprint.StreamStateText(ctl.Fields)),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
 			if d := rowDiff(row, want); len(d) > 0 {
@@ -313,6 +313,23 @@ type InboxView struct {
 	Open   []sprint.Open  `json:"-"`
 }
 
+// OpenGroups is the inbox's judgment groups from the open notes alone, at the clock's
+// reading: their ids and members are the ones Inbox computes, with no notifications, stream
+// clocks, weights or tables read. It answers whether a card is one of a group (rework and
+// drop of one card, oneOfAGroupWhy) without the whole inbox.
+func (st *Store) OpenGroups(ctx context.Context) ([]sprint.Group, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	open, _ = sprint.SplitOpen(open)
+	return sprint.Inbox(sprint.InboxReq{Now: st.now(), Open: open, Prefix: st.Names.Prefix, Epoch: st.epoch}), nil
+}
+
 // Inbox reads the open judgments, the notifications since the cursor (at
 // most max) and the streams' clocks, and groups them at the clock's reading.
 func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max int) (InboxView, error) {
@@ -341,6 +358,9 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 		return v, err
 	}
 	req := sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale, Prefix: st.Names.Prefix, Epoch: st.epoch}
+	if snap, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil {
+		req.Weights = sprint.Weights(snap) // the heaviest judgments first (weight.go)
+	}
 	var machine []sprint.Group
 	if _, ok := st.B.(KV); ok {
 		// One clock for overdue: running time, as the tick's deadlines.
@@ -526,8 +546,8 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: ctl.Fields["state"], Since: since, Progress: p, Empty: onTable[r.Key] == 0,
-			Held: waiting[r.Key] > 0 && moving[r.Key] == 0, Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
+		out = append(out, sprint.StreamClock{Stream: r.Key, State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
 	}
 	return out, nil
 }

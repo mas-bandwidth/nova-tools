@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -24,6 +25,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gocache"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -70,6 +72,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
+	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
 	if !f.parse(args, stderr) {
@@ -126,6 +129,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
+	}
+	if *gocacheGiB < 1 {
+		f.add("--gocache-limit is the GiB the shared Go build cache is held under: 1 or more (default 20)")
 	}
 	// the pool identity every child commits under, from the loop's argv in nova-config;
 	// without it native reads the pool's identity.tsv
@@ -187,6 +193,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
+		cacheLimit: int64(*gocacheGiB) * gib,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -418,8 +425,9 @@ type nativeRunner struct {
 	tokens, auth, config, worker, identity         string
 	noWall                                         bool
 	stderr                                         io.Writer
-	env                                            []string // added to this process's environment: none in production, a test's
-	pass                                           []string // the secret names handed to native (--pass, the worker's secret)
+	env                                            []string                     // added to this process's environment: none in production, a test's
+	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
+	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -433,9 +441,10 @@ type nativeRunner struct {
 	// the cleaner's lazy work (lazyclean.go): epoch is the sprint's epoch plus one as the
 	// member's last pass read it (Epoch; 0: none read yet); oldFailed and cache are the
 	// cleaner's own, touched by no other goroutine
-	epoch     atomic.Uint64
-	oldFailed map[string]bool
-	cache     gocache.Trim
+	epoch      atomic.Uint64
+	oldFailed  map[string]bool
+	cache      gocache.Trim
+	cacheLimit int64 // --gocache-limit in bytes; 0 is gocache.Limit
 }
 
 // stageTimeout is native's --stage-timeout for each launch: the member's --stage-wall, else
@@ -513,11 +522,15 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err != nil {
 		return nil, err
 	}
+	bin, err := r.harnessFor(p)
+	if err != nil {
+		return nil, err
+	}
 	framePath := filepath.Join(r.slots, name+cardcontract.FrameName)
 	if err := cardcontract.WriteFrame(framePath, frameOf(p, model, r.root)); err != nil {
 		return nil, err
 	}
-	args := []string{"native", "--harness", r.harness, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
+	args := []string{"native", "--harness", bin, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
 		"--stage-timeout", r.stageTimeout().String()}
 	if p.USD != "" {
@@ -631,6 +644,25 @@ func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline ti
 	return model, tokens, deadline, nil
 }
 
+// harnessFor is the binary a packet's child runs under: the member's --harness, or for a
+// route naming a headless harness (internal/harness; docs/SPEC-SWARM.md, the headless
+// harnesses) that program on this member's PATH. A headless program this machine has not
+// got refuses the launch, so the sprint deals the card to a member that has.
+func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
+	if !harness.IsHeadless(p.Harness) {
+		return r.harness, nil
+	}
+	lookPath := r.lookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	bin, err := lookPath(p.Harness)
+	if err != nil {
+		return "", fmt.Errorf("card %s's route %s runs under %s, which is on no PATH entry of this member: install it and log in, or deal the card to a member that has it", p.Card, p.Route, p.Harness)
+	}
+	return bin, nil
+}
+
 // launchName is the name of one launch: the card at its generation (a read:
 // its attempt) in its epoch; a card dealt again is another launch.
 func launchName(p member.Packet) string {
@@ -700,6 +732,8 @@ func nativeEnd(log []byte) string {
 	switch {
 	case nativeProvider.Match(log):
 		return member.EndProvider
+	case nativeUnverifiable.Match(log):
+		return member.EndUnverifiable
 	case nativeStopped.Match(log):
 		return member.EndBudget
 	case nativeKilled.Match(log) && !nativeTermed.Match(log):
@@ -752,6 +786,9 @@ var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: 
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
+	// nativeUnverifiable is a launch native ended because its usage source stopped
+	// answering (docs/SPEC-SWARM.md, native: stopped=unverifiable, end=budget-unverifiable)
+	nativeUnverifiable = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=unverifiable\b`)
 	// nativeBudgetWhy is the NATIVE BUDGET line's words: which budget ended the run and at
 	// what count (nativeBudgetWords)
 	nativeBudgetWhy = regexp.MustCompile(`(?m)^NATIVE BUDGET \S+ budget: (.+)$`)
@@ -806,7 +843,7 @@ func (c *nativeChild) Result() member.Result {
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
-			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && end == member.EndBudget {
+			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && (end == member.EndBudget || end == member.EndUnverifiable) {
 				budget = strings.TrimSpace(string(m[1]))
 			}
 		}

@@ -54,7 +54,7 @@ func TestATickOnAStoreWithTheLockedFleetTableWritesNoColumnItLacks(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, cols, 11)
 	h := routeHarness(t, route("flash-a", "flash"))
-	h.addReady("s1", 1, briefOf("pro", "")) // dealt on flash first (route.go, tierLadder)
+	h.addReady("s1", 1, briefOf("flash", "")) // dealt on flash (route.go, tierLadder)
 	h.startMachine()
 	name := h.st.Names.Table(sprint.Fleet)
 	// the twin's fleet table made the locked store's: its definition, and no cell of a

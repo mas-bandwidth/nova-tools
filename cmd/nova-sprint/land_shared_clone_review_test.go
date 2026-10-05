@@ -14,7 +14,7 @@ import (
 func TestLandReviewAnotherBuildInTheCloneCannotBecomeFalseLand(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	head := r.head("s1-1", "main", "work.txt", "the reviewed work\n")
 	r.queued(map[string]string{"s1-1": head}, "s1-1")
 	r.a.beforePush = func(int) {

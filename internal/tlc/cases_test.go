@@ -1,11 +1,12 @@
 package tlc
 
 import (
-	"os"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,6 +15,15 @@ const header = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\
 
 func row(config, module, expected, property, deadlock, group, gate, debt string) string {
 	return strings.Join([]string{config, module, expected, property, deadlock, group, gate, debt}, "\t") + "\n"
+}
+
+func refused(t *testing.T, err error, name, phrase string) {
+	t.Helper()
+	if phrase == "" {
+		assert.Error(t, err, "%s was accepted", name)
+		return
+	}
+	assert.ErrorContains(t, err, phrase, "%s: %v, want %q", name, err, phrase)
 }
 
 func TestParseCasesReadsAValidPlan(t *testing.T) {
@@ -37,51 +47,42 @@ func TestParseCasesReadsAValidPlan(t *testing.T) {
 func TestParseCasesRefusesEachMalformedRow(t *testing.T) {
 	t.Parallel()
 	good := []string{"MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-"}
-	tests := []struct {
-		name   string
-		field  int
-		value  string
-		reason string
-	}{
-		{"module shape", 1, "A.tla", "invalid instance module"},
-		{"module extension", 1, "MCA.txt", "invalid instance module"},
-		{"expected", 2, "maybe", "invalid expected outcome"},
-		{"deadlock", 4, "never", "invalid deadlock policy"},
-		{"a pass with a property", 3, "Safe", "expected property required only for a counterexample"},
-		{"gate", 6, "optional", "invalid gate/group"},
-		{"group shape", 5, "Alpha", "invalid gate/group"},
-		{"a required case waived as debt", 7, "later", "required case cannot be waived as debt"},
-	}
-	for _, tc := range tests {
+	line := func(field int, value string) string {
 		fields := append([]string(nil), good...)
-		fields[tc.field] = tc.value
-		_, err := ParseCases(strings.NewReader(header + strings.Join(fields, "\t") + "\n"))
-		assert.ErrorContains(t, err, tc.reason, "%s: error = %v, want %q", tc.name, err, tc.reason)
+		fields[field] = value
+		return header + strings.Join(fields, "\t") + "\n"
 	}
-	noProperty := append([]string(nil), good...)
-	noProperty[2] = "invariant"
-	_, err := ParseCases(strings.NewReader(header + strings.Join(noProperty, "\t") + "\n"))
-	assert.Error(t, err, "a counterexample case with property - was accepted")
-	for name, text := range map[string]string{
-		"empty":            "",
-		"a missing column": "config\tmodule\n",
-		"a short row":      header + "MCA.cfg\tMCA.tla\n",
+	for _, tc := range []struct {
+		name, text, reason string
+	}{
+		{"module shape", line(1, "A.tla"), "invalid instance module"},
+		{"module extension", line(1, "MCA.txt"), "invalid instance module"},
+		{"expected", line(2, "maybe"), "invalid expected outcome"},
+		{"deadlock", line(4, "never"), "invalid deadlock policy"},
+		{"a pass with a property", line(3, "Safe"), "expected property required only for a counterexample"},
+		{"gate", line(6, "optional"), "invalid gate/group"},
+		{"group shape", line(5, "Alpha"), "invalid gate/group"},
+		{"a required case waived as debt", line(7, "later"), "required case cannot be waived as debt"},
+		{"a counterexample case with property -", line(2, "invariant"), ""},
+		{"empty", "", ""},
+		{"a missing column", "config\tmodule\n", ""},
+		{"a short row", header + "MCA.cfg\tMCA.tla\n", ""},
 	} {
-		_, err := ParseCases(strings.NewReader(text))
-		assert.Error(t, err, "%s was accepted", name)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseCases(strings.NewReader(tc.text))
+			refused(t, err, tc.name, tc.reason)
+		})
 	}
 }
 
-// tree writes a checkout's tla/ with the named files.
 func tree(t *testing.T, files map[string]string) string {
 	t.Helper()
-	root := t.TempDir()
-	for name, contents := range files {
-		path := filepath.Join(root, "tla", name)
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(contents), 0o644))
+	rooted := make(map[string]string, len(files))
+	for name, body := range files {
+		rooted["tla/"+name] = body
 	}
-	return root
+	return testkit.Tree(t, t.TempDir(), rooted)
 }
 
 func TestLoadCasesHoldsThePlanToTheFiles(t *testing.T) {
@@ -90,27 +91,27 @@ func TestLoadCasesHoldsThePlanToTheFiles(t *testing.T) {
 	base := map[string]string{"CASES.tsv": plan, "MCA.tla": "m\n", "MCA.cfg": "c\n"}
 	_, err := LoadCases(tree(t, base))
 	require.NoError(t, err, "a matching tree was refused")
-	with := func(edit func(map[string]string)) map[string]string {
-		m := map[string]string{}
-		for k, v := range base {
-			m[k] = v
-		}
-		edit(m)
-		return m
-	}
-	for name, files := range map[string]map[string]string{
-		"a configuration nobody declared": with(func(m map[string]string) { m["MCB.cfg"] = "c\n" }),
-		"a declared configuration that is missing": with(func(m map[string]string) {
+	for _, tc := range []struct {
+		name string
+		edit func(map[string]string)
+	}{
+		{"a configuration nobody declared", func(m map[string]string) { m["MCB.cfg"] = "c\n" }},
+		{"a declared configuration that is missing", func(m map[string]string) {
 			m["CASES.tsv"] += row("MCC.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-")
-		}),
-		"a case declared twice": with(func(m map[string]string) {
+		}},
+		{"a case declared twice", func(m map[string]string) {
 			m["CASES.tsv"] += row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-")
-		}),
-		"a missing module": with(func(m map[string]string) { delete(m, "MCA.tla") }),
-		"no plan":          with(func(m map[string]string) { delete(m, "CASES.tsv") }),
+		}},
+		{"a missing module", func(m map[string]string) { delete(m, "MCA.tla") }},
+		{"no plan", func(m map[string]string) { delete(m, "CASES.tsv") }},
 	} {
-		_, err := LoadCases(tree(t, files))
-		assert.Error(t, err, "%s was accepted", name)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := maps.Clone(base)
+			tc.edit(m)
+			_, err := LoadCases(tree(t, m))
+			refused(t, err, tc.name, "")
+		})
 	}
 }
 
@@ -121,38 +122,36 @@ func TestSelectPicksAGroupOrAShard(t *testing.T) {
 		if err != nil {
 			return "error: " + err.Error()
 		}
-		var out []string
-		for _, c := range cs {
-			out = append(out, c.Config)
+		out := make([]string, len(cs))
+		for i, c := range cs {
+			out[i] = c.Config
 		}
 		return strings.Join(out, ",")
 	}
-	tests := []struct {
+	for _, tc := range []struct {
+		name          string
 		group         string
 		shards, shard int
 		want          string
 	}{
-		{"", 1, 0, "a,b,c,d"},
-		{"x", 1, 0, "a,c"},
-		{"", 2, 0, "a,c"},
-		{"", 2, 1, "b,d"},
-		{"", 4, 3, "d"},
-		{"z", 1, 0, "error: unknown group: z"},
-		{"x", 2, 0, "a"},
-		{"x", 2, 1, "c"},
-		{"x", 3, 0, "error: shard count exceeds the 2 cases of group x"},
-		{"", 0, 0, "error: use a positive shard count and a zero-based shard below it"},
-		{"", 2, 2, "error: use a positive shard count and a zero-based shard below it"},
-		{"", 5, 0, "error: shard count exceeds the number of declared cases"},
-	}
-	for _, tc := range tests {
+		{"all", "", 1, 0, "a,b,c,d"},
+		{"group x", "x", 1, 0, "a,c"},
+		{"shard 0 of 2", "", 2, 0, "a,c"},
+		{"shard 1 of 2", "", 2, 1, "b,d"},
+		{"shard 3 of 4", "", 4, 3, "d"},
+		{"unknown group", "z", 1, 0, "error: unknown group: z"},
+		{"group x shard 0 of 2", "x", 2, 0, "a"},
+		{"group x shard 1 of 2", "x", 2, 1, "c"},
+		{"too many shards for the group", "x", 3, 0, "error: shard count exceeds the 2 cases of group x"},
+		{"a zero shard count", "", 0, 0, "error: use a positive shard count and a zero-based shard below it"},
+		{"a shard past the count", "", 2, 2, "error: use a positive shard count and a zero-based shard below it"},
+		{"more shards than cases", "", 5, 0, "error: shard count exceeds the number of declared cases"},
+	} {
 		got := names(Select(cases, tc.group, tc.shards, tc.shard))
-		assert.Equal(t, tc.want, got, "Select(group=%q shards=%d shard=%d) = %s, want %s", tc.group, tc.shards, tc.shard, got, tc.want)
+		assert.Equal(t, tc.want, got, "%s: Select(group=%q shards=%d shard=%d) = %s, want %s", tc.name, tc.group, tc.shards, tc.shard, got, tc.want)
 	}
 }
 
-// The repository's own plan is held to its files by the runner's refusals; the
-// tests here run the same load over the real tla/.
 func TestTheRepositoryPlanLoads(t *testing.T) {
 	t.Parallel()
 	cases, err := LoadCases(filepath.Join("..", ".."))

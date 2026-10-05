@@ -50,7 +50,7 @@ func TestARemovedMemberRejoinedBeforeTheDeleteKeepsItsRowAndCards(t *testing.T) 
 	inv.set("m1", 4)
 	inv.set("m2", 4)
 	ta.ok("fleet sync")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ctx := context.Background()
 	raw := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now, Actor: "tester"}
 	seam := &seamed{Mem: ta.m, between: func() {

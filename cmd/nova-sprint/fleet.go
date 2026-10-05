@@ -24,9 +24,13 @@ machine's load. A beat window is `+sprint.BeatDeadline.String()+`; a member is u
 in a row (one missed beat marks nothing; a beat resets the count) and down past
 that or when it has never beaten; the tick applies each change
 (a member down has its unfinished work cards dealt to the members up; a
-member up levels the ready queues). fleet down holds a member down whatever
-it beats (status held); fleet up releases the hold, adding a member the
-sprint does not know. Each says where the cards went on its MOVED line: down
+member up levels the ready queues). hold <member> holds a member whatever it
+beats (status held), and fleet down <member> is hold --return in the old
+words; unhold or fleet up releases the hold, fleet up adding a member the
+sprint does not know; fleet up <m> --width 0 drains a member instead: no new
+deal reaches it, its untaken ready cards are levelled away and its working
+cards finish where they are (fleet down deals them again elsewhere); --width
+<n> ends the drain. Each says where the cards went on its MOVED line: down
 "moved=N to <member>(n),...; stayed=K withdrawn: <ids>" (a card no member up
 has room for is withdrawn and dealt again where there is room), up
 "moved=N to <member>(n) from <member>(n),..." (the level). The load cell is the machine's CPU busy percent of all
@@ -56,21 +60,25 @@ reader with its row says it is there by asking for its own queue (queue --as
 <reader> is its beat); the queue of a name with no row writes none and answers
 reader false, and the reader loop says MEMBER NOT A READER. A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
 when it beat and has lapsed, down when it has never beaten; reader away holds
-one away whatever it beats and reader up releases the hold. A flash card is
+one away whatever it beats and reader up releases the hold (the old words of
+hold <reader> --return and unhold <reader>: its state reads held). A flash card is
 read once and a pro card twice, by two different readers, each read on a route
 of the card's tier. The ask deals a read to a reader up only: a read asked of a
 reader that is not up is asked of another at the next tick, and a card that
 needs more readers than are up is not asked: the tick raises one judgment
 (fewer than two readers up). reader remove takes a row off the readers table, refused while the
-reader holds a read (asked, reading, ok or broken).`) + "\n"
+reader holds a read (asked, reading, ok or broken); reader retire keeps the
+row and its read cards (the history) and takes the reader off the table for
+good: never asked, its queue no beat and reader false, until reader up brings
+it back.`) + "\n"
 }
 
 // fleetStep is the coordinator's fleet verb as a step: up releases a hold,
 // counts as a beat of the member, and brings it up at once when it is alive, and sets its
-// width when width is above zero; down holds it down; level evens the ready
-// queues.
-func (a *app) fleetStep(st *store.Store, op, member, who string, width int) store.Step {
-	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width}
+// width when width is above zero, and drains it at a width of 0; level evens
+// the ready queues (fleet down is hold --return, hold.go).
+func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drain bool) store.Step {
+	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain}
 	switch op {
 	case "up":
 		r.Op = "release"
@@ -86,8 +94,6 @@ func (a *app) fleetStep(st *store.Store, op, member, who string, width int) stor
 		if beats, err := st.Beats(context.Background(), []string{member}); err == nil {
 			r.Fresh = beats[member].Alive(a.now())
 		}
-	case "down":
-		r.Op, r.Why = "hold", "held by "+who
 	}
 	return store.FleetStep(r)
 }

@@ -251,7 +251,7 @@ seconds=<s> budget=<b>`, unless an allowlist row
 (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, `-` in the test column for
 the package's own row) names a higher budget for exactly that package or test.
 Every row names the time it was measured at and where: `run<id>` (a CI run) or
-a bench (`slowtests.Benches`: space, studio, superman, batman, air), never free
+a bench (a label `slowtests.Benches` reads from ci.yml), never free
 text (`2s@guess` is refused), with a budget between that time and three times
 it (`TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
@@ -274,9 +274,9 @@ budgets makes the verdict depend on the load instead. So:
   cpus=<n> per-cpu=<n>: measured, not a verdict` line (the host's load
   average, the larger of its 1- and 5-minute figures; `load=unknown` with the
   reason when it cannot be read) are printed, and the exit is 0 on them.
-- **Enforced only on the nightly whole-tree run on the space legs:** ci.yml's
-  `test` job runs on `schedule` too, test-packages deals that tree onto the
-  space shards only, and `ci unit-test` on the nightly leg runs `make test
+- **Enforced only on the nightly whole-tree run on the nightly Linux legs:**
+  ci.yml's `test` job runs on `schedule` too, test-packages deals that tree
+  onto the Linux shards only, and `ci unit-test` on the nightly leg runs `make test
   GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
   CI-SLOW line fails the run there (slowtests exits 1) and nowhere else. A red schedule run blocks
   nothing (ci-ok does not run on schedule); it is evidence, and its raw times
@@ -942,34 +942,6 @@ shape that hurt is written inline. And only LISTINGS are read: `os.Stat`,
 `os.Open` and `os.RemoveAll` over one named path in the shared directory are
 questions about that path, which no sibling job can answer wrongly.
 
-### `busprogress` — progress never enters a protocol stream
-
-**The rule.** The rule has two halves: a program that takes over 0.1 s says
-what it is doing on stderr, AND a progress line never enters a stream a consumer
-parses. Every package that starts `nova-bus` and READS what it said asks
-`internal/bus` — `bus.IsProgress(` or the one classifier that does, `Classify(` —
-whether a line is progress.
-**The mistake it prevents.** `nova-bus`'s since-walk narrates `INBOX WALK
-commits=1/1 notes=0 elapsed=3ms` on stderr exactly as the first half asks; a
-consumer that merges stdout and stderr on purpose, so an `INBOX REFUSED` is
-never lost, and whose classifier's default case PRINTS, relays the progress line
-as a bus line, counts it as a change in the world, and ends a poll before the
-mail arrives.
-**The test.** `TestEveryNovaBusConsumerDropsProgressLines`
-(`internal/ci/busprogress_class_test.go`); the producer half it indexes is
-`TestProgressNeverEntersTheProtocolStream` in `cmd/nova-bus`, and the consumer half is this test itself.
-**Its allowlist.** None. The registry is `internal/bus/protocol.go` and a
-consumer either reaches it or discards both streams; a start that reads nothing
-back is not a consumer and is not held to this.
-**Its remedy line.** `<pkg> reads nova-bus's output and nothing in its package
-reaches internal/bus.IsProgress; a progress line on stderr will be parsed as
-protocol -- drop progress through the registry, or read stdout alone`.
-**Its narrowings.** It is per-PACKAGE and textual: a package that names
-`bus.IsProgress(` anywhere satisfies it, even if the one reader that matters does
-not call it, and a consumer that starts `nova-bus` through an indirection the
-walk cannot see is invisible. The registry file's existence is asserted, not its
-contents.
-
 ### `outputs` — no multi-line value written to a step output
 
 **The rule.** `$GITHUB_OUTPUT` and `$GITHUB_ENV` are `key=value` FILES, one pair
@@ -1120,10 +1092,10 @@ redis-server is functional-only (build tag functional)` and exits 86, so
 `testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
 `functional` job, `make test-functional`) runs only the `//go:build functional`
 tests of the selected packages, on `merge_group`, `schedule` and
-`workflow_dispatch`, never on `pull_request`, four space shards under the
+`workflow_dispatch`, never on `pull_request`, six Linux shards under the
 two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
-measurement, printed on every leg and enforced only on the nightly space legs;
+measurement, printed on every leg and enforced only on the nightly Linux legs;
 what is enforced on every leg is static (`unitwaits`).
 **The mistake it prevents.** CI is the bottleneck of the working process and the
 real blocker for merging: when every PR's shards each take the whole of a box,
@@ -1164,7 +1136,7 @@ server by an absolute path is not caught by the shim.
 **The rule.** ci.yml's `test-hosted` keeps `timeout-minutes: 2` and meets it by
 shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
-heavy package (`cmd/nova-bus`) first, then every other package round-robin in
+heavy package (`cmd/nova-swarm`) first, then every other package round-robin in
 `go list` order; vet and test both read the deal's `HOSTED_PKGS`. The Go cache
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
@@ -1252,7 +1224,7 @@ it by shard count: ubuntu-latest and macos-latest each run shards 1..16, every l
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
 deal over the live packages (`go run ./tools/ci deal`), with the measured heavy list
 (`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
-`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`,
+`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`,
 `cmd/nova-sprint`, `internal/sprint/store`, `cmd/nova-swarm`,
 `internal/sprint/refmodel`, `internal/docs`, `internal/sprint`,
 `internal/redisconn`, `internal/config`, `internal/secrets`) dealt
@@ -1368,7 +1340,9 @@ is the point: a skip that outlives the branch it names excuses a tool from the
 standard for good. The same lesson from the other side: a tool whose `CLI.md`
 section is prose-shaped contributes ZERO rows to `nova-check dogfood`.
 **The test.** `TestEveryCommandMeetsTheOnboardingStandard`
-(`internal/ci/onboarding_test.go`).
+(`internal/ci/onboarding_test.go`). `TestCommandReferenceStartsWithItsTitle`
+also requires the first line of `docs/CLI.md` to be `# Command reference`,
+so a misplaced command row cannot replace the document's title.
 **Its allowlist.** `notYetOnTheStandard` in the test file: empty, and an entry
 must name a genuinely open branch, so a skip is a dated pointer rather than a
 permanent exemption and it stops firing the moment that branch's section lands.
@@ -1774,9 +1748,9 @@ version offline: the image build's `sha256sum -c` checks it against the tarball.
 ### `cardtemplates` — no card template carries a command only one platform has
 
 **The rule.** A card template is the text a worker is handed verbatim; nothing
-rewrites it between `cut` and the shell. The estate is mixed — hulk, vision,
-space and mini are linux, the Studio and the Air are darwin — so a shipped
-template may spell only commands BOTH answer. The portable spellings are
+rewrites it between `cut` and the shell. The estate is mixed — some machines
+run linux and some darwin — so a shipped template may spell only commands BOTH
+answer. The portable spellings are
 `command -v <name>` for presence, `go version`, `dotnet --version` and
 `java -version 2>&1` for the three toolchains that each spell it differently,
 and a `uname`-chosen pair (`sysctl -n hw.ncpu` on darwin, `nproc` elsewhere) for
@@ -2132,7 +2106,7 @@ value (the real clock handed to a seam), or a `context.WithTimeout` /
 refused unless internal/ci/sleeps-skips_allowlist.txt names the package
 directory and the top-level function it is written in. A wait through an
 injected clock seam is not a wall-clock wait and is not found: the seams the
-tree has are internal/bus's lockClock, internal/swarm's
+tree has are internal/swarm's
 batchClock and pullClock, internal/log.Clock and
 the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
 internal/swarm.
@@ -2269,10 +2243,9 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 9. `TestNoTestComparesAPathAgainstASlashLiteral` — a path is never compared against a `/`-containing literal; compare `filepath.ToSlash(got)` or build the want side with `filepath.Join`.
 10. `TestToolRunsInTestsWriteIntoATempDir` — a test that runs a tool names every output path inside `t.TempDir()`, never a relative literal that lands in the tree.
 11. `TestNoTestGlobsTheSharedTempDir` — no `_test.go` lists (`Glob`/`ReadDir`) a directory built from `os.TempDir()`; it reads only its own `t.TempDir()`.
-12. `TestEveryNovaBusConsumerDropsProgressLines` — every package that starts `nova-bus` and reads its output routes lines through `bus.IsProgress(`/`Classify(` so progress never enters a parsed protocol stream.
-13. `TestNoMultiLineValueIsWrittenToAStepOutput` — a variable assigned from a one-item-per-line producer without a single-line guard may not be written to `$GITHUB_OUTPUT`/`$GITHUB_ENV`.
-14. `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no `_test.go` carries a literal duration under ten seconds where the test leans on the wall clock; thirty seconds is the generous bound, or `// wall-ok:`.
-15. `TestCIBuildTestLintCommandsGoThroughMake` — every build/test/vet/format command in `ci.yml` is a `make` invocation.
+12. `TestNoMultiLineValueIsWrittenToAStepOutput` — a variable assigned from a one-item-per-line producer without a single-line guard may not be written to `$GITHUB_OUTPUT`/`$GITHUB_ENV`.
+13. `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no `_test.go` carries a literal duration under ten seconds where the test leans on the wall clock; thirty seconds is the generous bound, or `// wall-ok:`.
+14. `TestCIBuildTestLintCommandsGoThroughMake` — every build/test/vet/format command in `ci.yml` is a `make` invocation.
 16. `TestMakefileIsTheOneEntry` — the Makefile declares `build`, `test`, `test-full`, `lint`, `check`, `clean`, `help` as phony targets, with `check` the union of CI's gates.
 19. `TestNoCacheStepRunsOnASelfHostedRunner` — every `actions/cache` step in `ci.yml` is `github-hosted`-only and every `setup-go` says `cache: false`.
 20. `TestEveryActionIsPinnedBySHA` — every `uses:` in `ci.yml` and `certification.yml` is `owner/action@<40-hex-sha>`.
@@ -2419,7 +2392,7 @@ receipt step calls GitHub; the run's own context has every field`; the fix is
 the step, never the test.
 **Its narrowings.** It reads the step's text and does not run it, so a bench
 with no `card.env` is found by the run itself (the step's own refusal names
-the rowan-tools bench play), not here.
+the bench play it runs), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 
@@ -2770,7 +2743,7 @@ the original failed measurement.
 **The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralitySpaceHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
 **Its allowlist.** the `generality` package ledger, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
-**Its narrowings.** It scans living `.go` files under `cmd/`, `internal/` and `tools/` only, skipping `testdata/`, `vendor/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. A machine name counts wherever it appears in Go syntax: identifiers, struct tags, comments and string literals.
+**Its narrowings.** It scans living `.go` files under `cmd/`, `internal/` and `tools/` only, skipping `testdata/`, `vendor/`, and `_test.go` files. It excludes Go package `import` statements and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. A machine name counts wherever it appears in Go syntax: identifiers, struct tags, comments and string literals.
 
 ### `tool-standard` — every tool built on internal/tool is held to the standard its definition alone can break
 
@@ -2915,6 +2888,15 @@ the original failed measurement.
 **Its allowlist.** the `toolanswers` package ledger, one shard per tool, `cmd/<tool>:<kind> <count> <why>`, kind `bare`, `unknown-verb`, `unknown-flag`, `group-help` or `dry-run`; the count is the verbs or groups short of the rule. Counted and shrink-only.
 **Its remedy line.** Each site names its kind's remedy after `to clear it:`; moving the tool onto `internal/tool` clears every kind but `dry-run`, which clears verb by verb with `Verb.DryRun` and `Call.DryRun`.
 **Its narrowings.** The unknown flag is tried on one verb per tool (the first whose `-h` lists a flag): a tool parses every verb through one seam. A verb's effect is read from its `-h`, so a tool not on `internal/tool` meets `dry-run` only where a verb lists `--dry-run`.
+
+### `no-hand-printing` — a tool package never prints, parses its flags or exits by hand
+
+**The rule.** In the non-test Go of every tool package — every package under `cmd/` that holds a Go file, and every package under `internal/` that holds a tool's verbs, found by what it builds or dispatches rather than by a name written here: its non-test Go builds a `tool.Tool`, or a function takes the verb off the first argument and switches on it — four shapes are refused: `fmt.Fprint`, `fmt.Fprintf` or `fmt.Fprintln` to `os.Stdout` or `os.Stderr`; `flag.NewFlagSet`; `verbflag.New`; and `os.Exit` outside `main()` and outside the `Run` of a verb whose `Flags` func calls `Prints` (`tool.Flags.Prints`). `internal/tool` and `internal/nsprint/verbflag` are the skeleton and the flag seam, not a tool's verbs, so they are not in the set. The status word is computed from the `Out` the verb returns, never typed into a format string (docs/STANDARD.md section 2).
+**The mistake it prevents.** A tool that types `VERB OK k=v` into a `fmt.Fprintf` has two output shapes: the line it wrote and the `--json` the skeleton renders from the same `Out`, and the two drift the first time a field is added. A verb that builds its own flag set has no `--json`, no help and no refusal grammar, and a verb that calls `os.Exit` itself takes the exit table out of the skeleton's hands, so its exit and its status word can disagree. A package that dispatches a tool's verbs without building a `tool.Tool` is the same miss if the scan only reads `tool.Tool` builders.
+**The test.** `TestNoHandPrintingInAToolPackage` (`internal/ci/nohandprinting_class_test.go`), with its witness `TestNoHandPrintingWitness` (a fixture that breaks the rule once per kind is refused naming every site and its remedy; the same tool written the skeleton's way is not), `TestNoHandPrintingReadsAHandDispatcher` (a hand dispatcher with no `tool.Tool` is scanned, and the skeleton and the flag seam are not) and `TestNoHandPrintingRuleReadsEveryShape` for the reader's narrowings.
+**Its allowlist.** the `no-hand-printing` package ledger, one shard per tool package at `internal/ci/testdata/no-hand-printing/<package>.txt`, `<package>:<kind> <sites> <why>`, kind `stream-print`, `flagset`, `verbflag` or `exit`; counted and shrink-only, so a port onto `internal/tool` or a verb's move to `tool.Flags` lowers that package's row in the same change and `NOVA_CI_UPDATE=1 go test -count=1 -timeout 600s -run '^TestNoHandPrintingInAToolPackage$' ./internal/ci/` lowers a count and drops a row at zero, never raising one or adding one.
+**Its remedy lines.** `stream-print`: build the line as an `Out` (`tool.OK`, `tool.Refuse`, `Out.Item`, `Out.ItemText`) and return it, and put a payload the skeleton cannot render behind a verb that declares `Prints` and writes to `c.Stdout`; `flagset` and `verbflag`: declare the flags with `tool.Flags` in the verb's `Flags` func, and move a tool that is not on `internal/tool` onto it; `exit`: return the verb's `Out` and its exit, or declare `Prints` and return `tool.Exit` — only `main()` calls `os.Exit`.
+**Its narrowings.** It reads the syntax of one file: a write to `c.Stdout`, to `c.Stderr` or to a `bytes.Buffer` a line is assembled in is not a stream print (the skeleton hands those to a verb that declared `Prints`, and a buffer is a value); a stream reached through a variable, a parameter or a helper in another file (`fmt.Fprintf(w, …)`) is not seen, and the per-tool transcript and `tool-answers` walks are the net under that. A verb is exempt from `exit` only where its `Run` literal stands in the same `tool.Verb` literal whose `Flags` func calls `Prints`, so a verb built by a helper that declares `Prints` elsewhere is not exempt. A dispatch is a function that assigns the first argument's element and switches on that name with a string case; a switch on a word cut from a line is not one. Files under `testdata/` are not read, and `tools/` is not a tool package.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

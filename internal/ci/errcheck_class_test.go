@@ -69,7 +69,7 @@ func uncheckedErrorSites(t *testing.T, ctx context.Context, bin, dir string) map
 // (docs/SPEC-CI.md, `errcheck`).
 func TestUncheckedErrors(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), lintDeadline)
+	ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
 	defer cancel()
 
 	root := repoRoot(t)
@@ -83,7 +83,7 @@ func TestUncheckedErrors(t *testing.T) {
 // a call reasoned with `// ignored:` on its line or the line above are not.
 func TestUncheckedErrorsReadsItsShapes(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), lintDeadline)
+	ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
 	defer cancel()
 
 	dir := plantModule(t, map[string]string{

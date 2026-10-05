@@ -134,14 +134,14 @@ func TestDeprecatedPackagesAreDroppedAndKeepLinesKept(t *testing.T) {
 		"./cmd/old",
 		"./cmd/older",
 		"cmd/old/sub",
-		mod + "/cmd/nova-bus",
+		mod + "/cmd/nova-swarm",
 	}
 	want := []string{
 		"./internal/nsprint/store",
 		mod + "/internal/nsprint/verbflag",
 		"./internal/nsprintx",
 		"./cmd/older",
-		mod + "/cmd/nova-bus",
+		mod + "/cmd/nova-swarm",
 	}
 	assert.Equal(t, want, d.Live(in), "a path drops that package and everything under it, a keep line keeps one, a name that only starts the same is another package")
 }
@@ -383,6 +383,51 @@ func TestWholeTreeFromTheTrackedFiles(t *testing.T) {
 	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, got, "tree from files")
 }
 
+// A tracked directory whose name is shell syntax is not a package. The name
+// would be interpolated into a shell by make test PKGS=, so treeFromFiles
+// returns a *ListError that names the directory, and Select --all does the
+// same through dotted. A tree of ordinary names still passes. The test does
+// not start a shell.
+func TestWholeTreeRefusesAPackageDirectoryWithShellSyntax(t *testing.T) {
+	t.Parallel()
+	const badDir = "internal/p';id>x;'"
+	const badFile = badDir + "/a.go"
+	root := tree(t)
+	p := filepath.Join(root, filepath.FromSlash(badFile))
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte("package p\n"), 0o644))
+	dep, err := LoadDeprecated(root)
+	require.NoError(t, err)
+
+	s := &selector{
+		run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked() + badFile + "\x00"}}).run,
+		o:   Options{Root: root},
+		dep: dep,
+	}
+	got, err := s.treeFromFiles()
+	var le *ListError
+	require.ErrorAs(t, err, &le, "treeFromFiles returned %q", got)
+	assert.Contains(t, le.Text, "./"+badDir)
+	assert.Empty(t, got)
+
+	f := newFake(map[string]Result{
+		listTree: {Stdout: imports("cmd/foo", "internal/bar", badDir)},
+	})
+	out, err := Select(f.run, Options{Root: root, All: true})
+	require.ErrorAs(t, err, &le, "Select --all returned %q", out.Packages)
+	assert.Contains(t, le.Text, "./"+badDir)
+	assert.Empty(t, out.Packages)
+
+	s = &selector{
+		run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked()}}).run,
+		o:   Options{Root: root},
+		dep: dep,
+	}
+	ok, err := s.treeFromFiles()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, ok, "a normal tree still passes")
+}
+
 func TestSelectRefusesWithNoBase(t *testing.T) {
 	t.Parallel()
 	_, err := Select(newFake(nil).run, Options{Root: tree(t)})
@@ -406,9 +451,9 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		pkgs = append(pkgs, fmt.Sprintf("%s/cmd/p%02d", mod, i))
 	}
-	pkgs = append(pkgs[:3], append([]string{mod + "/cmd/nova-bus"}, pkgs[3:]...)...)
+	pkgs = append(pkgs[:3], append([]string{mod + "/cmd/nova-swarm"}, pkgs[3:]...)...)
 	pkgs = append(pkgs, mod+"/internal/heavy2")
-	heavy := []string{"cmd/nova-bus", "internal/heavy2"}
+	heavy := []string{"cmd/nova-swarm", "internal/heavy2"}
 	seen := map[string]int{}
 	home := map[string]int{}
 	for i := 1; i <= 4; i++ {
@@ -422,7 +467,7 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 	for _, p := range pkgs {
 		assert.Equal(t, 1, seen[p], "%s dealt %d times", p, seen[p])
 	}
-	assert.Equal(t, 1, home[mod+"/cmd/nova-bus"], "the heavy packages are on shards 1 and 2")
+	assert.Equal(t, 1, home[mod+"/cmd/nova-swarm"], "the heavy packages are on shards 1 and 2")
 	assert.Equal(t, 2, home[mod+"/internal/heavy2"])
 	// the first other package takes the shard after the heavy ones, then round robin
 	assert.Equal(t, []int{3, 4, 1, 2}, []int{home[mod+"/cmd/p01"], home[mod+"/cmd/p02"], home[mod+"/cmd/p03"], home[mod+"/cmd/p04"]}, "round robin after the heavy: p01..p04")
@@ -430,9 +475,9 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 
 func TestDealMatchesOnAPathSuffixNotASubstring(t *testing.T) {
 	t.Parallel()
-	got, err := Deal([]string{mod + "/cmd/nova-bus-extra", mod + "/cmd/nova-bus"}, []string{"cmd/nova-bus"}, 2, 1)
+	got, err := Deal([]string{mod + "/cmd/nova-swarm-extra", mod + "/cmd/nova-swarm"}, []string{"cmd/nova-swarm"}, 2, 1)
 	require.NoError(t, err)
-	assert.Equal(t, []string{mod + "/cmd/nova-bus"}, got, "shard 1 is only the exact heavy package")
+	assert.Equal(t, []string{mod + "/cmd/nova-swarm"}, got, "shard 1 is only the exact heavy package")
 }
 
 func TestDealRefusesAShardThatIsNotOne(t *testing.T) {
@@ -445,14 +490,14 @@ func TestDealRefusesAShardThatIsNotOne(t *testing.T) {
 
 func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	t.Parallel()
-	all := []string{"./cmd/a", "./cmd/nova-sandbox", "./cmd/nova-bus", "./cmd/b", "./internal/sandbox", "./cmd/c", "./cmd/d", "./cmd/e"}
+	all := []string{"./cmd/a", "./cmd/nova-sandbox", "./cmd/nova-swarm", "./cmd/b", "./internal/sandbox", "./cmd/c", "./cmd/d", "./cmd/e"}
 	ordered := OrderHeavyFirst(all)
-	assert.Equal(t, "./cmd/nova-bus", ordered[0], "the heavy package first")
+	assert.Equal(t, "./cmd/nova-swarm", ordered[0], "the heavy package first")
 	assert.Len(t, ordered, len(all))
 	assert.Equal(t, "./cmd/a", ordered[1], "the rest in order")
 	g := Groups{Linux: "lin", Mac: "mac"}
 	got := MarshalLegs(Functional(ordered, g))
-	want := `[{"name":"1/4 lin","packages":"./cmd/nova-bus ./cmd/d"},{"name":"2/4 lin","packages":"./cmd/a ./cmd/e"},{"name":"3/4 lin","packages":"./cmd/b"},{"name":"4/4 lin","packages":"./cmd/c"}]`
+	want := `[{"name":"1/6 lin","packages":"./cmd/nova-swarm"},{"name":"2/6 lin","packages":"./cmd/a"},{"name":"3/6 lin","packages":"./cmd/b"},{"name":"4/6 lin","packages":"./cmd/c"},{"name":"5/6 lin","packages":"./cmd/d"},{"name":"6/6 lin","packages":"./cmd/e"}]`
 	assert.Equal(t, want, got, "Functional: the darwin-only packages have no Linux leg")
 	assert.Equal(t, `[{"name":"nothing","packages":""}]`, MarshalLegs(Functional(nil, g)), "Functional of nothing")
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")
@@ -480,7 +525,7 @@ func TestFanoutByEvent(t *testing.T) {
 		// the merge group: every package on Linux but the darwin-only ones, which go to macOS
 		{"merge_group", []string{"1/8 lin=./cmd/a", "2/8 lin=./cmd/b", "3/8 lin=./cmd/c", "1/4 darwin-arm64=./cmd/nova-sandbox", "2/4 darwin-arm64=./internal/sandbox"}},
 		// a pull request: macOS only for what differs there, and the darwin-only packages
-		{"pull_request", []string{"1/4 lin=./cmd/a", "2/4 lin=./cmd/b", "3/4 lin=./cmd/c", "1/4 darwin-arm64=./cmd/b", "2/4 darwin-arm64=./cmd/nova-sandbox", "3/4 darwin-arm64=./internal/sandbox"}},
+		{"pull_request", []string{"1/4 lin=./cmd/a", "2/4 lin=./cmd/b", "3/4 lin=./cmd/c", "1/8 darwin-arm64=./cmd/b", "2/8 darwin-arm64=./cmd/nova-sandbox", "3/8 darwin-arm64=./internal/sandbox"}},
 		// a push to dev: every package on both OSes
 		{"push", []string{"1/8 lin=./cmd/a", "2/8 lin=./cmd/b", "3/8 lin=./cmd/c", "1/8 darwin-arm64=./cmd/a", "2/8 darwin-arm64=./cmd/b", "3/8 darwin-arm64=./cmd/nova-sandbox", "4/8 darwin-arm64=./cmd/c", "5/8 darwin-arm64=./internal/sandbox"}},
 	}
@@ -749,4 +794,48 @@ func TestFanoutWithTheDarwinLegsOffIsLinuxOnly(t *testing.T) {
 		assert.Equal(t, []string{"./cmd/a", "./cmd/b"}, dealt, event)
 	}
 	assert.Equal(t, []string{"./cmd/a", "./cmd/b"}, DropDarwinOnly(pkgs))
+}
+
+// The functional tier's six longest packages each get a leg of their own, whatever else
+// is dealt and in whatever order it arrives (a leg that held two of them ran past the
+// two-minute cap in the merge-group runs of 2026-10-04).
+func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
+	t.Parallel()
+	pkgs := []string{"./cmd/a", "./cmd/nova-bus", "./cmd/b", "./cmd/nova-swarm", "./internal/atomicfile", "./internal/c", "./internal/ntable", "./internal/ci", "./internal/swarm", "./internal/d"}
+	legs := Functional(pkgs, Groups{Linux: "lin", Mac: "mac"})
+	require.Len(t, legs, FunctionalShards)
+	home := map[string]int{}
+	for i, l := range legs {
+		for _, p := range strings.Fields(l.Packages) {
+			home[p] = i
+		}
+	}
+	legOf := map[int]bool{}
+	for _, h := range FunctionalHeavy {
+		legOf[home[h]] = true
+	}
+	assert.Len(t, legOf, len(FunctionalHeavy), "each heavy package has a leg of its own: %v", home)
+	assert.Len(t, home, len(pkgs), "every package is dealt once")
+}
+
+// A pull request deals cmd/nova-sprint and cmd/nova-swarm to the Linux legs alone, even
+// when they differ under macOS: their unit tests do not fit a macOS leg's two-minute cap.
+// A push still deals them to both.
+func TestAPullRequestKeepsNovaSprintAndNovaSwarmOffTheMacLegs(t *testing.T) {
+	t.Parallel()
+	g := Groups{Linux: "lin", Mac: "mac"}
+	pkgs := []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/other"}
+	sens := DarwinSensitive{All: true}
+	for _, leg := range Fanout("pull_request", pkgs, sens, g, true) {
+		if leg.OS == "macOS" {
+			assert.Equal(t, "./internal/other", leg.Packages, "only the package that fits runs on macOS")
+		}
+	}
+	pushed := 0
+	for _, leg := range Fanout("push", pkgs, sens, g, true) {
+		if leg.OS == "macOS" {
+			pushed += len(strings.Fields(leg.Packages))
+		}
+	}
+	assert.Equal(t, 3, pushed, "a push deals all three to macOS")
 }

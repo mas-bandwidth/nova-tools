@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -392,4 +394,65 @@ func TestTheFriendBriefSaysWhatSyncChecks(t *testing.T) {
 	assert.Contains(t, text, "The Head you report must be origin's tip of your branch when sync reads it", "the brief names the tip-equality rule friendFinish checks")
 	assert.Contains(t, text, "the attempt is expected to start from the tip named above", "the brief says where the attempt starts")
 	assert.NotContains(t, text, "descend", "the brief claims no descent check, for friendFinish makes none")
+}
+
+// A friend's row is fed like a machine's (the owner, 2026-10-04: "Do it just like the
+// fleet, you keep people busy by having 2X width queued up in ready per-friend"): at
+// width 1 her second card is dealt ready behind her working one, friend sync delivers
+// both and writes her queue file saying which is which, and her finish of the first
+// takes the second into working with no tick between.
+func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t)
+	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"width": "1"}}, "t")
+	require.NoError(t, err)
+	ta.a.tip = tipIs(t, landHead)
+	root := t.TempDir()
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend beat amy")
+	dir := t.TempDir()
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+	}
+	ta.ok("add --stream s1 --brief-dir " + dir)
+	ta.ok("start")
+	ta.ok("tick")
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"], "her width working")
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"], "and as many again ready behind")
+	var third cardView
+	ta.json("card s1-3", &third)
+	assert.Empty(t, third.Work, "the third waits on the work table, dealt to no one")
+
+	out := ta.ok("friend sync --root " + root)
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-2.w1", "the ready card is delivered too")
+	queue := filepath.Join(root, "amy-working", "inbox", "QUEUE.json")
+	var q friendQueue
+	text, err := os.ReadFile(queue)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(text, &q))
+	assert.Equal(t, []friendTask{{ID: "s1-1.w1", State: "working"}, {ID: "s1-2.w1", State: "queued"}}, q.Tasks)
+
+	// she finishes the first: the second is working at once, the third is dealt ready by
+	// the next tick, and the queue file follows
+	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n")
+	out = ta.ok("friend sync --root " + root)
+	assert.Contains(t, out, "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok")
+	var c cardView
+	ta.json("card s1-2", &c)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, sprint.Working, c.Work[0].Col, "her finish took her next ready card, no tick between")
+	ta.ok("tick")
+	ta.json("card s1-3", &c)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col, "the tick fills her room again")
+	ta.ok("friend sync --root " + root)
+	text, err = os.ReadFile(queue)
+	require.NoError(t, err)
+	q = friendQueue{}
+	require.NoError(t, json.Unmarshal(text, &q))
+	assert.Equal(t, []friendTask{{ID: "s1-1.w1", State: "working"}, {ID: "s1-2.w1", State: "working"}, {ID: "s1-3.w1", State: "queued"}}, q.Tasks, "a finished card's record is left as it was (her session marks it done)")
+	ta.clean()
 }
