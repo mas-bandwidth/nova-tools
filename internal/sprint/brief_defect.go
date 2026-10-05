@@ -20,13 +20,11 @@ const (
 	BriefDefectOther     = "named by the worker"
 )
 
-// FieldBriefDefect is the reason a work card, and its primary, ended on a brief defect;
-// FieldBriefDefects is a stream's count of them, on its control card, bumped by one in the
-// finish that records each (a Bump, so two in one step add up).
-const (
-	FieldBriefDefect  = "brief_defect"
-	FieldBriefDefects = "brief_defects"
-)
+// FieldBriefDefect (rules.go, the field the brief-defect rule stamps) also carries, on a work
+// card and its primary, the reason a worker's HOLD named; FieldBriefDefects is a stream's count
+// of them, on its control card, bumped by one in the finish that records each (a Bump, so two
+// in one step add up).
+const FieldBriefDefects = "brief_defects"
 
 // negated is the words before a reason or the label that turn it into its opposite
 // ("not a duplicate of landed work", "no brief defect"); the reason's own article is in it.
