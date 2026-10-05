@@ -212,7 +212,7 @@ func ReadStamp(path string) (Stamp, error) {
 	if err != nil {
 		return Stamp{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the open is read-only, a close error loses nothing
 	return readExistingStamp(f), nil
 }
 
