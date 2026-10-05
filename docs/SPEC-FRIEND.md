@@ -1012,7 +1012,7 @@ through one list, so check reports exactly what install writes.
 | codex | `$CODEX_HOME/config.toml` (else `~/.codex`) | `[sandbox_workspace_write] writable_roots` holds `--dir`, added to the roots there; edited by line, so comments and other keys stay |
 | dsh | `$DSH_HOME/profiles/desktop/cordis.patch.yml` (else `~/.dsh`) | the patch entry `agent-preset-registry`, `config.default` and `config.selectedDefault` = `standard`; the desktop profile must exist (the app makes it); edited as a YAML node tree |
 | grok | the wake file, `--session`, else `~/.nova-friend/<me>/<me>.wake` | its directory a real directory (made), the file a file (made empty); the agent's `--session` names it, and the NOTE's monitor line names it |
-| claude | `--config-dir` (default `CLAUDE_CONFIG_DIR`) | a real directory, made private; the agent's `run --config-dir` names it; install refuses claude without one |
+| claude | `--config-dir` (default `CLAUDE_CONFIG_DIR`) | a real directory, made private; settings use the default, and the installed agent receives `run --config-dir` only for an explicit flag |
 | opencode | `<dir>/opencode.json` | `permission.external_directory["<dir>/**"] = allow` (as `AllowDirs` writes before each turn), and `model` when `--model` names one |
 
 The `CLAUDE_CONFIG_DIR` default supplies the Claude settings directory during install but does not opt the installed agent into headless mode. The launchd command receives `--config-dir` only when the install command explicitly gives that flag.

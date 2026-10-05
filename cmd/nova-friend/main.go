@@ -915,7 +915,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	}
 	if a.Harness == "claude" {
 		// The environment default configures Claude settings but does not opt an
-		// installed friend into headless mode; only an explicit flag does.
+		// installed friend into headless mode; only an explicit flag does (docs/SPEC-FRIEND.md).
 		if c.Given("config-dir") {
 			a.ConfigDir = c.Str("config-dir")
 		}
