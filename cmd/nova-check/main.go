@@ -13,154 +13,89 @@
 package main
 
 import (
-	"flag"
-	"fmt"
 	"io"
 	"maps"
 	"os"
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
+// seams are the process-wide resources a run reads: the git program the
+// --staged advisory runs through, and the clock, git runner and help runner of
+// the dogfood verbs. The zero value is the production default; a test fills the
+// field it needs and runs beside its neighbours instead of assigning a package
+// variable, which would race every parallel test reading it.
+type seams struct {
+	staged  stagedSeams
+	dogfood dogfoodSeams
+}
 
-how it works: most verbs inspect named paths and keep no state between runs.
-dogfood record appends a receipt; spelling --write edits files in place (--dry-run: neither writes).
-convergence reads forge data through gh, an optional checkout through git, and
-the files you name; --state stores its two-tick streak. Other repository checks
-read the manifests, ledgers and receipts you name.
-first run: create the small markdown tree below, then run the example commands.
+func main() { os.Exit(novaCheck(seams{}).Main()) }
 
-usage:
-  nova-check version [--json] print this build identity (--version also accepted)
-  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes
-  nova-check quickstart --dir <dir> [--max <n>] the two checks a first run can make
-                                                     with nothing but a directory: links,
-                                                     then nocode. Both run even if the
-                                                     first says NO.
-  nova-check attest --home <dir> --manifest <file>   did the full self load
-  nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]
-                                                     every relative md link resolves;
-                                                     --file (repeatable) checks just those
-                                                     files, not the whole tree; --exclude
-                                                     leaves a subtree unscanned and skips
-                                                     links into it
-  nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
-  nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
-                                                     kernel size budget, in tokens
-  nova-check nocode --dir <dir>                      no code files in a self repo
-        [--allow <prefix>]     where machinery may live (repeatable, empty by default)
-        [--deny-ext <l|@f>]    replace the floor EXTENSION list wholesale
-        [--deny-ext-add <l|@f>] extend the floor EXTENSION list
-        [--print-deny-list]    print both floors in force, exit 0
-    two floors: an EXTENSION list, and a NAME list for build machinery named
-    or located rather than extensioned (Makefile, .github/workflows/). The
-    --deny-ext flags govern the EXTENSION list only; --allow is the escape
-    for the name floor, and names where machinery may live.
-  nova-check nocode --staged --dir <repo>            advisory over the index: classify what
-                                                      is about to be committed, by the same
-                                                      rules the audit walks the tree with;
-                                                      --dir is the repository root, required
-  nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
-                                                     the door's floor set matches the seed's
-  nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
-                                                     protected material is still where the
-                                                     ledger says it is
-  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"
-        [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
-                                                     the four mechanical checks the accept
-                                                     gate runs, on a branch, before you ask
-                                                     a friend for a read: identity,
-                                                     out-of-path, stray-file, secret.
-                                                     --paths is the card's bound; with none
-                                                     the line says paths=- and out-of-path
-                                                     is skipped, never silently passed.
-  nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
-                                                     one row per verb the command reference
-                                                     declares: who has run it, when, and
-                                                     whether it did what they needed
-  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
-                            --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
-                            [--tools-timeout <s>] [--max <n>] [--dry-run]
-                                                     append one receipt: I ran this verb,
-                                                     on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
-                                                     exit 1 with the verbs no non-author has
-                                                     run and the edges nobody has cleared.
-                                                     An edge is what the run found; a
-                                                     receipt records it: --not-ok, or an
-                                                     Edge: or Edges: in the notes. The
-                                                     remedy is one nova-check dogfood record
-                                                     --ok per verb named, and per edge
-                                                     --closes <id> or the finder
-                                                     running it again. The line the release
-                                                     lane calls.
-  nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
-                         --retired <file> --since <RFC3339|24h>
-        [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
-        [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
-                                                     LANDING and PRS read the forge through
-                                                     gh; CLASSES reads the optional checkout
-                                                     through git. SCRIPTS, EDGES, FLEET and
-                                                     LEDGER read the named paths. --state
-                                                     stores the two-tick streak. Each stream
-                                                     shows now, --since, ratio and trend;
-                                                     an unnamed optional source is ABSENT,
-                                                     not zero. Exit 1 after two consecutive
-                                                     widening ticks. A widening tick is a tick whose
-                                                     <stream> moved the wrong way against
-                                                     its before: --state's last for LEDGER
-                                                     and FLEET, --since's for the rest.
-                                                     The exit-1 line prints
-                                                     trend=widening on the CONVERGENCE line,
-                                                     and the next run is
-                                                     nova-check convergence --state <file>
-                                                     again once the source moves, or
-                                                     nova-check dogfood record the finding
-                                                     the stream names.
-  nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
-                      [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                      [--max <n>] [--dry-run]
-                                                     check markdown or prose for misspellings;
-                                                     fenced code blocks and inline code spans
-                                                     are blanked so code is not prose;
-                                                     --write fixes misspellings in place
+func run(args []string, stdout, stderr io.Writer) int {
+	return runWith(seams{}, args, stdout, stderr)
+}
 
-  --json           on attest, links, kernel, nocode, floors, corpus, hygiene, spelling
-                   and version: structured findings and totals; convergence uses
-                   its reading object. quickstart and dogfood use typed lines.
+func runWith(s seams, args []string, stdout, stderr io.Writer) int {
+	return novaCheck(s).Run(args, os.Stdin, stdout, stderr)
+}
 
-  --max <n>        on quickstart, attest, links, nocode, corpus and spelling: how many
-                   FAILED lines to print before one MORE line stands for the
-                   rest. Default 20, and 0 means all. The count line prints
-                   whether the check passed or failed, so a run that found 800
-                   broken links says 800 without printing 800.
-                   --fail-max is the flag's old spelling, accepted for this
-                   release: it sets the same value.
+// exitCodes is the one exit table of every verb (docs/STANDARD.md section 2).
+const exitCodes = "0 pass, 1 check failed, 2 could not run (bad invocation)"
 
-exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
+// novaCheck is the tool: its verbs and their flags, run by internal/tool, which
+// holds the dispatch, the banner, -h, --json, --max with its MORE line, the
+// refusal grammar and the exit table.
+func novaCheck(s seams) *tool.Tool {
+	return &tool.Tool{
+		Name:      "nova-check",
+		What:      "checks over markdown records and repositories, each finding named by file and line",
+		Stamp:     version,
+		ExitTable: exitCodes + "\n\nsetup:\n  mkdir -p ./self/docs\n  printf '# Kernel\\n' > ./self/docs/SEED-CORE.md",
+		How: "most verbs inspect named paths and keep no state; three write, each only when asked:\n" +
+			"dogfood record appends a receipt, spelling --write edits files in place, convergence --state\n" +
+			"stores its streak, and --dry-run writes none of it. convergence reads forge data through gh\n" +
+			"and an optional checkout through git; the other checks read the manifests and ledgers you name.\n" +
+			"first run: create the small markdown tree below, then run the example commands.",
+		NoJSON: "the same result as one JSON object on stdout; spelling and convergence take it too, through their own " +
+			"printers (convergence prints its reading object), and quickstart and dogfood print typed lines",
+		UsageNote: "  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes\n" +
+			"dogfood gate exits 1 with the verbs no non-author has run and the edges nobody has cleared.\n" +
+			"An edge is what the run found; a receipt records it: --not-ok, or an Edge: or Edges: in the notes.\n" +
+			"The remedy is one nova-check dogfood record --ok per verb named, and per edge --closes <id> or\n" +
+			"the finder running it again.\n" +
+			"convergence exits 1 after two consecutive widening ticks. A widening tick is a tick whose <stream>\n" +
+			"moved the wrong way against its before: --state's last for LEDGER and FLEET, --since's for the rest.\n" +
+			"The exit-1 line prints trend=widening on the CONVERGENCE line, and the next run is\n" +
+			"nova-check convergence --state <file> again once the source moves, or nova-check dogfood record the\n" +
+			"finding the stream names.",
+		Verbs: []tool.Verb{
+			quickstartVerb(),
+			attestVerb(),
+			linksVerb(),
+			kernelVerb(),
+			nocodeVerb(s),
+			floorsVerb(),
+			corpusVerb(),
+			hygieneVerb(),
+			dogfoodVerb("ledger", s),
+			dogfoodVerb("record", s),
+			dogfoodVerb("gate", s),
+			convergenceVerb(),
+			spellingVerb(),
+		},
+	}
+}
 
-setup:
-  mkdir -p ./self/docs
-  printf '# Kernel\n' > ./self/docs/SEED-CORE.md
-
-example:
-  nova-check quickstart --dir ./self
-  nova-check links --dir ./self
-  nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-
-links findings are relative to --dir; kernel findings use the --file path as given.
-attest manifests list one path per line relative to --home (blank lines and # comments ignored).
-corpus ledgers use markdown rows: | fragment | home file | given | by |.
-floors checks the fixed eight-floor charter: --core has numbered bold titles;
---source has the section 6 charter enumeration and section 0 rank declarations.
-
-`
+func linksFlags(f *tool.Flags) {
+	f.Required("dir", dirHint)
+	f.Var(&repeatable{}, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
+	f.Var(&repeatable{}, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
+	addMax(f)
+}
 
 // The hints below turn this binary's most-hit refusals into a next step. The
 // no-guessing law is unchanged — a missing flag is still exit 2 and still says
@@ -181,481 +116,6 @@ const (
 	budgetHint   = `state the unit: --max-bytes <n> for a byte budget, or --max-tokens <n> --bytes-per-token <r> for the unit a context window actually spends (the divisor is one you measured on your own writing; there is no default)`
 )
 
-// hintFor returns the already-indented hint line for a required flag, newline
-// included, or "" for a flag whose own usage entry is the whole story. It
-// returns package constants only, which is why printing its result is safe.
-func hintFor(name string) string {
-	switch name {
-	case "dir":
-		return "  " + dirHint + "\n"
-	case "home":
-		return "  " + homeHint + "\n"
-	case "manifest":
-		return "  " + manifestHint + "\n"
-	case "file":
-		return "  " + fileHint + "\n"
-	case "core":
-		return "  " + coreHint + "\n"
-	case "source":
-		return "  " + sourceHint + "\n"
-	case "ledger":
-		return "  " + ledgerHint + "\n"
-	case "root":
-		return "  " + rootHint + "\n"
-	case "cli":
-		return "  " + cliHint + "\n"
-	case "tools":
-		return "  " + toolsHint + "\n"
-	case "receipts":
-		return "  " + receiptsHint + "\n"
-	case "tool":
-		return "  " + toolHint + "\n"
-	case "verb":
-		return "  " + verbHint + "\n"
-	case "by":
-		return "  " + byHint + "\n"
-	case "notes":
-		return "  " + notesHint + "\n"
-	}
-	return ""
-}
-
-// maxRemedy is the second half of every MORE line this binary prints. A cap with no
-// remedy is censorship; a cap with one is an index, so the line that says what was not
-// shown says in the same breath how to see it.
-const maxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
-
-// refuse is what an unusable invocation costs: one line, `nova-check[ <verb>]
-// REFUSED: <what was wrong>; run: nova-check help`, the door to the usage rather
-// than the usage itself.
-func refuse(stderr io.Writer, where, what string) int {
-	if out, ok := stderr.(*jsonOutput); ok && *out.enabled {
-		return out.refuse(where, what)
-	}
-	fmt.Fprintf(stderr, "nova-check%s REFUSED: %s; run: nova-check help\n", oneline.Escape(where), oneline.Escape(what))
-	return 2
-}
-
-// verbs is every first word run dispatches, for the unknown-verb answer.
-var verbs = []string{"quickstart", "attest", "links", "kernel", "nocode", "floors", "corpus", "hygiene", "dogfood", "convergence", "spelling", "version"}
-
-// effects is each verb's effect, the line its -h ends its own lines with, in
-// the grammar every tool's help uses: inspection, local write or delivery, and
-// the flag that changes it.
-var effects = map[string]string{
-	"quickstart":     "inspection: reads the directory, writes nothing",
-	"attest":         "inspection: reads the manifest and the files it names, writes nothing",
-	"links":          "inspection: reads the markdown under --dir, writes nothing",
-	"kernel":         "inspection: reads the one file, writes nothing",
-	"nocode":         "inspection: reads the tree, or with --staged the git index, writes nothing",
-	"floors":         "inspection: reads the two files, writes nothing",
-	"corpus":         "inspection: reads the ledger and the files it names, writes nothing",
-	"hygiene":        "inspection: reads the repository through git, writes nothing",
-	"dogfood":        "inspection for ledger and gate; local write for record, which appends one receipt (--dry-run writes none)",
-	"dogfood ledger": "inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing",
-	"dogfood gate":   "inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing",
-	"dogfood record": "local write: appends one receipt file to --receipts (--dry-run writes none)",
-	"convergence":    "local write: --state stores the two-tick streak (--dry-run writes none); LANDING and PRS read the forge through gh, over the network, and CLASSES reads --repo-dir through git",
-	"spelling":       "local write: --write edits the files in place (--dry-run, or no --write, writes nothing)",
-	"version":        "inspection: prints this build identity",
-}
-
-// verbHelp is the lines run adds to a verb's -h: its effect, and for the
-// dogfood verbs the shape of the command reference they read.
-func verbHelp(verb string) string {
-	lines := ""
-	if strings.HasPrefix(verb, "dogfood") {
-		lines = "  " + cliShapeHint + "\n"
-	}
-	if e := effects[verb]; e != "" {
-		lines += "effect: " + e + "\n"
-	}
-	return lines
-}
-
-// refuseRan is what a check that ran and answered no costs: one line naming the
-// verdict and its remedy, and no door. The door is for an unusable invocation
-// (refuse), where a reader needs the usage; after a gate has run, it is noise.
-func refuseRan(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-check%s FAIL: %s\n", oneline.Escape(where), oneline.Escape(what))
-	return 1
-}
-
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
-}
-
-func run(args []string, stdout, stderr io.Writer) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help, with its effect, on
-	// stdout at exit 0, before anything is read or written.
-	defer verbflag.RecoverWith(stdout, "nova-check", usage, &code, verbHelp)
-	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; quickstart is the first run; the verbs are "+strings.Join(verbs, ", "))
-	}
-	switch args[0] {
-	case "quickstart":
-		return cmdQuickstart(args[1:], stdout, stderr)
-	case "attest":
-		return cmdAttest(args[1:], stdout, stderr)
-	case "links":
-		return cmdLinks(args[1:], stdout, stderr)
-	case "kernel":
-		return cmdKernel(args[1:], stdout, stderr)
-	case "nocode":
-		return cmdNoCode(args[1:], stdout, stderr)
-	case "floors":
-		return cmdFloors(args[1:], stdout, stderr)
-	case "corpus":
-		return cmdCorpus(args[1:], stdout, stderr)
-	case "hygiene":
-		return cmdHygiene(args[1:], stdout, stderr)
-	case "dogfood":
-		return cmdDogfood(dogfoodSeams{}, args[1:], stdout, stderr)
-	case "convergence":
-		return cmdConvergence(args[1:], stdout, stderr)
-	case "spelling":
-		return cmdSpelling(args[1:], stdout, stderr)
-	case "version", "--version":
-		return cmdVersion(args[1:], stdout, stderr)
-	case "help", "-h", "--help":
-		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdout, stderr)
-		}
-		fmt.Fprint(stdout, usage)
-		return 0
-	default:
-		near := ""
-		if n := verbflag.Nearest(args[0], verbs); n != "" {
-			near = " did you mean " + n + "?"
-		}
-		return refuse(stderr, "", fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], oneline.Escape(near), oneline.Escape(strings.Join(verbs, ", "))))
-	}
-}
-
-// parse runs a subcommand flag set and enforces the no-guessing rule:
-// every listed flag must have been given a non-empty value.
-//
-// Package flag is given no stream: its error text quotes the argument it
-// could not parse, raw, and its usage dump follows -- so an argument holding
-// a newline authored a whole line of stderr before any code in this file ran.
-// The refusal is printed here instead, escaped. -h after a verb is not refused:
-// verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[string]*string) bool {
-	if !parseFlags(fs, args, stderr) {
-		return false
-	}
-	return requireFlags(fs, stderr, required)
-}
-
-// parseFlags is the half of parse that decides whether anything after it can be
-// trusted: once the flag set has failed to parse, the values and the positional
-// arguments are both meaningless, so no verb adds a second complaint on top.
-func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
-		refuse(stderr, " "+fs.Name(), oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
-		return false
-	}
-	if fs.NArg() > 0 {
-		// Through refuse like every other unusable invocation: this site printed its own
-		// line and dropped the `; run: nova-check help` door, so a stray word after a
-		// verb said what was wrong and nothing about where to look.
-		refuse(stderr, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		return false
-	}
-	return true
-}
-
-// requireFlags reports EVERY missing required flag, not the first: the flags are
-// independent of each other, so a caller who omitted two should learn about two
-// in one run rather than being sent back for a second refusal. Each one carries
-// the hint that says what the flag wants.
-func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*string) bool {
-	ok := true
-	for _, name := range slices.Sorted(maps.Keys(required)) { // deterministic order, not map order
-		if *required[name] == "" {
-			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
-			fmt.Fprint(stderr, hintFor(name))
-			ok = false
-		}
-	}
-	return ok
-}
-
-// addMax puts the same ceiling on every verb that lists findings, so a reader learns
-// one flag and not five. Zero prints everything; a negative number is refused, because
-// zero already means "all" and a negative ceiling is a typo with two readings. The
-// flag's old spelling --fail-max is registered on the same value and stays accepted
-// for one release; checkMax says when a run spelled it.
-func addMax(fs *flag.FlagSet) *int {
-	max := fs.Int("max", bounded.Default, "FAILED lines to print before one MORE line stands for the rest; 0 prints all")
-	fs.IntVar(max, "fail-max", bounded.Default, "the old spelling of --max, accepted for one release; it sets the same value")
-	return max
-}
-
-// checkMax refuses a negative ceiling, naming the verb, and says when the run
-// spelled the flag's old name.
-func checkMax(fs *flag.FlagSet, max int, stderr io.Writer) bool {
-	alias := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "fail-max" {
-			alias = true
-		}
-	})
-	if alias {
-		fmt.Fprintln(stderr, "NOTE --fail-max is --max")
-	}
-	if max < 0 {
-		refuse(stderr, " "+fs.Name(), fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", max))
-		return false
-	}
-	return true
-}
-
-// cmdQuickstart is the first run: the two checks that need nothing but a
-// directory, in one command, so that a stranger's first invocation is a line
-// they can type from the usage banner rather than a choice between six verbs
-// and the flags each of them wants. It adds no check of its own — it runs
-// links and then nocode, and both run even when the first says NO, because a
-// first run should learn everything this pair can tell it in one go.
-func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
-	dir := fs.String("dir", "", "directory tree to check (required)")
-	maxFlag := addMax(fs)
-	var exclude repeatable
-	fs.Var(&exclude, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
-	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
-		return 2
-	}
-	if !checkMax(fs, *maxFlag, stderr) {
-		return 2
-	}
-	// The caps are inherited: quickstart is the first run, the one made on a repo
-	// nobody has checked, and a first run should cost about forty lines, not a
-	// thousand.
-	ceiling := fmt.Sprintf("%d", *maxFlag)
-	fmt.Fprintf(stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
-	linksCode := cmdLinks(append([]string{"--dir", *dir, "--max", ceiling}, excludeFlags(exclude)...), stdout, stderr)
-	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--max", ceiling}, stdout, stderr)
-	worst := max(linksCode, nocodeCode)
-	var failed []string
-	for _, c := range []struct {
-		name string
-		code int
-	}{{"links", linksCode}, {"nocode", nocodeCode}} {
-		if c.code != 0 {
-			failed = append(failed, c.name)
-		}
-	}
-	// The closing line is printed on every outcome. The OK word is a claim that
-	// both checks passed, so it is printed only then. What comes next depends on
-	// the outcome: after a pass, the checks that want an input of yours; after a
-	// failure or a refusal, the failed check run alone, which is the one to fix
-	// before anything else.
-	if len(failed) == 0 {
-		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)\n", worst)
-	} else {
-		fmt.Fprintf(stdout, "QUICKSTART FAILED checks=2 failed=%s worst-exit=%d next=%s (fix what it names, then run quickstart again)\n",
-			oneline.Field(strings.Join(failed, ",")), worst, oneline.Escape("nova-check "+failed[0]+" --dir "+oneline.ShellWord(*dir)))
-	}
-	return worst
-}
-
-func cmdAttest(args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
-	fs := flag.NewFlagSet("attest", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	home := fs.String("home", "", "memory-home directory (required)")
-	manifest := fs.String("manifest", "", "file listing the paths a full boot must read, relative to --home (required)")
-	maxFlag := addMax(fs)
-	if !parse(fs, args, stderr, map[string]*string{"home": home, "manifest": manifest}) {
-		return 2
-	}
-	if !checkMax(fs, *maxFlag, stderr) {
-		return 2
-	}
-	att, failures, err := check.Attest(*home, *manifest)
-	if err != nil {
-		return refuse(stderr, " attest", oneline.Err(err))
-	}
-	if asJSON {
-		return renderFailures(stdout, "attest", failures, *maxFlag, "home", *home, "manifest", *manifest, "files", att.Files, "bytes", att.Bytes, "sha256", att.SHA256)
-	}
-	if len(failures) > 0 {
-		list := bounded.Capped(stderr, *maxFlag, "ATTEST", "entry", maxRemedy)
-		for _, f := range failures {
-			list.Line(fmt.Sprintf("ATTEST FAILED %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
-		}
-		list.More()
-		fmt.Fprintf(stderr, "ATTEST FAILED failed=%d shown=%d manifest=%s\n", list.Total(), list.Shown(), oneline.Field(*manifest))
-		return 1
-	}
-	fmt.Fprintf(stdout, "ATTEST OK files=%d bytes=%d sha256=%s\n", att.Files, att.Bytes, att.SHA256)
-	return 0
-}
-
-func cmdLinks(args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
-	fs := flag.NewFlagSet("links", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	dir := fs.String("dir", "", "directory tree to scan for markdown links (required)")
-	maxFlag := addMax(fs)
-	var exclude repeatable
-	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
-	var files repeatable
-	fs.Var(&files, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
-	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
-		return 2
-	}
-	if !checkMax(fs, *maxFlag, stderr) {
-		return 2
-	}
-	var (
-		res check.LinksResult
-		err error
-	)
-	if len(files) > 0 {
-		res, err = check.LinksFiles(*dir, files, exclude)
-	} else {
-		res, err = check.LinksExcluding(*dir, exclude)
-	}
-	if err != nil {
-		return refuse(stderr, " links", oneline.Err(err))
-	}
-	if asJSON {
-		return renderLinks(stdout, *dir, res, *maxFlag)
-	}
-	if len(res.Broken) > 0 {
-		list := bounded.Capped(stderr, *maxFlag, "LINKS", "broken", maxRemedy)
-		for _, b := range res.Broken {
-			if b.Line == 0 && b.Target == "" {
-				// A whole-file finding: the .md itself could not be read, so there
-				// is no line and no target — `LINKS FAILED <file>: unreadable (<why>)`.
-				// A named failure like any other, per SPEC; not a refusal.
-				list.Line(fmt.Sprintf("LINKS FAILED %s: %s", oneline.Escape(b.File), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
-				continue
-			}
-			list.Line(fmt.Sprintf("LINKS FAILED %s:%d: %s (%s)", oneline.Escape(b.File), b.Line,
-				oneline.Escape(oneline.Cap(b.Target, oneline.TailBytes)), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
-		}
-		list.More()
-		// The count line prints on FAILURE too. It did not, so a failing run gave N lines
-		// and never N: the one number a reader wanted was the one thing they had to
-		// derive by counting the output.
-		fmt.Fprintf(stderr, "LINKS FAILED files=%d links=%d broken=%d shown=%d excluded=%d\n", res.MDFiles, res.Checked, list.Total(), list.Shown(), res.Excluded)
-		return 1
-	}
-	fmt.Fprintf(stdout, "LINKS OK files=%d links=%d excluded=%d\n", res.MDFiles, res.Checked, res.Excluded)
-	return 0
-}
-
-func cmdKernel(args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
-	fs := flag.NewFlagSet("kernel", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	file := fs.String("file", "", "kernel file to measure (required)")
-	maxBytes := fs.Int64("max-bytes", 0, "size budget in bytes, must be positive (one of --max-bytes / --max-tokens)")
-	maxTokens := fs.Int64("max-tokens", 0, "size budget in tokens, must be positive (one of --max-bytes / --max-tokens)")
-	bytesPerToken := fs.Float64("bytes-per-token", 0, "measured bytes per token, required with --max-tokens; no default")
-	if !parseFlags(fs, args, stderr) {
-		return 2
-	}
-	// The file and the budget are independent, so both are judged before
-	// either sends the caller away: `nova-check kernel` with nothing at all
-	// names --file and the budget together, rather than naming --file, stopping,
-	// and leaving the budget for a second run. One run, every problem it can find.
-	ok := requireFlags(fs, stderr, map[string]*string{"file": file})
-	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a
-	// stated (and refused) budget, not an absent one.
-	given := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	switch {
-	case given["max-bytes"] && given["max-tokens"]:
-		refuse(stderr, " kernel", "give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick")
-		fmt.Fprintf(stderr, "  %s\n", budgetHint)
-		ok = false
-	case !given["max-bytes"] && !given["max-tokens"]:
-		refuse(stderr, " kernel", "--max-bytes or --max-tokens is required; refusing to guess")
-		fmt.Fprintf(stderr, "  %s\n", budgetHint)
-		ok = false
-	}
-	if given["bytes-per-token"] && given["max-bytes"] {
-		refuse(stderr, " kernel", "--bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant")
-		fmt.Fprintf(stderr, "  %s\n", budgetHint)
-		ok = false
-	}
-	if !ok {
-		return 2
-	}
-
-	if given["max-tokens"] {
-		// Independent again, and reported together: a run that named a zero
-		// budget and forgot the divisor has two things wrong with it.
-		unit := true
-		if !given["bytes-per-token"] {
-			refuse(stderr, " kernel", "--max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess")
-			fmt.Fprintf(stderr, "  %s\n", budgetHint)
-			unit = false
-		} else if *bytesPerToken <= 0 {
-			refuse(stderr, " kernel", fmt.Sprintf("--bytes-per-token must be a positive ratio (got %g); refusing to guess", *bytesPerToken))
-			fmt.Fprintf(stderr, "  %s\n", budgetHint)
-			unit = false
-		}
-		if *maxTokens <= 0 {
-			refuse(stderr, " kernel", fmt.Sprintf("--max-tokens must be a positive token budget (got %d); refusing to guess", *maxTokens))
-			fmt.Fprintf(stderr, "  %s\n", budgetHint)
-			unit = false
-		}
-		if !unit {
-			return 2
-		}
-		measured, tokens, failures, err := check.KernelTokens(*file, *maxTokens, *bytesPerToken)
-		if err != nil {
-			return refuse(stderr, " kernel", oneline.Err(err))
-		}
-		if asJSON {
-			return renderFailures(stdout, "kernel", failures, 0, "file", *file, "tokens", tokens, "budget", *maxTokens, "bytes", measured, "divisor", *bytesPerToken)
-		}
-		if len(failures) > 0 {
-			for _, f := range failures {
-				fmt.Fprintf(stderr, "KERNEL FAILED %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
-			}
-			return 1
-		}
-		// The OK line teaches the unit it enforced: tokens first, then the
-		// bytes and the divisor they were derived from, so the number can be
-		// re-derived by anyone reading the line.
-		fmt.Fprintf(stdout, "KERNEL OK tokens=%d budget=%d bytes=%d divisor=%g\n", tokens, *maxTokens, measured, *bytesPerToken)
-		return 0
-	}
-
-	if *maxBytes <= 0 {
-		return refuse(stderr, " kernel", fmt.Sprintf("--max-bytes must be a positive byte budget (got %d); refusing to guess", *maxBytes))
-	}
-	measured, failures, err := check.Kernel(*file, *maxBytes)
-	if err != nil {
-		return refuse(stderr, " kernel", oneline.Err(err))
-	}
-	if asJSON {
-		return renderFailures(stdout, "kernel", failures, 0, "file", *file, "bytes", measured, "budget", *maxBytes)
-	}
-	if len(failures) > 0 {
-		for _, f := range failures {
-			fmt.Fprintf(stderr, "KERNEL FAILED %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
-		}
-		return 1
-	}
-	fmt.Fprintf(stdout, "KERNEL OK bytes=%d budget=%d\n", measured, *maxBytes)
-	return 0
-}
-
 // repeatable collects a flag given more than once. Every scope narrowing is
 // the caller's, stated per run, and starts empty.
 type repeatable []string
@@ -663,131 +123,9 @@ type repeatable []string
 func (r *repeatable) String() string     { return strings.Join(*r, ",") }
 func (r *repeatable) Set(v string) error { *r = append(*r, v); return nil }
 
-// excludeFlags flattens a repeatable exclude set into the argv spellings
-// cmdLinks expects, so quickstart forwards the same narrowing it accepted.
-func excludeFlags(exclude repeatable) []string {
-	out := make([]string, 0, len(exclude)*2)
-	for _, ex := range exclude {
-		out = append(out, "--exclude", ex)
-	}
-	return out
-}
-
-func cmdNoCode(args []string, stdout, stderr io.Writer) int {
-	return cmdNoCodeIn(stagedSeams{}, args, stdout, stderr)
-}
-
-// cmdNoCodeIn is the audit and the --staged advisory with the git program
-// injected: the production entry point passes the zero value (git on PATH) and
-// a test passes a fake git so it needs no process PATH. Every refusal and every
-// output line is the same as cmdNoCode's.
-func cmdNoCodeIn(seams stagedSeams, args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
-	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	dir := fs.String("dir", "", "self-repo directory to scan (required)")
-	staged := fs.Bool("staged", false, "advisory over the index: classify what is about to be committed, not the working tree (--dir is the repository root)")
-	denyExt := fs.String("deny-ext", "", "replace the floor EXTENSION list (not the name floor): comma list, or @file")
-	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor EXTENSION list (not the name floor): comma list, or @file")
-	printList := fs.Bool("print-deny-list", false, "print both floors in force (extensions and names) and exit 0")
-	maxFlag := addMax(fs)
-	var allow repeatable
-	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
-
-	fs.SetOutput(io.Discard) // see parse: the flag package is not allowed to print
-	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " nocode", oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
-	}
-	if fs.NArg() > 0 {
-		// nocode parses its own flags rather than through parse(), so it carried the
-		// second copy of the door-less refusal; both go through refuse now.
-		return refuse(stderr, " nocode", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-	}
-	if *denyExt != "" && *denyExtAdd != "" {
-		return refuse(stderr, " nocode", "--deny-ext and --deny-ext-add are mutually exclusive")
-	}
-	if !checkMax(fs, *maxFlag, stderr) {
-		return 2
-	}
-
-	// Resolve the effective deny-list and its provenance before anything else:
-	// a guard that cannot say what it forbids must refuse, not pass.
-	deny, source, err := effectiveDenyList(*denyExt, *denyExtAdd)
-	if err != nil {
-		return refuse(stderr, " nocode", oneline.Err(err))
-	}
-
-	if *printList {
-		// The NAME floor is printed alongside the extension list because this
-		// flag's whole job is to print what is actually in force. A floor that
-		// fires but does not appear here would be exactly the hidden default
-		// the deny-list is defended against being.
-		names, prefixes, nerr := check.FloorDenyNames()
-		if nerr != nil {
-			return refuse(stderr, " nocode", oneline.Err(nerr))
-		}
-		if asJSON {
-			return renderNoCodeList(stdout, source, deny, names, prefixes)
-		}
-		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", oneline.Field(source), len(deny))
-		for _, e := range deny {
-			fmt.Fprintf(stdout, "%s\n", oneline.Escape(e))
-		}
-		fmt.Fprintf(stdout, "NOCODE NAME-LIST source=%s names=%d paths=%d\n", oneline.Field(check.DenyFloor), len(names), len(prefixes))
-		for _, n := range sortedNames(names) {
-			fmt.Fprintf(stdout, "name:%s\n", oneline.Escape(n))
-		}
-		for _, pre := range prefixes {
-			fmt.Fprintf(stdout, "path:%s/\n", oneline.Escape(pre))
-		}
-		return 0
-	}
-
-	if *dir == "" {
-		refuse(stderr, " nocode", "--dir is required; refusing to guess")
-		fmt.Fprint(stderr, hintFor("dir"))
-		return 2
-	}
-
-	// The staged advisory dispatches here, after the shared refusals above --
-	// the deny-list floors, the cap, the required --dir -- so it keeps every
-	// refusal the audit already makes, and it never sees a --dir it was
-	// willing to guess. The verb's own wiring is staged.go.
-	if *staged {
-		return stagedRun(seams, *dir, allow, deny, source, *maxFlag, stdout, stderr)
-	}
-
-	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}
-
-	scanned, findings, err := check.NoCode(opts)
-	if err != nil {
-		return refuse(stderr, " nocode", oneline.Err(err))
-	}
-	if asJSON {
-		return renderFailures(stdout, "nocode", findings, *maxFlag, "dir", *dir, "files", scanned, "deny-list", source)
-	}
-	if len(findings) > 0 {
-		list := bounded.Capped(stderr, *maxFlag, "NOCODE", "file", maxRemedy)
-		for _, f := range findings {
-			list.Line(fmt.Sprintf("NOCODE FAILED %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
-		}
-		list.More()
-		fmt.Fprintf(stderr, "NOCODE FAILED files=%d findings=%d shown=%d deny-list=%s\n", scanned, list.Total(), list.Shown(), oneline.Field(source))
-		return 1
-	}
-	// A run that classified nothing should not read as a run that found
-	// nothing: an empty tree and a wrong --dir are indistinguishable here.
-	if scanned == 0 {
-		// The audit had no such warning, so a --dir that resolved to an empty
-		// or unreadable tree read as a clean repo with nothing to say.
-		fmt.Fprintf(stderr, "NOCODE NOTE classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", oneline.Escape(*dir))
-	}
-	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, oneline.Field(source))
-	return 0
-}
+// Get returns the collected values, so the flag is a flag.Getter and the
+// skeleton's Call.Get reads it.
+func (r *repeatable) Get() any { return []string(*r) }
 
 // effectiveDenyList resolves the floor list, a replacement, or an extension,
 // and reports which of the three produced it.
@@ -818,124 +156,6 @@ func effectiveDenyList(replace, add string) ([]string, string, error) {
 		seen[e] = true
 	}
 	return slices.Sorted(maps.Keys(seen)), check.DenyExtended, nil
-}
-
-func cmdFloors(args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
-	fs := flag.NewFlagSet("floors", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	core := fs.String("core", "", "the door: path to SEED-CORE.md (required)")
-	source := fs.String("source", "", "the source: path to SEED.md (required)")
-	if !parse(fs, args, stderr, map[string]*string{"core": core, "source": source}) {
-		return 2
-	}
-	floors, failures, err := check.Floors(*core, *source)
-	if err != nil {
-		return refuse(stderr, " floors", oneline.Err(err))
-	}
-	if asJSON {
-		return renderFailures(stdout, "floors", failures, 0, "core", *core, "source", *source, "floors", floors)
-	}
-	if len(failures) > 0 {
-		for _, f := range failures {
-			fmt.Fprintf(stderr, "FLOORS FAILED %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
-		}
-		return 1
-	}
-	fmt.Fprintf(stdout, "FLOORS OK floors=%d\n", floors)
-	return 0
-}
-
-func cmdCorpus(args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
-	fs := flag.NewFlagSet("corpus", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	ledger := fs.String("ledger", "", "the ledger of protected material, a markdown file (required)")
-	root := fs.String("root", "", "the repo the ledger's home paths are relative to (required)")
-	minAnchors := fs.Int("min-anchors", 0, "the fewest rows the ledger may hold, must be positive (required); the ledger is inside what it protects, so its own shrinking must be red")
-	maxFlag := addMax(fs)
-	if !parseFlags(fs, args, stderr) {
-		return 2
-	}
-	// All three are independent, so `nova-check corpus` with nothing names all
-	// three at once instead of sending a first run back twice.
-	ok := requireFlags(fs, stderr, map[string]*string{"ledger": ledger, "root": root})
-	given := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	switch {
-	case !given["min-anchors"]:
-		refuse(stderr, " corpus", "--min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess")
-		fmt.Fprintf(stderr, "  %s\n", anchorsHint)
-		ok = false
-	case *minAnchors <= 0:
-		refuse(stderr, " corpus", fmt.Sprintf("--min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess", *minAnchors))
-		fmt.Fprintf(stderr, "  %s\n", anchorsHint)
-		ok = false
-	}
-	if !checkMax(fs, *maxFlag, stderr) {
-		ok = false
-	}
-	if !ok {
-		return 2
-	}
-	// --root is validated BEFORE any finding is printed: a FAILED line from a
-	// run that then exits 2 reports findings from a run that did not happen.
-	if _, _, rootErr := check.ResolveRoot(*root); rootErr != nil {
-		return refuse(stderr, " corpus", oneline.Err(rootErr))
-	}
-	raw, err := os.ReadFile(*ledger)
-	if err != nil {
-		// Nothing was checked, so this is a refusal rather than a pass —
-		// the one outcome a protection check must never confuse.
-		return refuse(stderr, " corpus", fmt.Sprintf("the ledger %s cannot be read (%s); NOTHING was checked, which is not a pass", oneline.Escape(*ledger), oneline.Err(err)))
-	}
-	anchors, malformed, parseErr := check.ParseLedger(raw)
-	// Malformed rows print whether or not any good row survived: a ledger
-	// whose rows are ALL malformed is visibly populated, and telling its
-	// author it is empty while withholding the reason is the worst of both.
-	// They are their own KIND under the cap, so a ledger with a thousand bad
-	// rows cannot hide the anchors that also went missing.
-	rows := bounded.Capped(stderr, *maxFlag, "CORPUS", "malformed-row", maxRemedy)
-	for _, f := range malformed {
-		rows.Line(fmt.Sprintf("CORPUS FAILED %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
-	}
-	rows.More()
-	if asJSON && parseErr != nil && len(malformed) > 0 {
-		return renderCorpus(stdout, *ledger, len(anchors), *minAnchors, nil, malformed, *maxFlag)
-	}
-	if parseErr != nil {
-		if len(malformed) > 0 {
-			// Rows were found and judged bad. The check RAN, and the answer
-			// is no — that is exit 1, not "could not run".
-			fmt.Fprintf(stderr, "CORPUS FAILED malformed=%d shown=%d anchors=0 ledger=%s: no row survived parsing\n",
-				rows.Total(), rows.Shown(), oneline.Field(*ledger))
-			return 1
-		}
-		return refuse(stderr, " corpus", fmt.Sprintf("%s: %s", oneline.Escape(*ledger), oneline.Err(parseErr)))
-	}
-	failures, err := check.Corpus(*root, *ledger, *minAnchors, anchors)
-	if err != nil {
-		return refuse(stderr, " corpus", oneline.Err(err))
-	}
-	if asJSON {
-		return renderCorpus(stdout, *ledger, len(anchors), *minAnchors, failures, malformed, *maxFlag)
-	}
-	if len(failures) > 0 || len(malformed) > 0 {
-		list := bounded.Capped(stderr, *maxFlag, "CORPUS", "anchor", maxRemedy)
-		for _, f := range failures {
-			list.Line(fmt.Sprintf("CORPUS FAILED %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
-		}
-		list.More()
-		fmt.Fprintf(stderr, "CORPUS FAILED anchors=%d floor=%d failed=%d shown=%d malformed=%d ledger=%s\n",
-			len(anchors), *minAnchors, list.Total(), list.Shown(), rows.Total(), oneline.Field(*ledger))
-		return 1
-	}
-	fmt.Fprintf(stdout, "CORPUS OK anchors=%d floor=%d ledger=%s\n", len(anchors), *minAnchors, oneline.Field(*ledger))
-	return 0
 }
 
 // sortedNames returns the name-floor keys in a stable order, so that

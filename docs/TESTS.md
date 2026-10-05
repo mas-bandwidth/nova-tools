@@ -244,12 +244,12 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART RUN dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor-list
+LINKS OK dir=./self files=4 links=3 excluded=0 broken=0
+NOCODE OK dir=./self files=5 deny-list=floor-list findings=0
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-KERNEL OK bytes=771 budget=4000
+KERNEL OK file=./self/docs/SEED-CORE.md bytes=771 budget=4000 findings=0
 ```
 
 The included `example-self` fixture has `SEED-CORE.md` but no `SEED.md`, so it
@@ -265,13 +265,13 @@ that also strays outside the card's paths.
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
-HYGIENE OK base=main head=card paths=sign/** findings=0
+HYGIENE OK repo=. base=main head=card paths=sign/** findings=0
 
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
@@ -280,11 +280,11 @@ back — it is the command that prints the rest, and it carries the
 
 ```
 $ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=out-of-path at=elsewhere/x.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=stray-file at=sign/RESULT.md why="an added file matching the stray list's RESULT.md"
 ```
 
 `--identity` takes one pair of angle brackets. A second pair is refused rather
@@ -292,7 +292,7 @@ than matched against nobody:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
-nova-check hygiene REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+HYGIENE REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
@@ -300,7 +300,7 @@ it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk

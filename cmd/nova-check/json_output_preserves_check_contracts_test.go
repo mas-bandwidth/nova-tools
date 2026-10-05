@@ -87,7 +87,7 @@ func TestPolishHygieneHelpDescribesEveryFlag(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "hygiene", "-h")
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
-	for _, want := range []string{"git checkout to inspect", "base git ref", "head git ref", "allowed path globs", "allowed authors", "card kind", "finding lines", "positive seconds"} {
+	for _, want := range []string{"git checkout to inspect", "base git ref", "head git ref", "allowed path globs", "allowed authors", "card kind", "items listed before one MORE line", "positive seconds"} {
 		assert.Contains(t, stdout, want)
 	}
 }
@@ -146,17 +146,74 @@ func TestPolishJSONCheckSuccessAndFailure(t *testing.T) {
 			assert.Empty(t, stderr)
 			var out struct {
 				Result struct {
+					Verb   string
 					Exit   int
 					Status string
 				}
 			}
 			require.NoError(t, json.Unmarshal([]byte(stdout), &out))
+			assert.Equal(t, tc.args[0], out.Result.Verb)
 			assert.Equal(t, exit, out.Result.Exit)
 			if exit == 0 {
 				assert.Equal(t, "ok", out.Result.Status)
 			} else {
 				assert.Equal(t, "failed", out.Result.Status)
 			}
+		})
+	}
+}
+
+// Each verb's --json carries the facts it carried before the move onto the
+// shared skeleton, in the same order, on success and on failure alike: the
+// provenance (the path a check read) and the counts (findings, broken) a reader
+// compares two runs by.
+func TestJSONFactsKeepEachVerbsFields(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "record.md")
+	require.NoError(t, os.WriteFile(file, []byte("# Kernel\n"), 0600))
+	manifest := filepath.Join(dir, "MANIFEST")
+	require.NoError(t, os.WriteFile(manifest, []byte("record.md\n"), 0600))
+	bad := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bad, "a.md"), []byte("[gone](missing)\nthe teh word\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(bad, "run.sh"), []byte("echo\n"), 0600))
+	core, source := "../../internal/check/testdata/seed-core-floors.md", "../../internal/check/testdata/seed-floors.md"
+	for _, tc := range []struct {
+		name string
+		args []string
+		keys string
+	}{
+		{"links ok", []string{"links", "--dir", dir}, "dir files links excluded broken"},
+		{"links failed", []string{"links", "--dir", bad}, "dir files links excluded broken"},
+		{"attest", []string{"attest", "--home", dir, "--manifest", manifest}, "home manifest files bytes sha256 findings"},
+		{"kernel bytes", []string{"kernel", "--file", file, "--max-bytes", "4000"}, "file bytes budget findings"},
+		{"kernel bytes failed", []string{"kernel", "--file", file, "--max-bytes", "1"}, "file bytes budget findings"},
+		{"kernel tokens", []string{"kernel", "--file", file, "--max-tokens", "100", "--bytes-per-token", "2"}, "file tokens budget bytes divisor findings"},
+		{"nocode ok", []string{"nocode", "--dir", dir}, "dir files deny-list findings"},
+		{"nocode failed", []string{"nocode", "--dir", bad}, "dir files deny-list findings"},
+		{"floors", []string{"floors", "--core", core, "--source", source}, "core source floors findings"},
+		{"corpus", []string{"corpus", "--ledger", "testdata/example-self/corpus/anchors.md", "--root", exampleSelf, "--min-anchors", "2"}, "ledger anchors floor failed malformed"},
+		{"spelling", []string{"spelling", "--dir", bad}, "dir files misspellings written excluded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, stdout, _ := runCheck(t, append(tc.args, "--json")...)
+			var out struct {
+				Facts json.RawMessage
+			}
+			require.NoError(t, json.Unmarshal([]byte(stdout), &out))
+			dec := json.NewDecoder(strings.NewReader(string(out.Facts)))
+			_, err := dec.Token() // the opening brace
+			require.NoError(t, err)
+			var keys []string
+			for dec.More() {
+				key, err := dec.Token()
+				require.NoError(t, err)
+				keys = append(keys, key.(string))
+				var value json.RawMessage
+				require.NoError(t, dec.Decode(&value))
+			}
+			assert.Equal(t, tc.keys, strings.Join(keys, " "))
 		})
 	}
 }
@@ -212,7 +269,7 @@ func TestPolishJSONDoesNotSwallowHelp(t *testing.T) {
 			assert.Contains(t, stdout, "nova-check "+verb)
 			assert.Contains(t, stdout, "--json")
 			if verb == "version" {
-				assert.Contains(t, stdout, "print this build identity in a JSON envelope")
+				assert.Contains(t, stdout, "print the result as one JSON object instead of lines")
 			}
 		})
 	}
@@ -236,7 +293,7 @@ func TestPolishLinksBannerExampleMatchesOutput(t *testing.T) {
 	args[2] = filepath.Join(scratch, args[2])
 	exit, stdout, stderr := runCheck(t, args...)
 	assert.Empty(t, stderr)
-	step := onboarding.Step{Line: "$ " + command, Args: args, Want: []string{"LINKS OK files=1 links=0 excluded=0"}, StderrWhole: true}
+	step := onboarding.Step{Line: "$ " + command, Args: args, Want: []string{"LINKS OK dir=" + args[2] + " files=1 links=0 excluded=0 broken=0"}, StderrWhole: true}
 	result := onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}
 	assert.Empty(t, onboarding.Compare(step, result, nil))
 }
