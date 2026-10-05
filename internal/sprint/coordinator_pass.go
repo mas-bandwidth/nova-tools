@@ -22,7 +22,8 @@ import (
 //     working to done in the friend-finish window (FriendFinishAfter; a read is not
 //     card work);
 //   - the coordinator is behind: judgments wait on the coordinator past their due time,
-//     by kind and count.
+//     by kind and count, each counted once PassEvery of running time has run since the
+//     overdue part named it (its overdue line is the first reminder, this the next).
 //
 // Raising again is a push: the judgment is rewritten in place with the latest facts and
 // the count of its raises after the first (its Before), and a happened note NRaisedAgain
@@ -212,8 +213,20 @@ func idleConds(s *Snapshot, r TickReq) []cond {
 
 // behindConds is the one condition, about the sprint, that judgments wait on the
 // coordinator past their due time: by type, with the count and the judgments of each.
-// The pass's own judgments are not counted: they are raised again on their own.
+// A judgment counts once PassEvery of running time has run since its overdue line (the
+// overdue part's hold, NOverdue), so a late judgment is pushed at its deadline by the
+// overdue line and every PassEvery after by the pass, never twice in one tick. The
+// pass's own judgments are not counted: they are raised again on their own.
 func behindConds(s *Snapshot, r TickReq) []cond {
+	marked := map[string]time.Time{} // judgment id: when the overdue part first named it
+	for _, o := range s.Acked {
+		if o.Note.Type != NOverdue {
+			continue
+		}
+		if at, ok := marked[o.Note.What]; !ok || o.Note.At.Before(at) {
+			marked[o.Note.What] = o.Note.At
+		}
+	}
 	byType := map[string][]string{}
 	seen := map[string]bool{}
 	n := 0
@@ -226,11 +239,16 @@ func behindConds(s *Snapshot, r TickReq) []cond {
 		if !JudgmentOverdue(s, r, j) {
 			continue
 		}
-		ref := j.Alias
-		if ref == "" {
-			ref = j.ID
+		// the overdue line is the first reminder; the pass is the next, PassEvery after it
+		at, ok := marked[j.ID]
+		if !ok {
+			continue
 		}
-		byType[j.Type] = append(byType[j.Type], ref)
+		if d, ok := r.running(s.Now, stamp(at)); !ok || d < PassEvery {
+			continue
+		}
+		// by id, as the overdue line names it: an alias is the store's, not the decision's
+		byType[j.Type] = append(byType[j.Type], j.ID)
 		n++
 	}
 	if n == 0 {
@@ -287,12 +305,8 @@ func reraise(p *Plan, s *Snapshot, conds []cond, r TickReq) {
 			n.Decisions = append([]string(nil), c.decisions...)
 		}
 		p.Updates = append(p.Updates, n)
-		ref := n.Alias
-		if ref == "" {
-			ref = n.ID
-		}
 		push := Note{Kind: Happened, Type: NRaisedAgain, Stream: n.Stream, Primaries: n.Primaries, Count: n.Count, Who: r.who(), To: to, At: s.Now,
-			What: fmt.Sprintf("%s (%s) still holds, open since %s: %s", ref, n.Type, stamp(n.At), c.what),
+			What: fmt.Sprintf("%s (%s) still holds, open since %s: %s", n.ID, n.Type, stamp(n.At), c.what),
 			Hint: "run: nova-sprint inbox; ack it, or wait it, to quiet it"}
 		p.Notes = append(p.Notes, push)
 	}

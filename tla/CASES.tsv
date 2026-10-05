@@ -395,3 +395,5 @@ MCCoordinatorPass.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinatorpa
 MCCoordinatorPassBrokenNoReraise.cfg	MCCoordinatorPass.tla	invariant	PushedEveryWindow	ignore-terminal	coordinatorpass	required	-
 MCCoordinatorPassBrokenReopen.cfg	MCCoordinatorPass.tla	invariant	OneJudgmentAnEpisode	ignore-terminal	coordinatorpass	required	-
 MCCoordinatorPassBrokenNoClose.cfg	MCCoordinatorPass.tla	invariant	ClosedWhenCleared	ignore-terminal	coordinatorpass	required	-
+MCCoordinatorPassBehind.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinatorpass	required	-
+MCCoordinatorPassBrokenDoublePush.cfg	MCCoordinatorPass.tla	invariant	OnePushATick	ignore-terminal	coordinatorpass	required	-

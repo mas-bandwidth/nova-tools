@@ -2858,8 +2858,13 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
   read is not card work.
 - **judgments wait on the coordinator past their deadline** (`judgments wait on the
   coordinator past their deadline`), one about the sprint while any open judgment is
-  overdue (its review time, else `DeadlineJudgment`, as the overdue line has it), naming
-  them by type and count. The pass's own judgments are not counted.
+  overdue (its review time, else `DeadlineJudgment`, as the overdue line has it) and its
+  overdue line was written at least 10 minutes of running time ago, naming them by type
+  and count. The overdue line is a late judgment's first reminder, at its deadline; the
+  pass is the next, 10 minutes on, and every 10 minutes after while it holds, so the
+  coordinator is never pushed twice in one tick for one late judgment. The pass's own
+  judgments are not counted: each is raised again on its own (and, like every judgment,
+  gets its one overdue line).
 
 Each is an episode, keyed by its type and subject: written once when its condition
 starts, raised again in place every 10 minutes of running time while it holds

@@ -116,7 +116,8 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	assert.Nil(t, r.open(sprint.NFriendDeaf, amy), "a pong 9 minutes old is not deaf")
 	assert.Nil(t, r.open(sprint.NCoordinatorBehind, behind), "a judgment 9 minutes old is not late")
 
-	// 10m30s: amy deaf, the failed judgment late; each raised once
+	// 10m30s: amy deaf, raised once; the failed judgment late, named by its overdue line
+	// (the first reminder) and not yet by the pass
 	fresh()
 	r.tick(90 * time.Second)
 	deaf := r.open(sprint.NFriendDeaf, amy)
@@ -126,10 +127,8 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	assert.Contains(t, deaf.What, "--wake", "the remedy, a wake note")
 	assert.Contains(t, deaf.What, "SPEC-FRIEND.md", "then the debug steps")
 	assert.Nil(t, r.open(sprint.NFriendDeaf, bob), "bob's session answers")
-	late := r.open(sprint.NCoordinatorBehind, behind)
-	require.NotNil(t, late, "a judgment waits on the coordinator past its deadline")
-	assert.Contains(t, late.What, "1 judgments wait past their deadline")
-	assert.Contains(t, late.What, "1 "+sprint.NWorkFailed)
+	assert.Equal(t, 1, r.count(sprint.Happened, sprint.NOverdue, sprint.NWorkFailed), "the overdue line names the late judgment")
+	assert.Nil(t, r.open(sprint.NCoordinatorBehind, behind), "the overdue line is the first reminder, not the pass")
 	assert.Nil(t, r.open(sprint.NFriendIdle, sprint.FriendRow(holder)), "her card is 10 minutes old: not idle")
 	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendDeaf, "friend amy"))
 	assert.Equal(t, 0, r.count(sprint.Happened, sprint.NRaisedAgain, ""))
@@ -142,13 +141,20 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendDeaf, "friend amy"), "one judgment an episode")
 	assert.Equal(t, 0, r.count(sprint.Happened, sprint.NRaisedAgain, ""), "not again within 10 minutes")
 
-	// 20m31s: ten minutes on, both raised again, each a push to the coordinator that wakes her
+	assert.Nil(t, r.open(sprint.NCoordinatorBehind, behind), "the late judgment's overdue line is under 10 minutes old")
+
+	// 20m31s: ten minutes on, deaf raised again, a push to the coordinator that wakes her;
+	// the late judgment's overdue line is ten minutes old: the pass raises behind
 	ends := r.tickEnds()
 	fresh()
 	r.tick(time.Second)
 	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendDeaf, "friend amy"), "raised again in place, never a second judgment")
 	assert.Equal(t, 1, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendDeaf))
-	assert.Equal(t, 1, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NCoordinatorBehind))
+	late := r.open(sprint.NCoordinatorBehind, behind)
+	require.NotNil(t, late, "a judgment waits on the coordinator past its deadline, 10 minutes after its overdue line")
+	assert.Contains(t, late.What, "1 judgments wait past their deadline")
+	assert.Contains(t, late.What, "1 "+sprint.NWorkFailed)
+	assert.Equal(t, 1, r.count(sprint.Happened, sprint.NOverdue, sprint.NWorkFailed), "the overdue line is written once")
 	for _, n := range r.notes() {
 		if n.Type == sprint.NRaisedAgain {
 			assert.Equal(t, "coordinator", n.To, "the push is the coordinator's")
@@ -168,6 +174,8 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	assert.Contains(t, idle.What, fc.ID)
 	assert.Contains(t, idle.What, "no finish yet")
 	assert.Equal(t, 2, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendDeaf), "deaf raised again at 30m31s")
+	assert.Equal(t, 1, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NCoordinatorBehind), "behind raised again at 30m31s")
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NCoordinatorBehind, ""), "one behind judgment an episode")
 
 	// amy's session answers: deaf closes; the failed card is dropped: late closes
 	r.pongs["amy"] = r.clock()
