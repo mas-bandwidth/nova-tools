@@ -1117,6 +1117,21 @@ uncalibrated: nova-config's `sprint` row `decide_brief_bar` stays empty, which r
 only, until the brief record's own outcomes support a bar
 ([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 14).
 
+### install-server-unit-by-verb-r.w1: the server's unit
+
+`nova-sprint server install --listen <address:port> --secrets-store <dir>
+--secrets-as <seat> --secrets-key <path> --sops <path> [--redis <host:port>]
+[--redis-user <user>] [--password-env <NAME>] [--only <NAME,...>] [--land]
+[--decide <dir>] [--dir <dir>] [--log <file>] [--replace-hand-edit] [--dry-run]`
+writes the sprint server's launchd agent (macOS) or systemd user unit (Linux)
+and the SHA-256 of its bytes beside it, and loads it. The unit runs `run
+--listen` under `nova-secrets exec --only`, naming key names and never a value,
+and names no actor. A unit edited or written by hand (its bytes not the recorded
+hash) is refused with the diff, secret-like values redacted, until
+`--replace-hand-edit` is given. `--dry-run` prints the unit and the plan
+(`write`, `keep` or `refuse`) and writes nothing. Exit 0 done, 1 a hand edit
+refused or a write or load failed, 2 usage. docs/SPEC-SPRINT.md, "The server".
+
 ### Exit codes
 
 | exit | meaning |
