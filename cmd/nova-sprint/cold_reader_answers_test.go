@@ -227,7 +227,7 @@ func TestTheColdRunsMistakesAreAnsweredInOneTurn(t *testing.T) {
 	require.NoError(t, os.WriteFile(raw, []byte(card), 0o600))
 	out := ta.ok("add --stream s1 r1 --one --brief-file " + raw)
 	assert.Contains(t, out, "\nNOTE the brief holds 10 of the card template's lines unfilled (line 1: RESULT: <label> sha=<sha12>; line 2: REPO: <owner>/<name>; line 3: BASE: <branch>; and 7 more);")
-	filled := strings.NewReplacer("RESULT: <label> sha=<sha12>", "RESULT: r2 sha=000000000000", "REPO: <owner>/<name>", "REPO: acme/widgets", "BASE: <branch>", "BASE: main").Replace(card)
+	filled := strings.NewReplacer("RESULT: <label> sha=<sha12>", "RESULT: r2 sha=000000000000", "REPO: <owner>/<name>", "REPO: acme/widgets", "BASE: <branch>", "BASE: sprint/foundation").Replace(card)
 	require.NoError(t, os.WriteFile(raw, []byte(filled), 0o600))
 	assert.Contains(t, ta.ok("add --stream s1 r2 --one --brief-file "+raw), "NOTE the brief holds 7 of the card template's lines unfilled (line 6: Deadline: finish within <n> minutes.;")
 }

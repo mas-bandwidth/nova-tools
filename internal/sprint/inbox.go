@@ -30,6 +30,11 @@ type StreamClock struct {
 	// Quiet is the time wait set on the stream's stale judgment (FieldStaleReview):
 	// not shown stale before it.
 	Quiet time.Time `json:",omitzero"`
+	// Promotion is the stream's protected-branch mark from its control card
+	// (FieldLandProtected): LandProtectedAny for the promotion stream, else the
+	// repositories it lands dev and main of; empty for a plain stream
+	// (docs/SPEC-SPRINT.md section 7, protected-bases-pb.w1).
+	Promotion string `json:",omitempty"`
 }
 
 // Stalled says a stream that has not landed has made no progress for longer

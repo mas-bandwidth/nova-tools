@@ -27,6 +27,7 @@ func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 	// base has not, and the report says report
 	held := func(s, report string) (id, head string) {
 		id = s + "-1"
+		r.promotionStream(s) // the card is cut on main, which the promotion stream alone takes
 		r.ok("add --stream " + s + " --count 1 --one --brief-file " + brief)
 		r.deal(1)
 		r.ok("take --as m1 " + id + ".w1@1")

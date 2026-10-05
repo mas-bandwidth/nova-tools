@@ -31,7 +31,10 @@ func TestBasesListsEveryBaseInUseAndAddRefusesAPersonalOne(t *testing.T) {
 		return path
 	}
 
-	// main: a card lands through land, so the lander gated main's tip green
+	// main: a card lands through land, so the lander gated main's tip green; s1 and s2 take
+	// cards cut on main, which the promotion stream alone takes
+	r.promotionStream("s1")
+	r.promotionStream("s2")
 	r.ok("add --stream s1 g --one --brief-file " + brief("g", "main"))
 	r.ok("add --stream s3 h --one --brief-file " + brief("h", "hot"))
 	r.queued(map[string]string{"g": r.head("g", "main", "g.txt", "g\n"), "h": r.head("h", "hot", "h.txt", "h\n")}, "g", "h")

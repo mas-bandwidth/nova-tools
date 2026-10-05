@@ -106,7 +106,7 @@ func init() {
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
-		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
@@ -1252,7 +1252,22 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if len(rs) == 1 {
 		step = store.AddStep(rs[0])
 	}
-	return a.runStep("add", *c, st, step, stdout, stderr)
+	return a.runStep("add", *c, st, promotionGuard(step, rs), stdout, stderr)
+}
+
+// promotionGuard is the add step refused whole, nothing written, when any card it admits
+// is cut on a protected branch, dev or main, outside the promotion stream
+// (sprint.PromotionRefusals; docs/SPEC-SPRINT.md section 7, protected-bases-pb.w1). It
+// plans on the step's own snapshot, so the stream's mark is read with the tables it writes.
+func promotionGuard(step store.Step, rs []sprint.AddReq) store.Step {
+	plan := step.Plan
+	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
+		if refused := sprint.PromotionRefusals(s, rs); len(refused) > 0 {
+			return sprint.Plan{Refused: refused}
+		}
+		return plan(s)
+	}
+	return step
 }
 
 // cmdAddMany is add --brief-dir <dir>, or add with --brief-file given again:
@@ -1352,7 +1367,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	}
 	c.addStream = stream
 	c.addBefore = before
-	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
+	return a.runStep("add", *c, st, promotionGuard(store.AddStep(r), []sprint.AddReq{r}), stdout, stderr)
 }
 
 // briefFiles is the brief files of a many-brief add, in order: the *.md files
@@ -2997,12 +3012,23 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	attempts := fs.String("attempts", "", fmt.Sprintf("the stream's attempt cap, over the sprint's: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to %d, or default (the sprint's)", sprint.AttemptsMax))
 	reason := fs.String("reason", "", "why the read tier is set, recorded on the stream row (the judgment 'raise the read tier of the stream?' names it)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	promotion := fs.Bool("promotion", false, "mark the streams the promotion stream: they alone take cards cut on dev or main, and land them there (--land-protected any); --promotion=false takes the mark off (--land-protected default)")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
+	var promotionGiven bool
+	fs.Visit(func(f *flag.Flag) { promotionGiven = promotionGiven || f.Name == "promotion" })
+	if promotionGiven {
+		// the promotion mark is the protected-branch mark for every repository
+		// (docs/SPEC-SPRINT.md section 7, protected-bases-pb.w1)
+		if *mark != "" {
+			return refuse(stderr, "stream set", "--promotion and --land-protected both set the stream's mark: give one")
+		}
+		*mark = map[bool]string{true: sprint.LandProtectedAny, false: sprint.ReadTierDefault}[*promotion]
+	}
 	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "" && *attempts == "") {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default>, --release <name> or --attempts <n|default>")
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default>, --promotion[=false], --release <name> or --attempts <n|default>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
