@@ -1089,12 +1089,11 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 		j.subjects = append(j.subjects, o.Subject())
 	}
 	overdue := func(n Note) bool {
-		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
-			return s.Now.After(n.Review)
-		}
 		if !n.Review.IsZero() {
-			d, ok := r.running(s.Now, stamp(n.ReviewSet))
-			return ok && d >= n.Review.Sub(n.ReviewSet)
+			// The review time wait set counts running time from when wait set
+			// it, by the tree's one clock comparison, the same one a timer is
+			// due by (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers").
+			return DueNow(s.Now, n.Review, n.ReviewSet, r.Stopped)
 		}
 		d, ok := r.running(s.Now, stamp(n.At))
 		return ok && d > DeadlineJudgment

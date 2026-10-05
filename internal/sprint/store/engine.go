@@ -624,7 +624,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil {
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil && len(op.CloseTimers) == 0 && op.Timers == nil {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
@@ -1228,7 +1228,7 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // entries, each expecting the revision the one before it leaves; then the
 // notifications and the answers.
 func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
-	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Health: plan.Health}
+	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Health: plan.Health, Timers: plan.Timers, CloseTimers: plan.CloseTimers}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}
