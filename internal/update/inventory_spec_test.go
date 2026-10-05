@@ -299,14 +299,12 @@ func TestDiffRefusesANonSnapshotFile(t *testing.T) {
 
 // 11. TestSnapshotIsBoundedByTheClock.
 func TestSnapshotIsBoundedByTheClock(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		old := snapshotChildTimeout
-		snapshotChildTimeout = 20 * time.Millisecond
-		t.Cleanup(func() { snapshotChildTimeout = old })
 		bin := t.TempDir()
 		specScript(t, bin, "nova-slow", "printf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
 		out := filepath.Join(t.TempDir(), "s.tsv")
-		env := Environment{Process: deadlineFake(t, 20*time.Millisecond), Now: func() time.Time { return time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC) }}
+		env := Environment{Process: deadlineFake(t, snapshotChildTimeout), Now: func() time.Time { return time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC) }}
 		code, _, stderr := specRun(t, env, "snapshot", "--bin", bin, "--out", out)
 		if code != 2 {
 			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)

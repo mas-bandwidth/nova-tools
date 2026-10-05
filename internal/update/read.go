@@ -8,7 +8,9 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -106,7 +108,7 @@ func identity(e Entry, raw string, report bool) Read {
 
 type ProcessResult struct{ Stdout, Stderr, Path, Reason string }
 
-func process(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+func process(ctx context.Context, childEnv []string, args []string, input io.Reader, cap int) ProcessResult {
 	r := ProcessResult{}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -116,7 +118,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "empty argv"
 		return r
 	}
-	path, err := exec.LookPath(args[0])
+	path, err := lookPath(childEnv, args[0])
 	if err != nil {
 		r.Reason = "not_found"
 		return r
@@ -126,6 +128,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := subproc.Context(child, path, args[1:]...)
+	cmd.Env = childEnv
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and
@@ -321,7 +324,7 @@ func ladder(e Entry) [][]string {
 type processFunc func(context.Context, []string, io.Reader, int) ProcessResult
 
 func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
-	return installed(ctx, e, timeout, report, process)
+	return installed(ctx, e, timeout, report, Environment{}.runProcess)
 }
 
 // installed keeps the version decisions independent of the child transport.
@@ -449,10 +452,29 @@ func decPatch(v string) string {
 	return strings.Join(parts, ".")
 }
 
+// lookPath finds name on the PATH of childEnv, or on this process's own PATH
+// when childEnv is nil.
+func lookPath(childEnv []string, name string) (string, error) {
+	if childEnv == nil || strings.ContainsRune(name, filepath.Separator) {
+		return exec.LookPath(name)
+	}
+	for _, kv := range slices.Backward(childEnv) {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			for _, dir := range filepath.SplitList(v) {
+				if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+					return p, nil
+				}
+			}
+			break
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
 // runProcess uses the supplied transport or the real child adapter.
 func (env Environment) runProcess(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
 	if env.Process != nil {
 		return env.Process(ctx, args, input, cap)
 	}
-	return process(ctx, args, input, cap)
+	return process(ctx, env.Env, args, input, cap)
 }
