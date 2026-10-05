@@ -284,7 +284,7 @@ func (s *Server) servePull(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/healthz":
-		s.send(w, "text/plain; charset=utf-8", []byte("ok\n"))
+		s.healthz(w)
 		return
 	case "/events":
 		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.Snapshot(), true })

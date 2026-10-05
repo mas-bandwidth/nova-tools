@@ -744,6 +744,9 @@ func twinTables(load []string) bool {
 // step inside another, or another goroutine's), and the step reads the
 // store itself. The release is to be called when the step ends.
 func (st *Store) stepTwin(step Step) (*Twin, func()) {
+	if step.heldTwin != nil {
+		return step.heldTwin, func() {}
+	}
 	tw := step.Twin
 	if tw == nil {
 		lazyMu.Lock()

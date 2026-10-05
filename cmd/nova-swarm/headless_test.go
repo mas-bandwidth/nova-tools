@@ -213,3 +213,27 @@ func TestAHeadlessChildReadsItsInstallAndNotTheLoginAroundIt(t *testing.T) {
 	assert.Equal(t, release, swarm.HeadlessProgramRoot(bin))
 	assert.Equal(t, "/v/claude/versions", swarm.HeadlessProgramRoot("/v/claude/versions/2.1.220"), "a binary outside a bin directory is read by its own directory")
 }
+
+// claude's private home is seeded with nothing of the bench's login: its `.credentials.json`
+// (a fake here) is a refreshable OAuth login, and a copy refreshed inside a turn would strand
+// the bench's own refresh token. The bench's file is left as it was, and the child's login is
+// the token the run hands it by name.
+func TestClaudesPrivateHomeIsGivenNoCopyOfTheBenchsCredential(t *testing.T) {
+	t.Parallel()
+	home, data := t.TempDir(), t.TempDir()
+	login := filepath.Join(home, ".claude")
+	require.NoError(t, os.MkdirAll(login, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(login, ".credentials.json"), []byte(`{"fake":"not a real login"}`), 0o600))
+
+	h := swarm.HeadlessHomeOf(harness.Claude, home, data)
+	require.NoError(t, os.MkdirAll(h.Dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(h.Dir, ".credentials.json"), []byte("an earlier card's copy"), 0o600))
+	require.NoError(t, seedHeadlessHome(h))
+	names, err := os.ReadDir(h.Dir)
+	require.NoError(t, err)
+	assert.Empty(t, names, "no credential file is copied, and an earlier copy is gone")
+	b, err := os.ReadFile(filepath.Join(login, ".credentials.json"))
+	require.NoError(t, err)
+	assert.Equal(t, `{"fake":"not a real login"}`, string(b))
+	assert.Equal(t, "CLAUDE_CODE_OAUTH_TOKEN", h.Token)
+}

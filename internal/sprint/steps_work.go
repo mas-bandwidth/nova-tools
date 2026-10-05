@@ -31,6 +31,9 @@ type CardAdd struct {
 	Rules string
 	Needs []string
 	File  string
+	// Base is the branch the brief names on its BASE: line (swarm.ReadCardBase), "" for
+	// none: add admits a card based on dev only into the promotion stream (SprintBranchWhy).
+	Base string
 	// Sentinel marks this card a sentinel (a stop), not a primary: the
 	// many-brief form's --sentinel <id>, admitted after the brief cards.
 	Sentinel bool
@@ -44,6 +47,8 @@ type AddReq struct {
 	Needs  []string
 	Brief  string
 	Rules  string // the held rules file of every card the add admits with Brief (FieldRules)
+	// Base is the branch Brief names on its BASE: line, as CardAdd.Base.
+	Base string
 	// Cards, when set, is the many-brief form: one card per entry, in order,
 	// each with its own brief and needs (a need names a primary already on
 	// the table or one of this add). IDs, Count, Brief and Needs are then
@@ -202,6 +207,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		return r.Rules
 	}
+	baseOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Base
+		}
+		return r.Base
+	}
 	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
 	// or a card of the many-brief form marked one (its --sentinel <id>).
 	isSent := func(i int) bool {
@@ -242,6 +253,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if unknown := BenchKnown(s, bench); len(unknown) > 0 {
 			bench, benchWhy = nil, BenchRefused(s, bench, unknown)
 		}
+		devWhy := SprintBranchWhy(s, r.Stream, baseOf(i), id)
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -251,6 +263,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		case s.Work.Card(id) != nil:
 			p.refuse(id, "exists already ("+placeWord(s.Work.Card(id))+")")
+			continue
+		case devWhy != "": // a card cut on dev, outside the promotion stream (docs/SPEC-SPRINT.md section 7)
+			p.refuse(id, devWhy)
 			continue
 		case len(missing) > 0:
 			if len(r.Cards) > 0 {
@@ -1073,7 +1088,7 @@ func Take(s *Snapshot, r TakeReq) Plan {
 	}
 	var p Plan
 	if named(r.Sel) {
-		for _, id := range r.Sel.IDs {
+		for _, id := range r.IDs {
 			p.refuse(id, "a take by id names one member: --as <member>")
 		}
 		return p
@@ -1692,8 +1707,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		var head []Change
 		var n *Note
 		line := r.Member + " up"
-		switch {
-		case ctl == nil:
+		switch ctl {
+		case nil:
 			status := Down
 			if comeUp {
 				status = Up
@@ -1835,7 +1850,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
-		if len(up) > 0 && !(taken && c.Int("redeals") >= MaxRedeals) {
+		if len(up) > 0 && (!taken || c.Int("redeals") < MaxRedeals) {
 			// the next member round the fleet below its width (round.go), the
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a

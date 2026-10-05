@@ -1016,6 +1016,56 @@ func TestInstallLeavesEveryToolAloneWhenOneStagingFails(t *testing.T) {
 	})
 }
 
+// TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside pins security#72 finding 5.
+//
+// A directory at a tool path cannot be replaced by an executable. Install
+// must refuse to touch it, leaving the directory and any files inside intact,
+// and must not leave an aside or staged temp behind.
+func TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside(t *testing.T) {
+	t.Parallel()
+
+	goos, _ := platformOf(t, "")
+	from := built(t, "v0.16.0", "", "nova-c")
+	bin := t.TempDir()
+	name := ToolFile("nova-c", goos)
+	target := filepath.Join(bin, name)
+	require.NoError(t, os.Mkdir(target, 0o755))
+	keep := filepath.Join(target, "keep.txt")
+	require.NoError(t, os.WriteFile(keep, []byte("preserved"), 0o644))
+
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+		&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+			return "", fmt.Errorf("absent")
+		}})
+	require.NotZero(t, code, "install must fail when tool path is a directory: out=%s errs=%s", o.String(), e.String())
+	require.Contains(t, e.String(), "INSTALL FAIL")
+	require.Contains(t, e.String(), "not a regular file")
+
+	info, err := os.Lstat(target)
+	require.NoError(t, err)
+	require.True(t, info.IsDir(), "%s should still be a directory", target)
+
+	body, err := os.ReadFile(keep)
+	require.NoError(t, err)
+	require.Equal(t, "preserved", string(body))
+
+	entries, err := os.ReadDir(bin)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			require.FailNowf(t, "assertion failed", "unexpected temp file or aside left behind: %s", entry.Name())
+		}
+	}
+	require.Len(t, entries, 1)
+	require.Equal(t, name, entries[0].Name())
+
+	for _, aside := range []string{"." + name + ".old", "." + name + ".new"} {
+		_, err := os.Lstat(filepath.Join(bin, aside))
+		require.True(t, os.IsNotExist(err), "unexpected aside or temp %s: %v", aside, err)
+	}
+}
+
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
 	t.Parallel()
 
@@ -2563,4 +2613,61 @@ func TestReadSumsRefusesAnArtifactNameTheRemoteShellWouldReadAsSyntax(t *testing
 		names = append(names, a.Name)
 	}
 	assert.Equal(t, []string{"nova-bus", "nova-update.exe", "nova_tool+1.2"}, names)
+}
+
+// TestInstallFileRefusesBytesThatAreNotTheVerifiedSum pins security#72 finding
+// 8: the bytes staged into --bin are the bytes whose sha256 the build recorded,
+// not whatever the artifact directory holds after VerifyArtifacts passed. The
+// source is swapped, so a symlink or a rewritten file is refused and no
+// temporary is left behind.
+func TestInstallFileRefusesBytesThatAreNotTheVerifiedSum(t *testing.T) {
+	t.Parallel()
+	sumOf := func(b []byte) string {
+		s := sha256.Sum256(b)
+		return hex.EncodeToString(s[:])
+	}
+	leftovers := func(t *testing.T, bin string) []string {
+		t.Helper()
+		ents, err := os.ReadDir(bin)
+		require.NoError(t, err)
+		var names []string
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		return names
+	}
+
+	t.Run("changed bytes", func(t *testing.T) {
+		t.Parallel()
+		art, bin := t.TempDir(), t.TempDir()
+		src := filepath.Join(art, "nova-bus")
+		require.NoError(t, os.WriteFile(src, []byte("substituted"), 0o755))
+		_, err := stageArtifact(bin, "nova-bus", src, sumOf([]byte("verified")))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nova-bus")
+		assert.Contains(t, err.Error(), "does not match")
+		assert.Empty(t, leftovers(t, bin))
+	})
+
+	t.Run("matching bytes", func(t *testing.T) {
+		t.Parallel()
+		art, bin := t.TempDir(), t.TempDir()
+		src := filepath.Join(art, "nova-bus")
+		require.NoError(t, os.WriteFile(src, []byte("verified"), 0o755))
+		tmp, err := stageArtifact(bin, "nova-bus", src, sumOf([]byte("verified")))
+		require.NoError(t, err)
+		got, err := os.ReadFile(tmp)
+		require.NoError(t, err)
+		assert.Equal(t, "verified", string(got))
+	})
+
+	t.Run("symlink source", func(t *testing.T) {
+		t.Parallel()
+		art, bin := t.TempDir(), t.TempDir()
+		link, _ := plantSymlink(t, art, "nova-bus", "verified")
+		_, err := stageArtifact(bin, "nova-bus", link, sumOf([]byte("verified")))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a regular file")
+		assert.Empty(t, leftovers(t, bin))
+	})
 }

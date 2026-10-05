@@ -383,11 +383,11 @@ func appendLine(name, line string) error {
 		return err
 	}
 	if _, err := f.WriteString(line + "\n"); err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the write already failed and is the error returned
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the sync already failed and is the error returned
 		return err
 	}
 	if err := f.Close(); err != nil {
@@ -401,7 +401,7 @@ func fsyncDir(dir string) error {
 	if err != nil {
 		return nil
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }() // ignored: a directory opened only for reading; the close releases the descriptor
 	// ignored: a directory fsync is best effort where the platform does not support it; the rename already landed
 	_ = d.Sync()
 	return nil

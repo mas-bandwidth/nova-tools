@@ -37,7 +37,7 @@ func TestWorkerTakeRetryIdentityAndEmptyResultContract(t *testing.T) {
 				ta.ok("add --stream s1 --count 4")
 				ta.ok("start")
 				ta.ok("tick")
-				ta.ok("stop")
+				ta.ok("stop --reason r --until 9999h")
 			}
 			if !tc.emptyFirst {
 				deal()

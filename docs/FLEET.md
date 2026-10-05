@@ -84,6 +84,15 @@ tier of the card it reads, the tier its work was dealt on (flash when line 1
 names none), at that tier's rolling index, and
 the packet hands the reader its model, budget and deadline; a reader started
 with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
+A loop record runs a verb its program must still have: a release that retires
+the verb leaves the unit exiting at every start (`sprint-table-live` ran
+`nova-sprint table` that way until 2026-10-04). The loop kind asks each nova
+program in a record's argv `help <verb>` (`internal/config/loop.go`: exit 2
+naming verbs is a verb gone; a program not installed where nova-config runs
+judges nothing): `CheckLoopVerb` is the refusal of an enabled record whose
+verb is gone (enforced by `loop add` and `loop set`), and `DeadLoops` the line
+for each in `status`, with its `nova-config loop remove <name>`.
+
 Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
 hand; a loop without it reads the pool's `identity.tsv`.
@@ -268,7 +277,9 @@ layout: the command is the record's `argv`, word for word (a bare program is the
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
 record's log under the fleet row's `loops_dir` (migration 0027 seeds it to
-`~/nova-bench/loops`), which the play creates. Every unit
+`~/nova-bench/loops`), which the play creates (on darwin, launchd agents log under the user's home,
+`~/Library/Logs/nova-loop-<name>.log`, because launchd cannot open log files on
+network volumes such as `/Volumes/nova`). Every unit
 gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
 a `nova-swarm member`, inventory removes an older endpoint assignment from the
 rendered `/usr/bin/env` prefix while preserving its Redis user, password
@@ -280,7 +291,9 @@ cleanup.
 
 - darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
   `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,
-  `UserName` the login). A kept-alive record has `KeepAlive`; a periodic one
+  `UserName` the login), with `StandardOutPath` and `StandardErrorPath` logging
+  to `~/Library/Logs/nova-loop-<name>.log` under the user's home. A kept-alive
+  record has `KeepAlive`; a periodic one
   `StartInterval`. A record with `enabled: false` is written with `Disabled`
   and not loaded. A changed unit is booted out and bootstrapped again.
 - linux: `nova-loop-<name>.service` (`templates/nova-loop.service.j2`) in
@@ -332,7 +345,8 @@ adopted by the new member while they live.
 Beside the records, the play adds one periodic row to every machine,
 `disk-guard`: `nova-swarm disk-guard` every `nova_disk_guard_every` seconds
 (900), its `--root` each root a record's argv names, then
-`nova_disk_guard_args`, logging to `~/nova-bench/loops/disk-guard.log`. A record
+`nova_disk_guard_args`, logging to `~/nova-bench/loops/disk-guard.log` (on darwin,
+launchd logs to `~/Library/Logs/nova-loop-disk-guard.log`). A record
 named `disk-guard` on the machine takes its place; `nova_disk_guard: false` in
 `host_vars` leaves it out (and retires the unit). Owner's rule, 2026-10-02: "We
 must not fill discs again", "cleanup must be auto!". Every per-card or
@@ -345,7 +359,7 @@ per-machine artifact the fleet writes, and what removes it, when:
 | a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under `--gocache-limit` (20 GiB) while it runs; the disk guard every run, under `--cache-max-gb` (20), whether or not a loop runs |
 | the login's Go build cache (`$GOCACHE`, else the user cache directory's `go-build`) and every `--cache` (the CI runners' `_cache/go-build`) | the disk guard every run, under `--cache-max-gb`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth |
 | a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50), no `go` command runs and no process holds a file in it |
-| a loop log, `~/nova-bench/loops/*.log` | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |
+| a loop log, `~/nova-bench/loops/*.log` (on darwin, `~/Library/Logs/nova-loop-<name>.log`, which the disk guard does not rotate unless `--logs` points to `~/Library/Logs`) | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |
 | a land clone, `<user cache dir>/nova-sprint/land/<repo>-<hash>` (`~/Library/Caches` on darwin, `~/.cache` on linux; never `/tmp`) | the disk guard, unused for `--clone-age` (24h), with no uncommitted work and no process naming it or working in it; land clones it again on its next use |
 | a mirror's temporary packs, `~/nova-bench/mirror/<repo>/objects/pack/tmp_pack_*` and `.tmp-*` (an aborted fetch's) | the disk guard, older than an hour, when no process names the mirror or works in it and no git fetch naming no path runs; never `git prune` |
 | release copies, `nova_release_out` | `tools.yml`, after a build: all but the built, the running and the 3 newest |
@@ -353,8 +367,12 @@ per-machine artifact the fleet writes, and what removes it, when:
 A process works in a path when its working directory or a file it holds open
 lies under it (lsof on darwin, `/proc/<pid>/cwd` and `/proc/<pid>/fd` on Linux):
 a `git push` or a `make` run inside a land clone names no path on its argument
-line, and keeps the clone all the same. A run that cannot read the open files
-removes nothing that needs them and ends `INCOMPLETE`.
+line, and keeps the clone all the same. A launch agent's PATH leaves out
+`/usr/sbin`, where macOS keeps lsof, so the guard takes lsof from PATH, else
+from `/usr/sbin/lsof`, `/usr/bin/lsof`, `/sbin/lsof` or `/bin/lsof`, and says
+once at its start, on a `NOTE` line, which it took off PATH or that it found
+none. A run that cannot read the open files removes nothing that needs them
+and ends `INCOMPLETE`.
 
 Each run prints one line per action (`REMOVED`, `TRIMMED`, `CLEANED`,
 `ROTATED`, with `freed=<bytes>`, or `KEPT` with why), a `DISK-GUARD WARN` line

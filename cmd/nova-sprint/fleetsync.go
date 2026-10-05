@@ -73,7 +73,7 @@ func (a *app) withConfig(ctx context.Context, pg string, read func(context.Conte
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer st.Close() // ignored: closing a read of the config store; the sync's writes are checked where made
 	have, err := st.Version(ctx)
 	if err != nil {
 		return err

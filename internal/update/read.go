@@ -8,7 +8,9 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -106,7 +108,7 @@ func identity(e Entry, raw string, report bool) Read {
 
 type ProcessResult struct{ Stdout, Stderr, Path, Reason string }
 
-func process(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+func process(ctx context.Context, childEnv []string, args []string, input io.Reader, cap int) ProcessResult {
 	r := ProcessResult{}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -116,7 +118,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "empty argv"
 		return r
 	}
-	path, err := exec.LookPath(args[0])
+	path, err := lookPath(childEnv, args[0])
 	if err != nil {
 		r.Reason = "not_found"
 		return r
@@ -126,6 +128,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := subproc.Context(child, path, args[1:]...)
+	cmd.Env = childEnv
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and
@@ -135,14 +138,14 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "execution failed: " + clip(err.Error(), 160)
 		return r
 	}
-	defer stdoutRead.Close()
+	defer func() { _ = stdoutRead.Close() }() // ignored: pipe read end; child's exit is the report
 	stderrRead, stderrWrite, err := os.Pipe()
 	if err != nil {
-		stdoutWrite.Close()
+		_ = stdoutWrite.Close() // ignored: pipe management on pipe creation failure
 		r.Reason = "execution failed: " + clip(err.Error(), 160)
 		return r
 	}
-	defer stderrRead.Close()
+	defer func() { _ = stderrRead.Close() }() // ignored: pipe read end; child's exit is the report
 	cmd.Stdout = stdoutWrite
 	cmd.Stderr = stderrWrite
 	configureProcess(cmd)
@@ -155,10 +158,10 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	go func() { defer copyWG.Done(); _, _ = io.Copy(errs, stderrRead) }()
 
 	if err := cmd.Start(); err != nil {
-		stdoutWrite.Close()
-		stderrWrite.Close()
-		stdoutRead.Close()
-		stderrRead.Close()
+		_ = stdoutWrite.Close() // ignored: pipe management on start failure
+		_ = stderrWrite.Close() // ignored: pipe management on start failure
+		_ = stdoutRead.Close()  // ignored: pipe management on start failure
+		_ = stderrRead.Close()  // ignored: pipe management on start failure
 		copyWG.Wait()
 		if ctx.Err() != nil || child.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded") {
 			r.Reason = "timeout"
@@ -169,8 +172,8 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	}
 	// The parent's write ends must close so a read sees EOF once the child and
 	// its descendants have all closed theirs.
-	stdoutWrite.Close()
-	stderrWrite.Close()
+	_ = stdoutWrite.Close() // ignored: parent closing write end to deliver EOF
+	_ = stderrWrite.Close() // ignored: parent closing write end to deliver EOF
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -202,8 +205,8 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 			stopTimer()
 		case <-timerChan:
 			held = true
-			stdoutRead.Close()
-			stderrRead.Close()
+			_ = stdoutRead.Close() // ignored: killing the pipe on drain timeout
+			_ = stderrRead.Close() // ignored: killing the pipe on drain timeout
 			<-done
 		}
 	} else {
@@ -319,10 +322,6 @@ func ladder(e Entry) [][]string {
 }
 
 type processFunc func(context.Context, []string, io.Reader, int) ProcessResult
-
-func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
-	return installed(ctx, e, timeout, report, process)
-}
 
 // installed keeps the version decisions independent of the child transport.
 func installed(ctx context.Context, e Entry, timeout time.Duration, report bool, run processFunc) Read {
@@ -449,10 +448,29 @@ func decPatch(v string) string {
 	return strings.Join(parts, ".")
 }
 
+// lookPath finds name on the PATH of childEnv, or on this process's own PATH
+// when childEnv is nil.
+func lookPath(childEnv []string, name string) (string, error) {
+	if childEnv == nil || strings.ContainsRune(name, filepath.Separator) {
+		return exec.LookPath(name)
+	}
+	for _, kv := range slices.Backward(childEnv) {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			for _, dir := range filepath.SplitList(v) {
+				if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+					return p, nil
+				}
+			}
+			break
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
 // runProcess uses the supplied transport or the real child adapter.
 func (env Environment) runProcess(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
 	if env.Process != nil {
 		return env.Process(ctx, args, input, cap)
 	}
-	return process(ctx, args, input, cap)
+	return process(ctx, env.Env, args, input, cap)
 }

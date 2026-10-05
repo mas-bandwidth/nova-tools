@@ -12,9 +12,7 @@
 
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
-docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
-tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
@@ -35,7 +33,6 @@ internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cit
 internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 cmd/nova-bus/broadcast_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 cmd/nova-bus/draft.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 cmd/nova-bus/firstrun_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day

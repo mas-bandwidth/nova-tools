@@ -170,7 +170,7 @@ func ReadNoSpendFile(path string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading
 	days := map[string]bool{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)

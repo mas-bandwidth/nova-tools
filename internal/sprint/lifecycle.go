@@ -58,6 +58,8 @@ var Moves = []Move{
 	{Review, Working, "rework", Coordinator, "rework with a fix: the next attempt is delegated at once to an up member"},
 	{Review, Ready, "rework", Coordinator, "rework with a fix when no fleet member is up: start delegates it later"},
 	{Merging, Review, "return", Coordinator, "the stream's CI went red and the coordinator sent it back, or return"},
+	{Merging, Working, "redo", Coordinator, "redo a conflicted card with the tip's rework: delegated at once to an up member"},
+	{Merging, Ready, "redo", Coordinator, "redo a conflicted card when no fleet member is up: start delegates it later"},
 	{Merging, Landed, "merge", Mechanical, "its batch, green on the stream branch, merged to the development branch"},
 	{Waiting, Landed, "release", Coordinator, "a sentinel reached, or with nothing before it, released by the coordinator (kind sentinel only)"},
 	{Ready, Waiting, "add", Mechanical, "a sentinel inserted in front of it (only as the effect of inserting a sentinel)"},
@@ -216,7 +218,7 @@ func unlawful(u Unit, p *Plan) string {
 			to = e.Move.Col
 		}
 		switch {
-		case from == Waiting && to == Landed && !(p.releasing && sentinel):
+		case from == Waiting && to == Landed && (!p.releasing || !sentinel):
 			return "the lifecycle lands from waiting only a sentinel, and only by release"
 		case from == Ready && to == Waiting && !p.inserting:
 			return "the lifecycle moves ready -> waiting only as the effect of inserting a sentinel"

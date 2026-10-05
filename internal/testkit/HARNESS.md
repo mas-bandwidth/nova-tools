@@ -32,6 +32,23 @@ paths outside that root. Use `SkipOn` when a test's property cannot be
 observed on a named operating system. Domain fixtures such as a sandbox job,
 fake volume manager or egress plan stay package-specific.
 
+Use `Git(t, n)` only in the tests of the adapter that runs real git; every
+other test fakes git at that adapter's seam. It builds a bare remote and n
+clones of it under `t.TempDir()`, runs the git on PATH, and gives every command
+a fixed identity and `GIT_CONFIG_GLOBAL` at an empty file in that directory
+through the command's environment, so the machine's git config never reaches
+the test and nothing outside the temp directory is written.
+
+Use `Commit(clone, files)` to give a clone history: it writes each named file
+under the clone and commits them all as one commit.
+
+Use `Push(clone)` when the test needs the remote to hold a clone's commit. It
+is one `git push` of the clone's current branch from the clone to the remote.
+
+Use `Head(repo)` to read the commit a clone's or the remote's HEAD names, for
+asserting where a push or commit left it; it fails the test on a repository
+with no commit.
+
 Use `testing/synctest` for time-dependent tests first. `Waits` is only for a
 wait seam around code that must perform real I/O and cannot run in a synctest
 bubble; it records requested durations and lets the test hold or release that

@@ -283,23 +283,23 @@ func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 func TestSlowTestsVerdictIsTheSameAtAnyLoad(t *testing.T) {
 	t.Parallel()
 
-	rows, err := ParseAllowlist(strings.NewReader("m/busy\tTestSlow\t1.2\t0.4s@run36264290984\n"))
+	rows, err := ParseAllowlist(strings.NewReader("internal/busy\tTestSlow\t1.2\t0.4s@run36264290984\n"))
 	require.NoError(t, err)
 	b := Budgets{Package: 2, Test: 1, Rows: rows}
-	timeOnly := `{"Action":"pass","Package":"example.com/m/busy","Test":"TestSlow","Elapsed":1.4}
-{"Action":"pass","Package":"example.com/m/busy","Elapsed":1.5}
+	timeOnly := `{"Action":"pass","Package":"example.com/m/internal/busy","Test":"TestSlow","Elapsed":1.4}
+{"Action":"pass","Package":"example.com/m/internal/busy","Elapsed":1.5}
 {"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
 {"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Elapsed":58.8}
 `
-	sleeps := `{"Action":"output","Package":"example.com/m/busy","Test":"TestSleeps","Output":"    x_test.go:3: SLEEPS: needs a mocked clock\n"}
-{"Action":"skip","Package":"example.com/m/busy","Test":"TestSleeps","Elapsed":0}
-{"Action":"pass","Package":"example.com/m/busy","Elapsed":0.1}
+	sleeps := `{"Action":"output","Package":"example.com/m/internal/busy","Test":"TestSleeps","Output":"    x_test.go:3: SLEEPS: needs a mocked clock\n"}
+{"Action":"skip","Package":"example.com/m/internal/busy","Test":"TestSleeps","Elapsed":0}
+{"Action":"pass","Package":"example.com/m/internal/busy","Elapsed":0.1}
 `
 	slowLines := []string{
 		"CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s",
-		"CI-SLOW test=TestSlow package=example.com/m/busy seconds=1.4s budget=1.2s",
+		"CI-SLOW test=TestSlow package=example.com/m/internal/busy seconds=1.4s budget=1.2s",
 	}
-	const sleepsLine = "CI-SLEEPS test=TestSleeps package=example.com/m/busy: skipped for a wall-clock wait and not on ledger.txt; inject a clock or tag it //go:build functional"
+	const sleepsLine = "CI-SLEEPS test=TestSleeps package=example.com/m/internal/busy: skipped for a wall-clock wait and not on ledger.txt; inject a clock or tag it //go:build functional"
 	loads := map[string]Load{
 		"load 2":  {Avg: 2, CPUs: 32, Known: true},
 		"load 20": {Avg: 20, CPUs: 32, Known: true},
@@ -334,10 +334,10 @@ func TestSlowTestsVerdictIsTheSameAtAnyLoad(t *testing.T) {
 func TestSlowTestsSleepsLedgerExemptsItsRowsOnly(t *testing.T) {
 	t.Parallel()
 
-	ledger, err := ParseSleeps(strings.NewReader("# pkg\ttest\twhere\nm/known\tTestKnown\t#4221\n"))
+	ledger, err := ParseSleeps(strings.NewReader("# pkg\ttest\twhere\ninternal/known\tTestKnown\t#4221\n"))
 	require.NoError(t, err)
-	fixture := `{"Action":"output","Package":"example.com/m/known","Test":"TestKnown","Output":"SLEEPS: x\n"}
-{"Action":"skip","Package":"example.com/m/known","Test":"TestKnown","Elapsed":0}
+	fixture := `{"Action":"output","Package":"example.com/m/internal/known","Test":"TestKnown","Output":"SLEEPS: x\n"}
+{"Action":"skip","Package":"example.com/m/internal/known","Test":"TestKnown","Elapsed":0}
 {"Action":"output","Package":"example.com/m/new","Test":"TestNew/a","Output":"SLEEPS: x\n"}
 {"Action":"skip","Package":"example.com/m/new","Test":"TestNew/a","Elapsed":0}
 {"Action":"output","Package":"example.com/m/new","Test":"TestNew/b","Output":"SLEEPS: x\n"}
@@ -349,8 +349,37 @@ func TestSlowTestsSleepsLedgerExemptsItsRowsOnly(t *testing.T) {
 	if assert.Len(t, report.Sleepers, 1, "Sleepers = %+v, want only example.com/m/new TestNew", report.Sleepers) {
 		assert.Equal(t, Sleeper{Package: "example.com/m/new", Name: "TestNew"}, report.Sleepers[0], "Sleepers = %+v, want only example.com/m/new TestNew", report.Sleepers)
 	}
-	for _, bad := range []string{"m\tTestA\n", "m\tTestA/sub\twhere\n", "m\tTestA\tw\nm\tTestA\tw\n"} {
+	for _, bad := range []string{"internal/m\tTestA\n", "internal/m\tTestA/sub\twhere\n", "internal/m\tTestA\tw\ninternal/m\tTestA\tw\n"} {
 		_, err := ParseSleeps(strings.NewReader(bad))
 		assert.ErrorContains(t, err, "line ", "ParseSleeps(%q) = %v, want an error naming the line", bad, err)
+	}
+}
+
+// A package column that is not the full module-relative path is refused on
+// its line. matches still compares by trailing elements, so a column of just
+// auditpoc would raise the budget of every import path that ends in /auditpoc
+// (docs/SPEC-CI.md, "The unit tier's budgets": a row names exactly that
+// package). internal/auditpoc is that path and parses.
+func TestSlowTestsAllowlistRefusesAPackageThatIsNotAModuleRelativePath(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseAllowlist(strings.NewReader("auditpoc\t-\t1.5\t1s@run1\n"))
+	assert.ErrorContains(t, err, "line 1", "ParseAllowlist(auditpoc) = %v, want an error naming line 1", err)
+	assert.ErrorContains(t, err, "must be the full module-relative path", "ParseAllowlist(auditpoc) = %v, want the full module-relative path", err)
+
+	rows, err := ParseAllowlist(strings.NewReader("internal/auditpoc\t-\t1.5\t1s@run1\n"))
+	require.NoError(t, err, "ParseAllowlist(internal/auditpoc) = %v, want one row", err)
+	if assert.Len(t, rows, 1, "ParseAllowlist(internal/auditpoc) = %+v, want one row", rows) {
+		assert.Equal(t, "internal/auditpoc", rows[0].Package, "ParseAllowlist(internal/auditpoc) = %+v, want the module-relative path kept", rows)
+	}
+
+	_, err = ParseSleeps(strings.NewReader("auditpoc\tTestA\t#1\n"))
+	assert.ErrorContains(t, err, "line 1", "ParseSleeps(auditpoc) = %v, want an error naming line 1", err)
+	assert.ErrorContains(t, err, "must be the full module-relative path", "ParseSleeps(auditpoc) = %v, want the full module-relative path", err)
+
+	sleeps, err := ParseSleeps(strings.NewReader("internal/auditpoc\tTestA\t#1\n"))
+	require.NoError(t, err, "ParseSleeps(internal/auditpoc) = %v, want one row", err)
+	if assert.Len(t, sleeps, 1, "ParseSleeps(internal/auditpoc) = %+v, want one row", sleeps) {
+		assert.Equal(t, "internal/auditpoc", sleeps[0].Package, "ParseSleeps(internal/auditpoc) = %+v, want the module-relative path kept", sleeps)
 	}
 }

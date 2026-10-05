@@ -8,12 +8,12 @@ package converge
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 )
 
 // Options is every source of one reading. A path that is empty is a source the
@@ -71,7 +71,7 @@ func Read(ctx context.Context, o Options) (Report, error) {
 	if o.Git == nil || o.RepoDir == "" {
 		streams = append(streams, AbsentStream("CLASSES", "class-test-index-entries", "--repo-dir", false))
 	} else {
-		nowSpec, err := os.ReadFile(filepath.Join(o.RepoDir, SpecCIPath))
+		nowSpec, err := readregular.Read(filepath.Join(o.RepoDir, SpecCIPath), readregular.DefaultMax)
 		if err != nil {
 			return Report{}, fmt.Errorf("--repo-dir %s: %s", oneline.Field(o.RepoDir), oneline.Err(err))
 		}
@@ -87,7 +87,7 @@ func Read(ctx context.Context, o Options) (Report, error) {
 	}
 
 	// SCRIPTS.
-	retiredRaw, err := os.ReadFile(o.RetiredPath)
+	retiredRaw, err := readregular.Read(o.RetiredPath, readregular.DefaultMax)
 	if err != nil {
 		return Report{}, fmt.Errorf("--retired %s: %s", oneline.Field(o.RetiredPath), oneline.Err(err))
 	}
@@ -117,7 +117,7 @@ func Read(ctx context.Context, o Options) (Report, error) {
 	if o.VersionsPath == "" {
 		streams = append(streams, AbsentStream("FLEET", "units-off-the-one-build", "--versions", true))
 	} else {
-		raw, err := os.ReadFile(o.VersionsPath)
+		raw, err := readregular.Read(o.VersionsPath, readregular.DefaultMax)
 		if err != nil {
 			return Report{}, fmt.Errorf("--versions %s: %s", oneline.Field(o.VersionsPath), oneline.Err(err))
 		}
@@ -127,7 +127,7 @@ func Read(ctx context.Context, o Options) (Report, error) {
 		}
 		certified, total, haveCerts := 0, 0, false
 		if o.CertsPath != "" {
-			craw, err := os.ReadFile(o.CertsPath)
+			craw, err := readregular.Read(o.CertsPath, readregular.DefaultMax)
 			if err != nil {
 				return Report{}, fmt.Errorf("--certs %s: %s", oneline.Field(o.CertsPath), oneline.Err(err))
 			}
@@ -141,7 +141,7 @@ func Read(ctx context.Context, o Options) (Report, error) {
 	}
 
 	// LEDGER.
-	ledgerRaw, err := os.ReadFile(o.LedgerPath)
+	ledgerRaw, err := readregular.Read(o.LedgerPath, readregular.DefaultMax)
 	if err != nil {
 		return Report{}, fmt.Errorf("--ledger %s: %s", oneline.Field(o.LedgerPath), oneline.Err(err))
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,38 @@ func TestTakeShippedNeverPaperOverAMissingBinary(t *testing.T) {
 	}
 	if len(r.calls) != 0 {
 		t.Fatalf("ran %q", r.lines())
+	}
+}
+
+func TestTakeShippedReportsADistItCannotList(t *testing.T) {
+	t.Parallel()
+	dist := filepath.Join(t.TempDir(), "gone")
+	var o, eb bytes.Buffer
+	e := env{stdout: &o, stderr: &eb, getenv: func(string) string { return "" }}
+	out := filepath.Join(t.TempDir(), "nova-check")
+	if code := takeShipped(e, &fakeCmdRunner{}, takeArgs(dist, out, "ubuntu-latest")); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(eb.String(), "take-shipped: cannot list "+dist) {
+		t.Fatalf("stderr %q does not name the directory it could not list", eb.String())
+	}
+}
+
+func TestTakeShippedReportsARunnerThatCannotStartTheBinary(t *testing.T) {
+	t.Parallel()
+	dist := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dist, "nova-check_v0.0.0-dry-run_linux_amd64"), []byte("bin"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var o, eb bytes.Buffer
+	e := env{stdout: &o, stderr: &eb, getenv: func(string) string { return "" }}
+	r := &fakeCmdRunner{answer: func(cmdSpec) (string, int, error) { return "", 0, fmt.Errorf("exec: permission denied") }}
+	out := filepath.Join(t.TempDir(), "nova-check")
+	if code := takeShipped(e, r, takeArgs(dist, out, "ubuntu-latest")); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(eb.String(), "take-shipped: exec: permission denied") {
+		t.Fatalf("stderr %q does not name the runner failure", eb.String())
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -221,6 +222,8 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // rewritten, which is what the old `localize` did and why it could not have
 // compared the line the document promised.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	fixture, err := filepath.Abs(exampleSelf)
@@ -233,9 +236,30 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	copyTree(t, fixture, filepath.Join(dir, "self"))
-	t.Chdir(dir)
-	for _, p := range onboarding.Execute(steps, runDocumented) {
+	for _, p := range onboarding.Execute(steps, runInDir(dir)) {
 		assert.Fail(t, "check failed", p)
+	}
+}
+
+// runInDir calls this binary's own entry point with the documented arguments,
+// in a child of this test binary whose working directory is dir, so the
+// documented relative paths (`./self`) resolve as written without a
+// process-wide Chdir. nova-check reads nothing on stdin.
+func runInDir(dir string) onboarding.Runner {
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		cmd := exec.Command(os.Args[0], s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_CHECK_CHILD_MAIN=1")
+		var out, errb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		err := cmd.Run()
+		if err != nil && cmd.ProcessState == nil {
+			return onboarding.Result{}, err
+		}
+		return onboarding.Result{Code: cmd.ProcessState.ExitCode(), Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
 

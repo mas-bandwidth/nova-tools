@@ -315,7 +315,7 @@ func (v *reverter) land(msg, newSHA string) int {
 		if err != nil {
 			return v.fail("git push: %v", err)
 		}
-		io.WriteString(v.e.stdout, log.String())
+		_, _ = io.WriteString(v.e.stdout, log.String()) // ignored: it prints the pushed output to the verb's stdout stream
 		fmt.Fprintln(v.e.stdout, "direct push refused by the ruleset; opening a revert PR for somebody to land")
 	} else {
 		fmt.Fprintln(v.e.stdout, "opening a revert PR for somebody to land (--push-revert is not set: nothing is pushed to main)")

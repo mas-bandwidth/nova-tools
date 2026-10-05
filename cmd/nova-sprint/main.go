@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -103,6 +104,15 @@ type app struct {
 	// (store/twin.go). It is not the mem twin above, which is a store.
 	readTwinsMu sync.Mutex
 	readTwins   map[string]*store.Twin
+	// busWatches is the Watch of each bus store and user sendBus has sent on
+	// (busWatch), and busAlarms the lines its alarms queued for the send that
+	// saw them to say; busOpen dials the store for each send (a test gives a
+	// fake store and opens no socket).
+	busWatchesMu sync.Mutex
+	busWatches   map[string]*bus.Watch
+	busAlarmsMu  sync.Mutex
+	busAlarms    []string
+	busOpen      func(ctx context.Context, addr, user string) (*bus.Bus, func(), error)
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
@@ -122,10 +132,15 @@ type app struct {
 	// red batch gate (landgate.go); nil asks Jev with the key JEV_API_KEY holds, on the
 	// wall clock.
 	gateBackend func() (decide.Backend, func() time.Time)
+	// mergeQueue is the forge's merge queue of a branch land asks before it lands onto it
+	// (mergewindow.go): gh's for a GitHub repository, each answer kept a while; a test gives
+	// a fake and asks no forge.
+	mergeQueue sprint.MergeQueue
 	// serial is the server's one line of control (serve.go): a worker's batch
-	// and a tick of the run loop each hold it, so neither runs during the other.
+	// and a tick of the run loop each hold it, so neither runs during the other;
+	// the tick takes it at its turn, not behind every batch waiting (sprint.ControlLine).
 	// serveAddr is the store the server runs the workers' verbs on.
-	serial    serialLock
+	serial    controlLine
 	serveAddr string
 	// serving says the verb running is one a worker sent to the server (set and
 	// cleared under serial): its step names the epoch its worker holds, or is
@@ -142,6 +157,9 @@ type app struct {
 	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
 	// server's own step.
 	forward func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error)
+	// outside is the seat check's reaches past the store (machinery.go): zero
+	// is the machine's own; a test gives fakes.
+	outside outside
 	// landFailed is what the land loop's last round printed when it failed, "" after a
 	// round that did not (landloop.go): the same failure again prints nothing.
 	landFailed string
@@ -195,6 +213,69 @@ type app struct {
 	gateOnly      *briefAsked
 }
 
+// controlLine is the server's one line of control (app.serial): a tick of the run
+// loop, a worker's batch and the short store steps of the land, decide and balance
+// lanes each hold it, so none runs during another. sprint.ControlLine keeps its
+// rule: the batches take the line in the order they asked and the tick takes it at
+// its turn, after the holder in flight and before every batch still waiting
+// (docs/SPEC-SPRINT.md section 14, The server, "The tick's turn"). LockCtx gives a
+// wait up when its caller has gone: on 2026-10-04 a sync.Mutex here kept every
+// timed-out friend beat in the line, each run long after its caller had gone, and
+// the line never drained (tla/ServerLanes.tla, AbandonedNeverRuns). The zero value
+// is a free line.
+type controlLine struct {
+	sprint.ControlLine
+	// waiting, when set (a test), is called by a LockCtx that finds the line taken,
+	// before it waits: how a test sees, with no clock, that a verb would wait.
+	waiting func()
+}
+
+// LockCtx waits for the line until ctx is done; it holds the line only when it
+// returns nil. A line taken at the moment ctx ends is given straight back: a caller
+// that has gone never runs its verbs.
+func (l *controlLine) LockCtx(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if l.TryLock() {
+		return nil
+	}
+	if l.waiting != nil {
+		l.waiting()
+	}
+	var mu sync.Mutex
+	gone := false
+	taken := make(chan struct{})
+	go func() {
+		l.Lock()
+		mu.Lock()
+		defer mu.Unlock()
+		if gone {
+			l.Unlock() // its caller went: the line is handed straight back, its verbs never run
+			return
+		}
+		close(taken) // the line is the caller's from here
+	}()
+	select {
+	case <-taken:
+		if err := ctx.Err(); err != nil {
+			l.Unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		mu.Lock()
+		defer mu.Unlock()
+		gone = true
+		select {
+		case <-taken: // taken as ctx ended, its taker kept it: give it straight back
+			l.Unlock()
+		default:
+		}
+		return ctx.Err()
+	}
+}
+
 func newApp(getenv func(string) string) *app {
 	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, after: time.After, exit: os.Exit, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
@@ -202,10 +283,13 @@ func newApp(getenv func(string) string) *app {
 	a.friends = a.readFriends
 	a.tip = a.branchTip
 	a.bus = a.sendBus
+	a.busOpen = a.openBus
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
 	a.briefBar = a.readBriefBar
+	a.mergeQueue = &keptQueue{ask: ghMergeQueue{host: githubHost}, now: func() time.Time { return a.now() }, kept: map[string]keptAnswer{}}
+	a.busWatches = map[string]*bus.Watch{}
 	return a
 }
 

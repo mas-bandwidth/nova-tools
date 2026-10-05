@@ -72,7 +72,7 @@ func LoadProfile(path, seat, home string) (Profile, error) {
 	if err != nil {
 		return Profile{}, fmt.Errorf("seat %s: cannot read %s: %v", seat, path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: closing a file opened only for reading
 	var found *Profile
 	sc := bufio.NewScanner(f)
 	for n := 1; sc.Scan(); n++ {

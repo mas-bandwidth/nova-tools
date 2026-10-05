@@ -50,20 +50,6 @@ type Finding struct {
 	Job      string
 }
 
-// Key is the part of rule 15's de-duplication key this finding carries; the report supplies
-// repo and rev. Two findings merge only when both reports carry both AND they are equal.
-func (f Finding) Key(repo, rev string) (string, bool) {
-	if repo == "" || rev == "" || f.File == "" || f.Rule == "" {
-		return "", false
-	}
-	return strings.Join([]string{repo, rev, f.File, f.FileLine, f.Rule}, "\x00"), true
-}
-
-// Quoted reports whether this finding carries its rule verbatim with a file:line beside it.
-// A finding with no quote is counted `unquoted` and is not counted `accurate` by anybody:
-// 5 of 67 findings in batch 1 were wrong, each one a rule paraphrased from memory.
-func (f Finding) Quoted() bool { return f.Rule != "" && f.File != "" }
-
 // Item is one row of the Per item table.
 type Item struct {
 	Text     string
@@ -251,7 +237,7 @@ func ParseReport(data []byte) Report {
 				// below it. This is the whole of the widening: the parser gains no
 				// opinion, it reads the second line rule 2 always allowed.
 				last := &r.FindingLines[len(r.FindingLines)-1]
-				if last.Line == n-1 && !last.Quoted() {
+				if last.Line == n-1 && (last.Rule == "" || last.File == "") {
 					last.carry(trimmed)
 				}
 			}

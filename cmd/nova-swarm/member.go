@@ -716,6 +716,19 @@ func (c *nativeChild) Done() bool {
 	}
 }
 
+// Printed is when the child last printed: the modification time of its log, and the zero
+// time when the log is not there (member.Printer; the member stamps progress on the card
+// while the child prints, and the late rule reads the silence).
+func (c *nativeChild) Printed() time.Time {
+	fi, err := os.Stat(c.logPath)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
+
+var _ member.Printer = (*nativeChild)(nil)
+
 var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\S+)`)
 
 // nativeSpent is the NATIVE line's wall seconds and budget word, the launch's usage.

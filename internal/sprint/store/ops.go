@@ -400,12 +400,12 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: a twin ticks only by hand", int(gap/time.Second)),
 				sprint.Command{Decision: "tick by hand", Lines: []string{"nova-sprint tick"}},
-				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop"}}))
+				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop --reason 'the machine is not ticking' --until 1h"}}))
 		default:
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: its run loop is not running", int(gap/time.Second)),
 				sprint.Command{Decision: "run the loop", Lines: []string{"nova-sprint run"}},
-				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop"}}))
+				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop --reason 'the machine is not ticking' --until 1h"}}))
 		}
 		if hb.Failures >= 3 && hb.Error != "" {
 			out = append(out, group("machine:failing", sprint.NTickFailing,
@@ -546,7 +546,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+		out = append(out, sprint.StreamClock{Stream: r.Key, Release: ctl.Fields[sprint.FieldRelease], State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
 			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
 	}
 	return out, nil

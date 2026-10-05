@@ -131,3 +131,31 @@ func TestMemApplyLooksUpARecordedOperationBeforeValidatingTheManifest(t *testing
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "OPCONFLICT")
 }
+
+// TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking pins
+// security#78 finding 2: the in-memory twin of ns_table_apply panics on a
+// legal manifest when a guard-only entry (Expect.Absent) has no Create.
+func TestMemApplyAnswersAnAbsentGuardWithoutACreateInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	cols, err := ntable.ParseColumns("ready")
+	require.NoError(t, err)
+	require.NoError(t, m.Create(ctx, ntable.Table{Name: "demo", Columns: cols}))
+	require.NoError(t, m.RowsAdd(ctx, "demo", []string{"r"}))
+	man := ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: "1", OperationID: "x",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	}
+	r, err := m.Apply(ctx, man)
+	require.NoError(t, err, "a guard-only entry must not panic")
+	require.Equal(t, "noop", r.Outcome, "guard-only entry yields noop")
+	require.NoError(t, m.RowsAdd(ctx, "demo", []string{"s"}))
+	man2 := ntable.BatchManifest{
+		Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: "3", OperationID: "y",
+		Members: []ntable.BatchMemberEntry{{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}}},
+	}
+	_, err = m.Apply(ctx, man2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MEMBEREXISTS")
+}

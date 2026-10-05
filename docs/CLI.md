@@ -921,6 +921,7 @@ nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
 nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]
 nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
+nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
 nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
 nova-sprint queue --as <reader|member> | --stream <s>
 nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
@@ -935,6 +936,7 @@ nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+nova-sprint backup --file <path>
 nova-sprint fleet beat <member> [--load <percent>]
 nova-sprint fleet up <member> [--width <n>]
 nova-sprint fleet down <member>
@@ -989,6 +991,10 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### The sprint backup
+
+`nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store, and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=<document+counts|counts> secrets=none`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).
 
 ### A card re-cut as its twin
 
@@ -1116,6 +1122,18 @@ the op stored on the card for land and drop to attach its end. The decision is
 uncalibrated: nova-config's `sprint` row `decide_brief_bar` stays empty, which reports
 only, until the brief record's own outcomes support a bar
 ([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 14).
+
+### install-canary-shadow-tick-r.w1: the shadow tick before a server swap
+
+`nova-sprint tick --shadow` plans one tick on the store and applies nothing: the store is
+opened read-only, every write a refusal, and each part's plan is printed (`SHADOW PLAN
+<table>/<part> size= due=`, then `SHADOW TICK OK epoch= state= parts= size= took= wrote=nothing`;
+`--json` prints the plan as one line). `nova-sprint server switch <binary>` runs `<binary> tick
+--shadow --json` against the store first and refuses the swap, exit 1 with nothing changed and
+the old server running, when the shadow exits non-zero, panics, misses `--tick-deadline`
+(default 10s) or prints no plan; on a pass it switches and keeps the shadow's plan size and time
+at `<target>.shadow.json`, beside the switch record. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
 
 ### Exit codes
 

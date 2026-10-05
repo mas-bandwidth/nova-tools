@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
@@ -26,14 +27,31 @@ import (
 // Environment supplies deterministic clock/network seams. Nil values use the
 // machine clock and a credential-free, redirect-bounded HTTP client.
 type Environment struct {
-	Process     processFunc
+	Process processFunc
+	// Env is the environment a spawned child gets, and the PATH its name is
+	// looked up on. Nil inherits this process's own.
+	Env         []string
 	Now         func() time.Time
 	Client      *http.Client
 	Context     context.Context
 	WorkerStart func(id int)
 	JobAttempt  func(index int)
 	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
+	// Rename commits a snapshot; nil is os.Rename.
+	Rename func(oldPath, newPath string) error
+	// OpenStore dials the fleet store for report --store; nil is store.Open,
+	// which authenticates from the process environment.
+	OpenStore func(ctx context.Context, addr string) (*store.Store, error)
 }
+
+// rename is the snapshot commit operation this environment uses.
+func (env Environment) rename() func(oldPath, newPath string) error {
+	if env.Rename != nil {
+		return env.Rename
+	}
+	return os.Rename
+}
+
 type options struct {
 	file, host, snapshot, as, to, target, adopt, store string
 	max                                                int
@@ -60,9 +78,13 @@ func field(s string) string {
 }
 
 // refusal is the one refusal line (STANDARD §2): what was wrong and what the
-// input wants, then the command a reader runs next.
+// input wants, then the command a reader runs next. A write error folds into
+// the code the caller returns: 1 when the refusal carries no error of its own,
+// the usage code 2 otherwise, as when the line was printed whole.
 func refusal(w io.Writer, token, run string, err error) int {
-	fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run)
+	if _, e := fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run); e != nil && err == nil {
+		return 1
+	}
 	return 2
 }
 
@@ -151,32 +173,59 @@ first run: the binary alone; the lines under example: write a one-tool manifest
 // lines from.
 func helpText(name string) string {
 	var b strings.Builder
-	help(name, &b)
+	_ = help(name, &b) // ignored: a strings.Builder's writes never fail
 	return b.String()
 }
 
-func help(name string, w io.Writer) {
+func help(name string, w io.Writer) int {
 	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
 	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
 	// and the help cannot drift apart. This is that string.
-	fmt.Fprintf(w, "%s\n\n", updateOpening)
-	fmt.Fprintln(w, updateVerbs)
+	if _, err := fmt.Fprintf(w, "%s\n\n", updateOpening); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintln(w, updateVerbs); err != nil {
+		return 1
+	}
 	// The notes are one short paragraph per subject (a cold rating named the
 	// wall of text): the defaults, the --json rendering, the verbs' shape,
 	// then report's delivery and the snapshot's lock (SPEC-UPDATE rule 25).
-	fmt.Fprintf(w, "  %s version (or --version)\n", name)
-	fmt.Fprintf(w, "\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n")
-	fmt.Fprintf(w, "\nEvery verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n")
-	fmt.Fprintf(w, "\nReport needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.\n")
-	fmt.Fprintf(w, "\nA delivery is one nova-bus send on the Redis bus (nova-bus reads its store from NOVA_BUS_REDIS); with --snapshot, a report unchanged since it was confirmed sent to the same recipients is not sent again.\n")
-	fmt.Fprintf(w, "\nA snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.\n")
-	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	fmt.Fprint(w, twoBinaries())
-	fmt.Fprint(w, manifestHelp(name))
-	fmt.Fprintf(w, "\n%s\n\nexample:\n", exitCodes(name))
-	for _, line := range []string{"example --out versions.tsv", "report --file versions.tsv", "status --file versions.tsv", "apply --file versions.tsv go --dry-run", "version"} {
-		fmt.Fprintf(w, "  %s %s\n", name, line)
+	if _, err := fmt.Fprintf(w, "  %s version (or --version)\n", name); err != nil {
+		return 1
 	}
+	if _, err := fmt.Fprintf(w, "\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "\nEvery verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "\nReport needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "\nA delivery is one nova-bus send on the Redis bus (nova-bus reads its store from NOVA_BUS_REDIS); with --snapshot, a report unchanged since it was confirmed sent to the same recipients is not sent again.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "\nA snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprint(w, twoBinaries()); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprint(w, manifestHelp(name)); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(w, "\n%s\n\nexample:\n", exitCodes(name)); err != nil {
+		return 1
+	}
+	for _, line := range []string{"example --out versions.tsv", "report --file versions.tsv", "status --file versions.tsv", "apply --file versions.tsv go --dry-run", "version"} {
+		if _, err := fmt.Fprintf(w, "  %s %s\n", name, line); err != nil {
+			return 1
+		}
+	}
+	return 0
 }
 
 // twoBinaries says, in nova-update's banner, how nova-update and nova-version
@@ -317,8 +366,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		if verb == "help" && len(args) > 0 && args[0] != "help" && !verbflag.IsHelp(args[0]) {
 			return Run(name, append(args, "--help"), stamp, out, errs, env)
 		}
-		help(name, out)
-		return 0
+		return help(name, out)
 	}
 	if verb == "version" || verb == "--version" {
 		return versionVerb(name, stamp, args, out, errs)
@@ -411,7 +459,7 @@ func storeReport(name string, o options, positional []string, env Environment) *
 	if o.timeout <= 0 {
 		return refused("report", help, "--timeout wants a positive duration")
 	}
-	return fleetReport(o.store, help, o.timeout, env.Now)
+	return fleetReport(o.store, help, o.timeout, env)
 }
 
 // checked is a parsed check, apply or report: the flags' own rules, the
@@ -461,7 +509,7 @@ func checked(name, verb string, o options, positional []string, env Environment)
 		return refused(verb, help, fmt.Sprintf("cannot open %s (supply a readable --file: %s; %s example --out %s writes one to start from)", o.file, manifestShape, name, o.file))
 	}
 	entries, err := Load(file)
-	file.Close()
+	_ = file.Close() // ignored: file was opened only to be read
 	if err != nil {
 		return refused(verb, help, fmt.Sprintf("%s: %s", o.file, err))
 	}
@@ -554,9 +602,9 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 				e := entries[i]
 				r := entryRead{Entry: e, Installed: installed(ctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
 				if !report {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+					r.Latest = latestIn(ctx, env.Env, e, o.timeout, env.Client)
 				} else if strings.HasPrefix(e.Latest, "local:") {
-					r.Latest = Latest(ctx, e, o.timeout, env.Client)
+					r.Latest = latestIn(ctx, env.Env, e, o.timeout, env.Client)
 				}
 				rs[i] = r
 			}
@@ -627,7 +675,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	started := env.Now()
 	target := o.target
 	if target == "" {
-		r := Latest(context.Background(), *e, o.timeout, env.Client)
+		r := latestIn(context.Background(), env.Env, *e, o.timeout, env.Client)
 		if !r.Known() {
 			return refused("apply", help, fmt.Sprintf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
 		}
@@ -639,7 +687,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 			return refused("apply", help, fmt.Sprintf("invalid target %q (pass a complete version with --version, such as 1.2.3)", o.target))
 		}
 	}
-	before := Installed(context.Background(), *e, o.timeout, false)
+	before := installed(context.Background(), *e, o.timeout, false, env.runProcess)
 	args := append([]string(nil), e.Apply...)
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
@@ -654,9 +702,9 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	res.Item("before", "name", name, "kind", e.Kind, "installed", before.Version, "path", before.Path, "latest", target, "source", e.Latest)
 	res.Item("run", "name", name, "argv", len(args), "version", target, "command", strings.Join(args, " "))
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
-	p := process(ctx, args, nil, ChildCap)
+	p := process(ctx, env.Env, args, nil, ChildCap)
 	cancel()
-	after := Installed(context.Background(), *e, o.timeout, false)
+	after := installed(context.Background(), *e, o.timeout, false, env.runProcess)
 	res.Item("after", "name", name, "installed", after.Version, "was", before.Version)
 	reason := p.Reason
 	if reason == "" && !after.Known() {
@@ -802,9 +850,9 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	var staged []string
 	defer func() {
 		for i := len(staged) - 1; i >= 0; i-- {
-			os.Remove(staged[i])
+			_ = os.Remove(staged[i]) // ignored: staging cleanup
 		}
-		os.Remove(stage)
+		_ = os.Remove(stage) // ignored: staging cleanup
 	}()
 	inventory := func(rev string) (movedInv, error) {
 		p := runChild([]string{"git", "-C", repo, "ls-tree", "-d", "--name-only", rev + ":cmd"})

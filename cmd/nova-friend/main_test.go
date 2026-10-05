@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -24,17 +25,18 @@ var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
 type rig struct {
-	store     *bus.Fake
+	store     *bustest.Fake
 	env       map[string]string
 	launchctl []string
 	onPath    map[string]string // what lookPath finds, by name
 	now       time.Time
 	home      string
+	answered  map[string]bool // the session checks bob's fake session has answered
 }
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	return &rig{store: bus.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir()}
 }
 
 func (r *rig) world() world {
@@ -50,7 +52,7 @@ func (r *rig) world() world {
 			r.launchctl = append(r.launchctl, strings.Join(args, " "))
 			return "", nil
 		},
-		now:     func() time.Time { r.now = r.now.Add(time.Second); return r.now },
+		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
 		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
@@ -64,6 +66,31 @@ func (r *rig) world() world {
 		},
 		random: func() string { return "r4nd0m" },
 	}
+}
+
+// answerChecks is bob's session, alive: each session check the daemon put
+// on his own stream (a passive harness reads it there) is answered once, from
+// bob, with its nonce, as the pong verb sends it.
+func (r *rig) answerChecks() {
+	es, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
+	if err != nil {
+		return // ignored: a store that is down answers nothing; the test that wants it down says so
+	}
+	for _, e := range es {
+		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok && !r.answered[nonce] {
+			r.answer(nonce)
+		}
+	}
+}
+
+// answer is bob's session sending its pong for nonce.
+func (r *rig) answer(nonce string) {
+	if r.answered == nil {
+		r.answered = map[string]bool{}
+	}
+	r.answered[nonce] = true
+	b := &bus.Bus{Store: r.store}
+	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
 }
 
 func (r *rig) cli() testkit.Main {
@@ -410,9 +437,21 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		var mu sync.Mutex
 		var runs []string
 		lists := 0
+		checked := false
 		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
+			if !checked { // the session check goes into her newest session first; her answer brings her up, and the beat with the row
+				if args[0] == "session" {
+					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
+				}
+				text := args[len(args)-1]
+				if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
+					checked = true
+					r.answer(nonce)
+					return "answered\n", 0, nil
+				}
+			}
 			if args[0] == "session" {
 				lists++
 				if lists == 1 {
@@ -451,3 +490,141 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
 	})
 }
+
+// A closed app is a friend down, however well its daemon runs: the verb wires
+// the session check, holds the beat back while no session answers, and
+// status says so (docs/SPEC-FRIEND.md, presence).
+func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	r.answered = map[string]bool{"r4nd0m": true} // bob's session never answers the check
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	beats, sleeps := 0, 0
+	w.beat = func(context.Context, string, string) (string, error) { beats++; return "", nil }
+	w.sleep = func(context.Context, time.Duration) {
+		r.now = r.now.Add(time.Minute)
+		if sleeps++; sleeps == 8 {
+			cancel()
+		}
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, errb.String())
+	assert.Zero(t, beats, "no beat reaches the sprint server while no session answers")
+	assert.Contains(t, out.String(), "presence: session check r4nd0m on the stream")
+	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
+	got, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, got)
+	assert.Contains(t, got[0].Fields["body"], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
+	assert.Contains(t, got[0].Fields["body"], "--to ada")
+	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	require.NoError(t, err)
+	r.now = st.At // read as the daemon last wrote it: up
+	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
+		Out("presence=down", `presence_reason="no session answer"`, "NOTE the daemon is up and the session is not (no session answer)")
+}
+
+// A harness at its limit is down until its reset, through the verb: the turn whose
+// output says the limit is deferred, the message kept in hand; the friend is down on
+// the presence file with the limit's reason until she is woken; nothing goes into her
+// session before the reset; after it a wake turn whose answer carries its nonce, and
+// then the message (docs/SPEC-FRIEND.md, a harness at its limit).
+func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
+	require.NoError(t, err)
+	state := friend.DefaultStateDir(r.home, "bob")
+	w := r.world()
+	var mu sync.Mutex
+	clock := start
+	w.now = func() time.Time { mu.Lock(); defer mu.Unlock(); clock = clock.Add(time.Second); return clock }
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	sleeps := 0
+	w.sleep = func(context.Context, time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		clock = clock.Add(5 * time.Second)
+		if sleeps++; sleeps == 2000 {
+			cancel() // a bound on the test, never reached when it passes
+		}
+	}
+	w.beat = func(context.Context, string, string) (string, error) {
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
+	}
+	type turn struct {
+		at       time.Time
+		kind     string
+		presence friend.PresenceStatus
+	}
+	var turns []turn
+	limited := false
+	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		text := args[len(args)-1]
+		p, _, _ := friend.ReadPresence(state) // ignored: a missing file reads as the zero presence, which the test sees
+		mu.Lock()
+		defer mu.Unlock()
+		now := clock
+		switch {
+		case strings.HasPrefix(text, friend.SessionCheckPrefix):
+			nonce, _, _ := strings.Cut(strings.TrimPrefix(text, friend.SessionCheckPrefix), "\n")
+			r.answer(nonce)
+			return "answered\n", 0, nil
+		case strings.HasPrefix(text, "nova-friend: your harness's usage limit has reset"):
+			turns = append(turns, turn{now, "wake", p})
+			fields := strings.Fields(text)
+			return fields[len(fields)-1] + "\n", 0, nil
+		case strings.Contains(text, "card c9"):
+			if !limited {
+				limited = true
+				turns = append(turns, turn{now, "limit", p})
+				return "working\nInsufficient AI Credits. Your credits will refresh in 10 minutes.\n", 1, nil
+			}
+			turns = append(turns, turn{now, "message", p})
+			cancel()
+			return "I ran card c9.\n", 0, nil
+		}
+		return "", 0, nil
+	}
+	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
+	require.Equal(t, 0, code, errb.String())
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, turns, 3, "the limited turn, one wake, the message; nothing between\n%s", out.String())
+	assert.Equal(t, []string{"limit", "wake", "message"}, []string{turns[0].kind, turns[1].kind, turns[2].kind})
+	assert.Contains(t, out.String(), "limit: down until ")
+	assert.Contains(t, out.String(), "Insufficient AI Credits")
+	assert.Contains(t, out.String(), "the turn hit the harness's limit", "the turn is deferred, the message in hand")
+	assert.False(t, turns[1].at.Before(turns[0].at.Add(10*time.Minute)), "no wake before the reset: %s then %s", turns[0].at, turns[1].at)
+	assert.Equal(t, friend.PresenceDown, turns[1].presence.Presence, "down on the presence file until woken")
+	assert.Contains(t, turns[1].presence.Reason, "harness limit until ")
+	assert.Contains(t, out.String(), "limit: woken: the session answered r4nd0m after the reset")
+}
+
+// lockedBuilder is a strings.Builder under the test's lock: the daemon writes
+// its lines and the harness's output from the turn's goroutine and its own.
+type lockedBuilder struct {
+	mu *sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuilder) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+// String is read with the lock held by the caller.
+func (l *lockedBuilder) String() string { return l.b.String() }

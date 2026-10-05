@@ -80,7 +80,7 @@ type adoptResult struct {
 	observedLine string
 }
 
-func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Duration) []adoptResult {
+func runAdoptChecks(ctx context.Context, env Environment, checks []AdoptCheck, timeout time.Duration) []adoptResult {
 	rs := make([]adoptResult, len(checks))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -93,7 +93,7 @@ func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Durat
 					continue
 				}
 				child, cancel := context.WithTimeout(ctx, timeout)
-				p := process(child, c.Command, nil, ChildCap)
+				p := process(child, env.Env, c.Command, nil, ChildCap)
 				cancel()
 				if p.Reason != "" {
 					remedy := "repair the check command"
@@ -130,7 +130,7 @@ func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Durat
 // named, posts the receipt as the coordinator's own. Every REFUSED check is
 // handed to the duty tier on an ESCALATE line naming its owner.
 func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started time.Time, out, errs io.Writer, env Environment) int {
-	rs := runAdoptChecks(ctx, checks, o.timeout)
+	rs := runAdoptChecks(ctx, env, checks, o.timeout)
 	var lines []string
 	ok, refused := 0, 0
 	var okBuf, refuseBuf bytes.Buffer
@@ -159,13 +159,17 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 		if _, err := out.Write([]byte{}); err != nil {
 			return 1
 		}
-		fmt.Fprint(errs, refuseBuf.String())
+		if _, err := fmt.Fprint(errs, refuseBuf.String()); err != nil {
+			return 1
+		}
 	}
 	w := out
 	if refused > 0 {
 		w = errs
 	}
-	fmt.Fprintln(w, done)
+	if _, err := fmt.Fprintln(w, done); err != nil {
+		return 1
+	}
 	code := 0
 	if refused > 0 {
 		code = 1
@@ -178,10 +182,12 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 		fmt.Fprintln(&body, done)
 		line, serr := postAdoptReceipt(ctx, o, body.Bytes(), env)
 		if serr != nil {
-			fmt.Fprintf(errs, "ADOPT NOTE %s\n", oneline.Err(serr))
+			_, _ = fmt.Fprintf(errs, "ADOPT NOTE %s\n", oneline.Err(serr)) // ignored: the failed receipt already returns 1
 			return 1
 		}
-		fmt.Fprintf(out, "ADOPT SENT to=%s line=%s\n", field(o.to), field(line))
+		if _, err := fmt.Fprintf(out, "ADOPT SENT to=%s line=%s\n", field(o.to), field(line)); err != nil {
+			return 1
+		}
 	}
 	return code
 }
@@ -199,7 +205,7 @@ func loadAdoptFile(path string) ([]AdoptCheck, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the checks file is opened only to be read
 	return LoadAdopt(f)
 }
 

@@ -12,10 +12,10 @@ is the server; both sides need to know they are connected, continually".
 One daemon per friend, started by launchd and never by the model, parks on the
 friend's nova-bus stream and, whenever the session is free, pushes every
 message waiting into the running session as one turn; it beats to the sprint
-server while that loop runs and only then; it answers the coordinator's ping
-at once and never makes a turn of it, and the session's own answer, the pong
-line that rides at the head of its next turn, is the only thing that makes the
-friend up.
+server while that loop runs and its session answers, and only then; it answers
+the coordinator's ping at once and never makes a turn of it, and the session's
+own answer to a nonce is the only thing that makes the friend up (Presence,
+below): the daemon answering is never the session.
 
 ## The data
 
@@ -51,7 +51,10 @@ friend up.
   or seen by a peek while a turn is running. It proves transport. The ping is
   then acked by the daemon and never pushed in as a turn (the finding of
   2026-10-04: pings every few seconds were turns of their own and buried the
-  work).
+  work). It is the daemon's, named so, and never counts as presence.
+- `SESSION CHECK <nonce>`: the daemon's own question to its session (Presence,
+  below), delivered into the session as a turn; answered by the same `pong`
+  line with that nonce.
 - `pong <nonce> queue=<n> working=<n> width=<n>`: the session's answer, sent by
   `nova-friend pong`, recorded in the pong file. While a challenge is open, the
   exact pong line for the current nonce rides at the head of the next turn
@@ -72,12 +75,102 @@ never heard `silent`) is dropped. The challenge: `quiet`; `challenged` from a
 ping until the session's pong with that nonce; `deaf` after a window challenged
 with no pong, until a pong. Only the current nonce answers: a stale or replayed
 pong changes nothing. Up is `quiet` with at least one pong; the daemon's beat
-never makes a friend up.
+never makes a friend up. The friend's presence, the daemon's own check of its
+session, is beside this machine (Presence, below), not part of it.
 
 The invariants, each with a reversed witness that TLC catches: a friend is up
 only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
+
+## Presence (internal/friend/presence.go)
+
+The finding of 2026-10-04: three friends read up with eight cards each while
+their harness apps were not running at all. The daemon answered every ping
+itself, so a closed app looked alive (the owner: "If your detection that they
+are down doesn't work WHEN THEY ARE DOWN, that seems like a bad design").
+Presence is therefore the session's, never the daemon's:
+
+- The daemon reads the bus log for messages from the friend. A message the
+  daemon itself sent (every send goes through the daemon's store, which
+  remembers its ids; a `daemon-pong` or `SESSION CHECK` by name, from a run
+  before this one) is the daemon's and proves nothing. Any other message from
+  the friend is the session's.
+- After ten minutes (`SessionQuiet`) with no bus message from the session, the
+  daemon delivers a session check carrying a fresh nonce through the friend's
+  adapter, into the session, the way a card is delivered: a turn of its own,
+  only once no turn is under way (the session's turns hold the adapter shared,
+  the check holds it alone, so it is never a second turn in one session; the
+  lanes of one-shot mode hold it the same way). A harness with no deliver
+  command has the check put on its own stream, which its session reads. The
+  check is one line to run with nothing to fill in: `nova-friend pong` with
+  the nonce, to the seat (else `--coordinator`), and then end the turn.
+- Only a reply carrying that nonce, written by the session, counts: a
+  `daemon-pong`, a pong the daemon wrote, another friend's pong, a stale or
+  wrong nonce all answer nothing. The bound runs from when the check went in.
+- No answer within five minutes (`SessionBound`) and the friend is down, with
+  the reason `no session answer`; a check turn still running then is stopped.
+  While down, an ordinary message is no proof the check reached the session:
+  only the nonce answers, and a fresh check goes in ten minutes after the last.
+  The next answer, to the latest nonce, late or not, brings the friend back up.
+- A daemon that starts is down, `no session answer yet`, with a check owed at
+  once: coming up proves nothing about the session.
+- While down, no beat goes to the sprint server: a friend the coordinator has
+  never observed is up there on her beat alone, so the beat is held back (the
+  status says `not beating: the session is down (<reason>)`). The friend row's
+  mode and width arrive with the beat's answer, so while down the daemon
+  delivers by the row it last read (batch at `--width` before any).
+- The state is in `presence.json` in the state directory, one writer, the
+  daemon; `status` prints `presence=up|down`, `last_session=`, and, when down,
+  `presence_reason=` (`no session answer`, `no session answer yet`, or
+  `no daemon` when the status file is stale).
+
+### The model (tla/FriendPresence.tla)
+
+What the table shows of a friend, and where the friend's cards are,
+modelled as a TLA+ module (card fr-presence-model). The world, per friend:
+the harness (running, closed), the session (answering, silent), the
+provider's limit (none, limited until a reset), the daemon (beating). The
+table: the coordinator's hold, the age of the session's last answer to a
+nonce, and each card's holder. The table's word is derived at every read:
+held is the hold alone; up is a session answer younger than the bound; down
+is the rest. The daemon's beat is never read for it. Only a running harness,
+a session taking turns and a provider not limiting it can answer.
+
+The model's ping is the session check above (a fresh nonce), its answer the
+session's pong with that nonce, and its bound the longest a friend stays up
+with no proof from the session: in the code that is `SessionQuiet` plus
+`SessionBound`, fifteen minutes, since any bus message from the session
+restarts the quiet and the check goes in only after it.
+
+A friend leaves up in two steps only, the coordinator's hold and the tick
+(the last answer reaching the bound), and each takes back every card the
+friend holds in that same step: the hold's withdrawal and the tick's
+rebalance. The dealer deals only to a friend up, and never back to the
+friend a card was last taken from.
+
+The rules, each with a reversed witness TLC catches: a friend shown up has a
+session answer younger than the bound and a harness running or closed less
+than the bound ago; a closed harness is shown down once it has been closed
+for the bound; a held or down friend holds no card; the beat alone never
+makes a friend up. The liveness: a closed harness is shown down on a clock
+that keeps ticking, whatever else never recovers; a card taken back is dealt
+to another friend, assuming disruptions are finite, every recovery comes
+(the app reopens, the session answers again, the limit resets, the hold is
+released) and the checks keep going in.
+
+"A friend shown up has a running harness", read at every state, cannot hold:
+the table cannot see the app close, only the answers stop, so for up to the
+bound after a close the friend is still shown up (the finding case
+`MCFriendPresenceFindingRunningNow`). The bound is the promise.
+
+Where the code today differs: a card stays with a friend who goes down
+(internal/sprint/friend_deal.go: "a friend who goes quiet keeps her card");
+the hold takes back only the cards not yet started
+(internal/sprint/friend_take.go), where the model has no started card; and
+a card the hold took back may be dealt to the same friend again (only
+`friend take` keeps it off them, `taken_from`). The provider's limit only
+stops answers in the model; limit.go's `Down` until the reset is not in it.
 
 ## The loop (internal/friend/daemon.go)
 
@@ -129,6 +222,37 @@ broken until the daemon restarts (install again, or `launchctl kickstart -k`),
 which is how a renewed session is taken up. The finding of 2026-10-04:
 a friend's session refused every turn with `invalid_request_error` for two hours
 and nothing said so.
+
+A harness at its usage limit or out of credits is down until its reset,
+woken after it, and its measured usage rides on its beat
+(`internal/friend/limit.go`; the finding of 2026-10-04: a friend's harness
+stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while her row
+read up with six working cards, and four Claude accounts ran out of their
+weekly usage unseen). `Limits.Watch` reads every command an adapter runs:
+Claude Code's stream-json `rate_limit_event` (`rate_limit_info`: `status`
+allowed, allowed_warning or rejected; `isUsingOverage`; `unifiedWindows`
+`five_hour` and `seven_day`, each `utilization` 0 to 1 and `resetsAt` in epoch
+seconds), the last one anywhere in the output, is the measured usage, and a
+rejection is a limit until the spent window resets; otherwise a line in the
+last 2 KiB that says a limit or credits (`insufficient ... credits`, `usage
+limit`, `limit reached`, `hit your limit`, `quota exceeded`) with its reset
+beside it (a clock time, today or else tomorrow in the daemon's zone; `in N
+hours`; an epoch after `limit reached|`) is a limit. A line with no reset is
+no limit, and a provider's transient `rate_limit_error` is no limit, so a
+reply that only talks about limits sends no one down. A harness on paid
+overage reads down, until the spent window resets, unless the owner allows
+overage for that friend (`AllowOverage`). Each new limit calls `Down` once
+with its reset (`friend down --until`, the status cell `down (<reason>, until
+<time>)`). `Limits.Gate` holds the session: a delivery while it is down is
+`Deferred` without running the harness, so its messages stay in hand, counted
+toward nothing; a turn that hits a limit is `Deferred` the same way; the
+first delivery after the reset is a wake turn (`WakeText`) whose output must
+carry its nonce, six fresh characters each try, so only the session that ran
+this turn answers it; then `Up` with the nonce, and the message goes in. The
+usage is on the beat as `--five-hour <pct> --seven-day <pct>`
+(`Usage.BeatFlags`) for pacing to read.
+`TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
+(What is weak).
 
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader, its stdin `/dev/null` when there is no text for it (a
@@ -280,6 +404,39 @@ window's pid and `route=defer` with that line when none does. A wake path
 that is not absolute, or that the process listing cannot show whole, is
 still a refusal and nothing is written.
 
+### fr-delivery-receipts.w1: receipts, the table's columns, the send alarm
+
+The finding of 2026-10-04: the sprint server's notes to friends failed on
+`WRONGPASS` for its bus user for two hours (54 failures in 30 minutes) and
+only a log line said so; earlier a friend's harness got no note for 80
+minutes while her beat said up. A beat proves the daemon, and the daemon's
+ack proves the turn ran; neither proves the session read the message. So
+every message to a friend is owed her session's receipt (SPEC-BUS.md,
+fr-delivery-receipts.w1): her session runs `nova-bus ack --as <f> --id
+<ids>` once it has read them, or answers one (`re`); `ReceiptLine`
+(internal/friend/deliver.go) is that exact line for a turn's text, from its
+`RECV OK id=` lines. The daemon's own ack at exit 0 is unchanged and is no
+receipt.
+
+The friends table's two columns per friend are `DeliveryCells` over
+`bus.Undelivered`: undelivered, the count owed, and oldest, the oldest
+owed message's age (`Age`: `45s`, `12m`, `1h20m`, `3d`; `-` when none).
+
+The sprint server sends its notes through a `Courier`
+(internal/friend/deliver.go): the bus, or a dial per note (`Open`), with a
+`bus.Watch` on each result, so a login refused or a store not reached is
+one alarm to the coordinator naming the store and the user, raised at the
+first failure and cleared at the next success.
+
+Not wired by this card (outside its paths, owed): the daemon putting
+`ReceiptLine` in each turn (daemon.go's `Batch`); `nova-bus recv --ack`
+giving a receipt for a session that reads the bus itself; the friends
+table's columns (cmd/nova-sprint/friends.go); the sprint server's
+`sendBus` becoming a `Courier` whose `Raise` and `Clear` write the alarm
+where the coordinator reads it (a sprint note, like the idle alarm); and
+the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
+a daemon ack that clears it).
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
@@ -320,7 +477,10 @@ refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
 share a turn, and a lane never runs two. A lane beyond a width since lowered
 finishes its card and takes no other. The silence watch, the provider's
 refusal streak and the broken session are the batch turn's, across every
-lane.
+lane. The friend daemon stamps progress on the sprint for each card whose
+one-shot turn printed since that card's last stamp (`stampProgress`, at most
+every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
+late), so the late rule never returns a printing card for want of a stamp.
 
 Only a harness that can open a session and deliver into a named one has
 lanes (`LaneHarness`; OpenCode today: `opencode run --dir <dir> <seed>` with no
@@ -368,11 +528,31 @@ new one to it. The state files are out of its way, under the home directory;
 until it is granted the daemon beats and answers the daemon pong but cannot
 run the harness on the volume, and the record says so.
 
+Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
+code is not yet held to it where the two differ. A session check waits for the
+turn under way, so a session in a turn longer than ten minutes that sends
+nothing on the bus is checked only once that turn ends, and keeps its word
+until then. A one-shot friend with no session in its directory at all has
+nowhere for the check to go until a lane opens one, and its lanes wait on the
+row, which comes with a beat; it stays down until a session exists.
+
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
 here; `ping` and `wait-pong` run the canary by hand. The beat carries no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.
+
+The limit layer (`limit.go`) is built and tested, not yet wired: the daemon
+and `nova-friend run` do not yet wrap the adapter's Exec in `Limits.Watch` or
+the Deliverer in `Limits.Gate` (a wrap must keep the `LaneHarness` lanes and
+the OpenCode `Allow` setting, and gate the lanes' turns), do not call `Down`
+and `Up` at the sprint (a friend's own `down --until` and `up`, which the
+server today takes as the coordinator's hold), and the beat sends no flags;
+`friend beat` takes no `--five-hour` or `--seven-day` until the sprint
+records them for pacing. Claude has no deliver command, so its
+`rate_limit_event` is read only once a Claude run's output passes through
+`Watch`. The state machine (up, down until a reset, waking on a nonce) wants
+its TLA+ module beside `tla/Friend.tla`.
 
 ## The harness survey (2026-10-04)
 

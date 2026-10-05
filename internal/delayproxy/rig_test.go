@@ -189,7 +189,7 @@ func startEcho(t *testing.T) *echo {
 			e.wg.Add(1)
 			go func() {
 				defer e.wg.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }() // ignored: a test fixture's connection ends when the accept loop stops; the test's assertions are the report
 				buf := make([]byte, echoBuffer)
 				for {
 					n, err := c.Read(buf)
@@ -350,7 +350,7 @@ type sunk struct {
 // takeAll is a target that reads total bytes from c and hangs up, and says what it
 // got. It gives up at the ceiling.
 func takeAll(c net.Conn, total int64, done chan<- sunk) {
-	defer c.Close()
+	defer func() { _ = c.Close() }() // ignored: a test fixture's connection ends when the copy does; the test's assertions are the report
 	_ = c.SetReadDeadline(time.Now().Add(ceiling))
 	n, err := io.CopyN(io.Discard, c, total)
 	done <- sunk{n: n, err: err}

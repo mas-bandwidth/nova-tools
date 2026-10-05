@@ -24,8 +24,10 @@ func defaultClient() *http.Client {
 	}}
 }
 
-// Latest reads only the declared endpoint, without credentials or persistent cache.
-func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Client) Read {
+// latestIn reads only the declared endpoint, without credentials or persistent
+// cache, with the environment a local: locator's child gets; nil inherits this
+// process's own.
+func latestIn(ctx context.Context, childEnv []string, e Entry, timeout time.Duration, client *http.Client) Read {
 	r := Read{Source: e.Latest, Remedy: "check the declared latest source or ask again when it answers"}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -37,7 +39,7 @@ func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Cl
 	scheme, loc, _ := strings.Cut(e.Latest, ":")
 	if scheme == "local" {
 		a, _ := argv(loc)
-		p := process(child, a, nil, ChildCap)
+		p := process(child, childEnv, a, nil, ChildCap)
 		raw := p.Stdout
 		if raw == "" {
 			raw = p.Stderr
@@ -95,7 +97,7 @@ func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Cl
 		if err != nil {
 			return nil, 0, err
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }() // ignored: response body close after reading
 		if response.StatusCode != 200 {
 			if response.StatusCode == 403 || response.StatusCode == 429 {
 				r.Remedy = "ask again at x-ratelimit-reset=" + response.Header.Get("x-ratelimit-reset")

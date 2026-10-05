@@ -109,7 +109,7 @@ func TestVerbsFromToolsRefusesWithNoDirectoryAndStopsOnADeadline(t *testing.T) {
 
 	_, _, err := VerbsFromTools(context.Background(), "  ", nil, nil)
 	require.Error(t, err, "an empty --tools was accepted; every path comes from a flag")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	dir := toolsDir(t, "nova-fake")
 	run := func(ctx context.Context, bin string) (string, error) { return fakeHelp, nil }
@@ -139,7 +139,7 @@ func TestVerbsFromToolsAgainstARealExecutable(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncat <<'EOF'\n" + fakeHelp + "EOF\n"
 	require.NoError(t, testbin.WriteExecutable(filepath.Join(dir, binName("nova-fake")), []byte(script), 0o755))
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	verbs, failures, err := VerbsFromTools(ctx, dir, nil, nil)
 	require.NoError(t, err, "VerbsFromTools: %v", err)

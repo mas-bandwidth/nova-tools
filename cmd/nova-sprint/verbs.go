@@ -49,9 +49,10 @@ func init() {
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
-		{"stop", "", "stop", (*app).cmdMachineStop},
+		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
-		{"tick", "[--answer-rules] [--idle-alarm]", "tick", (*app).cmdTick},
+		{"tick", "[--answer-rules] [--idle-alarm] [--shadow]", "tick", (*app).cmdTick},
+		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
 		{"selftest", "[--dir <d>] [--keep]", "selftest", (*app).cmdSelftest},
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
@@ -65,6 +66,7 @@ func init() {
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
+		{"redo", "<card>... [--stream <s>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
@@ -74,6 +76,7 @@ func init() {
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
+		{"backup", "--file <path>", "backup --file /tmp/nova-sprint-backup.rdb", (*app).cmdBackup},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"hold", "<member|reader|friend|stream>... --reason <text> [--return] [--dry-run]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},
@@ -97,9 +100,10 @@ func init() {
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
-		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
-		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
+		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
@@ -114,7 +118,9 @@ func init() {
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"watch", "--wake [--every <duration>] [--state <file>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]", "watch --wake --state wake.json", (*app).cmdWatch},
-		{"where", "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows]]", "where", (*app).cmdWhere},
+		{"seat check", "", "seat check", (*app).cmdSeatCheck},
+		{"machinery", "", "machinery", (*app).cmdMachinery},
+		{"where", "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows]] [--release [<name>]]", "where", (*app).cmdWhere},
 		{"dashboard", "[--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]", "dashboard --listen 127.0.0.1:7390 --pull 127.0.0.1:7395", (*app).cmdDashboard},
 		{"handover", "", "handover", (*app).cmdHandover},
 		{"view coordinator", "[--all] [--since <cursor>] [--json]", "view coordinator --json", (*app).cmdViewCoordinator},
@@ -128,6 +134,7 @@ func init() {
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
+		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
@@ -146,7 +153,7 @@ func verbNames() []string {
 	return append(out, "help", "version")
 }
 
-// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream):
+// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream, merge-window):
 // every verb whose name is that word and more; nil for a word that is no group.
 func groupVerbs(word string) []string {
 	var out []string
@@ -176,7 +183,7 @@ block shows the coordinator's day on that store.
 For one verb's usage, examples, flags and exit codes:
   nova-sprint help <verb> (or <verb> -h)
 For one group's help: nova-sprint help <group> (fleet, friend, reader, goal,
-stream).`
+stream, merge-window).`
 
 func banner() string {
 	var b strings.Builder
@@ -678,7 +685,7 @@ var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true,
 // epochVerbs, except a merge run by the sprint's coordinator, which merges
 // the cards of its own read of the merge queue and names no handed card.
 func needsEpoch(verbName string, coordinator bool) bool {
-	return epochVerbs[verbName] && !(verbName == "merge" && coordinator)
+	return epochVerbs[verbName] && (verbName != "merge" || !coordinator)
 }
 
 // runStep runs a step and reports it: exit 0 when everything named moved, 1
@@ -1162,7 +1169,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
-		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Who: c.actor,
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Base: swarm.ReadCardBase([]byte(*brief)).Ref, Who: c.actor,
 			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held, Replaces: sprint.Split(*replaces)}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
@@ -1247,7 +1254,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		if len(briefText) > store.MaxBriefBytes {
 			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
 		}
-		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path})
+		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path, Base: swarm.ReadCardBase([]byte(briefText)).Ref})
 	}
 	if !allowShared {
 		if why := sharedPaths(cards); why != "" {
@@ -1403,7 +1410,7 @@ func sharedPaths(cards []sprint.CardAdd) string {
 		ids := byPath[p]
 		for i := range ids {
 			for _, b := range ids[i+1:] {
-				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) && !(shared[a][p] && shared[b][p]) {
+				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) && (!shared[a][p] || !shared[b][p]) {
 					clash = append(clash, fmt.Sprintf("%s is named in PATHS by %s and %s, and neither needs the other", p, a, b))
 				}
 			}
@@ -2230,6 +2237,20 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
+func (a *app) cmdRedo(args []string, stdout, stderr io.Writer) int {
+	var ans *string
+	return a.setVerb("redo", args, stdout, stderr, false, func(fs flagSet) {
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	}, func(ids []string, s *sel) string {
+		if len(ids) == 0 && s.stream == "" {
+			return "wants ids or --stream <s>"
+		}
+		return ""
+	}, func(ids []string, s *sel, c *common) store.Step {
+		return store.RedoStep(sprint.RedoReq{Sel: s.sel(ids), Answers: answers(*ans), Who: c.actor})
+	})
+}
+
 func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("drop", args, stdout, stderr, true, func(fs flagSet) {
@@ -2670,11 +2691,16 @@ card's own tier, and default takes the stream's off.`) + "\n"
 
 // cmdSet writes the sprint's settings (sprint.Set): its read tier, the tier every
 // card's reads are raised to, and its dealt bound, how long a work card may wait
-// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27).
+// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27), and
+// the backlog alarms' thresholds (sprint.TickAlarms).
 func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("set")
 	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: each card's own tier)")
 	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
+	review := fs.String("alarm-review", "", "the backlog alarm on review: a judgment, once an episode, while more primaries than this whole number are in review; off takes it off (the default)")
+	merging := fs.String("alarm-merging", "", "the backlog alarm on merging: a judgment, once an episode, while more primaries than this whole number are merging; off takes it off (the default)")
+	fleet := fs.String("alarm-fleet", "", "the backlog alarm on the fleet: a judgment, once an episode, while the members up work fewer cards than this percent (1 to 100) of their width with a primary ready or waiting; off takes it off (the default)")
+	readyAlarm := fs.String("alarm-ready", "", "the backlog alarm on the feed: on raises a judgment, once an episode, while no primary is ready and one waits; off takes it off (the default)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
@@ -2686,7 +2712,8 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
 	}
-	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt,
+		AlarmReview: *review, AlarmMerging: *merging, AlarmFleet: *fleet, AlarmReady: *readyAlarm, Who: c.actor}), stdout, stderr)
 }
 
 // cmdPromoted is the coordinator's word that the sprint branch was promoted into dev
@@ -2736,23 +2763,26 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("funded", *c, st, store.FundedStep(sprint.FundedReq{Provider: pos[0], Reason: *reason, Who: c.actor}), stdout, stderr)
 }
 
-// cmdStreamSet writes the read tier of the streams named (sprint.Set), over the
-// sprint's.
+// cmdStreamSet writes the read tier or release of the streams named (sprint.Set), over the
+// sprint's, and their protected-branch mark: the repositories whose protected
+// branches the lander lands their cards on (docs/SPEC-SPRINT.md section 7 and section 11).
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
+	mark := fs.String("land-protected", "", "the repositories (owner/name, comma separated; any for every one) on whose protected branches, dev and main, the lander lands the stream's cards; default takes the mark off, and a card based on a protected branch is then refused at land")
+	release := fs.String("release", "", "the release this stream belongs to (default or none clears it)")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	if len(names) == 0 || *tier == "" {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default>")
+	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "") {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default> or --release <name>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Who: c.actor}), stdout, stderr)
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:

@@ -11,6 +11,7 @@ import (
 
 	"github.com/client9/misspell"
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 )
 
 // SpellingFinding is one misspelling finding in an input file or text.
@@ -677,8 +678,19 @@ func CheckSpellingDir(dir string, opts SpellingOptions) (res SpellingResult, err
 			res.Excluded++
 			return nil
 		}
+		// d.Type does not follow links. A symlink or a FIFO named like
+		// markdown is refused here, before any open, so a pipe cannot
+		// block the walk and an outside file is not spelled as this one
+		// (security#77 finding 3). A symlink keeps the old "is a symlink"
+		// words so the write-refusal pin still sees them.
+		if !d.Type().IsRegular() {
+			if d.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("reading %s: not a regular file: %s is a symlink", path, path)
+			}
+			return fmt.Errorf("reading %s: not a regular file", path)
+		}
 		res.FilesScanned++
-		data, readErr := os.ReadFile(path)
+		data, readErr := readregular.Read(path, readregular.DefaultMax)
 		if readErr != nil {
 			return fmt.Errorf("reading %q: %w", path, readErr)
 		}
@@ -880,7 +892,9 @@ func CheckSpellingFiles(dir string, files []string, opts SpellingOptions) (res S
 		}
 
 		res.FilesScanned++
-		data, readErr := os.ReadFile(targetPath)
+		// Stat above followed links, so a named symlink to a regular file
+		// is still that file. Read refuses a FIFO before open.
+		data, readErr := readregular.Read(targetPath, readregular.DefaultMax)
 		if readErr != nil {
 			return res, fmt.Errorf("reading %q: %w", f, readErr)
 		}

@@ -441,7 +441,8 @@ func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, 
 	return texts, inputs, nil
 }
 
-// findings prints the record's score decisions in the window clustered by class.
+// findings prints the record's score decisions in the window clustered by class;
+// card values follow the one-token field model of internal/oneline.Field.
 func (w world) findings(c *tool.Call) *tool.Out {
 	ds, err := decide.Load(c.Str("record"))
 	if err != nil {
@@ -452,7 +453,11 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	clusters, scored, skipped := decide.FindingsSkipped(ds, from, bar)
 	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
 	for _, cl := range clusters {
-		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cl.Cards, ","))
+		cards := make([]string, len(cl.Cards))
+		for i, card := range cl.Cards {
+			cards[i] = strings.ReplaceAll(oneline.Field(card), ",", `\x2c`)
+		}
+		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cards, ","))
 	}
 	if len(skipped) > 0 {
 		named := skipped[:min(len(skipped), 3)]

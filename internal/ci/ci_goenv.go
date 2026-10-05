@@ -272,7 +272,7 @@ func goCommandArgv0(call *ast.CallExpr) (token.Pos, bool) {
 	if !ok || (pkg.Name != "exec" && pkg.Name != "subproc") {
 		return 0, false
 	}
-	argv0 := -1
+	var argv0 int
 	switch {
 	case pkg.Name == "exec" && sel.Sel.Name == "Command":
 		argv0 = 0

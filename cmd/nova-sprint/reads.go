@@ -516,6 +516,8 @@ type whereView struct {
 	// Friends is the friends table's rows with what each friend's last beat reported (her
 	// load and her own counts, friend beat), beside the table's counts, which are the sprint's.
 	Friends []store.FriendRow `json:"friends,omitempty"`
+	// Releases is the count of cards left per release across the streams (docs/SPEC-SPRINT.md section 11, where --release).
+	Releases map[string]int64 `json:"releases,omitempty"`
 }
 
 // dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
@@ -605,9 +607,46 @@ type whereRun struct {
 	all     bool
 	cards   bool
 	rows    bool
+	release releaseFlag
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
+}
+
+type releaseFlag struct {
+	set  bool
+	name string
+}
+
+func (r *releaseFlag) String() string {
+	return r.name
+}
+
+func (r *releaseFlag) Set(val string) error {
+	r.set = true
+	if val != "true" && val != "false" {
+		r.name = val
+	}
+	return nil
+}
+
+func (r *releaseFlag) IsBoolFlag() bool {
+	return true
+}
+
+// releaseFrame prints the cards left per release from the stream rows (docs/SPEC-SPRINT.md section 11, where --release).
+func releaseFrame(releases map[string]int64, target string) string {
+	var b strings.Builder
+	if target != "" {
+		fmt.Fprintf(&b, "RELEASE %s cards=%d\n", target, releases[target])
+		return b.String()
+	}
+	names := slices.Collect(maps.Keys(releases))
+	slices.Sort(names)
+	for _, name := range names {
+		fmt.Fprintf(&b, "RELEASE %s cards=%d\n", name, releases[name])
+	}
+	return b.String()
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -619,7 +658,13 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
+	var rel releaseFlag
+	fs.Var(&rel, "release", "show cards left per release, or for the named release")
 	pos, err := parse(fs, args)
+	if rel.set && rel.name == "" && len(pos) == 1 {
+		rel.name = pos[0]
+		pos = nil
+	}
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", argErr("takes no words ", err, pos...))
 	}
@@ -645,7 +690,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *rows && !c.json {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, every: *every, stale: *stale, atEpoch: *atEpoch}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -713,6 +758,9 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 		if r.c.json {
 			b, _ := json.Marshal(v)
 			return string(b) + "\n", 0, true
+		}
+		if r.release.set {
+			return releaseFrame(v.Releases, r.release.name), 0, true
 		}
 		return frame, 0, true
 	})
@@ -908,6 +956,15 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			v.Stalled = append(v.Stalled, c.Stream)
 		}
 	}
+	streamLeft := map[string]int64{}
+	for _, r := range shapes[0].Rows {
+		for k, col := range shapes[0].Columns {
+			if col.Projection == ntable.Count && col.Name != sprint.Landed && k < len(r.Cells) {
+				streamLeft[r.Key] += r.Cells[k].Count
+			}
+		}
+	}
+	v.Releases = sprint.WhereReleasesCountCardsLeft(clocks, streamLeft)
 	return v, b.String(), nil
 }
 

@@ -216,7 +216,7 @@ func (g *GH) Files(ctx context.Context, repo, base, head string) ([]string, erro
 //
 // THE OBJECT FIRST, THEN THE REF. This verb used to POST `git/refs` alone, which
 // creates a LIGHTWEIGHT tag: a name pointing straight at the commit and carrying
-// nothing. Johnny's decision 2 on SPEC-RELEASE (#1337) is that the tag carries
+// nothing. The repository owner's decision 2 on SPEC-RELEASE (#1337) is that the tag carries
 // the digest of the release's SHA256SUMS, so there has to be something to carry
 // it IN -- a tag object -- and the ref has to point at THAT, not at the commit,
 // or the annotation is orphaned and the tag still reads lightweight to everything
@@ -390,7 +390,16 @@ func diffNamesResult(stdout, stderr *diffCapture, runErr error) ([]string, error
 // found on PATH, because "no cwd dependence, every path a flag" applies to the
 // program as much as to the directories: a bench with two ssh binaries should
 // not be a coin toss.
-type ExecSSH struct{ Path string }
+//
+// Guard is the per-test host guard this seam consults: a test arms an isolated
+// testguard.NewGuard(true) as a field on the value under test, so it needs
+// neither t.Setenv nor a process-wide reload. The nil default is the
+// production path: the package-level guard, armed from NOVA_TEST_NO_HOST by
+// `make test`.
+type ExecSSH struct {
+	Path  string
+	Guard *testguard.Guard
+}
 
 // remoteArgv is the option list every invocation carries, with the machine the
 // invocation reaches. It composes the policy and starts no child: Run, Send and
@@ -400,7 +409,7 @@ func remoteArgv(machine string) []string {
 }
 
 // SSHOptions are the options EVERY invocation carries, in one slice so a test
-// can read the whole policy rather than three call sites (Johnny, 2026-09-18).
+// can read the whole policy rather than three call sites (the repository owner, 2026-09-18).
 //
 // BatchMode so a missing key is a refusal now rather than a password prompt
 // nobody is at the keyboard for. ConnectTimeout so a sleeping bench costs
@@ -425,7 +434,11 @@ var SSHOptions = []string{
 // named them).
 func (s ExecSSH) Run(ctx context.Context, machine string, argv []string) (string, error) {
 	args := append(remoteArgv(machine), argv...)
-	testguard.RefuseHosts(s.Path, args...)
+	if s.Guard != nil {
+		s.Guard.RefuseHosts(s.Path, args...)
+	} else {
+		testguard.RefuseHosts(s.Path, args...)
+	}
 	return runCommand(ctx, s.Path, args...)
 }
 
@@ -437,7 +450,7 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	// ONLY WHAT THE CHECKSUM FILE NAMES GOES OVER THE WIRE. Sending whatever
 	// happens to be sitting in the directory would mean that anything dropped
 	// there -- a key, a token, an unrelated file -- is copied to every machine
-	// in the fleet by a verb nobody thinks of as a file transfer (Johnny,
+	// in the fleet by a verb nobody thinks of as a file transfer (the repository owner,
 	// 2026-09-18). The shipped set is the verified set and nothing else.
 	arts, err := ReadSums(dir)
 	if err != nil {
@@ -452,9 +465,14 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	go func() {
 		pw.CloseWithError(writeTar(pw, dir, base, allowed))
 	}()
-	defer pr.Close()
+	// ignored: the read end of a pipe the child has drained; the command's error is the one returned
+	defer func() { _ = pr.Close() }()
 	args := append(remoteArgv(machine), "mkdir", "-p", dest, "&&", "tar", "-C", dest, "-xf", "-")
-	testguard.RefuseHosts(s.Path, args...)
+	if s.Guard != nil {
+		s.Guard.RefuseHosts(s.Path, args...)
+	} else {
+		testguard.RefuseHosts(s.Path, args...)
+	}
 	return runCommandInput(ctx, pr, "", s.Path, args...)
 }
 
@@ -465,7 +483,11 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 // trust adopting a release that lives on the host that has the cores.
 func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, error) {
 	args := append(remoteArgv(machine), "tar", "-C", dir, "-cf", "-", ".")
-	testguard.RefuseHosts(s.Path, args...)
+	if s.Guard != nil {
+		s.Guard.RefuseHosts(s.Path, args...)
+	} else {
+		testguard.RefuseHosts(s.Path, args...)
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stderr := bounded.NewCapture(childCap, cancel)

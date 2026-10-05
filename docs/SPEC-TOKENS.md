@@ -480,7 +480,8 @@ writes.
 `profiles --swarm-root <dir>` is a measurement over a swarm root: one
 `PROFILES MODEL` line per model (card count, median `tokens_out`, overshoot
 cards whose output exceeded their own card budget line) and one `PROFILES OK`
-line, exit 0 whenever it ran. `session --claude-session <jsonl>` prints one
+line, exit 0 whenever it ran. The overshoot ledger is advisory because both
+inputs (usage.tsv and PROMPT.md) are child-writable files. `session --claude-session <jsonl>` prints one
 `SESSION` line (the weighted fresh-input equivalent and average context) and,
 with `--out`, folds the window's turns into the day file as one row per model
 the transcript names, beside retained rows; a transcript that names no model

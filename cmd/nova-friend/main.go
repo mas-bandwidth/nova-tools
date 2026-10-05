@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -211,8 +212,8 @@ func friendTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
-harness's deliver command), beats to the sprint server while the loop runs, answers the coordinator
-PING at once (daemon-pong), never as a turn; the session's own pong --nonce alone makes it up.
+harness's deliver command), beats to the sprint server while the session answers, answers the
+coordinator PING at once (daemon-pong, never presence); presence is the session's answer to a nonce.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE"},
@@ -230,8 +231,13 @@ again when their claims open, and the third failure acks a message, given_up=tru
 PING is answered at once with a daemon-pong and acked, never a turn; while a challenge is open the
 pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
 "coordinator back" when pings resume, collapsed to the latest and said only inside a turn that
-carries messages. A turn runs as long as it prints; one silent past --silent-stop is stopped with
-its process group, the reason on the record. The same provider refusal (an invalid_request_error)
+carries messages. Presence is the session's, never the daemon's: after ` + friend.SessionQuiet.String() + ` with no bus message from
+the session (the daemon's own sends never count), a SESSION CHECK <nonce> goes in through the harness
+as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
+deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `
+and the friend is down, "no session answer", the beat to the sprint server held back until the next
+answer brings it up; it starts down until the first answer. A turn runs as long as it prints; one
+silent past --silent-stop is stopped with its process group, the reason on the record. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
 bus; a restart clears it. The friend row's mode and width come with each beat's answer (row_mode=,
@@ -370,7 +376,8 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
+last_pong= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=), and for harness grok route=<push|defer>,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
@@ -439,7 +446,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec, c.Stdout)
+	// her harness's limit: every command's output read for it, her turns held while she is
+	// down and a wake after the reset (friend.Limits); its hooks are set once record is
+	fl := &friend.Limits{Now: w.now, Nonce: w.random}
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(w.exec), c.Stdout)
 	if err != nil {
 		o := tool.Refuse(err.Error())
 		o.Render(c.Stderr, c.Bool("json"))
@@ -463,6 +473,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
+	// the presence file says a limit while there is one, whatever the session check saw
+	writePresence := func(p friend.PresenceStatus) error {
+		if until, reason, limited := fl.Limited(); limited {
+			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
+		}
+		return friend.WritePresence(state, p)
+	}
+	fl.Down = func(until time.Time, reason string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: down until " + until.UTC().Format(time.RFC3339) + ": " + reason + "; turns held until then, then a wake")
+		if err := writePresence(friend.PresenceStatus{Friend: name, At: w.now()}); err != nil {
+			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
+		}
+	}
+	fl.Up = func(nonce string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
+	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	st, closeStore := w.openUntil(ctx, addr, record)
@@ -470,17 +496,41 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(0) // a signal while the store was down
 	}
 	defer closeStore()
+	// the seat the last ping named, from the daemon's status: whom the session check's answer goes to
+	var seatMu sync.Mutex
+	seat := ""
+	answerTo := func() string {
+		seatMu.Lock()
+		defer seatMu.Unlock()
+		if seat != "" {
+			return seat
+		}
+		return c.Str("coordinator")
+	}
+	// presence is the session's, never the daemon's (docs/SPEC-FRIEND.md, presence)
+	sc := &friend.SessionCheck{
+		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record,
+		Save: writePresence,
+		Text: func(nonce string) string {
+			bin, err := w.binary()
+			if err != nil {
+				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
+			}
+			return friend.SessionCheckText(nonce, fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, c.Str("redis")), answerTo())
+		},
+	}
+	sc.Deliver = sc.Gate(fl.Gate(deliver))
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
+		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
-		Beat: func(ctx context.Context) error {
+		Beat: sc.Beat(func(ctx context.Context) error {
 			answer, err := w.beat(ctx, server, name)
 			if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 				rowMode, rowWidth = m, wd
 			}
 			return err
-		},
+		}),
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
 				return m, rowWidth // the override, for a test
@@ -512,7 +562,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		Record: record,
 		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
-		Status: func(s friend.Status) error { return friend.WriteStatus(state, s) },
+		Status: func(s friend.Status) error {
+			seatMu.Lock()
+			seat = s.Seat
+			seatMu.Unlock()
+			return friend.WriteStatus(state, s)
+		},
 		PongCommand: func(nonce string) string {
 			bin, err := w.binary()
 			if err != nil {
@@ -664,6 +719,21 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+	}
+	pr, prFound, prErr := friend.ReadPresence(state)
+	switch {
+	case !prFound || prErr != nil: // a daemon from before presence: no word
+	case daemon == "down":
+		o.Fact("presence", friend.PresenceDown).Fact("presence_reason", tool.Text("no daemon"))
+	default:
+		o.Fact("presence", pr.Presence).Fact("last_session", stamp(pr.LastHeard))
+		if pr.Presence != friend.PresenceUp {
+			o.Fact("presence_reason", tool.Text(pr.Reason))
+			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down, and no beat goes to the sprint server until the session answers a session check")
+		}
+	}
+	if prErr != nil {
+		o.Note("the presence file: " + prErr.Error())
 	}
 	if s.BeatError != "" {
 		o.Note("the last beat failed: " + s.BeatError)

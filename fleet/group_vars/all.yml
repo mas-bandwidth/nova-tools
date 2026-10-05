@@ -18,9 +18,12 @@ nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/b
 # A darwin machine's loops are LaunchAgents in the login's GUI domain (gui) or
 # LaunchDaemons dropped to the login (system, which needs sudo); auto asks
 # launchd whether the login has a GUI domain (a login that is never the
-# console user has none) and takes system when it has not. A linux machine's
-# are systemd user units (user, with linger) or system units dropped to the
-# login (system).
+# console user has none) and takes system when it has not. On darwin, launchd
+# agent logs go under the user's home (~/Library/Logs/nova-loop-<name>.log)
+# because launchd cannot open log files on network volumes such as
+# /Volumes/nova; the program's own state and logs stay where they are. A linux
+# machine's are systemd user units (user, with linger) or system units dropped
+# to the login (system).
 nova_launchd_domain: auto
 nova_systemd_scope: user
 # Units of another tool's (com.nova.loop.<name>.plist, nova-loop-<name>.service

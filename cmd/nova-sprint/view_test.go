@@ -189,7 +189,7 @@ func TestTheWorkerViewOfAMember(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
 	for _, id := range []string{"s1-1", "s1-2"} {
-		brief := passingBrief(id + ": a card\nREPO: mas-bandwidth/nova-tools\nBASE: dev\nPATHS: cmd/nova-sprint/" + id + ".go")
+		brief := passingBrief(id + ": a card\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nPATHS: cmd/nova-sprint/" + id + ".go")
 		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(brief), 0o644))
 	}
 	ta.ok("add --stream s1 --brief-dir " + dir)
@@ -204,7 +204,7 @@ func TestTheWorkerViewOfAMember(t *testing.T) {
 	c := v.Cards[0]
 	assert.Equal(t, "s1-1.w1", c.ID)
 	assert.Equal(t, sprint.Ready, c.St)
-	assert.Equal(t, "dev", c.Base)
+	assert.Equal(t, "sprint/s1", c.Base)
 	assert.Equal(t, []string{"cmd/nova-sprint/s1-1.go"}, c.Paths)
 	assert.Equal(t, "nova-sprint card s1-1 --brief", c.Brief)
 	assert.Equal(t, 1, c.Att)
@@ -232,7 +232,7 @@ func TestTheWorkerViewOfAMember(t *testing.T) {
 
 	out := ta.ok("view worker --as m1")
 	assert.Contains(t, out, "VIEW worker member m1: working 0 ready 1, results not landed 1\n")
-	assert.Contains(t, out, "CARD s1-1.w1 ready att=1 base=dev paths=cmd/nova-sprint/s1-1.go")
+	assert.Contains(t, out, "CARD s1-1.w1 ready att=1 base=sprint/s1 paths=cmd/nova-sprint/s1-1.go")
 	assert.Contains(t, out, "WAIT s1-2.w1 review 0s\n")
 
 	code, _, errs := ta.do("view worker --as nobody")

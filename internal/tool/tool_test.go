@@ -2,6 +2,7 @@ package tool
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -825,6 +827,77 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 	}
 }
 
+// hiddenTool is a tool with one shown verb and one hidden one (Verb.Hidden):
+// a probe step verb a user never types.
+func hiddenTool() *Tool {
+	return &Tool{
+		Name: "nova-hide", What: "a tool with a hidden verb", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "scan", Usage: "scan", Example: "scan", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+			{Name: "probe-step", Usage: "probe-step <nonce>", Example: "probe-step <nonce>", Effect: Inspection, Hidden: true,
+				Run: func(*Call) *Out { return Done().Fact("probed", true) }},
+		},
+	}
+}
+
+// TestAHiddenVerbRunsAndNoListShowsIt pins Verb.Hidden: the hidden verb runs
+// and answers `-h` and `help <it>` at exit 0, while the banner, the usage
+// block and the verb list of every refusal leave it out (STANDARD §2: an
+// unknown name is answered with the names there are for the reader; §3: help
+// is never a refusal).
+func TestAHiddenVerbRunsAndNoListShowsIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		code        int
+		stdout      []string // substrings, in order
+		stderr      []string
+		absent      []string // in neither stream
+		emptyStderr bool
+	}{
+		{name: "the hidden verb runs", args: []string{"probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"PROBE-STEP OK probed=true\n"}},
+		{name: "the banner's usage and example blocks do not show it", args: []string{"help"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage:\n  nova-hide scan\n", "\nexample:\n  nova-hide scan\n"}, absent: []string{"probe-step"}},
+		{name: "a bare command's verb list does not name it", args: nil, code: 2,
+			stderr: []string{"HIDE REFUSED: no verb given; the verbs are scan, version; run: nova-hide help\n"},
+			absent: []string{"probe-step"}},
+		{name: "an unknown verb is not answered with it", args: []string{"probe"}, code: 2,
+			stderr: []string{`HIDE REFUSED: unknown verb "probe"; the verbs are scan, version; run: nova-hide help` + "\n"},
+			absent: []string{"probe-step", "did you mean"}},
+		{name: "help of it still prints its help", args: []string{"help", "probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]", "exit codes: 0 done, 1 said no, 2 could not run.", "effect: inspection"}},
+		{name: "its -h still answers", args: []string{"probe-step", "-h"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(hiddenTool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			check := func(name, got string, want []string) {
+				rest := got
+				for _, s := range want {
+					i := strings.Index(rest, s)
+					if !assert.GreaterOrEqual(t, i, 0, "%s lacks %q:\n%s", name, s, got) {
+						break
+					}
+					rest = rest[i+len(s):]
+				}
+			}
+			check("stdout", r.Stdout, tc.stdout)
+			check("stderr", r.Stderr, tc.stderr)
+			if tc.emptyStderr {
+				assert.Empty(t, r.Stderr)
+			}
+			for _, s := range tc.absent {
+				assert.NotContains(t, r.Stdout+r.Stderr, s)
+			}
+		})
+	}
+}
+
 // TestAStageLineIsWhereEveryReaderMeetsTheTool: a tool's Stage is the
 // banner's line 2, the second line of every verb's -h, and an indented NOTE
 // line under a bare command's one-line refusal (STANDARD section 3 point 1); a tool without one prints none.
@@ -861,6 +934,201 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 			}
 			assert.True(t, strings.HasPrefix(got, tc.want), "want the stream to open %q:\n%s", tc.want, got)
 			assert.Equal(t, 1, strings.Count(got, stage), "the stage appears more than once:\n%s", got)
+		})
+	}
+}
+
+// topicsTool is a tool whose reference text lives in its help topics instead
+// of its banner (skeleton contract 2.7): the banner stays bounded and a
+// reader takes the reference text one topic at a time.
+func topicsTool() *Tool {
+	return &Tool{
+		Name:      "nova-demo",
+		What:      "a tool that exists to be tested",
+		How:       "It keeps nothing.",
+		ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "put", Usage: "put --key <k>", Effect: LocalWrite, Example: "put --key k",
+				Flags: func(f *Flags) { f.Required("key", "a name") },
+				Run:   func(c *Call) *Out { return Done().Fact("key", c.Str("key")) }},
+		},
+		Topics: []Topic{
+			{Name: "keys", Text: "A key is one line.\nIt holds no spaces."},
+			{Name: "exit", Text: "0 done, 1 said no."},
+		},
+	}
+}
+
+// TestAHelpTopicPrintsItsText pins Tool.Topics (skeleton contract 2.7):
+// `help <topic>` prints the topic's text on stdout at exit 0, the banner
+// lists the topic names on one line that names the way to read one, and a
+// name that is no verb and no topic is refused with the verbs and the topics
+// there are (STANDARD §2: an unknown name is answered with the names there
+// are; §3, help is never a refusal).
+func TestAHelpTopicPrintsItsText(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		tool   func() *Tool
+		args   []string
+		code   int
+		stdout string // the whole stream, exact
+		stderr string // the whole stream, exact
+		absent string // in neither stream
+	}{
+		{name: "a topic prints its text at exit 0", tool: topicsTool, args: []string{"help", "keys"}, code: 0,
+			stdout: "A key is one line.\nIt holds no spaces.\n"},
+		{name: "another topic prints its own text", tool: topicsTool, args: []string{"help", "exit"}, code: 0,
+			stdout: "0 done, 1 said no.\n"},
+		{name: "the banner lists the topic names on one line", tool: topicsTool, args: []string{"help"}, code: 0,
+			stdout: "  nova-demo help [<verb>]\ntopics: keys, exit; run: nova-demo help <topic>\n\nEvery verb takes --json"},
+		{name: "a tool with no topics prints no topics line", tool: demo, args: []string{"help"}, code: 0,
+			absent: "topics:"},
+		{name: "an unknown name is refused with the verbs and the topics", tool: topicsTool, args: []string{"help", "keey"}, code: 2,
+			stderr: `DEMO REFUSED: unknown verb "keey"; the verbs are put, version, and the help topics are keys, exit; run: nova-demo help` + "\n"},
+		{name: "a verb's help is still the verb's help", tool: topicsTool, args: []string{"help", "put"}, code: 0,
+			stdout: "usage: nova-demo put [flags]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(tc.tool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			if tc.stdout != "" {
+				assert.Contains(t, r.Stdout, tc.stdout)
+				assert.Empty(t, r.Stderr)
+			}
+			if tc.stderr != "" {
+				assert.Equal(t, tc.stderr, r.Stderr)
+				assert.Empty(t, r.Stdout)
+			}
+			if tc.absent != "" {
+				assert.NotContains(t, r.Stdout+r.Stderr, tc.absent)
+			}
+		})
+	}
+}
+
+// TestATopicIsNoneOfTheVerbs pins Problems' refusal of a topic named as one
+// of the tool's verbs: `help <name>` is one door, so a name is a verb's or a
+// topic's and never both (skeleton contract 2.7).
+func TestATopicIsNoneOfTheVerbs(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, topicsTool().Problems())
+	for _, tc := range []struct {
+		name  string
+		topic string
+		want  string
+	}{
+		{"a verb's name", "put", `nova-demo: the help topic "put" is one of its verbs; a topic is a name of its own`},
+		{"the version verb every tool has", "version", `nova-demo: the help topic "version" is one of its verbs; a topic is a name of its own`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := topicsTool()
+			d.Topics = append(d.Topics, Topic{Name: tc.topic, Text: "x"})
+			assert.Equal(t, []string{tc.want}, d.Problems())
+		})
+	}
+}
+
+// walkTool is a verb that prints two rows as it goes and returns the closing line.
+func walkTool(run func(c *Call) *Out) *Tool {
+	return &Tool{
+		Name: "nova-walk", What: "walks", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{{Name: "walk", Usage: "walk", Effect: Inspection, Run: run}},
+	}
+}
+
+// Emit prints one item now, so a long-running verb shows its rows as they
+// happen (skeleton contract 2.4, STANDARD §2: one output structure, two
+// renderings). Text is one item line; --json is one {"item":{...}} line. The
+// Out the verb returns is the closing line, printed after these.
+func (c *Call) Emit(kind string, kv ...any) {
+	o := &Out{token: c.token}
+	o.Item(kind, kv...)
+	it := o.Items[0]
+	if c.asJSON {
+		raw, err := marshal(struct {
+			Item Item `json:"item"`
+		}{it})
+		if err != nil {
+			f := Fail("the result is no JSON, so it is not printed: " + err.Error())
+			f.token = c.token
+			f.Render(c.Stderr, false)
+			return
+		}
+		fmt.Fprintf(c.Stdout, "%s\n", raw)
+		return
+	}
+	fmt.Fprintln(c.Stdout, oneline.Field(c.token)+" "+oneline.Field(strings.ToUpper(it.Kind))+it.Fields.text())
+}
+
+// TestEmitPrintsItemsThenTheClosingLine pins Call.Emit (skeleton contract 2.4,
+// STANDARD §2): two items print as they go, text as item lines and --json as
+// one {"item":{...}} line each, and the Out the verb returns is the closing line.
+func TestEmitPrintsItemsThenTheClosingLine(t *testing.T) {
+	t.Parallel()
+	run := func(c *Call) *Out {
+		if c.Ctx == nil || c.Ctx.Err() != nil {
+			return Fail("no live context")
+		}
+		c.Emit("row", "i", 1)
+		c.Emit("row", "i", 2)
+		return Done()
+	}
+	text := testkit.Main(walkTool(run).Run).Run("walk")
+	assert.Equal(t, 0, text.Code, text.Stderr)
+	assert.Equal(t, "WALK ROW i=1\nWALK ROW i=2\nWALK OK\n", text.Stdout)
+	assert.Empty(t, text.Stderr)
+	js := testkit.Main(walkTool(run).Run).Run("walk", "--json")
+	assert.Equal(t, 0, js.Code, js.Stderr)
+	assert.Equal(t, "{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":1}}}\n"+
+		"{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":2}}}\n"+
+		"{\"result\":{\"verb\":\"walk\",\"status\":\"ok\",\"exit\":0},\"facts\":{}}\n", js.Stdout)
+	assert.Empty(t, js.Stderr)
+}
+
+// TestACancelledContextEndsTheVerb pins RunContext (skeleton contract 2.4): a
+// cancelled context ends the verb before it runs, and the closing line says so,
+// in text and in JSON.
+func TestACancelledContextEndsTheVerb(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		during bool
+		json   bool
+		stdout string
+		stderr string
+	}{
+		{"text", false, false, "", "WALK FAILED: context canceled\n"},
+		{"json", false, true, "{\"result\":{\"verb\":\"walk\",\"status\":\"failed\",\"exit\":1,\"why\":[\"context canceled\"]},\"facts\":{}}\n", ""},
+		{"cancelled while the verb runs", true, false, "", "WALK FAILED: context canceled\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if !tc.during {
+				cancel()
+			}
+			ran := false
+			tool := walkTool(func(c *Call) *Out {
+				ran = true
+				if tc.during {
+					cancel()
+				}
+				return Done()
+			})
+			args := []string{"walk"}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			var out, errb bytes.Buffer
+			code := tool.RunContext(ctx, args, strings.NewReader(""), &out, &errb)
+			assert.Equal(t, 1, code, "stdout %q stderr %q", out.String(), errb.String())
+			assert.Equal(t, tc.during, ran)
+			assert.Equal(t, tc.stdout, out.String())
+			assert.Equal(t, tc.stderr, errb.String())
 		})
 	}
 }

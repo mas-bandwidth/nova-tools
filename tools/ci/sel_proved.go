@@ -88,7 +88,7 @@ func provedRuns(client selHTTP, token, repo, sha string) int {
 	if err != nil {
 		return 0
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // ignored: the body is read for its JSON and a close error is not the count's to report
 	if resp.StatusCode != http.StatusOK {
 		return 0
 	}

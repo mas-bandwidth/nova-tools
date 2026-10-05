@@ -26,7 +26,8 @@ func TestCommandCounterCountsAPing(t *testing.T) {
 		require.Failf(t, "", "the counter listens on %q; want 127.0.0.1 and a port", addr)
 	}
 	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
+	// ignored: a test client's close; the test's own assertions are the report
+	defer func() { _ = c.Close() }()
 	if n := count(); n != 0 {
 		require.Zero(t, n, "NewClient sent %d commands; want 0", n)
 	}
@@ -46,7 +47,8 @@ func TestCommandCounterAnswersEveryCommandAndCountsIt(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer conn.Close()
+	// ignored: a test client's close; the test's own assertions are the report
+	defer func() { _ = conn.Close() }()
 	r := bufio.NewReader(conn)
 	for i, step := range []struct{ send, want string }{
 		{"*1\r\n$4\r\nPING\r\n", "+PONG\r\n"},
@@ -175,7 +177,8 @@ func TestCommandCounterHangsUpOnItsClientsAtCleanup(t *testing.T) {
 			require.Failf(t, "", "answered %q, %v, counted %d", got, err, count())
 		}
 	})
-	defer left.Close()
+	// ignored: a test client's close; the test's own assertions are the report
+	defer func() { _ = left.Close() }()
 	// The end of the stream: ReadAll reads it as no error and nothing more.
 	if got, err := io.ReadAll(left); err != nil || len(got) != 0 {
 		require.Failf(t, "", "after the cleanup the client read %q, %v; want the end and nothing before it", got, err)

@@ -192,7 +192,8 @@ func pull(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "PULL", fmt.Errorf("cannot open %s: %w (name a readable --machines file, one machine per line)", o.machines, err))
 		}
 		machines, err = Machines(f)
-		f.Close()
+		// ignored: the machines file was opened only for reading; the read's error is the one reported
+		_ = f.Close()
 		if err != nil {
 			return refusal(errs, "PULL", err)
 		}

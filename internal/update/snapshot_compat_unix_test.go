@@ -25,10 +25,10 @@ func TestAnOldReportsSnapshotLockKeepsTheNewOneOut(t *testing.T) {
 	snap := filepath.Join(t.TempDir(), "snapshot.json")
 	old, err := os.OpenFile(snap+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	require.NoError(t, err)
-	defer old.Close()
+	defer func() { _ = old.Close() }() // ignored: test fixture file handle
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "stage the old binary's flock")
 
-	done, cancel := context.WithCancel(context.Background())
+	done, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = lockSnapshot(done, snap)
 	require.Error(t, err, "the new report took the snapshot while an old one held the same lock file")
@@ -51,7 +51,7 @@ func TestTheNewSnapshotLockKeepsAnOldReportOut(t *testing.T) {
 
 	old, err := os.OpenFile(snap+".lock", os.O_RDWR, 0)
 	require.NoError(t, err)
-	defer old.Close()
+	defer func() { _ = old.Close() }() // ignored: test fixture file handle
 	require.Error(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "an old report took the snapshot while the new one held it")
 
 	release()

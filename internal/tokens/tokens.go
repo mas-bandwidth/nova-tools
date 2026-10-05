@@ -719,7 +719,7 @@ func readSource(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading
 	return cappedRead(f, path)
 }
 
@@ -729,7 +729,7 @@ func readSourceFS(fsys fs.FS, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the file is opened only for reading
 	return cappedRead(f, name)
 }
 

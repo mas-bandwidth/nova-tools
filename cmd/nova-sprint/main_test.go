@@ -38,6 +38,8 @@ type testApp struct {
 	// sent is every message the app sent on the friends' bus.
 	sent  []bus.Message
 	quiet map[string]bool
+	// queue is the merge queues land asks, a fake: no forge is asked
+	queue *heldQueue
 }
 
 func newTestApp(t *testing.T) *testApp {
@@ -48,7 +50,7 @@ func newTestApp(t *testing.T) *testApp {
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
 	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return ta.m, nil }
 	// the friends' bus: every message sent is kept, none goes anywhere
-	ta.a.bus = func(_ context.Context, m bus.Message) error {
+	ta.a.bus = func(_ context.Context, m bus.Message, _ func(string)) error {
 		ta.mu.Lock()
 		defer ta.mu.Unlock()
 		ta.sent = append(ta.sent, m)
@@ -57,6 +59,9 @@ func newTestApp(t *testing.T) *testApp {
 	// run's wait on a quiet log steps the clock by the time it may take
 	ta.m.LogWait = func(d time.Duration) { ta.a.sleep(d) }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
+	// land asks no forge: every branch's merge queue is clear unless a test holds one
+	ta.queue = &heldQueue{held: map[string]bool{}}
+	ta.a.mergeQueue = ta.queue
 	// every part a tick plans on its twin is checked against a fresh read
 	ta.a.checkTwin = func(twin, fresh *sprint.Snapshot) error {
 		if d := store.TwinDiff(twin, fresh); d != "" {
@@ -370,7 +375,7 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	require.NotEqual(t, 0, code, "the tables are still there")
 	const none = "there is no prefix: the tables are always work, merge, readers and fleet and the view is sprint"
 	for _, verb := range []string{"where", "card p1", "log", "clear", "teardown", "inbox", "check", "repair", "init", "add --stream s1", "fleet up m1", "goal set a", "goal show", "goal", "reader add r"} {
-		name := verb
+		var name string
 		if f := strings.Fields(verb); f[0] == "goal" && len(f) == 1 {
 			name = "goal"
 		} else if f[0] == "goal" || f[0] == "fleet" || f[0] == "reader" {

@@ -87,18 +87,22 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // with the block written under it -- same number of lines, same lines, same
 // order -- through the one comparator.
 //
-// NOTHING IS NORMALISED, and that is a property of this transcript rather than
-// a shortcut. The stamps come from `--now`, the ids and the store are named on
-// the command line, and the byte count is of the text typed there, so every
-// value on every line reproduces. onboarding.CompareTranscript is told so by
-// being handed no field of the onboarding.Volatile table, and it says as much
-// under any line that disagrees.
+// NOTHING IS NORMALISED but the store path, and that is a property of this
+// transcript rather than a shortcut. The stamps come from `--now`, the ids are
+// named on the command line, and the byte count is of the text typed there, so
+// every other value on every line reproduces. onboarding.CompareTranscript is
+// told so by being handed only the `tmpdir` field of the onboarding.Volatile
+// table, and it says as much under any line that disagrees.
 //
-// The store is typed as written. The documented `./cairns` is relative and the
-// tool PRINTS IT BACK on every line, so the test runs in a directory of its own
-// rather than rewriting the path: a rewritten one is no longer the line the
-// document promised.
+// The documented `./cairns` is relative and the tool PRINTS IT BACK on every
+// line. It stands for a directory under this test's own t.TempDir(), named to
+// the comparator through `tmpdir`, so the sitting runs in parallel without
+// moving the process working directory: the printed path reduces back to the
+// spelling the document promises (the per-test seam the serial-tests ledger
+// names for a path: t.TempDir).
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-cairn")
@@ -116,26 +120,37 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	assert.Subset(t, verbs, []string{"open", "append", "index", "receipt"}, "the `### First run` block never runs one of the four verbs; the first sitting is all four")
 
 	// ONE store for the whole sitting: the transcript opens a record and then
-	// appends to it, and a fresh directory per line would unmake that.
-	t.Chdir(t.TempDir())
+	// appends to it, and a fresh directory per line would unmake that. It lives
+	// under t.TempDir() so the sitting needs no process working directory.
+	store := filepath.Join(t.TempDir(), "cairns")
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
-		res, err := runDocumented(s)
+		res, err := runDocumented(store, s)
 		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
 		got = append(got, res)
 	}
-	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+	volatile := []onboarding.Field{{Name: "tmpdir", Doc: "./cairns", Run: store}}
+	for _, p := range onboarding.CompareTranscript(steps, got, volatile) {
 		assert.Fail(t, p.Error())
 	}
 }
 
 // runDocumented calls this binary's own entry point with the documented
-// arguments. nova-cairn's first run reads nothing on stdin.
-func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+// arguments, resolving the one relative path the sitting names (./cairns) under
+// store, this test's own directory, so the record is written there instead of in
+// the process working directory. nova-cairn's first run reads nothing on stdin.
+func runDocumented(store string, s onboarding.Step) (onboarding.Result, error) {
 	if s.Stdin != "" {
 		return onboarding.Result{}, errReadsNothing
 	}
-	return onboarding.Result(cli.Run(s.Args...)), nil
+	args := make([]string, len(s.Args))
+	for i, a := range s.Args {
+		if a == "./cairns" {
+			a = store
+		}
+		args[i] = a
+	}
+	return onboarding.Result(cli.Run(args...)), nil
 }
 
 type readsNothing struct{}

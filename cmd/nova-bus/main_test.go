@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,7 @@ var start = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 // clock, no seat. exec is what --exec's command does with the text it is
 // handed; signals is the loop's context, which a test cancels.
 type rig struct {
-	store   *bus.Fake
+	store   *bustest.Fake
 	env     map[string]string
 	exec    func(stdin string) int
 	execIn  []string
@@ -33,7 +34,7 @@ type rig struct {
 }
 
 func newRig(names ...string) *rig {
-	return &rig{store: bus.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}}
 }
 
 func (r *rig) world() world {

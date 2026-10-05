@@ -305,7 +305,7 @@ func TestStoreWakeReadsTheSprintAndTellsAnAskedStop(t *testing.T) {
 	assert.Equal(t, 3, l.Ready+l.Waiting, "the three cards are counted as the view counts them")
 
 	ta.ok("start")
-	ta.ok("stop")
+	ta.ok("stop --reason maintenance --until 1h")
 	l, err = src.look(context.Background(), "")
 	require.NoError(t, err)
 	assert.True(t, l.Stopped)

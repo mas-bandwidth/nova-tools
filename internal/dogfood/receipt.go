@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 )
 
 // Receipt is one person saying: I ran this verb, on this day, on real work, and
@@ -287,22 +288,28 @@ func ReadReceipts(dir string) ([]Receipt, []Failure, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("receipts: %w", err)
 	}
+	var (
+		receipts []Receipt
+		failures []Failure
+	)
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		// An entry whose e.Type() is not regular is recorded as an unreadable failure rather than read (security#77 finding 3).
+		if !e.Type().IsRegular() {
+			failures = append(failures, Failure{Subject: path, Reason: "unreadable: not a regular file"})
 			continue
 		}
 		names = append(names, e.Name())
 	}
 	sort.Strings(names) // the order is the filenames', so two runs read the same
 
-	var (
-		receipts []Receipt
-		failures []Failure
-	)
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
+		data, err := readregular.Read(path, readregular.DefaultMax)
 		if err != nil {
 			failures = append(failures, Failure{Subject: path, Reason: fmt.Sprintf("unreadable: %v", err)})
 			continue

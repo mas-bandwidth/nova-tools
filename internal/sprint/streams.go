@@ -82,3 +82,15 @@ func RemovedStream(s *Snapshot, stream string) bool {
 	ctl := s.Merge.Card(CtlID(stream))
 	return ctl != nil && !ctl.Placed()
 }
+
+// WhereReleasesCountCardsLeft folds cards left per release from stream clocks
+// and per-stream cards left counts (docs/SPEC-SPRINT.md section 11, where --release).
+func WhereReleasesCountCardsLeft(clocks []StreamClock, streamCardsLeft map[string]int64) map[string]int64 {
+	out := map[string]int64{}
+	for _, c := range clocks {
+		if c.Release != "" {
+			out[c.Release] += streamCardsLeft[c.Stream]
+		}
+	}
+	return out
+}

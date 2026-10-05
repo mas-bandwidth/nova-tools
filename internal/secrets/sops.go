@@ -119,7 +119,7 @@ func DecryptFile(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer safepath.RemoveUnder(os.TempDir(), tmpDir)
+	defer func() { _ = safepath.RemoveUnder(os.TempDir(), tmpDir) }() // ignored: the temporary directory may already be gone
 
 	// Build isolated environment: do not inherit caller's AWS_*, VAULT_*, GNUPGHOME, etc.
 	cleanEnv := []string{

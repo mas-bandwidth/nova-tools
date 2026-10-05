@@ -5,6 +5,7 @@ package update
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -98,4 +99,36 @@ func TestSnapshotNotesASymlinkedNovaEntryItSkips(t *testing.T) {
 	assert.NotContains(t, stdout, "symlink, not a regular file; not snapshotted")
 	assert.NotContains(t, stdout, "NOTE")
 	assert.FileExists(t, cleanOut)
+}
+
+// A row whose source metadata is partial or contradictory (some but not all of the
+// four source keys, dirty=maybe; a duplicate key never gets this far, buildinfo.Parse refuses
+// the whole line) is noted by name and ignored by the
+// mixed-source gate rather than refused; a row with none of the four keys, or all four
+// well formed, gets no note (SPEC-VERSION item 6).
+func TestSnapshotNotesARowWhoseSourceMetadataIsPartial(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	stubs := map[string]string{
+		"nova-partial": "repo=my/repo revision=abcdef123456",
+		"nova-maybe":   "repo=my/repo revision=abcdef123456 dirty=maybe build_host=h",
+		"nova-none":    "",
+		"nova-whole":   "repo=my/repo revision=abcdef123456 dirty=false build_host=h",
+	}
+	for name, extras := range stubs {
+		line := name + " v1.0.0 linux/amd64 go1.0 " + extras
+		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '"+line+"\\n'\n"), 0o755))
+	}
+	out := filepath.Join(t.TempDir(), "s.tsv")
+
+	code, stdout, stderr := runTool(t, "nova-version", "snapshot", "--bin", bin, "--out", out)
+	assert.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "SNAPSHOT OK")
+	for _, name := range []string{"nova-partial", "nova-maybe"} {
+		assert.Contains(t, stdout, `NOTE partial source metadata: `+oneline.Quote(name))
+		assert.Contains(t, stdout, "SNAPSHOT ROW name="+name)
+	}
+	assert.Equal(t, 2, strings.Count(stdout, "NOTE partial source metadata"), stdout)
+	assert.NotContains(t, stdout, oneline.Quote("nova-none"))
+	assert.NotContains(t, stdout, oneline.Quote("nova-whole"))
 }

@@ -165,6 +165,22 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 	}
 }
 
+// TestNativeChildPrintedIsItsLogModTime pins nativeChild's member.Printer: Printed is the
+// modification time of the child's log (what the child printed last touched it), and the
+// zero time when the log is not there. The clock is the test's own, set with Chtimes.
+func TestNativeChildPrintedIsItsLogModTime(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "c1.native.log")
+	write(t, logPath, "NATIVE OK label=c1 job=/j rc=0 wall=1.00s harness=opencode budget=unmetered\n")
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	require.NoError(t, os.Chtimes(logPath, at, at))
+	c := &nativeChild{card: "c1", logPath: logPath}
+	require.True(t, c.Printed().Equal(at), "Printed = %v, want the log's mtime %v", c.Printed(), at)
+	c = &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log")}
+	require.True(t, c.Printed().IsZero(), "Printed of a log that is not there = %v, want the zero time", c.Printed())
+}
+
 // memberFull is every flag of `member` the verb requires, valid.
 func memberFull(root string) []string {
 	return []string{"member", "--as", "m1", "--server", "sprint.test:6390", "--width", "2", "--harness", "/bin/true", "--model", "p/m",

@@ -2,6 +2,8 @@ package release
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -228,7 +230,8 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	removeStaged := func() {
 		for _, s := range staged {
 			if s.tmp != "" {
-				os.Remove(s.tmp)
+				// ignored: the staged temporary is cleanup on the failure path; the error that stopped the install is the one reported
+				_ = os.Remove(s.tmp)
 			}
 		}
 	}
@@ -258,7 +261,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			skipped++
 			continue
 		}
-		tmp, err := stageArtifact(o.bin, a.Name, filepath.Join(dir, a.Name))
+		tmp, err := stageArtifact(o.bin, a.Name, filepath.Join(dir, a.Name), a.Sum)
 		if err != nil {
 			removeStaged()
 			fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d were in place)\n",
@@ -321,7 +324,8 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	}
 	for _, p := range placed {
 		if p.aside != "" {
-			os.Remove(p.aside)
+			// ignored: the install has already succeeded; a kept-aside copy the remove leaves is hidden and inert
+			_ = os.Remove(p.aside)
 		}
 	}
 	retired := 0
@@ -411,16 +415,35 @@ func hasToken(line, version string) bool {
 // stageArtifact copies src into an exclusive temp in bin. Publish renames
 // this file onto the target. The name is not the predictable .<tool>.new
 // installFile still uses: a planted directory there must not be opened.
-func stageArtifact(bin, name, src string) (string, error) {
+//
+// THE BYTES STAGED ARE THE BYTES VERIFIED (security#72 finding 8).
+// VerifyArtifacts hashed the file earlier; a writer to the artifact directory
+// between that pass and this read could substitute other bytes. The source is
+// Lstat-ed and a non-regular file (a symlink) refused, and the buffer actually
+// read is hashed against sum, the recorded one, before any temp is written.
+func stageArtifact(bin, name, src, sum string) (string, error) {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", src)
+	}
 	body, err := os.ReadFile(src)
 	if err != nil {
 		return "", err
+	}
+	got := sha256.Sum256(body)
+	if hex.EncodeToString(got[:]) != sum {
+		return "", refuse("build the release again; do not install an artifact whose bytes changed after it was verified",
+			"%s does not match %s at install: recorded %s, read %s", name, SumsFile, sum, hex.EncodeToString(got[:]))
 	}
 	return writeTemp(bin, "."+name+".new.*", body, 0o755)
 }
 
 // copyAside keeps target's bytes so a later rename failure can put them back.
-// A missing target is nothing to keep.
+// A missing target is nothing to keep. A non-regular file is refused before
+// any rename or aside (security#72 finding 5).
 func copyAside(target string) (string, bool, error) {
 	info, err := os.Lstat(target)
 	if err != nil {
@@ -454,14 +477,16 @@ func writeTemp(dir, pattern string, body []byte, mode os.FileMode) (string, erro
 	_, werr := f.Write(body)
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
-		os.Remove(path)
+		// ignored: the temporary is removed on the error path; the write's or the close's error is the one returned
+		_ = os.Remove(path)
 		if werr != nil {
 			return "", werr
 		}
 		return "", cerr
 	}
 	if err := os.Chmod(path, mode); err != nil {
-		os.Remove(path)
+		// ignored: the temporary is removed on the error path; the chmod error is the one returned
+		_ = os.Remove(path)
 		return "", err
 	}
 	return path, nil
