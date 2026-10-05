@@ -52,7 +52,7 @@ func TestTheAttemptBranchRoundTripsAndIsNewAfterAClear(t *testing.T) {
 func TestARedealInOneEpochIsAnotherBranchAndTheCardKeepsTheLastLaunchs(t *testing.T) {
 	t.Parallel()
 	h := fourMembers(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	one := h.packetOf("s1-1.w1")

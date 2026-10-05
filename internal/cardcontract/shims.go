@@ -54,9 +54,25 @@ case "$nova_sub" in
 // gitPush is the contract's push: a long flag that is a prefix of a refused long flag is refused as
 // typed, since git accepts any unambiguous prefix (docs/SPEC-CARD-CONTRACT.md, the push); the head the refspec names (else HEAD) and the branch it
 // comes from, recorded in <job>/.sprint/pushed.tsv, answered as the push the member makes
-// at the finish: that branch to the card's branch on origin.
+// at the finish: that branch to the card's branch on origin. A push whose remote is a local
+// path (an absolute path, a ./ or ../ path) or a file:// URL goes through to the real git
+// unchanged, as typed (docs/SPEC-CARD-CONTRACT.md, the push): it lands on the child's own
+// machine and reaches no forge, and a test or tool inside a card that pushes to a bare
+// repository it made under its own temp directory needs the push to land.
 const gitPush = `push)
 	shift "$nova_n"
+	nova_remote=""; nova_skip=""
+	for nova_a in "$@"; do
+		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
+		case "$nova_a" in
+		--repo|--receive-pack|--exec|--signed|-o|--push-option) nova_skip=1 ;;
+		-*) ;;
+		*) nova_remote="$nova_a"; break ;;
+		esac
+	done
+	case "$nova_remote" in
+	/*|./*|../*|file://*) nova_git push "$@"; exit ;;
+	esac
 	nova_pos=""; nova_skip=""
 	for nova_a in "$@"; do
 		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi

@@ -13,13 +13,15 @@ import (
 const maxKeyedFile = 2 << 20
 
 // keyedPackages is the packages a changed file that is not Go selects
-// (nova-tools#5111): a test reads a doc, a golden or a script as text, and no
-// import edge says so, so a change to that file moved the package's tests
-// without moving the package. Two rules, both read from the tree at HEAD:
+// (nova-tools#5111): a test reads a doc, a golden or a script as text, a
+// package embeds a file as its own data, and no import edge says so, so a
+// change to that file moved the package's tests without moving the package.
+// Three rules, all read from the tree at HEAD:
 //
 //   - a package whose _test.go files or testdata name a changed file
-//     (referenced), and
-//   - the package a changed file under its testdata belongs to (owned).
+//     (referenced),
+//   - the package a changed file under its testdata belongs to (owned), and
+//   - a package whose //go:embed directive names a changed file (embedded).
 //
 // A test names a file by its base name, as often as not through
 // filepath.Join("..", "..", "docs", "X.md"), so the full path is not in the
@@ -28,15 +30,19 @@ const maxKeyedFile = 2 << 20
 // so SPEC-X.md is not NOT-SPEC-X.md. A reference over-selects a package (a
 // README.md names many) and never under-selects one. A non-test source file's
 // mention does not select its package: its own change would have, and the
-// dependents rule covers what imports it.
+// dependents rule covers what imports it. An embed pattern is package-relative
+// and cannot reach outside the package directory, so a changed file matches a
+// directive only under that directory.
 func (s *selector) keyedPackages(changed []string) (map[string]bool, error) {
 	owned := map[string]bool{}
 	names := map[string]bool{}
+	paths := map[string]bool{}
 	for _, f := range changed {
 		if strings.HasSuffix(f, ".go") {
 			continue
 		}
 		names[path.Base(f)] = true
+		paths[f] = true
 		if hasRootDir(f) {
 			if dir, _, ok := strings.Cut(f, "/testdata/"); ok {
 				owned["./"+dir] = true
@@ -66,11 +72,11 @@ func (s *selector) keyedPackages(changed []string) (map[string]bool, error) {
 				return err
 			}
 			rel = filepath.ToSlash(rel)
-			var pkg string
+			var pkg, srcDir string
 			if dir, _, ok := strings.Cut(rel, "/testdata/"); ok {
 				pkg = "./" + dir
-			} else if strings.HasSuffix(rel, "_test.go") {
-				pkg = "./" + path.Dir(rel)
+			} else if strings.HasSuffix(rel, ".go") {
+				pkg, srcDir = "./"+path.Dir(rel), path.Dir(rel)
 			} else {
 				return nil
 			}
@@ -84,7 +90,11 @@ func (s *selector) keyedPackages(changed []string) (map[string]bool, error) {
 			if err != nil {
 				return err
 			}
-			if namesAny(string(b), names) {
+			if srcDir != "" && embedsAny(string(b), srcDir, paths) {
+				owned[pkg] = true
+				return nil
+			}
+			if (srcDir == "" || strings.HasSuffix(rel, "_test.go")) && namesAny(string(b), names) {
 				owned[pkg] = true
 			}
 			return nil
@@ -94,6 +104,46 @@ func (s *selector) keyedPackages(changed []string) (map[string]bool, error) {
 		}
 	}
 	return owned, nil
+}
+
+// embedsAny reports whether the source text of the package directory dir holds
+// a //go:embed directive naming one of the changed paths. The pattern is read
+// relative to dir: exact for a plain name, path.Match for the glob characters
+// the Go tool allows, and a name or directory pattern also matches what lives
+// under it (an all: pattern embeds a directory recursively). Like a reference,
+// this over-selects and never under-selects.
+func embedsAny(text, dir string, paths map[string]bool) bool {
+	for _, line := range strings.Split(text, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimLeft(line, " \t"), "//go:embed")
+		if !ok || rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+			continue
+		}
+		for _, p := range strings.Fields(rest) {
+			p = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(p, "all:"), "embed:"), "/")
+			if p == "" {
+				continue
+			}
+			for f := range paths {
+				rel, ok := strings.CutPrefix(f, dir+"/")
+				if !ok {
+					continue
+				}
+				if p == rel {
+					return true
+				}
+				if strings.ContainsAny(p, "*?[]") {
+					if m, err := path.Match(p, rel); err == nil && m {
+						return true
+					}
+					continue
+				}
+				if strings.HasPrefix(rel, p+"/") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // namesAny reports whether text holds any of the names as a whole name.

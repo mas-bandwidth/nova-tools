@@ -129,7 +129,7 @@ func Stats(s *Snapshot) PassStats {
 				case "no":
 					x.failed++
 				}
-				x.timed(dealt, taken, finished, cardcost.ParseUsage(w.F(FieldUsage)).Wall)
+				x.timed(dealt, taken, finished, RunWall(w))
 				if k == 1 {
 					deal = appendSpan(deal, admitted, stampAt(w, "first_dealt"))
 				}
@@ -254,4 +254,23 @@ func measure(xs []float64) Measure {
 		med = (xs[n/2-1] + xs[n/2]) / 2
 	}
 	return Measure{Median: med, Max: xs[n-1], N: n}
+}
+
+// FieldReported is when a work card's report was written, as the transport knew it (a
+// friend's REPORT.md: FinishReq.Reported), no later than its finish.
+const FieldReported = "reported"
+
+// RunWall is a work card's run wall as a duration's text: its usage's wall (what the
+// member read from its child), else, for a friend's card, which reports no usage, her take
+// to her report (FieldReported), so her report lag is her report to its finish; "" when
+// neither is there.
+func RunWall(c *Card) string {
+	if w := cardcost.ParseUsage(c.F(FieldUsage)).Wall; w != "" {
+		return w
+	}
+	taken, reported := stampAt(c, "taken"), stampAt(c, FieldReported)
+	if taken.IsZero() || reported.IsZero() || reported.Before(taken) {
+		return ""
+	}
+	return reported.Sub(taken).String()
 }

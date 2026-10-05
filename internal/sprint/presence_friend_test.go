@@ -27,11 +27,11 @@ func TestAFriendIsDownAfterFifteenSecondsWithoutABeat(t *testing.T) {
 		{16 * time.Second, true, Held},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, FriendStatus(c.held, b, p0.Add(c.at)), "beat at t, status at t+%v held=%v", c.at, c.held)
+		assert.Equal(t, c.want, FriendStatus(FriendPresence{Held: c.held, Beat: b, Generation: FirstSeatGeneration}, p0.Add(c.at)), "beat at t, status at t+%v held=%v", c.at, c.held)
 	}
 	assert.Equal(t, Up, PresenceStatus(false, b, p0.Add(16*time.Second)), "a machine's rule is separate and longer")
 
 	again := p0.Add(16 * time.Second)
-	assert.Equal(t, Up, FriendStatus(false, Beat{At: again}, again), "a beat at t+16 s is up at once")
-	assert.Equal(t, Down, FriendStatus(false, Beat{}, p0), "never beaten is down")
+	assert.Equal(t, Up, FriendStatus(FriendPresence{Beat: Beat{At: again}, Generation: FirstSeatGeneration}, again), "a beat at t+16 s is up at once")
+	assert.Equal(t, Down, FriendStatus(FriendPresence{Generation: FirstSeatGeneration}, p0), "never beaten is down")
 }

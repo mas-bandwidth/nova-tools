@@ -107,7 +107,7 @@ func TestTheLoopWakesOnTheLogOnTheStore(t *testing.T) {
 	_, why := loop.pace(ctx, st, st.PinnedEpoch(), cursor, time.Now())
 	require.Equal(t, tickClock, why, "a quiet wait: %s in %d round trips, want the clock in 1", why, trips.n.Load()-before)
 	require.Equal(t, int64(1), trips.n.Load()-before, "a quiet wait: %s in %d round trips, want the clock in 1", why, trips.n.Load()-before)
-	do("add", "--stream", "d", "--count", "1")
+	do("add", "--stream", "d", "--count", "1", "--one")
 	before = trips.n.Load()
 	_, why = loop.pace(ctx, st, st.PinnedEpoch(), cursor, time.Now())
 	require.Equal(t, tickLog, why, "a woken wait: %s in %d round trips, want the log in 1", why, trips.n.Load()-before)

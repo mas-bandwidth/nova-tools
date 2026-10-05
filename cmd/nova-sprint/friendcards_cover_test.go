@@ -36,7 +36,7 @@ func TestFriendcardsCoverBranchTipRefusesATipItCannotRead(t *testing.T) {
 		{
 			name: "the tip's budget is already spent: the kill the caller sees",
 			ctx: func() (context.Context, context.CancelFunc) {
-				return context.WithDeadline(context.Background(), time.Now().Add(-friendTipBudget))
+				return context.WithDeadline(t.Context(), time.Now().Add(-friendTipBudget))
 			},
 			is:   context.DeadlineExceeded,
 			kill: true,
@@ -44,7 +44,7 @@ func TestFriendcardsCoverBranchTipRefusesATipItCannotRead(t *testing.T) {
 		{
 			name: "the caller cancelled the read before it started",
 			ctx: func() (context.Context, context.CancelFunc) {
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				return ctx, cancel
 			},

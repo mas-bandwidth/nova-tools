@@ -4,12 +4,14 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
-| `nova-bus/` | coordination bus inbox, send, and wait CLI | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
+| `nova-bus/` | messages between AIs over Redis streams: one stream per recipient under a consumer group, one log, pending until acked | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
 | `nova-cairn/` | session checkpoints: a session's exact words kept as plain files, with an index and receipts | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
+| `nova-card/` | writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help, for nova-sprint add --brief-dir | `go test ./cmd/nova-card` | `go test ./cmd/nova-card` |
 | `nova-check/` | checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
 | `nova-ci/` | CI slowtests budget and check CLI, and ci-ok's run receipt | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-decide/` | typed decisions with probabilities through a backend, recorded and calibrated against their outcomes | `go test ./cmd/nova-decide` | `go test ./cmd/nova-decide` |
+| `nova-friend/` | what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon | `go test ./cmd/nova-friend` | `go test -tags functional ./cmd/nova-friend` |
 | `nova-fuse/` | the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |
 | `nova-redis/` | Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |

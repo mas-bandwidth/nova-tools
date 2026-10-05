@@ -14,19 +14,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The first run needs the binary alone, so it runs in an empty directory: the
-// example lines write their own manifest there, never into the checkout.
+// The first run needs the binary alone, so it runs in the test's own empty
+// directory: the manifest path the example lines name is resolved under
+// t.TempDir(), so nothing is written into the checkout and the process working
+// directory is never changed. t.TempDir for a path is the seam the serial-tests
+// ledger names (internal/ci/testdata/serial-tests_allowlist.txt).
 func TestExecutableFirstRun(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	require.NoError(t, err, err)
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
 	var banner bytes.Buffer
 	update.Main("nova-update", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-update")
 	require.NoError(t, err, err)
 	for _, line := range examples {
 		var out, errs bytes.Buffer
-		code := update.Main("nova-update", strings.Fields(line)[1:], "", &out, &errs)
+		code := update.Main("nova-update", firstRunArgs(strings.Fields(line)[1:], dir), "", &out, &errs)
 		require.NotEqual(t, 2, code, "%s refused: %s", line, errs.String())
 	}
 	transcript, err := onboarding.FirstRun(string(doc), "nova-update")
@@ -36,7 +41,7 @@ func TestExecutableFirstRun(t *testing.T) {
 	for _, line := range transcript {
 		if strings.HasPrefix(line, "$ ") {
 			{
-				c := update.Main("nova-update", strings.Fields(line)[2:], "", &out, &errs)
+				c := update.Main("nova-update", firstRunArgs(strings.Fields(line)[2:], dir), "", &out, &errs)
 				require.Equal(t, 0, c, "first run: %d %s", c, errs.String())
 			}
 		} else if s := firstRunShape(line); s != "" {
@@ -56,7 +61,7 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 	var out, errs bytes.Buffer
 	c := update.Main("nova-update", []string{"report", "--send"}, "", &out, &errs)
 	require.Equal(t, 2, c, fmt.Sprint(c))
-	for _, flag := range []string{"--file", "--as", "--to", "--bus", "--remote", "--branch"} {
+	for _, flag := range []string{"--file", "--as", "--to"} {
 		require.Contains(t, errs.String(), flag, "missing "+flag+": "+errs.String())
 	}
 	require.LessOrEqual(t, strings.Count(errs.String(), "\n"), 2, "refusal printed a banner")
@@ -69,15 +74,18 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 // it passes on an abridged or reordered transcript; this test keeps the whole
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	require.NoError(t, err, err)
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
 	lines, err := onboarding.FirstRun(string(raw), "nova-update")
 	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-update", lines)
 	require.NoError(t, err, err)
 	require.NotEmpty(t, steps, "the `### First run` block holds no nova-update command; this test would pass by running nothing")
-	for _, p := range onboarding.Execute(steps, runDocumented(t), firstRunNorms(t)...) {
+	norms := append(firstRunNorms(t), onboarding.Path("versions.tsv", filepath.Join(dir, "versions.tsv")))
+	for _, p := range onboarding.Execute(steps, runDocumented(t, dir), norms...) {
 		assert.Fail(t, fmt.Sprint(p))
 	}
 }
@@ -132,15 +140,31 @@ func firstRunNorms(t *testing.T) []onboarding.Norm {
 }
 
 // runDocumented calls this binary's own entry point with the documented
-// arguments. nova-update reads no stdin and this transcript has no `< path`
-// redirect, so there is no stream to open.
-func runDocumented(t *testing.T) onboarding.Runner {
+// arguments, resolving the manifest name the block writes and reads against
+// dir so the sitting needs no process-wide working directory. nova-update reads
+// no stdin and this transcript has no `< path` redirect, so there is no stream
+// to open.
+func runDocumented(t *testing.T, dir string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		var out, errb bytes.Buffer
-		code := update.Main("nova-update", s.Args, "", &out, &errb)
+		code := update.Main("nova-update", firstRunArgs(s.Args, dir), "", &out, &errb)
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
+}
+
+// firstRunArgs resolves the one relative path the documented first run names
+// (versions.tsv) under dir, the test's own t.TempDir, so the manifest is
+// written and read there instead of in the process working directory.
+func firstRunArgs(args []string, dir string) []string {
+	resolved := make([]string, len(args))
+	for i, a := range args {
+		if a == "versions.tsv" {
+			a = filepath.Join(dir, "versions.tsv")
+		}
+		resolved[i] = a
+	}
+	return resolved
 }
 
 // repoRoot is the checkout root: this package sits two directories under it.

@@ -122,7 +122,7 @@ func (e *caseEnv) sprintRunUntil(t *testing.T, harness, model string, bound time
 	defer cancel()
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
 	d.must("init", "--members", "m1:1")
-	d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
+	d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", e.brief())
 	d.must("start")
 	e.member(t)
 	rn := e.runner(harness, model)
@@ -430,7 +430,7 @@ gh pr create --title T --body B >&2`)
 		Brief: e.brief(), Branch: "sprint/a-1.w1"}
 	c, err := rn.Start(p)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	for !c.Done() {
 		require.NoError(t, ctx.Err(), "the child did not end in time:\n%s", e.log())
@@ -461,7 +461,7 @@ func TestAClaudeReadersReviewAloneIsItsVerdict(t *testing.T) {
 			bin := builtSprint(t)
 			d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
 			d.must("init", "--members", "m1:1", "--readers", "reader-a,reader-b") // a flash card is read once, by reader-a, the first round the readers
-			d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
+			d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", e.brief())
 			d.must("start")
 			e.member(t)
 			work := e.script(t, `set -e
@@ -484,7 +484,7 @@ gh pr create --title T --body B >&2`)
 			rout := &lockedBuf{}
 			reader := member.New(member.Config{As: "reader-a", Width: 1, Reader: true}, d.worker(), rr, nil, rout)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 			defer cancel()
 			for cellInt(d.where(), "readers", "reader-a", tc.col) == 0 {
 				require.NoError(t, ctx.Err(), "the read did not reach %s:\n%s\nreader:\n%s", tc.col, d.must("card", "a-1"), rout.String())

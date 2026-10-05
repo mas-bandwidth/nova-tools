@@ -15,7 +15,6 @@ package dogfood
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 )
 
@@ -208,7 +207,7 @@ func declaredVerb(line string) (tool, verb string, ok bool) {
 	// is what separates them: `nova-work ask            delivers ONE unit to
 	// the FRIEND who owns it` is the verb `ask`, while `nova-work plan check
 	// --file <path>` is the verb `plan check`. Two spaces or more end the
-	// command; one space never does.
+	// command; one gap never does.
 	fields := strings.Fields(command(strings.TrimSpace(line)))
 	// A prompt and any environment prefixes come off: a transcript line is a
 	// declaration in every reference that documents a tool by worked example,
@@ -309,15 +308,4 @@ func isBareWord(s string) bool {
 		}
 	}
 	return true
-}
-
-// Keys returns the verb keys, sorted: useful to a caller that wants the set
-// rather than the document's order.
-func Keys(verbs []Verb) []string {
-	keys := make([]string, 0, len(verbs))
-	for _, v := range verbs {
-		keys = append(keys, v.Key())
-	}
-	sort.Strings(keys)
-	return keys
 }

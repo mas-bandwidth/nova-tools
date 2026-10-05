@@ -222,7 +222,7 @@ func TestTheToolListensForwardsAndStopsWhenAsked(t *testing.T) {
 
 	out, in := io.Pipe()
 	var stderr bytes.Buffer
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(t.Context())
 	t.Cleanup(stop)
 	exit := make(chan int, 1)
 	go func() {

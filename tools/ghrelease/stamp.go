@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // legacyNoVersionVerb names the shipped tools exempt from the stamp assertion,
@@ -85,8 +86,8 @@ func doStamp(e env, args []string) int {
 	}
 	// A tag this check could never match is a check that would only ever fail.
 	// The match is whole-token with = counted as a separator, so a tag holding =
-	// or white space can never be that token however the binary prints it.
-	if hasSpace(tag) {
+	// or whitespace can never be that token however the binary prints it.
+	if strings.IndexFunc(tag, unicode.IsSpace) >= 0 {
 		fmt.Fprintf(e.stderr, "refusing: the expected tag <%s> carries whitespace; no printed token can equal it\n", tag)
 		return 2
 	}

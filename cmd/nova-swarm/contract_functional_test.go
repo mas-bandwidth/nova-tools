@@ -159,7 +159,7 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 	brief := first + "\nbase-repo: " + origin + "\nBASE: main\n" + rest
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(dir, "sprint.twin"), bin: bin}
 	d.must("init", "--members", "m1:1")
-	d.must("add", "--stream", "a", "--count", "1", "--brief", brief)
+	d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", brief)
 	d.must("start")
 
 	// The member loop runs in this process, its verbs and the test's ticks one

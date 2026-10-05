@@ -661,7 +661,13 @@ func cardCommands(n sprint.Note, card string) []sprint.Command {
 	cmds := sprint.NoteCommands(n, []string{card})
 	for i := range cmds {
 		for j, l := range cmds[i].Lines {
-			cmds[i].Lines[j] = strings.Replace(l, " --group "+n.ID+" --expect 1", " "+card, 1)
+			l = strings.Replace(l, " --group "+n.ID+" --expect 1", " "+card, 1)
+			// one card of a group, deliberately (docs/SPEC-SPRINT.md section 8): --one, since
+			// rework and drop of one card of a group are refused without it
+			if strings.HasPrefix(l, prog+" rework "+card) || strings.HasPrefix(l, prog+" drop "+card) {
+				l += " --one"
+			}
+			cmds[i].Lines[j] = l
 		}
 	}
 	return cmds
@@ -854,4 +860,68 @@ func printPass(p answerPass, asJSON bool, stdout io.Writer) int {
 func leadLine(s string) string {
 	l, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return l
+}
+
+// judgedBefore is the open judgments the notes name, read before the verb that answers them
+// closes them: nil when no decide lane keeps the record (only the server's run does), or none
+// is named, or the read fails (the verb is not held for its record).
+func (a *app) judgedBefore(ctx context.Context, st *store.Store, notes []string) []sprint.Open {
+	if a.decide == nil || len(notes) == 0 {
+		return nil
+	}
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
+		return nil
+	}
+	judgments, _ := sprint.SplitOpen(open)
+	return slices.DeleteFunc(judgments, func(o sprint.Open) bool { return !slices.Contains(notes, o.Note.ID) })
+}
+
+// recordAnswers appends one judgment-answer record to the decide dir's record for each card
+// the verb answered, every judgment in before (judgedBefore) that the step moved something
+// for and did not refuse for that card (SPEC-NOVA-DECIDE section 13, the judgment-answer
+// record); the lane attaches the outcome when the card's fate is known (answerOutcomes). A
+// record that fails is a NOTE and never the verb's failure.
+func (a *app) recordAnswers(ctx context.Context, st *store.Store, verb string, before []sprint.Open, res store.Result, reason, fix, actor string) []string {
+	if a.decide == nil || len(before) == 0 || len(res.Moved) == 0 {
+		return nil
+	}
+	refused := map[string]bool{}
+	for _, r := range res.Refused {
+		refused[r.Key] = true
+	}
+	var cards []string
+	for _, o := range before {
+		_, card, _ := strings.Cut(o.Key, "|")
+		if card != "" && !strings.Contains(card, ":") && !refused[card] && !slices.Contains(cards, card) {
+			cards = append(cards, card)
+		}
+	}
+	snap, err := st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
+		return map[string][]string{sprint.Work: cards}
+	})
+	if err != nil {
+		return []string{"the judgment answer was not recorded: the work table could not be read: " + oneline.Escape(err.Error())}
+	}
+	var said []string
+	for _, o := range before {
+		_, card, _ := strings.Cut(o.Key, "|")
+		if !slices.Contains(cards, card) || refused[card] {
+			continue
+		}
+		d := decide.AnswerDecision(decide.AnswerInput{Note: o.Note.ID, Kind: o.Note.Type, Text: o.Note.What, Card: card, Verb: verb,
+			Reason: reason, Fix: fix, Actor: actor, Mark: markOf(snap.Work.Card(card))}, a.now())
+		if err := a.decide.recordAnswer(d); err != nil {
+			said = append(said, fmt.Sprintf("the judgment answer of %s was not recorded: %s", card, oneline.Escape(err.Error())))
+		}
+	}
+	return said
+}
+
+// flagValue is a verb flag's value, "" when the verb has no such flag.
+func flagValue(fs flagSet, name string) string {
+	if f := fs.Lookup(name); f != nil {
+		return f.Value.String()
+	}
+	return ""
 }
