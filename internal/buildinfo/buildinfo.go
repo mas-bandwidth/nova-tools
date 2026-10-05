@@ -317,3 +317,56 @@ func (f Fields) PartialSource() bool {
 	}
 	return false
 }
+
+// Commit is the source commit the line names, read from the line alone: the revision of
+// a whole Source when the line carries one, else the hex of the vcs stamp in field two
+// (<utc revision time>-<12 hex>, the shape Resolve writes). It is "" for a line that
+// names no commit -- devel, a release tag, a module version -- and for a build from an
+// edited tree (dirty=true, or a stamp ending -dirty), because a dirty build is not the
+// commit it names. why says which, for a refusal to quote. Nothing here asks git: the
+// caller decides what the commit is to it (the server's base check, docs/SPEC-SPRINT.md
+// section 14, "server-from-base-only.w1").
+func (f Fields) Commit() (commit, why string) {
+	if src, ok := f.FindSource(); ok {
+		switch {
+		case src.Dirty:
+			return "", "built from an edited tree at " + src.Revision + " (dirty=true)"
+		case !isHex(src.Revision):
+			return "", "its revision= " + src.Revision + " is not a commit"
+		}
+		return src.Revision, ""
+	}
+	v := f.Version
+	if strings.HasSuffix(v, "-dirty") {
+		return "", "built from an edited tree (" + v + ")"
+	}
+	stamp, rev, found := strings.Cut(v, "-")
+	if !found {
+		stamp, rev = "", v
+	}
+	if (stamp == "" || len(stamp) == len("20060102150405") && isDigits(stamp)) && len(rev) >= shortRevisionLen && isHex(rev) {
+		return rev, ""
+	}
+	return "", "its build identity " + v + " names no source commit"
+}
+
+func isHex(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if !('0' <= r && r <= '9' || 'a' <= r && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
