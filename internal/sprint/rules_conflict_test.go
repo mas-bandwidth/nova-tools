@@ -111,7 +111,7 @@ func (r *conflictRig) snap() *sprint.Snapshot {
 func (r *conflictRig) toMerging(id string) {
 	r.t.Helper()
 	if r.snap().Work.Card(id).Col == sprint.Ready {
-		r.must(store.DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{id}}}))
+		r.must(dealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{id}}}))
 	}
 	s := r.snap()
 	wc := s.Fleet.Card(s.Work.Card(id).F("work"))
@@ -244,4 +244,11 @@ func TestAConflictingHeadIsRedoneOnTheTipAndItsStreamKeepsLanding(t *testing.T) 
 			r.clean("refused twice")
 		})
 	}
+}
+
+// dealStep cuts and deals work cards by hand, the step the tick's deal replaced
+// (sprint.TickDeal): a test that needs exact queues deals with it.
+func dealStep(r sprint.DealReq) store.Step {
+	return store.Step{Args: store.ArgsOf(r), Verb: "deal", Load: []string{sprint.Work, sprint.Fleet, sprint.Merge}, Mirrors: true, Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
 }

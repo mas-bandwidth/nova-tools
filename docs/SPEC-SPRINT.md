@@ -90,7 +90,7 @@ card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
 tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
 report done failed, and a report with no verdict word is done failed too,
 never ok. `ready` is never a friend's card's state: the tick deals a card
-straight into `working` (`sprint.FriendDeal`). A hand-written inbox job that is
+straight into `working` (`sprint.TickDeal`). A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
 is its pointer. `ready` and `working` count her cards in those states; `width`
@@ -293,7 +293,7 @@ waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
 `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal picks the
 friend the card names, or for `WHO: friend` the friend up with the most room
 free, the first by name among equals; with none it waits ready, held by the
-no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
+no-stall rule as waiting for a friend (`sprint.TickDeal`). The tick reads the
 friends' records (the roster, then the beats: two round trips) only when a
 friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
@@ -386,7 +386,7 @@ route serves (`readTierOf`), is frontier — a frontier card, or a heavy card
 whose read tier is the one above — is asked of a friend of frontier class,
 not drawn on a reader machine (`FriendReadAsk`, `FriendReadClose`). The friend
 is up, below her room (the same free width a friend's card is dealt within,
-`FriendDeal`), and her tiers include frontier: the one with the most free
+`TickDeal`), and her tiers include frontier: the one with the most free
 width, the first by name among equals. Each ask takes one of that free width.
 The ask writes `inbox/<read-card>/BRIEF.md` in her working directory when it
 knows it: the primary's AS A READ section through the next heading, the
@@ -800,7 +800,7 @@ the cards named <was|were> refused"
 **The friends' deal and level fill idle lanes first, by tier, every tick**
 (the owner, 2026-10-05: "You should automatically rebalance queues", "This
 should not require you to remember, it should just happen mechanically." and
-"The machine should do this."; `sprint.FriendDeal`, `sprint.FriendLevel`,
+"The machine should do this."; `sprint.TickDeal`, `sprint.FriendLevel`,
 `sprint.TickDeal`). Two failures led here: on 2026-10-04 at 3:57 PM eight
 unstarted cards taken back from three full friends for two idle ones were dealt
 back to the full friends by the next tick; on 2026-10-05 at 9:40 AM a friend
@@ -1257,11 +1257,18 @@ to the fleet table's property `cost_reconcile_<provider>`, the last read of each
 the provider (`a provider's usage and the sprint's cost records disagree`, filed under
 `provider:<p>`, decisions ack and wait), never a second while it is open; a read back within
 the bound closes it. A provider with no usage endpoint (opencode) or no key is recorded
-unknown with why, and changes nothing. **Not yet run:** the loop that reads each provider
-when `nova-sprint run` begins and every hour after (through the seat's key in its own
-environment, outside every tick, as the balance poll does), with the judgment's entry in
-`Decisions` and its line in the help, lives in `cmd/nova-sprint` and is owed; until it lands
-no read is written, no judgment opens, and the unreconciled line below reads $0.00.
+unknown with why, and changes nothing. **`nova-sprint cost reconcile [--dry-run] [--json]`** runs it
+once: each provider the routes name is read through the seat's key in its own environment
+(`provbalance.ReadUsage`, today's UTC day), the reads go to the step (`store.CostReconcileStep`),
+and one line per provider is printed, `COST provider=<p> day=<d> provider_usd=<$> records=<$>
+gap=<$> share=<n>%` or `COST provider=<p> unknown: <why>`, then `COST RECONCILE OK
+providers=<n> notes=<n>` (with `--json`, the providers' records and the notes written; with
+no provider named by a route, `providers=0` and nothing written; with `--dry-run`, the same
+lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`); the
+release's spend check calls it (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
+**Not yet run by the loop:** the read when `nova-sprint run` begins and every hour after
+(outside every tick, as the balance poll does), with the judgment's entry in `Decisions` and
+its line in the help, is owed; until it lands a read is written only when the verb runs.
 
 **The dashboard's cost** is the complete total: every take and read of every card on the
 work table in any column, landed or not (`total_cost` on each stream's `stream_costs`), plus

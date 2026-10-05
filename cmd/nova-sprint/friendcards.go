@@ -34,7 +34,7 @@ import (
 // for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends
 // where we would normally do friend work."; docs/SPEC-SPRINT.md section 1, a friend's
 // card). The tick deals a card whose brief says WHO: friend to a friend's fleet row
-// (sprint.FriendDeal); friend sync, which runs where the friends' working directories are
+// (sprint.TickDeal); friend sync, which runs where the friends' working directories are
 // and is the coordinator's own loop (only the coordinator reaches out), carries it across
 // the inbox/outbox standard (docs/FRIENDS.md): it delivers each card working on her row
 // as inbox/<job>/BRIEF.md, and finishes it from outbox/<job>/REPORT.md once she writes
@@ -306,7 +306,7 @@ func friendReadReport(dir, job string) (report, why string, at time.Time, err er
 // outside her working directory. It says what it did, a line each, and how many it
 // delivered and finished.
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
-	// her working cards, then the ready ones dealt behind them (sprint.FriendDeal): both are
+	// her working cards, then the ready ones dealt behind them (sprint.TickDeal): both are
 	// delivered, and her queue file says which are which
 	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
 	// places them again: taken in her queue file, so her daemon starts none of them

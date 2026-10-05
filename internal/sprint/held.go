@@ -519,7 +519,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	case Ready:
 		if name, ok := FriendCard(pr); ok {
 			// a friend's card waits for a friend up below her room, DealAhead times her
-			// width (FriendDeal), whose beats and widths are the friends' records, not
+			// width (friendDeal), whose beats and widths are the friends' records, not
 			// the tables'
 			from := ""
 			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {

@@ -136,15 +136,14 @@ func Idem(kind string, rev int64) string { return fmt.Sprintf("config:%s:%d", ki
 // A publish never moves the sprint seat (docs/SPEC-CONFIG.md, "sprint"): a
 // sprint:coordinator the live store disagrees with is held, every other
 // sprint field is written and one OpHeld line is said. The seat moves by
-// nova-sprint's seat verb, or by ApplyMovingSeat. nova-config does not parse
-// --move-seat.
+// nova-sprint's seat verb, or by ApplyMovingSeat (nova-config apply --move-seat).
 func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
 	return apply(ctx, st, ap, kind, actor, check, false, report)
 }
 
 // ApplyMovingSeat is Apply with the seat move named (docs/SPEC-CONFIG.md,
 // "sprint"): it writes a sprint:coordinator the live store disagrees with.
-// nova-config does not parse --move-seat.
+// nova-config apply --move-seat calls it.
 func ApplyMovingSeat(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
 	return apply(ctx, st, ap, kind, actor, check, true, report)
 }
@@ -254,16 +253,16 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 }
 
 // heldLine is the one line a held seat says: the live coordinator and the
-// row's, and how to make the row agree (docs/SPEC-CONFIG.md, "sprint").
-// It does not name apply --move-seat: that flag is not parsed.
+// row's, and the two ways on (docs/SPEC-CONFIG.md, "sprint"): make the row
+// agree, or name the move with apply --move-seat.
 func heldLine(live, row string) string {
-	return fmt.Sprintf("APPLY HELD kind=sprint field=coordinator live=%s row=%s: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator %s to make the row agree", live, row, live)
+	return fmt.Sprintf("APPLY HELD kind=sprint field=coordinator live=%s row=%s: the seat moves by nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run nova-config sprint set --coordinator %s to make the row agree", live, row, live)
 }
 
 // SaidLine is the line a caller prints for one op. An OpHeld name is the
 // whole line, said verbatim, so a publish's held seat is one line
 // (docs/SPEC-CONFIG.md, "sprint") and not wrapped. Every other op is OpLine.
-// nova-config apply prints through OpLine, which wraps an OpHeld name.
+// nova-config apply prints every op through it.
 func SaidLine(word, kind string, op Op) string {
 	if op.Op == OpHeld {
 		return op.Name

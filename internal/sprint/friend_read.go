@@ -195,8 +195,8 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 }
 
 // FriendReadAsk asks each frontier read in review of a friend of frontier
-// class, the same chooser as FriendDeal (up, below her free width, most room,
-// first by name), and decrements that free width as FriendDeal does. dir is a
+// class, the same chooser as friendDeal (up, below her free width, most room,
+// first by name), and decrements that free width as friendDeal does. dir is a
 // working directory used when the seat names none; empty writes no brief (friend
 // sync writes it). With no friend up with room it asks no one and raises the
 // one judgment a read with no reader up already raises (NFewReaders).

@@ -235,7 +235,7 @@ func friendLoad(s *Snapshot, name string) int {
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
 }
 
-// FriendDeal deals the friends' cards (in the order given, the deal's stream turns) to
+// friendDeal is the tick's friend deal (TickDeal): it deals the friends' cards (in the order given, the deal's stream turns) to
 // the friends up, each within her room, DealAhead times her width, as the machines'
 // deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
 // people busy by having 2X width queued up in ready per-friend"): a card naming a
@@ -254,13 +254,8 @@ func friendLoad(s *Snapshot, name string) int {
 // its deadline is the working one) and ready behind them otherwise (her finish takes the next:
 // Finish), carrying the primary's fix, finding and why as a machine's deal does; its primary
 // moves ready -> working. The friend's row is declared by the plan the first time she is dealt to.
-func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
-	p, _, _ := friendDeal(s, cards, seats)
-	return p
-}
-
-// friendDeal is FriendDeal, with the cards it places on each friend's row and how many of
-// them go into working: the tick levels the friends after it (TickDeal).
+// It answers the cards it places on each friend's row and how many of them go into
+// working: the tick levels the friends after it.
 func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}

@@ -14,10 +14,11 @@ import (
 
 // THE COST RECONCILIATION (docs/SPEC-SPRINT.md, "What a card cost", the reconciliation; the
 // owner, 2026-10-04: "this is a tragedy. we MUST track the complete cost of what we do on the
-// fleet and friends on API plans."). Once every CostReconcileEvery the run loop is to read
-// each provider's own count of the dollars its key used today (openrouter's GET
-// /api/v1/key, data.usage_daily, the UTC day; that loop, in cmd/nova-sprint, is owed and
-// not yet built, so nothing calls this step yet), and this step sets it beside
+// fleet and friends on API plans."). `nova-sprint cost reconcile` reads each provider's own
+// count of the dollars its key used today (openrouter's GET /api/v1/key, data.usage_daily,
+// the UTC day: internal/provbalance.ReadUsage) and runs this step once; the release's spend
+// check calls it, and the run loop's hourly call (CostReconcileEvery) is still owed. This
+// step sets it beside
 // the sprint's own records of that provider for the same UTC day: every consumer record on
 // every primary (a work card's take or a read's run, whatever its end) whose provider is
 // that one and whose end stamp falls on that day, at its charged figure (the harness's cost,
@@ -61,8 +62,8 @@ const PropCostReconcilePrefix = "cost_reconcile_"
 // CostGapDecisions are NCostGap's decisions, the owner's: the cause is a cost not recorded,
 // which no rework of a card fixes. They join Decisions, with the judgment's line in
 // nova-sprint's help, in the change that starts the run loop's reconciliation
-// (cmd/nova-sprint, owed: docs/SPEC-SPRINT.md, "What a card cost"); until then no judgment
-// of the type is opened.
+// (cmd/nova-sprint, owed: docs/SPEC-SPRINT.md, "What a card cost"); until then the judgment
+// is opened only by `nova-sprint cost reconcile`, carrying these decisions itself.
 var CostGapDecisions = []string{"ack", "wait"}
 
 // PropCostReconcile is the fleet table property of a provider's reconciliation.

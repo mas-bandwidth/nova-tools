@@ -153,7 +153,12 @@ func TestEveryVerbHelpShowsAnExampleItsFlagsTake(t *testing.T) {
 		case "run", "play", "dashboard", "teardown", "fleet sync", "goal set", "goal show", "brief":
 			continue // run and play tick for ever; dashboard serves until interrupted (its own tests); teardown drops the sprint; fleet sync reads a config store; a goal is set from a file; a brief is read from a file and linted
 		}
-		code, out, errs := ta.do(v.example)
-		assert.NotEqual(t, 2, code, "%s: exit 2, the usage refusal\n%s%s", v.example, out, errs)
+		line := v.example
+		if v.name == "watch" {
+			// its state file under the test's temp, never the package directory
+			line = strings.ReplaceAll(line, "--state wake.json", "--state "+filepath.Join(t.TempDir(), "wake.json"))
+		}
+		code, out, errs := ta.do(line)
+		assert.NotEqual(t, 2, code, "%s: exit 2, the usage refusal\n%s%s", line, out, errs)
 	}
 }

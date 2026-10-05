@@ -375,15 +375,15 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 // (docs/SPEC-CONFIG.md, "sprint"): apply holds a sprint:coordinator the live
 // store disagrees with, writes every other sprint field, reports one OpHeld
 // whose SaidLine is the one APPLY HELD line, and exits 0. The seat moves by
-// nova-sprint's seat verb. ApplyMovingSeat writes a differing coordinator;
-// nova-config does not parse --move-seat. A first apply, with no live key,
+// nova-sprint's seat verb. ApplyMovingSeat (apply --move-seat) writes a
+// differing coordinator. A first apply, with no live key,
 // writes the row's coordinator. A check reports the same line and writes nothing.
 func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	friend, _ := Lookup(KindFriend)
-	const held = "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator a to make the row agree"
+	const held = "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run nova-config sprint set --coordinator a to make the row agree"
 	// The live seat holds a; the row names b and an unrelated field.
 	st := NewMem()
 	fb, err := friend.NewRow("b", map[string]string{"slots": "8", "tiers": "flash"})
@@ -421,7 +421,7 @@ func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	require.Equal(t, "a", ap.views[KindSprint][KindSprint]["coordinator"], "the live coordinator is moved: %v", ap.views[KindSprint])
 	require.Equal(t, "0.9", ap.views[KindSprint][KindSprint][FieldDecideBounce], "the other sprint field is written: %v", ap.views[KindSprint])
 	require.Equal(t, []string{held}, heldSaid(), "the one held line: %v", said)
-	require.NotContains(t, held, "--move-seat", "the line names a flag the binary does not parse")
+	require.Contains(t, held, "--move-seat", "the line names the flag that moves the seat")
 
 	// ApplyMovingSeat (the owner's word) writes the differing coordinator.
 	said = nil

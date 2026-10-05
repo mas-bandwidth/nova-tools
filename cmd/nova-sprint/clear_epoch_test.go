@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -161,6 +162,10 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 		case "teardown":
 			// drops every epoch by design; refused, it touches none
 			lines = append(lines, "teardown --confirm refused")
+			continue
+		case "watch":
+			// its state file under the test's temp, never the package directory
+			lines = append(lines, strings.ReplaceAll(v.example, "--state wake.json", "--state "+filepath.Join(t.TempDir(), "wake.json")))
 			continue
 		}
 		// an example names epoch 0, the epoch of a fresh sprint; the verb here

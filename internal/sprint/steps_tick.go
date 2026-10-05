@@ -166,7 +166,7 @@ type TickReq struct {
 	// the done part's note counts from; zero is not known.
 	Started time.Time
 	// Friends is each friend the deal may give a friend's card to, read by
-	// the binding with every tick while the roster has a friend (FriendDeal),
+	// the binding with every tick while the roster has a friend (friendDeal),
 	// with what her beat names running (FriendSeat.Running): the tick levels
 	// them after its deal (FriendLevel). nil is none: a friend's card waits
 	// ready and no friend is levelled.

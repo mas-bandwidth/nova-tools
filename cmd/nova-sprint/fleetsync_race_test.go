@@ -61,7 +61,7 @@ func TestARemovedMemberRejoinedBeforeTheDeleteKeepsItsRowAndCards(t *testing.T) 
 		require.NoError(t, err)
 		_, err = raw.Run(ctx, store.FleetStep(sprint.FleetReq{Op: "hold", Member: "m1", Who: "tester"}))
 		require.NoError(t, err)
-		res, err := raw.Run(ctx, store.DealStep(sprint.DealReq{}))
+		res, err := raw.Run(ctx, dealStep(sprint.DealReq{}))
 		require.NoError(t, err)
 		require.Empty(t, res.Refused, "the deal gives m2 the card")
 	}}

@@ -597,6 +597,16 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
 	require.Equal(t, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\n", out, "second apply: %q", out)
+	// The seat: a live coordinator the row disagrees with is held, its line printed whole
+	// (SaidLine), and moved only by --move-seat (ApplyMovingSeat).
+	h.redis.views["sprint"]["sprint"]["coordinator"] = "stella"
+	out, _ = step(0, "apply", "--kind", "sprint")
+	require.Contains(t, out, "APPLY HELD kind=sprint field=coordinator live=stella row=rowan: the seat moves by nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run nova-config sprint set --coordinator stella to make the row agree\n", "a held seat: %q", out)
+	require.NotContains(t, out, "name=APPLY HELD", "the held line is said whole, not wrapped: %q", out)
+	require.Equal(t, "stella", h.redis.views["sprint"]["sprint"]["coordinator"], "the seat is held")
+	out, _ = step(0, "apply", "--kind", "sprint", "--move-seat")
+	require.NotContains(t, out, "HELD", "--move-seat moves the seat: %q", out)
+	require.Equal(t, "rowan", h.redis.views["sprint"]["sprint"]["coordinator"], "--move-seat writes the row's coordinator")
 	h.redis.revs["friend"] = 9
 	_, errs = step(1, "apply", "--kind", "friend")
 	require.True(t, strings.HasPrefix(errs, "nova-config apply REFUSED: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status"), "conflict: %q", errs)

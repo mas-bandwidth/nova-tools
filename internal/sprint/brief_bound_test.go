@@ -34,7 +34,8 @@ func capWorld(t *testing.T) *world {
 	return w
 }
 
-// onHerRow deals n of the world's friend cards naming friend to her, her load.
+// onHerRow deals n of the world's friend cards naming friend to her by the tick's friend
+// deal (TickDeal's friendDeal) alone, so no other ready card moves: her load.
 func onHerRow(w *world, friend string, n int) {
 	w.t.Helper()
 	var cards []*Card
@@ -43,7 +44,8 @@ func onHerRow(w *world, friend string, n int) {
 		w.must(Add(w.s, AddReq{Stream: "s2", Cards: []CardAdd{{ID: id, Brief: friendBrief("friend " + friend)}}}))
 		cards = append(cards, w.s.Primary(id))
 	}
-	w.must(FriendDeal(w.s, cards, []FriendSeat{{Name: friend, Width: n, Status: Up}}))
+	p, _, _ := friendDeal(w.s, cards, []FriendSeat{{Name: friend, Width: n, Status: Up}}) // the tick's friend deal (TickDeal)
+	w.must(p)
 }
 
 // capDeal is the pump's cap deal and then its deal with these friends, applied, as the
