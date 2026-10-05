@@ -105,6 +105,7 @@ cmd/nova-decide/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card lint --card ./cards/finding-internal-bus-send.md
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus wait --as bob --timeout 1s
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus send --as ada --to bob --subject hello --body "are you there?"
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus peek --as bob
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus recv --as bob --exec true

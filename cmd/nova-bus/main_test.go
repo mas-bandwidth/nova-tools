@@ -31,10 +31,19 @@ type rig struct {
 	login   string // the user the store logs in as; "" is a store with no users
 	fleet   string // the applied fleet row's bus, read when nothing names the store
 	fleetAt []string
+	now     time.Time // the wait verbs' clock; the fake store's block moves it, never real time
+	wake    []string  // the wake-file reader's answers, one per look: "" is nothing new
 }
 
 func newRig(names ...string) *rig {
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, now: start}
+}
+
+// clock wires the fake store's block to the rig's clock: a block that finds
+// nothing past its cursor waits its duration out on r.now, so a test's
+// timeout runs on no real time.
+func (r *rig) clock() {
+	r.store.Sleep = func(d time.Duration) { r.now = r.now.Add(d) }
 }
 
 func (r *rig) world() world {
@@ -72,6 +81,16 @@ func (r *rig) world() world {
 				"far.test":   {netip.AddrFrom4([4]byte{203, 0, 113, 9})}, // the internet
 				"lan.test":   {netip.AddrFrom4([4]byte{10, 0, 0, 5})},    // a private network that is not the tailnet
 			}[host], nil
+		},
+		now:      func() time.Time { return r.now },
+		fileSize: func(string) (int64, error) { return 0, nil },
+		fileLine: func(_ string, from int64) (string, int64, error) {
+			if len(r.wake) == 0 {
+				return "", from, nil
+			}
+			line := r.wake[0]
+			r.wake = r.wake[1:]
+			return line, from + int64(len(line)) + 1, nil
 		},
 	}
 }
