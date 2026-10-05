@@ -14,19 +14,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The first run needs the binary alone, so it runs in an empty directory: the
-// example lines write their own manifest there, never into the checkout.
+// The first run needs the binary alone, so it runs in the test's own empty
+// directory: the manifest name the example lines carry is resolved under
+// t.TempDir(), the per-test seam the serial-tests ledger names
+// (internal/ci/testdata/serial-tests_allowlist.txt), so the manifest is written
+// and read there, never in the checkout, and the process working directory is
+// never changed.
 func TestExecutableFirstRun(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	require.NoError(t, err, err)
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
 	var banner bytes.Buffer
 	update.Main("nova-version", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-version")
 	require.NoError(t, err, err)
 	for _, line := range examples {
 		var out, errs bytes.Buffer
-		code := update.Main("nova-version", strings.Fields(line)[1:], "", &out, &errs)
+		code := update.Main("nova-version", firstRunArgs(strings.Fields(line)[1:], dir), "", &out, &errs)
 		require.NotEqual(t, 2, code, "%s refused: %s", line, errs.String())
 	}
 	transcript, err := onboarding.FirstRun(string(doc), "nova-version")
@@ -36,7 +42,7 @@ func TestExecutableFirstRun(t *testing.T) {
 	for _, line := range transcript {
 		if strings.HasPrefix(line, "$ ") {
 			{
-				c := update.Main("nova-version", strings.Fields(line)[2:], "", &out, &errs)
+				c := update.Main("nova-version", firstRunArgs(strings.Fields(line)[2:], dir), "", &out, &errs)
 				require.Equal(t, 0, c, "first run: %d %s", c, errs.String())
 			}
 		} else if s := firstRunShape(line); s != "" {
@@ -73,9 +79,11 @@ func firstRunShape(line string) string { return onboarding.Shape(line) }
 // the words and drops the count and the order; this one keeps the whole
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	require.NoError(t, err, err)
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
 	lines, err := onboarding.FirstRun(string(raw), "nova-version")
 	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-version", lines)
@@ -88,15 +96,19 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// what its `version` command printed (`raw=`) and where it is installed
 	// (`path=`). The document records the Studio's arm64 Go; a bench runs its
 	// own, so those three cannot be compared as written. Every other value --
-	// the file, the counts, the kinds, the bounds -- is compared exactly.
+	// the file, the counts, the kinds, the bounds -- is compared exactly. The
+	// run's own directory is declared too: the runner resolves the documented
+	// name versions.tsv under the test's t.TempDir, and onboarding.Path
+	// reduces both sides to the documented spelling.
 	norms := []onboarding.Norm{
 		onboarding.Instant("at"),
 		elide(t, "took= (the duration of this run)", `took=[^ ]+`, "took=<the duration of this run>"),
 		elide(t, "version= (the Go this bench runs)", `version=[^ ]+`, "version=<the Go this bench runs>"),
 		elide(t, "raw= (what this bench's version command printed)", `raw=[^ ]+`, "raw=<what this bench's version command printed>"),
 		elide(t, "path= (where this bench's Go is installed)", `path=[^ ]+`, "path=<where this bench's Go is installed>"),
+		onboarding.Path("versions.tsv", filepath.Join(dir, "versions.tsv")),
 	}
-	for _, p := range onboarding.Execute(steps, runVersionDocumented(t), norms...) {
+	for _, p := range onboarding.Execute(steps, runVersionDocumented(t, dir), norms...) {
 		assert.Fail(t, fmt.Sprint(p))
 	}
 }
@@ -111,20 +123,36 @@ func elide(t *testing.T, name, pattern, as string) onboarding.Norm {
 }
 
 // runVersionDocumented calls this tool's own entry point with the documented
-// arguments. A redirect would be a transcript for a tool that reads stdin, and
-// nova-version reads none: it is refused here rather than silently dropped, so
-// a future document that adds one fails loudly instead of running a different
-// command than the reader typed.
-func runVersionDocumented(t *testing.T) onboarding.Runner {
+// arguments, resolving the manifest name the block writes and reads against
+// dir so the sitting needs no process-wide working directory. A redirect would
+// be a transcript for a tool that reads stdin, and nova-version reads none: it
+// is refused here rather than silently dropped, so a future document that adds
+// one fails loudly instead of running a different command than the reader
+// typed.
+func runVersionDocumented(t *testing.T, dir string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, fmt.Errorf("the transcript redirects %q into nova-version, which reads no stdin", s.Stdin)
 		}
 		var out, errb bytes.Buffer
-		code := update.Main("nova-version", s.Args, "", &out, &errb)
+		code := update.Main("nova-version", firstRunArgs(s.Args, dir), "", &out, &errb)
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
+}
+
+// firstRunArgs resolves the one relative path the documented first run names
+// (versions.tsv) under dir, the test's own t.TempDir, so the manifest is
+// written and read there instead of in the process working directory.
+func firstRunArgs(args []string, dir string) []string {
+	resolved := make([]string, len(args))
+	for i, a := range args {
+		if a == "versions.tsv" {
+			a = filepath.Join(dir, "versions.tsv")
+		}
+		resolved[i] = a
+	}
+	return resolved
 }
 
 // repoRoot is the checkout root: this package sits two directories under it.
