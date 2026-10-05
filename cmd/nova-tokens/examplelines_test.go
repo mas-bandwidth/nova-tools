@@ -32,10 +32,10 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
 
 	lines := exampleBlockLines(usage)
-	require.False(t, len(lines) == 0, "the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
+	require.NotEmpty(t, lines, "the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
 
 	setupLines := fixtureSetupLines(usage)
-	require.False(t, len(setupLines) == 0, "the usage banner has no fixture setup block above the block, so a stranger pasting it names\n"+
+	require.NotEmpty(t, setupLines, "the usage banner has no fixture setup block above the block, so a stranger pasting it names\n"+
 		"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
 		"The missing block opens with:\n  %s", wantFixtureSetup)
 	assert.Equal(t, wantFixtureSetup, setupLines[0], "the setup block does not open with the line that makes the transcript directory")

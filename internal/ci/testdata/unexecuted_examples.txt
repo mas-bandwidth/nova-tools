@@ -12,11 +12,6 @@
 # entry that matches no real example is a stale entry and a red run. Remove an
 # entry by moving it to compared_examples.txt once a test executes it.
 
-$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
-$ nova-bus names --bus ./bus
-$ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
@@ -40,9 +35,5 @@ $ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bi
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
 $ nova-self-talk ./pages/journal.md
 example: go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
-example: nova-bus check --bus ./bus --full
-example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
-example: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open
-example: nova-bus names --bus ./bus
 example: nova-ci help
 example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \

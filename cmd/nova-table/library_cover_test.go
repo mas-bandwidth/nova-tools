@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -68,16 +67,20 @@ func TestLibraryCoverTableLibrary(t *testing.T) {
 	require.Equal(t, "nova-redis fn load --addr <host:port>", lib.Remedy, "tableLibrary remedy")
 	require.Equal(t, "lua/*.lua", lib.Glob, "tableLibrary glob")
 	require.NotNil(t, lib.Files, "tableLibrary files")
-	source, err := lib.Source()
-	require.NoError(t, err, "tableLibrary Source")
-	require.True(t, strings.HasPrefix(source, "#!lua name=nova_sprint\n"), "tableLibrary source starts %q", source)
-	functions, err := lib.Functions()
-	require.NoError(t, err, "tableLibrary Functions")
-	require.Contains(t, functions, "ns_table_create", "tableLibrary functions")
+	digest, err := lib.Digest()
+	require.NoError(t, err, "tableLibrary Digest")
+	require.NotEmpty(t, digest, "tableLibrary digest")
+	functions, err := lib.Registered()
+	require.NoError(t, err, "tableLibrary Registered")
+	var names []string
+	for _, fn := range functions {
+		names = append(names, fn.Name)
+	}
+	require.Contains(t, names, "ns_table_create", "tableLibrary functions")
 
 	broken := lib
 	broken.Name = "not a name"
-	_, err = broken.Source()
+	_, err = broken.Digest()
 	require.ErrorIs(t, err, redisfn.ErrRefused, "a library with a broken name is refused")
 }
 

@@ -366,7 +366,7 @@ func TestADialThatAnswersAfterOpenGaveUpIsClosed(t *testing.T) {
 		answer := make(chan struct{})
 		var late sync.WaitGroup
 		late.Add(1)
-		ctx, cancel := context.WithTimeout(context.Background(), sooner)
+		ctx, cancel := context.WithTimeout(t.Context(), sooner)
 		defer cancel()
 		conn, err := open(ctx, Options{Addr: storeAddr}, nothing, func(dctx context.Context, network, addr string) (net.Conn, error) {
 			defer late.Done()

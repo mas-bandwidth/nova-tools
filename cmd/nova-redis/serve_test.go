@@ -379,7 +379,13 @@ func TestServeFailuresHaveRemedies(t *testing.T) {
 		h.d.lookPath = func(string) (string, error) { return "", errors.New("not found") }
 		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
 		const want = "SERVE FAILED err=redis-server not found on PATH: not found remedy=\"install redis-server (Redis 7 or later) so it is on PATH, then run nova-redis serve again\"\n"
-		require.True(t, code == 1 && out == "" && errb == want && len(h.launches) == 0,
+		require.True(t, code == 1,
+			"missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
+		require.True(t, out == "",
+			"missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
+		require.True(t, errb == want,
+			"missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
+		require.True(t, len(h.launches) == 0,
 			"missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
 	})
 
@@ -390,9 +396,13 @@ func TestServeFailuresHaveRemedies(t *testing.T) {
 		h.dir = filepath.Join(storeRoot, "store's space")
 		h.onLaunch = func(launchSpec) error { return errors.New("exit status 1") }
 		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
-		remedy := "run: ls -ld -- '" + strings.ReplaceAll(storeRoot, "'", "'\\''") + string(os.PathSeparator) + "store'\\''s space'; compare directory access and the explicit --bind/--port with the launch error and any redis-server output"
+		remedy := "run: ls -ld -- '" + strings.ReplaceAll(h.dir, "'", `'"'"'`) + "'; compare directory access and the explicit --bind/--port with the launch error and any redis-server output"
 		want := fmt.Sprintf("SERVE FAILED err=exit status 1 remedy=%q\n", remedy)
-		require.True(t, code == 1 && errb == want && len(h.launches) == 1,
+		require.True(t, code == 1,
+			"child failure: exit %d stderr %q launches %d", code, errb, len(h.launches))
+		require.True(t, errb == want,
+			"child failure: exit %d stderr %q launches %d", code, errb, len(h.launches))
+		require.True(t, len(h.launches) == 1,
 			"child failure: exit %d stderr %q launches %d", code, errb, len(h.launches))
 		assert.Equal(t, h.dir, h.launches[0].Dir,
 			"launch directory must match the diagnostic directory")

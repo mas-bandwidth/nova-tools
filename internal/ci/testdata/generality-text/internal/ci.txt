@@ -1,6 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 4
-internal/ci/slow-tests_allowlist.txt:glenn 1
-internal/ci/slow-tests_allowlist.txt:rowan 1
-internal/ci/slow-tests_allowlist.txt:space 1
-internal/ci/slow-tests_allowlist.txt:studio 3
+# ceiling: 1
+internal/ci/slow-tests_allowlist.txt:studio 1

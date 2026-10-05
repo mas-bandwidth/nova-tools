@@ -56,6 +56,9 @@ func newTerminalTestOptions(t *testing.T, secretValue string, clock *terminalFak
 	opts.Exec = func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
 		cmdName := filepath.Base(name)
 		if cmdName == "sops" || name == opts.SopsPath {
+			if slices.Contains(args, "--version") {
+				return []byte("sops 3.13.3\n"), nil
+			}
 			if slices.Contains(args, "-d") {
 				return []byte("TARGET: old\n"), nil
 			}

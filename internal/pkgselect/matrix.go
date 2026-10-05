@@ -1,6 +1,7 @@
 package pkgselect
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -25,8 +26,14 @@ const (
 	// would need, so the legs are few and each takes a wave.
 	PullRequestShards   = 4
 	MergeGroupMacShards = 4
-	// FunctionalShards is the leg count of the functional tier.
-	FunctionalShards = 4
+	// PullRequestMacShards is the macOS group's leg count on a pull request: a change that reaches
+	// many darwin-sensitive packages (a promotion) dealt four legs of four ran every leg past the
+	// two-minute cap (2026-10-04, all four cancelled twice); a small change fills few of the eight.
+	PullRequestMacShards = 8
+	// FunctionalShards is the leg count of the functional tier. Six: the sprint stream moved
+	// slow real-time tests into the tier and four legs ran past the two-minute cap
+	// (functional 1/4 and 3/4 were cancelled at it); the cap is permanent, the split is not.
+	FunctionalShards = 6
 )
 
 // Groups are the labels of the two runner groups the fan-out deals onto. They
@@ -38,10 +45,18 @@ type Groups struct{ Linux, Mac string }
 // macOS-only today (docs/USAGE.md).
 var DarwinOnly = []string{"./cmd/nova-sandbox", "./internal/sandbox"}
 
+// LinuxOnly are the packages a pull request never deals to the macOS legs: their unit
+// tests cost more than a macOS runner's two cores give in the two-minute cap (cmd/nova-sprint
+// about 335 CPU-seconds, cmd/nova-swarm about 200), so those legs were cancelled at the cap
+// in every pull-request run of 2026-10-04. Linux runs them in every pull request and in
+// the merge group, and cmd/nova-sprint is leaving this repository (nova-tools#5309).
+// A push and the nightly run still deal them to macOS.
+var LinuxOnly = []string{"./cmd/nova-sprint", "./cmd/nova-swarm"}
+
 // HeavyFirst are the packages the fan-out deals first, so the heaviest never
 // share a shard: dealt round-robin from the sorted list, the two heaviest sat
 // eight apart and so shared a leg on every push.
-var HeavyFirst = []string{"./cmd/nova-bus"}
+var HeavyFirst = []string{"./cmd/nova-swarm"}
 
 // DarwinBranches are the target branches whose changes meet the darwin legs:
 // the integration branches (the concurrency group's integration list in
@@ -123,12 +138,28 @@ func NothingLeg(g Groups) Leg {
 	return Leg{Name: "nothing", Packages: "", OS: "linux", Arch: "x64", Group: g.Linux}
 }
 
+// FunctionalHeavy are the packages whose functional tests run longest on a shared
+// runner (measured 28 to 68 s each in the merge-group runs of 2026-10-04, two of
+// them landing on one leg ran past the two-minute cap): Functional deals them
+// first, in this order, so no leg gets two while another is empty.
+var FunctionalHeavy = []string{"./cmd/nova-swarm", "./cmd/nova-bus", "./internal/ci", "./internal/atomicfile", "./internal/ntable", "./internal/swarm"}
+
 // Functional deals the packages into FunctionalShards Linux legs like a pull
 // request's unit legs (the darwin-only packages have no Linux leg). The
 // functional job reads it on merge_group, schedule and workflow_dispatch only;
 // each leg's `make test-functional` runs just the tests behind the functional
 // tag. With no package it is one empty leg.
 func Functional(pkgs []string, g Groups) []FunctionalLeg {
+	pkgs = slices.Clone(pkgs)
+	slices.SortStableFunc(pkgs, func(a, b string) int {
+		rank := func(p string) int {
+			if i := slices.Index(FunctionalHeavy, p); i >= 0 {
+				return i
+			}
+			return len(FunctionalHeavy)
+		}
+		return cmp.Compare(rank(a), rank(b))
+	})
 	groups := make([][]string, FunctionalShards)
 	f := 0
 	for _, p := range pkgs {
@@ -283,7 +314,7 @@ func Fanout(event string, pkgs []string, sens DarwinSensitive, g Groups, darwin 
 	sh := Shards{Linux: LinuxShards, Mac: MacShards}
 	switch event {
 	case "pull_request":
-		sh = Shards{Linux: PullRequestShards, Mac: PullRequestShards}
+		sh = Shards{Linux: PullRequestShards, Mac: PullRequestMacShards}
 	case "merge_group":
 		sh = Shards{Linux: LinuxShards, Mac: MergeGroupMacShards}
 	}
@@ -299,7 +330,7 @@ func Fanout(event string, pkgs []string, sens DarwinSensitive, g Groups, darwin 
 			addLinux(p)
 			continue
 		}
-		linuxOnly := event == "merge_group" || (event == "pull_request" && !(sens.All || sens.Pkgs[p]))
+		linuxOnly := event == "merge_group" || (event == "pull_request" && (!(sens.All || sens.Pkgs[p]) || slices.Contains(LinuxOnly, p)))
 		if linuxOnly && !slices.Contains(DarwinOnly, p) {
 			addLinux(p)
 			continue

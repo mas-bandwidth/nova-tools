@@ -60,7 +60,7 @@ func TestFnVerbsOnARedisServer(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr, Password: pw})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
-	names, err := library().Functions()
+	functions, err := library().Registered()
 	require.NoError(t, err, err)
 	libs, err := c.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "nova_sprint"}).Result()
 	require.NoError(t, err, "FUNCTION LIST: %v %v", libs, err)
@@ -69,8 +69,8 @@ func TestFnVerbsOnARedisServer(t *testing.T) {
 	for _, f := range libs[0].Functions {
 		onStore[f.Name] = true
 	}
-	for _, n := range names {
-		assert.True(t, onStore[n], "function %s is registered by the library's files and not on the store after fn load", n)
+	for _, fn := range functions {
+		assert.True(t, onStore[fn.Name], "function %s is registered by the library's files and not on the store after fn load", fn.Name)
 	}
 
 	other := "#!lua name=nova_sprint\nredis.register_function('ns_ping', function() return 'PONG' end)\n"

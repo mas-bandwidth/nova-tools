@@ -9,7 +9,7 @@ import (
 func TestLandReviewRefusesWrongEpochBeforePush(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	before := r.git(r.remote, "rev-parse", "main")
 	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --epoch 999")
@@ -20,7 +20,7 @@ func TestLandReviewRefusesWrongEpochBeforePush(t *testing.T) {
 func TestLandReviewGitIdentityFailureDoesNotBlameCard(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
 	before := r.streamState("s1")
 	env := []string{}
@@ -44,7 +44,7 @@ func TestLandReviewDifferentRepositoriesHaveDifferentCloneNames(t *testing.T) {
 func TestLandReviewReportPinsTheHeadItPushed(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 --count 1")
+	r.ok("add --stream s1 --count 1 --one")
 	oldHead := r.head("s1-1", "main", "a.txt", "old\n")
 	r.queued(map[string]string{"s1-1": oldHead}, "s1-1")
 	newHead := r.head("s1-1-next", "main", "a.txt", "new\n")
@@ -69,10 +69,10 @@ func TestLandReviewReportPinsTheHeadItPushed(t *testing.T) {
 func TestLandReviewReusedOperationCannotClaimAnotherBatchLanded(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.ok("add --stream s1 first")
+	r.ok("add --stream s1 first --one")
 	r.queued(map[string]string{"first": r.head("first", "main", "first.txt", "first\n")}, "first")
 	r.ok("land --repo-dir " + r.clone + " --base main --op repeated-land")
-	r.ok("add --stream s1 second")
+	r.ok("add --stream s1 second --one")
 	r.queued(map[string]string{"second": r.head("second", "main", "second.txt", "second\n")}, "second")
 	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --op repeated-land")
 	if code == 0 {

@@ -412,7 +412,8 @@ func TestExecuteWithSkipsAStatedPreconditionAndRunsTheRest(t *testing.T) {
 		return Result{Stdout: "LIST OK n=1\n"}, nil
 	}, Conditions{GOOS: "darwin"})
 	assert.Empty(t, problems, "the runnable step disagreed: %v", problems)
-	require.True(t, len(skips) == 1 && strings.Contains(skips[0].Why, "plan9"), "the plan9 step was not skipped with the document's reason: %v", skips)
+	require.True(t, len(skips) == 1, "the plan9 step was not skipped with the document's reason: %v", skips)
+	require.True(t, strings.Contains(skips[0].Why, "plan9"), "the plan9 step was not skipped with the document's reason: %v", skips)
 	assert.Equal(t, "list", strings.Join(ran, ","), "ExecuteWith ran %q; only the runnable step should have run", ran)
 	// The skip is RETURNED, never swallowed: a run whose skips are invisible is
 	// a green that means less than it looks like.

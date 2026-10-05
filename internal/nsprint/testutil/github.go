@@ -15,12 +15,17 @@ import (
 type GitHubStub struct {
 	Server *httptest.Server
 	URL    string
-	calls  atomic.Int64
+	// Env carries GITHUB_API_URL and GH_HOST for a caller to append to a
+	// child's cmd.Env, so a child honoring the standard GitHub variables
+	// targets the stub without this process changing its own environment.
+	Env   []string
+	calls atomic.Int64
 }
 
 // StartGitHubStub starts an httptest.Server that fails t on any HTTP request.
-// It sets GITHUB_API_URL and GH_HOST in the test environment so clients
-// honoring standard GitHub environment variables will target the stub.
+// It returns the environment a child needs to target the stub (GITHUB_API_URL
+// and GH_HOST) in GitHubStub.Env, a per-test seam in place of t.Setenv, so the
+// test can run in parallel.
 func StartGitHubStub(t *testing.T) *GitHubStub {
 	t.Helper()
 	stub := &GitHubStub{}
@@ -31,11 +36,13 @@ func StartGitHubStub(t *testing.T) *GitHubStub {
 		http.Error(w, msg, http.StatusForbidden)
 	}))
 	stub.URL = stub.Server.URL
+	stub.Env = []string{
+		"GITHUB_API_URL=" + stub.URL,
+		"GH_HOST=" + stub.Server.Listener.Addr().String(),
+	}
 	t.Cleanup(func() {
 		stub.Server.Close()
 	})
-	t.Setenv("GITHUB_API_URL", stub.URL)
-	t.Setenv("GH_HOST", stub.Server.Listener.Addr().String())
 	return stub
 }
 

@@ -93,6 +93,20 @@ func TestProbeRefusalReasonsAreTheSpecsOwnSet(t *testing.T) {
 		strings.Join(got, "|"), strings.Join(want, "|"))
 }
 
+// TestSpecExitAmbiguityParagraphNamesTheSignalShapedStatuses pins security#67
+// finding 2: the exit-code ambiguity paragraph must also name 128+N, because
+// a wrapped command that itself exits 143 is byte-identical to a SIGTERM kill.
+func TestSpecExitAmbiguityParagraphNamesTheSignalShapedStatuses(t *testing.T) {
+	t.Parallel()
+	spec := specSandbox(t)
+	_, after, ok := strings.Cut(spec, "The reservation is ambiguous")
+	require.True(t, ok, "docs/SPEC-SANDBOX.md has no paragraph beginning \"The reservation is ambiguous\"")
+	if i := strings.Index(after, "\n\n"); i >= 0 {
+		after = after[:i]
+	}
+	assert.Contains(t, after, "128+N", "the ambiguity paragraph names only 125, 126, 127 and darwin 71; a wrapped command that exits 128+N (for example 143) is indistinguishable from one killed by signal N too")
+}
+
 // #119 item 2. The internal verb prints a SEVENTH reason, and leaving it out of the six is
 // right -- no caller runs the verb, so no parser stands on that token -- but the grammar
 // line then does not describe every `PROBE REFUSED` the binary can print, and the spec's

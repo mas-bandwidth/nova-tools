@@ -59,25 +59,45 @@ func tierOfRoute(name string) string {
 	return ""
 }
 
-// A pro card's first deal is on flash: its brief's tier is its ceiling, never its first
-// deal. The work card records the tier it was drawn from, its packet hands it to the
-// child, and `card` shows the tier now and the ceiling.
-func TestAProCardsFirstDealIsFlash(t *testing.T) {
+// A brief's tier on line 1 is the card's starting tier, not only its ceiling (the owner,
+// 2026-10-03: seven of seven first flash attempts of pro cards died with no result, one
+// dead attempt per card): a brief that says pro starts on a pro route and is never dealt
+// below it; flash first applies to a brief that says flash or says no tier. The work card
+// records the tier it was drawn from, its packet hands it to the child, and `card` shows
+// the tier now and the ceiling.
+func TestABriefThatSaysProStartsOnPro(t *testing.T) {
 	t.Parallel()
-	h := flashAndPro(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
-	h.must(DealStep(sprint.DealReq{}))
-	wc := h.workCards()["s1-1.w1"]
-	require.NotNil(t, wc)
-	assert.Equal(t, "flash", tierOfRoute(wc.F(sprint.FieldRoute)), "dealt on %s", wc.F(sprint.FieldRoute))
-	assert.Equal(t, "flash", wc.F(sprint.FieldTier), "the work card records the tier it was drawn from")
-	assert.Equal(t, "flash", h.packetOf(wc.ID).Tier, "the packet hands the child its tier")
-	pr := h.snap().Work.Card("s1-1")
-	assert.Equal(t, "flash", pr.F(sprint.FieldTierNow), "the deal on a route writes the tier the card is on")
-	now, ceiling := sprint.CardTiers(pr)
-	assert.Equal(t, []string{"flash", "pro"}, []string{now, ceiling})
-	assert.Contains(t, sprint.AttemptLine(wc), " tier=flash ")
-	h.clean("a pro card dealt on flash")
+	for _, tc := range []struct{ name, brief, tier, ceiling string }{
+		{"says pro", briefOf("pro", ""), "pro", "pro"},
+		{"says flash", briefOf("flash", ""), "flash", "flash"},
+		{"says no tier", "c: the work (s1)\n\nThe task.\n", "flash", "flash"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := flashAndPro(t)
+			h.addReady("s1", 1, tc.brief)
+			h.must(DealStep(sprint.DealReq{}))
+			wc := h.workCards()["s1-1.w1"]
+			require.NotNil(t, wc)
+			assert.Equal(t, tc.tier, tierOfRoute(wc.F(sprint.FieldRoute)), "dealt on %s", wc.F(sprint.FieldRoute))
+			assert.Equal(t, tc.tier, wc.F(sprint.FieldTier), "the work card records the tier it was drawn from")
+			assert.Equal(t, tc.tier, h.packetOf(wc.ID).Tier, "the packet hands the child its tier")
+			pr := h.snap().Work.Card("s1-1")
+			assert.Equal(t, tc.tier, pr.F(sprint.FieldTierNow), "the deal on a route writes the tier the card is on")
+			now, ceiling := sprint.CardTiers(pr)
+			assert.Equal(t, []string{tc.tier, tc.ceiling}, []string{now, ceiling})
+			assert.Contains(t, sprint.AttemptLine(wc), " tier="+tc.tier+" ")
+			h.clean("dealt on " + tc.tier)
+		})
+	}
+}
+
+// onFlashBelowPro admits a pro card dealt on flash below its ceiling, as a card dealt
+// before line 1 became the starting tier was: the escalation ladder still carries it.
+func (h *harness) onFlashBelowPro(stream string) {
+	h.t.Helper()
+	h.addReady(stream, 1, briefOf("pro", ""))
+	h.setPrimary(stream+"-1", map[string]string{sprint.FieldTierNow: "flash"})
 }
 
 // After its bound on flash a pro card is escalated by the machine: the attempt at its
@@ -86,7 +106,7 @@ func TestAProCardsFirstDealIsFlash(t *testing.T) {
 func TestAProCardAfterItsFlashBoundIsRedealtOnPro(t *testing.T) {
 	t.Parallel()
 	h := flashAndPro(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	h.boundOut("s1-1")
@@ -120,15 +140,14 @@ func TestAtTheProBoundTheJudgmentIsRaised(t *testing.T) {
 		h.addReady("s1", 1, briefOf("pro", ""))
 		h.startMachine()
 		h.machine()
-		h.boundOut("s1-1")
-		require.Equal(t, "pro", h.snap().Work.Card("s1-1").F(sprint.FieldTierNow))
+		require.Equal(t, "pro", h.snap().Work.Card("s1-1").F(sprint.FieldTierNow), "a brief that says pro starts on pro")
 		h.boundOut("s1-1")
 		pr := h.snap().Work.Card("s1-1")
-		assert.Equal(t, 2, pr.Int("attempt"), "no third attempt: pro is its ceiling")
+		assert.Equal(t, 1, pr.Int("attempt"), "no second attempt: pro is its ceiling")
 		assert.Equal(t, sprint.Ready, pr.Col)
 		open := h.openOf(sprint.NBound)
 		require.Len(t, open, 1, "the bound's judgment")
-		assert.Contains(t, open[0].Note.What, "s1-1.w2: attempt 2 was redealt 3 times")
+		assert.Contains(t, open[0].Note.What, "s1-1.w1: attempt 1 was redealt 3 times")
 		h.clean("at the pro bound")
 	})
 	t.Run("a flash card at the flash bound", func(t *testing.T) {
@@ -162,7 +181,7 @@ func TestAtTheProBoundTheJudgmentIsRaised(t *testing.T) {
 func TestTheCostHistoryListsTheTiers(t *testing.T) {
 	t.Parallel()
 	h := flashAndPro(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	h.boundOut("s1-1")
@@ -187,7 +206,7 @@ func TestTheCostHistoryListsTheTiers(t *testing.T) {
 func TestAnEscalationNoRouteServesIsJudgedUnderItsTier(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	h.boundOut("s1-1")
@@ -207,7 +226,7 @@ func TestAProCardsFlashAttemptIsReadOnFlash(t *testing.T) {
 	t.Parallel()
 	h := flashAndPro(t)
 	require.NoError(t, h.st.BeatReaders(h.ctx))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	require.Equal(t, "flash", h.workCards()["s1-1.w1"].F(sprint.FieldTier))
@@ -248,7 +267,7 @@ func TestAStoreWithNoRouteEscalatesNothing(t *testing.T) {
 func TestASecondIdenticalFailedAttemptBelowTheCeilingEscalates(t *testing.T) {
 	t.Parallel()
 	h := flashAndPro(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	rework := func() {
@@ -291,7 +310,7 @@ func TestASecondIdenticalFailedAttemptBelowTheCeilingEscalates(t *testing.T) {
 func TestASecondIdenticalTakeBelowTheCeilingEscalatesNamingTheClass(t *testing.T) {
 	t.Parallel()
 	h := flashAndPro(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	h.failTake("s1-1.w1", noResultLine)
@@ -316,7 +335,7 @@ func TestASecondIdenticalTakeBelowTheCeilingEscalatesNamingTheClass(t *testing.T
 func TestASecondIdenticalFailureWithNoUsageStillEscalates(t *testing.T) {
 	t.Parallel()
 	h := flashAndPro(t)
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	failBare := func(card, report string) {

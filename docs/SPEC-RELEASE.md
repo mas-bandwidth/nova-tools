@@ -12,8 +12,8 @@ so it can be referred to, states the mistake it prevents, and names the tests th
 
 A release is the moment work stops being a diff somebody can revert and becomes binaries on every bench in
 the fleet. Most ranges are ordinary. Some touch the parts of this estate a mistake cannot be taken back
-from: the secret store, the sandbox that holds a worker, the image every bench boots, and the scripts the
-coordinator runs unattended. Those are not cut on the judgement of whoever is at the keyboard.
+from: the secret store, the sandbox that holds a worker, and the image every bench boots. Those are not cut
+on the judgement of whoever is at the keyboard.
 
 **`release cut` classifies the range `<previous tag>..<head>` against the list below.** If any path the
 range touched sits under one of these prefixes, the cut **refuses** — naming the paths, because *something
@@ -30,8 +30,9 @@ is a line nobody reads.
 ### The list
 
 Each entry is a **directory prefix**, trailing slash included, and the slash is load-bearing:
-`internal/secrets` without it also catches `internal/secretsanta/`. Matching is by prefix and by nothing
-else — no guessing from a file name, no substring anywhere in the path.
+`internal/secrets` without it would also catch `internal/secrets<sibling>/` — a directory whose name
+merely begins the same way. Matching is by prefix and by nothing else — no guessing from a file name, no
+substring anywhere in the path.
 
 <!-- release-sensitive-paths -->
 ```
@@ -40,7 +41,6 @@ cmd/nova-secrets/
 infra/image/
 internal/sandbox/
 internal/secrets/
-scripts/coordination/
 ```
 
 **The list lives in `internal/release/sensitive.go`, and this block is the same list in the same order.**

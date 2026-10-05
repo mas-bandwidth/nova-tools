@@ -182,7 +182,7 @@ func TestClaudeCoverReadClaudeFoldsTheTranscriptTree(t *testing.T) {
 		"",
 	}, "\n"))
 
-	s := ReadClaude("glenn", dir, claudeCoverRules(t))
+	s := ReadClaude("glenn", dir, os.DirFS(dir), claudeCoverRules(t))
 
 	assert.Equalf(t, "claude:glenn", s.Label, "label=%q, want claude:glenn", s.Label)
 	assert.Equalf(t, KindClaude, s.Kind, "kind=%q, want %q", s.Kind, KindClaude)
@@ -311,7 +311,7 @@ func TestClaudeCoverReadClaudeRefusesWhatItCannotRead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := tc.write(t)
-			s := ReadClaude("glenn", dir, claudeCoverRules(t))
+			s := ReadClaude("glenn", dir, os.DirFS(dir), claudeCoverRules(t))
 			tc.want(t, s)
 		})
 	}

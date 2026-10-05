@@ -84,7 +84,7 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 	ta.m.SetRoutes(costRoutes())
 	ta.ok("add --stream s1 --count 2 --brief-file " + proBriefFile(t))
 	ta.ok("add --stream s2 --count 2 --brief-file " + proBriefFile(t))
-	ta.ok("add --stream s3 --count 1 --brief-file " + proBriefFile(t))
+	ta.ok("add --stream s3 --count 1 --one --brief-file " + proBriefFile(t))
 	for _, id := range []string{"s1-1", "s1-2", "s2-1", "s2-2", "s3-1"} {
 		ta.tierNow(id, "pro") // read by two readers: pro cards on pro
 	}
@@ -132,7 +132,7 @@ func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1:8")
-	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + proBriefFile(t))
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("take --as m1 s1-1.w1@1")

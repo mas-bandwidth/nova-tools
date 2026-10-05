@@ -1,279 +1,696 @@
-// nova-bus is the bus: a git repository where several lines write notes to each
-// other, one lane directory per sender, one Markdown file per note.
-//
-// It exists because the bus it was written for lost notes. A shared branch keyed by the
-// clock races: two senders pushing in the same second meant one push was rejected and a
-// line without the rebase reflex simply lost it; one sender writing twice in a minute
-// collided on the filename; threads named by exact filename orphaned an answer when a slug
-// was retyped; and a bare receipt and a note carrying a finding looked identical until
-// opened. Every verb here is one of those failures closed:
-//
-//	draft     prints the header a note needs, with the names checked against the roster,
-//	          so that a line's first send is not a header written from memory; with
-//	          --reply-to it writes a whole reply draft for a note on your listing
-//	prepare   fixes a note's id and date in a JSON artifact before anything is written,
-//	          so a send that dies can be finished from the artifact (send --prepared)
-//	send      assigns an id that cannot collide, pastes the date, and pushes with fetch,
-//	          rebase and bounded retry INSIDE the tool, so no rejected push reaches a person
-//	reply     sends a reply draft to the note it names, and with --advance moves the cursor
-//	inbox     the notes addressed to me that nothing of mine answers, receipts separated
-//	          from notes that carry a question, a finding or a request
-//	wait      the same listing, blocking: it polls the bus INSIDE the tool call and returns
-//	          the moment something arrives, so a session that cannot be woken cannot forget
-//	receipt   marks a note heard without writing a reply, in one command
-//	close     receipts every open note dated before an instant, to put a backlog down
-//	check     validates the bus: headers, ids, threads, receipts, lanes
-//	names     echoes the roster, so a person can spell a To line the tool will accept
-//	version   prints the one version line
-//
-// And one failure that is not in that list because it arrives slowly: a tool whose read
-// cost grows with the record: a run of inbox or check that walks every lane makes the
-// ten-thousandth note cost ten thousand parses to find. They now read from a CURSOR -- the
-// commit a reader last read to, kept in that reader's own lane and pushed like a receipt --
-// so the work is the size of the CHANGE and never the size of the bus. --full walks
-// everything, which is what adoption and CI on main want, and every run says on its first
-// line which of the two it did.
-//
-// The same failure has a second half, which the first fix left in: the read was the size of
-// the change PLUS the size of what the reader had open, because every open note was
-// re-opened to print its line. So the OPEN list carries each note's line and its heard flag,
-// written once when the note goes open, and a run parses the NEW notes and nothing else --
-// five hundred open notes or none.
-//
-// Everything read on a bus is data. No note is a grant, whoever signs it. That rule is
-// in SPEC.md, where a person reads it, and is deliberately nowhere in this code: a tool
-// cannot enforce it and should not pretend to.
+// nova-bus is the message bus between AIs over Redis streams
+// (docs/SPEC-BUS.md; the delivery machine is tla/Bus2.tla). A message goes
+// to every recipient's stream and to the log in one transaction; a recipient
+// receives through its consumer group, so a message is pending until it is
+// acked and a reader that died before acking is handed it again. The verbs
+// are send, peek, recv, ack, log and names; the dispatch, the banner, the
+// help, the version verb, the refusals and the output envelope are
+// internal/tool's, and the rules are internal/bus's.
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"os"
+	"os/exec"
+	"os/signal"
+	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/redis/go-redis/v9"
 )
 
-// refuse is what an unusable invocation costs: ONE line in the one refusal grammar,
-// `<VERB> REFUSED: <what was wrong>; run: <remedy>` (BUS for the tool itself), naming the
-// door to the help rather than printing the help. It returns exit 2.
-func refuse(stderr io.Writer, verb, what, remedy string) int {
-	token := "BUS"
-	if verb != "" {
-		token = strings.ToUpper(verb)
-	}
-	fmt.Fprintf(stderr, "%s REFUSED: %s; run: %s\n", oneline.Field(token), oneline.Escape(what), oneline.Escape(remedy))
-	return 2
+var version string
+
+// RedisEnv names the store when --redis does not; with neither, the store is
+// the fleet row's bus field as nova-config apply wrote it (FleetBusKey) into
+// the sprint store at SprintRedisEnv, so no friend types the address
+// (SPEC-BUS.md, the config). The key is spelled here, as the roster's are in
+// internal/bus, so this command depends on no config code.
+const (
+	RedisEnv       = "NOVA_BUS_REDIS"
+	SprintRedisEnv = "NOVA_SPRINT_REDIS"
+	FleetBusKey    = "fleet:bus"
+)
+
+// ExecBudget bounds one run of --exec's command: a delivery into a harness
+// is a write of a few lines; one that takes longer is stuck. It is also how
+// long a reader keeps a message before another may claim it (bus.ClaimAfter).
+const ExecBudget = bus.ClaimAfter
+
+// ForeverBlock is how long one read of the loop waits before it looks again
+// (so a signal is seen within it).
+const ForeverBlock = 30 * time.Second
+
+// world is what the tool reaches outside itself: the environment, the store
+// it opens for an address, the command --exec runs, and the signals a loop
+// stops on. main passes the real one; a test passes its own over
+// internal/bus's Fake, so no test opens a socket.
+type world struct {
+	getenv func(string) string
+	// open dials the store and says which user it logged in as ("" when the
+	// store has no login: the default user), the identity every verb acts as.
+	open    func(ctx context.Context, addr string) (st bus.Store, login string, closeStore func(), err error)
+	run     func(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (exit int, err error)
+	signals func(ctx context.Context) (context.Context, context.CancelFunc)
+	lookup  bus.Lookup // a store named by a host name is judged by every address it resolves to
+	// fleetBus reads the applied fleet row's bus address from the sprint store
+	// at addr ("" when the row has none).
+	fleetBus func(ctx context.Context, addr string) (string, error)
 }
 
-// dryField is the field a dry run's OK line ends in, and nothing for a real run.
-func dryField(dry bool) string {
-	if dry {
-		return " dry_run=true"
-	}
-	return ""
+func realWorld() world {
+	w := world{getenv: os.Getenv, run: runShell,
+		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		},
+		signals: func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		}}
+	w.open = w.openRedis
+	w.fleetBus = w.readFleetBus
+	return w
 }
 
-// verbHelp is the remedy for a malformed invocation of a verb: its own help.
-func verbHelp(verb string) string { return "nova-bus " + verb + " -h" }
+func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
+// run is the entry point apart from the process.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
+	return busTool(w).Run(args, stdin, stdout, stderr)
 }
 
-// run is the whole tool, with its streams and clock injected so the tests can drive it.
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, dialed or written (the CLI style's rule (b)).
-	defer verbflag.RecoverWith(stdout, "nova-bus", usage, &code, verbDetail)
-	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+"; inbox only looks", "nova-bus help")
-	}
-	cmd, rest := args[0], args[1:]
-	switch cmd {
-	case "help", "-h", "--help":
-		if cmd == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdin, stdout, stderr, now)
+// openRedis dials the store through redisconn, the one way a nova tool opens
+// Redis, with the fleet's login: NOVA_SPRINT_REDIS_USER names the user and
+// NOVA_SPRINT_REDIS_PASSWORD_ENV the variable that holds its password
+// (NOVA_REDIS_BENCH_PASSWORD when it names none); no user is the default
+// user with no password. The password is never on the line and never
+// printed (internal/redisconn).
+// sprintOptions is the fleet's login for a store at addr (the convention above).
+func (w world) sprintOptions(addr string) redisconn.Options {
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	if w.getenv(redisauth.UserEnv) != "" {
+		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+		if w.getenv(redisauth.PasswordEnvEnv) == "" {
+			o.PasswordEnv = redisauth.DefaultPasswordEnv
 		}
-		fmt.Fprintf(stdout, "%s", usage)
-		return 0
-	case "draft":
-		return cmdDraft(rest, stdout, stderr, now)
-	case "prepare":
-		return cmdPrepare(rest, stdin, stdout, stderr, now)
-	case "send":
-		return cmdSend(rest, stdin, stdout, stderr, now)
-	case "reply":
-		return cmdReply(rest, stdout, stderr, now)
-	case "inbox":
-		return cmdInbox(rest, stdout, stderr, now)
-	case "receipt":
-		return cmdReceipt(rest, stdout, stderr, now)
-	case "close":
-		return cmdClose(rest, stdout, stderr, now)
-	case "wait":
-		return cmdWait(rest, stdout, stderr, now)
-	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
-	case "names":
-		return cmdNames(rest, stdout, stderr)
-	case "version", "--version":
-		return cmdVersion(rest, stdout, stderr)
 	}
-	near := ""
-	if n := verbflag.Nearest(cmd, verbs); n != "" {
-		near = "; did you mean " + n + "?"
-	}
-	return refuse(stderr, "", "unknown verb "+oneline.Quote(cmd)+near+"; the verbs are "+verbflag.List(verbs), "nova-bus help")
+	return o
 }
 
-// ------------------------------------------------------------------------------- flags
-
-// refreshCheckout is the reply form's refresh, and it is `wait`'s poll: one implementation
-// and not a second that could drift. It is a var so a test can take the fetch out at the
-// seam and prove the fetch is load-bearing; nothing else replaces it.
-var refreshCheckout = bus.FetchAndFastForward
-
-// checkoutLockWait is how long a second run on one checkout waits for the first. It is a
-// var so a test can shorten it; nothing else replaces it.
-var checkoutLockWait = 10 * time.Second
-
-// lockCheckout is the one-run-per-checkout guard as a verb takes it: the release, or the
-// exit code it has already printed. token is the verb's own event token.
-//
-// It is a function because `wait` takes and RELEASES this lock once per poll rather than
-// holding it for the whole call. A wait is minutes long by design, and a lock held for
-// minutes would refuse every other run on that checkout for as long as somebody is
-// listening -- which is the opposite of what a tool that makes waiting cheap is for. The
-// lock covers what it has always covered: one poll's fetch, listing and cursor, which is
-// exactly one `inbox` run's worth of work.
-func lockCheckout(token, busDir string, stderr io.Writer) (func(), int) {
-	release, err := bus.LockCheckout(busDir, checkoutLockWait)
+// readFleetBus is one GET of FleetBusKey on the sprint store.
+func (w world) readFleetBus(ctx context.Context, addr string) (string, error) {
+	conn, err := redisconn.Open(ctx, w.sprintOptions(addr), w.getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s REFUSED: %s\n", token, oneline.WithRemedy(oneline.Err(err), "nova-bus "+strings.ToLower(token)+" -h"))
-		return nil, 1
+		return "", err
 	}
-	return release, 0
+	defer conn.Close()
+	v, err := conn.Client().Get(ctx, FleetBusKey).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return v, err
 }
 
-// quoteList renders names a person will PASTE -- into a To line -- each quoted and joined
-// by the ";" that line's own separator is. An empty list is the grammar's "-".
-func quoteList(names []string) string {
-	if len(names) == 0 {
-		return "-"
-	}
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		out = append(out, oneline.Quote(n))
-	}
-	return strings.Join(out, ";")
-}
-
-// printTranscript puts git's own output on stderr, VERBATIM, under the one actionable line
-// that has already been printed and escaped.
-//
-// THE FAILURE THIS CLOSES: a `SEND FAILED` on a rebase conflict would otherwise carry git's whole
-// transcript inside the reason, rendered through the one-line escape, so forty lines of git
-// arrived as one line of `\x0d\x0a` and nobody could read any of it. The one-line guarantee
-// is about the EVENT line -- the line above this, which a scanner reads -- and a transcript
-// is not an event. It is the thing a person opens the terminal to read, and it is printed
-// as git wrote it.
-func printTranscript(stderr io.Writer, err error) {
-	tr := strings.TrimRight(bus.Transcript(err), "\n")
-	if tr == "" {
-		return
-	}
-	fmt.Fprintf(stderr, "%s\n", tr)
-}
-
-// openTable loads the roster and reads the bus, or prints the refusal.
-func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
-	c, err := bus.LoadConfig(busDir)
+func (w world) openRedis(ctx context.Context, addr string) (bus.Store, string, func(), error) {
+	o := w.sprintOptions(addr)
+	resolved, err := redisconn.Resolve(o, w.getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), verbHelp(verb)))
-		return nil, false
+		return nil, "", nil, err
 	}
-	t, err := bus.ReadBus(busDir, c)
+	conn, err := redisconn.Open(ctx, o, w.getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), verbHelp(verb)))
-		return nil, false
+		return nil, "", nil, err
 	}
-	return t, true
+	return bus.Redis{C: conn.Client()}, resolved.User, func() { conn.Close() }, nil
 }
 
-// ------------------------------------------------------------------------------- verbs
-
-// ---------------------------------------------------------------------------- the wait
-
-// shortSHA is how much of a commit a cursor's commit MESSAGE carries. The message is for a
-// person reading `git log`; the CURSOR file carries the whole sha and is what anything
-// reads.
-const shortSHA = 12
-
-// dash renders an empty value as the grammar's "-", so a note with no Id line prints one
-// field rather than none.
-func dash(s string) string {
-	if s == "" {
-		return "-"
+// runShell runs --exec's command through the shell with the message on its
+// stdin, under ExecBudget (internal/subproc: WaitDelay and the bound).
+func runShell(ctx context.Context, command, stdin string, stdout, stderr io.Writer) (int, error) {
+	cmd, cancel := subproc.CommandFor(ctx, ExecBudget, "/bin/sh", "-c", command)
+	defer cancel()
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(stdin), stdout, stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), nil
 	}
-	return s
+	return 0, err
 }
 
-// sha8 renders a commit the way the WAIT ADVANCED line names its two ends: eight
-// characters, enough to tell one commit from another on a transcript, rendered as "-"
-// rather than a panic for an empty one.
-func sha8(s string) string {
-	if len(s) < 8 {
-		if s == "" {
-			return "-"
+func busTool(w world) *tool.Tool {
+	return &tool.Tool{
+		Name:  "nova-bus",
+		What:  "messages between AIs over Redis streams: sent once, delivered until acked",
+		Stamp: version,
+		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
+recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
+ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
+one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
+first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
+		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
+		Words:     []string{"NONE"},
+		Verbs: []tool.Verb{
+			{
+				Name:    "send",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--redis <addr>] [--dry-run]",
+				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
+				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
+				DryRun:  true,
+				Detail: `Prints SEND OK id=<ulid> to=<names> cc=<names> [kind=<k>] at=<RFC3339> bytes=<n> sha256=<hex>: the id is the
+message's for ever, and the byte count and digest are the body's as the store holds it, so a sender
+can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
+You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
+out, and another name is refused. With no login (a store with no users) --as is your word for who you
+are, and the line says login=none. --dry-run checks the message as send does (every problem named) and prints the
+line with no id, writing nothing.`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
+					f.Required("to", "the recipients, comma-separated names")
+					f.String("cc", "", "more recipients, comma-separated names; each gets the message as well")
+					f.Required("subject", "one line saying what the message is")
+					f.String("body", "", "the message's text (or --stdin; at most 1 MiB)")
+					f.Bool("stdin", false, "read the message's text from stdin")
+					f.String("re", "", "the id of the message this one answers")
+					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Check(func(c *tool.Call) {
+						if c.Given("body") == c.Given("stdin") {
+							c.Problem("the body comes from exactly one of --body <text> or --stdin")
+						}
+					})
+				},
+				Run: w.send,
+			},
+			{
+				Name:    "peek",
+				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--redis <addr>]",
+				Example: "peek --as bob",
+				Effect:  tool.Inspection,
+				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE state=<pending|new> id=<id> from=<name>
+[kind=<k>] at=<RFC3339> subject=<s> line per message: pending is delivered and not acked, new is never delivered.
+--kind <k>[,<k>] lists only messages of those kinds; kind=<k> is left off a status's line.`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.peek,
+			},
+			{
+				Name:    "recv",
+				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
+				Example: "recv --as bob --exec true",
+				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
+				DryRun:  true,
+				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
+subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
+NONE at exit 1 when nothing waits. You are the login user, as in send. The oldest message a
+reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
+reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
+acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
+it pending and is RECV FAILED at exit 1. --max <n> takes up to n messages in order and --all every
+one waiting, each printed as its own RECV OK (or handed to --exec and acked on exit 0, stopping
+at the first command that fails); --ack acks each after a plain recv prints it. --forever loops,
+waiting for messages, and needs --exec; it stops on SIGINT or SIGTERM, or at the first command
+that fails. --dry-run moves nothing: it prints RECV OK pending=<n> new=<n> next_new=<id>, what
+waits (a pending message held past fifteen minutes comes before the oldest new one).
+--kind <k>[,<k>] takes only messages of those kinds, in --all, --max, --forever and --dry-run too: a
+message of another kind is skipped, neither acked nor held, and the next recv without the filter
+gets it. kind=<k> is left off the line of a status (the default), so an absent kind is a status, as for a message sent
+before kinds existed.`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind); others are left for the next reader")
+					f.Int("max", 1, "how many messages to take, in order, each its own result; 1 is one message")
+					f.Bool("all", false, "take every message waiting, in order, each its own result")
+					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
+					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
+					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Check(func(c *tool.Call) {
+						if c.Bool("forever") && c.Str("exec") == "" {
+							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
+						}
+						if c.Bool("all") && c.Given("max") {
+							c.Problem("--all takes every message and --max <n> a count; give one or the other")
+						}
+						if c.Bool("forever") && (c.Bool("all") || c.Given("max")) {
+							c.Problem("--forever takes every message as it arrives; --all and --max are for what waits now")
+						}
+						if c.Int("max") < 1 {
+							c.Problem("--max wants a count of at least 1 (--all takes every message)")
+						}
+						if c.Bool("ack") && c.Str("exec") != "" {
+							c.Problem("--exec acks on the command's exit 0; --ack is for a plain recv")
+						}
+					})
+				},
+				Run: w.recv,
+			},
+			{
+				Name:    "ack",
+				Usage:   "ack [--as <me>] --id <id,...> [--redis <addr>] [--dry-run]",
+				Example: "ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
+				Effect:  tool.Delivery + ": acks the messages on your stream",
+				DryRun:  true,
+				Detail: `Prints ACK OK acked=<n> asked=<n> (login=none when the connection has no login user), then one
+ACK ID id=<id> acked=<true|false> line per id: false when the id is not pending for you (acked
+already, never delivered, or not yours), so acking twice is safe and exits 0. You are the login
+user, as in send. --dry-run acks nothing: acked= says which ids are pending for you.`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.Required("id", "the message ids, comma-separated, as recv printed them")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.ack,
+			},
+			{
+				Name:    "log",
+				Usage:   "log [--bodies] [--max <n>] [--redis <addr>]",
+				Example: "log --max 5",
+				Effect:  tool.Inspection,
+				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
+[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
+				Flags: func(f *tool.Flags) {
+					f.Bool("bodies", false, "print each message's body as well")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.log,
+			},
+			{
+				Name:    "names",
+				Usage:   "names [--redis <addr>]",
+				Example: "names",
+				Effect:  tool.Inspection,
+				Detail:  "Prints NAMES OK count=<n>, then one NAMES NAME name=<name> line per known name: nova-config's friend and machine rows.",
+				Flags: func(f *tool.Flags) {
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.names,
+			},
+		},
+	}
+}
+
+// bus opens the store named by --redis for a verb, or says why not: an
+// empty address is a usage refusal, an address off loopback and the tailnet
+// is one (bus.CheckAddr, before any dial), and a store that did not answer
+// is one too (exit 2, the banner's table), in redisconn's one line.
+func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
+	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+	defer cancel()
+	addr, refused := w.address(ctx, c)
+	if refused != nil {
+		return nil, "", nil, refused
+	}
+	if why := bus.CheckAddr(ctx, addr, w.lookup); why != "" {
+		return nil, "", nil, tool.Refuse(why)
+	}
+	st, login, closeStore, err := w.open(ctx, addr)
+	if err != nil {
+		return nil, "", nil, tool.Refuse(err.Error())
+	}
+	return &bus.Bus{Store: st}, login, closeStore, nil
+}
+
+// identity is who the verb acts as: the user the connection logged in as,
+// which --as may repeat and never contradict (the store's login is the
+// identity, not a word on the line; SPEC-BUS.md, the identity); with no
+// login user, --as alone, and the result says login=none.
+func identity(c *tool.Call, login string) (string, *tool.Out) {
+	as := c.Str("as")
+	switch {
+	case login == "" && strings.TrimSpace(as) == "":
+		return "", tool.Refuse("--as is required: this connection has no login user (" + redisauth.UserEnv + " is unset), so it wants your name; refusing to guess")
+	case login != "" && as != "" && as != login:
+		return "", tool.Refuse(fmt.Sprintf("--as %s is not the login user %s: this connection acts as %s; drop --as, or log in as %s (%s=%s with its password)", as, login, login, as, redisauth.UserEnv, as))
+	case login != "":
+		return login, nil
+	}
+	return as, nil
+}
+
+// loginFact marks a result made with no login user, so the weakness (any
+// name on the line is believed) is visible, never silent.
+func loginFact(o *tool.Out, login string) *tool.Out {
+	if login == "" {
+		o.Fact("login", "none")
+	}
+	return o
+}
+
+// answer renders an error of the bus: a Refusal names the input (exit 2),
+// anything else is the store (exit 2, with redisconn's words).
+func answer(err error) *tool.Out {
+	var r *bus.Refusal
+	if errors.As(err, &r) {
+		return tool.Refuse(r.Problems...)
+	}
+	return tool.Refuse("the store did not answer: " + err.Error())
+}
+
+func names(csv string) []string {
+	var out []string
+	for _, w := range strings.Split(csv, ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
 		}
-		return s
 	}
-	return s[:8]
+	return out
 }
 
-// --------------------------------------------------------------------------- the shared
-
-// checkoutReady is the guard before anything is written: the bus is on the branch the
-// caller named, and holds no changes but the ones this run is about to make. A rebase over
-// a dirty tree either refuses or sweeps somebody's unrelated work into a note's commit.
-func checkoutReady(busDir, branch string, allow []string) error {
-	on, err := bus.CurrentBranch(busDir)
+func (w world) send(c *tool.Call) *tool.Out {
+	body := c.Str("body")
+	if c.Bool("stdin") {
+		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus.MaxBody+1))
+		if err != nil {
+			return tool.Refuse("--stdin: " + err.Error())
+		}
+		if len(raw) > bus.MaxBody {
+			return tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus.MaxBody))
+		}
+		body = string(raw)
+	}
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	draft := bus.Message{
+		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
+		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body,
+	}
+	send := b.Send
+	if c.DryRun() {
+		send = b.Check // the message as it would be sent, with no id: nothing is written
+	}
+	m, err := send(context.Background(), draft)
 	if err != nil {
-		return err
+		return answer(err)
 	}
-	if on != branch {
-		return fmt.Errorf("the bus's checkout is on branch %q, not %q", on, branch)
-	}
-	return bus.EnsureClean(busDir, allow)
+	sum := sha256.Sum256([]byte(m.Body))
+	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
+	return loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
+		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 }
 
-// levelWithRemote is the second guard, and it runs BEFORE the file is written: a push
-// publishes the branch, not the commit, so a checkout already holding commits this tool
-// did not make would send those to the bus too, under a note's name, with nothing in the
-// output saying so.
-//
-// Under --no-push there is nothing to publish and no reason to make the caller wait on a
-// fetch they did not ask for, so the guard is skipped. The commit then sits on a branch
-// that is already ahead, which is the state the caller chose by passing the flag; the note
-// is not on the bus either way, and pushed=false says so.
-func levelWithRemote(busDir, remote, branch string, noPush bool) error {
-	if noPush {
-		return nil
+// kindFact adds kind=<k> to a result when the message is not a status: a
+// message without the word is a status, so the common line is unchanged.
+func kindFact(o *tool.Out, m bus.Message) *tool.Out {
+	if k := m.KindName(); k != bus.KindStatus {
+		o.Fact("kind", k)
 	}
-	return bus.EnsureLevelWith(busDir, remote, branch)
+	return o
 }
 
-// commit is send's and receipt's shared tail: the same commit, the same push protocol, the
-// same identity rule. The identity comes from the roster and is passed with `git -c`; this
-// tool never writes a git config file.
-func commit(busDir string, who bus.Participant, paths []string, message, remote, branch string, attempts int, noPush bool) (bus.PushResult, error) {
-	id := bus.Identity{Name: who.GitName, Email: who.GitEmail}
-	if noPush {
-		return bus.CommitOnly(busDir, id, paths, message)
+// kindItem is the key and value kind=<k> for an item's fields when the
+// message is not a status, as kindFact leaves it out for a status.
+func kindItem(m bus.Message) []any {
+	if k := m.KindName(); k != bus.KindStatus {
+		return []any{"kind", k}
 	}
-	return bus.CommitAndPush(busDir, id, paths, message, remote, branch, attempts)
+	return nil
+}
+
+// message is a received message as one Out: the header line's facts and the
+// body as the payload, so the text form is the header, a blank line and the
+// body, and --json carries the same under facts and payload.
+func message(m bus.Message, login string) *tool.Out {
+	o := tool.Done()
+	o.Verb = "recv" // the token of the line, also when text renders it for --exec before the skeleton has
+	o.Fact("id", m.ID).Fact("from", m.From).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ",")).
+		Fact("re", m.Re)
+	kindFact(o, m).Fact("at", m.At.Format(time.RFC3339))
+	return loginFact(o, login).Fact("subject", tool.Text(m.Subject))
+}
+
+// text is the message as recv prints it and as --exec's command reads it:
+// the header line, a blank line, the body ending in a newline.
+func text(m bus.Message, login string) string {
+	var b strings.Builder
+	message(m, login).Render(&b, false)
+	body := m.Body
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return b.String() + "\n" + body
+}
+
+func (w world) recv(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	kinds := names(c.Str("kind"))
+	if p := bus.CheckKinds(kinds...); p != "" {
+		return tool.Refuse(p)
+	}
+	if c.DryRun() {
+		// what waits, read only: the next delivered is a pending one held past fifteen
+		// minutes when there is one, else the oldest new one
+		pending, fresh, err := b.Peek(context.Background(), as)
+		if err != nil {
+			return answer(err)
+		}
+		pending, fresh = bus.FilterKinds(pending, kinds), bus.FilterKinds(fresh, kinds)
+		next := "-"
+		if len(fresh) > 0 {
+			next = fresh[0].Message().ID
+		}
+		return loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login)
+	}
+	command := c.Str("exec")
+	ctx, stop := w.signals(context.Background())
+	defer stop()
+	stopped := tool.Done().Note("stopped by a signal; a message being delivered stays pending")
+	// one is one recv: the result, and whether a message was delivered
+	one := func(block time.Duration) (*tool.Out, bool) {
+		e, ok, err := b.RecvKinds(ctx, as, block, kinds)
+		if ctx.Err() != nil {
+			return stopped, false
+		}
+		if err != nil {
+			return answer(err), false
+		}
+		if !ok {
+			return tool.Fail("nothing for " + as).As("NONE"), false
+		}
+		m := e.Message()
+		o := message(m, login)
+		if command == "" {
+			o.Payload = "\n" + m.Body
+			if c.Bool("ack") {
+				acked, err := b.AckEntry(ctx, as, e.Entry)
+				if err != nil {
+					return answer(err), false
+				}
+				o.Fact("acked", acked)
+			}
+			return o, true
+		}
+		exit, err := w.run(ctx, command, text(m, login), c.Stderr, c.Stderr)
+		if ctx.Err() != nil {
+			return stopped, false
+		}
+		if err != nil {
+			return tool.Fail("--exec could not run: "+err.Error()).Fact("id", m.ID), false
+		}
+		if exit != 0 {
+			return tool.Fail(fmt.Sprintf("--exec exited %d, so the message stays pending", exit)).Fact("id", m.ID).Fact("exec_exit", exit), false
+		}
+		acked, err := b.AckEntry(ctx, as, e.Entry)
+		if err != nil {
+			return answer(err), false
+		}
+		return o.Fact("acked", acked).Fact("exec_exit", 0), true
+	}
+	if !c.Bool("forever") && !c.Bool("all") && c.Int("max") == 1 {
+		o, _ := one(0)
+		return o
+	}
+	if !c.Bool("forever") {
+		// the batch: what waits now, in order, each its own result, until the
+		// count is met or nothing waits; none at all is the one NONE
+		limit := c.Int("max")
+		for taken := 0; c.Bool("all") || taken < limit; taken++ {
+			res, ok := one(0)
+			switch {
+			case ok:
+				res.Render(c.Stdout, c.Bool("json"))
+			case res.Word == "NONE" && taken > 0:
+				return tool.Exit(0)
+			case taken == 0:
+				return res
+			default:
+				res.Verb = "recv" // the token of the line, rendered here and not by the skeleton
+				res.Render(c.Stderr, c.Bool("json"))
+				return tool.Exit(res.Exit)
+			}
+		}
+		return tool.Exit(0)
+	}
+	// the loop: every message in turn, each a line of its own, until a signal
+	// or a command that fails; a NONE is a wait that ran out, not a line
+	for {
+		res, ok := one(ForeverBlock)
+		switch {
+		case ok:
+			res.Render(c.Stdout, c.Bool("json"))
+		case res.Word == "NONE":
+		case res == stopped:
+			return tool.Exit(0)
+		default:
+			res.Verb = "recv"
+			res.Render(c.Stderr, c.Bool("json"))
+			return tool.Exit(res.Exit)
+		}
+	}
+}
+
+func (w world) ack(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	ids := names(c.Str("id"))
+	ack := b.Ack
+	if c.DryRun() {
+		ack = b.WouldAck // which ids are pending for you, acking none
+	}
+	acked, err := ack(context.Background(), as, ids)
+	if err != nil {
+		return answer(err)
+	}
+	n := 0
+	for _, v := range acked {
+		if v {
+			n++
+		}
+	}
+	o := loginFact(tool.Done().Fact("acked", n).Fact("asked", len(ids)), login)
+	for _, id := range ids {
+		o.Item("id", "id", id, "acked", acked[id])
+	}
+	return o
+}
+
+func (w world) peek(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	kinds := names(c.Str("kind"))
+	if p := bus.CheckKinds(kinds...); p != "" {
+		return tool.Refuse(p)
+	}
+	pending, fresh, err := b.Peek(context.Background(), as)
+	if err != nil {
+		return answer(err)
+	}
+	pending, fresh = bus.FilterKinds(pending, kinds), bus.FilterKinds(fresh, kinds)
+	o := tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh))
+	for _, state := range []struct {
+		name string
+		es   []bus.Entry
+	}{{"pending", pending}, {"new", fresh}} {
+		for _, e := range state.es {
+			m := e.Message()
+			o.Item("message", slices.Concat([]any{"state", state.name, "id", m.ID, "from", m.From}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})...)
+		}
+	}
+	return o
+}
+
+func (w world) log(c *tool.Call) *tool.Out {
+	b, _, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	got, err := b.Log(context.Background(), "-")
+	if err != nil {
+		return answer(err)
+	}
+	o := tool.Done().Fact("total", len(got))
+	for _, e := range got {
+		m := e.Message()
+		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})
+		if c.Bool("bodies") {
+			kv = append(kv, "body", tool.Text(m.Body))
+		}
+		o.Item("message", kv...)
+	}
+	return o
+}
+
+func (w world) names(c *tool.Call) *tool.Out {
+	b, _, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	got, err := b.Names(context.Background())
+	if err != nil {
+		return answer(err)
+	}
+	o := tool.Done().Fact("count", len(got))
+	for _, n := range got {
+		o.Item("name", "name", n)
+	}
+	return o
+}
+
+// address is the store a verb opens: --redis (its default is RedisEnv),
+// else the fleet row's bus field read from the sprint store at
+// SprintRedisEnv; with none of the three, a refusal naming all three.
+func (w world) address(ctx context.Context, c *tool.Call) (string, *tool.Out) {
+	if addr := c.Str("redis"); strings.TrimSpace(addr) != "" {
+		return addr, nil
+	}
+	sprint := w.getenv(SprintRedisEnv)
+	if sprint == "" {
+		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset, and with no " + SprintRedisEnv + " the fleet's bus row (nova-config fleet set --bus <host:port>, then apply) cannot be read either; refusing to guess")
+	}
+	addr, err := w.fleetBus(ctx, sprint)
+	if err != nil {
+		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row could not be read from the sprint store: " + err.Error())
+	}
+	if addr == "" {
+		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row is empty; set it once: nova-config fleet set --bus <host:port> --as <you>, then nova-config apply")
+	}
+	return addr, nil
 }

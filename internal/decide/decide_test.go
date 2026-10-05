@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -394,4 +395,137 @@ func TestConcurrentWritersRecordEachIDOnce(t *testing.T) {
 	ds, err := Load(path)
 	require.NoError(t, err)
 	assert.Len(t, ds, ids)
+}
+
+// A hand-edited probability outside [0, 1] must not load. Calibration would
+// otherwise score it (SPEC-NOVA-DECIDE section 4).
+func TestLoadRefusesARecordedProbabilityOutsideZeroAndOne(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, tc := range []struct{ name, p string }{
+		{"above", "1.5"},
+		{"below", "-0.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name+".jsonl")
+			body := `{"decision":{"id":"d1","decision":"read","answers":{"defect":{"type":"noul","value":"yes","p":{"yes":` + tc.p + `}}}}}` + "\n"
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+			_, err := Load(path)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, path)
+			assert.ErrorContains(t, err, ":1:")
+			assert.ErrorContains(t, err, "question defect")
+			assert.ErrorContains(t, err, "outside [0, 1]")
+		})
+	}
+	inRange := filepath.Join(dir, "in-range.jsonl")
+	require.NoError(t, os.WriteFile(inRange, []byte(
+		`{"decision":{"id":"d0","decision":"read","answers":{"defect":{"type":"noul","value":"no","p":{"yes":0}}}}}`+"\n"+
+			`{"decision":{"id":"d1","decision":"read","answers":{"defect":{"type":"noul","value":"yes","p":{"yes":1}}}}}`+"\n"), 0o644))
+	got, err := Load(inRange)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	for _, rel := range []string{
+		filepath.Join("..", "..", "cmd", "nova-decide", "testdata", "record.jsonl"),
+		filepath.Join("testdata", "judgment-record.jsonl"),
+		filepath.Join("testdata", "gate-calibration-base-not-run.jsonl"),
+		filepath.Join("testdata", "gate-calibration-base-run.jsonl"),
+	} {
+		_, err := Load(rel)
+		require.NoError(t, err, rel)
+	}
+}
+
+// A replayed decision is held to the schema like a fresh ask (SPEC-NOVA-DECIDE section 4).
+func TestAReplayedDecisionIsHeldToTheSchemaLikeAFreshAsk(t *testing.T) {
+	t.Parallel()
+	record := filepath.Join(t.TempDir(), "decisions.jsonl")
+	s := GateSchema()
+	b := Fixed{Table: map[string]FixedAnswer{
+		"class": {Choice: PreExisting, P: map[string]float64{PreExisting: 0.9, Flaky: 0.05, Caused: 0.05}},
+	}}
+	in := GateInput{Failures: []Failure{{Pkg: "m/p", Test: "TestA"}}}
+	state := GateState(in, 0)
+	op := "p1"
+	id := GateOp(op, in.Failures[0])
+	inputs := map[string]string{"failure": in.Failures[0].Key(), "state_sha256": Sum([]byte(state))}
+	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+
+	// Write a record through Make with the fixed backend.
+	d, existing, err := Make(context.Background(), b, s, state, record, id, inputs, at)
+	require.NoError(t, err)
+	assert.False(t, existing)
+	assert.Equal(t, id, d.ID)
+
+	// An untouched record still replays with existing=true.
+	d2, existing2, err := Make(context.Background(), b, s, state, record, id, inputs, at)
+	require.NoError(t, err)
+	assert.True(t, existing2)
+	assert.Equal(t, d.Answers, d2.Answers)
+
+	// Rewrite the line to an impossible value.
+	raw, err := os.ReadFile(record)
+	require.NoError(t, err)
+	tampered := strings.Replace(string(raw), `"value":"pre-existing"`, `"value":"impossible"`, 1)
+	require.NotEqual(t, string(raw), tampered, "rewrite must replace value")
+	require.NoError(t, os.WriteFile(record, []byte(tampered), 0o600))
+
+	// Assert Make, MakeAll and Gate return an error naming the op and do not route.
+	_, _, err = Make(context.Background(), b, s, state, record, id, inputs, at)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), id, "Make returns an error naming the op")
+
+	made, err := MakeAll(context.Background(), b, s, []Item{{ID: id, State: state, Inputs: inputs}}, record, at, 1, 0)
+	if err != nil {
+		assert.Contains(t, err.Error(), id, "MakeAll error names the op")
+	} else {
+		require.Len(t, made, 1)
+		require.Error(t, made[0].Err)
+		assert.Contains(t, made[0].Err.Error(), id, "MakeAll item error names the op")
+	}
+
+	bars := GateBars{Flaky: 0.8, PreExisting: 0.8}
+	res, err := Gate(context.Background(), b, bars, in, record, op, at)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), id, "Gate returns an error naming the op")
+	assert.Empty(t, res.Route, "Gate does not route")
+
+	// Direct replay of a decision with p=1.5 is refused by Replays naming the op and the failing rule.
+	dBad := d
+	dBad.Answers = map[string]Answer{
+		"class": {Type: Choice, Value: PreExisting, P: map[string]float64{PreExisting: 1.5}},
+	}
+	err = Replays(dBad, s, state)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), id, "Replays error names the op")
+	assert.Contains(t, err.Error(), "1.5", "Replays error names the failing rule")
+
+	// In Make, Append's race path (another writer recorded meanwhile with bad answers) checks against s.
+	raceRecord := filepath.Join(t.TempDir(), "race.jsonl")
+	raceID := "p1/race"
+	racing := &racingBackend{
+		Backend: b,
+		onAsk: func() {
+			bad := d
+			bad.ID = raceID
+			bad.Answers = map[string]Answer{"class": {Type: Choice, Value: "impossible"}}
+			_, aerr := Append(raceRecord, bad)
+			require.NoError(t, aerr)
+		},
+	}
+	_, _, err = Make(context.Background(), racing, s, state, raceRecord, raceID, inputs, at)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), raceID, "race path returns an error naming the op")
+}
+
+type racingBackend struct {
+	Backend
+	onAsk func()
+}
+
+func (r *racingBackend) Ask(ctx context.Context, s Schema, state string) (map[string]Answer, Usage, error) {
+	if r.onAsk != nil {
+		r.onAsk()
+	}
+	return r.Backend.Ask(ctx, s, state)
 }

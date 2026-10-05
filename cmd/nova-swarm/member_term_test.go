@@ -80,9 +80,10 @@ func TestMemberStopsAtOnceOnSIGTERMWithNothingRunning(t *testing.T) {
 }
 
 // A child that never ends does not hold the stop for ever: the drain is bounded by
-// the longest deadline of the cards the member runs, plus the long work's own bound
-// (member.LongStall) for its push and report; past it the member stops and says what
-// it left running. The unit's stop timeout is above the longest bound (DrainMost).
+// member.DrainBound of the longest deadline of the cards the member runs, capped at
+// member.DrainMost (two minutes) with member.LongStall for its push and report
+// folded in; past the bound the member stops and says what it left running. The
+// unit's stop timeout is above the bound (DrainMost).
 func TestMemberDrainOnSIGTERMIsBoundedByTheLongestDeadline(t *testing.T) {
 	t.Parallel()
 	r := newTermRig(t)
@@ -96,7 +97,7 @@ func TestMemberDrainOnSIGTERMIsBoundedByTheLongestDeadline(t *testing.T) {
 	}
 	n, replaced := r.run(t, 50)
 	assert.False(t, replaced)
-	bound := 30*time.Minute + member.LongStall
+	bound := member.DrainBound(30 * time.Minute)
 	assert.Contains(t, r.out.String(), "MEMBER DRAIN SIGTERM: taking no new card, 1 running; it stops when the last child is reported, at most "+bound.String())
 	assert.Contains(t, r.out.String(), "MEMBER STOP SIGTERM: the drain's bound "+bound.String()+" passed with 1 running")
 	assert.Equal(t, 1, r.m.Running(), "the child is left to its supervisor and the sprint, not reported")
@@ -107,10 +108,11 @@ func TestMemberDrainOnSIGTERMIsBoundedByTheLongestDeadline(t *testing.T) {
 }
 
 // The bound is the longest deadline the running cards name (the member's own
-// --deadline for a card that names none) plus LongStall, never past DrainMost.
+// --deadline for a card that names none) plus LongStall, capped at DrainMost; the
+// two-minute cap is below LongStall, so every real deadline lands on DrainMost.
 func TestDrainBound(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, 30*time.Minute+member.LongStall, member.DrainBound(30*time.Minute))
-	assert.Equal(t, member.LongStall, member.DrainBound(0))
+	assert.Equal(t, member.DrainMost, member.DrainBound(30*time.Minute))
+	assert.Equal(t, member.DrainMost, member.DrainBound(0))
 	assert.Equal(t, member.DrainMost, member.DrainBound(10*time.Hour))
 }

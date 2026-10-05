@@ -403,7 +403,8 @@ func TestReworkTwice(t *testing.T) {
 	}
 	require.Len(t, who, 2, "not asked of two at h2")
 	assert.NotEqual(t, who[0], who[1], "asked twice of one reader at h2")
-	p.read(who[0], sprint.ReadCardID("s1-1", 2, who[0]), "broken")
+	// a second finding, not the first again: the same finding twice is the brief's bound (brief_bound.go)
+	p.do("read broken f:2", ReadStep(sprint.ReadReq{As: who[0], Verdict: "broken", Finding: "f:2", Sel: ids(sprint.ReadCardID("s1-1", 2, who[0]))}))
 	for _, o := range p.openOn("s1-1") {
 		t.Logf("second broken: marked=%v before=%d decisions=%v", o.Note.Marked, o.Note.Before, o.Note.Decisions)
 		assert.True(t, o.Note.Marked, "the second broken read for the same cause is not marked")
