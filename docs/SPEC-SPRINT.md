@@ -3292,6 +3292,30 @@ the base, the gate, the refusals and the first refusal's time, every card where 
 then moves the stream and clears the count, as do a pass that merges and every other stop
 (`TestBaseGateRefusedThreeTimesStopsTheStreamWithAJudgment`, cmd/nova-sprint/land_basegate_count_test.go).
 
+### A judgment retires with its card
+
+A judgment is about cards on the table. Once every card it is still open on has landed,
+been dropped or been replaced, no decision listed on it can move anything, and the
+coordinator cannot even ack one the tick keeps (the owner, 2026-10-05: "every step the
+coordinator did by hand today is a missing instruction"; that day the inbox held `no route
+serves the tier` for a card seven hours after it landed, and `returned to review` for a card
+already dropped). The tick end's check part retires each such judgment first, before
+anything after it can mark it overdue or answer it (`sprint.RetireJudgments`,
+internal/sprint/judgments_retire.go). Retiring closes the judgment on every subject still
+open and records one decided note by the machine, `retired with its card: <card> <event>`,
+with one event per card, `;`-separated: `landed`, `dropped (<reason>)`, `replaced by <twin>`, or
+`off the table (<outcome>)`. The note goes on the log and in the inbox's decided list. The
+retirement happens on the first tick that reads the card gone. For a move the tick's own
+pump applies, that is the same tick. For a move a verb made between ticks, it is the next one.
+A judgment with any subject still on the table stays whole. So do a stream's and the
+sprint's judgments, and a subject that is no card. The judgments about the landed work itself, `landed work scored low`
+and `ci red` (`sprint.OutlivesLanding`), stay the coordinator's when the card lands, and
+retire only once it leaves the table. The verbs that move a card still close what they
+answer (drop closes every judgment on its card); the retirement covers judgments that a step
+left open, or that a tick wrote on the read just before the card moved. Running the tick again
+retires nothing more. Test: `TestAJudgmentRetiresWhenItsCardLeavesTheTable`
+(internal/sprint/judgments_retire_test.go).
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared

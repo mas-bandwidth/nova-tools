@@ -1013,9 +1013,12 @@ func cannotAskCond(s *Snapshot, refused []Refusal) []cond {
 // tick when the rule holds again. Its duty is the no-stall rule too:
 // each stall nothing holds is one judgment "stalled", with the decisions open
 // to it, not written again while it stays and closed when it clears; a stall
-// that waits behind another is told by the other's.
+// that waits behind another is told by the other's. Its duty is the retirement too: a
+// judgment whose every card has left the table retires with it (RetireJudgments), first,
+// so nothing after it in the tick's end marks it overdue or answers it again.
 func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
+	retired := RetireJudgments(s, r)
 	var conds []cond
 	for _, v := range Check(s, nil) {
 		c := cond{typ: NInvariant, what: v.String()}
@@ -1043,6 +1046,17 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 		conds = append(conds, c)
 	}
 	due := notify(&p, s, conds, []string{NInvariant, NStalled}, r)
+	gone := map[string]bool{}
+	for _, o := range retired.Closes {
+		gone[o.Key] = true
+	}
+	closes := retired.Closes
+	for _, o := range p.Closes {
+		if !gone[o.Key] {
+			closes = append(closes, o)
+		}
+	}
+	p.Closes, p.Notes = closes, append(retired.Notes, p.Notes...)
 	return p, due
 }
 
