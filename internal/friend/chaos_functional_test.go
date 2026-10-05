@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/stretchr/testify/assert"
@@ -48,7 +49,7 @@ var wrongPass = errors.New("WRONGPASS invalid username-password pair or user is 
 // command answering WRONGPASS once the credential is revoked. The coordinator
 // and the session keep their own credentials: the Fake itself.
 type chaosBus struct {
-	*bus.Fake
+	*bustest.Fake
 	revoked atomic.Bool
 	fails   atomic.Int64 // commands refused since the revoke
 }
@@ -216,7 +217,7 @@ func (h *fakeHarness) Deliver(ctx context.Context, text string) (int, error) {
 type chaosRig struct {
 	t       *testing.T
 	ctx     context.Context
-	fake    *bus.Fake
+	fake    *bustest.Fake
 	bobBus  *chaosBus
 	coord   *bus.Bus // the coordinator's credential
 	session *bus.Bus // the session's credential
@@ -241,7 +242,7 @@ type chaosRig struct {
 func newChaosRig(t *testing.T) *chaosRig {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &chaosRig{t: t, ctx: ctx, fake: bus.NewFake(time.Now(), "coord", "amy", "bob"), done: make(chan struct{}),
+	r := &chaosRig{t: t, ctx: ctx, fake: bustest.NewFake(time.Now(), "coord", "amy", "bob"), done: make(chan struct{}),
 		amyBeat: time.NewTicker(sprint.FriendBeatEvery)}
 	r.bobBus = &chaosBus{Fake: r.fake}
 	r.coord, r.session = &bus.Bus{Store: r.fake}, &bus.Bus{Store: r.fake}
@@ -265,10 +266,11 @@ func newChaosRig(t *testing.T) *chaosRig {
 			case <-ctx.Done():
 			}
 		},
-		Beat: func(ctx context.Context) error {
+		Beat: func(ctx context.Context, active time.Time) error {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			_, err := r.st.FriendBeat(ctx, "bob")
+			// the beat carries the session's last activity, as nova-friend's does
+			_, err := r.st.FriendBeatReport(ctx, "bob", sprint.FriendReport{Active: active}, nil)
 			return err
 		},
 		Record: func(string) {},
