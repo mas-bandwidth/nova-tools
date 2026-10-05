@@ -29,14 +29,14 @@ var word = map[Status]string{OK: "OK", Failed: "FAILED", Refused: "REFUSED"}
 
 // Out is the one value every verb returns. Render writes it as typed lines:
 //
-//	<TOKEN> OK|FAILED|REFUSED k=v ...[: <why>][; run: <remedy>]   one line per why
+//	<TOKEN> OK|FAILED|REFUSED [reason=<r>] k=v ...[: <why>][; run: <remedy>]   one line per why
 //	<TOKEN> <KIND> k=v ...[: <text>]                            one line per item, the text its prose tail
 //	<TOKEN> MORE kind=<kind> shown=<n> total=<n> <remedy>       one per capped kind
 //	<TOKEN> NOTE <text>                                         one per note
 //
 // or as the JSON of the same value:
 //
-//	{"result":{"verb","status","exit","remedy","why"},"facts":{},"items":[{"kind","fields","text"}],
+//	{"result":{"verb","status","exit","remedy","why","reasons"},"facts":{},"items":[{"kind","fields","text"}],
 //	 "more":[{"kind","shown","total","remedy"}],"notes":[],"payload":""}
 //
 // A payload (the version line, a document a program reads) is printed as it is,
@@ -51,6 +51,7 @@ type Out struct {
 	Word    string   // the tool's own status word in place of OK or FAILED (Out.As); "" is the plain one
 	Remedy  string   // what to run next: the tool's help on a refusal unless the verb names better
 	Why     []string // every reason it failed or was refused
+	Reasons []string // a stable code per Why, parallel to it; a program reads the code (skeleton contract 2.10)
 	Facts   Fields
 	Items   []Item
 	More    []More
@@ -216,8 +217,12 @@ func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
 		if len(o.Why) == 0 {
 			fmt.Fprintln(w, head+tail)
 		}
-		for _, why := range o.Why {
-			fmt.Fprintln(w, head+": "+oneline.Escape(why)+tail)
+		for i, why := range o.Why {
+			reason := ""
+			if i < len(o.Reasons) && o.Reasons[i] != "" {
+				reason = " reason=" + oneline.Field(o.Reasons[i])
+			}
+			fmt.Fprintln(w, head+reason+": "+oneline.Escape(why)+tail)
 		}
 	}
 	for _, it := range o.Items {
@@ -321,12 +326,13 @@ func (fs Fields) MarshalJSON() ([]byte, error) {
 // MarshalJSON is the JSON rendering: the result, then the value's parts.
 func (o *Out) MarshalJSON() ([]byte, error) {
 	type result struct {
-		Verb   string   `json:"verb"`
-		Status Status   `json:"status"`
-		Exit   int      `json:"exit"`
-		Word   string   `json:"word,omitempty"`
-		Remedy string   `json:"remedy,omitempty"`
-		Why    []string `json:"why,omitempty"`
+		Verb    string   `json:"verb"`
+		Status  Status   `json:"status"`
+		Exit    int      `json:"exit"`
+		Word    string   `json:"word,omitempty"`
+		Remedy  string   `json:"remedy,omitempty"`
+		Why     []string `json:"why,omitempty"`
+		Reasons []string `json:"reasons,omitempty"`
 	}
 	return marshal(struct {
 		Result  result   `json:"result"`
@@ -335,5 +341,5 @@ func (o *Out) MarshalJSON() ([]byte, error) {
 		More    []More   `json:"more,omitempty"`
 		Notes   []string `json:"notes,omitempty"`
 		Payload string   `json:"payload,omitempty"`
-	}{result{o.Verb, o.Status, o.Exit, o.Word, o.Remedy, o.Why}, o.Facts, o.Items, o.More, o.Notes, o.Payload})
+	}{result{o.Verb, o.Status, o.Exit, o.Word, o.Remedy, o.Why, o.Reasons}, o.Facts, o.Items, o.More, o.Notes, o.Payload})
 }
