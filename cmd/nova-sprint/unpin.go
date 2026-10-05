@@ -42,11 +42,12 @@ func (a *app) cmdUnpin(args []string, stdout, stderr io.Writer) int {
 		for _, r := range plan.Refused {
 			lines = append(lines, "REFUSED "+r.Key+": "+r.Why)
 		}
-		sayOK(stdout, c.json, "unpin", fmt.Sprintf("UNPIN DRY-RUN changes=%d refused=%d\n%s", len(plan.Units), len(plan.Refused), strings.Join(lines, "\n")), map[string]any{"dry_run": true, "changes": len(plan.Units), "lines": lines, "refused": plan.Refused})
+		code, status := 0, "ok"
 		if len(plan.Refused) > 0 {
-			return 1
+			code, status = 1, "refused"
 		}
-		return 0
+		sayOK(stdout, c.json, "unpin", fmt.Sprintf("UNPIN %s DRY-RUN changes=%d refused=%d\n%s", strings.ToUpper(status), len(plan.Units), len(plan.Refused), strings.Join(lines, "\n")), map[string]any{"status": status, "exit": code, "dry_run": true, "changes": len(plan.Units), "lines": lines, "refused": plan.Refused})
+		return code
 	}
 	return a.runStep("unpin", *c, st, store.UnpinStep(req), stdout, stderr)
 }

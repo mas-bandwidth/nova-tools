@@ -114,3 +114,27 @@ func TestUnpinRefusesOnlyTheStartedCardOnTheTwin(t *testing.T) {
 	assert.Empty(t, h.snap().Primary("a").F(sprint.FieldWho))
 	assert.Equal(t, "friend.amy", h.snap().Primary("b").F(sprint.FieldWho))
 }
+
+func TestUnpinReturnedCardWhileRunningOnTheTwin(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(0)
+	brief := "job tier: pro\nWHO: only friend amy\n\nWork."
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "a", Brief: brief}, {ID: "b", Brief: brief}}}))
+	var due int
+	h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up}}}, nil, nil, &due))
+	h.must(FriendTakeStep(sprint.FriendTakeReq{Friend: "amy", IDs: []string{"b"}, Reason: "share"}))
+	h.startMachine()
+	h.must(UnpinStep(sprint.UnpinReq{IDs: []string{"b"}, Reason: "share returned work", Who: "tester"}))
+	// While running, the edit queues; the stopped machine drains it using the
+	// same twin and retains the issued work-card identity.
+	h.stopMachine()
+	s := h.snap()
+	assert.Empty(t, s.Primary("b").F(sprint.FieldWho))
+	assert.Equal(t, brief, s.Primary("b").F("brief"))
+	assert.Equal(t, 1, s.Primary("b").Int("attempt"))
+	h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: []sprint.FriendSeat{{Name: "bob", Width: 1, Status: sprint.Up, Class: "pro"}}}, nil, nil, &due))
+	assert.Equal(t, "friend.bob", h.snap().Fleet.Card("b.w1").Row)
+	assert.Equal(t, 3, h.snap().Fleet.Card("b.w1").Int("gen"))
+	h.clean("returned unpin")
+}

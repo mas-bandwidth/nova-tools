@@ -296,6 +296,6 @@ func RelinkStep(r sprint.RelinkReq) Step {
 
 // UnpinStep drops stored WHO pins atomically with their audit notes.
 func UnpinStep(r sprint.UnpinReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "unpin", Load: tables(sprint.Work),
+	return Step{Args: ArgsOf(r), Verb: "unpin", Load: tables(sprint.Work, sprint.Fleet),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Unpin(s, r) }}
 }

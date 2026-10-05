@@ -39,7 +39,7 @@ func Unpin(s *Snapshot, r UnpinReq) Plan {
 			continue
 		}
 		seen[id] = true
-		if why := unstarted(s, id, "its WHO pin"); why != "" {
+		if why := unpinWhy(s, id); why != "" {
 			p.refuse(id, why+"; inspect with nova-sprint card "+id+", or add a new unpinned card")
 			continue
 		}
@@ -63,4 +63,20 @@ func Unpin(s *Snapshot, r UnpinReq) Plan {
 			Moved: n.What})
 	}
 	return p
+}
+
+// unpinWhy admits the unstarted work returned by friend take as well as
+// never-dealt primaries (docs/SPEC-SPRINT.md, WHO preference). The take-back
+// mark records the friend's external-start check; an ended take or an older
+// attempt is not evidence of unstarted work.
+func unpinWhy(s *Snapshot, id string) string {
+	c := s.Work.Placed(id)
+	if c != nil && !IsSentinel(c) && c.Col == Ready && c.Int("attempt") == 1 && s.Fleet != nil {
+		wc := s.Fleet.Placed(WorkCardID(id, 1))
+		if wc != nil && IsFriendRow(wc.Row) && wc.Col == Withdrawn && wc.F(FieldTakenBack) != "" &&
+			wc.F(FieldTakeEnded) == "" && wc.Int("redeals") == 0 {
+			return ""
+		}
+	}
+	return unstarted(s, id, "its WHO pin")
 }

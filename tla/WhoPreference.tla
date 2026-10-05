@@ -29,12 +29,17 @@ Deal(c,w) == /\ owner[c] = "none" /\ w \in Candidate(c)
 Start(c) == /\ owner[c] \in Workers /\ c \notin started
             /\ started' = started \cup {c}
             /\ UNCHANGED <<owner,pin,up>>
+\* friend take returns a dealt but unstarted card; the same identity can be
+\* unpinned and offered again. Started work cannot take this transition.
+TakeBack(c) == /\ owner[c] \in Friends /\ c \notin started
+               /\ owner' = [owner EXCEPT ![c] = "none"]
+               /\ UNCHANGED <<pin,up,started>>
 Unpin(c) == /\ owner[c] = "none" /\ c \notin started /\ pin[c] # "none"
             /\ pin' = [pin EXCEPT ![c] = "none"]
             /\ UNCHANGED <<owner,up,started>>
 Presence == /\ up' \in SUBSET Workers /\ UNCHANGED <<owner,pin,started>>
 Next == (\E c \in Cards, w \in Workers : Deal(c,w))
-        \/ (\E c \in Cards : Start(c) \/ Unpin(c)) \/ Presence
+        \/ (\E c \in Cards : Start(c) \/ TakeBack(c) \/ Unpin(c)) \/ Presence
 Spec == Init /\ [][Next]_vars
 OnlyToItsFriend == \A c \in Cards : pin[c] = "only" => owner[c] \in {"none","a"}
 WidthRespected == \A w \in Workers : Cardinality({c \in Cards : owner[c] = w}) <= 1

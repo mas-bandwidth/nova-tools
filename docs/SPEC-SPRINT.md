@@ -225,11 +225,16 @@ the tick.
 
 `nova-sprint unpin <id>... --reason <text>` or `unpin --stream <s>
 --reason <text>` removes the stored WHO value from waiting or ready primaries
-that have never been dealt, including while the machine runs. It changes no
+that have never been dealt, or whose first attempt `friend take` returned to
+ready without starting or ending a take, including while the machine runs.
+The returned work card keeps its identity and is redealt at its next generation.
+An earlier completed attempt or ended take does not qualify. It changes no
 brief bytes. Each successful unpin records the actor, time, reason and
 removed WHO line in the card log; card and log show the record. Each started,
 finished or unknown card is refused separately with its remedy. An unpinned
-card is a reported no-op. `--dry-run` reports the plan without writing it.
+card is a reported no-op. `--dry-run` reports the plan without writing it;
+any refusal, including a mixed preview, has status `refused` and exit 1 in
+both text and JSON.
 `WhoPreference.tla` checks hard pins and capacity; the reversed only witness
 permits fallback and violates `OnlyToItsFriend`.
 
@@ -3384,4 +3389,3 @@ no line of its own; `log --card <id>` and `log --json` keep each record whole. A
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
-
