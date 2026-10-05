@@ -90,11 +90,11 @@ func OpenPG(ctx context.Context, dsn string) (*PG, error) {
 // deadline given, so the package's tests can shorten it: a caller's deadline,
 // longer or shorter, always governs.
 func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*PG, error) {
-	cfg, err := pgconn.ParseConfig(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("postgres dsn: %w", err)
+	if _, err := pgconn.ParseConfig(dsn); err != nil {
+		// pgconn's parse error quotes the string it could not read, and a string that
+		// is not a DSN may be a token or a password; the cause is withheld, not wrapped
+		return nil, errors.New("postgres dsn: not a connection string pgx can parse (the string is withheld from this error; it may carry a secret)")
 	}
-	_ = cfg
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)

@@ -89,6 +89,25 @@ were written for, because a rule document is a list of absolutes, and acting on
 that output weakened five rules before a cold reader caught them. One was
 floor-level. If you find the next one of those, we want it.
 
+### secrets-never-in-errors.w3
+
+A secret handed to an opener must not come back out of it. `TestNoSecretReachesAnError`
+(`internal/ci/secrets_in_errors_class_test.go`) drives secret-shaped strings (a Postgres
+DSN in both spellings, a URL with userinfo, and OpenRouter, GitHub and Anthropic
+tokens, each with its own marker) through every exported `Open*`, `Parse*`, `Dial*` and
+`New*` function that takes a string, found by `go/ast` and held complete against a
+reviewed table. It fails when any 8-byte window of a marker appears in a returned
+error, a panic, what the call logged or printed, or what it wrote to an `io.Writer` it was
+handed (the test hands it the child's stderr, never a discard). A fixture opener per
+channel pins that the measure sees each one. An opener with more than one string
+argument (`cairn.Open`, `secrets.OpenSeatFile`, `friend.NewestCodexSession`) is driven
+with every argument set to the secret; only an opener whose one string is a file path
+is exempt, with its reason. A Postgres DSN parse error that
+quoted the string it could not read is fixed (`internal/config/pg.go`); the parsers that
+still quote a flag or field value are rows in
+the `secretsInErrorsAllowlist` table in `internal/ci/secrets_in_errors_class_test.go`, each
+with its reason, and that table only shrinks.
+
 ## Reporting
 
 Email <glenn@mas-bandwidth.com>. That is the route that works today, and it is
