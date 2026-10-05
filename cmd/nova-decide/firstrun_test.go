@@ -31,15 +31,46 @@ func sitting(t *testing.T) func(args []string) onboarding.Result {
 	}
 }
 
-// The usage banner's examples are the ten verbs in the order a first run
-// types them, and each one runs and exits 0.
+// emptyDir is a fresh directory holding what the help's `setup:` lines write:
+// each `printf '<text>' > <file>` line is run, so the example block reads
+// files the banner itself made. The returned function runs one example line
+// there, a bare file name standing for its path in that directory.
+func emptyDir(t *testing.T, help string) func(args []string) onboarding.Result {
+	dir := t.TempDir()
+	_, tail, found := strings.Cut(help, "setup:")
+	require.True(t, found, "the help has no setup: block")
+	n := 0
+	for _, line := range strings.Split(tail, "\n")[1:] {
+		fields, err := onboarding.SplitShell(strings.TrimSpace(line))
+		if err != nil || len(fields) != 4 || fields[0] != "printf" || fields[2] != ">" {
+			break
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fields[3]), []byte(fields[1]), 0o644))
+		n++
+	}
+	require.Equal(t, 3, n, "setup: writes schema.json, state.txt and answers.json, one printf each")
+	return func(args []string) onboarding.Result {
+		local := make([]string, len(args))
+		for i, a := range args {
+			local[i] = a
+			if _, err := os.Stat(filepath.Join(dir, a)); err == nil || a == "decisions.jsonl" {
+				local[i] = filepath.Join(dir, a)
+			}
+		}
+		return onboarding.Result(cli.Run(local...))
+	}
+}
+
+// The usage banner's example block is ask, outcome and findings, in that order,
+// and runs as printed in an empty directory after the setup: lines, each exiting 0.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
-	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-decide")
+	help := cli.OK(t, "help").Stdout
+	examples, err := onboarding.ExampleLines(help, "nova-decide")
 	require.NoError(t, err)
-	verbs := []string{"ask", "read", "score", "attempt", "grade", "gate", "brief", "outcome", "calibrate", "findings"}
+	verbs := []string{"ask", "outcome", "findings"}
 	require.Len(t, examples, len(verbs), "want one example of each of %v under `example:`, got %q", verbs, examples)
-	run := sitting(t)
+	run := emptyDir(t, help)
 	for i, verb := range verbs {
 		fields, err := onboarding.SplitShell(examples[i])
 		require.NoError(t, err)
@@ -70,9 +101,15 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok",
 		"nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01",
 	}
-	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-decide")
-	require.NoError(t, err)
-	require.Equal(t, documentedExamples, examples, "the banner's examples and the ones this test names are one list")
+	// The banner's block runs in an empty directory (TestUsageBannerExamplesRun);
+	// each other verb's example is the checkout-root line its own help prints.
+	for _, line := range documentedExamples {
+		verb := strings.Fields(line)[1]
+		if verb == "ask" || verb == "outcome" || verb == "findings" {
+			continue
+		}
+		assert.Contains(t, cli.OK(t, "help", verb).Stdout, "nova-decide "+line[len("nova-decide "):], "the help of %s does not print its example", verb)
+	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-decide")
