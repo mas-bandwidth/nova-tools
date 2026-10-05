@@ -420,7 +420,9 @@ const (
 )
 
 // busSendFn sends one message on the friends' bus; say is handed each line the send has
-// for the verb's output (a bus store's alarm raised or cleared).
+// for the verb's output (a bus store's alarm raised or cleared, a name copied). Every
+// recipient in m.To is a nova-config friend row (friend sync's deal and the stall ladder
+// send to no one else), so the send makes each a name on the bus store first (sendBus).
 type busSendFn func(ctx context.Context, m bus.Message, say func(string)) error
 
 // busWatch is the app's Watch of the bus store addr as user, one per store and user
@@ -480,18 +482,45 @@ func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(),
 // (busWatch). The alarm a send raises or clears is said as one FRIEND-CARD
 // BUS-ALARM line, and a send that fails while the alarm is raised says so in its
 // error, which friend sync writes on the card's story.
+//
+// Before it sends, each recipient (a friend row, busSendFn) is made a name on the
+// bus store (bus.KnowFriends): nova-config apply writes the rows into the sprint
+// store, and where the bus store is its own Redis its roster is otherwise a stale
+// copy, so a friend or bud added since was no known name and never told of her
+// card. A name copied is said once as one FRIEND-CARD BUS-NAME line.
 func (a *app) sendBus(ctx context.Context, m bus.Message, say func(string)) error {
 	addr := a.getenv(busRedisEnv)
 	if addr == "" {
 		return errors.New(busRedisEnv + " is not set: no bus to send on")
 	}
 	user := a.getenv(busUserEnv)
+	var named []string
+	open := func(ctx context.Context) (*bus.Bus, func(), error) {
+		b, closeBus, err := a.busOpen(ctx, addr, user)
+		if err != nil {
+			return nil, nil, err
+		}
+		added, err := bus.KnowFriends(ctx, b.Store, m.To...)
+		if err != nil {
+			if closeBus != nil {
+				closeBus()
+			}
+			return nil, nil, err
+		}
+		named = added
+		return b, closeBus, nil
+	}
 	c := &friend.Courier{
 		Now:   func() time.Time { return a.now() },
-		Open:  func(ctx context.Context) (*bus.Bus, func(), error) { return a.busOpen(ctx, addr, user) },
+		Open:  open,
 		Watch: a.busWatch(addr, user),
 	}
 	_, err := c.Send(ctx, m)
+	if say != nil {
+		for _, n := range named {
+			say(fmt.Sprintf("FRIEND-CARD BUS-NAME friend=%s: her nova-config friend row was no name on the bus store %s; it is one now", n, addr))
+		}
+	}
 	a.busAlarmsMu.Lock()
 	said := a.busAlarms
 	a.busAlarms = nil

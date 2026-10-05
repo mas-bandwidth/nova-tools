@@ -975,7 +975,9 @@ nonce changes nothing. Then each friend whose state changed is said, and every
 friend row but the coordinator's own is sent a `PING` with a fresh nonce and
 the seat line (`since` the loop's start). The friends are nova-config's friend
 rows as the bus store holds them (the set `friends`, written by `nova-config
-apply`, the roster a send is checked against), read at the start in the trip
+apply` when the bus store is the sprint store, and otherwise added to by
+friend sync's send for each friend it tells of a card, `bus.KnowFriends`; the
+roster a send is checked against), read at the start in the trip
 that fixes where the stream is read from, and again each minute
 (`RowsEvery`), so a friend or a bud added as a row is pinged with no list kept
 anywhere else, and a row removed is forgotten. A friend is up on a counted pong and down once ten

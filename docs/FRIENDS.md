@@ -114,6 +114,20 @@ what it lacks; `HOLD` and `FAIL` come back failed to the coordinator with the
 paragraph. A sprint card is not counted among the
 inbox's jobs: the friends table counts it from the sprint.
 
+The sync tells her of each card it delivers with one bus message from the
+coordinator, `card <card> dealt: ...`, naming the brief's path: her daemon (a
+friend's, or a bud's runner) wakes on it and never polls the inbox. Her name is
+her nova-config friend row, and the sync holds the row, so before it sends it
+makes her a name on the bus store (the set `friends` there) when she is not one:
+`nova-config apply` writes the rows into the sprint store, and where the bus
+store is its own Redis (the fleet row's `bus`) its roster is otherwise a copy
+from before her row, and a friend or bud added since was no known name and never
+told. A name copied is said once, `FRIEND-CARD BUS-NAME friend=<name>: her
+nova-config friend row was no name on the bus store <addr>; it is one now`; a
+name already there is read and never written. A send that still fails leaves
+the inbox file as the record and writes `a friend was not told of her card` on
+the card's story.
+
 A friend pulls her own view of the sprint whenever she wants it with one curl, `curl -s
 http://<tailnet address>:<port>/friend/<name>` (the coordinator's dashboard pull port,
 `7395` by default; `/api/friend/<name>` is the same as JSON), and reads the sprint line,
