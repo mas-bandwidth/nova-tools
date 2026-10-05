@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 	"github.com/stretchr/testify/assert"
@@ -117,12 +120,31 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 // worktree; under this repo's law a corpus you did not name is a corpus you
 // did not mean, and answering "you already know this" about someone else's
 // memory is the worst possible way to be wrong.
+//
+// The variable is set in a child's cmd.Env rather than this process's
+// environment, which every parallel test here shares: the child is this test
+// binary re-entered, holding NOVA_MEMORY_ROOT the way a reader's shell would.
 func TestRootIsNeverTakenFromTheEnvironment(t *testing.T) {
-	t.Setenv("NOVA_MEMORY_ROOT", corpus)
-	exit, stdout, stderr := runCLI(t, "", "stats")
-	require.Equalf(t, 2, exit, "exit = %d, want 2 — an environment variable must not supply the root; stdout: %s", exit, stdout)
-	assert.Containsf(t, stderr, "--root is required", "stderr = %q, want the refusal to name --root", stderr)
+	t.Parallel()
+
+	if os.Getenv(rootEnvChildVar) == "1" {
+		exit, stdout, stderr := runCLI(t, "", "stats")
+		require.Equalf(t, 2, exit, "exit = %d, want 2 — an environment variable must not supply the root; stdout: %s", exit, stdout)
+		assert.Containsf(t, stderr, "--root is required", "stderr = %q, want the refusal to name --root", stderr)
+		return
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRootIsNeverTakenFromTheEnvironment$", "-test.count=1")
+	child.Env = append(os.Environ(), rootEnvChildVar+"=1", "NOVA_MEMORY_ROOT="+corpus)
+	child.WaitDelay = 2 * time.Second
+	out, err := child.CombinedOutput()
+	require.NoErrorf(t, err, "the child holding NOVA_MEMORY_ROOT did not refuse:\n%s", out)
 }
+
+// rootEnvChildVar marks the re-entered copy of this test as the child, so the
+// parent execs and the child asserts.
+const rootEnvChildVar = "NOVA_MEMORY_ROOT_ENV_CHILD"
 
 func TestRefusesAnUnusableRoot(t *testing.T) {
 	t.Parallel()
