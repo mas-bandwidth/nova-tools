@@ -1,220 +1,191 @@
-# The note wake and the verdict receipt
+# SPEC-BUS: messages between AIs over Redis streams
 
-Nova-bus carries messages over Git and uses only the Go standard library and
-its general bus, build-info and one-line modules. It does not classify notes
-or contact an AI provider.
+nova-bus is the message bus between AIs: a message is sent once and delivered
+until it is acked. It depends on Redis, reached over the tailnet, and on
+nothing else: no git, no file twin, no mode that works without a server. The
+tool is `cmd/nova-bus`, the rules are `internal/bus`, the delivery machine is
+`tla/Bus2.tla`. It was built as nova-bus2 beside the git bus and took the name
+nova-bus on 2026-10-04, when the git bus was removed.
 
-Status: specified, not implemented; no code. Every path comes from a flag, every
-verb prints one line of output, a refusal is exit 2 with one remedy line, output is
-bounded, and tests use fakes.
+## The data
 
-## `wait --on-note` and `receipt --verdict`
+- One stream per recipient, `bus2:to:<name>`, with one consumer group on it
+  named `<name>`, made on the recipient's first `recv` (`XGROUP CREATE ... 0
+  MKSTREAM`). Every reader is the one consumer `nova-bus2`: who holds an entry
+  is told by its idle time, never by a name.
+- One stream `bus2:log` holding every message once, for history and audit.
+- A message is one stream entry with the fields `id` (a ULID the sender makes
+  from the store's time: `TIME`, never the client's clock; its first ten random
+  bits are the microsecond, so ids sort by the store's time), `from`, `to`
+  (comma list), `cc` (comma list, may be empty), `subject`, `re` (the id it
+  answers, may be empty), `at` (RFC 3339 UTC from `TIME`, to the second) and
+  `body` (UTF-8, at most 1 MiB).
+- A name is lowercase letters, digits and hyphens, at most 64 bytes, and one of
+  nova-config's friend or machine rows as `apply` wrote them into the store
+  (the sets `friends` and `machines`).
+- `send` writes the entry to every recipient's stream (to and cc) and to
+  `bus2:log` in one `MULTI`/`EXEC`: a message is on every stream or on none.
+- Nothing is ever deleted by the tool. Trimming is a later decision.
+- The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
+  `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
+  `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
+  streams, groups and pending lists under these names, and renaming a live key
+  is a migration (every reader stopped, every stream copied, every group
+  re-made with its pending entries), bought for nothing but a spelling.
 
-**The verb lines, as help prints them.**
+## The semantics
+
+At-least-once delivery. A message delivered to a recipient is pending until
+that recipient acks it, and its reader keeps it for fifteen minutes (`ClaimAfter`,
+the budget one `--exec` delivery gets: longer than the longest delivery any
+reader makes, nova-friend's ten minute turn and the kill that ends it, so a
+live reader mid-turn is never handed its message twice). `recv` first claims
+the recipient's pending entries that have been idle for at least that long
+(`XAUTOCLAIM` with min-idle 900 s, from `0-0`): what a reader that died or
+stalled was holding, so
+a reader that crashed before acking is handed the message again, before any new
+one, while a live reader is never handed a message a second time. Then it reads
+new entries (`XREADGROUP ... >`; `--forever` waits with `BLOCK`, a plain `recv`
+answers at once). A name the roster does not hold is refused, never given a
+stream to wait on. `ack` is `XACK` and is idempotent: an id that is not pending
+answers `acked=false` at exit 0. The model (`tla/Bus2.tla`) holds: every message
+on a stream was sent to that recipient; nothing is lost (a sent message is acked
+or still on the stream for recv); a message held by a live reader stays with it
+(delivered once while held); a recv that hands out a new message found nothing
+pending that a dead reader held; only a delivered message is acked; once acked,
+acked; and, with crashes bounded, every sent message is acked by every recipient
+it names.
+
+## The verbs
+
+`nova-bus help` opens with the loop a harness runs, three lines. Every verb
+takes `--json`; `log` takes `--max`.
+
+- `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> |
+  --stdin) [--re <id>]` prints `SEND OK id=<id> to=<names> cc=<names>
+  at=<time> bytes=<n> sha256=<hex>` (and `login=none` on a store with no
+  users): the count and the digest are the body's as the store holds it, the
+  sender's check that a file arrived whole without asking the receiver. A body's
+  trailing newline is the body's and is kept by send, the store, log and recv. Refuses, naming every problem at once: an unknown name (with the
+  nova-config line that adds one), a bad name, an empty body, a body over 1
+  MiB, an empty subject, a body from both or neither source.
+- `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
+  <command>]` prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
+  line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
+  `--exec` runs the command with that same text on its stdin (the body ending
+  in a newline) and acks the message when it exits 0; a non-zero exit leaves it
+  pending and is `RECV FAILED` at exit 1. `--max <n>` takes up to n messages in
+  order and `--all` every one waiting (pending first, then new), each printed
+  as its own `RECV OK`, or each handed to `--exec` and acked on exit 0, the
+  batch stopping at the first command that fails; `--ack` acks each message a
+  plain recv printed; none waiting is the one `RECV NONE`. `--forever` loops,
+  waiting for messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
+  delivered stays pending) or at the first command that fails. The push into a
+  harness is `nova-bus recv --as <me> --forever --exec '<deliver-into-session>'`
+  beside the session.
+- `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
+  `ACK ID id= acked=true|false` line per id.
+- `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one `PEEK MESSAGE
+  state= id= from= at= subject=` line per message. Writes nothing, makes no
+  group.
+- `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
+- `names` lists the known names.
+- `version`, `help`, `help <verb>`.
+
+Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
+`--exec`: the command failed); 2 could not run (a flag, an input, a store that
+did not answer).
+
+### bus-message-kinds.w1: the kind of a message
+
+A message carries a kind, one of `report`, `ack`, `status`, `request`,
+`blocker`: the bus's own vocabulary, which it stores and filters on and gives
+no meaning. `send --kind <k>` sets it (default `status`; another word is
+refused with the list), the entry holds it as the field `kind`, and `recv`,
+`peek` and `log` print `kind=<k>` (left off the line of a status, so an absent
+`kind=` is a status and the common line is unchanged). A message with no `kind` field (sent
+before kinds) reads as `status`. `recv --kind <k>[,<k>]` (also `--all`,
+`--max`, `--forever`, `--dry-run`) and `peek --kind <k>[,<k>]` take only
+messages of those kinds. A message the filter skips is neither acked nor held:
+it is claimed with the filter's read and handed back at once (`XCLAIM ...
+IDLE` of `ClaimAfter`, `JUSTID`), so the next `recv` without the filter, or
+with another, gets it in its order; a skip costs a round trip, and a run of
+skipped claimed messages one more to hand them back.
+
+## The identity
+
+Who a verb acts as is the user the connection logged in as, never a word on
+the line. With a login user (`NOVA_SPRINT_REDIS_USER`, or whatever
+internal/redisconn resolves), `--as` defaults to that user, may repeat it, and
+any other name is refused: `--as bob is not the login user ada: this connection
+acts as ada; drop --as, or log in as bob`. `send`'s `from` is that identity.
+With no login user (a store whose default user is open, as a trial store is)
+`--as` is required and every write (`SEND OK`, `RECV OK`, `ACK OK`) carries
+`login=none`, so the weakness (any name on the line is believed) is visible,
+never silent. The fleet's store therefore needs one user per friend, named as
+the friend is; creating users is the owner's, never the tool's.
+
+## The ACL per friend
+
+The user for friend `<f>` is named `<f>` and needs, measured against what
+the tool sends (`internal/bus/redis.go`; the key flags are what `COMMAND
+INFO` on Redis 8 answers):
+
+| Verb | Commands | Keys |
+| --- | --- | --- |
+| every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
+| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `EXEC` | `friends`, `machines` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag) |
+| recv | `SMEMBERS`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:to:<f>` |
+| ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK` | `bus2:to:<f>` |
+| peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
+| log | `XRANGE` | `bus2:log` |
+| names | `SMEMBERS`, `TIME` | `friends`, `machines` |
+
+The wrinkle, said plainly: a sender writes other friends' streams. `send` fans
+the message out from the client, one `XADD` per recipient stream inside the
+transaction, so every friend's user must be able to `XADD` to every
+`bus2:to:*` stream. `XADD`'s key flag is read-write (`RW update`), so a
+write-only selector (`%W~bus2:to:*`) does not admit it: the least key set is
+the whole pattern `~bus2:to:*`, and the store cannot stop user `ada` reading
+`bus2:to:bob` with `XRANGE`, or acking on it with `XACK`. What stops that is
+the tool (the identity above), not the ACL. The ACL still does the two things
+that matter: it pins `from` to a real login (no user, no send as anyone), and
+it keeps every other key family (the sprint's, the config's) out of reach.
+The least set per friend, one line:
 
 ```
-nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
-nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id-or-path> [--text <text>] --remote <name> --branch <name> [--attempts <n>] [--no-push] [--git-timeout <seconds>]
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~friends ~machines resetchannels
+  +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
+  +xautoclaim +xack +xpending +xinfo|groups +xrange
 ```
 
-**What each reads and writes.** `wait --on-note` reads the bus from `--bus`, fetches
-`--remote`/`--branch` on `--interval`, and reads the notes addressed to the caller
-by To: only, by To: or Cc: once `--cc` opts in, the wake being To: only (addr=to is
-the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing
-unless `--advance` is given, when it moves and pushes the caller's cursor as `inbox
---advance` does. `receipt --verdict` reads the bus and roster, resolves `--re` against
-the open list, and writes one receipt note into the caller's lane — `Verdict:
-<APPROVE|HOLD|ADOPTED>`, `Re: <id>`, the `--text` body — plus the lane's `RECEIPTS`
-record, in one commit it pushes to `--remote` on `--branch`.
+If the fan-out moved into the store (a Redis function running `XADD` for the
+caller, which Redis runs under the caller's own ACL, so it buys nothing; or a
+privileged relay process, which is a second writer), the pattern could narrow
+to `%W~bus2:to:*` plus `~bus2:to:<f>`. Neither is built; the one line above is
+what the bus needs today.
 
-**What `wait --on-note` prints.** The moment a To: note for the caller arrives it
-exits 0 with exactly one status line and the notes, and nothing else: no `INBOX
-OPEN` frame and no carrying count ever print.
+## The config
 
-```
-WAIT OK id=<id> from=<name> path=<path> bytes=<n>
-INBOX NOTE id=<id> from=<name> addr=<to|cc> at=<stamp> path=<path>: <subject>
-INBOX BODY id=<id> bytes=<n>
-<n bytes of body, verbatim>
-INBOX BODY END id=<id>
-```
+The store is `--redis <host:port>`, else `NOVA_BUS_REDIS`, else the fleet row's
+`bus` field as `nova-config apply` wrote it (`fleet:bus`, in the sprint store at
+`NOVA_SPRINT_REDIS`, with the fleet's login below), so no friend types the
+address: `nova-config fleet set --bus <host:port> --as <me>`, then `apply`, once.
+With none of the three, or an empty row, or a sprint store that does not
+answer, the refusal names the row and how it is set. The store is on loopback or
+the tailnet (100.64.0.0/10) and nowhere else: the tailnet is the boundary and
+there is no ACL behind it (decided 2026-10-04), so an address outside both, by
+literal or by any address its name resolves to, is refused before a dial in one
+line naming the rule (`internal/bus`, `CheckAddr`); a name that does not
+resolve is refused the same way. A Unix socket path is this machine's. The login follows
+the fleet convention exactly (internal/redisconn): `NOVA_SPRINT_REDIS_USER`
+names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` the variable that holds its
+password (`NOVA_REDIS_BENCH_PASSWORD` when it names none); never a password on
+the line or in a message. The known names are nova-config's friend rows plus
+its machine rows; no new kind or field was needed.
 
-Every field is named: the id, the sender, the repository-relative path, the body's
-byte count, and the existing frame fields. The verb runs as a systemd or launchd
-unit outside a TUI, so the unit restarts it after a harness cap; the exit is the
-wake, and a parent wakes on a note without ingesting the open list. A service restart
-alone does not wake a harness parent — nothing in the unit's lifetime reaches the
-parent — so this slice waits in the foreground only: a FIFO is not durable, a file
-can overwrite pending notes, and `--advance` does not itself name the batch it
-acknowledges. `wait --on-note` wakes a parent that is waiting inside its own turn.
-Background delivery is deferred to a later section, which must pin a real
-notification adapter and an acknowledgement-token protocol before it makes any claim.
+## Round trips
 
-The verb also runs as a systemd or launchd unit outside a TUI, so the unit restarts
-it after a harness cap; the exit is the wake, and a parent wakes on a note without
-ingesting the open list.
-
-**The body and batch bounds, the continuation, and the cursor.** One note's body is
-bounded to `--max-bytes` bytes, default 65536 and hard ceiling 1048576; one wake
-returns at most `--max-notes` notes, default 20 and hard ceiling 1000, and at most
-`--max-bytes` body bytes across the whole return, stopping at whichever bound is
-reached first. These are the read half's own limits, with its values and refusals
-(*The limits*, *Snapshot continuation and the read cursor*). A body that would cross
-the remaining budget is not printed half; it is left whole for the next call, and a
-first body larger than the whole run's budget prints the bounded
-`INBOX BODY OVERSIZE id=<id|-> bytes=<n> max-bytes=<m> path=<path>` gap line instead.
-Past a bound the wake ends with the read half's continuation receipt, `INBOX BODIES
-printed=<n> bytes=<b> oversize=<k> gaps=<g> drained=<true|false> complete=<false>
-next=<token>`; the same verb called again with `--after <token>` returns the rest, and
-no run repeats itself. The cursor is the acknowledgement: without `--advance` no
-`CURSOR`, `OPEN`, `RECEIPTS`, `INDEX`, commit or push changes; with it the cursor
-advances only past the batch the caller acknowledged by the batch token — the
-existing complete-batch cursor contract — so a crash mid-batch redelivers from the
-last acknowledged batch and a body that was not acknowledged keeps its turn at being
-new.
-
-**What `receipt --verdict` prints.** One line, or one `RECEIPT ALREADY` line per
-note already heard:
-
-```
-RECEIPT OK verdict=<APPROVE|HOLD|ADOPTED> re=<id> recorded=<n> already=<m> commit=<commit> pushed=<bool> attempts=<n>
-```
-
-**The mistakes it removes.** `wait --on-note` removes the one-minute heartbeat loop
-that woke a 500k-context parent on every note — 53 tool calls per empty tick — and
-its service restart removes the silent poller death at the harness's ten-hour cap;
-`receipt --verdict` removes the hand-shaped receipt note; and `send`'s fold removes
-`SEND FAIL` on a BEAT rebase conflict.
-
-**The refusals.** Each is exit 2 with one remedy line.
-- `--on-note` without `--timeout`, `--bus`, `--as`, `--remote` or `--branch`: `WAIT REFUSED: --on-note needs <flag>; give it, refusing to guess; run: nova-bus wait -h`.
-- `--on-note` with `--open` or `--full`, which would print the frame it suppresses: `WAIT REFUSED: --on-note prints no open frame; drop --open; run: nova-bus wait -h`.
-- `--verdict` outside the three: `nova-bus receipt: --verdict <value> is not APPROVE, HOLD or ADOPTED; give one of the three`.
-- `--verdict` without `--re`, or with `--note`: `nova-bus receipt: --verdict writes one receipt and needs --re <id-or-path>; name the note it answers`.
-- `--text` without `--verdict`: `nova-bus receipt: --text belongs to --verdict; add --verdict or drop --text`.
-
-**`send`, the BEAT fold, and the process name.** `send` stages the caller's own
-`from-<me>/BEAT` — the uncommitted file a killed `wait` leaves, and a beat-only local
-commit ahead of the remote — into its one note commit instead of aborting on a
-rebase; every other dirty path is still the refusal it always was, on one `SEND FAIL`
-line, and `SEND OK` still names its fields. `send` sets its own process name,
-distinct from the wait's, so `pkill -f` on the wait never kills a send.
-
-**Red tests, written first.** Each uses a fake where the real thing is the network, a bench or a clock.
-1. `TestWaitOnNotePrintsOnlyTheNote`: a fake remote lands one To: note; stdout is the `WAIT OK` line and its `INBOX NOTE`/body and no `INBOX OPEN` or carrying count.
-2. `TestWaitOnNoteNeverWakesOnAnEmptyTick`: a fake clock and empty fake remote; the process prints one `WAIT TIMEOUT` and no frame, and no parent is woken.
-3. `TestWaitOnNoteRearmsAfterAHarnessCap`: a fake service manager kills the unit at the cap and restarts it; the restarted wait resumes with the note's arrival not lost.
-4. `TestReceiptVerdictWritesTheExactNoteShape`: a fake remote plus `--no-push`; the committed note is byte-for-byte the `Verdict`/`Re`/body shape and the `RECEIPT OK` line names every field.
-5. `TestReceiptVerdictRefusesAnUnknownVerdict`: exit 2 and one remedy line, with no write to a fake checkout.
-6. `TestSendFoldsOwnUncommittedBeat`: a fake checkout holding a dirty `from-<me>/BEAT` sends and commits it without a `SEND FAIL`.
-7. `TestSendFoldsOwnBeatOnlyCommit`: a fake remote behind a local beat-only commit sends without a rebase abort.
-8. `TestSendProcessNameIsDistinctFromWait`: a fake process-title probe asserts the send name and the wait name differ.
-9. `TestPkillOnWaitLeavesASendAlive`: a fake `pkill -f` matching only the wait name leaves a running fake send alive.
-10. `TestWaitOnNoteBoundsBodyAndBatch`: a body over `--max-bytes` prints the `INBOX BODY OVERSIZE` gap and no partial frame, and 21 notes under the default `--max-notes` print 20 with `complete=false`.
-11. `TestWaitOnNoteContinuationReturnsTheRest`: the `next=<token>` passed back as `--after` returns exactly the remainder once and ends with `next=-`.
-12. `TestWaitOnNoteCursorAdvancesOnlyPastAcknowledged`: a crash mid-batch leaves the cursor at the last fully delivered and acknowledged batch, the next run redelivers from there, and a run without `--advance` moves no cursor.
-
-## `send --file` preflight and `reply`
-
-**The verb lines, as help prints them.**
-
-```
-nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
-nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
-```
-
-**What `send --file` reads and preflights.** `send` reads the draft from `--file` (or
-`--stdin`) and the bus and roster from `--bus`, and it preflights the shaped note before
-any commit, so a draft it refuses leaves the bus, the index and the working tree exactly
-as it found them; it refuses a hand-written `Id:` header because the tool mints the id,
-and refuses a `Re:` line naming more than one id because a `Re` line names one thread. A
-`Date:` header is not a refusal: the tool replaces it and prints one `SEND NOTE` line
-saying so, the same notice a heading or a bold `**Key**:` already earns.
-
-**What `send --dry-run` prints.** `--dry-run` stops after the preflight and the shaping,
-commits nothing and pushes nothing, and prints the shaped note it would send as one
-`SEND DRAFT id=<id> path=<path> to=<n> cc=<n> re=<id|none> subject=<text> date=<RFC3339> bytes=<n>`
-line naming every field, then the `<n>` bytes of the note verbatim between one
-`SEND DRAFT id=<id>` line and one `SEND DRAFT END id=<id>` line, so the count frames the
-body and a caller can pipe the note to a file.
-
-**What `reply` reads and writes.** `reply` reads the bus and roster from `--bus`,
-resolves `--re` against the notes in the checkout after fetching `--remote`/`--branch`,
-and reads the body from `--file`; it writes one reply note into the caller's lane whose
-`From` is `--as`, whose `To` is the original note's `From`, and whose `Re` and `Subject`
-are taken from the original, so a reply is never hand-shaped. Without `--advance` it
-writes nothing else; with `--advance` it moves and pushes the caller's cursor in the
-same commit as the reply.
-
-**What `reply` prints.** One line:
-
-```
-REPLY OK id=<id> re=<id> path=<path> to=<name> subject=<text> commit=<commit> pushed=<bool> advanced=<bool> attempts=<n>
-```
-
-**The refusals.** Each is exit 2 with one remedy line.
-- a hand-written `Id:` header: `SEND REFUSED: the tool mints the Id; delete the Id: header from <draft>; run: nova-bus send -h`.
-- more than one id in `Re:`: `SEND REFUSED: Re: names one thread; name one id in <draft>; run: nova-bus send -h`.
-- `--dry-run` with `--prepared`: `SEND REFUSED: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run; run: nova-bus send -h`.
-- `reply` without `--re`: `REPLY REFUSED: --re is required; name the note being answered; run: nova-bus reply -h`.
-- `reply --re` naming no note: `REPLY REFUSED: --re <id> names no note on this bus; name one from your open list; run: nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> --open`.
-- `reply` draft carrying a header it fills: `REPLY REFUSED: reply fills From, To, Re and Subject; delete the <Key>: line from <draft>; run: nova-bus reply -h`.
-- `reply --advance` with `--dry-run`: `REPLY REFUSED: --advance moves the cursor and --dry-run writes nothing; drop one; run: nova-bus reply -h`.
-
-**The mistake it removes.** The mistake it removes is hand-crafted `Id:` headers in
-drafts, comma-separated ids in `Re:`, a date warning on every send, and the hand-shaped
-reply header.
-
-**Red tests, written first.** Each uses a fake where the real thing is the network, a bench or a clock.
-1. `TestSendRefusesAHandWrittenId`: a fake checkout and a draft with an `Id:` header; exit 2, one remedy line, and no new commit.
-2. `TestSendRefusesTwoIdsInRe`: a fake checkout and a `Re:` line naming two comma-separated ids; exit 2 and one remedy line.
-3. `TestSendWarnsOnceOnADateItReplaces`: a fake clock and a draft with a `Date:` header; one `SEND NOTE` line and the committed note carries the fake clock's date.
-4. `TestSendDryRunPrintsTheShapedNoteAndWritesNothing`: a fake checkout; stdout is the `SEND DRAFT` line and its framed note, and the checkout is unchanged.
-5. `TestReplyFillsFromToReSubjectFromTheOriginal`: a fake bus holding one note; the committed reply's four headers come from the original, not from the draft.
-6. `TestReplyRefusesAnUnknownRe`: a fake bus; exit 2 and one remedy line naming `inbox --open`, and nothing is written.
-7. `TestReplyRefusesAHandShapedHeader`: a fake bus and a draft carrying a `To:` line; exit 2 and one remedy line.
-8. `TestReplyAdvanceMovesTheCursorInTheReplyCommit`: a fake checkout; one commit holds both the reply note and the caller's advanced `CURSOR`.
-9. `TestReplyAdvanceWithDryRunIsRefused`: a fake checkout; exit 2 and one remedy line, and neither cursor nor note moves.
-
-## Tests this spec demands
-
-Every test runs against a fake remote, a fake checkout, a fake clock and a fake
-service/process probe; nothing reaches a network or a real secret, and each new
-test is proven able to fail before it is trusted. The verb groups are
-`wait --on-note` / `receipt --verdict` (absent) and `send --file` preflight /
-`reply` (already implemented).
-
-1. `TestWaitOnNotePrintsOnlyTheNote` — a To: note wakes exactly one `WAIT OK` status line and its `INBOX NOTE`/body, and no `INBOX OPEN` frame or carrying count ever prints.
-2. `TestWaitOnNoteWakesOnToOnly` — the wake is To: only (addr=to the default); a Cc: note is data, not a wake.
-3. `TestWaitOnNoteWritesNothingWithoutAdvance` — `wait --on-note` writes nothing unless `--advance` is given.
-4. `TestWaitOnNoteAdvanceMovesTheCursorLikeInbox` — with `--advance` it moves and pushes the caller's cursor as `inbox --advance` does.
-5. `TestWaitOnNoteNamesEveryField` — the wake output names the id, sender, repository-relative path, byte count and the existing frame fields.
-6. `TestWaitOnNoteNeverWakesOnAnEmptyTick` — an empty tick prints one `WAIT TIMEOUT` and no frame, and no parent is woken.
-7. `TestWaitOnNoteRearmsAfterAHarnessCap` — a service manager restarts the unit at the cap and the restarted wait resumes with the note's arrival not lost.
-8. `TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap` — one note's body is bounded to `--max-bytes` (default 65536, hard ceiling 1048576).
-9. `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse` — one wake returns at most `--max-notes` notes (default 20, ceiling 1000) and at most `--max-bytes` body bytes, stopping at whichever bound is reached first.
-10. `TestASingleOversizeBodyIsANamedGapAndNeverALoop` — a body that would cross the remaining budget is left whole, not printed half, and a first body larger than the whole budget prints the `INBOX BODY OVERSIZE` gap line.
-11. `TestBodiesContinuationKeepsOriginalSnapshotAfterAdvanceAndNewTip` — past a bound the wake ends with the `INBOX BODIES … next=<token>` receipt; `--after <token>` returns the rest and no run repeats itself.
-12. `TestBodiesWithoutAdvanceMovesNoCursor` — without `--advance` no `CURSOR`/`OPEN`/`RECEIPTS`/`INDEX`/commit/push changes; with it the cursor advances only past the acknowledged batch.
-13. `TestWaitRefusesOnNoteWithoutItsRequiredFlags` — `--on-note` without `--timeout`/`--bus`/`--as`/`--remote`/`--branch` is exit 2 with one remedy line.
-14. `TestWaitRefusesOnNoteWithOpenOrFull` — `--on-note` with `--open` or `--full` is exit 2, `drop --open`.
-15. `TestReceiptVerdictWritesTheExactNoteShape` — `receipt --verdict` resolves `--re` and writes one `Verdict:`/`Re:`/`--text` note plus the lane's `RECEIPTS` record, in one commit pushed to `--remote`/`--branch`.
-16. `TestReceiptVerdictPrintsTheNamedLine` — `RECEIPT OK` names every field: verdict, re, recorded, already, commit, pushed, attempts.
-17. `TestReceiptVerdictNamesAlreadyHeard` — one `RECEIPT ALREADY` line per note already heard.
-18. `TestReceiptVerdictRefusesAnUnknownVerdict` — `--verdict` outside the three is exit 2 with one remedy line and no write.
-19. `TestReceiptVerdictRefusesWithoutReOrWithNote` — `--verdict` without `--re`, or with `--note`, is exit 2.
-20. `TestReceiptRefusesTextWithoutVerdict` — `--text` without `--verdict` is exit 2.
-21. `TestSendProcessNameIsDistinctFromWait` — `send` sets its own process name, distinct from the wait's.
-22. `TestPkillOnWaitLeavesASendAlive` — a `pkill -f` matching only the wait name leaves a running send alive.
-23. `TestSendAfterWaitBeatSucceeds` — `send` stages the caller's own uncommitted `from-<me>/BEAT` into its one note commit instead of aborting on a rebase.
-24. `TestSendFoldsUnpushedOwnBeatCommit` — a beat-only local commit ahead of the remote is carried out with the note, not refused.
-25. `TestSendRefusesAWrongBranchOrADirtyCheckout` — every other dirty path is still the refusal it always was, on one `SEND FAIL` line, and `SEND OK` still names its fields.
-26. `TestSendRefusesAHandWrittenId` — a hand-written `Id:` header is exit 2 with one remedy line and no new commit.
-27. `TestSendRefusesTwoIdsInRe` — a `Re:` line naming more than one id is exit 2 with one remedy line.
-28. `TestSendWarnsOnceOnADateItReplaces` — a `Date:` header is replaced and earns one `SEND NOTE` line.
-29. `TestSendDryRunPrintsTheShapedNoteAndWritesNothing` — `--dry-run` prints the framed `SEND DRAFT` note and commits and pushes nothing.
-30. `TestReplyFillsFromToReSubjectFromTheOriginal` — the reply's four headers come from the original note, never hand-shaped.
-31. `TestReplyRefusesAnUnknownRe` — `reply --re` naming no note is exit 2 and names `inbox --open`.
-32. `TestReplyRefusesAHandShapedHeader` — a draft carrying a header `reply` fills is exit 2 with one remedy line.
-33. `TestReplyAdvanceMovesTheCursorInTheReplyCommit` — `--advance` moves and pushes the cursor in the same commit as the reply.
-34. `TestReplyAdvanceWithDryRunIsRefused` — `reply --advance` with `--dry-run` is exit 2 and neither cursor nor note moves.
+send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
+four (the roster, the group, the claim, the read). ack: four (group, pending,
+the entries, `XACK`). peek: up to four. log: one. names: one.

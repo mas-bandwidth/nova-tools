@@ -44,7 +44,7 @@ func TestStatusGrammar(t *testing.T) {
 				ta.ok("init --readers reader-a,reader-b --members m1")
 				return ta
 			},
-			line: "add --stream s1 --count 1", wantToken: "ADD", wantWord: "OK", wantExit: 0,
+			line: "add --stream s1 --count 1 --one", wantToken: "ADD", wantWord: "OK", wantExit: 0,
 		},
 		{
 			name: "add refused with no stream",
@@ -61,7 +61,7 @@ func TestStatusGrammar(t *testing.T) {
 			setup: func(t *testing.T) *testApp {
 				ta := newTestApp(t)
 				ta.ok("init --readers reader-a,reader-b --members m1")
-				ta.ok("add --stream s1 --count 1")
+				ta.ok("add --stream s1 --count 1 --one")
 				return ta
 			},
 			line: "resolve s1-nope", wantToken: "RESOLVE", wantWord: "FAILED", wantExit: 1,
@@ -71,7 +71,7 @@ func TestStatusGrammar(t *testing.T) {
 			setup: func(t *testing.T) *testApp {
 				ta := newTestApp(t)
 				ta.ok("init --readers reader-a,reader-b --members m1")
-				ta.ok("add --stream s1 --count 1")
+				ta.ok("add --stream s1 --count 1 --one")
 				ta.deal(1)
 				return ta
 			},

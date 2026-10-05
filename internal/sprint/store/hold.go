@@ -76,7 +76,7 @@ func (st *Store) WriteHoldRecords(ctx context.Context, r sprint.HoldReq) error {
 	for _, n := range r.Names {
 		switch {
 		case (r.Kind == "" || r.Kind == sprint.HoldReader) && slices.Contains(readers, n):
-			err = st.setReaderHold(ctx, n, r)
+			err = st.holdReader(ctx, n, r)
 		case (r.Kind == "" || r.Kind == sprint.HoldFriend) && slices.Contains(r.Friends, n):
 			err = st.setFriendHold(ctx, n, r)
 		}
@@ -87,21 +87,13 @@ func (st *Store) WriteHoldRecords(ctx context.Context, r sprint.HoldReq) error {
 	return nil
 }
 
-// setReaderHold writes a reader's hold record: held with the reason, or empty on unhold.
-func (st *Store) setReaderHold(ctx context.Context, reader string, r sprint.HoldReq) error {
-	kv, err := st.rootKV()
-	if err != nil {
-		return err
-	}
+// holdReader writes a reader's hold record: held with the reason, or empty on unhold.
+func (st *Store) holdReader(ctx context.Context, reader string, r sprint.HoldReq) error {
 	hold := readerHold{}
 	if !r.Release {
-		hold = readerHold{Away: true, Held: true, At: st.now().UTC().Truncate(time.Second), By: r.Who, Reason: r.Reason, Return: r.Return}
+		hold = readerHold{Away: true, Held: true, Reason: r.Reason, Return: r.Return}
 	}
-	out, err := json.Marshal(hold)
-	if err != nil {
-		return err
-	}
-	return kv.SetKey(ctx, readerAwayKey(reader), string(out))
+	return st.setReaderHold(ctx, reader, hold, r.Who)
 }
 
 // setFriendHold writes a friend's hold in the roster: held with the reason, or released.
@@ -213,17 +205,4 @@ func stampOf(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
-}
-
-// FriendNamed is nil for a friend of the roster, else the refusal naming the roster and
-// friend sync, which makes it.
-func (st *Store) FriendNamed(ctx context.Context, friend string) error {
-	ros, _, err := st.roster(ctx)
-	if err != nil {
-		return err
-	}
-	if _, ok := ros[friend]; !ok {
-		return noFriend(ros, friend)
-	}
-	return nil
 }

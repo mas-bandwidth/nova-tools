@@ -38,7 +38,7 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	wantExit(t, r, 2)
 	{
 		opened := tokens.Opens() - opensBefore
-		assert.True(t, opened == 0, "the refusal opened %d source files; nothing under $HOME, $TMPDIR or $XDG_DATA_HOME may be opened", opened)
+		assert.Equal(t, int64(0), opened, "the refusal opened %d source files; nothing under $HOME, $TMPDIR or $XDG_DATA_HOME may be opened", opened)
 	}
 
 	// And a fold that DOES run opens only the source its flags name -- the one transcript
@@ -51,7 +51,7 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
 	{
 		opened := tokens.Opens() - opensBefore
-		assert.True(t, opened == 1, "the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
+		assert.Equal(t, int64(1), opened, "the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
 	}
 	lines := strings.Split(strings.TrimSuffix(r.stderr, "\n"), "\n")
 	require.Equal(t, 3, len(lines), "want three refusal lines, one per independent problem, got %d:\n%s", len(lines), r.stderr)
@@ -181,7 +181,7 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 	wantExit(t, r, 0)
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	row := lineWith(day, "fable\tschema")
-	require.False(t, row == "", "no row for fable/schema:\n%s", day)
+	require.NotEmpty(t, row, "no row for fable/schema:\n%s", day)
 	// The sources column is the ELEVENTH, read by position.
 	cols := strings.Split(row, "\t")
 	require.Equal(t, len(tokens.Columns), len(cols), "the row has %d columns, want %d: %q", len(cols), len(tokens.Columns), row)
@@ -415,7 +415,7 @@ func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
 	wantNotContains(t, r.stdout+r.stderr, "emma-00000000000b")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-		assert.False(t, err == nil, "a near-miss note was folded into a day file")
+		assert.Error(t, err, "a near-miss note was folded into a day file")
 	}
 }
 
@@ -446,7 +446,7 @@ func TestRule6ABadDateRefusesTheWholeNote(t *testing.T) {
 			wantContains(t, r.stdout, "unparsed=1")
 			{
 				_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-				assert.False(t, err == nil, "a row of a note with a bad Date was folded")
+				assert.Error(t, err, "a row of a note with a bad Date was folded")
 			}
 		})
 	}
@@ -545,7 +545,7 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		wantContains(t, r.stderr, "TOKENS CONFLICT")
 		{
 			_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-			assert.False(t, err == nil, "a conflicted lane-day wrote a file")
+			assert.Error(t, err, "a conflicted lane-day wrote a file")
 		}
 	})
 
@@ -1385,7 +1385,7 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "f\tschema\t7\t")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-		assert.False(t, err == nil, "the zoned stamp folded on the local day, not on its UTC day")
+		assert.Error(t, err, "the zoned stamp folded on the local day, not on its UTC day")
 	}
 	// Two stamps this tool cannot read: counted, printed, and named. The count is on
 	// TOKENS FAILED and the lines name the label; the transcript's own unparsed= column is
@@ -1455,7 +1455,7 @@ func TestRule18TwoFoldsDifferInNothingButTheStamp(t *testing.T) {
 	second := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	a, b := strings.SplitN(first, "\n", 2), strings.SplitN(second, "\n", 2)
 	assert.Equal(t, b[1], a[1], "the rows differ between two folds:\n%s\n%s", a[1], b[1])
-	assert.False(t, a[0] == b[0], "the stamp line did not change with the clock")
+	assert.NotEqual(t, b[0], a[0], "the stamp line did not change with the clock")
 	assert.Equal(t, strings.ReplaceAll(b[0], "at=2026-09-12T00:55:02Z", ""), strings.ReplaceAll(a[0], "at=2026-09-11T23:55:02Z", ""), "the stamp lines differ in more than at=:\n%s\n%s", a[0], b[0])
 	// rows sorted by (model, repo)
 	rows := strings.Split(strings.TrimSpace(first), "\n")[2:]
@@ -1534,7 +1534,7 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 		assert.Equal(t, "what was there before\n", read(t, note), "a failed report replaced the --note file")
 		{
 			_, err := os.Stat(note + ".tmp")
-			assert.False(t, err == nil, "a failed report left a .tmp beside the note")
+			assert.Error(t, err, "a failed report left a .tmp beside the note")
 		}
 		release()
 	}
@@ -1583,7 +1583,7 @@ func subjectOf(t *testing.T, r result) string {
 	t.Helper()
 	line := lineWith(r.stderr, "REPORT OK")
 	i := strings.Index(line, "subject=")
-	require.False(t, i < 0, "no subject= on %q", line)
+	require.GreaterOrEqual(t, i, 0, "no subject= on %q", line)
 	return line[i+len("subject="):]
 }
 
@@ -1651,7 +1651,7 @@ func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 	wantContains(t, r.stderr, "the xai parser does not know the column input_tokens")
 	{
 		_, err := os.Stat(filepath.Join(out4, "2026-09-11.tsv"))
-		assert.False(t, err == nil, "a Google export folded under the xai parser")
+		assert.Error(t, err, "a Google export folded under the xai parser")
 	}
 	// And the third parser the work list names reads its own shape.
 	o := write(t, filepath.Join(dir, "openai.csv"), "timestamp,model,prompt_tokens,completion_tokens,cached_tokens\n2026-09-11T10:00:00Z,gpt-5,11,22,33\n")
@@ -1688,7 +1688,7 @@ func TestRule17AMixedRowIsRefused(t *testing.T) {
 	wantContains(t, r.stderr, "mixed=1")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-		assert.False(t, err == nil, "a mixed row was written")
+		assert.Error(t, err, "a mixed row was written")
 	}
 }
 
@@ -1841,7 +1841,7 @@ func TestADayIsADateOnTheCalendar(t *testing.T) {
 		wantContains(t, r.stderr, "--day is not a day: "+bad)
 		{
 			_, err := os.Stat(filepath.Join(out, bad+".tsv"))
-			assert.False(t, err == nil, "%s was written as a day file", bad)
+			assert.Error(t, err, "%s was written as a day file", bad)
 		}
 	}
 	// A leap day that exists is a day.

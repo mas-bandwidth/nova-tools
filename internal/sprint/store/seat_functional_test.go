@@ -43,7 +43,7 @@ func TestRedisTheSeatMovesInOneCommit(t *testing.T) {
 	seat, moved, err := st.Seat(ctx)
 	require.NoError(t, err)
 	require.True(t, moved)
-	assert.Equal(t, sprint.SeatChange{Holder: "friend-b", From: "friend-a", At: seat.At, By: "friend-b", Taken: true, ApprovedBy: "owner-a", Reason: "friend-a is asleep"}, seat)
+	assert.Equal(t, sprint.SeatChange{Holder: "friend-b", Generation: 2, From: "friend-a", At: seat.At, By: "friend-b", Taken: true, ApprovedBy: "owner-a", Reason: "friend-a is asleep"}, seat)
 	lines, err := st.Log(ctx)
 	require.NoError(t, err)
 	var said []string

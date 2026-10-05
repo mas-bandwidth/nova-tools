@@ -74,6 +74,10 @@ type app struct {
 	// tip reads origin's tip of a branch (friend sync, a friend's LAND): tests give
 	// it a table of tips and open no socket.
 	tip tipFn
+	// bus sends one message on the friends' bus (internal/bus; friend sync wakes a
+	// friend's daemon with it when it delivers her a card): tests give a recorder
+	// and open no socket.
+	bus busSendFn
 	loc *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
@@ -119,15 +123,21 @@ type app struct {
 	// wall clock.
 	gateBackend func() (decide.Backend, func() time.Time)
 	// serial is the server's one line of control (serve.go): a worker's batch
-	// and a tick of the run loop each hold it, so neither runs during the other;
-	// the tick takes it at its turn, not behind every batch waiting (sprint.ControlLine).
+	// and a tick of the run loop each hold it, so neither runs during the other.
 	// serveAddr is the store the server runs the workers' verbs on.
-	serial    sprint.ControlLine
+	serial    serialLock
 	serveAddr string
 	// serving says the verb running is one a worker sent to the server (set and
 	// cleared under serial): its step names the epoch its worker holds, or is
 	// refused (runStep).
 	serving bool
+	// lanes is the server's lanes beside the line (servelanes.go), made at the first
+	// batch under lanesMu; served is what its batches cost since its last SERVE line, said
+	// on serveLog (run's stdout once it listens; nil, a test's, says nothing).
+	lanesMu  sync.Mutex
+	lanes    *serveLanes
+	served   serveTally
+	serveLog io.Writer
 	// forward sends verbs to the sprint's server named by NOVA_SPRINT_SERVER (the
 	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
 	// server's own step.
@@ -143,6 +153,12 @@ type app struct {
 	// landCtx is the land loop's context while it runs a land (landOnce): the landed
 	// diffs' scoring runs under it, so the loop's shutdown ends the pass; nil is none.
 	landCtx context.Context
+	// baseGateCache is the tree gate's findings for base commit tips, by commit SHA:
+	// "" when green, cached across streams and rounds so a base is gated once.
+	baseGateCache map[string]string
+	// baseGateFails is the base-gate rule's record of base commits that failed their tree
+	// gate (landgo.go, treeGateBase), kept across rounds as the cache is.
+	baseGateFails map[string]*baseGateFail
 	// tickDeadline is how long the run loop waits for one tick (run
 	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
 	// it waits on (time.After unless a test sets it), and exit how the loop
@@ -159,6 +175,11 @@ type app struct {
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
+	// goos is the OS seat install writes its unit for (seatinstall.go): runtime.GOOS unless a
+	// test sets it; seatLoad, when set (a test), loads and unloads the unit in place of
+	// launchctl or systemctl --user, so a test loads nothing on its machine.
+	goos     string
+	seatLoad func(goos, op, path string) error
 	// transport carries the balance poll's requests to the providers (balance.go):
 	// nil is http.DefaultTransport, a test gives a fake.
 	transport http.RoundTripper
@@ -180,6 +201,7 @@ func newApp(getenv func(string) string) *app {
 	a.inventory = a.readInventory
 	a.friends = a.readFriends
 	a.tip = a.branchTip
+	a.bus = a.sendBus
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
 	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }

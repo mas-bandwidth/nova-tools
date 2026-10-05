@@ -599,7 +599,9 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 // new epoch.
 func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	began := time.Now()
-	defer func() { res.Said = append(res.Said, st.stats().takeNotes()...) }()
+	// the store the tick was given, never the one repin makes: a repin that fails returns
+	// nil, and the notes are on the counters both share
+	defer func(given *Store) { res.Said = append(res.Said, given.stats().takeNotes()...) }(st)
 	st.stats()
 	st.twin() // made on the store the run loop keeps: its ticks share it
 	defer func() { res.Took = time.Since(began) }()
@@ -893,7 +895,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	at := snap.Epoch
 	res.Tables = newTables()
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
 	// the first read as it was: the twin it came from moves on with every
 	// part's writes, and with any other writer in this process
 	first := *snap
@@ -947,7 +949,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// 4. The end: the checks, the deadlines, the overdue judgments and the
 	// done part, once the tables are settled.
 	t.res.Order = append(t.res.Order, "end")
-	if out := t.parts("", sprint.TickEnd); out != tickOn && out != tickDone {
+	// the machine's own answers, when the loop gives them: the rule parts and the idle alarm
+	end := sprint.TickEndWith(t.req.AnswerRules, t.req.IdleAlarm)
+	if out := t.parts("", end); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
 	}
 	if t.unshown {
@@ -986,7 +990,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 
 // routesPart says a tick part plans with the routes: the deal and the ask draw
 // from them, and the check asks what the next deal does.
-func routesPart(name string) bool { return name == "deal" || name == "ask" || name == "check" }
+func routesPart(name string) bool {
+	return name == "deal" || name == "ask" || name == "check" || sprint.IsRulePart(name)
+}
 
 // MaxSettle bounds the updates a tick makes past its first pass while the
 // readers', merge's and fleet's updates write each other's tables: a tick

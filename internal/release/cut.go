@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"golang.org/x/mod/semver"
 )
 
 // prNumber matches the `(#123)` a squash merge puts at the end of the subject.
@@ -97,23 +96,19 @@ func green(runs []CheckRun) error {
 // previousTag picks the highest version tag in the repository. It is a semantic
 // comparison, not a lexical one: v0.15.10 comes after v0.15.3, which a sort by
 // string puts the other way round and which would make the changelog for a
-// patch release list seven releases' worth of work. (STANDARD §7: library first.)
+// patch release list seven releases' worth of work.
 func previousTag(tags []string) string {
-	versions := make([]string, 0, len(tags))
+	best, bestParts := "", []int{}
 	for _, tag := range tags {
-		// semver.IsValid refuses a tag without a leading v (e.g. "0.16.0")
-		// and a tag with a fourth number (e.g. "v0.16.0.1"), the same
-		// shapes the previous hand-rolled filter rejected.
-		if !semver.IsValid(tag) {
+		if ValidVersion(tag) != nil {
 			continue
 		}
-		versions = append(versions, tag)
+		parts := versionParts(tag)
+		if best == "" || lessVersion(bestParts, parts) {
+			best, bestParts = tag, parts
+		}
 	}
-	if len(versions) == 0 {
-		return ""
-	}
-	semver.Sort(versions)
-	return versions[len(versions)-1]
+	return best
 }
 
 func versionParts(tag string) []int {
@@ -299,17 +294,32 @@ func classify(files []string, complete bool, rangeName, securityRead string, out
 // than quietly classifying a release that is not this one.
 const PathsHeaderPrefix = "# nova-update release cut --local-diff "
 
-// WritePathsFile records the complete list and the range it is the list for.
+// pathsDigestPrefix opens the SECOND header line, the sha256 of the list body
+// (the files joined by newlines, in order) as this verb wrote it. The first
+// line pins WHICH range the list is for; the digest pins THAT THE LIST IS
+// STILL THE ONE PRODUCED FOR IT (docs/SPEC-RELEASE.md section 5, security#72
+// finding 10): an unpinned body is a hand-editable one, and whoever deleted
+// the sensitive lines between the --local-diff run and the cut walked past
+// the gate with no --security-read, silently.
+const pathsDigestPrefix = "# sha256 "
+
+// WritePathsFile records the complete list, the range it is the list for, and
+// the digest of the list itself. The digest is computed with the package's own
+// sumOf (incremental.go).
 func WritePathsFile(path, rangeName string, files []string) error {
+	body := strings.Join(files, "\n")
 	var b strings.Builder
 	b.WriteString(PathsHeaderPrefix + rangeName + "\n")
-	for _, f := range files {
-		b.WriteString(f + "\n")
+	b.WriteString(pathsDigestPrefix + sumOf([]byte(body)) + "\n")
+	if body != "" {
+		b.WriteString(body + "\n")
 	}
 	return writeNoFollow("write paths", path, []byte(b.String()), 0o644)
 }
 
-// ReadPathsFile reads one back, and refuses anything this verb did not write.
+// ReadPathsFile reads one back, and refuses anything this verb did not write:
+// the wrong first line, the wrong range, a list without the digest line the
+// verb pins its body with, and a body that no longer matches that digest.
 func ReadPathsFile(path, rangeName string) ([]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -328,12 +338,31 @@ func ReadPathsFile(path, rangeName string) ([]string, error) {
 		return nil, refuse(fmt.Sprintf("produce the list for this range: `release cut --local-diff <checkout> --paths-from %s`", path),
 			"%s is the path list for %s, and this cut is %s", path, got, rangeName)
 	}
+	recorded := ""
 	var files []string
 	for _, line := range lines[1:] {
-		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, pathsDigestPrefix) {
+			if recorded == "" {
+				recorded = strings.TrimSpace(strings.TrimPrefix(line, pathsDigestPrefix))
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
 			continue
 		}
 		files = append(files, line)
+	}
+	remedy := fmt.Sprintf("regenerate the list: `release cut --local-diff <checkout> --paths-from %s`", path)
+	if recorded == "" {
+		return nil, refuse(remedy,
+			"%s carries no sha256 digest line, so nothing pins its body to what `release cut --local-diff` wrote", path)
+	}
+	if got := sumOf([]byte(strings.Join(files, "\n"))); got != recorded {
+		return nil, refuse(remedy,
+			"%s changed after `release cut --local-diff` wrote it: the sha256 of its list is %s and its header records %s", path, field(got), field(recorded))
 	}
 	return files, nil
 }

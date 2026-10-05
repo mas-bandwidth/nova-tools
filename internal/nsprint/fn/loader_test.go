@@ -27,7 +27,9 @@ func countLocals(t *testing.T, source string) (active, sum int, largest string) 
 			header = strings.TrimPrefix(line, fileHeader)
 			continue
 		case line == blockOpen && prev != "":
-			require.Equal(t, "", inBlock, "line %d: block %q opens inside %q", i+1, prev, inBlock)
+			if inBlock != "" {
+				require.Equal(t, "", inBlock, "line %d: block %q opens inside %q", i+1, prev, inBlock)
+			}
 			inBlock, block = prev, 0
 			continue
 		case strings.HasPrefix(line, blockClose):
@@ -55,7 +57,9 @@ func countLocals(t *testing.T, source string) (active, sum int, largest string) 
 			outside += n
 		}
 	}
-	require.Equal(t, "", inBlock, "block %q never closes", inBlock)
+	if inBlock != "" {
+		require.Equal(t, "", inBlock, "block %q never closes", inBlock)
+	}
 	return outside + most, sum, largest
 }
 
@@ -69,11 +73,17 @@ func TestLibraryLocalsUnderLimit(t *testing.T) {
 	t.Parallel()
 
 	source, err := Source()
-	require.NoError(t, err)
+	if err != nil {
+		require.NoError(t, err, err)
+	}
 	active, sum, largest := countLocals(t, source)
 	t.Logf("active locals %d (largest file %s), unscoped sum %d, limit %d", active, largest, sum, MaxLocals)
-	require.LessOrEqual(t, active, MaxLocals, "nova_sprint main function holds %d locals at once (largest file %s), over %d (Lua refuses above 200); move helpers into a table or split the file", active, largest, MaxLocals)
-	require.False(t, active == sum && sum > 1, "no file is block-scoped (active %d = sum %d); Source must wrap each file in its own do-block", active, sum)
+	if active > MaxLocals {
+		require.LessOrEqual(t, active, MaxLocals, "nova_sprint main function holds %d locals at once (largest file %s), over %d (Lua refuses above 200); move helpers into a table or split the file", active, largest, MaxLocals)
+	}
+	if active == sum && sum > 1 {
+		require.Failf(t, "assertion failed", "no file is block-scoped (active %d = sum %d); Source must wrap each file in its own do-block", active, sum)
+	}
 }
 
 // TestCountLocalsSeesTheOldShape is the guard's own control: a chunk with
@@ -87,5 +97,7 @@ func TestCountLocalsSeesTheOldShape(t *testing.T) {
 		fmt.Fprintf(&flat, "local v%d = %d\n", i, i)
 	}
 	active, _, _ := countLocals(t, flat.String())
-	require.Greater(t, active, MaxLocals, "unblocked chunk counts %d locals, want > %d (the guard must see the pre-fix shape)", active, MaxLocals)
+	if active <= MaxLocals {
+		require.Greater(t, active, MaxLocals, "unblocked chunk counts %d locals, want > %d (the guard must see the pre-fix shape)", active, MaxLocals)
+	}
 }

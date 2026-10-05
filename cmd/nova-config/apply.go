@@ -10,13 +10,14 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "apply"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := writeStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
 	kind := fs.String("kind", "", "one `kind` to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")
@@ -39,9 +40,13 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		kinds = []string{*kind}
 	}
 	var actor string
+	seatVal := ""
+	if c.seat != nil {
+		seatVal = *c.seat
+	}
 	if !*check {
 		var err error
-		actor, err = actorName(*as, d.getenv)
+		actor, err = actorName(*as, d.getenv, seatVal)
 		if err != nil {
 			problems = append(problems, err.Error())
 		}
@@ -49,6 +54,10 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		actor = *as
 	} else if v := d.getenv(envActor); v != "" {
 		actor = v
+	} else if seatVal != "" {
+		actor = seatVal
+	} else if getenv := d.getenv; getenv != nil && getenv(seatcred.SeatEnv) != "" {
+		actor = getenv(seatcred.SeatEnv)
 	}
 	dsn, err := c.dsn(d.getenv)
 	if err != nil {

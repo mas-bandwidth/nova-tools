@@ -2,6 +2,7 @@ package fn
 
 import (
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -57,19 +58,33 @@ func loadEnv(t *testing.T) (*lua.LState, *[]string) {
 
 // TestLibraryLoadsInTheLoadTimeEnvironment: the assembled library runs to its
 // end with only `redis` global, and the functions it registers there are
-// exactly the ones redisfn reads out of its files (Spec().Functions()), which
+// exactly the ones redisfn reads out of its files (Spec().Registered()), which
 // nova-redis's TestFnVerbsOnARedisServer expects on the store after fn load.
 func TestLibraryLoadsInTheLoadTimeEnvironment(t *testing.T) {
 	t.Parallel()
 	src, err := Source()
-	require.NoError(t, err)
+	if err != nil {
+		require.NoError(t, err, err)
+	}
 	_, body, _ := strings.Cut(src, "\n") // the shebang line is the store's, not Lua's
 	L, registered := loadEnv(t)
-	require.NoError(t, L.DoString(body), "the library does not load")
-	require.NotEmpty(t, *registered, "the library registered no function")
-	want, err := Spec().Functions()
-	require.NoError(t, err)
-	got := slices.Clone(*registered)
-	slices.Sort(got)
-	require.Equal(t, want, got, "the library registers %v at load; its files name %v", got, want)
+	if err := L.DoString(body); err != nil {
+		require.NoError(t, err, "the library does not load: %v", err)
+	}
+	if len(*registered) == 0 {
+		require.NotEqual(t, 0, len(*registered), "the library registered no function")
+	}
+	funcs, err := Spec().Registered()
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	want := make([]string, 0, len(funcs))
+	for _, fn := range funcs {
+		want = append(want, fn.Name)
+	}
+	got := append([]string(nil), *registered...)
+	sort.Strings(got)
+	if !slices.Equal(got, want) {
+		require.Equal(t, want, got, "the library registers %v at load; its files name %v", got, want)
+	}
 }

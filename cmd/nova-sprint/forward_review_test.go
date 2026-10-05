@@ -42,14 +42,14 @@ func TestServerReviewHelpAsAValueStillForwardsTheWrite(t *testing.T) {
 	r := newServerRig(t, twoLanes()...)
 	var sent [][]string
 	boss := coordinatorAt(t, r, "boss", &sent)
-	code, out, errs := boss("add", "--stream", "help", "--count", "1")
+	code, out, errs := boss("add", "--stream", "help", "--count", "1", "--one")
 	assert.Equal(t, 0, code, "%s%s", out, errs)
 	assert.Len(t, sent, 1, "help is the stream's name, not a help request")
 }
 
 func TestServerReviewPathRewritingDoesNotConsumeAnotherFlagsValue(t *testing.T) {
 	t.Parallel()
-	argv := []string{"add", "--brief", "--rules", "--stream", "s1", "--count", "1"}
+	argv := []string{"add", "--brief", "--rules", "--stream", "s1", "--count", "1", "--one"}
 	assert.Equal(t, argv, absolutePaths(append([]string(nil), argv...)), "the brief is the literal string --rules; --stream is not a rules path")
 }
 

@@ -180,9 +180,18 @@ func refuse(stdout, stderr io.Writer, asJSON bool, verb, hint string, problems .
 	return 2
 }
 
-func main() { os.Exit(runStdin(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+func main() {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = ""
+	}
+	os.Exit(runStdin(wd, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
 
-func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+// runStdin runs one invocation. wd is the working directory a relative file is
+// read against: main passes os.Getwd, a test passes a directory of its own
+// (docs/STANDARD.md section 8), and an empty wd leaves the path for the OS.
+func runStdin(wd string, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` prints that verb's help on stdout at exit 0, with the verb's effect, before anything is read
 	// (docs/CLI-STYLE.md rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-self-talk", usage, &code, func(verb string) string {
@@ -197,7 +206,7 @@ func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code in
 		// `help <verb>` is that verb's help; `help` with anything else is the banner,
 		// because help is never a refusal.
 		if first == "help" && len(args) > 1 && slices.Contains(verbs, args[1]) && args[1] != "help" {
-			return runStdin([]string{args[1], "-h"}, stdin, stdout, stderr)
+			return runStdin(wd, []string{args[1], "-h"}, stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -211,7 +220,7 @@ func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code in
 	case "scan":
 		args = args[1:]
 	}
-	return scan(args, stdin, stdout, stderr)
+	return scan(args, stdin, stdout, stderr, wd)
 }
 
 // reason is an error without the path a *fs.PathError repeats, since the line names the path.

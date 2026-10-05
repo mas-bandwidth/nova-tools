@@ -466,6 +466,8 @@ func TestGeneralityTextFindings(t *testing.T) {
 		{"mail ada@mas-bandwidth.com", []string{"mas-bandwidth"}},
 		{"in a namespace, on miniredis, in whitespace", nil},
 		{"the swarm-hulk seat", []string{"hulk"}},
+		{"leave space for the footer", nil},
+		{"free space on the bench named space", []string{"space"}},
 	}
 	for _, tc := range cases {
 		got := generalityTextFindings("docs/x.md", tc.line)

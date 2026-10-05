@@ -668,7 +668,7 @@ func TestInstallLockWaiterTakesOverWhenTheHolderDiesWhilePolling(t *testing.T) {
 func TestInstallLockIsReleasedWhenTheHolderIsSignalled(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	sig, raise := context.WithCancel(context.Background())
+	sig, raise := context.WithCancel(t.Context())
 	h.installHost.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
 	exited := make(chan int, 1)
 	lockAtExit := make(chan bool, 1)
@@ -695,7 +695,7 @@ func TestInstallLockWaiterGivesUpWhenSignalled(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
 	writeHolder(t, h, 99999, fixedNow)
-	sig, raise := context.WithCancel(context.Background())
+	sig, raise := context.WithCancel(t.Context())
 	h.installHost.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
 	h.installHost.sleep = func(time.Duration) { *h.sleeps++; raise() }
 	ran := false

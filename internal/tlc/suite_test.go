@@ -23,14 +23,10 @@ func (c *fakeClock) Now() time.Time {
 	return t
 }
 
-// testClock is a fakeClock that starts at the wall and advances by step on each
-// Now: the shape every clock-driven case below takes.
 func testClock(step time.Duration) *fakeClock {
 	return &fakeClock{now: time.Now(), step: step}
 }
 
-// suiteTree is a checkout with three cases: one that passes, one whose
-// invariant is violated on purpose and one temporal counterexample.
 func suiteTree(t *testing.T) (string, []Case) {
 	t.Helper()
 	plan := header +
@@ -46,7 +42,6 @@ func suiteTree(t *testing.T) (string, []Case) {
 	return root, cases
 }
 
-// script answers each case with a recorded TLC output and its exit status.
 func script(t *testing.T, seen *[]Run) Executor {
 	t.Helper()
 	answers := map[string]struct {
@@ -59,7 +54,6 @@ func script(t *testing.T, seen *[]Run) Executor {
 	}
 	return func(ctx context.Context, r Run, log string) int {
 		*seen = append(*seen, r)
-		// TLC writes an error trace beside the spec it was given.
 		_ = os.WriteFile(filepath.Join(r.Dir, strings.TrimSuffix(r.Module, ".tla")+"_TTrace_1.tla"), []byte("trace\n"), 0o644)
 		a := answers[r.Config]
 		_ = os.WriteFile(log, []byte(a.log), 0o644)
@@ -75,22 +69,67 @@ func suiteOptions(root string, cases []Case, out string, exec Executor, clock *f
 	}
 }
 
+// suiteFix is one suite's repeated setup: the checkout, the output dir and the
+// options a test then edits.
+type suiteFix struct {
+	root, out string
+	cases     []Case
+	seen      []Run
+	opt       Options
+}
+
+func openSuite(t *testing.T) *suiteFix {
+	t.Helper()
+	root, cases := suiteTree(t)
+	s := &suiteFix{root: root, cases: cases, out: filepath.Join(t.TempDir(), "o")}
+	s.opt = suiteOptions(root, cases, s.out, script(t, &s.seen), testClock(time.Millisecond))
+	return s
+}
+
+// refusedRun is the sentence a suite that must not run repeats.
+func refusedRun(t *testing.T, res Result, err error, ran int, out, want, why string) {
+	t.Helper()
+	require.NoError(t, err)
+	require.True(t, res.Failed, "suite = %+v, ran %d cases", res, ran)
+	require.Equal(t, want, res.Refused, "suite = %+v, ran %d cases", res, ran)
+	require.Zero(t, ran, "suite = %+v, ran %d cases", res, ran)
+	require.Empty(t, res.Records, "suite = %+v, ran %d cases", res, ran)
+	_, statErr := os.Stat(filepath.Join(out, RunsFile))
+	require.Error(t, statErr, why)
+}
+
+func assertCaseRun(t *testing.T, r Run, workers int, noDeadlock bool, work, out string) {
+	t.Helper()
+	flags := "%s: workers=%d noDeadlock=%v lncheck=%v"
+	assert.Equal(t, workers, r.Workers, flags, r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal)
+	assert.Equal(t, noDeadlock, r.NoDeadlock, flags, r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal)
+	assert.True(t, r.LnCheckFinal, flags, r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal)
+	assert.Equal(t, []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"}, r.JVM, "%s: JVM = %v", r.Config, r.JVM)
+	where := "%s: dir=%s jar=%s java=%s"
+	assert.Equal(t, work, r.Dir, where, r.Config, r.Dir, r.Jar, r.Java)
+	assert.Equal(t, "/j/tla2tools.jar", r.Jar, where, r.Config, r.Dir, r.Jar, r.Java)
+	assert.Equal(t, "/usr/bin/java", r.Java, where, r.Config, r.Dir, r.Jar, r.Java)
+	priv := "%s: tmp=%s meta=%s are not private under the output"
+	assert.True(t, strings.HasPrefix(r.TmpDir, out), priv, r.Config, r.TmpDir, r.MetaDir)
+	assert.True(t, strings.HasPrefix(r.MetaDir, r.TmpDir), priv, r.Config, r.TmpDir, r.MetaDir)
+	_, err := os.Stat(r.TmpDir)
+	assert.Error(t, err, "%s: the temporary directory was left behind", r.Config)
+}
+
 func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	out := filepath.Join(t.TempDir(), "out")
-	var seen []Run
+	s := openSuite(t)
 	var reported []Record
 	clock := &fakeClock{now: time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC), step: 250 * time.Millisecond}
-	o := suiteOptions(root, cases, out, script(t, &seen), clock)
-	o.OnCase = func(r Record) { reported = append(reported, r) }
-	res, err := RunSuite(o)
+	s.opt.Clock = clock.Now
+	s.opt.OnCase = func(r Record) { reported = append(reported, r) }
+	res, err := RunSuite(s.opt)
 	require.NoError(t, err, "suite = %+v, %v", res, err)
 	require.False(t, res.Failed, "suite = %+v, %v", res, err)
 	require.Empty(t, res.Refused, "suite = %+v, %v", res, err)
 	require.Equal(t, reported, res.Records, "reported %d records, kept %d", len(reported), len(res.Records))
 	require.Len(t, res.Records, 3, "reported %d records, kept %d", len(reported), len(res.Records))
-	src, err := SourceAt(root)
+	src, err := SourceAt(s.root)
 	require.NoError(t, err)
 	fp, files, err := src.Fingerprint("MCA.cfg")
 	require.NoError(t, err)
@@ -103,144 +142,106 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	require.Equal(t, 13, res.Records[2].Exit, "records = %+v", res.Records)
 	require.Equal(t, "PASS", res.Records[1].Result, "records = %+v", res.Records)
 	require.Equal(t, "PASS", res.Records[2].Result, "records = %+v", res.Records)
-
-	// The commands: two workers only for a case expected to pass, the
-	// terminal-stutter models with -deadlock, final liveness checking, and a
-	// private copy of the models as the working directory.
 	wantFlags := []struct {
 		workers    int
 		noDeadlock bool
 	}{{2, false}, {1, true}, {1, false}}
-	for i, r := range seen {
-		if assert.Equal(t, wantFlags[i].workers, r.Workers, "%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal) {
-			if assert.Equal(t, wantFlags[i].noDeadlock, r.NoDeadlock, "%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal) {
-				assert.True(t, r.LnCheckFinal, "%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal)
-			}
-		}
-		assert.Equal(t, []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"}, r.JVM, "%s: JVM = %v", r.Config, r.JVM)
-		if assert.Equal(t, res.Work, r.Dir, "%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java) {
-			if assert.Equal(t, "/j/tla2tools.jar", r.Jar, "%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java) {
-				assert.Equal(t, "/usr/bin/java", r.Java, "%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java)
-			}
-		}
-		if assert.True(t, strings.HasPrefix(r.TmpDir, out), "%s: tmp=%s meta=%s are not private under the output", r.Config, r.TmpDir, r.MetaDir) {
-			assert.True(t, strings.HasPrefix(r.MetaDir, r.TmpDir), "%s: tmp=%s meta=%s are not private under the output", r.Config, r.TmpDir, r.MetaDir)
-		}
-		{
-			_, err := os.Stat(r.TmpDir)
-			assert.Error(t, err, "%s: the temporary directory was left behind", r.Config)
-		}
+	for i, r := range s.seen {
+		assertCaseRun(t, r, wantFlags[i].workers, wantFlags[i].noDeadlock, res.Work, s.out)
 	}
-
-	// TLC's error traces landed in the private copy, never in tla/.
-	m, _ := filepath.Glob(filepath.Join(root, "tla", "*TTrace*"))
+	m, _ := filepath.Glob(filepath.Join(s.root, "tla", "*TTrace*"))
 	assert.Empty(t, m, "the checkout gained %v", m)
 	m, _ = filepath.Glob(filepath.Join(res.Work, "*TTrace*"))
 	assert.NotEmpty(t, m, "no error trace was kept with the private copy")
 	_, err = os.Stat(filepath.Join(res.Work, "CASES.tsv"))
 	assert.Error(t, err, "the plan was copied into the working copy")
-
-	recs, err := ReadRecordsFile(filepath.Join(out, RunsFile))
+	recs, err := ReadRecordsFile(filepath.Join(s.out, RunsFile))
 	require.NoError(t, err, "RUNS.tsv = %v, %v", recs, err)
 	require.Equal(t, recs, res.Records, "RUNS.tsv = %v, %v", recs, err)
-	{
-		raw, err := os.ReadFile(filepath.Join(out, "MCA.cfg.log"))
-		require.NoError(t, err, "the case's log was not kept: %v", err)
-		require.Equal(t, fixture(t, "pass.log"), string(raw), "the case's log was not kept: %v", err)
-	}
+	raw, err := os.ReadFile(filepath.Join(s.out, "MCA.cfg.log"))
+	require.NoError(t, err, "the case's log was not kept: %v", err)
+	require.Equal(t, fixture(t, "pass.log"), string(raw), "the case's log was not kept: %v", err)
 }
 
 func TestRunSuiteFailsACaseThatIsNotWhatItDeclares(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	var seen []Run
-	exec := script(t, &seen)
-	wrong := func(ctx context.Context, r Run, log string) int {
-		code := exec(ctx, r, log)
+	s := openSuite(t)
+	inner := s.opt.Exec
+	s.opt.Exec = func(ctx context.Context, r Run, log string) int {
+		code := inner(ctx, r, log)
 		if r.Config == "MCABroken.cfg" {
-			return 0 // the counterexample was not found: the model passed
+			return 0
 		}
 		return code
 	}
-	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), wrong, testClock(time.Millisecond)))
+	res, err := RunSuite(s.opt)
 	require.NoError(t, err, "suite = %+v, %v", res, err)
 	require.True(t, res.Failed, "suite = %+v, %v", res, err)
-	{
-		got := res.Records[1]
-		require.Equal(t, "FAIL", got.Result, "record = %+v", got)
-		require.Zero(t, got.Exit, "record = %+v", got)
-	}
+	got := res.Records[1]
+	require.Equal(t, "FAIL", got.Result, "record = %+v", got)
+	require.Zero(t, got.Exit, "record = %+v", got)
 	require.Equal(t, "PASS", res.Records[0].Result, "a failing case failed its neighbours")
 	require.Equal(t, "PASS", res.Records[2].Result, "a failing case failed its neighbours")
 }
 
 func TestRunSuiteWritesNothingWhenItsInputsMoveUnderIt(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	out := filepath.Join(t.TempDir(), "o")
-	var seen []Run
-	exec := script(t, &seen)
-	meddle := func(ctx context.Context, r Run, log string) int {
+	s := openSuite(t)
+	inner := s.opt.Exec
+	s.opt.Exec = func(ctx context.Context, r Run, log string) int {
 		if r.Config == "MCABroken.cfg" {
-			_ = os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited while running\n"), 0o644)
+			_ = os.WriteFile(filepath.Join(s.root, "tla", "MCA.tla"), []byte("edited while running\n"), 0o644)
 		}
-		return exec(ctx, r, log)
+		return inner(ctx, r, log)
 	}
-	res, err := RunSuite(suiteOptions(root, cases, out, meddle, testClock(time.Millisecond)))
+	res, err := RunSuite(s.opt)
 	require.NoError(t, err)
 	require.True(t, res.Failed, "suite = %+v", res)
 	require.Equal(t, "model inputs changed during execution", res.Refused, "suite = %+v", res)
-	_, err = os.Stat(filepath.Join(out, RunsFile))
+	_, err = os.Stat(filepath.Join(s.out, RunsFile))
 	require.Error(t, err, "records were written for inputs that changed under the run")
 }
 
 func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	out := filepath.Join(t.TempDir(), "o")
-	var seen []Run
-	// Each reading of the clock is a minute later: the first case starts
-	// inside the budget and ends outside it.
-	o := suiteOptions(root, cases, out, script(t, &seen), testClock(time.Minute))
-	o.Budget = 90 * time.Second
-	res, err := RunSuite(o)
+	s := openSuite(t)
+	s.opt.Clock = testClock(time.Minute).Now
+	s.opt.Budget = 90 * time.Second
+	res, err := RunSuite(s.opt)
 	require.NoError(t, err)
-	require.True(t, res.Failed, "records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
-	require.Less(t, len(res.Records), len(cases), "records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
-	require.Equal(t, len(res.Records), len(seen), "records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
-	recs, err := ReadRecordsFile(filepath.Join(out, RunsFile))
+	require.True(t, res.Failed, "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
+	require.Less(t, len(res.Records), len(s.cases), "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
+	require.Equal(t, len(res.Records), len(s.seen), "records=%d ran=%d failed=%v", len(res.Records), len(s.seen), res.Failed)
+	recs, err := ReadRecordsFile(filepath.Join(s.out, RunsFile))
 	require.NoError(t, err, "the records of the cases that ran were not kept: %v, %v", recs, err)
 	require.Len(t, recs, len(res.Records), "the records of the cases that ran were not kept: %v, %v", recs, err)
 }
 
 func TestRunSuiteNeverStartsACaseAfterTheBudget(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	var seen []Run
-	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Hour))
-	o.Budget = time.Second
-	res, err := RunSuite(o)
-	require.NoError(t, err, "ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
-	require.Zero(t, len(seen), "ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
-	require.True(t, res.Failed, "ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
-	{
-		got := res.Records[0]
-		require.Equal(t, ExitTimeout, got.Exit, "record = %+v", got)
-		require.Equal(t, "FAIL", got.Result, "record = %+v", got)
-		require.Equal(t, "-", got.Generated, "record = %+v", got)
-	}
-	raw, _ := os.ReadFile(filepath.Join(o.Out, "MCA.cfg.log"))
+	s := openSuite(t)
+	s.opt.Clock = testClock(time.Hour).Now
+	s.opt.Budget = time.Second
+	res, err := RunSuite(s.opt)
+	require.NoError(t, err, "ran %d cases, failed=%v, err=%v", len(s.seen), res.Failed, err)
+	require.Empty(t, s.seen, "ran %d cases, failed=%v, err=%v", len(s.seen), res.Failed, err)
+	require.True(t, res.Failed, "ran %d cases, failed=%v, err=%v", len(s.seen), res.Failed, err)
+	got := res.Records[0]
+	require.Equal(t, ExitTimeout, got.Exit, "record = %+v", got)
+	require.Equal(t, "FAIL", got.Result, "record = %+v", got)
+	require.Equal(t, "-", got.Generated, "record = %+v", got)
+	raw, err := os.ReadFile(filepath.Join(s.opt.Out, "MCA.cfg.log"))
+	require.NoError(t, err)
 	require.Contains(t, string(raw), "before starting", "log = %q", raw)
 }
 
 func TestRunSuiteRecordsAManualRun(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	var seen []Run
-	o := suiteOptions(root, cases[:1], filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
-	o.Selection = Selection{Shards: 3, Shard: 0} // the first of three: MCA.cfg
-	o.Manual, o.Budget = true, 1500*time.Millisecond
-	res, err := RunSuite(o)
+	s := openSuite(t)
+	s.opt.Cases = s.cases[:1]
+	s.opt.Selection = Selection{Shards: 3, Shard: 0}
+	s.opt.Manual, s.opt.Budget = true, 1500*time.Millisecond
+	res, err := RunSuite(s.opt)
 	require.NoError(t, err, "records = %+v, %v", res.Records, err)
 	require.Len(t, res.Records, 1, "records = %+v, %v", res.Records, err)
 	require.Equal(t, "manual", res.Records[0].Mode, "records = %+v, %v", res.Records, err)
@@ -249,23 +250,14 @@ func TestRunSuiteRecordsAManualRun(t *testing.T) {
 
 func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	out := filepath.Join(t.TempDir(), "o")
+	s := openSuite(t)
 	ran := 0
-	exec := func(context.Context, Run, string) int { ran++; return 0 }
-	o := suiteOptions(root, cases, out, exec, testClock(time.Millisecond))
-	// TLC would check the edited bytes while the records named the old digest.
-	o.beforeCopy = func() {
-		_ = os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited before the copy\n"), 0o644)
+	s.opt.Exec = func(context.Context, Run, string) int { ran++; return 0 }
+	s.opt.beforeCopy = func() {
+		_ = os.WriteFile(filepath.Join(s.root, "tla", "MCA.tla"), []byte("edited before the copy\n"), 0o644)
 	}
-	res, err := RunSuite(o)
-	require.NoError(t, err)
-	require.True(t, res.Failed, "suite = %+v, ran %d cases", res, ran)
-	require.Equal(t, "model inputs changed while the models were copied", res.Refused, "suite = %+v, ran %d cases", res, ran)
-	require.Zero(t, ran, "suite = %+v, ran %d cases", res, ran)
-	require.Zero(t, len(res.Records), "suite = %+v, ran %d cases", res, ran)
-	_, err = os.Stat(filepath.Join(out, RunsFile))
-	require.Error(t, err, "records were written for models that were not the digest's")
+	res, err := RunSuite(s.opt)
+	refusedRun(t, res, err, ran, s.out, "model inputs changed while the models were copied", "records were written for models that were not the digest's")
 }
 
 func TestACopyOfTheModelsHasTheFingerprintsOfItsSource(t *testing.T) {
@@ -279,39 +271,28 @@ func TestACopyOfTheModelsHasTheFingerprintsOfItsSource(t *testing.T) {
 	require.NoError(t, err)
 	copied := src
 	copied.TLADir = work
-	{
-		got, err := fingerprints(copied, cases)
-		require.NoError(t, err, "copy fingerprints %v (%v), source %v", got, err, want)
-		require.True(t, sameFingerprints(got, want), "copy fingerprints %v (%v), source %v", got, err, want)
-	}
+	got, err := fingerprints(copied, cases)
+	require.NoError(t, err, "copy fingerprints %v (%v), source %v", got, err, want)
+	require.True(t, sameFingerprints(got, want), "copy fingerprints %v (%v), source %v", got, err, want)
 	require.NoError(t, os.WriteFile(filepath.Join(work, "MCA.tla"), []byte("other\n"), 0o644))
-	got, _ := fingerprints(copied, cases)
+	got, _ = fingerprints(copied, cases)
 	require.False(t, sameFingerprints(got, want), "an edited copy has its source's fingerprints")
 }
 
-// The cases are parsed before the digest is taken. A plan edited between the
-// two must not run the old cases under the new digest: the suite refuses, runs
-// nothing and writes no records.
 func TestRunSuiteRefusesACasePlanEditedAfterItWasRead(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
+	s := openSuite(t)
 	edited := header +
 		row("MCA.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "check", "alpha", "required", "-") +
 		row("MCABroken.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "ignore-terminal", "alpha", "required", "-") +
 		row("MCATerm.cfg", "MCA.tla", "temporal", "TermEnds", "check", "alpha", "required", "-")
-	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(edited), 0o644))
-	out := filepath.Join(t.TempDir(), "o")
+	require.NoError(t, os.WriteFile(filepath.Join(s.root, "tla", CasesFile), []byte(edited), 0o644))
 	ran := 0
-	res, err := RunSuite(suiteOptions(root, cases, out, func(context.Context, Run, string) int { ran++; return 0 }, testClock(time.Millisecond)))
-	require.NoError(t, err)
+	s.opt.Exec = func(context.Context, Run, string) int { ran++; return 0 }
+	res, err := RunSuite(s.opt)
 	want := "CASES.tsv changed after the cases were read (MCA.cfg is not as it was)"
-	require.True(t, res.Failed, "suite = %+v, ran %d cases", res, ran)
-	require.Equal(t, want, res.Refused, "suite = %+v, ran %d cases", res, ran)
-	require.Zero(t, ran, "suite = %+v, ran %d cases", res, ran)
-	require.Zero(t, len(res.Records), "suite = %+v, ran %d cases", res, ran)
-	_, err = os.Stat(filepath.Join(out, RunsFile))
-	require.Error(t, err, "records were written for a plan that was not the one read")
-	_, err = os.Stat(filepath.Join(out, workDir))
+	refusedRun(t, res, err, ran, s.out, want, "records were written for a plan that was not the one read")
+	_, err = os.Stat(filepath.Join(s.out, workDir))
 	require.Error(t, err, "the models were copied for a suite that was refused")
 }
 
@@ -333,7 +314,6 @@ func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 	selected, err := Select(all, "alpha", 1, 0)
 	require.NoError(t, err, "selected %v, %v", selected, err)
 	require.Len(t, selected, 2, "selected %v, %v", selected, err)
-	// An edit to a case outside the selection is not a change to the cases run.
 	write(planWith("Another"))
 	var seen []Run
 	o := suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
@@ -345,18 +325,14 @@ func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 	require.Len(t, seen, 2, "suite = %+v, ran %d, %v", res, len(seen), err)
 }
 
-// What runs is the selection of the plan the digest names. A field of a
-// selected case that changed between the load and the run (the deadlock policy
-// is on the command line, the property is what the result is held to) makes the
-// suite refuse; the old fields are never executed.
 func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 	t.Parallel()
-	// alphaTree is the suite tree with MCATerm in its own group, and the alpha
-	// group as a caller reads it: MCA and MCABroken.
-	alphaTree := func() (string, []Case) {
+	alphaTree := func(t *testing.T) (string, []Case) {
+		t.Helper()
 		root, _ := suiteTree(t)
 		planPath := filepath.Join(root, "tla", CasesFile)
-		raw, _ := os.ReadFile(planPath)
+		raw, err := os.ReadFile(planPath)
+		require.NoError(t, err)
 		text := strings.Replace(string(raw), "MCATerm.cfg\tMCA.tla\ttemporal\tTermEnds\tcheck\talpha", "MCATerm.cfg\tMCA.tla\ttemporal\tTermEnds\tcheck\tbeta", 1)
 		require.NoError(t, os.WriteFile(planPath, []byte(text), 0o644))
 		require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "MCB.tla"), []byte("other\n"), 0o644))
@@ -367,82 +343,76 @@ func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 		require.Len(t, alpha, 2, "alpha = %v, %v", alpha, err)
 		return root, alpha
 	}
-	runIn := func(root string, alpha []Case) (Result, []Run, error) {
+	runIn := func(t *testing.T, root string, alpha []Case) (Result, []Run, error) {
+		t.Helper()
 		var seen []Run
 		o := suiteOptions(root, alpha, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
 		o.Selection = Selection{Group: "alpha", Shards: 1}
 		res, err := RunSuite(o)
 		return res, seen, err
 	}
-	// The control: with no edit the same call runs both cases.
-	{
-		res, seen, err := runIn(alphaTree())
-		require.NoError(t, err, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
-		require.False(t, res.Failed, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
-		require.Len(t, seen, 2, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
-	}
-	for name, edit := range map[string]func(string) string{
-		"the command-line field (deadlock policy)": func(p string) string {
+	root, alpha := alphaTree(t)
+	res, seen, err := runIn(t, root, alpha)
+	require.NoError(t, err, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
+	require.False(t, res.Failed, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
+	require.Len(t, seen, 2, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
+	for _, tc := range []struct {
+		name string
+		edit func(string) string
+	}{
+		{"the command-line field (deadlock policy)", func(p string) string {
 			return strings.Replace(p, "ignore-terminal", "check", 1)
-		},
-		"the configuration the result is held to (property)": func(p string) string {
+		}},
+		{"the configuration the result is held to (property)", func(p string) string {
 			return strings.Replace(p, "OnePlacePerTable", "SomethingElse", 1)
-		},
-		"the module the case instantiates": func(p string) string {
+		}},
+		{"the module the case instantiates", func(p string) string {
 			return strings.Replace(p, "MCABroken.cfg\tMCA.tla", "MCABroken.cfg\tMCB.tla", 1)
-		},
-		"a case dropped from the selection's group": func(p string) string {
+		}},
+		{"a case dropped from the selection's group", func(p string) string {
 			return strings.Replace(p, "MCABroken.cfg\tMCA.tla\tinvariant\tOnePlacePerTable\tignore-terminal\talpha", "MCABroken.cfg\tMCA.tla\tinvariant\tOnePlacePerTable\tignore-terminal\tbeta", 1)
-		},
+		}},
 	} {
-		root, alpha := alphaTree()
-		planPath := filepath.Join(root, "tla", CasesFile)
-		raw, _ := os.ReadFile(planPath)
-		edited := edit(string(raw))
-		require.NotEqual(t, string(raw), edited, "%s: the edit changed nothing", name)
-		require.NoError(t, os.WriteFile(planPath, []byte(edited), 0o644))
-		res, seen, err := runIn(root, alpha)
-		if assert.NoError(t, err, "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
-			if assert.True(t, res.Failed, "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
-				if assert.True(t, strings.HasPrefix(res.Refused, "CASES.tsv changed after the cases were read"), "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
-					if assert.Zero(t, len(seen), "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
-						assert.Zero(t, len(res.Records), "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err)
-					}
-				}
-			}
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root, alpha := alphaTree(t)
+			planPath := filepath.Join(root, "tla", CasesFile)
+			raw, err := os.ReadFile(planPath)
+			require.NoError(t, err)
+			edited := tc.edit(string(raw))
+			require.NotEqual(t, string(raw), edited, "%s: the edit changed nothing", tc.name)
+			require.NoError(t, os.WriteFile(planPath, []byte(edited), 0o644))
+			res, seen, err := runIn(t, root, alpha)
+			msg := "%s: suite = %+v, ran %d cases, %v"
+			assert.NoError(t, err, msg, tc.name, res, len(seen), err)
+			assert.True(t, res.Failed, msg, tc.name, res, len(seen), err)
+			assert.True(t, strings.HasPrefix(res.Refused, "CASES.tsv changed after the cases were read"), msg, tc.name, res, len(seen), err)
+			assert.Empty(t, seen, msg, tc.name, res, len(seen), err)
+			assert.Empty(t, res.Records, msg, tc.name, res, len(seen), err)
+		})
 	}
 }
 
-// The cases that run are the digested plan's own: the fields TLC is started
-// with and the fields the result is held to equal the plan's, case by case.
 func TestRunSuiteRunsTheDigestedPlansCases(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	var seen []Run
-	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
-	res, err := RunSuite(o)
-	require.NoError(t, err, "suite = %+v, ran %d, %v", res, len(seen), err)
-	require.False(t, res.Failed, "suite = %+v, ran %d, %v", res, len(seen), err)
-	require.Equal(t, len(cases), len(seen), "suite = %+v, ran %d, %v", res, len(seen), err)
-	plan, err := LoadCases(root)
+	s := openSuite(t)
+	res, err := RunSuite(s.opt)
+	require.NoError(t, err, "suite = %+v, ran %d, %v", res, len(s.seen), err)
+	require.False(t, res.Failed, "suite = %+v, ran %d, %v", res, len(s.seen), err)
+	require.Equal(t, len(s.cases), len(s.seen), "suite = %+v, ran %d, %v", res, len(s.seen), err)
+	plan, err := LoadCases(s.root)
 	require.NoError(t, err)
-	for i, r := range seen {
+	for i, r := range s.seen {
 		c := plan[i]
-		if assert.Equal(t, c.Config, r.Config, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
-			if assert.Equal(t, c.Module, r.Module, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
-				if assert.Equal(t, (c.Deadlock == "ignore-terminal"), r.NoDeadlock, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
-					if assert.Equal(t, c.Expected, res.Records[i].Expected, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
-						assert.Equal(t, c.Property, res.Records[i].Property, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c)
-					}
-				}
-			}
-		}
+		msg := "case %d ran as %+v / %+v, the plan says %+v"
+		assert.Equal(t, c.Config, r.Config, msg, i, r, res.Records[i], c)
+		assert.Equal(t, c.Module, r.Module, msg, i, r, res.Records[i], c)
+		assert.Equal(t, c.Deadlock == "ignore-terminal", r.NoDeadlock, msg, i, r, res.Records[i], c)
+		assert.Equal(t, c.Expected, res.Records[i].Expected, msg, i, r, res.Records[i], c)
+		assert.Equal(t, c.Property, res.Records[i].Property, msg, i, r, res.Records[i], c)
 	}
 }
 
-// A suite holds itself to the inputs of the cases it runs. A model that only
-// another group reads may be edited under it; one of its own may not.
 func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -460,7 +430,8 @@ func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 			})
 			cases, err := LoadCases(root)
 			require.NoError(t, err)
-			chosen, _ := Select(cases, "alpha", 1, 0)
+			chosen, err := Select(cases, "alpha", 1, 0)
+			require.NoError(t, err)
 			exec := func(_ context.Context, r Run, log string) int {
 				_ = os.WriteFile(filepath.Join(root, "tla", tc.edited), []byte("edited while running\n"), 0o644)
 				_ = os.WriteFile(log, []byte(fixture(t, "pass.log")), 0o644)
@@ -476,46 +447,39 @@ func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 	}
 }
 
-// A record names the workers its case ran with (a counterexample case runs with
-// one) and the java version the suite was given; a suite with no java version
-// refuses to run.
 func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 	t.Parallel()
-	root, cases := suiteTree(t)
-	var seen []Run
-	clock := testClock(time.Millisecond)
-	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock))
+	s := openSuite(t)
+	res, err := RunSuite(s.opt)
 	require.NoError(t, err, "%+v, %v", res, err)
 	require.Len(t, res.Records, 3, "%+v, %v", res, err)
 	for i, want := range []int{2, 1, 1} {
-		{
-			r := res.Records[i]
-			if assert.Equal(t, want, r.Workers, "%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want) {
-				if assert.Equal(t, "21.0.12.1", r.JavaVersion, "%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want) {
-					assert.Equal(t, want, seen[i].Workers, "%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want)
-				}
-			}
-		}
+		r := res.Records[i]
+		msg := "%s: workers %d (ran with %d), java %q; want %d workers"
+		assert.Equal(t, want, r.Workers, msg, r.Config, r.Workers, s.seen[i].Workers, r.JavaVersion, want)
+		assert.Equal(t, "21.0.12.1", r.JavaVersion, msg, r.Config, r.Workers, s.seen[i].Workers, r.JavaVersion, want)
+		assert.Equal(t, want, s.seen[i].Workers, msg, r.Config, r.Workers, s.seen[i].Workers, r.JavaVersion, want)
 	}
-	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o2"), script(t, &seen), clock)
-	o.JavaVer = ""
-	_, err = RunSuite(o)
+	missing := openSuite(t)
+	missing.opt.JavaVer = ""
+	_, err = RunSuite(missing.opt)
 	require.ErrorContains(t, err, "no java version", "a suite with no java version")
-	for name, mutate := range map[string]func(*Options){
-		"a machine name": func(o *Options) { o.Platform = "build-host-7.example" },
-		"no platform":    func(o *Options) { o.Platform = "" },
-		"no CPU count":   func(o *Options) { o.CPUs = 0 },
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Options)
+	}{
+		{"a machine name", func(o *Options) { o.Platform = "build-host-7.example" }},
+		{"no platform", func(o *Options) { o.Platform = "" }},
+		{"no CPU count", func(o *Options) { o.CPUs = 0 }},
 	} {
-		o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o3"), script(t, &seen), clock)
-		mutate(&o)
-		{
-			_, err := RunSuite(o)
-			if assert.Error(t, err, "%s: %v", name, err) {
-				assert.Contains(t, err.Error(), "no platform label and CPU count", "%s: %v", name, err)
-			}
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bad := openSuite(t)
+			tc.mutate(&bad.opt)
+			_, err := RunSuite(bad.opt)
+			assert.ErrorContains(t, err, "no platform label and CPU count", "%s: %v", tc.name, err)
+		})
 	}
-	if assert.Equal(t, "linux-amd64", res.Records[0].Host, "record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs) {
-		assert.Equal(t, 8, res.Records[0].CPUs, "record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs)
-	}
+	assert.Equal(t, "linux-amd64", res.Records[0].Host, "record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs)
+	assert.Equal(t, 8, res.Records[0].CPUs, "record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs)
 }

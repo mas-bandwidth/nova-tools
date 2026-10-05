@@ -51,19 +51,13 @@ func TestFindHelperUsesTheOverrideThenPATH(t *testing.T) {
 	require.NoError(t, os.WriteFile(override, nil, 0o755))
 	onPath := func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	offPath := func(string) (string, error) { return "", errors.New("not found") }
-	{
-		got, err := FindHelper("java", override, offPath)
-		if assert.NoError(t, err, "override: %q, %v", got, err) {
-			assert.Equal(t, override, got, "override: %q, %v", got, err)
-		}
-	}
-	{
-		got, err := FindHelper("java", "", onPath)
-		if assert.NoError(t, err, "PATH: %q, %v", got, err) {
-			assert.Equal(t, "/usr/bin/java", got, "PATH: %q, %v", got, err)
-		}
-	}
-	_, err := FindHelper("java", "", offPath)
+	got, err := FindHelper("java", override, offPath)
+	assert.NoError(t, err, "override: %q, %v", got, err)
+	assert.Equal(t, override, got, "override: %q, %v", got, err)
+	got, err = FindHelper("java", "", onPath)
+	assert.NoError(t, err, "PATH: %q, %v", got, err)
+	assert.Equal(t, "/usr/bin/java", got, "PATH: %q, %v", got, err)
+	_, err = FindHelper("java", "", offPath)
 	assert.ErrorContains(t, err, "java is not on PATH", "absent")
 	_, err = FindHelper("java", filepath.Join(r.root, "gone"), onPath)
 	assert.Error(t, err, "a missing override fell back to PATH")
@@ -81,11 +75,9 @@ func TestJavaVersionReadsTheQuotedTokenOfTheVersionLine(t *testing.T) {
 		"  openjdk version \"17\" 2021-09-14\n":                                                                                   "17",
 	}
 	for out, want := range ok {
-		{
-			got, err := JavaVersion(out)
-			if assert.NoError(t, err, "%q: %q, %v; want %q", out, got, err, want) {
-				assert.Equal(t, want, got, "%q: %q, %v; want %q", out, got, err, want)
-			}
+		got, err := JavaVersion(out)
+		if assert.NoError(t, err, "%q: %q, %v; want %q", out, got, err, want) {
+			assert.Equal(t, want, got, "%q: %q, %v; want %q", out, got, err, want)
 		}
 	}
 	for _, out := range []string{"", "no version here\n", "openjdk version \"\"\n", "openjdk version \"21 x\"\n", "Picked up JAVA_TOOL_OPTIONS: -Dfoo=version \"evil\"\n", "NOTE: Picked up JDK_JAVA_OPTIONS: --version \"x\"\n", "openjdk version \"-\"\n", "openjdk version \"21,0\"\n", "java version \"x21\"\n", "openjdk version 21\nsecond \"22\"\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nno version line\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nopenjdk version \"\"\n"} {

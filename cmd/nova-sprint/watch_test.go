@@ -76,7 +76,7 @@ func whereFixture(t *testing.T) *testApp {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1,m2")
 	ta.ok("add --stream s1 --count 3")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.ok("drop s2-1 --reason obsolete")
 	ta.ok("start")
 	ta.ok("tick")
@@ -135,7 +135,7 @@ func TestWhereFrameIsTheGolden(t *testing.T) {
 	ta := whereFixture(t)
 	golden(t, "where_frame.golden", ta.ok("where"))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 { // the cursor hidden, then the frame
@@ -219,7 +219,7 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 		assert.Equal(t, "", strings.TrimSpace(strings.Split(lines[2], " | ")[0]), "table %s: the summary row is unlabelled: %q", name, lines[2])
 	}
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("add --stream s2 --count 1")
+	ta.ok("add --stream s2 --count 1 --one")
 	ta.ok("drop s2-1 --reason obsolete")
 	frame := ta.ok("where --all")
 	for _, name := range []string{"work", "readers", "merge", "fleet"} {
@@ -234,7 +234,7 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 
 	// the readers come, and a card comes to s2
 	ta.ok("reader add reader-a reader-b")
-	ta.ok("add --stream s2 s2-2")
+	ta.ok("add --stream s2 s2-2 --one")
 	frame = ta.ok("where --all")
 	assert.Equal(t, allRow, strings.Join(rowsOf(tableOf(frame, "readers")), ","), "readers rows, %s alone:\n%s", allRow, frame)
 	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, ta.readerRows(), "where --json keeps each reader's row")
@@ -274,7 +274,7 @@ func (ta *testApp) mergeRows() []string {
 func TestWatchDrawsEachFrameInPlaceWithOneWrite(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 3 { // the cursor hidden, then two frames
@@ -332,7 +332,7 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 	t.Run("cancelled while it sleeps", func(t *testing.T) {
 		t.Parallel()
 		ta := whereFixture(t)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		ta.a.sleep = func(time.Duration) { cancel() }
 		screen := &writeLog{}
@@ -349,7 +349,7 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 	t.Run("cancelled before it starts", func(t *testing.T) {
 		t.Parallel()
 		ta := whereFixture(t)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		screen := &writeLog{}
 		var errb bytes.Buffer
@@ -393,7 +393,7 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 func TestWatchJSONIsOneObjectAFrameAndNoEscape(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 {
@@ -456,7 +456,7 @@ func TestPauseSleepsInStepsAndStopsWhenCancelled(t *testing.T) {
 	a.sleep = func(d time.Duration) { slept = append(slept, d) }
 	require.True(t, a.pause(context.Background(), 250*time.Millisecond), "a pause nothing interrupted says the watch is over")
 	require.Equal(t, []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 50 * time.Millisecond}, slept, "slept")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	a.sleep = func(time.Duration) { cancel() }
 	slept = nil
 	require.False(t, a.pause(ctx, time.Hour), "a cancelled pause says the watch goes on")
@@ -533,7 +533,7 @@ func TestWhereWatchDrawsOnlyTheLinesThatFitTheScreen(t *testing.T) {
 	rows := 10
 	var asked []io.Writer
 	ta.a.screen = func(w io.Writer) (int, int) { asked = append(asked, w); return rows, 0 }
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		switch n {
@@ -594,7 +594,7 @@ func TestWhereWatchCutsItsLinesToTheWidthOfTheScreen(t *testing.T) {
 	plain := plainLines(ta.ok("where"))
 	const cols = 24
 	ta.a.screen = func(io.Writer) (int, int) { return 0, cols }
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 {
@@ -631,7 +631,7 @@ func TestWatchWritesAFrameOverFourKiBInOneWrite(t *testing.T) {
 	}
 	ta.ok("add --stream " + strings.Join(streams, ",") + " --count 2")
 	plain := ta.ok("where")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	screen := &writeLog{after: func(n int, _ string) {
 		if n == 2 {
@@ -788,7 +788,7 @@ func TestAnInterruptThatCutsAReadShortEndsTheWatchWithExitZero(t *testing.T) {
 			require.True(t, strings.HasPrefix(w[1], "\x1b[H"), "the cursor hidden, the one frame, the cursor restored: %q", w)
 			require.Equal(t, "\x1b[?25h", w[2], "the cursor hidden, the one frame, the cursor restored: %q", w)
 			assert.True(t, cut.sawDone, "the read the interrupt arrived in was not made in the command's context: the interrupt cannot cut it short")
-			if assert.True(t, cut.dialCtx != nil, "the store was opened in a context the interrupt does not end") {
+			if assert.NotNil(t, cut.dialCtx, "the store was opened in a context the interrupt does not end") {
 				assert.Error(t, cut.dialCtx.Err(), "the store was opened in a context the interrupt does not end")
 			}
 		})

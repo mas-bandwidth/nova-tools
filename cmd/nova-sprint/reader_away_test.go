@@ -49,7 +49,7 @@ func (ta *testApp) readerRows() []string {
 // STOPPED (the ask is the coordinator's by hand).
 func (ta *testApp) inReview(n int) {
 	ta.t.Helper()
-	ta.ok(fmt.Sprintf("add --stream s1 --count %d --brief-file %s", n, proBriefFile(ta.t))) // pro: two readers each
+	ta.ok(fmt.Sprintf("add --stream s1 --count %d --one --brief-file %s", n, proBriefFile(ta.t))) // pro: two readers each
 	ta.deal(n)
 	ta.ok(fmt.Sprintf("take --as m1 --limit %d", n))
 	var words []string

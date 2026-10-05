@@ -120,14 +120,15 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 	return foldOpenCodeRows(rows)
 }
 
-// LiveSampleLimit is what ONE live sample is given, whatever the interval (SPEC-SWARM rule
-// 13d): "a read is given 5 seconds whatever the interval, no sample starts while one is
+// LiveSampleLimit is the least ONE live sample is given, whatever the interval (SPEC-SWARM
+// rule 13d): "a read is given 5 seconds whatever the interval, no sample starts while one is
 // unanswered, a read still unanswered at its limit is abandoned and counted as a failed
-// read". It is a fixed number rather than a function of the interval because at a short
-// interval three slow reads would end an honest card `budget-unverifiable`.
+// read". The sampler raises it against the slowest read that answered (nova-swarm's
+// liveSampler.readLimit), and never relates it to the interval: at a short interval slow
+// reads would be counted as failures.
 const LiveSampleLimit = 5 * time.Second
 
-// ReadJobUsageLive is rule 13d's LIVE sample: the same statement readOpenCodeUsage runs,
+// ReadJobUsageLiveWithin is rule 13d's LIVE sample: the same statement readOpenCodeUsage runs,
 // against the same database at the same two spellings, and different from it in exactly two
 // ways that the rule names.
 //
@@ -137,14 +138,14 @@ const LiveSampleLimit = 5 * time.Second
 // read, made when the harness is gone." A live sample that waited for a checkpoint would
 // wait on a writer that is still running and has no reason to close its connection.
 //
-// AND IT IS BOUNDED BY LiveSampleLimit, not by the tool's 20-second query timeout: a sample
+// AND IT IS BOUNDED BY the caller's limit (LiveSampleLimit is the least a sampler gives), not by the tool's 20-second query timeout: a sample
 // that hung for twenty seconds would be a sample that cannot run at a five-second interval.
 //
 // A DATABASE THAT IS NOT THERE IS NOT AN ERROR, exactly as in the final read: it is the
 // harness having reported nothing yet, which is an absence and not a failure. The three
 // cases rule 13d keeps apart -- nothing observed, a partial observation, a read that FAILS
 // -- are the caller's to tell apart, and this function's error is the third of them.
-func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
+func ReadJobUsageLiveWithin(dataHome string, limit time.Duration) (ProviderUsage, error) {
 	path, err := findOpenCodeStore(dataHome)
 	if err != nil {
 		return ProviderUsage{}, err
@@ -156,7 +157,7 @@ func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
 			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}
-	rows, err := queryOpenCode(path, LiveSampleLimit)
+	rows, err := queryOpenCode(path, limit)
 	if err != nil {
 		return ProviderUsage{}, err
 	}

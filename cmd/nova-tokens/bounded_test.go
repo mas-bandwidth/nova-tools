@@ -159,11 +159,11 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	}
 	{
 		n := len(lines(all))
-		assert.False(t, n > 160, "%d lines at the largest plausible state, want at most 160", n)
+		assert.LessOrEqual(t, n, 160, "%d lines at the largest plausible state, want at most 160", n)
 	}
 	{
 		n := ownBytes(all, tmp)
-		assert.False(t, n > 28*1024, "%d bytes at the largest plausible state, want under 28 KB", n)
+		assert.LessOrEqual(t, n, 28*1024, "%d bytes at the largest plausible state, want under 28 KB", n)
 	}
 	// The counts are the truth about the STATE, never about the output.
 	fail := lineWith(r.stderr, "TOKENS FAILED")
@@ -204,11 +204,11 @@ func TestSourcesIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	assert.Equal(t, 2, more, "%d MORE lines, want 2", more)
 	{
 		n := len(lines(all))
-		assert.False(t, n > 53, "%d lines, want at most 53", n)
+		assert.LessOrEqual(t, n, 53, "%d lines, want at most 53", n)
 	}
 	{
 		n := ownBytes(all, tmp)
-		assert.False(t, n > 8*1024, "%d bytes, want under 8 KB", n)
+		assert.LessOrEqual(t, n, 8*1024, "%d bytes, want under 8 KB", n)
 	}
 	t.Logf("measured: %d lines, %d bytes", len(lines(all)), ownBytes(all, tmp))
 }
@@ -245,11 +245,11 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	assert.Equal(t, 3, more, "%d MORE lines, want 3", more)
 	{
 		n := len(lines(all))
-		assert.False(t, n > 64, "%d lines, want at most 64", n)
+		assert.LessOrEqual(t, n, 64, "%d lines, want at most 64", n)
 	}
 	{
 		n := ownBytes(all, dir)
-		assert.False(t, n > 8*1024, "%d bytes, want under 8 KB", n)
+		assert.LessOrEqual(t, n, 8*1024, "%d bytes, want under 8 KB", n)
 	}
 	count := lineWith(r.stderr, "CHECK FAILED files=")
 	wantContains(t, count, "bad=25")
@@ -291,11 +291,11 @@ func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	assert.Equal(t, 2, more, "%d MORE lines, want 2", more)
 	{
 		n := len(lines(all))
-		assert.False(t, n > 45, "%d lines, want at most 45", n)
+		assert.LessOrEqual(t, n, 45, "%d lines, want at most 45", n)
 	}
 	{
 		n := ownBytes(all, dir)
-		assert.False(t, n > 10*1024, "%d bytes, want under 10 KB", n)
+		assert.LessOrEqual(t, n, 10*1024, "%d bytes, want under 10 KB", n)
 	}
 	wantContains(t, lineWith(r.stdout, "SUM OK"), "pairs=210")
 	wantContains(t, lineWith(r.stdout, "SUM MONTH"), "turns=3000")
@@ -333,7 +333,7 @@ func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
 	wantNotContains(t, r.stdout, "MORE")
 	{
 		n := len(r.stdout)
-		assert.False(t, n > 64*1024, "%d bytes, want under 64 KB", n)
+		assert.LessOrEqual(t, n, 64*1024, "%d bytes, want under 64 KB", n)
 	}
 	{
 		n := len(lines(r.stderr))

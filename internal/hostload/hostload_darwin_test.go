@@ -33,7 +33,7 @@ func TestVMLoadavg(t *testing.T) {
 	require.True(t, near(v, 17.36), "load1 = %v %v, want 17.36", v, ok)
 	v, ok = ParseVMLoadavg(vmLoadavg(2048, 1.5))
 	require.True(t, ok, "load1 = %v %v, want 1.5", v, ok)
-	require.True(t, v == 1.5, "load1 = %v %v, want 1.5", v, ok)
+	require.Equal(t, 1.5, v, "load1 = %v %v, want 1.5", v, ok)
 	_, ok = ParseVMLoadavg(nil)
 	require.False(t, ok, "an empty reply has no scale and must not report")
 	_, ok = ParseVMLoadavg(make([]byte, 25))
@@ -47,7 +47,7 @@ func TestIostatSecond(t *testing.T) {
 	out := "      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n  3  6 90  8.18 8.05 7.81\n"
 	pct, ok := ParseIostat(out)
 	require.True(t, ok, "iostat busy = %v %v, want 10", pct, ok)
-	require.True(t, pct == 10, "iostat busy = %v %v, want 10", pct, ok)
+	require.Equal(t, float64(10), pct, "iostat busy = %v %v, want 10", pct, ok)
 	_, ok = ParseIostat("      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n")
 	require.False(t, ok, "the since-boot line alone is not a second")
 	_, ok = ParseIostat("")
@@ -62,16 +62,16 @@ func TestIostatIdleOneHundred(t *testing.T) {
 	head := "      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n"
 	pct, ok := ParseIostat(head + "  0  0100  8.18 8.05 7.81\n")
 	require.True(t, ok, "idle 100 = %v %v, want 0", pct, ok)
-	require.True(t, pct == 0, "idle 100 = %v %v, want 0", pct, ok)
+	require.Equal(t, float64(0), pct, "idle 100 = %v %v, want 0", pct, ok)
 	pct, ok = ParseIostat(head + "  0  1 99  8.18 8.05 7.81\n")
 	require.True(t, ok, "idle 99 = %v %v, want 1", pct, ok)
-	require.True(t, pct == 1, "idle 99 = %v %v, want 1", pct, ok)
+	require.Equal(t, float64(1), pct, "idle 99 = %v %v, want 1", pct, ok)
 	pct, ok = ParseIostat(head + "100  0  0  8.18 8.05 7.81\n")
 	require.True(t, ok, "idle 0 = %v %v, want 100", pct, ok)
-	require.True(t, pct == 100, "idle 0 = %v %v, want 100", pct, ok)
+	require.Equal(t, float64(100), pct, "idle 0 = %v %v, want 100", pct, ok)
 	pct, ok = ParseIostat("12 20 68 8.18\n3 6 90 8.18\n")
 	require.True(t, ok, "a row split on spaces = %v %v, want 10", pct, ok)
-	require.True(t, pct == 10, "a row split on spaces = %v %v, want 10", pct, ok)
+	require.Equal(t, float64(10), pct, "a row split on spaces = %v %v, want 10", pct, ok)
 }
 
 // Both spaced and packed columns preserve the entire idle value. The spaced

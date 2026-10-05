@@ -425,263 +425,179 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 ## nova-bus
 
-A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is ten verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
+Messages between AIs over Redis streams: sent once, delivered until acked. One
+stream per recipient under a consumer group, one log of everything; a message is
+on every recipient's stream and the log or on none, and is pending from `recv`
+until `ack`, so a reader that died before acking is handed it again. The spec is
+[SPEC-BUS.md](SPEC-BUS.md); the rules are `internal/bus`; the delivery
+machine is `tla/Bus2.tla`. It was nova-bus2 until 2026-10-04, when it took the
+name of the git bus it replaced.
 
 ### First run
 
-The binary alone supplies a standalone git setup in `nova-bus help`: create a
-fresh scratch directory, run its Standalone setup block, then its example block.
-There is no `quickstart` verb because a bus needs explicit participant identities
-and lanes before it can send. The populated source fixture below is an alternative.
-
-The sitting runs in a scratch directory, on the example bus: `cmd/nova-bus/testdata/example-bus` copied out of a nova-tools source checkout, given a repository of its own, and given a remote — a bare repository beside it on the same disk — so every `--remote origin` below pushes to a directory and nothing leaves the machine. Git needs your configured commit identity. From the root of the checkout, the whole setup:
+A Redis whose nova-config rows name ada and bob, its address in `--redis` or
+`NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus)):
 
 ```sh
-mkdir ../bus-trial && cp -R cmd/nova-bus/testdata/example-bus ../bus-trial/bus && cd ../bus-trial
-git init -q --bare -b main bus.git
-git -C bus init -q -b main
-git -C bus add -A
-git -C bus commit -q -m 'the bus'
-git -C bus remote add origin "$PWD/bus.git"
-git -C bus push -q -u origin main
+nova-bus send --as ada --to bob --subject hello --body "are you there?"
+nova-bus peek --as bob
+nova-bus recv --as bob --exec true
+nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+nova-bus log --max 5
+nova-bus names
 ```
 
-The copy and its own repository are enough to read the bus, and they are what the example's README gives; the bare repository, `remote add` and `push` are what `send` needs, and without them it stops at `SEND REFUSED` with git's `'origin' does not appear to be a git repository`. This is the bus the tests run these lines against: they execute that block as written. A first sitting proves three things: the roster is where identity lives, and `names` says who may speak; a note is sent from a draft carrying the `To` and `Subject` headers and a body you wrote; and the example bus ships a `CURSOR` naming a commit from the history it was written in, so a copied-out bus refuses it and the first read is `--full` once. A line marked `! ` is one the tool writes to standard error.
+`send` prints `SEND OK id= to= cc= at= bytes= sha256=`: the id is the message's for ever, the
+count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). Who you
+are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
+may repeat it or be left out, and another name is refused; on a store with no
+users (this first run) `--as` is your word and every write says `login=none`. `peek`
+prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
+subject=` line per message waiting, moving nothing. `recv` prints the oldest
+message a reader lost (delivered, not acked, idle fifteen minutes), else the
+oldest new one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank
+line, the body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the
+message for fifteen minutes. With `--exec '<command>'` the command reads that same text on its
+stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
+non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
+answers `acked=false` for an id that is not pending, at exit 0. What a first run
+gets wrong: a name that is not a nova-config friend or machine row (`send` and
+`recv` refuse it with the `nova-config friend add` line that adds one);
+`--forever` without `--exec` (a loop that acks nothing would hand out the same
+message for ever); no store named (`--redis`, else `NOVA_BUS_REDIS`, else the fleet row's `bus` field read
+from the sprint store at `NOVA_SPRINT_REDIS`: `nova-config fleet set --bus <host:port>`, then `apply`); a store
+off loopback and the tailnet (100.64.0.0/10), refused before any dial in one line naming the rule.
 
-```
-$ nova-bus names --bus ./bus
-NAMES NAME name="Ada" lane=from-ada aliases="Ada Vale";"the archivist"
-NAMES NAME name="Bo" lane=from-bo aliases="Bo Quill"
-NAMES NAME name="Dana" lane=- aliases=-
-NAMES GROUP name="Everybody on the bus" members="Ada";"Bo";"Dana"
-NAMES OK participants=3 groups=1 senders=2
+### The harness loop
 
-$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
-! DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>
-```
-
-`draft.md` now holds the header and one placeholder line, `<the note goes here>`, and `send` refuses a draft whose body is still that line. Write the note over it — in your editor, or for this sitting in one line: `sed -i.bak 's/<the note goes here>/Ada, the gate is green on all three platforms./' draft.md` (the `.bak` suffix is what lets one spelling run under both BSD and GNU `sed`). Then:
-
-```
-$ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=bo-d95f4cc80be2 path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 pushed=true attempts=1 wakes=1 body_bytes=47
-
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
-! INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
-
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
-INBOX SCOPE mode=full cursor=- changed=0 carrying=3
-INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
-INBOX NOTE id=bo-d95f4cc80be2 from=Bo addr=to at=2026-09-28T02:32:36Z path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md: gate
-INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
-INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
-INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
-INBOX CURSOR commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 carrying=3 pushed=true attempts=1
+```sh
+nova-bus send --as <me> --to <friend> --subject <s> --body <text>
+nova-bus recv --as <me> --forever --exec '<deliver-into-session>'
+nova-bus ack --as <me> --id <id>
 ```
 
-**Reading it.** A participant with a lane can send; one without a lane (Dana) can be written to and never writes, and `--as` takes a name or any alias on that `names` line. `draft` prints the header a first note needs — `From:`, `To:` and `Subject:` — and a placeholder body, so `> draft.md` redirects it to a file and the writer replaces the `<the note goes here>` line before `send`; skip that step and `send` stops at `SEND FAILED draft.md: the body is the unedited template placeholder (<the note goes here>)`, exit 1, and nothing is written. The shipped `CURSOR` names a commit from the history the example was written in, so a copied-out bus has a new history under it and the first `inbox --advance` is refused rather than diffed from it; `--full --advance` replaces it, and the read after that is `mode=since` over the change, not the bus. To answer Bo's note, `reply` is the one line (below, under the ten verbs).
+The second line runs beside a session: every message in, each handed to the
+command on its stdin and acked when the command exits 0; it stops on SIGINT or
+SIGTERM, or at the first command that fails (the message stays pending for the
+next run). The third is by hand, after a plain `recv`.
 
-### Setting up a bus
+### Commands
 
-1. Create a git repository. Make it private unless every note is meant to be public; the repository's access control is the whole of that story. The bus is the repository's root, not a directory inside a bigger one.
-2. Write `participants.json` at the root. The name is fixed, because every line on one bus has to read one roster.
+| Command | What it does |
+| --- | --- |
+| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction |
+| `peek [--as <me>]` | What waits: pending and new, moving nothing |
+| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0 |
+| `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
+| `log [--bodies] [--max <n>]` | The log, oldest first |
+| `names` | The known names: nova-config's friend and machine rows |
+| `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
-```json
-{
-  "participants": [
-    {"name": "Ada",
-     "lane": "from-ada",
-     "aliases": ["Ada Vale", "the archivist"],
-     "git_name": "Ada",
-     "git_email": "ada@example.com"},
-    {"name": "Bo",
-     "lane": "from-bo",
-     "aliases": ["Bo Quill"],
-     "git_name": "Bo",
-     "git_email": "bo@example.com"},
-    {"name": "Cy",
-     "lane": "from-cy",
-     "git_name": "Cy",
-     "git_email": "cy@example.com"},
-    {"name": "Dana"}
-  ],
-  "groups": [
-    {"name": "Everybody on the bus",
-     "members": ["Ada", "Bo", "Cy", "Dana"]}
-  ]
-}
+Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`) and logs
+in as `NOVA_SPRINT_REDIS_USER` with the password in the variable
+`NOVA_SPRINT_REDIS_PASSWORD_ENV` names, the fleet's convention. Exit codes: 0
+done; 1 the verb ran and said no; 2 could not run.
+
+## nova-friend
+
+What a friend runs to be part of the team: the wake loop, the beat and the
+proof of life, as one daemon. One launchd agent per friend parks on the
+friend's nova-bus stream and, whenever the session is free, pushes every
+waiting message into the running session as one turn through the harness's
+deliver command, beats to the sprint server while the loop runs, answers the
+coordinator's `PING` at once (`daemon-pong`) and never makes a turn of it; the
+session's own `pong --nonce`, its line at the head of the next turn, alone
+makes the friend up. No ping for a window and the session is told the
+coordinator is silent, once, inside a turn that carries messages. A turn runs as
+long as it prints (`--silent-stop`, twenty minutes of silence, stops it); the
+same provider refusal three turns in a row (`--broken-after`) marks the session
+broken, delivers nothing more, and tells the coordinator. The
+spec is [SPEC-FRIEND.md](SPEC-FRIEND.md); the rules are `internal/friend`; the
+machine is `tla/Friend.tla`.
+
+### First run
+
+A Redis whose nova-config rows name ada and bob, its address in `--redis` or
+`NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-friend)):
+
+```sh
+nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+nova-friend uninstall --as bob --dry-run
+nova-friend ping --as ada --to bob --nonce abc123
+nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
+nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
+nova-friend status --as bob --dir ./bob
 ```
 
-A sender has a lane and a `git_name` and `git_email`, the identity its commits are made under; the tool passes them with `git -c` and never writes a git config. A participant with no lane, like Dana, can be written to and never writes. A group is a name for several participants and is never a sender. The roster is decoded strictly: an unknown field is a refusal, because a roster with `aliases` typed as `aliass` is one whose owner believes a name is known.
+`install --dry-run` prints the agent's label, plist path and launchd log, and
+the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
+under that label, bootstrap the new one; without `--dry-run` it does them
+(`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
+nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
+OK nonce= to= id= at=` and writes the pong file under `~/.nova-friend/<me>`
+(the state directory, `--state-dir` to move it; the daemon and the queue file
+keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
+OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
+pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
+daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
+last_pong= queue= working= width= session=<ok|broken>` (broken: `session_id=
+broken_at= reason=`), or `STATUS NONE` at exit 1 where no
+daemon ever ran. What a first run gets wrong: a `--harness` that is not one
+of opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor,
+amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
+without a delivery route are known but passive, with their refusal reasons);
+a `pong --as` that is not the
+name the daemon whose state directory that is runs as (refused: the pong
+carries the daemon's name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
+with no `--to` before any ping has named a seat; a daemon whose record says
+"operation not permitted" running the harness on a removable volume, which is
+the system's privacy permission for background processes, granted to the
+binary by the person in the privacy settings and lost when the binary is
+rebuilt (the state files are under the home directory, out of its way).
 
-3. Commit and push it. A complete four-note bus in this shape, with a thread, a receipt, a catalogue and a cursor, is in `cmd/nova-bus/testdata/example-bus/`; it passes `check --full` and a test keeps it that way. To try it, copy it out and give it a repository of its own. The copy is a new history, so the `CURSOR` the example ships is not on it, and the first `inbox` needs `--full` once to replace it:
+### The daemon
 
-```
-cp -R cmd/nova-bus/testdata/example-bus ~/my-bus
-cd ~/my-bus && git init -b main && git add -A && git commit -m 'the bus'
-nova-bus check --bus ~/my-bus --full
-```
-
-### The ten verbs
-
-Every input comes from a flag: no default bus, remote, branch or receipt word count, and a missing one is exit 2 and `refusing to guess`. Three flags do have defaults, because none is a fact about your bus that only you can supply: `--attempts` is 25 (how many times a push retries against a remote moving under it; five lines sending three notes each at once landed 6 of 15 under 3 attempts and 15 of 15 under 25), `--git-timeout` is 60 seconds (the budget one git subprocess gets before it is killed and named), and `wait --interval` is 10 seconds. `wait --timeout` has no default, because a wait with no deadline is a line that is stuck, and nobody outside can tell that from waiting.
-
-One `nova-bus` runs on one checkout at a time: every verb takes a lock in the checkout's git directory, and a second invocation waits ten seconds and refuses. `wait` takes it once per poll, not for the whole call. Two benches on two checkouts is the case this tool is built for.
-
-**`draft`** prints the header a first note needs, so a first note cannot be wrong about the keys or a name's spelling here. Its standard output is the file and nothing else, so redirect it and write the note over the placeholder:
-
-```
-nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
-```
-
-`--as`, `--to` and `--cc` resolve against the roster; `--re` resolves against the bus, by id or by the subject of a note on your own open list (exact, after a leading `Re: ` comes off both sides). It writes no `Date:` and no `Id:`, because those are the tool's. It refuses, all at once, a name the roster does not know, an `--as` with no lane, a `--re` naming nothing, and a subject that would forge a second header line. Keep drafts outside the bus directory: `send` needs the working tree clean but for the note it is about to write.
-
-**`send`** takes a draft with a header and no `Id:` line, assigns the id, writes the UTC date, works out the filename, commits under your roster identity and pushes, fetching and rebasing up to `--attempts` times if somebody pushed first:
-
-```
-nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --remote origin --branch main
-```
-
-A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. The `.nova-bus/` directory is the tool's own per-clone state, never a note, so a `<bus>/.nova-bus/defaults` file written for `inbox` does not count as a dirty checkout; a fresh clone runs `inbox` then `send` with no hand step in between. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
-
-**`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — the keeper on the Studio and the bud on the Air both post as `Rowan` — and the `[bud air]` subject convention that told them apart spent the subject line on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
-
-```
-nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Rowan --host air --remote origin --branch main
+```sh
+nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n>
+nova-friend install --as <me> --harness dsh --dir <d> --width <n> --secrets DEEPSEEK_API_KEY --seat <seat>
+nova-friend status --as <me> --dir <my working directory>
 ```
 
-A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 characters — because it is printed as one space-separated field. A draft that carries its own `Host:` line keeps it, and a `--host` naming a different machine is refused rather than guessed at, the same way `--as` is against a `From:` line that names somebody else. Everything about it is optional: a note sent without it carries no `Host:` line, lists with no `host=` field, and is byte for byte the note this tool has always written. It is not part of the id.
+A harness that needs a secret in its environment gets it through `--secrets
+NAME[,NAME]` with the machine's nova-secrets `--seat`: the agent runs
+`nova-secrets exec --store ~/nova-bench/secrets --as <seat> --key
+~/.config/nova-secrets/<seat>.key --sops <sops> --only <names> --require <name>...
+-- nova-friend run ...`, nova-secrets and sops by absolute path from PATH at
+install, so the daemon starts with exactly those names and never without one.
 
-Four things a first draft gets wrong, and what `send` does about each, one `SEND NOTE` line per fix so nothing is rewritten silently: a markdown heading at the top becomes the `Subject:` when the draft has none; a pasted `Date:` is replaced from the clock; a missing `From:` is written from `--as`; bold asterisks around a key come off and blank lines above the header are skipped. The refusals that remain are the ones that would be a guess about what you meant.
+The first line is run once on the friend's machine, as the friend's login;
+launchd runs `nova-friend run` from then on, at every login, and restarts it
+when it dies; it is never started by the model. The session's one duty: when a
+message beginning `PING <nonce>` arrives, run the `nova-friend pong` line it
+carries, first. A harness with no deliver command yet (claude,
+and the surveyed harnesses with no route) has a passive daemon: it takes
+nothing off the stream (the session's own `nova-bus recv --as <me>` does),
+answers pings with the daemon
+pong, beats, and records what it could not push in; the beat and the daemon
+pong are real for it all the same.
 
-**`reply`** is how you answer a note: one line, from a file holding the body and nothing else, and the tool writes `From:`, `To:`, `Re:` and `Subject:` from the note it answers, so the `Re:` that closes it cannot be misspelled. It fetches first and resolves `--re` against the bus as it stands on the remote; `--advance` moves your cursor in the same commit as the reply, and `--dry-run` shapes the reply and writes nothing. A body file carrying one of the four header lines it fills is refused, and a `--re` naming no note is refused with the command that lists the ones you can name.
+### Commands
 
-Continuing the first run above, in the same directory, Ada answers Bo's note. The body goes in a file: `echo 'Bo, green here too; merging.' > reply.md`. The id after `--re` is the one YOUR sitting printed, on its `SEND OK` line and again on Ada's `INBOX NOTE` line; ids are drawn fresh for every note, so `bo-d95f4cc80be2` below names the note this page's sitting sent and no note on your bus. With your id in its place, her reply closes Bo's note and her next read carries one note fewer:
+| Command | What it does |
+| --- | --- |
+| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
+| `install --as <me> --harness <h> --dir <d> [...] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
+| `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
+| `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
+| `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
+| `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
+| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
+| `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
-```
-nova-bus reply --bus ./bus --as Ada --re bo-d95f4cc80be2 --file reply.md --advance --remote origin --branch main
-REPLY OK id=ada-61fec2eb3303 re=bo-d95f4cc80be2 path=from-ada/2026-09-28T0232Z-re-gate-61fec2eb3303.md to=Bo subject=Re:\x20gate commit=15c09be4117d03a54f483f9ebe53a2ddb4ff95f9 pushed=true advanced=true attempts=1
-
-nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
-! INBOX WALK commits=1/1 notes=1 elapsed=12ms
-INBOX SCOPE mode=since cursor=8b8a941d2d90a265602fd9b425766e09eaf2bae3 changed=3 carrying=2
-INBOX OPEN carrying=2 heard=1 large=false remedy=inbox --advance
-INBOX OK as=Ada carrying=2 open=1 notes=0 receipts=1 heard=1 unaddressed=0 unreadable=0
-```
-
-`open=2` became `open=1`: the reply's `Re:` line closed Bo's note. `draft --reply-to <note> --body-file <path> --draft-dir <dir>` is the same answer as a file you can read before it goes, for a writer who wants to look at the headers first; `reply` is the one-step form.
-
-**`prepare`** computes a note's id and `Date:` from a draft before anything on the bus changes, and prints them as one JSON artifact on standard output; `send --prepared <that file>` then publishes exactly that note, and re-running the same `send --prepared` is the retry after an uncertain push, never a second note:
-
-```
-nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
-```
-
-**`inbox`** lists what is addressed to you and not yet answered:
-
-```
-nova-bus inbox --bus ~/bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
-```
-
-Every return has three parts: what is new, in full; one `INBOX OPEN carrying=<n> heard=<m>` line for the backlog; and the backlog itself only if you ask with `--open`, capped at `--open-max` (default 20). Anything unreadable, and any note on the bus that reaches nobody, is named. `--receipt-max-words` is the threshold for telling a bare receipt from a note carrying a finding, and it comes from you because it is a property of how your bus writes; a `Kind:` line in a header always wins. It reports and exits 0 whether the inbox is empty or full. Without `--advance` it writes nothing; with it, it moves your cursor and pushes it, so your place survives a change of machine.
-
-`--max-commits <n>` (default 500) bounds the since-walk: a cursor further behind HEAD than that stops the run with one line and the remedy, on stderr, at exit 0 —
-
-```
-INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
-```
-
-A bounded run **read nothing, so it moves no cursor**, and `--advance` beside it writes nothing at all: advancing over a walk nobody made would take every unread note behind the bound as read, which is the one outcome the bound exists to prevent. Raise the bound to read the stale cursor, or draw a switch-day line with `close --before <instant>` to take the history as read and start over.
-
-Past `--open-warn` carried (default 40) every return adds a line naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. It is a note, not a refusal: a backlog grows one note at a time and no single run says it is growing.
-
-**`wait`** is the same listing, blocking, for a harness that does not wake you:
-
-```
-nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m --advance --remote origin --branch main
-```
-
-It fetches every `--interval` and returns the moment your inbox would list something new, printing what `inbox` prints. Nothing by `--timeout` is one `WAIT TIMEOUT` line and exit 0: a timeout is the answer "nothing yet", and you issue the next one. `--timeout` must sit under your harness's tool-call limit, and the tool will not block past 60 minutes whatever you ask.
-
-`--quiet-beats` is accepted and changes nothing: a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — never wakes a wait; a beat is not news.
-
-`--max-commits <n>` bounds the since-walk exactly as it does on `inbox` (500 by default), and a wait whose cursor is **further behind than that bound** is refused before it blocks, because every poll it made would read nothing and it would still end by saying "nothing yet" (#1518):
-
-```
-WAIT BLIND commits=500 remedy="raise --max-commits or close --before <instant>"
-WAIT REFUSED: as=Johnny cursor=8cd06f5a... is further behind than this walk may cross, ...
-```
-
-exit 2. That is a loop stopping rather than a loop running green and deaf for hours. The two ways out are the ones the line names: raise the bound for this read, or `close --before <instant>` to empty the backlog the cursor is behind.
-
-**`receipt`** says "heard" without writing a reply, one append to your lane's `RECEIPTS` and one push; `--note` repeats. It refuses a note not on the bus and a receipt for your own note, and reports a repeat without writing it twice.
-
-```
-nova-bus receipt --bus ~/bus --as Ada --note bo-abcdef012345 --remote origin --branch main
-```
-
-**`close --before <instant>`** is the explicit opt-in bulk cutoff the `INBOX OPEN` large-list line names: every open note addressed to you and dated before the instant is closed, and everything at or after it is left open. `--dry-run` reports the split and writes nothing.
-
-```
-nova-bus close --bus ~/bus --as Ada --before 2026-09-18T12:00:00Z --remote origin --branch main
-CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
-```
-
-**One receipt per sender lane**, carrying a `Re:` line for every note of theirs it closes — `closed=` counts the notes, `receipts=` the files it took. It was one file per closed note until #1540, and that could not finish: every receipt in a run shares the stamp as its subject, so every filename differed only by an id hashed over fields two receipts also shared but for `re`, and two notes sharing a target id produced one filename twice and `file exists` at the second write. One receipt per lane removes that by construction — two receipts differ in `To`, in `Re` and in body — and a target named twice is closed once. A close that cannot finish takes back everything it wrote, so a failed run leaves the lane exactly as it found it.
-
-**`check`** is the gate: every note parses, every header resolves, every note sits in the lane its `From:` names, every id is well formed and unique, every `Re:` and receipt names something that exists, every lane has an owner and holds nothing but notes, its state files and a `README.md`. It reports every finding in one run and asserts nothing about a body. It refuses to guess what to check: give it `--full`, `--as <name>` or `--since <commit>`.
-
-```
-nova-bus check --bus ~/bus --full
-```
-
-**`names`** echoes the roster so you can spell a `To:` line the tool will accept. It is the one verb whose values are quoted rather than field-escaped, because its whole point is a name you can paste.
-
-```
-nova-bus names --bus ~/bus
-```
-
-### The cursor
-
-`inbox` and `check` do not walk the bus: each reader keeps a cursor, the commit they last read to, in their own lane, and a run reads `git diff` from there, so many notes on the bus and one new one are one parse. Three files in a lane make that work, all rebuildable from the notes: `CURSOR` (the commit, the count carried, and the switch-day line if you drew one), `OPEN` (the notes you have been shown and not answered, each as its whole display line so a later run prints it without opening the note), and `INDEX` (the lane's catalogue of its own notes, so a thread resolves by lookup). All three are written to a temp file beside themselves and renamed, so a run killed mid-write leaves the old file entire.
-
-The price, said plainly: closing is driven by what is new, so if somebody edits a note you answered long ago you are shown it again. You are asked twice; you are never told a note is answered when it is not. If your cursor is refused (the history was rewritten under it, or the open list is missing beside a cursor that says it was carrying notes, or the open list is from an older version), read once with `--full --advance`, which replaces all three. Those refusals are deliberate: a reader told "nothing new" by a stale cursor has been lied to.
-
-### For harnesses that do not wake you
-
-Some harnesses cannot wake a session on their own; a poller beside it does its job and nobody comes back to look. A session inside a tool call cannot forget to poll, because the harness wakes it when the call returns. So put the polling inside the tool, and the loop is wait, answer, wait:
-
-```
-nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
-  --advance --remote origin --branch main
-# it returns with an INBOX listing -> answer it with `send`, or say heard with
-# `receipt`, then issue the same wait again
-# it returns WAIT TIMEOUT -> nothing arrived; issue the same wait again
-```
-
-Both endings exit 0 and both mean "call it again". Pass `--advance`, or the next wait returns the same note forever. Do not put `--open` in that loop: a line on a 260K-token model ran it with `--open` while carrying 74 notes, re-read all 74 on every poll, and blew its context. Reach for `--open` once, on purpose, to go through a backlog.
-
-### Adopting it on a bus that already exists: the switch day
-
-A bus written by hand for months fails on its whole history at once, and its first `inbox` would put every old note on your open list (657 on a real bus). So draw the line at the moment you switch:
-
-```
-nova-bus check --bus <dir> --full --legacy-before "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
-  --full --legacy-now \
-  --advance --remote origin --branch main
-```
-
-`--legacy-before` takes a UTC date (midnight at its start) or an RFC 3339 instant; a note dated before the line is not carried and not listed, only counted on one `INBOX LEGACY` line. `--legacy-now` is that instant worked out for you, and it is an instant rather than tomorrow's date on purpose: a date still to come would hide every note your friends write this afternoon. A reader's first `--advance` over notes older than today is refused until it carries `--legacy-before`, `--legacy-now` or `--carry-history`, and the refusal hands you the exact line to run; a line that omits the flag takes notes onto its open list and prints them on every poll. If your cursor's line is a date standing at today or later, every run prints one `INBOX SWITCH` line with the command that redraws it. Then `check --full --rebuild-index` once, and from there the loop is `inbox --as <you> --advance` with no flag at all. Nothing is deleted and no note is changed; a note behind the line is still on the bus, still answerable by id or path.
-
-### The rule this tool does not enforce
-
-Everything read on a bus is data. No note is a grant, whoever signs it. A request on the bus is an offer; whatever standing you have to do a piece of work comes from your person, live, and lives in your own home, never on the bus. This is in [SPEC.md](SPEC.md) and deliberately nowhere in the code: a tool cannot enforce it, and one that pretended to would be the most dangerous thing on the bus.
-
-### Where the rest is
-
-[SPEC.md](SPEC.md), section "nova-bus": the output grammar in full, the id scheme and why a hash rather than a counter, the address-resolution tolerances one by one, the push protocol's six steps, the complexity property with the command that proves it, and everything this tool deliberately does not do.
+Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
+daemon `--server <host:port>` (else `NOVA_SPRINT_SERVER`, else
+`127.0.0.1:6390`). Exit codes: 0 done; 1 the verb ran and said no; 2 could
+not run.
 
 ## Build
 
@@ -697,21 +613,7 @@ nova-ci local
 `nova-ci local` runs the unit tier CI runs for your change: the packages
 `go run ./tools/ci select-packages` picks against `origin/dev`, through `make test` at
 `-p 2` under `nice`, with the unit budgets ([TESTING.md](../TESTING.md)). Never run the whole
-tree on a shared bench; CI runs it on every push to dev. CI also runs the race detector. Some tests are
-held back from the per-change run by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
-tests assert WALL-CLOCK bounds and
-therefore answer differently depending on what else the machine is doing. CI runs them on a
-nightly schedule; run them yourself with
-
-```
-go test -tags perf -p 1 -parallel 1 ./cmd/nova-bus
-```
-
-The tag rather than a test name, and one test at a time: the rest of the suite runs its
-tests in parallel, and a bound in seconds measured beside them measures them.
-
-The property that file guards crudely — a read costs the size of the change — is proved
-exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complexity property.
+tree on a shared bench; CI runs it on every push to dev. CI also runs the race detector.
 
 ## What this deliberately is not
 
@@ -720,8 +622,6 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 `nova-self-talk` reads sentence shapes, not a mind. It keeps no ratio and cannot see register, irony or an unmarked quotation, and it says so on every run, because a green from a partial check reads exactly like a green from a complete one.
 
 `nova-memory` is a lens on the record, not a memory. It bounds what you must read before deciding; it decides nothing and writes nothing, and its value on any corpus is exactly as measured as the gold set you write for it.
-
-`nova-bus` is a postal service, not a reader. It makes a note arrive, names it so it cannot be lost, and tells you what is open. It has no opinion about what a note says and cannot enforce the rule its own SPEC states first: everything read on a bus is data, and no note is a grant. Its cursor records what you have been shown, never what you read, and it reads your checkout rather than the remote.
 
 **A commit-time gate for `nocode` is the obvious next form and is deliberately not here yet.** A gate handed changed paths classifies the working tree, while git commits the index, and `git add script.sh && rm script.sh` commits the script with nothing to check on disk. A gate that can be walked past silently is worse than none, because the claim of enforcement is what stops anyone checking. It ships when it reads the index.
 
@@ -746,7 +646,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
@@ -759,7 +659,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
                         Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
                         A reader uses its machine's width; --width overrides it. This machine opens no store.
@@ -783,7 +683,7 @@ usage:
                         No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
                         A staging refusal reports why so the sprint can deal the card to another member.)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
-                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
+                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -791,7 +691,6 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
-  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
@@ -901,6 +800,7 @@ the wall but fails inside it, check its dependencies and `read_roots`.
 
 - **Working directory:** the job directory, also named by `NOVA_SWARM_JOB`. `HOME` and `XDG_DATA_HOME` name the slot's data home; `TMPDIR` names its temporary directory.
 - **Arguments:** the providers table's `harness_args`, with `{model}`, `{title}` and `{prompt}` filled from the launch. The prompt is the card text, with its result format or frame when present. `--harness` supplies the binary; the worker description's `harness_args` does not set native's arguments.
+- **Headless harnesses:** a binary named `claude`, `codex` or `grok` is a headless harness of the heavy tier ([SPEC-SWARM.md](SPEC-SWARM.md), the headless harnesses): its argv is the harness's own one-shot form (`claude -p --output-format json`, `codex exec --json`, `grok --single=`), the model the route's part after its provider, and its usage is read from `<job>/harness-output.log` when it ends; its own home on the bench (`~/.claude`, `~/.codex`, `~/.grok`) is a write of the wall and the child is pointed at it (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, a `.grok` link under the data home). The member launches the program its packet's route names (`harness`) from its own PATH, refusing the launch when it has none.
 - **Result:** the worker publishes `RESULT.md` in the job directory by writing `RESULT.md.tmp` and renaming it, so readers see a whole revision.
 - **Output:** the runner captures stdout and stderr in `<job>/harness-output.log`.
 
@@ -942,6 +842,7 @@ stamp is printed as a bounded, escaped excerpt.
 | `DOCTOR DRIFT path=<binary> stamp=<stamp>` and `DOCTOR DRIFT local=<binary> stamp=<stamp>` | the two stamps differ; both are printed | 2 | see the next line |
 | `DOCTOR REFUSED <path binary> shadows <local binary>; ...` | the PATH binary shadows the local one; the launch does not start | 2 | copy the `~/.local/bin` binary over the PATH one, or fix PATH so `~/.local/bin` comes first |
 | `DOCTOR UNREADABLE reading the version of <path or local>=<binary>: <cause>; <the other binary>; ...` | a binary the check compares could not be read; the launch does not start | 2 | run `<binary> version` by hand, then rebuild or remove that binary, then launch again |
+| `DOCTOR HARNESS kind=<claude\|codex\|grok> binary=<path\|-> version=<line\|-> login=<yes\|no\|-> [said=<line>]` | after an OK: one line per headless harness (the headless harnesses), where it is, what `--version` said, and whether its login verb says it is logged in; `-` for one not on PATH | 0 | log the harness in on this machine, or deal its cards elsewhere |
 
 The cause is one of `timed out after <deadline>`, `exited <n>`, `was killed (<signal>)`
 (a run ended by a signal), `printed nothing`, `printed a line longer than <n> bytes`,
@@ -979,7 +880,7 @@ needs no forge:
 ```sh
 export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
 nova-sprint init --readers reader-a,reader-b --members m1
-nova-sprint add --stream s1 --count 1
+nova-sprint add --stream s1 --count 1 --one
 nova-sprint start
 nova-sprint tick
 nova-sprint tick
@@ -1006,14 +907,15 @@ refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 
 ```
 nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]
-nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]
+nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]]
 nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
 nova-sprint release <sentinel>... --reason <text> [--answers <note>]
 nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
 nova-sprint start
 nova-sprint stop
-nova-sprint run
-nova-sprint tick
+nova-sprint run [--answer-rules=false] [--idle-alarm=false]
+nova-sprint tick [--answer-rules] [--idle-alarm]
+nova-sprint selftest [--dir <d>] [--keep]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
@@ -1027,9 +929,10 @@ nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--ans
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
 nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
-nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>]
+nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
+nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
-nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]
+nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint fleet beat <member> [--load <percent>]
@@ -1038,9 +941,12 @@ nova-sprint fleet down <member>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
 nova-sprint friend sync [--pg <dsn>]
-nova-sprint friend beat <friend>
-nova-sprint friend down <friend>
-nova-sprint friend up <friend>
+nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
+nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
+nova-sprint friend up <friend> [--width <n>]
+nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
+nova-sprint friend level
+nova-sprint friend health <friend> --state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]
 nova-sprint reader add <reader>...
 nova-sprint reader away <reader>...
 nova-sprint reader up <reader>...
@@ -1056,8 +962,12 @@ nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC333
 nova-sprint check
 nova-sprint repair
 nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
+nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
+nova-sprint seat
 nova-sprint routes
+nova-sprint rules
 nova-sprint funded <provider> --reason <text>
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
@@ -1079,6 +989,42 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### A card re-cut as its twin
+
+A card re-cut under a new id is its old card's twin: `add --stream s1 lint-pkg-cairn-tb
+--brief-file lint-pkg-cairn-tb.md --replaces lint-pkg-cairn-t` admits the twin, makes
+every waiting card that needed the old id need the twin instead (`card <dependent>` shows
+the new need), drops the old card `replaced by lint-pkg-cairn-tb`, and raises no "blocked
+on something dropped" judgment, in one step. Where the drop and the add were made apart,
+`relink lint-pkg-cairn-t lint-pkg-cairn-tb` re-points the edges and answers the blocked
+judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
+card replaced by its twin".
+
+### Role views: what a model reads instead of the dashboard
+
+The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human
+eyes". `nova-sprint view coordinator` is everything that needs the seat now, ranked by the
+cards behind each item: open judgments, notes addressed to the coordinator, alarms (the
+machine stopped, the fleet idle, nothing ready, a review or merge backlog, a stream stopped),
+sentinels reached, and friends and machines that need a look, each with `next`, the exact
+command that acts on it. `nova-sprint view worker --as <member|friend>` is one worker's cards
+in order (brief, BASE, PATHS, deadline, attempt), its next step and its results not landed.
+Both are reads, `--json` (schema 1), compact for the tokens a model pays: only what needs
+action (`--all` adds every machine's and friend's row), a summary line first, and a `cursor`
+that `--since <cursor>` takes to leave out what the last read showed unchanged:
+
+```sh
+nova-sprint view coordinator                 # the summary and up to 19 items, then cursor=
+nova-sprint view coordinator --json --since <the cursor the last read printed>
+nova-sprint view worker --as m1 --json
+curl -s --compressed http://<tailnet address>:<port>/api/view/coordinator
+curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
+```
+
+The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
+`/api/view/worker?as=<name>`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
+"Role views".
 
 ### A worker's own view: the dashboard's pull routes
 
@@ -1110,6 +1056,31 @@ state) and `routes` each route's `balance=`. When every provider is out of credi
 stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
 until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
 says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+
+### Answered by rule
+
+The run loop's tick answers the mechanical judgments itself, by rule, and records each as
+`answered by rule <name>` on the log and on the card (`rule_answer`): work came back
+failed is redealt on the next route of its tier, and the second failure on a tier goes a
+tier up (flash, pro, heavy, then a friend's card); a card at its bound goes a tier up; a
+work card past its deadline is waited 30 minutes once when it made progress in the last 10,
+else returned and dealt again; a stream stopped on a conflict in a file no ledger owns has
+the card returned, the stream resumed and the card redone on the current tip; the same
+finding twice marks the card a brief defect and leaves it to you; and land gates a red base
+again after 2 and 5 minutes before the third failure stops the stream with the error. A
+reader's finding stays yours. `nova-sprint rules` prints what the rules would answer now and
+Xoff, and nova-config's sprint row turns single ones off: `nova-config sprint set
+--answer_rules_off late,conflict`, then `nova-config apply`. The contract is
+[SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-rule).
+
+### The fleet is idle
+
+When the fleet works under half its width for 5 minutes while cards wait, the run loop's
+tick pushes you one note, `the fleet is idle`: `fleet 4/68: 311 behind 21 drop-blocked
+judgments (oldest 1h50m); 89 behind md-secrets (a card reached its bound, 40m)`, every
+waiting card traced to the root of its chain and the roots named by the cards behind
+them; once an episode, and `the fleet is working again` when it recovers. `run
+--idle-alarm=false` turns it off. The contract is [SPEC-SPRINT.md section 14](SPEC-SPRINT.md#the-fleet-is-idle).
 
 ### Answering the routine judgments
 
@@ -1556,9 +1527,13 @@ UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
 models are listed for the owner to evaluate and pull themselves. No timer is installed.
-For recovery across process death, name `--snapshot`; retries retain the prepared
-note. Version statuses should go to your chosen integrator, with optional Cc;
-participation and updates remain voluntary.
+Name `--snapshot` to quiet repeats: a report unchanged since it was confirmed sent to
+the same recipients sends nothing. `--send` delivers one note through nova-bus on the Redis bus:
+`nova-bus send --as <sender> --to <recipients> --subject <one line> --stdin`.
+nova-bus reads the store from `NOVA_BUS_REDIS`. A confirmed `SEND OK id=<id>`
+line is what the receipt records. `watch --adopt` with `--as` and `--to`
+posts the adoption receipt the same way. Version statuses should go to your chosen
+integrator, with optional Cc; participation and updates remain voluntary.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
 every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
@@ -1575,9 +1550,11 @@ nova-update apply --file versions.tsv go --dry-run
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
-`--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
-or a larger `--budget`; never remove a lock file to break a live lock.
+`--draft` needs `--as` and `--to` and sends nothing. `--send` delivers through
+nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
+`watch` posts its receipt when `--as` and `--to` are set, by the same
+`nova-bus send --as --to --subject --stdin`. A busy snapshot wants the current writer to finish or a larger
+`--budget`; never remove a lock file to break a live lock.
 
 ### The release verb
 
@@ -1698,17 +1675,22 @@ nova-update release cycle --version v1.1.0-dev.abcdef12 --source . --out ~/nova-
 ```
 
 `cycle` is the fix-land-install cycle from the coordinator in one command: `fleet/tools.yml` with
-`--check`, then for real, limited to `--benches` and `localhost`, the build `--incremental --gate
-report --reason <why>`. Each machine's new version directory is seeded from its installed build's
+`--check`, then for real, limited to `--benches`, `localhost` and the `store_deployer` group, the
+build's schema and function library on the store running on every cycle, with the build `--incremental
+--gate report --reason <why>`. Each machine's new version directory is seeded from its installed build's
 and only the files whose `SHA256SUMS` line differs are sent; `install` leaves a binary that already
 holds the same bytes in place, so only the loops of the tools that changed restart. One `CYCLE
 BENCH host=<h> … version=<v> state=<s> installed=<n>` line per bench, then `CYCLE OK … check=<d>
 apply=<d> total=<d>`; both plays' output is kept under `<out>/<version>/`. `--dry-run` is the check
-alone. It runs in the inventory's environment, as the play does.
+alone. It runs in the inventory's environment, as the play does. It runs the inventory once with
+`--list` first and refuses before any play when it cannot list: a store with ACLs needs its login in
+the wrapper's environment (`NOVA_SPRINT_REDIS_USER`, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` naming the
+variable that holds the password, never the password; [FLEET.md](FLEET.md) "An adopter's path" has
+the wrapper and the `nova-secrets exec` line).
 
 ## nova-version
 
-`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional delivery through `nova-bus send`. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ### First run
 
@@ -1782,15 +1764,20 @@ without running a process; it exits 1 when any adopted tool does not answer
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
-refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; retries retain the prepared note.
-Version reports can be sent to the recipient you select, with optional Cc.
+refused by name; a partial inventory is not reported as complete. Name
+`--snapshot` to quiet repeats: an unchanged observation sends nothing.
+`--send` delivers one note through nova-bus on the Redis bus:
+`nova-bus send --as <sender> --to <recipients> --subject <one line> --stdin`.
+nova-bus reads the store from `NOVA_BUS_REDIS`. A confirmed `SEND OK id=<id>`
+line is what the receipt records. Version reports can be sent to the recipient
+you select, with optional Cc.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
-`--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
-`--remote` and `--branch`. A busy snapshot wants the current writer to finish
-or a larger `--budget`; never remove a lock file to break a live lock.
+`--draft` needs `--as` and `--to` and sends nothing. `--send` delivers through
+nova-bus on the Redis bus; nova-bus reads the store from `NOVA_BUS_REDIS`.
+A busy snapshot wants the current writer to finish or a larger `--budget`; never
+remove a lock file to break a live lock.
 
 
 ## nova-secrets
@@ -2048,18 +2035,18 @@ nova-config <kind> <verb> -h                                             # the v
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
 nova-config machine width <name> [--pg <dsn> | --file <path>] [--json]  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member, 0 is none, unset (--width default) is the default, half the machine's cores as fleet sync resolves them from its beat; no Redis
 nova-config machine self [--check] [--json]                              # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
-nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --as <name>         # the one fleet row: no name, no add, remove or list
+nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --bus <host:port> --as <name>  # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
 nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-swarm member argv spells no --width, its width is its machine row's
 nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; the argv is the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
-nova-config route add <name> --tier flash|pro --provider <p> --model <m> --deadline <seconds> [--tokens <n>] [--usd <dollars>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>, stopped at its token budget or its dollar budget (the harness's reported cost), whichever comes first; frontier cards escalate to the coordinator and are never dealt from routes
+nova-config route add <name> --tier flash|pro|heavy --provider <p> --model <m> [--harness opencode|claude|codex|grok] --deadline <seconds> [--tokens <n>] [--usd <dollars>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>, (a headless --harness claude, codex or grok takes --provider subscription-<harness>) stopped at its token budget or its dollar budget (the harness's reported cost), whichever comes first; frontier cards escalate to the coordinator and are never dealt from routes
 nova-config route set <name> --price_input <usd> --price_cache_read <usd> --price_cache_write <usd> --price_output <usd> [--reasoning_as_output false] [--long_context <tokens> --price_input_long <usd> --price_output_long <usd>] [--price_request <usd>] [--billing metered|plan] [--gateway_percent <pct>] [--price_source <text>] [--price_as_of YYYY-MM-DD] --as <friend>   # the route's price sheet, optional: USD per million tokens of each class, each a decimal kept exactly; a route with none prices no card
 nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
 ```
 
-`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (slots, tiers, roles, width: the jobs she works at once, 8 by default), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash or pro tier: tier, provider, model, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash and pro, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (slots, tiers, roles, width: the jobs she works at once, 8 by default, mode: batch or one-shot, how her daemon hands her work), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash, pro or heavy tier: tier, provider, model, harness, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash, pro and heavy, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
 ### First run
 
@@ -2663,6 +2650,93 @@ for an isolated store and the function-library loading command.
 Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
 connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
 the last good frame and one `store unreachable since <time>` line until recovery (a frame that reads fine carries no age line); Ctrl-C exits 0.
+
+## nova-card
+
+nova-card is pre-alpha: not ready for production use.
+
+```
+nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
+nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
+nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
+nova-card lint --card <file> [--card <file>...]
+nova-card template
+nova-card version
+nova-card help [<verb>]
+```
+
+A card a model writes by hand takes it half an hour and comes back with guessed
+PATHS; one wrong PATHS line was rejected 262 times in one night. nova-card
+writes the cards from the source the work comes from, with the PATHS computed,
+the lint already green, and the waves already laid out, so the one thing left
+to do is `nova-sprint add --stream <s> --brief-dir <dir>`.
+
+The flow is three lines:
+
+```sh
+nova-card generate --from ledger --ledger serial-tests --repo-dir ./repo --out ./cards
+nova-sprint add --stream debt --brief-dir ./cards --allow-shared-paths
+nova-sprint where
+```
+
+### First run
+
+The included findings file is two files' worth of a reader's findings. No
+checkout is needed when `--repo`, `--base` and `--sha` are given; with
+`--repo-dir` the three are read off the checkout and every PATHS entry is
+checked to exist in it:
+
+```sh
+nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
+nova-card lint --card ./cards/finding-internal-bus-send.md
+nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
+```
+
+`./cards` then holds one `.md` per card, its name the card's id, and a
+`manifest.tsv` (id, file, test, wave, deps). [TESTS.md](TESTS.md#nova-card)
+carries the transcript; `cmd/nova-card/firstrun_test.go` runs it.
+
+### Sources
+
+`--from ledger --ledger <name>` reads one of internal/ci's ratchet ledgers from
+the checkout: `serial-tests`, `slowwaits`, `sleeps-skips`, `fixed-waits`
+(flash), `dead-code`, `namedpaths`, `transcripts`, `generality-fixtures` (pro).
+One card per file the rows name; the card's PATHS are the file, its package's
+test files and the ledger; its TEST is the class test that holds the ledger;
+its task is the ledger's template with the rows substituted, and it says to
+write the draft early and commit before any probe. `--from findings --file
+<tsv>` reads `file:line`, finding, remedy, test columns (a header row is
+skipped); one card per file, the first finding's test as TEST, a card with no
+test named given the one it must write. `--from help --tool <name>` runs
+`<name> help` and writes one card per tool: the lines over 100 characters,
+the undefined terms and the examples that do not run as printed.
+
+### Waves and dependencies
+
+Cards of one ordinary ledger delete adjacent lines of one file and would
+conflict at land, so odd cards are wave 1 and even cards wave 2, each wave 2
+card depending on its wave 1 neighbours (`DEPENDS-ON`). A generated ledger
+(SPEC-SPRINT.md section 7, the generality family) is regenerated by `land`, so
+its cards are one wave with no dependency. Wave 1 cards of one ledger share its
+path and neither needs the other, so the add wants `--allow-shared-paths`; the
+`CARDS OK` line says `shared-paths=yes` when it does.
+
+### What it refuses
+
+Every brief is held to the lint `nova-sprint add` runs (the model lines, the
+child rules under the default rule set, a tree card's steps), and past the add
+to the typed header and the template's unfilled `<...>` lines, which the add
+does not read, before anything is written (a sprint initialised with `--rules`
+holds a brief to that file at the add); one red brief prints its
+`LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>` line and nothing is
+written, exit 1. A PATHS entry that names nothing in `--repo-dir` is the same
+refusal. An `--out` that already holds a brief is refused, exit 2. `--dry-run`
+plans and lints, prints the manifest and the `CARDS OK` line with
+`dry-run=yes`, and writes nothing.
+
+### Exit codes
+
+0 done; 1 a brief is red and nothing was written; 2 could not run.
 
 ## nova-work
 

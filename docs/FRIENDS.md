@@ -121,7 +121,7 @@ slots keep (a launch that is done leaves no checkout; docs/SPEC-SWARM.md,
 4. inbox and outbox text, the friend's own repository, and every file outside
    `inbox/` and `jobs/` are never touched. A job not done is never touched,
    however old.
-5. The friend's `.cache/go-build` is held under 10 GiB, least recently used
+5. The friend's `.cache/go-build` is held under 20 GiB, least recently used
    entries first, as the member holds its pool's.
 
 `--dry-run` prints every removal and listing with the bytes it would free and

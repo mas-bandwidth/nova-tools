@@ -248,3 +248,56 @@ func TestMoveThatClosesACycleIsRefused(t *testing.T) {
 	assert.Empty(t, p.Units)
 	assert.Contains(t, p.Refused[0].Why, "the needs would make a cycle")
 }
+
+// A card is re-tiered in any state (the owner, 2026-10-04: "If there are pro cards that
+// are really heavy, then let's mark them as heavy"): brief --tier pins the tier on the
+// primary as rework --tier does, on a RUNNING machine and for a card dealt, where the
+// next attempt draws from it; a card landed, a pinned model, a word that is no class
+// and a sentinel are refused, and nothing else of the card changes.
+func TestBriefTierRetiersACardInAnyState(t *testing.T) {
+	t.Parallel()
+	for _, tc := range append([]struct {
+		name, col string
+		attempt   string
+	}{{"ready, never dealt", Ready, "0"}, {"waiting", Waiting, "0"}}, startedCases[:4]...) {
+		w := editWorld(t)
+		w.s.Running = true
+		w.place(w.s.Work, "a-1", "a", tc.col)
+		w.s.Work.Placed("a-1").Fields["attempt"] = tc.attempt
+		before := *w.s.Work.Placed("a-1")
+		p := Brief(w.s, BriefReq{ID: "a-1", Tier: "heavy", Who: "coordinator"})
+		require.Empty(t, p.Refused, tc.name)
+		w.must(p)
+		c := w.s.Work.Placed("a-1")
+		assert.Equal(t, "heavy", c.F(FieldTier), tc.name)
+		assert.Equal(t, "heavy", cardTierOf(c), "%s: the next deal draws from the pinned tier", tc.name)
+		assert.Equal(t, "", w.s.NextTier(c), "%s: a pinned tier is its ceiling", tc.name)
+		assert.Equal(t, before.F("brief"), c.F("brief"), tc.name)
+		assert.Equal(t, before.Col, c.Col, tc.name)
+		assert.Equal(t, before.F("attempt"), c.F("attempt"), tc.name)
+		assert.Contains(t, p.Units[0].Moved, "a-1 tier pinned to heavy (was -)", tc.name)
+	}
+	for _, tc := range []struct{ name, id, tier, col, why string }{
+		{"landed", "a-1", "heavy", Landed, "a-1 is landed: a card landed keeps its tier"},
+		{"no class", "a-1", "ultra", Ready, "--tier wants frontier, heavy, pro or flash, found ultra"},
+		{"a sentinel", "a-sentinel", "heavy", Ready, "a-sentinel is a sentinel"},
+		{"unknown", "zz-9", "heavy", Ready, "no primary zz-9"},
+	} {
+		w := editWorld(t)
+		w.must(Add(w.s, AddReq{Stream: "a", IDs: []string{"a-sentinel"}, Sentinel: true, Who: "coordinator"}))
+		w.place(w.s.Work, "a-1", "a", tc.col)
+		p := Brief(w.s, BriefReq{ID: tc.id, Tier: tc.tier, Who: "coordinator"})
+		require.Len(t, p.Refused, 1, tc.name)
+		assert.Empty(t, p.Units, tc.name)
+		assert.Contains(t, p.Refused[0].Why, tc.why, tc.name)
+	}
+	w := editWorld(t)
+	w.must(Brief(w.s, BriefReq{ID: "a-1", Brief: "pinned (s) tier: pro\nmodel: deepseek/deepseek-chat\ntokens: 1000\ndeadline: 600\n\nthe task", Who: "coordinator"}))
+	p := Brief(w.s, BriefReq{ID: "a-1", Tier: "heavy", Who: "coordinator"})
+	require.Len(t, p.Refused, 1)
+	assert.Contains(t, p.Refused[0].Why, "its brief pins model deepseek/deepseek-chat")
+	w.must(Brief(w.s, BriefReq{ID: "a-2", Tier: "heavy", Who: "coordinator"}))
+	p = Brief(w.s, BriefReq{ID: "a-2", Tier: "heavy", Who: "coordinator"})
+	require.Len(t, p.Refused, 1)
+	assert.Contains(t, p.Refused[0].Why, "pinned to tier heavy already")
+}

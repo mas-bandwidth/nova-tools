@@ -71,7 +71,7 @@ func TestConnectIsHelloAlone(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
 	if err := s.Client().Get(context.Background(), "k").Err(); err != redis.Nil {
-		require.True(t, err == redis.Nil, "get: %v", err)
+		require.Equal(t, redis.Nil, err, "get: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()

@@ -420,58 +420,6 @@ func TestCutWritesTheChangelogTagsAndSaysWhatItDid(t *testing.T) {
 	}
 }
 
-// TestPreviousTagSelectsHighestOverPrereleases pins that previousTag orders by
-// semver precedence, not by the three dotted numbers alone: a release beats the
-// prerelease of the same version, and a higher prerelease beats a lower one, so
-// the changelog range starts from the tag the fleet actually adopted.
-func TestPreviousTagSelectsHighestOverPrereleases(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		tags []string
-		want string
-	}{
-		{
-			name: "release beats prerelease of same version",
-			tags: []string{"v0.15.3", "v0.16.0-rc1", "v0.16.0"},
-			want: "v0.16.0",
-		},
-		{
-			name: "higher prerelease beats lower prerelease",
-			tags: []string{"v0.15.3", "v0.16.0-rc1", "v0.16.0-rc2"},
-			want: "v0.16.0-rc2",
-		},
-		{
-			name: "highest release selected from mixed tags",
-			tags: []string{"v0.9.0", "v0.15.3", "v0.15.10", "not-a-version"},
-			want: "v0.15.10",
-		},
-		{
-			name: "no valid versions returns empty",
-			tags: []string{"not-a-version", "also-not"},
-			want: "",
-		},
-		{
-			name: "skips tags without v prefix",
-			tags: []string{"0.16.0", "v0.15.3"},
-			want: "v0.15.3",
-		},
-		{
-			name: "skips fourth number",
-			tags: []string{"v0.16.0.1", "v0.16.0"},
-			want: "v0.16.0",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := previousTag(tc.tags)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
 // A commit whose subject carries no (#n) is not a pull request and is not a
 // changelog line; the count says 2 because two of the three commits were.
 func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
@@ -523,6 +471,30 @@ func TestCutRefusesAVersionNoLaterStepCouldCheck(t *testing.T) {
 		}
 	}
 	for _, v := range []string{"v0.16.0", "v1.0.0-rc1", "v0.15.3-0.20260918044559-d576bf6bbabb"} {
+		if err := ValidVersion(v); err != nil {
+			assert.NoError(t, err, "refused %q: %v", v, err)
+		}
+	}
+}
+
+func TestValidVersionRefusesAPrereleaseSuffixCarryingShellSyntax(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{
+		"v9.9.9-;id>pwned",
+		"v9.9.9-x/../../pwn",
+		"v9.9.9-$(id)",
+		"v9.9.9-a b",
+		"v9.9.9-`id`",
+	} {
+		if err := ValidVersion(v); err == nil {
+			assert.Error(t, err, "accepted %q", v)
+		}
+	}
+	for _, v := range []string{
+		"v0.15.3-0.20260918044559-d576bf6bbabb",
+		"v1.0.0-rc1",
+	} {
 		if err := ValidVersion(v); err != nil {
 			assert.NoError(t, err, "refused %q: %v", v, err)
 		}
@@ -795,13 +767,20 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			name = "this host " + hostPlatform
 		}
 		t.Run(name, func(t *testing.T) {
-			goos, _ := platformOf(t, platform)
+			goos, goarch := platformOf(t, platform)
 			from := built(t, "v0.16.0", platform, "nova-bus", "nova-swarm", "nova-wake")
 			bin := t.TempDir()
-			// nova-wake is already at the release; the other two are not. It
-			// is written under the name the TARGET installs it as.
+			// nova-wake already holds the artifact's bytes; the other two do
+			// not. It is written under the name the TARGET installs it as.
+			// Skip is the sum, so these bytes are the artifact's
+			// (security#72 finding 2).
 			current := ToolFile("nova-wake", goos)
-			if err := testbin.WriteExecutable(filepath.Join(bin, current), []byte("old"), 0o755); err != nil {
+			wake := filepath.Join(bin, current)
+			if err := testbin.Place(filepath.Join(ArtifactDir(from, "v0.16.0", goos, goarch), current), wake); err != nil {
+				require.NoError(t, err, err)
+			}
+			before, err := os.Stat(wake)
+			if err != nil {
 				require.NoError(t, err, err)
 			}
 			args := []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin}
@@ -837,9 +816,9 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 				assertRunnable(t, filepath.Join(bin, ToolFile(tool, goos)))
 			}
 			// Skipped means untouched, not overwritten with the same bytes.
-			body, err := os.ReadFile(filepath.Join(bin, current))
-			if err != nil || string(body) != "old" {
-				require.FailNowf(t, "assertion failed", "a skipped tool was rewritten: %q %v", body, err)
+			after, err := os.Stat(wake)
+			if err != nil || !os.SameFile(before, after) {
+				require.FailNowf(t, "assertion failed", "a skipped tool was rewritten: %v", err)
 			}
 			// The temporary name never survives the verb.
 			entries, err := os.ReadDir(bin)
@@ -853,6 +832,36 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A file that answers the target version and holds other bytes is replaced.
+// The version line fills the before list for prune and is not a skip
+// (security#72 finding 2). Skip is fileSum equal to the artifact sum
+// (SPEC-RELEASE, install skip).
+func TestInstallReplacesABinaryThatAnswersTheTargetVersionButHoldsOtherBytes(t *testing.T) {
+	t.Parallel()
+
+	goos, goarch := platformOf(t, "")
+	const version = "v0.16.0"
+	from := built(t, version, "", "nova-bus")
+	name := ToolFile("nova-bus", goos)
+	want, err := os.ReadFile(filepath.Join(ArtifactDir(from, version, goos, goarch), name))
+	require.NoError(t, err)
+
+	bin := t.TempDir()
+	target := filepath.Join(bin, name)
+	require.NoError(t, testbin.WriteExecutable(target, []byte("other bytes"), 0o755))
+
+	var out, errs bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", version, "--bin", bin},
+		&out, &errs, Deps{VersionOf: func(context.Context, string) (string, error) {
+			return "nova-bus " + version + " " + goos + "/" + goarch, nil
+		}})
+	require.Equal(t, 0, code, errs.String())
+	require.Contains(t, out.String(), "tools=1")
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
 }
 
 func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
@@ -879,6 +888,132 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 	if entries, err := os.ReadDir(bin); err != nil || len(entries) != 0 {
 		require.FailNowf(t, "assertion failed", "a refused install still wrote %v (%v)", entries, err)
 	}
+}
+
+// TestInstallLeavesEveryToolAloneWhenOneStagingFails pins security#72 finding 4.
+//
+// The planted directory at the predictable .<tool>.new name must not be what
+// fails the install. Publish renames the staged temp onto the target, so
+// that name is never opened and both tools land. An install that replaces
+// nova-a before nova-b is published dies on the plant; rolling nova-a back
+// to its old bytes would still hide that, so this case requires the new
+// artifact, not the end state after a restore.
+//
+// The other case is a real staging failure, before any rename. nova-a has
+// to be the same file it was, not a copy put back afterwards.
+func TestInstallLeavesEveryToolAloneWhenOneStagingFails(t *testing.T) {
+	t.Parallel()
+
+	t.Run("planted temp name does not fail the install", func(t *testing.T) {
+		t.Parallel()
+
+		goos, _ := platformOf(t, "")
+		from := built(t, "v0.16.0", "", "nova-a", "nova-b")
+		bin := t.TempDir()
+		nameA := ToolFile("nova-a", goos)
+		nameB := ToolFile("nova-b", goos)
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		planted := "." + nameB + ".new"
+		if err := os.Mkdir(filepath.Join(bin, planted), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+			&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+				return "", fmt.Errorf("absent")
+			}})
+		if code != 0 {
+			require.Equal(t, 0, code, "planted %s failed the install (a tool was published before the rest):\n%s%s", planted, o.String(), e.String())
+		}
+		assertRunnable(t, filepath.Join(bin, nameA))
+		assertRunnable(t, filepath.Join(bin, nameB))
+		info, err := os.Lstat(filepath.Join(bin, planted))
+		if err != nil || !info.IsDir() {
+			require.FailNowf(t, "assertion failed", "planted %s is %v (%v); publish must not open that name", planted, info.Mode(), err)
+		}
+		entries, err := os.ReadDir(bin)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		for _, entry := range entries {
+			if entry.Name() != planted && (strings.Contains(entry.Name(), ".new") || strings.Contains(entry.Name(), ".aside")) {
+				require.FailNowf(t, "assertion failed", "a temp this run created was left behind: %s", entry.Name())
+			}
+		}
+	})
+
+	t.Run("one staging failure replaces nothing", func(t *testing.T) {
+		t.Parallel()
+
+		goos, goarch := platformOf(t, "")
+		from := built(t, "v0.16.0", "", "nova-a", "nova-b")
+		bin := t.TempDir()
+		nameA := ToolFile("nova-a", goos)
+		nameB := ToolFile("nova-b", goos)
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
+			require.NoError(t, err, err)
+		}
+		af, err := os.Open(filepath.Join(bin, nameA))
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		before, err := af.Stat()
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		if err := af.Close(); err != nil {
+			require.NoError(t, err, err)
+		}
+		art := ArtifactDir(from, "v0.16.0", goos, goarch)
+		var removeErr error
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+			&o, &e, Deps{VersionOf: func(_ context.Context, target string) (string, error) {
+				// After nova-a has been staged and before nova-b is. The
+				// artifact was verified already; removing it fails staging
+				// and must not publish anything.
+				if filepath.Base(target) == nameB {
+					removeErr = os.Remove(filepath.Join(art, nameB))
+				}
+				return "", fmt.Errorf("absent")
+			}})
+		if removeErr != nil {
+			require.NoError(t, removeErr, removeErr)
+		}
+		if code == 0 || !strings.Contains(e.String(), "were in place") || strings.Contains(e.String(), "restored") || strings.Contains(e.String(), "left replaced") {
+			require.FailNowf(t, "assertion failed", "staging failure was not reported before any publish: code=%d\n%s%s", code, o.String(), e.String())
+		}
+		after, err := os.Stat(filepath.Join(bin, nameA))
+		if err != nil || !os.SameFile(before, after) {
+			require.FailNowf(t, "assertion failed", "%s was replaced before every staged file was published (rollback hides the bytes)\n%s", nameA, e.String())
+		}
+		body, err := os.ReadFile(filepath.Join(bin, nameA))
+		if err != nil || string(body) != "old-a" {
+			require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameA, body, err, e.String())
+		}
+		body, err = os.ReadFile(filepath.Join(bin, nameB))
+		if err != nil || string(body) != "old-b" {
+			require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameB, body, err, e.String())
+		}
+		entries, err := os.ReadDir(bin)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), ".new") || strings.Contains(entry.Name(), ".aside") {
+				require.FailNowf(t, "assertion failed", "a temp this run created was left behind: %s", entry.Name())
+			}
+		}
+	})
 }
 
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
@@ -1234,6 +1369,71 @@ func TestAdoptRefusesARemoteFromWithNoStage(t *testing.T) {
 
 // A fetch that arrived truncated is caught ONCE, here, rather than four times
 // on four machines that are then in four different states.
+func TestAdoptRemovesWhatItFetchedWhenTheDigestOrTheChecksRefuse(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{"damaged artifact", "wrong expected digest", "invalid sums", "missing sums"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			source := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+			dir := ArtifactDir(source, "v0.16.0", "linux", "amd64")
+			sums := filepath.Join(dir, SumsFile)
+			if kind == "damaged artifact" {
+				require.NoError(t, testbin.WriteExecutable(filepath.Join(dir, "nova-bus"), []byte("truncated"), 0o755))
+			}
+			if kind == "invalid sums" {
+				require.NoError(t, os.WriteFile(sums, []byte("invalid checksum file\n"), 0o644))
+			}
+			digest, err := fileSum(sums)
+			require.NoError(t, err)
+			if kind == "wrong expected digest" {
+				digest = strings.Repeat("0", 64)
+			}
+			if kind == "missing sums" {
+				require.NoError(t, os.Remove(sums))
+			}
+			stage := t.TempDir()
+			neighbor := filepath.Join(stage, "keep")
+			require.NoError(t, os.WriteFile(neighbor, []byte("operator data"), 0o600))
+			s := &fakeSSH{serves: map[string]string{"builder": dir}}
+			var out, errs bytes.Buffer
+			code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
+				"--machines", machinesFile(t, "target\n"), "--ssh", "/usr/bin/ssh",
+				"--from", "builder:/releases", "--stage", stage, "--expect-sums", digest,
+				"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &out, &errs, Deps{SSH: s})
+			require.Equal(t, 2, code, errs.String())
+			require.Len(t, s.fetches, 1)
+			assert.Empty(t, s.sends)
+			assert.NoDirExists(t, ArtifactDir(stage, "v0.16.0", "linux", "amd64"), "a refused fetch must leave no unverified artifacts")
+			body, err := os.ReadFile(neighbor)
+			require.NoError(t, err)
+			assert.Equal(t, "operator data", string(body))
+		})
+	}
+}
+
+func TestAdoptLeavesAnExistingFetchDirectoryAlone(t *testing.T) {
+	t.Parallel()
+
+	stage := t.TempDir()
+	into := ArtifactDir(stage, "v0.16.0", "linux", "amd64")
+	require.NoError(t, os.MkdirAll(into, 0o755))
+	owned := filepath.Join(into, "operator-data")
+	require.NoError(t, os.WriteFile(owned, []byte("keep"), 0o600))
+	s := &fakeSSH{}
+	var out, errs bytes.Buffer
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "target\n"), "--ssh", "/usr/bin/ssh",
+		"--from", "builder:/releases", "--stage", stage, "--expect-sums", strings.Repeat("0", 64),
+		"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &out, &errs, Deps{SSH: s})
+	require.Equal(t, 2, code, errs.String())
+	assert.Contains(t, errs.String(), "name a writable --stage without this version and platform")
+	assert.Empty(t, s.fetches, "an existing directory is refused before any fetch")
+	body, err := os.ReadFile(owned)
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(body))
+}
+
 func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
 	t.Parallel()
 
@@ -1321,6 +1521,43 @@ func TestMachinesFileRefusesAShapeItCannotMean(t *testing.T) {
 				require.FailNowf(t, "assertion failed", "got %v, want a refusal naming %q", err, tc.wants)
 			}
 		})
+	}
+}
+
+// A name that begins with a dash is an ssh flag once ExecSSH appends it after
+// the options, so the machines file refuses it before any dial. The names the
+// file is written to hold still parse.
+func TestMachinesFileRefusesANameBeginningWithADash(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, in, wants string }{
+		{"an ssh version flag", "-V\n", "machine name"},
+		{"an ssh login flag", "-lroot\n", "machine name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Machines(strings.NewReader(tc.in))
+			if err == nil || !strings.Contains(err.Error(), tc.wants) {
+				require.FailNowf(t, "assertion failed", "got %v, want a refusal naming %q", err, tc.wants)
+			}
+		})
+	}
+
+	got, err := Machines(strings.NewReader("hulk\nbench-1\nuser@host\n"))
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	want := []Machine{
+		{Name: "hulk"},
+		{Name: "bench-1"},
+		{Name: "user@host"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		require.FailNowf(t, "assertion failed", "got %v, want %v", got, want)
+	}
+
+	host, dir, remote := RemoteFrom("-V:/x")
+	if host != "" || dir != "-V:/x" || remote {
+		require.FailNowf(t, "assertion failed", "RemoteFrom(%q) = (%q, %q, %v), want a local path", "-V:/x", host, dir, remote)
 	}
 }
 
@@ -1582,7 +1819,7 @@ func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
 		}
 	}
 	// And the whole composed argv for a real machine carries none of them.
-	argv := ExecSSH{Path: "/usr/bin/ssh"}.sshArgs("hulk")
+	argv := remoteArgv("hulk")
 	if argv[len(argv)-1] != "hulk" {
 		require.FailNowf(t, "assertion failed", "the machine is not the last argument: %v", argv)
 	}
@@ -1688,6 +1925,61 @@ func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"},
 		&o, &e, Deps{SSH: s}); code != 0 {
 		require.FailNowf(t, "assertion failed", "the digest the cut wrote was not accepted: %d %s", code, e.String())
+	}
+}
+
+// THE LIST IS PINNED BY ITS OWN DIGEST (docs/SPEC-RELEASE.md section 5,
+// security#72 finding 10). A --paths-from file is the sensitive gate's only
+// input, and an unpinned list is a hand-editable one: whoever edits it between
+// the --local-diff that wrote it and the cut that reads it could delete the
+// sensitive paths and pass the gate with no --security-read, silently.
+func TestCutRefusesAPathsFileWhoseListWasEditedAfterItWasWritten(t *testing.T) {
+	t.Parallel()
+
+	const rangeName = "v0.15.10...abc123abc123def"
+	dir := t.TempDir()
+	written := filepath.Join(dir, "paths.txt")
+	list := []string{"internal/secrets/seal.go", "README.md"}
+	require.NoError(t, WritePathsFile(written, rangeName, list), "the verb could not write its own list")
+
+	// UNTOUCHED, THE ROUND TRIP STANDS: the file this verb wrote reads back
+	// exactly the list it was given.
+	got, err := ReadPathsFile(written, rangeName)
+	require.NoError(t, err, "an untouched list this verb wrote was refused: %v", err)
+	assert.Equal(t, list, got, "the round trip lost or changed paths")
+
+	raw, err := os.ReadFile(written)
+	require.NoError(t, err, err)
+
+	for _, tc := range []struct {
+		name string
+		drop string
+	}{
+		{"list line dropped", list[0] + "\n"},
+		{"digest line dropped", "# sha256 "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := string(raw)
+			if tc.name == "digest line dropped" {
+				lines := strings.SplitAfterN(body, "\n", 3)
+				require.GreaterOrEqual(t, len(lines), 3, "the written file has no second header line:\n%s", body)
+				require.True(t, strings.HasPrefix(lines[1], tc.drop), "the second header line is not a sha256 line: %q", lines[1])
+				body = lines[0] + lines[2]
+			} else {
+				body = strings.Replace(body, tc.drop, "", 1)
+			}
+			require.NotEqual(t, string(raw), body, "the edit changed nothing; the fixture is wrong")
+			paths := filepath.Join(dir, tc.name+".txt")
+			if err := os.WriteFile(paths, []byte(body), 0o644); err != nil {
+				require.NoError(t, err, err)
+			}
+			_, err := ReadPathsFile(paths, rangeName)
+			if assert.Error(t, err, "the cut read back a list edited after it was written") {
+				assert.Contains(t, err.Error(), "sha256", "the refusal does not name the digest mismatch: %v", err)
+				assert.Contains(t, err.Error(), "release cut --local-diff", "the refusal carries no remedy to regenerate the list: %v", err)
+			}
+		})
 	}
 }
 
@@ -1969,6 +2261,51 @@ func TestBuildRefusesAPlatformListItCannotRead(t *testing.T) {
 	}
 }
 
+// --platform is a goos and a goarch and nothing else. Each half is
+// ^[a-z0-9]+$, so a value carrying a path separator, a second dash or an
+// upper-case letter is refused rather than silently retargeted: a split on the
+// first dash alone lets `q-a/../b` name the goarch `a/../b`, and install then
+// reads a directory the --from tree never named. The install leg says the
+// refusal reaches the verb before --bin is touched.
+func TestPlatformRefusesAValueThatIsNotLowercaseGoosDashGoarch(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		platform string
+		wantErr  bool
+	}{
+		{"linux-amd64", false},
+		{"windows-arm64", false},
+		{"q-a/../b", true},
+		{"linux-amd64/../x", true},
+		{"../a-b", true},
+		{"linux-amd64-extra", true},
+		{"linux-AMD64", true},
+	} {
+		t.Run(tc.platform, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := Platform(tc.platform)
+			if tc.wantErr {
+				assert.Error(t, err, "accepted %q", tc.platform)
+				return
+			}
+			assert.NoError(t, err, "refused %q", tc.platform)
+		})
+	}
+
+	from := built(t, "v0.16.0", "", "nova-bus")
+	bin := t.TempDir()
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
+		"--bin", bin, "--platform", "q-a/../b"}, &o, &e, Deps{})
+	if code != 2 {
+		require.Equal(t, 2, code, "a retargeting --platform was accepted: code=%d out=%s errs=%s", code, o.String(), e.String())
+	}
+	if entries, err := os.ReadDir(bin); err != nil || len(entries) != 0 {
+		require.FailNowf(t, "assertion failed", "a refused install wrote %v (%v)", entries, err)
+	}
+}
+
 // A checksum file nobody has ever checked is a file whose first reader is the
 // person it was supposed to reassure. The build reads its own, in the step that
 // wrote it, and says how many it checked.
@@ -2189,4 +2526,41 @@ func TestVerifyArtifactsReportsWhatItActuallyChecked(t *testing.T) {
 	if n, err := VerifyArtifacts(dir, arts); err == nil || n == 3 {
 		require.FailNowf(t, "assertion failed", "a changed artifact was counted as verified: n=%d err=%v", n, err)
 	}
+}
+
+// TestReadSumsRefusesAnArtifactNameTheRemoteShellWouldReadAsSyntax pins
+// security#72 finding 1 (artifact-name half): ReadSums is the one place the
+// names enter, and install writes a file under the name while adopt composes a
+// remote `rm -f` over it. A name the far shell reads as syntax must stop here,
+// with the line number, so install, adopt and pull see only safe names.
+func TestReadSumsRefusesAnArtifactNameTheRemoteShellWouldReadAsSyntax(t *testing.T) {
+	t.Parallel()
+	const sum = "73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb73cb"
+	write := func(t *testing.T, lines ...string) string {
+		t.Helper()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, SumsFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644))
+		return dir
+	}
+
+	for _, bad := range []string{"nova-a;touch pwn7", "$(id)", "nova-a`id`", "nova a", "-rf", "nova-a|id", "nova-a&id", "nova-a>x", "nova\tb", "~root"} {
+		bad := bad
+		t.Run(bad, func(t *testing.T) {
+			t.Parallel()
+			dir := write(t, sum+"  nova-bus", sum+"  "+bad)
+			_, err := ReadSums(dir)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "line 2")
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", bad))
+		})
+	}
+
+	dir := write(t, sum+"  nova-bus", sum+"  nova-update.exe", sum+"  nova_tool+1.2")
+	arts, err := ReadSums(dir)
+	require.NoError(t, err)
+	names := make([]string, 0, len(arts))
+	for _, a := range arts {
+		names = append(names, a.Name)
+	}
+	assert.Equal(t, []string{"nova-bus", "nova-update.exe", "nova_tool+1.2"}, names)
 }

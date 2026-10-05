@@ -68,8 +68,13 @@ type AddReq struct {
 	// none.
 	BriefOps    map[string]string
 	BriefRecord string
-	Only        []string
-	Who         string
+	// Replaces names the cards the one card this add admits replaces (add --replaces, twins.go):
+	// it takes over every edge where a waiting card needs one of them, and each still on the
+	// table is dropped "replaced by <the new id>", in the same step, raising no blocked
+	// judgment.
+	Replaces []string `json:",omitempty"`
+	Only     []string
+	Who      string
 }
 
 // gatePrefix is the prefix of the sentinels add --sentinel-every names.
@@ -128,6 +133,9 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 // back to waiting, and those in flight are past the stop: it waits for them as
 // well. It is one step: a cycle of needs refuses the whole add.
 func Add(s *Snapshot, r AddReq) Plan {
+	if len(r.Replaces) > 0 {
+		return Replace(s, r)
+	}
 	var p Plan
 	p.on(s)
 	ids := AddIDs(s, r)
@@ -209,6 +217,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		needs  []string
 		brief  string
 		rules  string // FieldRules
+		bench  string // FieldBench: the members its brief's BENCH line names (bench_deal.go)
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
 		sent   bool   // a stop: --sentinel or a many-brief card marked one
@@ -225,6 +234,13 @@ func Add(s *Snapshot, r AddReq) Plan {
 			if s.Work.Card(n) == nil && !adding[n] {
 				missing = append(missing, n)
 			}
+		}
+		// bench is the members its brief's BENCH line names: every placement of its work
+		// cards deals it only to them, and a name that is no fleet member is refused with
+		// the members there are (bench_deal.go)
+		bench, benchWhy := BenchOfBrief(briefOf(i))
+		if unknown := BenchKnown(s, bench); len(unknown) > 0 {
+			bench, benchWhy = nil, BenchRefused(s, bench, unknown)
 		}
 		switch {
 		case seen[id]:
@@ -243,9 +259,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
 			}
 			continue
+		case benchWhy != "":
+			p.refuse(id, benchWhy)
+			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -333,6 +352,18 @@ func Add(s *Snapshot, r AddReq) Plan {
 	if len(pulled) > 0 {
 		p.inserting = true
 	}
+	// the weights the admission changes (weight.go): the cards admitted carry theirs, and
+	// every primary they wait on is written its new one
+	var admitted []*Card
+	for _, a := range in {
+		if !a.sent && !a.gate {
+			admitted = append(admitted, &Card{ID: a.id, Fields: map[string]string{"needs": strings.Join(a.needs, ",")}})
+		}
+	}
+	weighed := weighUnits(s, admitted, nil)
+	weights := weightsOver(append(openPrimaries(s), admitted...))
+	// the gate's measured wall, read once for the add (gate_wall.go)
+	var walls map[string][]float64
 	for _, a := range in {
 		col := Ready
 		for _, n := range a.needs {
@@ -354,6 +385,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if r.Held {
 			fields[FieldHeld] = stamp(s.Now)
 		}
+		gateSaid := ""
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
 			if a.rules != "" {
@@ -362,12 +394,26 @@ func Add(s *Snapshot, r AddReq) Plan {
 			if who := WhoOfBrief(a.brief); who != "" {
 				fields[FieldWho] = who // a friend's card: the tick deals it to a friend (friend_deal.go)
 			}
+			if a.bench != "" {
+				fields[FieldBench] = a.bench // its bench: dealt only to the members it names (bench_deal.go)
+			}
 			if op := r.BriefOps[a.id]; op != "" {
 				fields[FieldBriefOp], fields[FieldBriefRecord] = op, r.BriefRecord
+			}
+			if !a.sent {
+				if walls == nil {
+					walls = gateWalls(s)
+				}
+				set, said := gateTier(walls, a.brief)
+				maps.Copy(fields, set)
+				gateSaid = said
 			}
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
+		}
+		if n := weights[a.id]; n > 0 && !a.sent && !a.gate {
+			fields[FieldBehind] = itoa(n)
 		}
 		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
 		if a.gate {
@@ -375,6 +421,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if r.Held {
 			u.Moved += "; held until release"
+		}
+		if gateSaid != "" {
+			u.Moved += "; " + gateSaid
 		}
 		if r.Sentinel {
 			u.Moved = "sentinel " + u.Moved
@@ -416,6 +465,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		head = nil
 		p.Units = append(p.Units, u)
 	}
+	p.Units = append(p.Units, weighed...)
 	if len(p.Units) > 0 {
 		last := &p.Units[len(p.Units)-1]
 		for _, c := range streamLine(s, r.Stream) {
@@ -773,8 +823,20 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		return p, moves
 	}
 	q, widths := memberLoads(s, up), memberWidths(s, up)
-	next := func() string { return rr.next(up, q, widths, "") }
 	for _, c := range chosen {
+		// its bench: the members its brief's BENCH line names, and the deal deals it to
+		// none other; with no member of it up it waits ready (bench_deal.go)
+		bench := Bench(c)
+		members := onlyBench(up, bench)
+		if len(members) == 0 {
+			p.refuse(c.ID, benchRefusal(bench))
+			continue
+		}
+		next := func() string { return rr.next(members, q, widths, "") }
+		roomWhy := noRoomWhy
+		if len(bench) > 0 {
+			roomWhy = benchRoom(bench)
+		}
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
 				tier := s.NextTier(c)
@@ -789,7 +851,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				// below its ceiling: the machine escalates it, a new attempt on the next tier
 				m := next()
 				if m == "" {
-					p.refuse(c.ID, noRoomWhy)
+					p.refuse(c.ID, roomWhy)
 					continue
 				}
 				on, _ := CardTiers(c)
@@ -815,7 +877,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			// a member that refused it at staging is not dealt it again (StagingRefusers)
 			m := next()
 			if refused := StagingRefusers(wc); len(refused) > 0 {
-				others := without(up, refused)
+				others := without(members, refused)
 				if len(others) == 0 {
 					p.refuse(c.ID, fmt.Sprintf("%s was refused at staging by every member up (%s): rework it with a fix, or drop it", wc.ID, strings.Join(refused, ", ")))
 					continue
@@ -823,7 +885,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				m = rr.next(others, q, widths, "")
 			}
 			if m == "" {
-				p.refuse(c.ID, noRoomWhy)
+				p.refuse(c.ID, roomWhy)
 				continue
 			}
 			u, why := redeal(s, c, wc, m, q, ri)
@@ -842,7 +904,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		}
 		m := next()
 		if m == "" {
-			p.refuse(c.ID, noRoomWhy)
+			p.refuse(c.ID, roomWhy)
 			continue
 		}
 		u, why := deal(s, c, c.F("fix"), m, q, ri, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
@@ -1117,7 +1179,12 @@ type FinishReq struct {
 	// finish whose class is no-result or nothing-to-do at or above that class's bar on the
 	// card is routed by it (finishKind). A finish carrying one names one card.
 	Decided string
-	Who     string
+	// Reported is when the worker wrote its report, when the transport knows it (a
+	// friend's REPORT.md, friend sync): kept on the work card as FieldReported, no later
+	// than the finish, so the stats time a friend's run from her take to her report and
+	// her report lag from it to the finish (RunWall). Zero is unknown.
+	Reported time.Time `json:",omitzero"`
+	Who      string
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -1225,6 +1292,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			head, result, okWord, into = pr.F(FieldPassedHead), "ok", "yes", DoneOK
 		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
+		if !r.Reported.IsZero() {
+			at := r.Reported
+			if at.After(s.Now) {
+				at = s.Now // her clock ahead of the sprint's: never after the finish
+			}
+			cardSet[FieldReported] = stamp(at)
+		}
 		if r.Report != "" {
 			cardSet["report"] = r.Report
 		}
@@ -1300,6 +1374,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				Card: c.ID, Attempt: attempt, What: identicalWorkWhat(c.ID, attempt, set[FieldFailure], pr.ID),
 				Decisions: append([]string(nil), TickDecisions[NBound]...)}
 			u.Notes = append(u.Notes, n)
+		} else if bb, ok := AtBriefBound(pr, ""); ok {
+			// too many attempts on one brief: the brief is wrong, not the worker (brief_bound.go)
+			n := judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
+			n.Who, n.Attempt, n.What = who, attempt, bb.String()+"; attempt "+itoa(attempt)+" failed: "+r.Report
+			u.Notes = append(u.Notes, n)
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
 			n.Who, n.Attempt, n.What = who, attempt, r.Report
@@ -1313,9 +1392,31 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
+		friendNext(s, c, &u)
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// friendNext is a friend's own take: her finish moves the oldest ready card on her row
+// (the deal dealt it ready behind her working cards: FriendDeal) into working in the
+// same step, taken now, so she never waits for a tick between one card and the next
+// (the owner, 2026-10-04: "just like the fleet"). A machine's finish does nothing of the
+// kind: the member takes.
+func friendNext(s *Snapshot, c *Card, u *Unit) {
+	if !IsFriendRow(c.Row) {
+		return
+	}
+	ready := append([]*Card(nil), s.Fleet.Cell(c.Row, Ready)...)
+	if len(ready) == 0 {
+		return
+	}
+	SortCards(ready)
+	next := ready[0]
+	name, _ := FriendOfRow(c.Row)
+	set, unset := friendTaken(s, next, name)
+	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, set, unset...)))
+	u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", next.ID)
 }
 
 // FieldPassedHead is the head of the attempt a rework sent back when a reader had passed
@@ -1427,17 +1528,25 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 }
 
 // withdrawCard is the unit that withdraws work card c from its member, the one path of a
-// member going down (FleetStep) and of a ready card on a resting route (restWithdrawals): a
-// new generation and the withdrawn stamp, and FieldTakeEnded only when its take ended
-// (ended), which spends a redeal (redeal); its primary, working on c, goes back to ready for
-// the next deal, with a happened note of typ to its stream that says what, by who.
+// member going down (FleetStep), of a ready card on a resting route (restWithdrawals) and
+// of a friend's card taken back (FriendTake, by withdrawUnit): a new generation and the
+// withdrawn stamp, and FieldTakeEnded only when its take ended (ended), which spends a
+// redeal (redeal); its primary, working on c, goes back to ready for the next deal, with a
+// happened note of typ to its stream that says what, by who.
 func withdrawCard(s *Snapshot, c *Card, ended bool, typ, who, what string) Unit {
+	var set map[string]string
+	if ended {
+		set = map[string]string{FieldTakeEnded: stamp(s.Now)}
+	}
+	return withdrawUnit(s, c, set, nil, typ, who, what)
+}
+
+// withdrawUnit is withdrawCard with the fields extra sets and unset unsets on the card.
+func withdrawUnit(s *Snapshot, c *Card, extra map[string]string, unset []string, typ, who, what string) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"] = stamp(s.Now)
-	if ended {
-		set[FieldTakeEnded] = stamp(s.Now)
-	}
-	u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
+	maps.Copy(set, extra)
+	u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, append([]string{"taken", "dealt"}, unset...)...))},
 		Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
 	if what != "" {
 		u.Moved += ", " + what
@@ -1469,8 +1578,10 @@ type FleetReq struct {
 	// Why is said in the happened notification of a change of status.
 	Why string
 	// Width, above zero, is the member's width set by up or release (the
-	// machine's child cap, width.go); zero leaves the width as it is.
-	Width int `json:",omitempty"`
+	// machine's child cap, width.go); zero leaves the width as it is, unless
+	// Drain says the member drains: its width is set to DrainWidth (0).
+	Width int  `json:",omitempty"`
+	Drain bool `json:",omitempty"`
 	// Sync, with Op sync, is every machine the inventory says is a member
 	// and its width (fleet_sync.go); Member is empty.
 	Sync []SyncMember `json:",omitempty"`
@@ -1591,8 +1702,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				line = r.Member + " added, down until it beats"
 			}
 			fields := map[string]string{"kind": "member", "status": status, "since": stamp(s.Now)}
-			if r.Width > 0 {
-				fields[FieldWidth] = itoa(r.Width)
+			if w, ok := r.width(); ok {
+				fields[FieldWidth] = w
 			}
 			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0, fields)))
 		default:
@@ -1602,8 +1713,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				set["status"], set["since"] = Up, stamp(s.Now)
 				n = statusNote(s, r, NMemberUp, "up")
 			}
-			if r.Width > 0 && ctl.F(FieldWidth) != itoa(r.Width) {
-				set[FieldWidth] = itoa(r.Width)
+			if w, ok := r.width(); ok && ctl.F(FieldWidth) != w {
+				set[FieldWidth] = w
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
 				unset = append(unset, "held", FieldHeldBy, FieldHeldReason, FieldHeldFinish)
@@ -1615,8 +1726,11 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				head = append(head, change(Fleet, setEntry(ctl, set, unset...)))
 			}
 		}
-		if r.Width > 0 && (ctl == nil || ctl.F(FieldWidth) != itoa(r.Width)) {
-			line += " width=" + itoa(r.Width)
+		if w, ok := r.width(); ok && (ctl == nil || ctl.F(FieldWidth) != w) {
+			line += " width=" + w
+			if r.Drain {
+				line += " (drains: no new deals, its working cards finish)"
+			}
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Members(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
@@ -1726,7 +1840,9 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
 			// member at its width takes no more.
-			if m := rr.next(without(up, StagingRefusers(c)), q, widths, ""); m != "" {
+			// a bench card goes to a member of its bench alone: with none of it up it is
+			// withdrawn, and waits ready for its bench (bench_deal.go)
+			if m := rr.next(onlyBench(without(up, StagingRefusers(c)), benchOfWork(s, c)), q, widths, ""); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
 				q[m]++
@@ -1875,7 +1991,9 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 		q := queues[long]
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
-			to = target(rr, up, n, held, widths, long, StagingRefusers(q[i]))
+			// a bench card is never moved off its bench: the members its BENCH line does not
+			// name are avoided as a member that refused it at staging is (bench_deal.go)
+			to = target(rr, up, n, held, widths, long, append(StagingRefusers(q[i]), notBench(up, benchOfWork(s, q[i]))...))
 		}
 		if to == "" {
 			return
@@ -1985,4 +2103,16 @@ func takeTurns(cards []*Card, offset int) []*Card {
 		}
 	}
 	return out
+}
+
+// width is the width cell up or release writes: the width given, DrainWidth
+// for a member that drains, or none (ok false) to leave it as it is.
+func (r FleetReq) width() (string, bool) {
+	switch {
+	case r.Drain:
+		return DrainWidth, true
+	case r.Width > 0:
+		return itoa(r.Width), true
+	}
+	return "", false
 }
