@@ -102,7 +102,99 @@ func runDeleteHelper() int {
 	return code
 }
 
-// The masks, without a wall: the job dir and its tmp keep REMOVE_FILE and REMOVE_DIR, any
+// gitStepEnv makes the test binary the walled child of the step's-git-commit test.
+const gitStepEnv = "NOVA_TEST_A_STEPS_GIT_COMMIT"
+
+// A step's wall (internal/cardtree, Wall.Argv): its private tmp is the first --write and
+// the --tmp, its checkout the second --write and the --cwd. git commits by renaming a new
+// index over .git/index, a delete in the checkout, so the checkout is one of the step's
+// own write roots and the commit must succeed under the wall; a third --write, a shared
+// directory the step may write, still refuses a delete (docs/SPEC-SANDBOX.md,
+// "deletes-only-in-the-job-dir-p.w1"). A wall that withholds the remove rights from the
+// cwd fails here at commit=128 ("unable to write new index file").
+func TestAStepsGitCommitInsideItsWallSucceeds(t *testing.T) {
+	t.Parallel()
+	if os.Getenv(gitStepEnv) == "1" {
+		os.Exit(runGitStepHelper())
+	}
+	if _, ok := landlockABI(); !ok {
+		t.Skip("this kernel has no landlock; the wall cannot be built here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("the wall does not run as root (rule 2)")
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git on this machine")
+	}
+
+	tmp := realDir(t, t.TempDir())
+	repo := realDir(t, t.TempDir())
+	shared := realDir(t, t.TempDir())
+	keep := filepath.Join(shared, "keep")
+	require.NoError(t, os.WriteFile(keep, []byte("shared\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "home"), 0o700))
+	env := append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=step", "GIT_AUTHOR_EMAIL=step@example.com", "GIT_COMMITTER_NAME=step", "GIT_COMMITTER_EMAIL=step@example.com")
+	for _, args := range [][]string{{"init", "-q", repo}, {"-C", repo, "commit", "-q", "--allow-empty", "-m", "base"}} {
+		c := exec.Command(git, args...)
+		c.Env = env
+		out, err := c.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("step\n"), 0o644))
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestAStepsGitCommitInsideItsWallSucceeds$", "-test.count=1")
+	cmd.Env = append(env, gitStepEnv+"=1", "STEP_TMP="+tmp, "STEP_REPO="+repo, "STEP_SHARED="+shared, "STEP_GIT="+git)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	require.NoError(t, cmd.Run(), "the walled child did not run: stdout=%s stderr=%s", out.String(), errb.String())
+	got := out.String()
+	t.Logf("walled child:\n%s%s", got, errb.String())
+
+	assert.Contains(t, got, "add=0", "git add in the step's checkout was refused")
+	assert.Contains(t, got, "commit=0", "git commit in the step's checkout was refused")
+	log := exec.Command(git, "-C", repo, "log", "-1", "--format=%s")
+	log.Env = env
+	subject, err := log.Output()
+	require.NoError(t, err)
+	assert.Equal(t, "walled\n", string(subject), "the commit made under the wall is the checkout's head")
+	assert.Contains(t, got, "rm=1", "rm of a file in a shared --write outside every write root of the step was not refused")
+	assert.FileExists(t, keep, "the wall let a file outside the step's write roots be deleted")
+	assert.Contains(t, got, "write=0", "a write in the shared --write was refused, and only deletes should be")
+}
+
+// runGitStepHelper is the walled child: the step's wall around one shell that commits in
+// the checkout and tries a delete in the shared directory.
+func runGitStepHelper() int {
+	tmp, repo, shared, git := os.Getenv("STEP_TMP"), os.Getenv("STEP_REPO"), os.Getenv("STEP_SHARED"), os.Getenv("STEP_GIT")
+	script := strings.Join([]string{
+		`"$4" add a.txt; echo add=$?`,
+		`"$4" commit -q -m walled; echo commit=$?`,
+		`rm -f "$3/keep"; [ $? -eq 0 ] && echo rm=0 || echo rm=1`,
+		`echo new > "$3/written"; echo write=$?`,
+	}, "\n")
+	p, bad := Build(Input{
+		Writes: []string{tmp, repo, shared},
+		Tmp:    tmp,
+		Cwd:    repo,
+		Home:   filepath.Join(tmp, "home"),
+		Reads:  []string{filepath.Dir(git)},
+		Argv:   []string{"sh", "-c", script, "sh", tmp, repo, shared, git},
+	})
+	if len(bad) > 0 {
+		fmt.Fprintf(os.Stderr, "build refused: %v\n", bad)
+		return 2
+	}
+	code, err := Run(p, os.Environ(), strings.NewReader(""), os.Stdout, os.Stderr, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "run refused: %v\n", err)
+		return 2
+	}
+	return code
+}
+
+// The masks, without a wall: the job dir, its tmp and the cwd keep REMOVE_FILE and REMOVE_DIR, any
 // other write loses exactly those two and keeps every write right, and the printed
 // ruleset and the darwin profile say the same thing.
 func TestWritesOutsideTheJobCarryNoRemoveRights(t *testing.T) {
@@ -137,6 +229,24 @@ func TestWritesOutsideTheJobCarryNoRemoveRights(t *testing.T) {
 	// A tmp outside the job dir is the second place deletes are allowed.
 	p.Tmp = outside
 	assert.Equal(t, writeSubset(abi), writeRuleMask(p, outside, abi))
+	// A step's wall: its tmp first, its checkout the cwd, a shared directory beside them.
+	// The checkout keeps its remove rights (git commit renames over .git/index), the shared
+	// directory does not.
+	repo := realDir(t, t.TempDir())
+	step := &Policy{Writes: []string{tmp, repo, outside}, Tmp: tmp, Cwd: repo, Home: tmp}
+	assert.Equal(t, writeSubset(abi), writeRuleMask(step, repo, abi), "the step's checkout lost its remove rights")
+	assert.Equal(t, writeSubset(abi)&^uint64(fsRemoveFile|fsRemoveDir), writeRuleMask(step, outside, abi))
+	stepText, err := LandlockPolicyText(step)
+	require.NoError(t, err)
+	assert.Contains(t, stepText, "write="+repo+"\n")
+	assert.Contains(t, stepText, "write-nodelete="+outside+"\n")
+	stepProfile, stepParams, err := DarwinProfile(step)
+	require.NoError(t, err)
+	assert.Contains(t, stepProfile, `(deny file-write-unlink (subpath (param "WRITE2")))`)
+	assert.NotContains(t, stepProfile, `(deny file-write-unlink (subpath (param "WRITE1")))`, "the step's checkout is no denied write")
+	assert.Contains(t, stepProfile, `(allow file-write-unlink (subpath (param "JOBCWD")))`)
+	assert.Contains(t, strings.Join(stepParams, " "), "JOBCWD="+repo)
+
 	only := &Policy{Writes: []string{job}, Tmp: tmp, Cwd: job, Home: job}
 	plain, _, err := DarwinProfile(only)
 	require.NoError(t, err)
