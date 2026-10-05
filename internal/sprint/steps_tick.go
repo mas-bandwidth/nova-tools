@@ -230,15 +230,18 @@ const PartDrain = "drain"
 // tick's pump; a table another update wrote is updated again, at once, until
 // none is ("the tick doesn't end until all dirty bits are cleared"). The
 // model is tla/DirtyTick.tla.
+//
+// PartFriendStall is the friend stall ladder (friend_stall.go), in the fleet
+// update after presence: the live tick runs TickTables, so the part has to be
+// here to be carried out.
+const PartFriendStall = "friend-stall"
+
 var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}}},
 }
-
-// PartFriendStall is the friend stall ladder part (friend_stall.go).
-const PartFriendStall = "friend-stall"
 
 // PartLevel and PartLevelReads are the tick start's parts: the fleet's and the
 // readers' rebalance.
@@ -296,8 +299,7 @@ var TickParts = func() []TickPartDef {
 			}
 		}
 	}
-	out = append(out, TickEnd...)
-	return append(out, TickPartDef{PartFriendStall, TickFriendStall})
+	return append(out, TickEnd...)
 }()
 
 // NReadyToMerge is the note the pump addresses to the coordinator once a

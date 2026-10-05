@@ -192,6 +192,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "tick", err.Error())
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
+	a.armStallWake(st, stdout)
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
 	err = noSprintYet(err)
@@ -219,6 +220,17 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return 0
+}
+
+// armStallWake carries the stall ladder's wake out: rungs 1 and 2 call
+// wakeFriendStall, which sends the bus message. The stall part discards the
+// error; a failed send is said and the rung still climbs.
+func (a *app) armStallWake(st *store.Store, stdout io.Writer) {
+	st.WakeFriend = func(ctx context.Context, friend string, rung int, d time.Duration) error {
+		return a.wakeFriendStall(ctx, st, friend, rung, d, func(line string) {
+			fmt.Fprintln(stdout, line)
+		})
+	}
 }
 
 // printTick prints what one tick did: each part's moves, its refusals, a
@@ -299,6 +311,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
+	a.armStallWake(st, stdout)
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}

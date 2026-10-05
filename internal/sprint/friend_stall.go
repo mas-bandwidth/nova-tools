@@ -29,10 +29,11 @@ import (
 const NFriendStall = "friend stall"
 
 // PropFriendStallRung is the fleet property recording the friend's current stall ladder rung (0..5).
-func PropFriendStallRung(friend string) string { return "friend_stall_rung:" + friend }
+// A property name allows letters, digits, underscore, dot and hyphen: a colon is refused by the store.
+func PropFriendStallRung(friend string) string { return "friend_stall_rung." + friend }
 
 // PropFriendStallDown is the fleet property recording when the friend was marked down for stall.
-func PropFriendStallDown(friend string) string { return "friend_stall_down:" + friend }
+func PropFriendStallDown(friend string) string { return "friend_stall_down." + friend }
 
 // TickFriendStall is the friend stall part of the tick (PartFriendStall): it runs in the
 // fleet update pass, checks each friend holding cards against the stall bounds, climbs
@@ -158,7 +159,6 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 			hn.Who, hn.To = r.who(), s.Coordinator
 			hn.What = fmt.Sprintf("friend %s released to up: session activity at %s", f, sessionActive.UTC().Format(time.RFC3339))
 			p.Notes = append(p.Notes, hn)
-			p.Units = append(p.Units, Unit{Key: PartFriendStall, Moved: fmt.Sprintf("friend %s released to up", f)})
 			isStallDown = false
 		}
 
@@ -235,7 +235,6 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 				hn.Who, hn.To = r.who(), s.Coordinator
 				hn.What = fmt.Sprintf("friend %s stall reset to rung 0", f)
 				p.Notes = append(p.Notes, hn)
-				p.Units = append(p.Units, Unit{Key: PartFriendStall, Moved: fmt.Sprintf("friend %s stall reset to rung 0", f)})
 			}
 		case targetRung > curRung:
 			for nextRung := curRung + 1; nextRung <= targetRung; nextRung++ {
@@ -248,7 +247,6 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 					hn.Who, hn.To = r.who(), s.Coordinator
 					hn.What = fmt.Sprintf("friend %s stalled %s: wake turn 1", f, idleDuration.Round(time.Second))
 					p.Notes = append(p.Notes, hn)
-					p.Units = append(p.Units, Unit{Key: PartFriendStall, Moved: fmt.Sprintf("friend %s stall rung 1: wake turn 1", f)})
 				case 2:
 					if r.WakeFriend != nil {
 						_ = r.WakeFriend(f, 2, idleDuration) // ignored: the wake message is best effort; the rung climbs regardless
@@ -257,7 +255,6 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 					hn.Who, hn.To = r.who(), s.Coordinator
 					hn.What = fmt.Sprintf("friend %s stalled %s: wake turn 2", f, idleDuration.Round(time.Second))
 					p.Notes = append(p.Notes, hn)
-					p.Units = append(p.Units, Unit{Key: PartFriendStall, Moved: fmt.Sprintf("friend %s stall rung 2: wake turn 2", f)})
 				case 3:
 					jn := judgment(NStalled, "", s.Now, 0, f)
 					jn.Who, jn.To = r.who(), s.Coordinator
@@ -271,7 +268,6 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 					hn.Who, hn.To = r.who(), s.Coordinator
 					hn.What = fmt.Sprintf("friend %s stalled %s: coordinator note", f, idleDuration.Round(time.Second))
 					p.Notes = append(p.Notes, hn)
-					p.Units = append(p.Units, Unit{Key: PartFriendStall, Moved: fmt.Sprintf("friend %s stall rung 3: coordinator note", f)})
 				case 4:
 					started := map[string]string{}
 					if r.Beats != nil {
@@ -303,7 +299,6 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 					hn.Who, hn.To = r.who(), s.Coordinator
 					hn.What = fmt.Sprintf("friend %s stalled %s: unstarted cards taken back", f, idleDuration.Round(time.Second))
 					p.Notes = append(p.Notes, hn)
-					p.Units = append(p.Units, Unit{Key: PartFriendStall, Moved: fmt.Sprintf("friend %s stall rung 4: unstarted cards taken back", f)})
 				case 5:
 					gen := max(s.SeatGeneration, FirstSeatGeneration)
 					if p.Health == nil {
@@ -344,7 +339,6 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 					hn.Who, hn.To = r.who(), s.Coordinator
 					hn.What = fmt.Sprintf("friend %s stalled %s: marked down (reason stalled)", f, idleDuration.Round(time.Second))
 					p.Notes = append(p.Notes, hn)
-					p.Units = append(p.Units, Unit{Key: PartFriendStall, Moved: fmt.Sprintf("friend %s stall rung 5: marked down", f)})
 				}
 			}
 			write(PropFriendStallRung(f), strconv.Itoa(targetRung))

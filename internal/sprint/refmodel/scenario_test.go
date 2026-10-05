@@ -24,7 +24,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, aFriendStalled} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -171,4 +171,27 @@ func aLateCardRedealt(k *walk) []sample {
 		}
 	}
 	return out
+}
+
+// aFriendStalled admits one friend's card, deals it onto her row, and lets the
+// clock pass the stall bound by one minute. The stall ladder then has a wake
+// (rung 1) to plan. The plan is not applied: the snapshot is the state the
+// part reads, so the same sample stalls again for every duty that looks.
+func aFriendStalled(k *walk) []sample {
+	k.s.Now = k.now
+	id := fmt.Sprintf("p%d", k.next)
+	k.next++
+	brief := "tier: pro\nWHO: friend amy\nREPO: mas-bandwidth/nova-tools\n\nThe task."
+	if !k.try(sprint.Add(k.s, sprint.AddReq{Brief: brief, Stream: k.streams[0], IDs: []string{id}, Who: coordinator})) {
+		return nil
+	}
+	req := k.req()
+	req.Friends = []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up}}
+	k.s.Now = k.now
+	plan, _ := sprint.TickDeal(k.s, req)
+	if !k.try(plan) || k.s.Fleet.Count(sprint.FriendRow("amy"), sprint.Working) == 0 {
+		return nil
+	}
+	k.now = k.now.Add(sprint.FriendStallAfterDefault + time.Minute)
+	return []sample{k.sample()}
 }

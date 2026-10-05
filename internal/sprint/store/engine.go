@@ -82,6 +82,11 @@ type Store struct {
 	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
 	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
 	IdleAlarm bool
+	// WakeFriend wakes a friend by bus when the stall ladder climbs a wake rung
+	// (friend-stall, rungs 1 and 2). Nil sends nothing: a shadow tick, and a
+	// test that does not arm it. The stall part still climbs. The error is the
+	// send's; the stall part discards it (the rung climbs either way).
+	WakeFriend func(ctx context.Context, friend string, rung int, d time.Duration) error
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats

@@ -4091,6 +4091,9 @@ gives one at a time beside the store, so no two steps of the record interleave.
 the model is `tla/StallLadder.tla`). When a friend stalls while holding dealt sprint cards,
 recovery is fully mechanical as a tick part (`PartFriendStall = "friend-stall"`) in the
 fleet update pass (`TickTables`, `TickParts`), with no step needing the coordinator.
+The live tick (`nova-sprint tick` and `run`) carries that part out and calls
+`wakeFriendStall` for rungs 1 and 2; the send is best-effort (a failure is said,
+and the rung still climbs). A shadow tick plans the part and sends nothing.
 
 A friend holding dealt cards (`Ready` or `Working` on her row) is stalled when neither
 session activity (`FriendReport.Active`, her daemon's report of the newest write under

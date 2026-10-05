@@ -969,6 +969,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	at := snap.Epoch
 	res.Tables = newTables()
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
+	if st.WakeFriend != nil {
+		wake := st.WakeFriend
+		req.WakeFriend = func(friend string, rung int, d time.Duration) error {
+			return wake(ctx, friend, rung, d)
+		}
+	}
 	// the first read as it was: the twin it came from moves on with every
 	// part's writes, and with any other writer in this process
 	first := *snap
@@ -1157,12 +1163,28 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				continue
 			}
 			if !drain {
-				if p, due := part.Fn(view, t.req); p.Empty() && due == 0 {
+				// The peek decides whether the part has work. It must not
+				// wake: the committing step plans again and that plan sends.
+				peek := t.req
+				peek.WakeFriend = nil
+				if p, due := part.Fn(view, peek); p.Empty() && due == 0 {
 					// a part that brings the display cells up to date after
 					// it leaves them to the tick's end (tickRun.display)
 					t.unshown = t.unshown || t.ran && mirrors(part.Name)
 					continue
 				}
+			}
+		}
+		if view == nil && part.Name == sprint.PartFriendStall && t.snap != nil {
+			// Once an earlier part has run, the twin often cannot be peeked, and
+			// the tick would run this part just to find it empty, spending an
+			// operation id. The first read is enough to see an empty stall: a
+			// card dealt later in this tick is not idle. A stall the first read
+			// shows is planned again on the fresh read, which is what sends.
+			peek := t.req
+			peek.WakeFriend = nil
+			if p, due := part.Fn(t.snap, peek); p.Empty() && due == 0 {
+				continue
 			}
 		}
 		began := t.st.meter()
@@ -1810,6 +1832,7 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 	if err != nil {
 		return out, fmt.Errorf("fleet: %w", err)
 	}
+	// WakeFriend stays unset: a shadow tick plans the stall part and sends nothing.
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(first.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
 	if req.Friends, err = ro.friendSeats(ctx, &first, now); err != nil {
 		return out, err
