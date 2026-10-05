@@ -1,0 +1,2 @@
+# ceiling: 1
+internal/ci/allowlist:env 1 the environment is read here instead of taken as a parameter

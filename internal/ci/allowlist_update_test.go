@@ -41,7 +41,7 @@ var listFilePatterns = []string{"*allowlist*.txt", "*.allow", "*_examples.txt"}
 // future package shards and the @root shard.
 var countedShardDirectories = []string{
 	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify", "staticcheck", "errcheck",
-	"flagusage", "toolanswers",
+	"flagusage", "toolanswers", "transport-in-main",
 	"no-hand-printing",
 }
 
