@@ -1673,10 +1673,14 @@ func AtIdenticalFindings(c *Card, reader, finding string, bound int) (IdenticalF
 // attempt cap's attempts on one brief (AtBriefBound, its own whole-text repeat taken
 // over by the bound here, so a setting above 2 holds for it too).
 func briefStopAt(s *Snapshot, c *Card, reader, finding string) (briefStop, bool) {
-	if b, ok := AtIdenticalFindings(c, reader, finding, s.IdenticalBound(c.Row)); ok {
+	atCard := c
+	if c.F(FieldAttemptsRan) != "" {
+		atCard = withField(c, "attempt", itoa(c.Int(FieldAttemptsRan)+c.Int(FieldBriefAttempt)))
+	}
+	if b, ok := AtIdenticalFindings(atCard, reader, finding, s.IdenticalBound(c.Row)); ok {
 		return b, true
 	}
-	if bb, ok := AtBriefBound(withField(c, "finding", ""), finding, s.AttemptsCap(c.Row)); ok {
+	if bb, ok := AtBriefBound(withField(atCard, "finding", ""), finding, s.AttemptsCap(c.Row)); ok {
 		return bb, true
 	}
 	return nil, false
