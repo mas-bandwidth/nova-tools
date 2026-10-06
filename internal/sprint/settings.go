@@ -36,6 +36,10 @@ const (
 	// FieldRelease is a stream's control card's field: the release the stream
 	// belongs to (e.g. "v1.2.0"), set by stream set --release (docs/SPEC-SPRINT.md section 11).
 	FieldRelease = "release"
+	// FieldProse is a stream's control card's field: the globs (PATHS globs, comma
+	// separated) of the files whose backquotes are their own, which the lander does not
+	// read for a code span (land_repair.go); set by stream set --prose.
+	FieldProse = "prose"
 	// ReadTierDefault is the word that takes a read tier off: a stream's back to
 	// the sprint's, the sprint's back to each card's own tier.
 	ReadTierDefault = "default"
@@ -156,6 +160,9 @@ type SetReq struct {
 	// they land on (FieldLandProtected, docs/SPEC-SPRINT.md section 7).
 	LandProtected string `json:",omitempty"`
 	Release       string `json:",omitempty"`
+	// Prose is the streams' prose globs (FieldProse): comma separated, default or none
+	// takes them off.
+	Prose string `json:",omitempty"`
 	// The backlog alarms' thresholds (alarms.go): a count, a percent, on, or off.
 	AlarmReview  string `json:",omitempty"`
 	AlarmMerging string `json:",omitempty"`
@@ -189,6 +196,17 @@ func Set(s *Snapshot, r SetReq) Plan {
 		}
 		if len(r.Streams) == 0 {
 			why = append(why, "--land-protected is a stream's, not the sprint's: nova-sprint stream set <stream> --land-protected "+r.LandProtected)
+		}
+	}
+	if r.Prose != "" {
+		if len(r.Streams) == 0 {
+			why = append(why, "--prose is a stream's, not the sprint's: nova-sprint stream set <stream> --prose "+r.Prose)
+		}
+		for _, g := range strings.Split(r.Prose, ",") {
+			if g = strings.TrimSpace(g); g == "" || strings.HasPrefix(g, "-") || strings.HasPrefix(g, "/") || strings.ContainsAny(g, " \t") {
+				why = append(why, "--prose wants path globs (security/**, ratings/**), comma separated, or "+ReadTierDefault+" to take them off; found "+r.Prose)
+				break
+			}
 		}
 	}
 	if r.GoLanes != "" && r.GoLanes != ReadTierDefault {
@@ -225,8 +243,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" {
-		why = append(why, "nothing to set: --read-tier, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" {
+		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -287,6 +305,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 			for _, f := range []struct{ field, v, word, off string }{
 				{FieldLandProtected, r.LandProtected, "land-protected", "none"},
 				{FieldRelease, r.Release, "release", "none"},
+				{FieldProse, r.Prose, "prose", "none"},
 			} {
 				switch f.v {
 				case "":

@@ -270,6 +270,7 @@ type lander struct {
 	epoch         uint64              // the epoch land read: every report is fenced to it
 	diffs         map[string]string   // each card's merge diff, as checkCard read it, for its score
 	scope         map[string][]string // each card's scope amendments, as checkCard allowed them (sprint.ScopeAmended)
+	prose         map[string][]string // each stream's prose globs (sprint.StreamProse), whose backquotes checkCard does not read
 	toScore       []scoreJob          // the landed batches, scored after the whole pass (landscore.go)
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
@@ -343,7 +344,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if a.baseGateFails == nil {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -512,6 +513,10 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	case ctl.F("state") == sprint.StreamStopped:
 		return refused("stopped (" + ctl.F("cause") + "); run: nova-sprint resume --stream " + stream)
 	}
+	if l.prose == nil {
+		l.prose = map[string][]string{}
+	}
+	l.prose[stream] = sprint.StreamProse(s, stream)
 	queue := landQueue(s, stream)
 	if len(queue) == 0 {
 		return refused("nothing queued to merge in stream " + stream + "; run: nova-sprint queue --stream " + stream)
@@ -1041,7 +1046,11 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
 		if card == "" && env == "" {
-			card, env = l.checkCard(ctx, dir, *c, before)
+			var repaired string
+			if card, env, repaired = l.checkCard(ctx, dir, stream, *c, before); repaired != "" {
+				c.resolved = strings.TrimPrefix(c.resolved+"; "+repaired, "; ")
+				l.ledgerLog = append(l.ledgerLog, c.id+": "+repaired)
+			}
 		}
 		if card == "" && env == "" {
 			card, env = l.gateCard(ctx, dir, *c, before)
@@ -1188,29 +1197,48 @@ func (l *lander) ledgers() []landLedger {
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
 // merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
 // sentence fragment or unmatched backquote (E4). A card that adds a directory owns its
-// catalog row and the AGENTS.md maps (diffcheck.Outside). A card that fails is taken
-// off the batch branch (reset to before) and ends the batch as a head that does not
-// merge does, with what failed; card and env are mergeHead's. A merge that made no
-// commit (the head is in the base already) is not checked: it changes nothing the base
-// does not hold.
-func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
+// catalog row and the AGENTS.md maps (diffcheck.Outside). First the documents the merge
+// writes are repaired on the merge commit (sprint.RepairMerge: a stray backquote, an
+// open fence, trailing whitespace, a final newline, CRLF), as the ledgers are
+// regenerated, and repaired is the landing note that names each repair; a fault with no
+// one repair is refused with its line (E4). A Markdown or text file's backquotes are
+// judged by the repair, not by E4's count, and a file under the stream's prose globs
+// (FieldProse) is not read for them at all. A card that fails is taken off the batch
+// branch (reset to before) and ends the batch as a head that does not merge does, with
+// what failed; card and env are mergeHead's. A merge that made no commit (the head is in
+// the base already) is not checked: it changes nothing the base does not hold.
+func (l *lander) checkCard(ctx context.Context, dir, stream string, c landCard, before string) (card, env, repaired string) {
 	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || after == before {
-		return "", ""
+		return "", "", ""
+	}
+	var why []string
+	prose := l.prose[stream]
+	repaired, refused, err := sprint.RepairMerge(dir, func(args ...string) (string, error) { return l.git(ctx, dir, args...) }, before, prose)
+	if err != nil {
+		if _, rerr := l.git(ctx, dir, "reset", "-q", "--hard", before); rerr != nil {
+			return "", "the batch branch could not be reset after the documents of " + c.id + " could not be repaired: " + firstLine("", rerr), ""
+		}
+		return "", "the documents of the merge of " + c.id + " could not be repaired: " + firstLine("", err), ""
+	}
+	for _, f := range refused {
+		why = append(why, f.String()+" (E4)")
+	}
+	if after, err = l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+		return "", "the merge of " + c.id + " has no tip after its repair: " + firstLine("", err), ""
 	}
 	diff, err := l.git(ctx, dir, "diff", "-M", "--no-color", before, after)
 	if err != nil {
-		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err)
+		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err), ""
 	}
 	tracked, err := l.git(ctx, dir, "ls-tree", "-r", "--name-only", before)
 	if err != nil {
-		return "", "the files tracked before the merge of " + c.id + " could not be listed: " + firstLine("", err)
+		return "", "the files tracked before the merge of " + c.id + " could not be listed: " + firstLine("", err), ""
 	}
 	beforePaths := []string{}
 	if tracked != "" {
 		beforePaths = strings.Split(tracked, "\n")
 	}
-	var why []string
 	// a test, fixture or doc of the same change outside PATHS is a scope amendment, allowed
 	// by rule and recorded on the batch's line (sprint.ScopeAmended; section 7)
 	var changed []string
@@ -1222,17 +1250,21 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}
 	for _, f := range diffcheck.Fragments(diff) {
+		// a document's backquotes are the repair's to judge, a prose file's no one's
+		if strings.Contains(f.Why, "code span unmatched") && (sprint.DocFile(f.File) || sprint.DocProse(prose, f.File)) {
+			continue
+		}
 		why = append(why, f.String()+" (E4)")
 	}
 	if len(why) == 0 {
 		l.diffs[c.id] = diff
 		l.scope[c.id] = amended
-		return "", ""
+		return "", "", repaired
 	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
-		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err)
+		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err), ""
 	}
-	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), ""
+	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), "", ""
 }
 
 // containsAny says s holds one of words.
