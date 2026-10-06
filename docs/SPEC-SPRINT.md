@@ -300,7 +300,7 @@ checks the selection and the hard pin; the reversed only witness permits fallbac
 and violates `OnlyToItsFriend`. The tick reads the friends' roster before each pump,
 because a queued change can make work ready in the same tick. The tick's deal offers
 ready work, in the deal's stream turns, to a
-friend up (the friends' rule: not held, a beat within 15 s) below her room: in
+friend up (the friends' rule: not held, with evidence from her own session) below her room: in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, count against it; the owner,
