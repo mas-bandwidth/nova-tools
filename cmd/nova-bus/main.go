@@ -390,7 +390,11 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
 	}
-	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
+	b := &bus.Bus{Store: bus.Hearing(st)}
+	if r, ok := st.(bus.Waiter); ok {
+		b.Reads = r
+	}
+	return b, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,

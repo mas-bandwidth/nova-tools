@@ -238,8 +238,14 @@ type Waiter interface {
 	BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]Entry, error)
 }
 
-// Waiter is the Store's wait reads, or the refusal of a Store that has none.
+// Waiter is the wait reads of the bus: the Reads a caller set, else the
+// Store's own, or the refusal of a bus that has none (a gate wrapped round the
+// Store, as Hearing is, hides the Store's reads, and a wait takes nothing the
+// gate guards).
 func (b *Bus) Waiter() (Waiter, error) {
+	if b.Reads != nil {
+		return b.Reads, nil
+	}
 	w, ok := b.Store.(Waiter)
 	if !ok {
 		return nil, errors.New("this store cannot wait")
@@ -250,6 +256,9 @@ func (b *Bus) Waiter() (Waiter, error) {
 // Bus is the rules over a Store.
 type Bus struct {
 	Store Store
+	// Reads is the Store's wait reads when Store is wrapped and no longer
+	// shows them; nil is Store's own (Waiter).
+	Reads Waiter
 	// Rand fills a ULID's random half; crypto/rand when nil.
 	Rand func([]byte) (int, error)
 }
