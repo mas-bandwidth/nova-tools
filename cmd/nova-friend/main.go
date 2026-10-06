@@ -12,6 +12,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -66,16 +68,17 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) error      // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
-	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
-	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
-	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
-	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
-	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage     func(dir string) *friend.Stager                                                                     // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
-	tip       func(ctx context.Context, repo, branch string) (string, error)                                      // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
+	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                                    // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat      func(ctx context.Context, server, friend string, active, pong time.Time, extra ...string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row; extra are more flags (--disk)
+	diskStat  func(dir string) (sprint.DiskStat, error)                                                                            // her volume's figures; nil is the system's (sprint.StatVolume)
+	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) error                       // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
+	progress  func(ctx context.Context, server string, argv []string) error                                                        // one progress verb to the sprint server (friend.ProgressArgv)
+	finish    func(ctx context.Context, server string, argv []string) error                                                        // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	cards     func(ctx context.Context, server string, argv []string) (string, error)                                              // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                             // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	view      func(ctx context.Context, server, friend string) (string, error)                                                     // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
+	stage     func(dir string) *friend.Stager                                                                                      // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	tip       func(ctx context.Context, repo, branch string) (string, error)                                                       // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -202,8 +205,8 @@ func realWorld() world {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
-		beat: func(ctx context.Context, server, name string, active, pong time.Time) (string, error) {
-			args := []string{"friend", "beat", name}
+		beat: func(ctx context.Context, server, name string, active, pong time.Time, extra ...string) (string, error) {
+			args := append([]string{"friend", "beat", name}, extra...)
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
@@ -1056,6 +1059,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 	}
 	stager := w.stager(dir)
+	// the volume her working directory lives on, measured for each beat: its figures each
+	// beat, the AI root's largest directories every ten minutes (docs/SPEC-SPRINT.md section
+	// 8, "Disk watermark"); w.diskStat is a test's volume, nil the system's
+	disk := &sprint.DiskMeter{Dir: dir, Root: cmp.Or(w.getenv(sprint.EnvAIRoot), dir), Stat: w.diskStat}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
@@ -1082,7 +1089,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 				if perCard {
 					pong = w.now() // the daemon beating is the proof: nothing else can be asked of a process per card
 				}
-				answer, err := w.beat(ctx, server, name, active, pong)
+				var extra []string
+				if d := disk.Arg(w.now()); d != "" {
+					extra = []string{"--disk", d} // the volume her working directory lives on (docs/SPEC-FRIEND.md)
+				}
+				answer, err := w.beat(ctx, server, name, active, pong, extra...)
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 					dir := friend.RowConfigDir(answer)

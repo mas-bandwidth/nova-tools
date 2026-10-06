@@ -51,7 +51,10 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
+			beats++
+			return "", nil
+		}
 		cli := cliOf(w)
 		remedy := "run: start a session in /w/bob with no agent preset and name it with --session <id>"
 		cli.Do(t, "run", "--as", "bob", "--harness", "dsh", "--dir", "/w/bob", "--session", "session-z").Exit(2).
@@ -74,7 +77,10 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
+			beats++
+			return "", nil
+		}
 		dir := t.TempDir()
 		var out, errb strings.Builder
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
@@ -94,7 +100,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 			return ctx, cancel
 		}
 		var pongs []time.Time
-		w.beat = func(_ context.Context, _, _ string, _, pong time.Time) (string, error) {
+		w.beat = func(_ context.Context, _, _ string, _, pong time.Time, _ ...string) (string, error) {
 			if pongs = append(pongs, pong); len(pongs) == 3 {
 				cancel()
 			}

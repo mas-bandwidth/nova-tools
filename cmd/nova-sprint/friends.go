@@ -363,6 +363,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	pong := fs.String("pong", "", "her session's last pong, as her daemon has it (status last_pong), RFC3339: the coordinator's pass judges her session deaf when it is older than "+sprint.FriendDeafAfter.String())
 	until := fs.String("until", "", "her daemon's word that she is down until then, RFC3339: her harness at its usage limit or out of credits")
 	reason := fs.String("reason", "", "why she is down until --until, as her daemon read it")
+	disk := fs.String("disk", "", "the volume her working directory lives on, as her daemon measured it (JSON: at, host, dir, volume, size, free, inodes, inodes_free, root, top): above the disk alarm the tick raises a judgment of the volume, above the hold no new lane starts on her")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -384,6 +385,13 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 			return refuse(stderr, name, "--active wants an RFC3339 time, found "+oneline.Escape(*active))
 		}
 		rep.Active = at.UTC().Truncate(time.Second)
+	}
+	if *disk != "" {
+		d, err := sprint.ParseDisk(*disk)
+		if err != nil {
+			return refuse(stderr, name, err.Error())
+		}
+		rep.Disk = d
 	}
 	var ponged time.Time
 	if *pong != "" {
@@ -467,6 +475,10 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if len(rep.Running) > 0 {
 		line += " running=" + strings.Join(rep.Running, ",")
 		facts["running"] = rep.Running
+	}
+	if rep.Disk != nil {
+		line += fmt.Sprintf(" disk_used=%d%%", rep.Disk.Used())
+		facts["disk_used"], facts["disk_volume"] = rep.Disk.Used(), rep.Disk.Volume
 	}
 	if !rep.Until.IsZero() {
 		line += " down=true until=" + rep.Until.Format(time.RFC3339)

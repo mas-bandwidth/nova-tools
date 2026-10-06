@@ -845,10 +845,18 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		return inState(c, Ready)
 	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
-	up := s.UpMembers()
-	if len(up) == 0 {
+	all := s.UpMembers()
+	if len(all) == 0 {
 		for _, c := range chosen {
 			p.refuse(c.ID, "no fleet member is up: a member is up while its machine beats; start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>")
+		}
+		return p, moves
+	}
+	// a member whose volume is above the hold starts no new lane (disk.go)
+	up := s.withRoomOnDisk(all)
+	if len(up) == 0 {
+		for _, c := range chosen {
+			p.refuse(c.ID, "every up fleet member's volume is above the hold: "+strings.Join(s.fullOf(all), "; "))
 		}
 		return p, moves
 	}

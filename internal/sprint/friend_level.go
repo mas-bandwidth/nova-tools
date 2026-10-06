@@ -67,7 +67,8 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	var p Plan
 	var seats []FriendSeat
 	for _, f := range r.Seats {
-		if f.Status == Up {
+		// a friend whose volume is above the hold is levelled neither to nor from (disk.go)
+		if f.Status == Up && s.DiskFull(f.Name) == "" {
 			seats = append(seats, f)
 		}
 	}

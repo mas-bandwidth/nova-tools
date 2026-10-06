@@ -173,7 +173,10 @@ type SetReq struct {
 	// whole numbers from 1, or default.
 	DriftCommits string `json:",omitempty"`
 	DriftHours   string `json:",omitempty"`
-	Who          string
+	// The volume watermark's thresholds (disk.go): a percent used from 1 to 100, or default.
+	DiskAlarm string `json:",omitempty"`
+	DiskHold  string `json:",omitempty"`
+	Who       string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -227,6 +230,17 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, a.flag+" is the sprint's, not a stream's: nova-sprint set "+a.flag+" "+v)
 		}
 	}
+	for _, d := range [][2]string{{"--disk-alarm", r.DiskAlarm}, {"--disk-hold", r.DiskHold}} {
+		if d[1] == "" {
+			continue
+		}
+		if d[1] != ReadTierDefault && !DiskBoundValid(d[1]) {
+			why = append(why, d[0]+" wants a whole percent of the volume used, 1 to 100, or "+ReadTierDefault+"; found "+d[1])
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, d[0]+" is the sprint's, not a stream's: nova-sprint set "+d[0]+" "+d[1])
+		}
+	}
 	for _, d := range [][2]string{{"--drift-commits", r.DriftCommits}, {"--drift-hours", r.DriftHours}} {
 		if d[1] == "" {
 			continue
@@ -258,8 +272,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" {
-		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.DiskAlarm == "" && r.DiskHold == "" {
+		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --disk-alarm, --disk-hold or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -357,6 +371,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendStallStep, r.FriendStallStep},
 		{PropDriftCommits, r.DriftCommits},
 		{PropDriftHours, r.DriftHours},
+		{PropDiskAlarm, r.DiskAlarm},
+		{PropDiskHold, r.DiskHold},
 	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
@@ -394,6 +410,10 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%d commits)", DriftCommitsDefault)
 	case name == PropDriftHours:
 		return fmt.Sprintf("default (%d hours)", DriftHoursDefault)
+	case name == PropDiskAlarm:
+		return fmt.Sprintf("default (%d%%)", DiskAlarmDefault)
+	case name == PropDiskHold:
+		return fmt.Sprintf("default (%d%%)", DiskHoldDefault)
 	}
 	return "default (each card's own tier)"
 }

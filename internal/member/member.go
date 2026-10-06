@@ -367,6 +367,10 @@ type Config struct {
 	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat
 	// measures the machine itself.
 	Meter *hostload.Sampler
+	// Disk is the volume its slots live on as each beat names it (fleet beat --disk, the
+	// JSON sprint.DiskMeter.Arg writes), "" for none; nil names none and nova-sprint fleet
+	// beat measures its own (docs/SPEC-SPRINT.md section 8, "Disk watermark").
+	Disk func() string
 	// Sleep waits between two harness starts (StartGap); nil starts them back to back
 	// (the tests' member). Clock is the time it measures the gap by; nil is time.Now.
 	Sleep func(time.Duration)
@@ -666,6 +670,11 @@ func (m *Member) Beat() error {
 			var ok bool
 			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); ok {
 				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
+			}
+		}
+		if m.cfg.Disk != nil {
+			if d := m.cfg.Disk(); d != "" {
+				args = append(args, "--disk", d)
 			}
 		}
 	}

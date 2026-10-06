@@ -106,8 +106,8 @@ func alarmFacts(s *Snapshot) map[string]string {
 // condition starts, none while it stands (notify keys an alarm by its type alone, so a
 // count that moves is the same episode), and, for each whose judgment or hold the
 // condition's end closes, one cleared note to the coordinator; and the members' open
-// files over their alarm bounds the same way (tickFiles, fd.go). It writes notes, no
-// table.
+// files over their alarm bounds the same way (tickFiles, fd.go), and each volume above its
+// watermark (tickDisk, disk.go). It writes notes, no table.
 func tickAlarms(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	facts := alarmFacts(s)
@@ -129,7 +129,10 @@ func tickAlarms(s *Snapshot, r TickReq) (Plan, int) {
 	// each member's open files over its alarm bound, from its beat (fd.go)
 	f, filesDue := tickFiles(s, r)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, f.Notes...), append(p.Closes, f.Closes...), append(p.Updates, f.Updates...)
-	return p, due + filesDue
+	// each volume above its watermark, from the beats' readings (disk.go)
+	d, diskDue := tickDisk(s, r)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, d.Notes...), append(p.Closes, d.Closes...), append(p.Updates, d.Updates...)
+	return p, due + filesDue + diskDue
 }
 
 // alarmNow is what an alarm's cleared note says of the sprint now.

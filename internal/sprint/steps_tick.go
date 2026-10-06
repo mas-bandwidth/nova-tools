@@ -148,6 +148,8 @@ var TickDecisions = map[string][]string{
 	NAlarmFleet:   {"ack", "wait"},
 	// a member's open files over its alarm bound (fd.go): named per member, seen, or quiet a while
 	NFilesAlarm: {"fleet up <m> --width <half>", "fleet down <m>", "ack", "wait 15m"},
+	// a volume above its watermark (disk.go): free space, seen, or quiet a while
+	NDiskAlarm: {"act", "ack", "wait 30m"},
 	// the coordinator's pass (coordinator_pass.go): each names its own
 	NFriendDeaf:        {"ack", "wait"},
 	NFriendIdle:        {"ack", "wait"},
@@ -585,7 +587,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var ready []*Card
 	var conds []cond
 	unserved, whyOf := map[string][]string{}, map[string]string{}
-	up := s.UpMembers()
+	// a member whose volume is above the hold starts no new lane (disk.go): its room is no
+	// room, and the volume's own judgment says why
+	upAll := s.UpMembers()
+	up := s.withRoomOnDisk(upAll)
 	// Friends first: every ready card a friend may take, except a held stream
 	// (dealt nowhere) and a bench card (bench_deal.go keeps it for its bench).
 	// A hard pin that no friend takes stays out of the fleet below.
@@ -696,7 +701,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// landings on the sprint branch not promoted into dev (promotion.go)
 	conds = append(conds, devBehindCond(s)...)
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
-	if len(up) == 0 && len(ready) > 0 {
+	if len(upAll) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))}
 		if beatingHeld(s, r) {
@@ -1302,7 +1307,7 @@ type cond struct {
 func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NDiskAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
 		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
 		what = ""
 	case NWorkLate, NReadLate:
@@ -1434,7 +1439,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NDiskAlarm || c.typ == NReadersBehind || c.typ == NDevBehind) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}

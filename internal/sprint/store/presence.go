@@ -145,6 +145,12 @@ func (st *Store) rootKV() (KV, error) {
 // else measured from src; the record's measuring state carries from beat to
 // beat. It works while the machine is RUNNING or STOPPED and touches no table.
 func (st *Store) Beat(ctx context.Context, member string, given *float64, src hostload.Source) (sprint.Beat, error) {
+	return st.BeatDisk(ctx, member, given, src, nil)
+}
+
+// BeatDisk is Beat carrying the volume the member's working directory lives on (fleet beat
+// measures it, or a member names it with --disk; sprint.Disk), nil for none.
+func (st *Store) BeatDisk(ctx context.Context, member string, given *float64, src hostload.Source, disk *sprint.Disk) (sprint.Beat, error) {
 	if !sprint.ValidID(member) {
 		return sprint.Beat{}, fmt.Errorf("a member name wants letters, digits, _ and -: %s", member)
 	}
@@ -177,6 +183,7 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 		}
 	}
 	b := sprint.NextBeat(prev, now, pct, how, meter)
+	b.Disk = disk
 	// the machine's logical cores: the source's when it names them (a meter's,
 	// or fleet beat --cores), else this process's machine
 	if b.Cores = src.NCPU; b.Cores <= 0 {
@@ -546,4 +553,14 @@ func (st *Store) FriendFinishedAt(ctx context.Context, friend string) (time.Time
 	// ignored: an unreadable record is no finish, which the next finish replaces
 	at, _ := time.Parse(time.RFC3339, raw)
 	return at, nil
+}
+
+// DiskCells is each fleet member's and friend's disk figure from their beats (sprint.DiskCells;
+// docs/SPEC-SPRINT.md section 8, "Disk watermark"), by name, for the dashboard.
+func (st *Store) DiskCells(ctx context.Context) (map[string]string, error) {
+	_, beats, err := st.fleetBeats(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return sprint.DiskCells(beats, st.now()), nil
 }

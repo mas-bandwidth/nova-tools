@@ -47,7 +47,7 @@ import (
 // workerVerb is the worker a verb of a batch acts as and how many words its
 // verb is, or why the server does not run it. A worker sends its own verbs only:
 // take, finish, read or queue, then --as and its name; or fleet beat, its name,
-// --load and a number, and nothing more; or friend beat, its name, and its report's flags each with its value (friendBeatReport); or friend cards, its name, and --json at most. The name is one worker, never a list.
+// --load and a number, and at most --disk and its volume's reading (diskReading), and nothing more; or friend beat, its name, and its report's flags each with its value (friendBeatReport); or friend cards, its name, and --json at most. The name is one worker, never a list.
 // No later word, wherever it stands, is a flag named as, redis or actor: the
 // server gives the store and the actor (serve puts them before the worker's
 // words, where nothing the worker sent can take them as a value or end the
@@ -62,11 +62,26 @@ import (
 func workerVerb(argv []string) (as string, words int, why string) {
 	if len(argv) >= 2 && argv[0] == "fleet" && argv[1] == "beat" {
 		rest := argv[2:]
-		if len(rest) != 3 || rest[1] != "--load" || !sprint.ValidID(rest[0]) {
-			return "", 0, "a beat sent to the server is `fleet beat <member> --load <percent>` and nothing more: the server cannot measure the worker's machine"
+		refused := "a beat sent to the server is `fleet beat <member> --load <percent>`, with at most `--disk <json>` (its volume, as the member measured it), and nothing more: the server cannot measure the worker's machine"
+		if len(rest) < 3 || len(rest)%2 != 1 || !sprint.ValidID(rest[0]) {
+			return "", 0, refused
 		}
-		if _, err := strconv.ParseFloat(rest[2], 64); err != nil {
-			return "", 0, "a beat's --load is a number, found " + rest[2]
+		given := map[string]string{}
+		for i := 1; i+1 < len(rest); i += 2 {
+			if _, dup := given[rest[i]]; dup || (rest[i] != "--load" && rest[i] != "--disk") {
+				return "", 0, refused
+			}
+			given[rest[i]] = rest[i+1]
+		}
+		load, ok := given["--load"]
+		if !ok {
+			return "", 0, refused
+		}
+		if _, err := strconv.ParseFloat(load, 64); err != nil {
+			return "", 0, "a beat's --load is a number, found " + load
+		}
+		if d, ok := given["--disk"]; ok && !diskReading(d) {
+			return "", 0, "a beat's --disk is its volume's reading as JSON (sprint.Disk), found " + oneline.Cap(d, 200)
 		}
 		return rest[0], 2, ""
 	}
@@ -425,6 +440,17 @@ var friendBeatFlags = map[string]func(string) bool{
 	"--pong":   rfc3339,
 	"--until":  rfc3339,
 	"--reason": oneLineText,
+	"--disk":   diskReading,
+}
+
+// diskReading is the shape of a beat's volume reading: the JSON sprint.ParseDisk takes, at
+// most 8 KiB.
+func diskReading(v string) bool {
+	if len(v) > 8<<10 {
+		return false
+	}
+	_, err := sprint.ParseDisk(v)
+	return err == nil
 }
 
 // oneLineText is the shape of a short text on one line: not empty, no control character.

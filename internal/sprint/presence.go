@@ -86,6 +86,9 @@ type Beat struct {
 	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
 	// when her beat carried none; the friend beat record keeps it under "pong".
 	Proof time.Time `json:"pong,omitzero"`
+	// Disk is the volume the machine's working directory lives on, as its beat measured it
+	// (fleet beat; disk.go), nil when the beat measured none; a friend's is her report's.
+	Disk *Disk `json:"disk,omitempty"`
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -114,6 +117,9 @@ type FriendReport struct {
 	// docs/SPEC-FRIEND.md, limits-mean-down-w-r5.w1~15); zero and empty while she is up.
 	Until  time.Time `json:"until,omitzero"`
 	Reason string    `json:"reason,omitempty"`
+	// Disk is the volume her working directory lives on, as her daemon measured it (friend
+	// beat --disk; disk.go), nil when it reported none.
+	Disk *Disk `json:"disk,omitempty"`
 }
 
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
@@ -256,7 +262,8 @@ func ago(d time.Duration) string {
 // one decimal and a percent sign while the beat is fresh, else empty; and
 // beside it, while the machine's open file descriptors are over the member's
 // warn bound, "fds <count> warn" (or alarm, fd.go FilesText), so the fleet
-// table shows a machine running out of them before the alarm's judgment.
+// table shows a machine running out of them before the alarm's judgment; and
+// while the beat carries its volume's reading, "disk <used>%" (disk.go).
 func LoadText(b Beat, now time.Time) string {
 	if !b.Fresh(now) {
 		return ""
@@ -264,6 +271,9 @@ func LoadText(b Beat, now time.Time) string {
 	load := fmt.Sprintf("%.1f%%", b.Load)
 	if f := FilesText(b, now); f != "" {
 		load += " fds " + f
+	}
+	if d, ok := DiskOf(b, now); ok {
+		load += fmt.Sprintf(" disk %d%%", d.Used()) // its volume's use (disk.go)
 	}
 	return load
 }

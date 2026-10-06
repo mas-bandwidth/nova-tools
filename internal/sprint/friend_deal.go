@@ -336,7 +336,8 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
 	var up []string
 	for _, f := range seats {
-		if f.Status == Up {
+		// a friend whose volume is above the hold starts no new lane (disk.go): no room
+		if f.Status == Up && s.DiskFull(f.Name) == "" {
 			room, width := friendRoom(f)
 			free[f.Name] = room - friendLoad(s, f.Name)
 			// a lane is idle while no card on her row holds it, started or not

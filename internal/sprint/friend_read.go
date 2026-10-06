@@ -223,7 +223,7 @@ func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits [
 	free, lanes := map[string]int{}, map[string]int{}
 	var up []FriendSeat
 	for _, f := range seats {
-		if f.Status != Up || !slices.Contains(f.Tiers, cardhdr.RouteFrontier) {
+		if f.Status != Up || !slices.Contains(f.Tiers, cardhdr.RouteFrontier) || s.DiskFull(f.Name) != "" {
 			continue
 		}
 		room, width := DealAhead*f.Width, f.Width

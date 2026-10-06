@@ -234,7 +234,7 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 	classes := []string{cardhdr.RouteFrontier, cardhdr.RouteHeavy}
 	free := map[string]int{}
 	for _, f := range r.Friends {
-		if f.Status == Up {
+		if f.Status == Up && s.DiskFull(f.Name) == "" { // no new lane on a full volume (disk.go)
 			free[f.Name] = f.Width - friendLoad(s, f.Name)
 		}
 	}
