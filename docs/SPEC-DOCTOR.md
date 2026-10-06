@@ -105,7 +105,7 @@ doctor run. A tool that is not on PATH at all fails the step that called it, wit
 | daemon-running | supervisor | `nova-friend check <f> --json` | the daemon's status is not ok | `nova-friend install --as <f> --harness <h> --dir <d>` |
 | harness-responsive | session response | the same report | the session is marked broken, or every delivery failed | `nova-friend install ...` (install again clears a broken session) |
 | message-delivered | session response | the same report | no delivery in the window | `nova-friend ping --as <coordinator> --to <f>` |
-| session-receipt | session response | the same report | no session pong and no message back | `nova-friend check --as <f> --harness <h> --dir <d>` (the delivery check, where `--as` is the friend itself) |
+| session-receipt | session response | the same report | `deaf`: no session pong under ten minutes old (`sprint.FriendPongWindow`) and no card finished under thirty (`sprint.FriendFinishWindow`), at the doctor's clock; the line prints the last of each and its age | `nova-friend check --as <f> --harness <h> --dir <d>` (the delivery check, where `--as` is the friend itself) |
 | card-completion | session response | the same report | never: none completed yet is `ok` and says so | - |
 | friends | session response | `nova-friend check [--as <c>] --json` | a friend not ok is a `warn` | `nova-doctor --job friend --as <f>` |
 
@@ -126,7 +126,14 @@ The jobs:
 The friend job keeps five facts apart, each its own step and line, because each can hold
 while the next does not: the **daemon running** (a beat process is not a session), the
 **harness responsive** (the session is not broken), a **message delivered** into the session,
-the **session's receipt** (a pong or a message back), and **card completion** (the outbox).
+the **session's receipt**, and **card completion** (the outbox).
+
+The session's receipt is nova-friend status's evidence rule (docs/SPEC-FRIEND.md, "Presence is
+her session's evidence"), not a rule of the doctor's own: a session pong within ten minutes or
+a card finished within thirty. `nova-friend check` reports the age of the last pong ever
+recorded, so a pong on record is no receipt by itself: one 11 minutes old, or 72 hours, is
+`deaf` with its age and the fix. Messages back are printed beside it and decide nothing; the
+daemon's beat is never read.
 
 The output is one line per step, the frame's `DOCTOR <step> ok|warn|fail|blocked <evidence>
 [fix: <line>]`, then one summary line:

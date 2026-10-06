@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,16 +23,23 @@ import (
 
 const testRedis = "127.0.0.1:6390"
 
+// testNow is the fake clock every world reads: no test reads real time.
+var testNow = time.Date(2026, 10, 6, 8, 10, 0, 0, time.UTC)
+
 // world is a machine as the job steps see it through the tools: each field one
 // dependency, true when it is there. The fake tools answer from it, and the fake shell
-// (world.run) changes it only by the exact fix commands nova-doctor prints.
+// (world.run) changes it only by the exact fix commands nova-doctor prints. The session's
+// evidence is nova-friend check's: the age of the last session pong ever recorded ("-"
+// none), the age of the newest card finished, and the messages back.
 type world struct {
 	t                                                    *testing.T
 	root                                                 string
 	redisUp, loginOK, storeLogin, schema, applied, aclOK bool
 	fnLoaded, swarmAgrees                                bool
-	daemon, broken, delivered, receipt                   bool
-	outbox                                               int
+	daemon, broken, delivered                            bool
+	pongAge                                              string
+	finishAge                                            time.Duration
+	back, outbox                                         int
 	calls                                                int // tool calls the doctor made
 }
 
@@ -39,7 +47,8 @@ var allTools = []string{"nova-bus", "nova-config", "nova-friend", "nova-redis", 
 
 func healthyWorld(t *testing.T) *world {
 	w := &world{t: t, root: t.TempDir(), redisUp: true, loginOK: true, storeLogin: true, schema: true, applied: true,
-		aclOK: true, fnLoaded: true, swarmAgrees: true, daemon: true, delivered: true, receipt: true, outbox: 2}
+		aclOK: true, fnLoaded: true, swarmAgrees: true, daemon: true, delivered: true,
+		pongAge: "20s", finishAge: 8 * time.Minute, back: 2, outbox: 2}
 	require.NoError(t, os.MkdirAll(filepath.Join(w.root, "bin"), 0o755))
 	for _, n := range allTools {
 		w.install(n)
@@ -53,6 +62,12 @@ func (w *world) install(tool string) {
 
 func (w *world) uninstall(tool string) {
 	require.NoError(w.t, os.Remove(filepath.Join(w.root, "bin", tool)))
+}
+
+// deaf is a session that answered nothing in its windows: its last pong pongAge ago ("-"
+// none), its newest card finished two hours ago, and nothing back on the bus.
+func (w *world) deaf(pongAge string) {
+	w.pongAge, w.finishAge, w.back = pongAge, 2*time.Hour, 0
 }
 
 func (w *world) installed(tool string) bool {
@@ -71,8 +86,9 @@ func (e exitErr) ExitCode() int { return e.code }
 
 func (w *world) env() fakeEnv {
 	return fakeEnv{
-		env:  map[string]string{"PATH": "bin", "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": "ada"},
-		root: w.root,
+		env:   map[string]string{"PATH": "bin", "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": "ada"},
+		root:  w.root,
+		clock: testNow,
 		dial: func(addr string) error {
 			if addr != testRedis || !w.redisUp {
 				return errors.New("connection refused")
@@ -147,7 +163,7 @@ func (w *world) exec(name string, args ...string) (string, error) {
 
 func (w *world) friendReport() friend.CheckReport {
 	f := friend.FriendCheck{Friend: "bob"}
-	f.Daemon = friend.DaemonFacts{Friend: "bob", Agent: "loaded", PID: "42", Status: "ok", PongAge: "20s", Presence: "up"}
+	f.Daemon = friend.DaemonFacts{Friend: "bob", Agent: "loaded", PID: "42", Status: "ok", PongAge: w.pongAge, Presence: "up"}
 	if !w.daemon {
 		f.Daemon.Agent, f.Daemon.PID, f.Daemon.Status = "not-loaded", "-", "none"
 	}
@@ -158,19 +174,23 @@ func (w *world) friendReport() friend.CheckReport {
 	if w.broken {
 		f.Harness.Broken, f.Harness.Reason = "2026-10-06T07:00:00Z", "provider refused 3 turns"
 	}
-	f.Bus = friend.BusFacts{Friend: "bob", LastReal: "-"}
-	if w.receipt {
-		f.Bus.RealSince, f.Bus.LastReal = 2, "2026-10-06T08:01:00Z"
-	} else {
-		f.Daemon.PongAge = "-"
+	f.Bus = friend.BusFacts{Friend: "bob", RealSince: w.back, LastReal: "-"}
+	if w.back > 0 {
+		f.Bus.LastReal = "2026-10-06T08:01:00Z"
 	}
 	f.Work = friend.WorkFacts{Friend: "bob", Outbox: w.outbox, NewestOutbox: "-", NewestAt: "-"}
 	if w.outbox > 0 {
-		f.Work.NewestOutbox, f.Work.NewestAt = "card-7", "2026-10-06T08:02:00Z"
+		f.Work.NewestOutbox, f.Work.NewestAt = "card-7", testNow.Add(-w.finishAge).Format(time.RFC3339)
 	}
+	// The verdict as nova-friend decides it, over its default 24h window: a pong of
+	// any age inside it, or a message back, is "came back".
+	pong, err := time.ParseDuration(w.pongAge)
 	verdict := "ok"
-	if !w.daemon || w.broken || !w.receipt {
+	switch {
+	case !w.daemon || w.broken:
 		verdict = "down"
+	case w.back == 0 && (err != nil || pong > 24*time.Hour):
+		verdict = "deaf"
 	}
 	f.Verdict = friend.VerdictFacts{Friend: "bob", Verdict: verdict, Shown: "-", Why: verdict}
 	s := friend.CheckSummary{Friends: 1}
@@ -207,7 +227,7 @@ func (w *world) run(cmd string) {
 	case cmd == "nova-friend ping --as ada --to bob":
 		w.delivered = true
 	case cmd == "nova-friend check --as bob --harness claude --dir /home/bob": // the delivery check: --as is the friend itself
-		w.receipt = true
+		w.pongAge = "5s"
 	default:
 		w.t.Fatalf("the fix is not a command the cold reader can run as printed: %q", cmd)
 	}
@@ -238,23 +258,32 @@ var jobArgs = map[string][]string{
 func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		job, step string
-		breakIt   func(w *world)
+		job, step, why string
+		breakIt        func(w *world)
 	}{
-		{"local-notes", "redis-reachable", func(w *world) { w.redisUp = false }},
-		{"local-notes", "binaries", func(w *world) { w.uninstall("nova-redis"); w.redisUp = true }},
-		{"messaging", "binaries", func(w *world) { w.uninstall("nova-bus") }},
-		{"worker", "redis-functions", func(w *world) { w.fnLoaded = false }},
-		{"coordinator", "config-schema", func(w *world) { w.schema = false }},
-		{"coordinator", "config-applied", func(w *world) { w.applied = false }},
-		{"coordinator", "redis-acl", func(w *world) { w.aclOK = false }},
-		{"friend", "daemon-running", func(w *world) { w.daemon = false }},
-		{"friend", "harness-responsive", func(w *world) { w.broken = true }},
-		{"friend", "message-delivered", func(w *world) { w.delivered = false }},
-		{"friend", "session-receipt", func(w *world) { w.receipt = false }},
+		{"local-notes", "redis-reachable", "", func(w *world) { w.redisUp = false }},
+		{"local-notes", "binaries", "", func(w *world) { w.uninstall("nova-redis"); w.redisUp = true }},
+		{"messaging", "binaries", "", func(w *world) { w.uninstall("nova-bus") }},
+		{"worker", "redis-functions", "", func(w *world) { w.fnLoaded = false }},
+		{"coordinator", "config-schema", "", func(w *world) { w.schema = false }},
+		{"coordinator", "config-applied", "", func(w *world) { w.applied = false }},
+		{"coordinator", "redis-acl", "", func(w *world) { w.aclOK = false }},
+		{"friend", "daemon-running", "", func(w *world) { w.daemon = false }},
+		{"friend", "harness-responsive", "", func(w *world) { w.broken = true }},
+		{"friend", "message-delivered", "", func(w *world) { w.delivered = false }},
+		{"friend", "session-receipt", "", func(w *world) { w.deaf("-") }},
+		// nova-friend check reports the age of the last pong ever recorded: one 11 minutes
+		// old is past the session pong window, and with no card finished within its window
+		// the session is deaf, whatever else is on record.
+		{"friend", "session-receipt", "the only pong 11 minutes old", func(w *world) { w.deaf("11m0s") }},
+		{"friend", "session-receipt", "a pong 72 hours old that nova-friend calls deaf", func(w *world) { w.deaf("72h0m0s") }},
 	}
 	for _, tc := range cases {
-		t.Run(tc.job+"/"+tc.step, func(t *testing.T) {
+		name := tc.job + "/" + tc.step
+		if tc.why != "" {
+			name += "/" + tc.why
+		}
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			w := healthyWorld(t)
 			tc.breakIt(w)
@@ -350,12 +379,46 @@ func TestDoctorFriendJobKeepsTheFiveFactsApart(t *testing.T) {
 	t.Run("a running daemon with a silent session is not ready", func(t *testing.T) {
 		t.Parallel()
 		w := healthyWorld(t)
-		w.receipt = false
+		w.deaf("-")
 		code, lines := w.doctor(jobArgs["friend"]...)
 		assert.Equal(t, 2, code)
 		assert.Contains(t, strings.Join(lines, "\n"), "DOCTOR daemon-running ok ")
-		assert.Contains(t, strings.Join(lines, "\n"), "DOCTOR session-receipt fail ")
+		assert.Contains(t, strings.Join(lines, "\n"), "DOCTOR session-receipt fail deaf: no session pong within 10m0s, no card finished within 30m0s (last 2h0m0s ago)")
 	})
+	// The session's evidence is nova-friend status's (docs/SPEC-FRIEND.md, "Presence is her
+	// session's evidence"): a session pong under ten minutes old or a card finished under
+	// thirty, at the fake clock. A pong past its window is deaf with its age; messages back
+	// are shown and decide nothing.
+	for _, tc := range []struct {
+		name, pongAge string
+		finishAge     time.Duration
+		back          int
+		want          string
+	}{
+		{"a pong 9m59s old is a receipt", "9m59s", 2 * time.Hour, 0, "ok the session answered: session pong 9m59s ago; messages_back=0"},
+		{"the only pong 11 minutes old is deaf", "11m0s", 2 * time.Hour, 0,
+			"fail deaf: no session pong within 10m0s (last 11m0s ago), no card finished within 30m0s (last 2h0m0s ago); messages_back=0"},
+		{"a pong 72 hours old is deaf though messages came back", "72h0m0s", 2 * time.Hour, 2,
+			"fail deaf: no session pong within 10m0s (last 72h0m0s ago)"},
+		{"a card finished 29 minutes ago is a receipt", "72h0m0s", 29 * time.Minute, 0, "ok the session answered: finished card-7 29m0s ago"},
+		{"a card finished 31 minutes ago is not", "-", 31 * time.Minute, 0,
+			"fail deaf: no session pong within 10m0s, no card finished within 30m0s (last 31m0s ago)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := healthyWorld(t)
+			w.pongAge, w.finishAge, w.back = tc.pongAge, tc.finishAge, tc.back
+			code, lines := w.doctor(jobArgs["friend"]...)
+			out := strings.Join(lines, "\n")
+			assert.Contains(t, out, "DOCTOR session-receipt "+tc.want, out)
+			if strings.HasPrefix(tc.want, "fail") {
+				assert.Equal(t, 2, code, out)
+				assert.Contains(t, out, "fix: nova-friend check --as bob --harness claude --dir /home/bob", out)
+			} else {
+				assert.Equal(t, 0, code, out)
+			}
+		})
+	}
 	t.Run("no card completed yet is said, and is not a failure", func(t *testing.T) {
 		t.Parallel()
 		w := healthyWorld(t)
