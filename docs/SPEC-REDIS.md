@@ -1,9 +1,11 @@
 # nova-redis — specification
 
 `nova-redis` owns the local Redis instance and its scratch verbs. Redis is the
-fleet's low-latency store — a place for signals, slots, locks, counters and
-scratch — and never the record. **Git stays the record; nothing in Redis is the
-only copy of anything.**
+fleet's low-latency store: a place for signals, slots, locks, counters and
+scratch, and the source of truth for the classes [DATA.md](DATA.md) gives it.
+**The bus's messages and receipts and the sprint's runtime state live in Redis
+and nowhere else, so they are backed up and restored as DATA.md says; the
+configuration in Redis is a copy of PostgreSQL's; scratch is no one's record.**
 
 This spec is normative. If the code and this document disagree, one of them
 has a bug, and the tests decide which. It is a sibling of [SPEC.md](SPEC.md),
@@ -87,7 +89,10 @@ created 0700 when missing and never defaulted; `appendonly yes` with
 `appendfsync everysec`, so a crash loses at most one second; `save 60 1`, an
 RDB snapshot as the second copy; `maxmemory-policy noeviction`, so a full
 instance refuses a write rather than drop a key; and no TTL policy, so store
-keys do not expire. The ACL users live in `<store-dir>/users.acl`, mode 0600,
+keys do not expire. The AOF and the RDB are on the store's own disk: they
+survive a crash and a restart, not the loss of the host, and the backups that
+do, the restore order onto a replacement host and the loss each class accepts
+are [DATA.md](DATA.md)'s. The ACL users live in `<store-dir>/users.acl`, mode 0600,
 named in the config as `aclfile`: `acl apply`'s `ACL SAVE` writes them there and
 a restart loads them. redis-server ignores `requirepass` once an ACL file is
 named and would bring the default user up with no password, so before each
@@ -106,7 +111,10 @@ nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.
 
 ## Rules
 
-1. **Git stays the record; nothing in Redis is the only copy of anything.**
+1. **Each class of data has the one source of truth [DATA.md](DATA.md) names.**
+   Redis is it for messages, receipts and runtime state, which are backed up off
+   the store's host; it holds a copy of the configuration, whose source is
+   PostgreSQL; scratch is no one's record.
 2. Every ephemeral (scratch) key carries an owner prefix and a TTL; an
    unbounded scratch key is a bug. Store keys carry no TTL: the store has no
    TTL policy.
