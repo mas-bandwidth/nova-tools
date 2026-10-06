@@ -34,6 +34,21 @@
 \* The condition holds once Every of running time has run since the overdue line
 \* (behindConds): the line at the deadline, then the pass Every on, then every Every.
 \*
+\* With Kind = "empty" (an up friend has an empty row while cards wait) holds is the
+\* conjunction the pass reads each tick: she is up and not held, her row is empty, and
+\* cards she could do wait elsewhere. The judgment waits EmptyRowAfter (Every, in the
+\* code both ten minutes) of that conjunction, kept by the empty-row clock:
+\*   watchAt the running clock the clock (NFriendRowEmpty, an acknowledgement) was
+\*           written at, the first tick that finds the conjunction; -1 while none. A
+\*           tick that finds it gone closes the clock, so time down, held or busy does
+\*           not count.
+\*   streak  how many ticks in a row have found the conjunction (a ghost: the code
+\*           keeps no such count).
+\* With Kind = "pin" (a named pin dealt away from its friend) holds is the card ready or
+\* working off her row, and the deal writes the judgment on the unit that places it
+\* there (Deal); the pass keeps that one note and raises it again in place:
+\*   dealt   the open judgment is the deal's, not yet read by a pass.
+\*
 \* The design, Broken = "none":
 \*   Tick  the clock steps; when the condition holds, a judgment is written if none is
 \*         open or acknowledged, else the open one is raised again in place (again counts
@@ -49,14 +64,20 @@
 \*   "doublepush" (Kind = "behind") the pass counts a late judgment from its deadline, not
 \*                from its overdue line: the line and the pass push in one tick:
 \*                OnePushATick.
+\*   "noreset"    (Kind = "empty") the empty-row clock is kept when the conjunction is
+\*                gone, so time down counts and she is judged on her first tick back:
+\*                EmptyAWholeWindow.
+\*   "pinrekey"   (Kind = "pin") the pass does not know the deal's judgment as its own
+\*                (the text it would write differs from the deal's) and writes a
+\*                second: OneJudgmentAnEpisode.
 EXTENDS Integers
 
 CONSTANTS Every, MaxClock, Broken, Kind
 
 VARIABLES holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes
+          late, markAt, lastPush, tickPushes, watchAt, streak, dealt
 vars == <<holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes>>
+          late, markAt, lastPush, tickPushes, watchAt, streak, dealt>>
 
 TypeOK ==
   /\ holds \in BOOLEAN
@@ -72,33 +93,54 @@ TypeOK ==
   /\ markAt \in (0..MaxClock) \cup {-1}
   /\ lastPush \in (0..MaxClock) \cup {-1}
   /\ tickPushes \in 0..2
+  /\ watchAt \in (0..MaxClock) \cup {-1}
+  /\ streak \in 0..MaxClock
+  /\ dealt \in BOOLEAN
 
 Init ==
   /\ holds = FALSE /\ seen = FALSE /\ open = FALSE /\ acked = FALSE
   /\ first = -1 /\ again = 0 /\ clk = 0 /\ written = 0 /\ pushes = 0
   /\ late = FALSE /\ markAt = -1 /\ lastPush = -1 /\ tickPushes = 0
+  /\ watchAt = -1 /\ streak = 0 /\ dealt = FALSE
 
 \* The world: the friend's session answers or not, her cards finish or not, the
-\* coordinator answers the late judgments or not.
+\* coordinator answers the late judgments or not, the friend comes up or goes down, her
+\* row fills or empties, the cards she could do come and go, the pinned card moves.
 Flip ==
   /\ IF Kind = "behind"
        THEN late' = ~late /\ UNCHANGED holds
        ELSE holds' = ~holds /\ UNCHANGED late
-  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes>>
+  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes,
+                 watchAt, streak, dealt>>
+
+\* Pin: the deal places the pinned card on another row and writes the judgment on that
+\* unit (friendDeal, pinIgnoredNote). The deal is a part of the tick, which leaves the
+\* condition holding; the next pass reads the deal's note.
+Deal ==
+  /\ Kind = "pin"
+  /\ ~holds /\ ~open /\ ~acked
+  /\ holds' = TRUE /\ seen' = TRUE
+  /\ open' = TRUE /\ first' = clk /\ again' = 0 /\ dealt' = TRUE
+  /\ written' = written + 1 /\ pushes' = pushes + 1
+  /\ UNCHANGED <<acked, clk, late, markAt, lastPush, tickPushes, watchAt, streak>>
 
 \* The coordinator acknowledges the open judgment.
 Ack ==
   /\ open /\ ~acked
   /\ open' = FALSE /\ acked' = TRUE
-  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes>>
+  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes,
+                 watchAt, streak, dealt>>
 
 \* The condition the tick's pass reads. Behind: the late judgment's overdue line,
 \* written by an earlier tick (the pass reads the holds before this tick's), is Every
-\* old.
+\* old. Empty: the empty-row clock, written by an earlier tick, is Every old (or the
+\* judgment is already open: emptyConds keeps it while the conjunction holds).
 Cond ==
-  IF Kind = "behind"
-    THEN late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
-    ELSE holds
+  CASE Kind = "behind" ->
+         late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
+    [] Kind = "empty" ->
+         holds /\ (open \/ acked \/ (watchAt # -1 /\ clk + 1 - watchAt >= Every))
+    [] OTHER -> holds
 
 \* This tick's overdue line about the late judgment: the first tick that finds it late.
 Line == Kind = "behind" /\ late /\ markAt = -1
@@ -117,6 +159,11 @@ Tick ==
   /\ seen' = Cond
   /\ UNCHANGED <<holds, late>>
   /\ markAt' = IF Kind = "behind" /\ late THEN (IF markAt = -1 THEN clk + 1 ELSE markAt) ELSE -1
+  /\ watchAt' = IF Kind # "empty" THEN -1
+               ELSE IF holds THEN (IF watchAt = -1 THEN clk + 1 ELSE watchAt)
+               ELSE IF Broken = "noreset" THEN watchAt ELSE -1
+  /\ streak' = IF Kind = "empty" /\ holds THEN streak + 1 ELSE 0
+  /\ dealt' = FALSE
   /\ tickPushes' = (IF Line THEN 1 ELSE 0) + (IF PassPush THEN 1 ELSE 0)
   /\ lastPush' = IF ~(Kind = "behind" /\ late) THEN -1
                  ELSE IF tickPushes' > 0 THEN clk + 1 ELSE lastPush
@@ -131,6 +178,10 @@ Tick ==
                    /\ again' = (clk + 1 - first) \div Every /\ pushes' = pushes + 1
                    /\ written' = IF Broken = "reopen" THEN written + 1 ELSE written
                    /\ UNCHANGED <<open, acked, first>>
+            ELSE IF open /\ dealt /\ Broken = "pinrekey"
+              THEN \* the deal's note not known as the pass's: a second judgment
+                   /\ written' = written + 1
+                   /\ UNCHANGED <<open, acked, first, again, pushes>>
             ELSE UNCHANGED <<open, acked, first, again, written, pushes>>
        ELSE IF Broken = "noclose"
               THEN UNCHANGED <<open, acked, first, again, written, pushes>>
@@ -138,7 +189,7 @@ Tick ==
                  /\ open' = FALSE /\ acked' = FALSE /\ first' = -1 /\ again' = 0
                  /\ written' = 0 /\ pushes' = 0
 
-Next == Flip \/ Ack \/ Tick
+Next == Flip \/ Ack \/ Deal \/ Tick
 
 Spec == Init /\ [][Next]_vars
 
@@ -166,5 +217,9 @@ OnePushATick == tickPushes <= 1
 \* without a push once its overdue line is written: the line, then the pass every Every.
 LateRemindedEveryWindow ==
   (Kind = "behind" /\ late /\ markAt # -1 /\ ~acked) => clk - lastPush <= Every
+
+\* Empty: a friend is judged only after a whole window of ticks has found her up and not
+\* held, her row empty and cards she could do waiting; time down, held or busy restarts it.
+EmptyAWholeWindow == (Kind = "empty" /\ (open \/ acked)) => streak > Every
 
 =============================================================================
