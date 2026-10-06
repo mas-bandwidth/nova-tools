@@ -512,3 +512,27 @@ func TestAFriendsBeatAnswersHerRowsModeAndWidth(t *testing.T) {
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, " row_mode=one-shot row_width=1")
 }
+
+// A friend's row names the session her daemon delivers into, and her beat answers it
+// (row_session=) once friend sync carried it; a beat that says the session is gone
+// (--target-invalid, --target-state) reads target-invalid on her row in where, its own
+// word and not down, and --target-state alone is refused.
+func TestAFriendsBeatAnswersHerSessionAndSaysATargetIsInvalid(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2")
+	r.a.friends = func(context.Context, string) ([]config.Row, error) {
+		return []config.Row{{Name: "amy", Fields: map[string]string{"slots": "2", "tiers": "flash", "session": "019a-new"}}}, nil
+	}
+	r.boss("nova-sprint friend sync --root " + t.TempDir())
+	res := r.one("friend", "beat", "amy")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	assert.Contains(t, res.Stdout, " row_session=019a-new")
+	res = r.one("friend", "beat", "amy", "--target-invalid", "01a10e84", "--target-state", "superseded: her row names 019a-new")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	assert.Contains(t, res.Stdout, " target_invalid=01a10e84")
+	where := r.boss("nova-sprint where")
+	assert.Contains(t, where, "target-invalid", where)
+	res = r.one("friend", "beat", "amy", "--target-state", "archived")
+	assert.Equal(t, 2, res.Code)
+	assert.Contains(t, res.Stderr, "wants --target-invalid")
+}

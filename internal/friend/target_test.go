@@ -58,6 +58,14 @@ func TestAGoneSessionTargetIsInvalidAndNeverRetried(t *testing.T) {
 		r.d.Deliver, r.passive = &Codex{Dir: dir, Session: thread, Run: run, Home: home, Held: func(string) bool { return true }}, true
 		r.d.Harness, r.d.Coordinator = "codex", "ada"
 		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		var gones []TargetInvalid // what each beat said while the target was invalid: her row's target-invalid, not down
+		plain := r.d.Beat
+		r.d.BeatInvalid = func(ctx context.Context, active time.Time, gone TargetInvalid) error {
+			mu.Lock()
+			gones = append(gones, gone)
+			mu.Unlock()
+			return plain(ctx, active)
+		}
 		r.send(t, "ada", "hello", "x")
 		r.run(t, 10*int(RecheckEvery/BeatEvery)) // ten rechecks' worth of steps
 
@@ -107,7 +115,90 @@ func TestAGoneSessionTargetIsInvalidAndNeverRetried(t *testing.T) {
 		assert.Equal(t, 1, hello, "the message stays on her stream for the rebound session")
 		assert.Equal(t, 1, notes, "one NOTE to the friend")
 		assert.Equal(t, 0, s.Delivered)
+		mu.Lock()
+		defer mu.Unlock()
+		require.NotEmpty(t, gones, "the beats after it say the target is invalid (friend beat --target-invalid)")
+		for _, g := range gones {
+			assert.Equal(t, thread, g.Target)
+			assert.Equal(t, TargetArchived, g.State)
+		}
 	})
+}
+
+// A daemon started on a session her nova-config row no longer names (a service
+// reinstalled from an old command line after a rebind) is target-invalid as soon
+// as her beat answers the row: nothing is handed into the old id, the coordinator
+// gets one blocker and she one NOTE, and the message stays pending.
+func TestARowNamingAnotherSessionIsTargetInvalid(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		r.d.Harness, r.d.Coordinator, r.passive = "codex", "ada", true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		row := ""
+		var mu sync.Mutex
+		r.d.Superseded = func() *TargetInvalid {
+			mu.Lock()
+			defer mu.Unlock()
+			return Target{}.Supersedes("codex", "01a10e84-old", row)
+		}
+		plain := r.d.Beat
+		r.d.Beat = func(ctx context.Context, active time.Time) error {
+			mu.Lock()
+			row = "019a-new" // her first beat answers row_session=019a-new
+			mu.Unlock()
+			return plain(ctx, active)
+		}
+		r.at[1] = func() { r.send(t, "ada", "hello", "x") }
+		r.run(t, 20)
+
+		s := r.last()
+		assert.Equal(t, SessionTargetInvalid, s.Session)
+		assert.Equal(t, "01a10e84-old", s.SessionID)
+		assert.Contains(t, s.SessionReason, TargetSuperseded)
+		assert.Empty(t, r.delivered, "nothing handed into the old id")
+		blockers := 0
+		for _, m := range r.adaGot(t) {
+			if strings.Contains(m, "target-invalid") {
+				blockers++
+				assert.Contains(t, m, "019a-new")
+			}
+		}
+		assert.Equal(t, 1, blockers)
+	})
+}
+
+// The row's session against the daemon's: none named, the same, or the row lagging
+// a rebind made here go on; any other is superseded.
+func TestSupersedesReadsTheRowAgainstTheBoundTarget(t *testing.T) {
+	t.Parallel()
+	rebound := Target{}.Bind("bob", "codex", "old", t0).Bind("bob", "codex", "new", t0)
+	for _, tc := range []struct {
+		name, session, row string
+		bound              Target
+		gone               bool
+	}{
+		{"row names none", "old", "", Target{}, false},
+		{"row names it", "new", "new", Target{}, false},
+		{"row lags a rebind here", "new", "old", rebound, false},
+		{"an old command line", "old", "new", rebound, true},
+		{"another machine's rebind", "old", "new", Target{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := tc.bound.Supersedes("codex", tc.session, tc.row)
+			if !tc.gone {
+				assert.Nil(t, g)
+				return
+			}
+			require.NotNil(t, g)
+			assert.Equal(t, TargetSuperseded, g.State)
+			assert.Equal(t, tc.session, g.Target)
+			assert.Contains(t, g.Detail, tc.row)
+		})
+	}
+	assert.Equal(t, "019a", RowSession("FRIEND-BEAT OK bob at=x row_mode=batch row_width=8 row_session=019a working=0"))
+	assert.Equal(t, "", RowSession("FRIEND-BEAT OK bob at=x row_mode=batch row_width=8"))
 }
 
 // A thread live at the first try and archived before the retry: the first

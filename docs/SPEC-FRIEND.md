@@ -994,16 +994,36 @@ her current chat. Every harness that names a session has the same shape.
 - **`nova-friend rebind --as <me> --session <id>`** (and `nova-friend install`
   run again with a new `--session`) is the supported way to change the
   target. Rebind reads the installed agent's plist, reads the new target's
-  lifecycle (a gone one is refused), writes the friend's push proof down on
-  the bus (`rebound from <old> to <new>`: nova-bus refuses her as deaf), records the
-  new target in `<state>/target.json` with every session it replaced
-  `retired`, rewrites `--session` in the plist and boots the agent out and in.
-  The daemon then starts on a fresh push proof, a SESSION CHECK round trip
-  through the new session, before any delivery is scheduled ("The push
-  proof" above). `run` and `install` refuse a retired id, so a service
-  reinstalled from an old command line cannot resurrect a target she left;
-  rebinding to an id takes it off the retired list.
-- **The friend's row says it.** `nova-friend status` says
+  lifecycle (a gone one is refused), records the new session on her
+  nova-config friend row (`nova-config friend set <me> --session <id> --as
+  <me>`; a row that cannot be written refuses the rebind, nothing changed),
+  writes the friend's push proof down on the bus (`rebound from <old> to
+  <new>`: nova-bus refuses her as deaf), records the new target in
+  `<state>/target.json` with every session it replaced `retired`, rewrites
+  `--session` in the plist and boots the agent out and in. The daemon then
+  starts on a fresh push proof, a SESSION CHECK round trip through the new
+  session, before any delivery is scheduled ("The push proof" above).
+  Install with a new `--session` records it the same way, on the row and in
+  `target.json` (a row it cannot write is a NOTE with the command).
+- **The row is the managed configuration; a reinstall cannot resurrect an
+  old id.** The friend row's `session` (docs/SPEC-CONFIG.md, `friend`) rides
+  friend sync onto her friends-table entry and her beat answers it
+  (`row_session=<id>`). A daemon whose `--session` is not the row's is
+  target-invalid with the state `superseded` (`TargetSuperseded`, every
+  harness that names a session) as soon as a beat answers, and tells as
+  above; the one exception is a row lagging a rebind made on this machine
+  (`target.json` names `--session` and retired the row's id), which friend
+  sync closes within a pass. On the same machine `run` and `install` refuse a
+  retired id at once; rebinding to an id takes it off the retired list. A
+  beat waits for the session's answer ("The push proof"), so a daemon
+  started elsewhere on an old id that is still live gets its one push-proof
+  check into it before the row is read; one that is gone gets none.
+- **The friend's row says it.** Her beat while the target is invalid says so
+  (`friend beat --target-invalid <id> --target-state <state: detail>`, with
+  no `--pong`, so the coordinator's pass raises no deaf judgment beside the
+  blocker), and the sprint's friends table reads `target-invalid` on her
+  row, its own status and never `down` (docs/SPEC-SPRINT.md section 1);
+  nothing is dealt to her. `nova-friend status` says
   `session=target-invalid` and a NOTE with the rebind line; `nova-friend
   check` gives the verdict `target-invalid`, its own word before `broken` and
   never `down`, counted as `target_invalid=` in the summary.
@@ -1025,15 +1045,21 @@ The terminal states each adapter reads (`TerminalStates`, `NoTerminalStates`;
 | claude | none | the daemon is passive: `--session` names the wake file's friend, and the session's own wait reads the bus |
 | gemini | none | `--resume` takes an index or `latest`, resolved by the harness; nothing names a fixed session |
 | antigravity | none | the adapter delivers into the app's open conversation, found at each turn |
+| every harness that names a session | superseded | her nova-config friend row's `session`, as her beat answers it (`row_session=`), names another session than `--session` (`Target.Supersedes`) |
 
 The model is tla/Delivery.tla: a target that goes gone while messages wait,
-a retry that reads the lifecycle first, a rebind that retires the old target
-and owes a fresh proof. Its invariants: no retry is handed into a gone
-target; the daemon runs only on a proof through the target it names; the coordinator is told at most
-once per invalidation; a retired target is never bound again by a reinstall;
-and no message is acked undelivered. `MCDeliveryBrokenRetryUnchecked.cfg`
-(a retry that skips the read) and `MCDeliveryBrokenRebindKeepsProof.cfg` (a
-rebind that keeps the old proof) each find their counterexample.
+a retry that reads the lifecycle first, a rebind that records the target on
+her row, retires the old one and owes a fresh proof, friend sync carrying the
+row to her beat, and a service reinstalled elsewhere from an old command
+line. Its invariants: no retry is handed into a gone target; the daemon runs
+only on a proof through the target it names; the coordinator is told at most
+once per invalidation; a retired target is never bound again by a reinstall
+on the machine that retired it; nothing is handed into a session her row, as
+her beat answers it, does not name; and no message is acked undelivered.
+`MCDeliveryBrokenRetryUnchecked.cfg` (a retry that skips the read),
+`MCDeliveryBrokenRebindKeepsProof.cfg` (a rebind that keeps the old proof)
+and `MCDeliveryBrokenRowIgnored.cfg` (a daemon that never reads her row's
+session) each find their counterexample.
 
 ## The daemon writes every card she holds (internal/friend/inbox.go)
 

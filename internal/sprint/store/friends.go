@@ -53,6 +53,9 @@ type friendEntry struct {
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
+	// Session is her row's session, the one her daemon delivers into as nova-friend
+	// rebind or install last recorded it, which her beat answers (row_session=).
+	Session string `json:"session,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -70,6 +73,8 @@ type FriendSpec struct {
 	Mode  string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
+	// Session is her row's session ("" when it names none).
+	Session string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -168,11 +173,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.Session != s.Session:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.Session = s.Width, s.Class, s.Mode, s.ConfigDir, s.Session
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -225,11 +230,39 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 type friendBeatRecord struct {
 	sprint.Beat
 	Pong time.Time `json:"pong,omitzero"`
+	// Target is her daemon's word that the session it names is gone (friend beat
+	// --target-invalid), nil while it is not: her row reads TargetInvalid.
+	Target *GoneTarget `json:"target_invalid,omitempty"`
+}
+
+// TargetInvalid is a friend's status while her daemon's beat says the session it
+// delivers into is gone (archived, deleted, moved, or not the one her row names;
+// docs/SPEC-FRIEND.md, "A gone session target"): its own word, never down, since the
+// remedy is hers, a rebind, and not a wait. She is not up, so nothing is dealt to her.
+const TargetInvalid = "target-invalid"
+
+// GoneTarget is the session her daemon found gone, as her beat says it: the id and the
+// state found (with its detail).
+type GoneTarget struct {
+	Session string `json:"session"`
+	State   string `json:"state,omitempty"`
+}
+
+// rebindLine is the command a friend runs to name her session again (nova-friend
+// rebind; friend.RebindLine says the same).
+func rebindLine(friend string) string {
+	return "nova-friend rebind --as " + friend + " --session <id>"
 }
 
 // FriendBeatPong is FriendBeatReport with her session's last pong kept on the beat (zero:
 // none), until the next beat replaces it.
 func (st *Store) FriendBeatPong(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, pong time.Time) (sprint.Beat, error) {
+	return st.FriendBeatGone(ctx, friend, rep, load, pong, nil)
+}
+
+// FriendBeatGone is FriendBeatPong with her daemon's word that the session it names is
+// gone (nil: it is not), kept on the beat until the next replaces it.
+func (st *Store) FriendBeatGone(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, pong time.Time, gone *GoneTarget) (sprint.Beat, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return sprint.Beat{}, err
@@ -244,7 +277,7 @@ func (st *Store) FriendBeatPong(ctx context.Context, friend string, rep sprint.F
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
-	rec := friendBeatRecord{Beat: b}
+	rec := friendBeatRecord{Beat: b, Target: gone}
 	if !pong.IsZero() {
 		rec.Pong = pong.UTC().Truncate(time.Second)
 	}
@@ -321,13 +354,13 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 	status := map[string]string{}
 	whys := map[string]string{}
 	for i, n := range names {
-		var b sprint.Beat
+		var rec friendBeatRecord
 		var h sprint.FriendHealth
 		var fin time.Time
 		if 3*i+2 < len(oks) {
 			if oks[3*i] {
 				// ignored: an unreadable record is no beat, which the next beat replaces
-				_ = json.Unmarshal([]byte(vals[3*i]), &b)
+				_ = json.Unmarshal([]byte(vals[3*i]), &rec)
 			}
 			if oks[3*i+1] {
 				// ignored: an unreadable record is no observation, which the next replaces
@@ -338,11 +371,18 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 				fin, _ = time.Parse(time.RFC3339, vals[3*i+2])
 			}
 		}
+		b := rec.Beat
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
 		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
+		}
+		if g := rec.Target; g != nil && !r[n].Held { // her named session is gone: not down, and not up
+			row.Status = TargetInvalid
+			row.Evidence = fmt.Sprintf("her daemon's beat %s ago says session %s is gone (%s); nothing is delivered until she rebinds: %s", now.Sub(b.At).Truncate(time.Second), g.Session, g.State, rebindLine(n))
+			row.Reason = "session " + g.Session + " " + g.State
+			whys[n] = "her session target is invalid: " + g.Session + " is " + g.State + "; " + rebindLine(n)
 		}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
@@ -587,7 +627,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, Session: e.Session}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

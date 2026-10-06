@@ -198,6 +198,16 @@ type Daemon struct {
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its
 	// Head.
 	Tip func(ctx context.Context, repo, branch string) (string, error)
+	// Superseded, when set, is read each step while the target is live: the
+	// TargetInvalid when her nova-config row names another session than the one
+	// the daemon delivers into (a service reinstalled from an old command line),
+	// nil while it does not. The loop then goes target-invalid as for a gone one
+	// (tla/Delivery.tla, RowCheck; NeverIntoSuperseded).
+	Superseded func() *TargetInvalid
+	// BeatInvalid, when set, is the beat while the loop is target-invalid, in
+	// place of Beat: it says the session is gone (friend beat --target-invalid),
+	// so her row reads target-invalid and not down. Nil beats Beat.
+	BeatInvalid func(ctx context.Context, active time.Time, gone TargetInvalid) error
 	// Invalid, when set, is the named session found gone before the loop
 	// (run reads it in place of the push proof): the loop starts
 	// target-invalid, tells once and delivers nothing.
@@ -438,6 +448,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.Record(now.UTC().Format(time.RFC3339) + " not delivered: " + d.Harness + " has no deliver command: " + l.notice.Subject)
 			l.notice = nil
 		}
+		if l.invalid == nil && d.Superseded != nil && (l.busy == nil || !l.busy.running) {
+			if gone := d.Superseded(); gone != nil { // her row names another session: never this one again
+				l.targetInvalid(*gone, now, l.busy)
+			}
+		}
 		mode, width := l.row(now)
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
 		storeOK := l.read(now)
@@ -493,7 +508,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}
-			if err := d.Beat(ctx, d.active); err != nil {
+			beat := d.Beat
+			if l.invalid != nil && d.BeatInvalid != nil { // her row reads target-invalid, not down
+				gone := *l.invalid
+				beat = func(ctx context.Context, active time.Time) error { return d.BeatInvalid(ctx, active, gone) }
+			}
+			if err := beat(ctx, d.active); err != nil {
 				d.status.BeatError = err.Error()
 			} else {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
@@ -1012,15 +1032,7 @@ func (l *loop) batchDone(r result, now time.Time) {
 	var deferred Deferred
 	var gone TargetInvalid
 	if errors.As(r.err, &gone) && !r.t.stopped { // never a deferral: no retry can reach a session that is gone
-		l.invalid = &gone
-		for _, e := range r.t.entries {
-			delete(l.inHand, e) // pending on her stream, for the session she rebinds to
-		}
-		d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionTargetInvalid, gone.Target, oneLine(gone.State+": "+gone.Detail, 200), now
-		d.Record(fmt.Sprintf("%s subject=%s session=target-invalid: %s; nothing is delivered and nothing retried, every message stays pending, until she rebinds: %s",
-			now.UTC().Format(time.RFC3339), r.t.subjects, gone.Error(), RebindLine(d.Friend)))
-		l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
-		l.unable, l.unableTries = "", 0 // a refusal is superseded: the session is gone, not unable
+		l.targetInvalid(gone, now, r.t)
 		return
 	}
 	if errors.As(r.err, &deferred) && !r.t.stopped { // not a failure: the turn stays in hand, tried again, counted toward nothing
@@ -1100,6 +1112,26 @@ func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, why string) bool {
 		return false
 	}
 	return true
+}
+
+// targetInvalid puts the loop target-invalid on gone: the turn t in hand (nil:
+// none) dropped from hand, its messages pending on her stream for the session
+// she rebinds to, nothing retried, the status saying it, one line on the record.
+func (l *loop) targetInvalid(gone TargetInvalid, now time.Time, t *turn) {
+	d := l.d
+	l.invalid = &gone
+	subject := ""
+	if t != nil {
+		subject = "subject=" + t.subjects + " "
+		for _, e := range t.entries {
+			delete(l.inHand, e) // pending on her stream, for the session she rebinds to
+		}
+	}
+	d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionTargetInvalid, gone.Target, oneLine(gone.State+": "+gone.Detail, 200), now
+	d.Record(fmt.Sprintf("%s %ssession=target-invalid: %s; nothing is delivered and nothing retried, every message stays pending, until she rebinds: %s",
+		now.UTC().Format(time.RFC3339), subject, gone.Error(), RebindLine(d.Friend)))
+	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
+	l.unable, l.unableTries = "", 0 // a refusal is superseded: the session is gone, not unable
 }
 
 // limited says the harness is at its limit now (Daemon.Limited).

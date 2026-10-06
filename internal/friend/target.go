@@ -64,6 +64,13 @@ var NoTerminalStates = map[string]string{
 	"antigravity": "the adapter delivers into the app's open conversation, found at each turn; nothing names a fixed session",
 }
 
+// TargetSuperseded is the state of a named session her nova-config row no
+// longer names: she rebound to another (nova-friend rebind, or install with a
+// new --session), and a daemon started on the old id, from a service
+// reinstalled with an old command line, delivers nothing into it. Every
+// harness that names a session has it beside its TerminalStates.
+const TargetSuperseded = "superseded"
+
 // TerminalState is one row of TerminalStates.
 type TerminalState struct{ State, How string }
 
@@ -77,6 +84,12 @@ type TargetInvalid struct {
 
 func (e TargetInvalid) Error() string {
 	return fmt.Sprintf("%s session %s is %s: %s", e.Harness, e.Target, e.State, e.Detail)
+}
+
+// Said is the state found and its detail on one line, at most 300 bytes: what
+// her beat says of it (friend beat --target-state).
+func (e TargetInvalid) Said() string {
+	return oneLine(e.State+": "+e.Detail, 300)
 }
 
 // RebindLine is the command a friend runs to name her session again.
@@ -343,6 +356,34 @@ func (t Target) Refuses(session string) string {
 	}
 	return fmt.Sprintf("session %s was rebound away from (now %s, %s); a service carrying the old id cannot bring it back: %s",
 		session, dash(t.Session), t.At.UTC().Format(time.RFC3339), RebindLine(t.Friend))
+}
+
+// RowSession reads the friend row's session off her beat's answer
+// (row_session=<id>, as friend sync last wrote her nova-config row); "" when
+// the answer names none.
+func RowSession(answer string) string {
+	for _, w := range strings.Fields(answer) {
+		if v, found := strings.CutPrefix(w, "row_session="); found {
+			return v
+		}
+	}
+	return ""
+}
+
+// Supersedes is the TargetInvalid when her row's session (row, "" when it
+// names none) is not session, the one the daemon delivers into, nil when it
+// may go on: the row names none, names session, or lags a rebind made here
+// (t, the bound target in her state directory, names session and has retired
+// the row's), which friend sync carries to her row within a pass.
+func (t Target) Supersedes(harness, session, row string) *TargetInvalid {
+	if session == "" || row == "" || row == session {
+		return nil
+	}
+	if t.Session == session && slices.Contains(t.Retired, row) {
+		return nil
+	}
+	return &TargetInvalid{Harness: harness, Target: session, State: TargetSuperseded,
+		Detail: "her nova-config friend row names session " + row + "; a daemon started on another id delivers nothing into it"}
 }
 
 // FlagOf is the value of --name in args, the daemon's part of a plist's

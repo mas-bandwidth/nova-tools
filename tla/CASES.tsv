@@ -427,3 +427,4 @@ MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	fr
 MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	delivery	required	-
 MCDeliveryBrokenRetryUnchecked.cfg	MCDelivery.tla	invariant	NeverIntoGone	ignore-terminal	delivery	required	-
 MCDeliveryBrokenRebindKeepsProof.cfg	MCDelivery.tla	invariant	RunsOnItsOwnProof	ignore-terminal	delivery	required	-
+MCDeliveryBrokenRowIgnored.cfg	MCDelivery.tla	invariant	NeverIntoSuperseded	ignore-terminal	delivery	required	-

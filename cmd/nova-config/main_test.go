@@ -431,9 +431,9 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	_, errs = step(1, "friend", "set", "nobody", "--slots", "1")
 	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- session=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- "), "friend show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- session=- "), "friend show: %q", out)
 	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
 	_, errs = step(1, "friend", "show", "nobody")
 	require.Equal(t, "nova-config friend show REFUSED: friend nobody not found; run: nova-config friend list\n", errs, "show nobody: %q", errs)
@@ -592,7 +592,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
 	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=batch config_dir=- created="), "rowan's stored row: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=batch config_dir=- session=- created="), "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
@@ -808,16 +808,48 @@ func TestAFriendsConfigDirRoundTripsThroughSet(t *testing.T) {
 	}
 	step(0, "friend", "add", "amy", "--slots", "2", "--tiers", "heavy", "--mode", "one-shot")
 	out, _ := step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=- "), "unset: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=- session=- "), "unset: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--config_dir", "/accounts/heavy-a")
 	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=config_dir\n", out)
 	out, _ = step(0, "friend", "show", "amy")
-	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=/accounts/heavy-a "), "set: %q", out)
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=/accounts/heavy-a session=- "), "set: %q", out)
 	_, errs := step(1, "friend", "set", "amy", "--config_dir", "accounts/heavy-a")
 	assert.Contains(t, errs, "want --config_dir <an absolute path>")
 	out, _ = step(0, "friend", "show", "amy")
-	assert.Contains(t, out, " config_dir=/accounts/heavy-a ", "the refusal changed nothing: %q", out)
+	assert.Contains(t, out, " config_dir=/accounts/heavy-a session=- ", "the refusal changed nothing: %q", out)
 	step(0, "friend", "set", "amy", "--config_dir", "")
 	out, _ = step(0, "friend", "show", "amy")
-	assert.Contains(t, out, " config_dir=- ", "cleared: %q", out)
+	assert.Contains(t, out, " config_dir=- session=- ", "cleared: %q", out)
+}
+
+// A friend's session, the one her daemon delivers into, is unset when add is not
+// given one; friend set writes it (nova-friend rebind runs that set) and show reads
+// it back, a session that is not one word is refused with the row unchanged, and an
+// empty --session clears it.
+func TestAFriendsSessionRoundTripsThroughSet(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "rowan"
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		return out, errs
+	}
+	step(0, "friend", "add", "stella", "--slots", "2", "--tiers", "pro")
+	out, _ := step(0, "friend", "show", "stella")
+	assert.Contains(t, out, " session=- ", "unset: %q", out)
+	out, _ = step(0, "friend", "set", "stella", "--session", "019a-new-thread")
+	assert.Equal(t, "CONFIG SET kind=friend name=stella rev=2 changed=session\n", out)
+	out, _ = step(0, "friend", "show", "stella")
+	assert.Contains(t, out, " session=019a-new-thread ", "set: %q", out)
+	_, errs := step(1, "friend", "set", "stella", "--session", "two words")
+	assert.Contains(t, errs, "want --session <id>")
+	out, _ = step(0, "friend", "show", "stella")
+	assert.Contains(t, out, " session=019a-new-thread ", "the refusal changed nothing: %q", out)
+	step(0, "friend", "set", "stella", "--session", "")
+	out, _ = step(0, "friend", "show", "stella")
+	assert.Contains(t, out, " session=- ", "cleared: %q", out)
 }
