@@ -1120,6 +1120,45 @@ answer is still the session check's (Presence, above). Each `PING` reopens the
 daemon's challenge, so the challenge's `deaf` is not reached while this loop
 runs (Chaos, below); presence is what says a silent session.
 
+## The wake ping loop (cmd/nova-friend ping --wake --to-friends; internal/friend/wakeping.go)
+
+The owner, 2026-10-05: "there is no value in things that are answered just by
+the daemon", and "We need to get away from these one shot shell scripts." The
+ping that matters is the one only the session answers, the wake ping (`ping
+--wake`, the `wake=1` line): the daemon answers at once and pushes the pong line
+in as the session's own turn, and only the session's pong ends it. The loop that
+sent one to a typed list of friends is a verb: `nova-friend ping --as
+<coordinator> --wake --to-friends --every <d> [--within <d>] [--never-wake
+<f,...>] [--server <addr>]`.
+
+Each pass reads the friends table from the sprint server's coordinator view
+(`GET /api/view/coordinator?all=1`: the rows `f:<friend>` with status up, down
+or held, and the seat's holder), so no list of friends is kept anywhere else
+(`WakeTargets`). A friend whose status is not up (held by the coordinator, or
+down), a friend in `--never-wake`, and the coordinator itself are not pinged.
+Each target gets a wake PING with a fresh nonce; the pass then reads the bus log
+until every session's own pong for its nonce is there or `--within` (default
+`Window`) is out. A `daemon-pong` never counts: a friend whose daemon answered
+and whose session did not is deaf. The coordinator, the seat's holder (else
+`--as`), is sent one blocker note `wake: deaf: <f,...>` naming every deaf friend
+once per change of that set (`DeafChange`): the same set on the next pass says
+nothing, a friend added or dropped is a change, and a friend deaf again after
+the set emptied is a change. It prints `WAKE OK every= within= never_wake=`
+once, `WAKE PASS n= pinged= answered= deaf= at=` each pass, `WAKE DEAF friends=
+at=` at each change, `WAKE NOTE` for a table, store or send that failed (the
+pass goes again next time), and `WAKE STOP` at a signal. Without `--every` it is
+one pass. A pass cut by a signal calls no one deaf.
+
+`ping-install --as <coordinator> --every <d>` installs it as the launchd agent
+`com.nova.friend-wake-ping-<as>` (RunAtLoad, KeepAlive, the way `install` runs
+the daemon), and `ping-uninstall` boots it out and removes the plist.
+
+Not done, and why: `serve` (above) is a different loop, the connection's own,
+each second and answered by the daemon; the daemon's "coordinator silent" window
+(`Window`) counts its pings, so deleting it is the owner's decision and is not
+made here. The friends table has no never-wake column yet, so `--never-wake`
+names the friends; a row field is the sprint store's and nova-config's change.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the
