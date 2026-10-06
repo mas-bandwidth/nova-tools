@@ -93,8 +93,7 @@ below): the daemon answering is never the session.
 
 ### session-pong.w1: a wake check is answered by the session
 
-A wake check is a PING whose body carries a `wake=1` line (`nova-friend ping
---wake`; `WakePingText`, `IsWake`). The daemon answers it at once with
+A wake check is a PING whose body carries a `wake=1` line (`nova-friend ping --wake`; `WakePingText`, `IsWake`). The daemon answers it at once with
 `daemon-pong` as any ping, and when the session is free (no turn running, no
 message waiting) pushes in the exact pong line for the current nonce as its own
 short turn (`WakeTurnText`, `startWake`), with no message and no word about the
@@ -164,8 +163,7 @@ Presence is therefore the session's, never the daemon's:
   the reason `no session answer`; a check turn still running then is stopped,
   and a fresh check goes in ten minutes after the last. The next answer, to the
   latest nonce, late or not, brings the friend back up, and so does any other
-  message the session writes on the bus (`presence: up: the session wrote on
-  the bus`): a session that speaks is alive, whatever process is or is not
+  message the session writes on the bus (`presence: up: the session wrote on the bus`): a session that speaks is alive, whatever process is or is not
   running (the finding of 2026-10-05).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
   once: coming up proves nothing about the session.
@@ -248,8 +246,7 @@ friend did, in order, the first rule that holds deciding it:
    pong file, or the session's last word on the bus as the daemon's presence
    file holds it, whichever is newer, so a pong whose file write a sandbox
    refused still counts;
-3. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n>
-   undelivered)`);
+3. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n> undelivered)`);
 4. otherwise up (`session answer 40s`).
 
 The harness's process decides nothing: it is shown (`harness running`,
@@ -273,15 +270,13 @@ newest turn line of `deliver.log`, `<RFC3339> subject=... exit=<n>`). A bus
 that cannot deliver is the daemon down (its status file over thirty seconds
 old), the session broken, or the store failing.
 
-`nova-friend status` prints it after the daemon's facts: `status=<up|down>
-why="<the rule that decided it>" evidence="<each piece, ; between>"`.
+`nova-friend status` prints it after the daemon's facts: `status=<up|down> why="<the rule that decided it>" evidence="<each piece, ; between>"`.
 
 What is owed, outside this tool: the harness is known running only for Grok (a
 tail under the open window); other harnesses are `unknown` until each has a
 probe. No writer of `limit.json` yet: the daemon reads no limit from a turn.
 The coordinator's `friend health` carries `--reason` and `--until`, but not
-the five pieces of evidence, and the friends table (`nova-sprint where
---json`, the dashboard) shows the observation's word, not this verdict; the
+the five pieces of evidence, and the friends table (`nova-sprint where --json`, the dashboard) shows the observation's word, not this verdict; the
 coordinator's daemon sending this verdict through `friend health`, and the
 table showing `why` and the evidence beside the status, are the next change,
 in `internal/sprint` and `cmd/nova-sprint`.
@@ -320,8 +315,7 @@ and `jobs` first, then the rest of the directory, each root once, never descendi
 `.git`, `.cache` or `node_modules`. The walk is one stat pass bounded in files (2000) and in
 time (50 ms, on the daemon's clock), answers with the newest write it read when it reaches
 either, and runs at most once every `ActivityEvery` (10 s); the beats between carry its last
-answer, and a daemon with no `Activity` carries none. The beat is `friend beat <friend>
---active <RFC3339>`; the sprint keeps it on her beat record, shows it as the friends
+answer, and a daemon with no `Activity` carries none. The beat is `friend beat <friend> --active <RFC3339>`; the sprint keeps it on her beat record, shows it as the friends
 table's `active` column, and raises a `friend idle` alarm when she holds cards and it is
 older than the `friend_idle` setting (docs/SPEC-SPRINT.md, last session activity). Where the
 harness exposes the session's own turn events, they would be a second source; none is read
@@ -346,8 +340,7 @@ up. The same refusal on `--broken-after` turns in a row (three by default) marks
 the session broken: the daemon delivers nothing more into it, only peeks, so
 pings are still answered and every message stays pending; the status file and
 `status` say `session=broken session_id= broken_at= reason=`; and the
-coordinator is told once on the bus, `friend <name>: session <id> broken:
-<reason>`, to the seat the last ping named, else `--coordinator`. It stays
+coordinator is told once on the bus, `friend <name>: session <id> broken: <reason>`, to the seat the last ping named, else `--coordinator`. It stays
 broken until the daemon restarts (install again, or `launchctl kickstart -k`),
 which is how a renewed session is taken up. The finding of 2026-10-04:
 a friend's session refused every turn with `invalid_request_error` for two hours
@@ -364,16 +357,13 @@ allowed, allowed_warning or rejected; `isUsingOverage`; `unifiedWindows`
 `five_hour` and `seven_day`, each `utilization` 0 to 1 and `resetsAt` in epoch
 seconds), the last one anywhere in the output, is the measured usage, and a
 rejection is a limit until the spent window resets; otherwise a line in the
-last 2 KiB that says a limit or credits (`insufficient ... credits`, `usage
-limit`, `limit reached`, `hit your limit`, `quota exceeded`) with its reset
-beside it (a clock time, today or else tomorrow in the daemon's zone; `in N
-hours`; an epoch after `limit reached|`) is a limit. A line with no reset is
+last 2 KiB that says a limit or credits (`insufficient ... credits`, `usage limit`, `limit reached`, `hit your limit`, `quota exceeded`) with its reset
+beside it (a clock time, today or else tomorrow in the daemon's zone; `in N hours`; an epoch after `limit reached|`) is a limit. A line with no reset is
 no limit, and a provider's transient `rate_limit_error` is no limit, so a
 reply that only talks about limits sends no one down. A harness on paid
 overage reads down, until the spent window resets, unless the owner allows
 overage for that friend (`AllowOverage`). Each new limit calls `Down` once
-with its reset (`friend down --until`, the status cell `down (<reason>, until
-<time>)`). `Limits.Gate` holds the session: a delivery while it is down is
+with its reset (`friend down --until`, the status cell `down (<reason>, until <time>)`). `Limits.Gate` holds the session: a delivery while it is down is
 `Deferred` without running the harness, so its messages stay in hand, counted
 toward nothing; a turn that hits a limit is `Deferred` the same way; the
 first delivery after the reset is a wake turn (`WakeText`) whose output must
@@ -389,8 +379,7 @@ no usage flag yet (the Claude lanes, below).
 Presence is the session's check (above); this one says what the process
 table shows, for a person reading the status, and decides nothing. Every
 adapter answers `Alive`,
-from the cheapest true signal it has, the process table (`ps -axww -o
-user=,pid=,args=`, through the adapter's own runner, no shell): Codex, the
+from the cheapest true signal it has, the process table (`ps -axww -o user=,pid=,args=`, through the adapter's own runner, no shell): Codex, the
 ChatGPT app (`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`);
 Antigravity, its app; DSH, the DeepSeek Harness app; each its main
 executable, matched whole, of the daemon's user, never a helper. Grok, a
@@ -431,8 +420,7 @@ open, the session silent: down) and over a fake process table,
 `TestAClosedHarnessIsSaidAndNeverHoldsTheBeat`.
 
 A daemon whose own arguments differ from its installed plist's says so on
-start (`plist drift: this daemon's arguments differ from the installed plist
-...`, `friend.PlistDriftLine`, the daemon's part of each from its verb `run`
+start (`plist drift: this daemon's arguments differ from the installed plist ...`, `friend.PlistDriftLine`, the daemon's part of each from its verb `run`
 on): `launchctl kickstart` restarts the agent with the arguments launchd
 loaded, so an edit to the plist in place was lost on 2026-10-05 and nothing
 said so. `install` (boot out, bootstrap) is the way to run new arguments.
@@ -443,8 +431,7 @@ own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
 2026-10-04); a stopped turn's whole process group is signalled, SIGTERM then
 SIGKILL, so a harness that forks leaves no orphan.
-Six adapters are real: OpenCode, `opencode run --session <id> --dir <dir>
-<text>`, the newest session of the directory when none is named; Codex,
+Six adapters are real: OpenCode, `opencode run --session <id> --dir <dir> <text>`, the newest session of the directory when none is named; Codex,
 Antigravity and Grok, each below; and DSH and Gemini, from the harness survey
 at the end. A turn while a challenge is open carries, at its head, the exact `pong` line for
 this friend (the binary by path, the name, the directory, the store, the
@@ -464,8 +451,7 @@ working tasks, oldest first (`Daemon.Cards` stands in for it), read with her new
 the setting is her row's idle setting (`Daemon.IdleAfter`), ten minutes when it says none
 (`DefaultIdleAfter`). The watch is `awake`, `woken` or `noted`: awake with no write for the
 setting (measured from her newest write, the daemon's start, or the step she first held a
-card, whichever is latest) gives one wake turn through the harness's resume, `you hold <n>
-cards (<ids>) and your session has written nothing for <setting>; continue the oldest, <id>`,
+card, whichever is latest) gives one wake turn through the harness's resume, `you hold <n> cards (<ids>) and your session has written nothing for <setting>; continue the oldest, <id>`,
 headed by the pong line while a challenge is open and never carrying the word about the
 coordinator; woken for the setting again with no write newer than the one the wake was given
 on sends one `blocker` to the coordinator (the seat the last ping named, else
@@ -535,16 +521,14 @@ tmux keeps its own harness adapter.
   the free state, the typed line is the action that starts the turn, and the prompt gone is its
   acceptance; Deferred is the wait the model has while busy. The adapter is a function of captured
   screens and a clock; every tmux call goes through the Exec seam.
-- **The screen.** The last screen of a hosted friend is the pane's capture, the verb `nova-friend
-  screen`; this section does not define it.
+- **The screen.** The last screen of a hosted friend is the pane's capture, the verb `nova-friend screen`; this section does not define it.
 - **To watch.** `tmux attach -t friend-<me>`; detach with the tmux prefix and `d`.
 
 ### Antigravity
 
 Antigravity (Google's agent IDE, 2.19.1 as measured) has no deliver command
 of its own, but its agents message each other through the language server,
-and that channel takes a message from outside: `agentapi send-message
---title=nova-friend <conversation> <text>`, `agentapi` being the wrapper under
+and that channel takes a message from outside: `agentapi send-message --title=nova-friend <conversation> <text>`, `agentapi` being the wrapper under
 `~/.gemini/antigravity/bin` that execs the app's `language_server`. The
 server writes the text into the conversation's mailbox,
 `~/.gemini/antigravity/brain/<conversation>/.system_generated/messages/`, as
@@ -585,8 +569,7 @@ argument; the token is already on the server's own command line, readable
 by every process of the login, so the delivery exposes nothing the harness
 does not. The app needs no special launch (no wrapper, no custom flags).
 When the app is not running (no language server in `ps` for the daemon's
-user), the delivery returns `Deferred` (`no antigravity language server is
-running: is Antigravity open?`), so the message stays pending in the daemon's
+user), the delivery returns `Deferred` (`no antigravity language server is running: is Antigravity open?`), so the message stays pending in the daemon's
 hand, retried every ten seconds (`RecheckEvery`) and never counted toward
 failure attempts or acked.
 
@@ -644,8 +627,7 @@ only a log line said so; earlier a friend's harness got no note for 80
 minutes while her beat said up. A beat proves the daemon, and the daemon's
 ack proves the turn ran; neither proves the session read the message. So
 every message to a friend is owed her session's receipt (SPEC-BUS.md,
-fr-delivery-receipts.w1): her session runs `nova-bus ack --as <f> --id
-<ids>` once it has read them, or answers one (`re`); `ReceiptLine`
+fr-delivery-receipts.w1): her session runs `nova-bus ack --as <f> --id <ids>` once it has read them, or answers one (`re`); `ReceiptLine`
 (internal/friend/deliver.go) is that exact line for a turn's text, from its
 `RECV OK id=` lines. The daemon's own ack at exit 0 is unchanged and is no
 receipt.
@@ -693,20 +675,16 @@ log line:
 - `nova-friend install` and `run` refuse, before anything is written, loaded
   or delivered, a harness whose adapter has no deliver command (a `Stub`:
   every surveyed harness; not claude, which runs each card as a process of its
-  own, below, and owes neither this refusal nor the proof), exit 2, with the remedy `the adapter
-  card: give internal/friend a deliver command for <harness> (NewDeliverer),
-  or run the friend under a harness that has one: <the harnesses with one>`.
+  own, below, and owes neither this refusal nor the proof), exit 2, with the remedy `the adapter card: give internal/friend a deliver command for <harness> (NewDeliverer), or run the friend under a harness that has one: <the harnesses with one>`.
   `--dry-run` refuses it too.
 - `run` then proves the push with the first SESSION CHECK round trip
   (`friend.PushProof` over `Conformance`, the same check `nova-friend check`
   runs) once the store answers and before the loop: the check goes in through
   the adapter, and a pong with its nonce from the friend must reach the bus
   within `ProofWithin`, the session bound, five minutes. None, and run exits 2
-  and the daemon does not start: `RUN REFUSED: no push proof: CHECK FAIL ...;
-  run: <remedy>`. An adapter that answers the check with a `Deferred`
+  and the daemon does not start: `RUN REFUSED: no push proof: CHECK FAIL ...; run: <remedy>`. An adapter that answers the check with a `Deferred`
   carrying a `Remedy` cannot drive the session at all, and that remedy is
-  printed: dsh, a session under an agent preset, `start a session in <dir>
-  with no agent preset and name it with --session <id>`. Any other failure
+  printed: dsh, a session under an agent preset, `start a session in <dir> with no agent preset and name it with --session <id>`. Any other failure
   names the session to open and `nova-friend check` to prove it. A pass is
   one RUN line, `push proof: CHECK OK harness= took=`.
 - `install` runs the same check after loading the agent: a session the
@@ -744,8 +722,7 @@ counted her `QUEUE.json`, which nothing prunes (292 tasks, none of them the held
 The daemon now reconciles her inbox with her row on every loop (`InboxEvery`, the beat's
 second), both ways:
 
-- It asks the sprint server which cards are on her row (`Held`: the worker verb `friend
-  cards <friend> --json`, also served at `GET /api/friend/<friend>/cards`, answered
+- It asks the sprint server which cards are on her row (`Held`: the worker verb `friend cards <friend> --json`, also served at `GET /api/friend/<friend>/cards`, answered
   `{"friend":..,"cards":[{"card","job","col","kind","branch","tier","attempt","gen","epoch","brief"}]}`:
   each card working or ready on her row, whoever put it there (the deal, in batch mode
   ahead of her width; friend take or friend level from another friend's row), with its
@@ -768,12 +745,10 @@ second), both ways:
   server refused it for a card on `friend.<name>` (held by friend.<name>, not <name>).
 - A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
   (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
-  first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md
-  (card <c>, <col> on her row)`); in batch mode the session is told of the briefs in a turn
+  first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md (card <c>, <col> on her row)`); in batch mode the session is told of the briefs in a turn
   of their own, as friend sync's bus message would; in one-shot mode a free lane is handed
   the held cards in the server's order, whether or not her `QUEUE.json` names them.
-- A sprint job in her inbox (a `BRIEF.md` headed `STATUS: nova-sprint card` or `WHO:
-  friend`) whose card is no longer on her row (dropped, returned, landed), that no lane is
+- A sprint job in her inbox (a `BRIEF.md` headed `STATUS: nova-sprint card` or `WHO: friend`) whose card is no longer on her row (dropped, returned, landed), that no lane is
   running, and whose brief was written before the ask began is moved to
   `inbox/retired/<job>` (`<job>.<unix>` when that is taken). A brief written since the ask
   began is friend sync's for a card dealt after the server answered; the next pass decides
@@ -788,8 +763,7 @@ second), both ways:
   writes, reconcile retires it. The module sits in this card's report until its path is
   given (internal/friend/tla is outside the card's paths).
 - A job that is no single path element, a symlinked job and a card sent with no brief are
-  not written and counted missing, each said in one line (`inbox: refused ...`, `inbox:
-  missing inbox/<job>/BRIEF.md (card <c>, <col> on her row): <why>`) once while it stands,
+  not written and counted missing, each said in one line (`inbox: refused ...`, `inbox: missing inbox/<job>/BRIEF.md (card <c>, <col> on her row): <why>`) once while it stands,
   not once a loop.
 - An answer that does not come writes nothing and retires nothing; it is said once until it
   changes, and the status file carries it (`inbox_error`).
@@ -800,8 +774,7 @@ cards still without a brief), `-` for each until the server has answered once. W
 server has answered, the idle watch counts her row, never her `QUEUE.json`.
 
 While the server refuses `friend cards` (a refusal it answered, `friend.Refused`, never a
-server that did not answer), the daemon reads her row from the server's worker view, `GET
-/api/view/worker?as=<friend>` (nova-sprint `view worker`, served today): her work cards
+server that did not answer), the daemon reads her row from the server's worker view, `GET /api/view/worker?as=<friend>` (nova-sprint `view worker`, served today): her work cards
 ready and working, each with the inbox path friend sync delivers its brief to
 (`~/<friend>-working/inbox/<job>/BRIEF.md`, the job `friendJobOf`), and no brief. On that
 answer the daemon counts and retires as above, retiring only work jobs (`STATUS:` briefs:
@@ -815,8 +788,7 @@ log line, where on 2026-10-05 it was seen by no one for 40 minutes.
 
 A server without the verb (one older than the card daemon-writes-every-taken-card3, which
 adds it) refuses it, and the daemon says so once a `ServedEvery`, each time it asks again,
-naming that card (`inbox: the sprint server does not serve friend cards (card
-daemon-writes-every-taken-card3 adds it) ...`), never once a loop; with no worker view to
+naming that card (`inbox: the sprint server does not serve friend cards (card daemon-writes-every-taken-card3 adds it) ...`), never once a loop; with no worker view to
 fall back on (`friend.NotServed`) it writes and retires nothing.
 
 ## The daemon stages every job it writes (internal/friend/stage.go)
@@ -848,8 +820,7 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
 - The checkout is cloned from the mirror beside the job (`jobs/<job>/.repo.staging`), its
   origin set to the repository itself (never the mirror, so the child's push goes out), checked
   out at the base on the card's branch, and moved in whole as `jobs/<job>/repo`; `JOB.md` is
-  written last (`JobText`, the card-contract shape of docs/SPEC-CARD-CONTRACT.md: `# JOB: work
-  <card>, attempt <n>`, the checkout, the repository, base and commit, the branch and its push,
+  written last (`JobText`, the card-contract shape of docs/SPEC-CARD-CONTRACT.md: `# JOB: work <card>, attempt <n>`, the checkout, the repository, base and commit, the branch and its push,
   the outbox `REPORT.md` and `RESULT.md`, and the `no push` HOLD). A job with a `JOB.md` is
   never staged again, and is never written over.
 - Each stage runs on a goroutine of its own, so the loop beats on while a mirror is cloned
@@ -859,8 +830,7 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
 - No lane is handed a card whose job the daemon stages until its `JOB.md` is there, and in
   batch mode the session is told of such a brief once its job is staged.
 - A repository her account cannot reach (its clone or fetch fails), or a base it does not
-  hold, is one judgment to the coordinator (a blocker message, `judgment: <friend> cannot reach
-  <repo>` or `judgment: card <c> cannot be staged on <friend>`) with its remedy, said once
+  hold, is one judgment to the coordinator (a blocker message, `judgment: <friend> cannot reach <repo>` or `judgment: card <c> cannot be staged on <friend>`) with its remedy, said once
   until a stage of that repository or card succeeds, never one per card and never once a loop;
   the job is tried again once a `StageRetryEvery` (a minute). Any other failure is said once in
   the log (`stage: not staged jobs/<job>: ...`) and tried again the same way. A success is one
@@ -890,8 +860,7 @@ for a flash-class friend who answers each turn in seconds and stops, "we could
 have one shot friends, have one-shots, per-lane ... so [she] can still be
 wide, it's just 8 [of her]". `nova-config apply` writes the mode beside the
 width into `friend:<f>:desired`, `nova-sprint friend sync` copies both onto
-her sprint roster row, and her beat answers them (`FRIEND-BEAT OK ...
-row_mode=<mode> row_width=<n>`), so the daemon reads her row every second
+her sprint roster row, and her beat answers them (`FRIEND-BEAT OK ... row_mode=<mode> row_width=<n>`), so the daemon reads her row every second
 from the beat it already sends and a change takes effect without a restart
 (the change of mode waits for the other mode's turns to end). `run --mode`
 overrides the row, for a test.
@@ -913,8 +882,7 @@ The lane waits for the turn to end and looks for the card's `RESULT.md`:
 there, the card is done and the lane takes the next; absent, the same card
 is handed again once, and after `CardTurns` (two) turns without it the card
 is set aside (recorded in `lanes.json`, never handed again by this daemon),
-and the coordinator is told once on the bus, `friend <name>: card <id> not
-finished after 2 turns (lane <n>): <reason>`, and the card is finished failed
+and the coordinator is told once on the bus, `friend <name>: card <id> not finished after 2 turns (lane <n>): <reason>`, and the card is finished failed
 in the sprint (a lane's end, below). The reason is the last turn's:
 a permission the harness refused, a turn stopped silent, the provider's
 refusal, an exit code, or a turn that ended with no `RESULT.md`. Lanes never
@@ -936,8 +904,7 @@ that runs each card as a process of its own (`CardRunner`; Claude). On any
 other harness a one-shot row is delivered in batch, said once in the record.
 
 A claude lane opens no session: each card is one headless run in the
-friend's directory, `env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the
-brief> --output-format stream-json --verbose` and the trim (`ClaudeTrim`,
+friend's directory, `env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief> --output-format stream-json --verbose` and the trim (`ClaudeTrim`,
 the Claude lanes, below), stdin from `/dev/null`, the
 card's `BRIEF.md` the whole prompt (no bus message, pong line or notice rides
 with it; messages stay pending, the daemon reading nothing for a claude
@@ -947,14 +914,10 @@ account: its login and its settings, the permission mode a headless run
 works under among them; `run --config-dir` overrides the row. The run's
 output goes to the record and is never read for the result: the card's
 `REPORT.md` and `RESULT.md` in its outbox are. A run that leaves either out
-is a failed attempt whatever its exit (`claude -p exited <n> and <outbox>
-holds no ...`), handed again and set aside as above. stream-json prints as
+is a failed attempt whatever its exit (`claude -p exited <n> and <outbox> holds no ...`), handed again and set aside as above. stream-json prints as
 the run works, so the silence watch stops only a run that has stalled. A
 claude row in one-shot mode with no `config_dir` runs no lane: the daemon
-records `mode: one-shot REFUSED: friend <name> is a claude friend in
-one-shot mode with no config_dir ...; run: nova-config friend set <name>
---config_dir <her account's absolute config directory>, or nova-friend run
---config-dir <dir>` once, and stays in batch, which for claude delivers
+records `mode: one-shot REFUSED: friend <name> is a claude friend in one-shot mode with no config_dir ...; run: nova-config friend set <name> --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>` once, and stays in batch, which for claude delivers
 nothing.
 
 A claude lane's run is a lane's (`LaneContext`), so it runs inside the lane
@@ -983,24 +946,20 @@ record and the card's reason.
 On 2026-10-04 four Claude Code accounts ran sprint cards through hand-written
 zsh runners and readers (`runner.zsh`, `reader.zsh`) that wrote PAUSED files
 on a limit and guessed reset times; the owner: "Golang nova-tools and
-nova-sprint verbs only". They are retired: `nova-friend run --harness claude
---config-dir <dir> --width <n>` on a one-shot row is the lane (`Claude`, a
+nova-sprint verbs only". They are retired: `nova-friend run --harness claude --config-dir <dir> --width <n>` on a one-shot row is the lane (`Claude`, a
 `CardRunner`, each card a process of its own as above), and no script is
-needed. Every call is the trimmed one, `--strict-mcp-config
---disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob`
+needed. Every call is the trimmed one, `--strict-mcp-config --disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob`
 after the prompt and `--output-format stream-json --verbose` (`--tools`
 takes every argument after it, so it is last), which cut the context of each
 call from about 50k tokens to 12.7k (measured 2026-10-04). Each run's
 stream-json is read for its cost (the result line's `total_cost_usd`, summed
 per daemon, `Claude.Spent`) and its `rate_limit_event` (the five-hour and
 weekly utilization and each `resetsAt`, `ReadLimit`); both are one line on
-the daemon's record per run: `claude: run=<card> cost=$<run> total=$<sum>
-five_hour=<f> seven_day=<f> five_hour_resets=<t> seven_day_resets=<t>`. A
+the daemon's record per run: `claude: run=<card> cost=$<run> total=$<sum> five_hour=<f> seven_day=<f> five_hour_resets=<t> seven_day_resets=<t>`. A
 rejected event is `UsageLimited`, whatever the run's exit: the card stays in
 the lane's hand counted toward nothing (a card whose RESULT.md is written is
 done all the same), and the governor pauses every new turn and open until
-the reset itself (`PauseUntil`, one record line `usage limit: lanes paused
-until <t> (its reset): <why>`), with no cap lowered and no backoff guessed.
+the reset itself (`PauseUntil`, one record line `usage limit: lanes paused until <t> (its reset): <why>`), with no cap lowered and no backoff guessed.
 The same output is read by `Limits` under the run, so her row reads down
 until the reset. `TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit`,
 `TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap`.
@@ -1011,8 +970,7 @@ friend in `OpenCodePriced`: after every lane run it reads opencode's own
 session record, `opencode export <session>` (the JSON from the first `{`, any
 line before it skipped), and the run's cost is what the session's assistant
 messages' `cost` gained since the last read, one line on the record per run:
-`opencode: session=<id> cost=$<run> total=$<sum>` (or `cost=- (its record was
-not read: <why>)`, and the turn stands). A limited run is priced too. An API
+`opencode: session=<id> cost=$<run> total=$<sum>` (or `cost=- (its record was not read: <why>)`, and the turn stands). A limited run is priced too. An API
 friend has no five-hour or weekly window to read; her limit is what the run
 says: a rate limit backs off and out of funds holds (`ProviderLimit`, below),
 and a limit line with its reset beside it ("Insufficient AI Credits ... will
@@ -1023,8 +981,7 @@ and the daemon's wiring in
 `TestRunInOneShotModeOpensALaneAndHandsItTheCard`.
 
 Not here, owed: (1) cost and utilization on her beat and row: the sprint
-server's `friend beat` accepts only `--running --working --queue --width
---load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+server's `friend beat` accepts only `--running --working --queue --width --load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
 refuses any other flag, so a cost or a utilization flag sent from here would
 fail every beat; until the server takes them they are on the daemon's record
 only. (2) No live `claude` or `opencode` run checks these shapes: the tests use
@@ -1051,12 +1008,9 @@ cards, and the coordinator cleared the pause by hand and lowered him to 12).
 The OpenCode lanes read the last 2 KiB of each turn's output, whatever its
 exit, and of a failed session open (`ProviderLimit`, `internal/friend/ratelimit.go`),
 before a provider's refusal of the session: a line saying out of funds or
-credit (a `402`, `payment required`, `insufficient balance`, `insufficient
-... credits`, `out of funds`) is `OutOfFunds`, unless its reset is beside it
+credit (a `402`, `payment required`, `insufficient balance`, `insufficient ... credits`, `out of funds`) is `OutOfFunds`, unless its reset is beside it
 (that is the harness's own limit, `Limits` above); else a line saying a rate
-limit (a `429` after `status`, `code`, `error` or `HTTP`, `rate limit
-reached` or `exceeded`, `rate_limit_error`, `too many requests`, `input token
-limit exceeded`, `tokens per min`) is `RateLimited`. A card whose
+limit (a `429` after `status`, `code`, `error` or `HTTP`, `rate limit reached` or `exceeded`, `rate_limit_error`, `too many requests`, `input token limit exceeded`, `tokens per min`) is `RateLimited`. A card whose
 `RESULT.md` is there is done whatever its output said.
 
 A rate-limited turn keeps its card in the lane's hand, counted toward
@@ -1071,13 +1025,11 @@ between turns. A clean ten minutes, measured (no rate limit, and a lane turn
 ended clean in it), raises the cap one lane, up to the row's width; back at
 the width the backoff starts over at 30 s. There is no hold and no person in
 it: the beat goes on, the friend reads up, the cards stay hers. Each change
-is one line on the record (`rate limit: lanes paused <d> until <t>, cap
-<a> -> <b> of <w>: <reason>`, `rate limit: lanes resume at cap <c> of <w>`,
+is one line on the record (`rate limit: lanes paused <d> until <t>, cap <a> -> <b> of <w>: <reason>`, `rate limit: lanes resume at cap <c> of <w>`,
 `rate limit: cap raised <a> -> <b> of <w> after a clean 10m0s`), and the
 status's lanes say `:capped` beyond the cap and `:paused` during a backoff.
 Three lowerings within an hour are one judgment: a blocker to the
-coordinator, `friend <name>: lane cap lowered 3 times in 1h0m0s by rate
-limits, now <c> of <w>`, naming `nova-config friend set <name> --width <c>`
+coordinator, `friend <name>: lane cap lowered 3 times in 1h0m0s by rate limits, now <c> of <w>`, naming `nova-config friend set <name> --width <c>`
 as the way to keep it lower; the next three are another.
 
 Out of funds holds the lanes: no new turn or open until the daemon restarts,
@@ -1137,13 +1089,9 @@ from anyone. The paced width sits under the rate-limit governor's cap (the
 lower of the two holds), never above the row; a lane beyond it takes nothing
 new and hands back a card it holds between turns, as beyond the cap.
 
-Each change of the paced width is one line on the record (`pacing: width
-<a> -> <b> of <w>, five_hour at <u>% of 80%, resets <t>`, and back up, `no
-window over the pacing (80%)`). The status says `paced`, `window` (`5h 62%
-7d 31%`) and `pacing` (`80%`), and its lanes `:paced` beyond the paced width.
+Each change of the paced width is one line on the record (`pacing: width <a> -> <b> of <w>, five_hour at <u>% of 80%, resets <t>`, and back up, `no window over the pacing (80%)`). The status says `paced`, `window` (`5h 62% 7d 31%`) and `pacing` (`80%`), and its lanes `:paced` beyond the paced width.
 When the paced width falls below half the row, the coordinator is told once,
-as a judgment (a blocker), `friend <name>: paced to <p> of <w> lanes by the
-subscription windows (<use>; pacing <pct>)`; it is told again only after the
+as a judgment (a blocker), `friend <name>: paced to <p> of <w> lanes by the subscription windows (<use>; pacing <pct>)`; it is told again only after the
 width has been back at half or more. A friend whose harness reports no
 window (a metered provider) is never paced.
 `TestPacingLowersWidthAsTheWindowFills` (a fake harness printing the
@@ -1156,8 +1104,7 @@ limit.go): `Limits.Watch` already reads every command's output under the
 harness, and it feeds each `rate_limit_event` to the gate's own pacer; a
 batch turn is one lane, so while a window is at or past the pacing
 (`Limits.Pacing`, `DefaultPacing` when nil) the gate answers `Deferred`
-(`paced: the subscription window five_hour at 82% of 80%; held until it
-resets <t>`) without running the harness, the message kept in hand, until
+(`paced: the subscription window five_hour at 82% of 80%; held until it resets <t>`) without running the harness, the message kept in hand, until
 the window resets. Pacing is not a limit: the friend is not sent down and
 beats on. `Limits.WindowUse` is the windows as last reported.
 `TestTheGatePacesTheBatchTurnByTheWindows`.
@@ -1211,8 +1158,7 @@ A lane marks each card it begins as started in `lanes.json` (`started`, keyed
 by the job, `<id>~<epoch>[.g<gen>]`: its lane, the card and when) and clears it at the card's end. A daemon starting up
 finds every card still marked: the run that held it is gone with the daemon
 that ran it (exited, killed or crashed), so it ends each as above, the report's
-paragraph saying `the run is gone: the lane daemon started up at <t> and found
-the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, by
+paragraph saying `the run is gone: the lane daemon started up at <t> and found the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, by
 job, as a set-aside card is) so it is not handed again. A daemon stopping leaves its running cards marked, for the next
 one to finish.
 
@@ -1246,14 +1192,11 @@ whoever wrote the brief:
 - Its card working on her row, a work card: the report's verdict and head are
   read as friend sync reads them (the first `Verdict:` and `Head:` lines,
   markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
-  full sha head is `finish --as friend.<name> <card>@<gen> --epoch <n> --head
-  <sha> --branch <b> --report "friend <name> LAND: <first paragraph>"`; `HOLD`,
+  full sha head is `finish --as friend.<name> <card>@<gen> --epoch <n> --head <sha> --branch <b> --report "friend <name> LAND: <first paragraph>"`; `HOLD`,
   `FAIL` and any other verdict, and a `LAND` with no full sha head, are
   `--failed`, a full sha head kept, the report `friend <name> <verdict>: ` and
   the report's first 600 characters on one line. The branch is the row's, else
-  the brief's STATUS line. One line on the record per finish (`outbox: finished
-  card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row):
-  finish=ok|failed head=<sha> sent=server`).
+  the brief's STATUS line. One line on the record per finish (`outbox: finished card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row): finish=ok|failed head=<sha> sent=server`).
 - A finish is sent once: a job finished is never sent again, nor noted when its
   card leaves her row. One the server did not answer or refused is said once
   and sent again after `OutboxRetry` (a minute); friend sync may finish it
@@ -1281,8 +1224,7 @@ friend's reader row, `reader-<friend>`, the work the hand-written `reader.zsh` l
 - **Beat and queue.** Once a `ReadAskEvery` (10 s) it asks `queue --as reader-<friend> --json`;
   that ask is the reader's beat. Its asked cards (`col` asked, each with a packet: tier, head,
   work_branch, attempt, brief, report) are the reads.
-- **Read slots.** `row_read_slots=<n>` on her beat's answer (`nova-config friend set <f>
-  --read-slots <n>`, default `DefaultReadSlots` = 2) is how many reads run at once. Read slots
+- **Read slots.** `row_read_slots=<n>` on her beat's answer (`nova-config friend set <f> --read-slots <n>`, default `DefaultReadSlots` = 2) is how many reads run at once. Read slots
   are their own number beside `width`: width card lanes AND read-slots reads run at once, a read
   never takes a card lane and a card never takes a read slot, so a dealt card never waits for a
   read and an asked read never waits for a card. A read begins the step it is asked while a slot
@@ -1297,10 +1239,7 @@ friend's reader row, `reader-<friend>`, the work the hand-written `reader.zsh` l
   behind lane opens; a harness without it opens the prompt as a lane session). A claude
   account's model per tier is `ReadModels` (frontier claude-fable-5-1, heavy claude-opus-5-5,
   pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001).
-- **The record.** RESULT.md saying `verdict: ok|broken` is `read --ok|--broken <card> --epoch <n>
-  --finding <report line and body, 3500 bytes> --usage "model=<m> wall=<s>s harness=<h>
-  account=<friend>"`; any other end (no RESULT.md, another verdict) is `read --return <card>
-  --reason <why> --epoch <n> --usage ...`.
+- **The record.** RESULT.md saying `verdict: ok|broken` is `read --ok|--broken <card> --epoch <n> --finding <report line and body, 3500 bytes> --usage "model=<m> wall=<s>s harness=<h> account=<friend>"`; any other end (no RESULT.md, another verdict) is `read --return <card> --reason <why> --epoch <n> --usage ...`.
 - **Limits.** A rate limit or out of funds met by a read goes to the lanes' governor as a card
   turn's does (`providerLimit`): the read is returned with `usage limit on <friend>: <reason>`,
   the lanes back off or are held, and no read begins while they are. A daemon stopping leaves
@@ -1326,8 +1265,7 @@ profile is the friend row's, read off the beat as `row_profile=<name>` beside
 `row_mode=` and `row_width=`, else `run --profile`, whose default is `friend`,
 the one profile there is; a name that is not a profile is refused. The lane
 marks its context (`LaneContext`) and the daemon's harness `Exec` (`Wall.Exec`)
-runs a lane's command as `nova-friend wall --profile <p> --dir <dir>
---deny <self>... [--config-dir <c>] [--job <j>]... [--read <r>]... -- <harness> <args>`, in the
+runs a lane's command as `nova-friend wall --profile <p> --dir <dir> --deny <self>... [--config-dir <c>] [--job <j>]... [--read <r>]... -- <harness> <args>`, in the
 same directory with the same stdin; a batch turn and anything else not a
 lane's runs as it did. The `wall` verb (`RunWall`) is dispatched before the
 verb table, which carries no argv after `--`: it builds the profile's wall
@@ -1438,8 +1376,7 @@ on the `minimal` agent preset, and the headless runner refused every turn. A
 Grok friend's wake file path and the buds' `CLAUDE_CONFIG_DIR` were typed into
 units. Now
 `nova-friend install --harness <h>` writes the settings, before the agent, with
-one small writer per harness (`settings_<harness>.go`). `nova-friend check
---settings` compares what is there with what install would write. Both go
+one small writer per harness (`settings_<harness>.go`). `nova-friend check --settings` compares what is there with what install would write. Both go
 through one list, so check reports exactly what install writes.
 
 | harness | file | setting install writes |
@@ -1461,13 +1398,11 @@ under a refused path is not read through it, and check shows it as `unread`.
 Each written setting is merged into what the file holds and read back; one
 that still differs is an error. A second install writes nothing. `--dry-run`
 plans each write as `INSTALL PLAN command="write <file> <name>=<value>"` and
-refuses as the install would. A real install says each write as `INSTALL WROTE
-harness= file= name= value=`.
+refuses as the install would. A real install says each write as `INSTALL WROTE harness= file= name= value=`.
 
 **Check.** `nova-friend check --settings --as <me> --harness <h> --dir <d>`,
 with the flags install took (`--session`, `--config-dir`, `--model`,
-`--state-dir`), writes nothing. It prints `CHECK OK harness= settings=<n>
-drift=0`, or `CHECK DRIFT harness= settings=<n> drift=<n>` at exit 1 with one
+`--state-dir`), writes nothing. It prints `CHECK OK harness= settings=<n> drift=0`, or `CHECK DRIFT harness= settings=<n> drift=<n>` at exit 1 with one
 `CHECK DRIFT harness= file= name= want= have=` line per drifted setting and a
 NOTE with the install line that writes them. A symlink is
 `have="symlink to <target>"`.
@@ -1496,8 +1431,7 @@ message's `from`, never its body, and a stale, replayed or other friend's
 nonce changes nothing. Then each friend whose state changed is said, and every
 friend row but the coordinator's own is sent a `PING` with a fresh nonce and
 the seat line (`since` the loop's start). The friends are nova-config's friend
-rows as the bus store holds them (the set `friends`, written by `nova-config
-apply`, the roster a send is checked against), read at the start in the trip
+rows as the bus store holds them (the set `friends`, written by `nova-config apply`, the roster a send is checked against), read at the start in the trip
 that fixes where the stream is read from, and again each minute
 (`RowsEvery`), so a friend or a bud added as a row is pinged with no list kept
 anywhere else, and a row removed is forgotten. A friend is up on a counted pong and down once ten
@@ -1506,8 +1440,7 @@ first read; a ping that could not be sent is named in the down line's reason.
 The state is one process's, in memory (a last pong and the nonces of the last
 ten seconds per friend), so a restart starts every friend undecided. It prints
 `SERVE OK friends= every= down_after=` once, then one line per state change and
-never one per ping, `SERVE UP friend= at=` and `SERVE DOWN friend= at=
-last_pong=<RFC3339|never> reason=`; a store or rows read that fails is one
+never one per ping, `SERVE UP friend= at=` and `SERVE DOWN friend= at= last_pong=<RFC3339|never> reason=`; a store or rows read that fails is one
 `SERVE NOTE` until what it says changes, and one when it clears.
 
 This is the connection, not presence: a daemon-pong proves the friend's daemon
@@ -1520,12 +1453,9 @@ runs (Chaos, below); presence is what says a silent session.
 
 The owner, 2026-10-05: "there is no value in things that are answered just by
 the daemon", and "We need to get away from these one shot shell scripts." The
-ping that matters is the one only the session answers, the wake ping (`ping
---wake`, the `wake=1` line): the daemon answers at once and pushes the pong line
+ping that matters is the one only the session answers, the wake ping (`ping --wake`, the `wake=1` line): the daemon answers at once and pushes the pong line
 in as the session's own turn, and only the session's pong ends it. The loop that
-sent one to a typed list of friends is a verb: `nova-friend ping --as
-<coordinator> --wake --to-friends --every <d> [--within <d>] [--never-wake
-<f,...>] [--server <addr>]`.
+sent one to a typed list of friends is a verb: `nova-friend ping --as <coordinator> --wake --to-friends --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>]`.
 
 Each pass reads the friends table from the sprint server's coordinator view
 (`GET /api/view/coordinator?all=1`: the rows `f:<friend>` with status up, down
@@ -1540,8 +1470,7 @@ and whose session did not is deaf. The coordinator, the seat's holder (else
 once per change of that set (`DeafChange`): the same set on the next pass says
 nothing, a friend added or dropped is a change, and a friend deaf again after
 the set emptied is a change. It prints `WAKE OK every= within= never_wake=`
-once, `WAKE PASS n= pinged= answered= deaf= at=` each pass, `WAKE DEAF friends=
-at=` at each change, `WAKE NOTE` for a table, store or send that failed (the
+once, `WAKE PASS n= pinged= answered= deaf= at=` each pass, `WAKE DEAF friends= at=` at each change, `WAKE NOTE` for a table, store or send that failed (the
 pass goes again next time), and `WAKE STOP` at a signal. Without `--every` it is
 one pass. A pass cut by a signal calls no one deaf.
 
