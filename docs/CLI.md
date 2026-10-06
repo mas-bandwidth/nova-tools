@@ -1089,6 +1089,7 @@ nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--
 nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
+nova-sprint twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <flash|pro|heavy|frontier>] [--instruction <text>] [--carry]
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
@@ -1190,6 +1191,13 @@ on something dropped" judgment, in one step. Where the drop and the add were mad
 `relink lint-pkg-cairn-t lint-pkg-cairn-tb` re-points the edges and answers the blocked
 judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
 card replaced by its twin".
+
+`twin cards3 --paths 'internal/b/**' --instruction 'the fix is in the reader too' --carry`
+does the whole re-cut in one step: the twin `cards4` takes the brief with PATHS widened and
+THE TASK prefixed by the last attempt's branch and head and the instruction, every edge and
+the card's place; `cards3` is dropped `twinned as cards4` and its open judgments are
+answered. A merging card is returned first. `--needs`, `--before` and `--tier` set the
+twin's needs, place and tier.
 
 ### Role views: what a model reads instead of the dashboard
 

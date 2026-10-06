@@ -10,7 +10,9 @@
 \*   Replace (add --replaces) re-points every waiting need of o to t, drops o if it is
 \*   still open, and answers the blocked judgments that named o, in one step; Relink
 \*   does the same for a drop and an add made apart. Drop raises a blocked judgment on
-\*   every waiting card that needs the dropped card (the code's Drop).
+\*   every waiting card that needs the dropped card (the code's Drop). Twin (the twin
+\*   verb, twin_verb.go) is Replace of an open card that answers every open judgment on
+\*   it; a merging o is returned first (ReturnO), never twinned where it stands.
 \* Part "rules": one card's attempts under the failed and bound rules: tiers 1 (flash),
 \*   2 (pro), 3 (heavy), 4 (a friend's card, where no rule answers: a mind does).
 \* Part "late": one work card past its deadline, its holder's progress stamps (the `progress`
@@ -31,6 +33,8 @@
 \*   "silent"     replace drops raising no blocked judgment, without re-pointing:
 \*                NoDanglingNeed (a waiting card needs a dropped card and no judgment
 \*                says so)
+\*   "twinmerging" twin takes a merging card where it stands: TwinNeverFromMerging
+\*   "unanswered" twin leaves the judgment on the card open: NoJudgmentOnDropped
 \*   "nocap"      the failed rule redeals on the same tier for ever: RuleAttemptsBounded
 \*   "down"       the bound rule may lower the tier: LadderClimbs
 \*   "waitalways" the late rule waits whenever there was progress: WaitOnce
@@ -48,16 +52,16 @@ None == "none"
 \* -- twins
 TwinIds == {"o", "t", "d1", "d2"}
 Waiters == {"d1", "d2"}
-Cols == {"absent", "waiting", "open", "landed", "dropped"}
+Cols == {"absent", "waiting", "open", "merging", "landed", "dropped"}
 
 \* -- every part's variables
-VARIABLES col, need, blocked, twin,               \* twins
+VARIABLES col, need, blocked, twin, judged, from, \* twins
           tier, fails, st, attempts, envFails,     \* rules
           gen, waited, progress, late, waits, lst, stamped, badReturn, \* late
           gfails, stopped,                         \* gate
           idle, since, said, alarms, clk, nalarm, nclear \* idle
 
-twinVars == <<col, need, blocked, twin>>
+twinVars == <<col, need, blocked, twin, judged, from>>
 ruleVars == <<tier, fails, st, attempts, envFails>>
 lateVars == <<gen, waited, progress, late, waits, lst, stamped, badReturn>>
 gateVars == <<gfails, stopped>>
@@ -69,6 +73,8 @@ TypeOK ==
   /\ need \in [TwinIds -> SUBSET TwinIds]
   /\ blocked \in [TwinIds -> SUBSET TwinIds]
   /\ twin \in [TwinIds -> TwinIds \cup {None}]
+  /\ judged \in BOOLEAN
+  /\ from \in Cols \cup {None}
   /\ tier \in 1..4
   /\ fails \in 0..Cap
   /\ st \in {"working", "failed", "bound", "done", "judged"}
@@ -95,6 +101,7 @@ Init ==
   /\ need = [x \in TwinIds |-> IF x \in Waiters THEN {"o"} ELSE {}]
   /\ blocked = [x \in TwinIds |-> {}]
   /\ twin = [x \in TwinIds |-> None]
+  /\ judged = FALSE /\ from = None
   /\ tier = 1 /\ fails = 0 /\ st = "working" /\ attempts = 0 /\ envFails = 0
   /\ gen = 0 /\ waited = -1 /\ progress = FALSE /\ late = FALSE /\ waits = 0 /\ lst = "working"
   /\ stamped = FALSE /\ badReturn = FALSE
@@ -113,12 +120,13 @@ DropOld ==
   /\ col["o"] \in {"open", "waiting"}
   /\ col' = [col EXCEPT !["o"] = "dropped"]
   /\ blocked' = [d \in TwinIds |-> IF d \in Dependents("o") THEN blocked[d] \cup {"o"} ELSE blocked[d]]
-  /\ UNCHANGED <<need, twin>>
+  /\ judged' = FALSE \* the drop closes the judgments on the card
+  /\ UNCHANGED <<need, twin, from>>
 
 AddTwin ==
   /\ col["t"] = "absent"
   /\ col' = [col EXCEPT !["t"] = "open"]
-  /\ UNCHANGED <<need, blocked, twin>>
+  /\ UNCHANGED <<need, blocked, twin, judged, from>>
 
 \* every dependent of o needs t in o's place, and its judgments that named o are answered
 Repoint(n) ==
@@ -130,6 +138,8 @@ Replace ==
   /\ col["t"] = "absent"
   /\ col["o"] \in {"open", "waiting", "dropped"}
   /\ twin' = [twin EXCEPT !["o"] = "t"]
+  /\ judged' = FALSE
+  /\ UNCHANGED from
   /\ IF Broken = "norepoint"
        THEN \* the drop and the add, the edges left on o: the drop's judgments raised
             /\ col' = [col EXCEPT !["t"] = "open", !["o"] = "dropped"]
@@ -149,23 +159,54 @@ Relink ==
   /\ Dependents("o") # {}
   /\ twin' = [twin EXCEPT !["o"] = "t"]
   /\ Repoint("t")
-  /\ UNCHANGED col
+  /\ UNCHANGED <<col, judged, from>>
+
+\* twin o: Replace of an open o with every open judgment on it answered; a merging o is
+\* returned first (ReturnO), so the twin never takes it where it stands
+Twin ==
+  /\ col["t"] = "absent"
+  /\ col["o"] \in (IF Broken = "twinmerging" THEN {"open", "waiting", "merging"} ELSE {"open", "waiting"})
+  /\ twin' = [twin EXCEPT !["o"] = "t"]
+  /\ from' = col["o"]
+  /\ col' = [col EXCEPT !["t"] = "open", !["o"] = "dropped"]
+  /\ Repoint("t")
+  /\ judged' = (Broken = "unanswered" /\ judged)
+
+\* the outside: o is accepted onto the merge queue, a judgment is raised on it
+MergeO ==
+  /\ col["o"] = "open"
+  /\ col' = [col EXCEPT !["o"] = "merging"]
+  /\ UNCHANGED <<need, blocked, twin, judged, from>>
+
+\* return o: merging -> review, with its returned judgment
+ReturnO ==
+  /\ col["o"] = "merging"
+  /\ col' = [col EXCEPT !["o"] = "open"]
+  /\ judged' = TRUE
+  /\ UNCHANGED <<need, blocked, twin, from>>
+
+JudgeO ==
+  /\ col["o"] \in {"open", "merging"}
+  /\ ~judged
+  /\ judged' = TRUE
+  /\ UNCHANGED <<col, need, blocked, twin, from>>
 
 LandTwin(x) ==
   /\ x \in {"o", "t"}
   /\ col[x] = "open"
   /\ col' = [col EXCEPT ![x] = "landed"]
-  /\ UNCHANGED <<need, blocked, twin>>
+  /\ judged' = (judged /\ x # "o")
+  /\ UNCHANGED <<need, blocked, twin, from>>
 
 Resolve(d) ==
   /\ d \in Waiters
   /\ col[d] = "waiting"
   /\ \A x \in need[d] : col[x] = "landed"
   /\ col' = [col EXCEPT ![d] = "open"]
-  /\ UNCHANGED <<need, blocked, twin>>
+  /\ UNCHANGED <<need, blocked, twin, judged, from>>
 
 TwinNext ==
-  \/ DropOld \/ AddTwin \/ Replace \/ Relink
+  \/ DropOld \/ AddTwin \/ Replace \/ Relink \/ Twin \/ MergeO \/ ReturnO \/ JudgeO
   \/ \E x \in TwinIds : LandTwin(x) \/ Resolve(x)
 
 \* No waiting card needs an id that has a twin: the twin took over every edge.
@@ -180,6 +221,12 @@ NoBlockedForReplaced ==
 \* in silence on a card that will never land.
 NoDanglingNeed ==
   \A d \in Waiters : col[d] = "waiting" => \A x \in need[d] : col[x] = "dropped" => x \in blocked[d]
+
+\* The twin never took a merging card where it stood: it was returned first.
+TwinNeverFromMerging == from # "merging"
+
+\* No judgment stays open on a card off the table: the drop, or the twin, answered it.
+NoJudgmentOnDropped == col["o"] = "dropped" => ~judged
 
 -----------------------------------------------------------------------------
 \* Part "rules": one card's attempts.
