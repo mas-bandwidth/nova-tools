@@ -937,6 +937,17 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	} else if r.Notes > 0 {
 		res.Parts = append(res.Parts, PartResult{Name: "strangers", Result: r})
 	}
+	// The resources' pass (resource.go; tla/Resources.tla): a lease past its
+	// expiry or whose holder is down is released and the line is served; a
+	// resource starved past the bound raises its one judgment.
+	if r, changes, err := st.ResourcesTick(ctx); err != nil {
+		if st.clearedUnder(ctx, res) {
+			return last, nil
+		}
+		return last, fmt.Errorf("tick resources: %w", err)
+	} else if len(changes) > 0 {
+		res.Parts = append(res.Parts, PartResult{Name: "resources", Result: r})
+	}
 	seen, shapes, err := st.look(ctx)
 	if err != nil {
 		return last, err

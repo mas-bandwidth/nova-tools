@@ -1127,6 +1127,12 @@ nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--che
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
+nova-sprint resource add <name> --kind bench|branch|port|account --capacity <n> [--dry-run]
+nova-sprint resource claim <name> --as <member> --for <duration> [--wait <duration>] [--dry-run]
+nova-sprint resource renew <name> --as <member> --for <duration> [--dry-run]
+nova-sprint resource release <name> --as <member> [--dry-run]
+nova-sprint resource remove <name> [--dry-run]
+nova-sprint resource list [--json]
 nova-sprint fleet beat <member> [--load <percent>]
 nova-sprint fleet up <member> [--width <n>]
 nova-sprint fleet down <member>
@@ -1193,14 +1199,17 @@ verb that writes wants one), `--op <id>` (the same id again returns the recorded
 result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
-workers', whose actor is the member, reader or friend named; `merge` and `ci`
+workers', whose actor is the member, reader or friend named, as are `resource
+claim`, `resource renew` and `resource release` (a lease of a shared resource,
+the coordinator's table; `resource add` and `resource remove` are the
+coordinator's, `resource list` a read: `nova-sprint help resource`); `merge` and `ci`
 are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
 actor except `inbox --read`, which moves the coordinator's cursor. A set is
 ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 `--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
-<group>` (fleet, friend, reader, goal, stream) prints one group's.
+<group>` (fleet, friend, reader, goal, stream, lane, resource) prints one group's.
 
 ### The seat's store login
 

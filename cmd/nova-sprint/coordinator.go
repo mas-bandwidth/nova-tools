@@ -42,15 +42,16 @@ var verbClasses = map[string]string{
 	"merge-window open": classCoordinator,
 	"ack":               classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
+	"resource add": classCoordinator, "resource remove": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker,
+	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker, "resource claim": classWorker, "resource renew": classWorker, "resource release": classWorker,
 
 	"merge": classReport, "ci": classReport,
 
 	"tick": classMachine, "run": classMachine, "friend clean": classMachine, "seat install": classMachine, "seat uninstall": classMachine, "selftest land": classMachine, "server switch": classMachine,
 
 	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "watch": classRead, "dashboard": classRead, "routes": classRead, "rules": classRead, "stats": classRead, "bases": classRead,
-	"goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead, "fsck seat": classRead,
+	"goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead, "resource list": classRead, "fsck seat": classRead,
 
 	"coordinator": classSeat,
 }
