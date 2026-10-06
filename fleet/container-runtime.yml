@@ -22,6 +22,7 @@
     - name: group by system
       ansible.builtin.group_by:
         key: "container_runtime_{{ ansible_facts['system'] | lower }}"
+      changed_when: false
 
 - name: rootless podman for the functional tier (Linux)
   hosts: container_runtime_linux
