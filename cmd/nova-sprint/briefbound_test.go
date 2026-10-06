@@ -99,7 +99,7 @@ func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
 	over := filepath.Join(t.TempDir(), "over.md")
 	rules := filepath.Join(t.TempDir(), "rules.txt")
 	require.NoError(t, os.WriteFile(rules, []byte("Be careful.\n"), 0o600))
-	require.NoError(t, os.WriteFile(over, []byte("Be careful.\n"+strings.Repeat("x", store.MaxBriefBytes)), 0o600))
+	require.NoError(t, os.WriteFile(over, []byte("Be careful. tier: flash\n"+strings.Repeat("x", store.MaxBriefBytes)), 0o600))
 	for _, c := range []struct{ line, token string }{
 		{"add --stream s1 --count 1 --one --rules " + rules + " --brief-file " + over, "ADD"},
 		{"add --stream s1 --count 1 --one --json --rules " + rules + " --brief-file " + over, ""},

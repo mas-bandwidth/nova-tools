@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // StreamClock is a stream's state, since (the last change of its state) and
@@ -504,6 +506,15 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"accept"+grp+ans)
 		case d == "ask another reader":
 			add(d, cmd+"ask"+subj+" --another"+subjAns)
+		case d == "brief --tier":
+			// a card with no tier (deal_no_tier.go, TierUnset): each card is re-tiered by name, and the
+			// tick closes the judgment once its tier is set
+			for _, m := range g.Members {
+				add(d, cmd+"brief "+m+" --tier '<"+cardhdr.RouteList+">'")
+			}
+			if len(g.Members) == 0 {
+				add(d, cmd+"brief '<card>' --tier '<"+cardhdr.RouteList+">'")
+			}
 		case d == "brief":
 			// the brief is wrong, not the worker (brief_bound.go): replaced while the card waits,
 			// else dropped and added again corrected; the placeholder keeps it the coordinator's

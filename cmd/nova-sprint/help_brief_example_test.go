@@ -153,7 +153,12 @@ func TestAddAdmitsTheBriefExampleFromHelp(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/card.md"
 	require.NoError(t, os.WriteFile(path, []byte(briefExampleCard), 0o600))
-	code, out, errs := ta.do("add --one --stream s1 --count 1 --brief-file " + path)
+	// its line 1 names no tier (the card template's): add refuses it, naming --tier, and
+	// admits it with --tier (add.go, a-card-without-a-tier-is-not-dealt.w1)
+	code, _, errs := ta.do("add --one --stream s1 --count 1 --brief-file " + path)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "the brief names no tier")
+	code, out, errs := ta.do("add --one --stream s1 --count 1 --tier flash --brief-file " + path)
 	assert.Equal(t, 0, code, "stderr: %s", errs)
 	assert.NotContains(t, errs, "LINT DRIFT")
 	assert.NotContains(t, errs, "fails the card lint")

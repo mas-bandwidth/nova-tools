@@ -16,7 +16,7 @@ import (
 
 // friendBrief is a card brief whose header carries the WHO line who.
 func friendBrief(who string) string {
-	return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
+	return "c: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
 }
 
 // friendWorld is a world with two machines up and the cards of each brief given, one
@@ -141,7 +141,7 @@ func TestWhoFriendGoesToTheUpFriendWithTheMostFreeWidth(t *testing.T) {
 
 func TestACardWithNoWhoIsDealtToAMachine(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, "c: a machine's card\nREPO: mas-bandwidth/nova-tools\n\nThe task.")
+	w := friendWorld(t, "c: a machine's card tier: flash\nREPO: mas-bandwidth/nova-tools\n\nThe task.")
 	require.Empty(t, w.s.Primary("s1-1").F(FieldWho))
 	dealWith(w, FriendSeat{Name: "amy", Width: 8, Status: Up})
 	wc := w.s.Fleet.Card("s1-1.w1")

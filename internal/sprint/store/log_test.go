@@ -39,7 +39,7 @@ func TestTheLogHoldsEveryMoveAndReplaysToTheTables(t *testing.T) {
 	h := newHarness(t)
 	h.live = []string{"m1", "m2"}
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p1"}, Brief: "do the thing"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p1"}, Brief: "do the thing tier: flash"}))
 	h.startMachine()
 	h.machine() // p1 dealt to m1
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
@@ -73,7 +73,7 @@ func TestTheLogHoldsEveryMoveAndReplaysToTheTables(t *testing.T) {
 	var report, brief bool
 	for _, l := range h.lines() {
 		report = report || l.Text["report"] == "the tests went red"
-		brief = brief || l.Text["brief"] == "do the thing"
+		brief = brief || l.Text["brief"] == "do the thing tier: flash"
 	}
 	require.True(t, report, "the words given are not on their lines: report %v, brief %v", report, brief)
 	require.True(t, brief, "the words given are not on their lines: report %v, brief %v", report, brief)

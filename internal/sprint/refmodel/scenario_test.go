@@ -193,7 +193,7 @@ func lanesFreedBesideABacklog(k *walk) []sample {
 
 // friendBrief is a card's brief that names the friend it is hers.
 func friendBrief(name string) string {
-	return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend " + name + "\n\nThe task."
+	return "c: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: friend " + name + "\n\nThe task."
 }
 
 // aFriendStalls deals a friend two cards and lets her go silent: no session

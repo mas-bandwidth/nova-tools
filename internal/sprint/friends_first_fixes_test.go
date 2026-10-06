@@ -13,7 +13,7 @@ import (
 // move from a friend's ready backlog to a friend up with an idle lane like WHO: friend.
 func TestTheLevelMovesUnpinnedCardsToAnIdleFriend(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, "c: no WHO\n\nThe task.", friendBrief("friend amy"), friendBrief("only friend amy"))
+	w := friendWorld(t, "c: no WHO tier: flash\n\nThe task.", friendBrief("friend amy"), friendBrief("only friend amy"))
 	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFlash}}
 	dealWith(w, amy, FriendSeat{Name: "bob", Width: 1, Status: Held, Tiers: []string{cardhdr.RouteFlash}})
 	require.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Working))

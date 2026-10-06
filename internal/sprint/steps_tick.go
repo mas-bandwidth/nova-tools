@@ -131,6 +131,7 @@ var TickDecisions = map[string][]string{
 	NRaiseReadTier: {"raise", "keep"},                            // readtier.go
 	NDevBehind:     {"promoted", "wait 30m"},                     // promotion.go
 	NNoRoute:       {"route add", "look at the card", "drop", "wait"},
+	NNoTier:        {"brief --tier", "drop", "wait"}, // deal_no_tier.go, TierUnset
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
 	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
 	NProviderLow:    {"ack", "wait"}, // the same
@@ -584,8 +585,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// A hard pin that no friend takes stays out of the fleet below.
 	var offer []*Card
 	for _, c := range s.Work.Column(Ready) {
-		if StreamHeld(s, c.Row) || IsSentinel(c) {
-			continue
+		if StreamHeld(s, c.Row) || IsSentinel(c) || TierUnset(c) {
+			continue // a card whose tier is unset is dealt to no friend (TierUnset)
 		}
 		if b := Bench(c); len(b) > 0 {
 			continue
@@ -633,6 +634,12 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			continue
 		}
 		if IsSentinel(c) {
+			continue
+		}
+		if TierUnset(c) {
+			// its tier is unset: dealt to no machine and no friend, one judgment per card
+			// naming the command that sets it (deal_no_tier.go, TierUnset)
+			conds = append(conds, cond{typ: NNoTier, stream: c.Row, primaries: []string{c.ID}, what: noTierWhat(c.ID)})
 			continue
 		}
 		if tier, why := s.noRoute(escalating(s, c)); why != "" {
@@ -746,7 +753,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NDevBehind, NBound, NNoRoute, NNoTier, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due

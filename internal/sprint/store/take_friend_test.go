@@ -19,7 +19,7 @@ func TestTwinStoreTakeForAFriendUpOnHerSessionReadsHerPresence(t *testing.T) {
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Class: "flash"}})
 	require.NoError(t, err)
 	h.up("amy")
-	brief := "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy\n\nThe task."
+	brief := "c: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy\n\nThe task."
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "s1-1", Brief: brief}, {ID: "s1-2", Brief: brief}, {ID: "s1-3", Brief: brief}}}))
 	h.startMachine()
 	h.machine()

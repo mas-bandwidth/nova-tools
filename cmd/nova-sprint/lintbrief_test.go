@@ -10,12 +10,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-// passingBrief is a brief that passes the card lint: what the writer says, then the RULES
-// paragraph with every general rule (swarm.ChildRulesParagraph).
-func passingBrief(lead string) string { return lead + "\n\n" + swarm.ChildRulesParagraph() }
+// passingBrief is a brief that passes add: what the writer says, its line 1 naming a tier
+// (withTier), then the RULES paragraph with every general rule (swarm.ChildRulesParagraph).
+func passingBrief(lead string) string { return withTier(lead) + "\n\n" + swarm.ChildRulesParagraph() }
+
+// withTier is the brief with tier: flash on the end of its line 1 when it names no tier:
+// add refuses a brief whose tier is unset (add.go, a-card-without-a-tier-is-not-dealt.w1).
+func withTier(brief string) string {
+	if sprint.BriefNamesTier(brief) {
+		return brief
+	}
+	out, _ := sprint.WithBriefTier(brief, cardhdr.RouteFlash)
+	return out
+}
 
 // writeBrief writes a passing brief leading with lead under t.TempDir() and returns the
 // path, for `add --brief-file`.
@@ -152,7 +164,7 @@ func TestAddAdmitsAnyProjectsBriefUnderTheDefaultRules(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
-	brief := "Fix the typo in site/index.html, then run npm test and push the branch.\n\n" + swarm.ChildRulesParagraph()
+	brief := "Fix the typo in site/index.html, then run npm test and push the branch. tier: flash\n\n" + swarm.ChildRulesParagraph()
 	code, _, errs := ta.do("add --stream web --count 1 --one --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
 	require.Equal(t, 0, code, "a non-Go brief with the general rules: exit %d\n%s", code, errs)
 	code, _, errs = ta.do("add --stream web2 --count 1 --one --max 0 --rules " + copyRules(t) + " --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
@@ -170,7 +182,7 @@ func TestAddHoldsABriefToTheRulesFileItIsGiven(t *testing.T) {
 	ours, err := swarm.ReadChildRules(ourRulesFile)
 	require.NoError(t, err)
 	file := copyRules(t)
-	body := "handle the empty case\n\n" + swarm.RulesParagraph(ours)
+	body := "handle the empty case tier: flash\n\n" + swarm.RulesParagraph(ours)
 	brief := filepath.Join(t.TempDir(), "brief.md")
 	require.NoError(t, os.WriteFile(brief, []byte(body), 0o600))
 	ta.ok("add --stream s1 --count 1 --one --rules " + file + " --brief-file " + brief)
@@ -206,17 +218,17 @@ func TestInitRulesIsTheSprintsRuleSet(t *testing.T) {
 	require.Contains(t, errs, "LINT DRIFT brief rule-ticket: 1: missing: Quote the ticket number.", "a brief under the recorded file: exit %d\n%s", code, errs)
 	require.Contains(t, errs, "rule-tone", "a brief under the recorded file: exit %d\n%s", code, errs)
 	require.NotContains(t, errs, "rule-worktree", "a brief under the recorded file: exit %d\n%s", code, errs)
-	ta.ok("add --stream s1 --count 1 --one --brief 'Quote the ticket number. Write in the present tense.'")
+	ta.ok("add --stream s1 --count 1 --one --tier flash --brief 'Quote the ticket number. Write in the present tense.'")
 	// --rules on the add overrides the recorded file
 	other := writeRules(t, "Keep it short.\n")
-	ta.ok("add --stream s2 --count 1 --one --rules " + other + " --brief 'Keep it short.'")
+	ta.ok("add --stream s2 --count 1 --one --rules " + other + " --tier flash --brief 'Keep it short.'")
 	// a recorded file that is gone is named, and the add says how to go on
 	require.NoError(t, os.Remove(rules))
 	code, _, errs = ta.do("add --stream s3 --count 1 --one --brief 'Keep it short.'")
 	require.Equal(t, 2, code, "a recorded file that is gone: exit %d, %q", code, errs)
 	require.Contains(t, errs, "the sprint's rules file", "a recorded file that is gone: exit %d, %q", code, errs)
 	require.Contains(t, errs, "give --rules <file>", "a recorded file that is gone: exit %d, %q", code, errs)
-	ta.ok("add --stream s3 --count 1 --one --rules " + other + " --brief 'Keep it short.'")
+	ta.ok("add --stream s3 --count 1 --one --rules " + other + " --tier flash --brief 'Keep it short.'")
 	// a rules file with no brief to hold is a mistake, not a silent no-op
 	code, _, errs = ta.do("add --stream s4 --count 1 --one --rules " + other)
 	require.Equal(t, 2, code, "--rules with no brief: exit %d, %q", code, errs)

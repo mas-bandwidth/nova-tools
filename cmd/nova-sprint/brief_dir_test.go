@@ -14,7 +14,9 @@ import (
 func needsBrief(lead, needs string) string {
 	text := passingBrief(lead)
 	if needs != "" {
-		text = "Needs: " + needs + "\n" + text
+		// under line 1, which names the tier (passingBrief)
+		first, rest, _ := strings.Cut(text, "\n")
+		text = first + "\nNeeds: " + needs + "\n" + rest
 	}
 	return text
 }

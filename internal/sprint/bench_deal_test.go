@@ -19,7 +19,7 @@ import (
 
 // benchBrief is a card's brief whose BENCH line names its bench.
 func benchBrief(bench string) string {
-	return "c: a card for one bench\nREPO: mas-bandwidth/nova-tools\nBENCH: " + bench + "\n\nThe task."
+	return "c: a card for one bench tier: flash\nREPO: mas-bandwidth/nova-tools\nBENCH: " + bench + "\n\nThe task."
 }
 
 // addBenched admits cards of a stream, in id order: each brief is the bench it names, ""
