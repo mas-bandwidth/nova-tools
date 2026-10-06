@@ -1400,3 +1400,79 @@ func TestWritingVerbUnderDryRunCarriesFactInBothRenderings(t *testing.T) {
 		assert.NotContains(t, rJSON.Stdout, "dry_run")
 	})
 }
+
+// TestToolExistsSeam pins the filesystem seam: Tool.Exists reads the filesystem
+// through one seam, defaulting to os.Stat, and tests pass a map (skeleton contract 2.1).
+func TestToolExistsSeam(t *testing.T) {
+	t.Parallel()
+	files := map[string]bool{
+		"virtual.txt": true,
+		"other.log":   true,
+	}
+	tl := &Tool{
+		Name:      "nova-seam",
+		What:      "tests the exists seam",
+		ExitTable: "0 done, 2 could not run.",
+		Default:   "read",
+		Exists:    func(path string) bool { return files[path] },
+		Verbs: []Verb{
+			{
+				Name:   "read",
+				Usage:  "[read] <file>...",
+				Effect: Inspection,
+				Run: func(c *Call) *Out {
+					return Done().Fact("files", c.flags.NArg())
+				},
+			},
+			{
+				Name:   "other",
+				Usage:  "other",
+				Effect: Inspection,
+				Run:    func(*Call) *Out { return Done() },
+			},
+		},
+	}
+
+	t.Run("map answers existing file as default verb", func(t *testing.T) {
+		t.Parallel()
+		r := testkit.Main(tl.Run).Run("virtual.txt")
+		assert.Equal(t, 0, r.Code)
+		assert.Equal(t, "READ OK files=1\n", r.Stdout)
+	})
+
+	t.Run("map answers absent file with refusal naming verbs and path remedy", func(t *testing.T) {
+		t.Parallel()
+		r := testkit.Main(tl.Run).Run("missing.txt")
+		assert.Equal(t, 2, r.Code)
+		assert.Contains(t, r.Stderr, `"missing.txt" is no verb and no file; the verbs are read, other, version, and a file is given by its path (./missing.txt)`)
+	})
+
+	t.Run("nil Exists defaults to os.Stat", func(t *testing.T) {
+		t.Parallel()
+		tlDefault := &Tool{
+			Name:      "nova-stat",
+			What:      "tests default os.Stat",
+			ExitTable: "0 done, 2 could not run.",
+			Default:   "read",
+			Verbs: []Verb{
+				{
+					Name:   "read",
+					Usage:  "[read] <file>",
+					Effect: Inspection,
+					Run: func(c *Call) *Out {
+						return Done().Fact("files", c.flags.NArg())
+					},
+				},
+			},
+		}
+		// tool.go is in the package's working directory and stat sees it.
+		r := testkit.Main(tlDefault.Run).Run("tool.go")
+		assert.Equal(t, 0, r.Code)
+		assert.Equal(t, "READ OK files=1\n", r.Stdout)
+
+		// non-existent file is refused.
+		rMissing := testkit.Main(tlDefault.Run).Run("nonexistent_file_xyz_123.txt")
+		assert.Equal(t, 2, rMissing.Code)
+		assert.Contains(t, rMissing.Stderr, "is no verb and no file")
+	})
+}
