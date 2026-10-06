@@ -33,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -71,7 +72,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	workerFile := fs.String("worker", "", "the worker description `file` (JSON), handed to each child's native --worker; the secret it names is handed through too")
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
-	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
+	passFlag := fs.String("pass", "", "the `NAME,...` of provider keys a child may be handed, read in this process from the seat login (nova-sprint seat login); the child is handed only the one its route needs, never the whole set, and a unit carries no key in its environment")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
 	maxLoad := fs.Float64("max-load", 0, "the maximum one-minute host `load` at which a local child starts (default 0: no load gate)")
@@ -159,11 +160,13 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 			f.add(fmt.Sprintf("--pass %q is not an environment name (letters, digits, _)", n))
 		}
 	}
+	workerSecret := ""
 	if *workerFile != "" {
 		// the worker description names the secret its harness reads: that one name is
-		// handed through too (docs/SPEC-CARD-CONTRACT.md, the child's environment)
+		// read with --pass and handed through too (docs/SPEC-CARD-CONTRACT.md, the child's environment)
 		if w, problems := swarm.LoadWorker(*workerFile); len(problems) == 0 && w.Secret != "" {
 			pass = append(pass, w.Secret)
+			workerSecret = w.Secret
 		}
 	}
 	if f.refused(stderr) {
@@ -176,6 +179,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// an OS with no setpriority, so a member there would take and fail every card it is dealt
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
 		return refuse(stderr, " member", why)
+	}
+	// --pass is read here, before any directory is made: a named secret the
+	// seat does not hold refuses the start and writes nothing
+	keys, err := loadMemberKeys(pass, os.Getenv, os.UserHomeDir, secrets.ReadUnitKeys)
+	if err != nil {
+		return refuse(stderr, " member", err.Error())
 	}
 	if *slots == "" {
 		*slots = filepath.Join(*root, "slots")
@@ -197,15 +206,20 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		send = sprintwire.Client{Addr: *server}.Do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
-	// a member hands native the decide key when its environment holds it (the loop row's
-	// nova-secrets keys): a reader's native asks the decide read with it, a worker's the
-	// gate decision of a red gate, and neither hands it to the child (nativedecide.go,
-	// nativegate.go, nativeChildEnv)
+	// With no keys read in process, native is handed the decide key when this
+	// environment holds it. With keys, the child is handed one route key from
+	// the seat, the worker secret when the description names one, and
+	// JEV_API_KEY only when the seat held it (childEnv). Native asks with that
+	// key and does not hand it to the harness (nativedecide.go, nativegate.go,
+	// nativeChildEnv).
 	nativePass := append(append([]string{}, pass...), decide.JevSecret)
+	if keys != nil {
+		nativePass = nil
+	}
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, keyNames: append([]string{}, pass...), keys: keys, workerSecret: workerSecret, identity: *identity,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
@@ -464,7 +478,10 @@ type nativeRunner struct {
 	stderr                                         io.Writer
 	env                                            []string                     // added to this process's environment: none in production, a test's
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
-	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
+	pass                                           []string                     // the secret names copied from the environment when keys is nil
+	keyNames                                       []string                     // --pass, the route's choices, when keys were read in process
+	keys                                           map[string]secrets.Secret    // those keys, and JEV_API_KEY when the seat held it; nil copies pass from the environment
+	workerSecret                                   string                       // the worker description's secret name, handed with the route key when keys is set
 	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
 	load                                           hostload.Source
 	maxLoad, warnLoad                              float64
@@ -609,7 +626,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
-	cmd.Env = childEnviron(append(os.Environ(), r.env...), r.pass)
+	env, err := r.childEnv(model)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	cmd.Env = env
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
@@ -1235,7 +1257,7 @@ func passNote(model string, pass []string, auth string) string {
 	if len(pass) > 0 || auth != "" || localProviders[strings.ToLower(provider)] {
 		return ""
 	}
-	return "NOTE member --pass names no secret: a child's harness that reads its provider key from the environment starts without it and fails at the provider; run: nova-swarm member ... --pass <KEY> (the loop record's nova-secrets keys)"
+	return "NOTE member --pass names no secret: a child's harness that reads its provider key from the environment starts without it and fails at the provider; run: nova-swarm member ... --pass <KEY> (read in process from the seat login, not from this environment)"
 }
 
 // yieldRefusal is why a member will not start on an OS with no setpriority

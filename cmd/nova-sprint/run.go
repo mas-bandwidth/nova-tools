@@ -296,7 +296,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var rules, idle bool
 	st, c, code := a.machineVerb("run", args, stderr, answerRulesFlag(&rules, true), idleAlarmFlag(&idle, true), func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; a name, a public address, a link-local address, and an every-network address are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
-		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
+		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY read in this process from the seat login (not from the environment), and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
@@ -353,8 +353,12 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	// the store round trip, timed every 10 s for where (store-latency-row-r.w2)
 	go a.storeRTTLoop(context.Background(), st)
 	if decideDir != "" {
+		key, err := a.decisionKey()
+		if err != nil {
+			return refuse(stderr, "run", err.Error())
+		}
 		var b decide.Backend
-		if key := a.getenv(decide.JevSecret); key != "" {
+		if key != "" {
 			b = decide.JevHTTP(key, decide.JevTimeout)
 		}
 		if a.decide == nil { // a test's lane, with its backend, is kept

@@ -194,10 +194,7 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;
-the server, the push loop and the table open the store with the seat login (`nova-sprint seat login`). Two secrets are not read that way yet: the server's decision loop (`run --decide`) reads its
-API key from its environment, and the member hands its children the providers' keys `--pass` names
-from its environment; a unit carries neither, so until those verbs read a login as the store's does,
-the service's environment has to give them. `nova-sprint units --check` names each of the nine installed, missing or different, so a
+the server, the push loop and the table open the store with the seat login (`nova-sprint seat login`). The server's decision loop (`run --decide`) reads its API key (`JEV_API_KEY`) in its own process from that same seat login, and the member reads each provider key `--pass` names the same way and hands a child only the one key its route needs, plus the worker description's secret when that file names one, never the whole set. A named secret the seat does not hold refuses the start and names the remedy (`nova-secrets seal`). A unit carries neither key in its environment, and neither verb is wrapped in `nova-secrets exec`. `nova-sprint units --check` names each of the nine installed, missing or different, so a
 machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
 wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
 binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis

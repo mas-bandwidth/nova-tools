@@ -7,16 +7,18 @@ import (
 )
 
 // Login is where a tool's store login reads its password in its own process: one
-// name in one seat of a secrets store, opened with the seat's key and sops. It
+// name in one seat of a secrets store, opened with the seat's key and sops, and
+// the list of other secret names that binary may read the same way (Names). It
 // holds no secret and cannot: a tool may record a Login in its config file and
 // print every field of it (nova-sprint seat login, docs/SPEC-SECRETS.md, "A
 // tool's store login").
 type Login struct {
-	Store string // the store's working copy (--store)
-	As    string // the seat (--as)
-	Key   string // the seat's age key file (--key)
-	Sops  string // the sops binary (--sops)
-	Name  string // the secret's name in the seat's file (--secret)
+	Store string   // the store's working copy (--store)
+	As    string   // the seat (--as)
+	Key   string   // the seat's age key file (--key)
+	Sops  string   // the sops binary (--sops)
+	Name  string   // the secret's name in the seat's file (--secret), the store password
+	Names []string // secret names the binary may read besides Name: a unit's keys, never values
 }
 
 // Missing names every field of the login left empty, as the flags that set
@@ -33,7 +35,11 @@ func (l Login) Missing() string {
 
 // String is the login on one line, every field a fact and none of them a secret.
 func (l Login) String() string {
-	return fmt.Sprintf("store=%s as=%s key=%s sops=%s secret=%s", l.Store, l.As, l.Key, l.Sops, l.Name)
+	s := fmt.Sprintf("store=%s as=%s key=%s sops=%s secret=%s", l.Store, l.As, l.Key, l.Sops, l.Name)
+	if len(l.Names) > 0 {
+		s += " keys=" + strings.Join(l.Names, ",")
+	}
+	return s
 }
 
 // ReadLogin reads the login's secret in this process through OpenSeatFile, the
