@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -50,9 +51,11 @@ func (a *app) promoteOnTick(ctx context.Context, stdout io.Writer) {
 // which carries no merge strategy (the queue refuses one); a query of
 // mergeQueueEntry confirms the entry. gh pr merge, and a flag named auto, are
 // the spelling TestNoGhPrMergeSpellingInTheToolsGo refuses, and that test names
-// this mutation as the one admission. A failed merge-group run raises one
-// judgment, decisions fix-and-recut and skip, with the failing check's log
-// tail. A merge records `promoted --sha`.
+// this mutation as the one admission. A failed run of the pull request's branch
+// raises one judgment, decisions fix-and-recut and skip, with the failing
+// check's log tail, and cuts one fix card per failing test (promote_red.go); a
+// failed run on the base at the last promotion's merge does the same. A merge
+// records `promoted --sha`.
 //
 // The queries are one literal each, so they are not an argument list of pr and
 // merge, and neither is a strategy flag.
@@ -86,6 +89,13 @@ type promoter struct {
 	// judged is the branch a judgment was already raised for, so a later pass
 	// does not raise a second one.
 	judged string
+	// red, when set, cuts one fix card per failing test of a red run into the
+	// promote-red stream (promote_red.go) and returns the cards cut and the
+	// tests an open card already names. Nil cuts none.
+	red func(ctx context.Context, reds []sprint.RedTest, sp sprint.FixSpec) (cut, open []string, err error)
+	// redRuns is each red run of the base already judged, so a later pass
+	// does not cut its cards again.
+	redRuns map[int]bool
 	// every and landings are the schedule. started is when the verb began, and
 	// lastAt is when it last cut a branch. The step reads them in due.
 	every    time.Duration
@@ -94,11 +104,14 @@ type promoter struct {
 	lastAt   time.Time
 }
 
-// promoteJudgment is the one judgment a failed merge-group run raises.
+// promoteJudgment is the one judgment a red run raises: the fix cards it cut,
+// and the failing tests an open card already named.
 type promoteJudgment struct {
 	What      string
 	Tail      string
 	Decisions []string
+	Cards     []string
+	Open      []string
 }
 
 // promoteOutcome is what one pass did.
@@ -112,15 +125,18 @@ type promoteOutcome struct {
 	Entry    string // the confirmed merge-queue entry, when there is one
 	Promoted string // the merge sha, when it merged
 	Judgment *promoteJudgment
-	Dry      bool
-	Nothing  bool
-	Cut      bool // a frozen branch was cut on this pass
+	// DevJudgment is the judgment of a red run on the base at the last
+	// promotion's merge, when this pass raised one.
+	DevJudgment *promoteJudgment
+	Dry         bool
+	Nothing     bool
+	Cut         bool // a frozen branch was cut on this pass
 }
 
 // cmdPromote is `nova-sprint promote`. --dry-run is one pass and changes
 // nothing. Without it the verb repeats every --every until it is interrupted.
 func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
-	fs, _ := a.verbSetup("promote")
+	fs, c := a.verbSetup("promote")
 	every := fs.Duration("every", promoteEveryDefault, "how often to look, a duration (default 1h); each pass promotes when that long has passed or --landings cards have landed")
 	landings := fs.Int("landings", 0, "also promote once this many cards have landed since the last promotion (0: the clock only)")
 	dry := fs.Bool("dry-run", false, "print the branch and the landed cards and change nothing")
@@ -146,6 +162,9 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 		dir: *repo, live: *branch, base: *base, check: *check,
 		now: now, dry: *dry, env: a.gitEnv,
 		every: *every, landings: *landings, started: now,
+	}
+	if !*dry {
+		p.red = a.redCutter(*c)
 	}
 	ctx := context.Background()
 	if !*dry && a.notify != nil {
@@ -203,6 +222,9 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	}
 	o.Live = live
 	p.live = live
+	if !p.dry {
+		o.DevJudgment = p.devRed(ctx, stdout, stderr)
+	}
 	tip, err := p.rev(ctx, live)
 	if err != nil {
 		return o, p.fail(stderr, err)
@@ -329,22 +351,19 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		o.Entry = confirmed
 	}
 	fmt.Fprintf(stdout, "PROMOTE QUEUE branch=%s entry=%s\n", oneline.Field(o.Branch), oneline.Field(o.Entry))
-	failed, logText, err := p.mergeGroup(ctx, o.Branch)
+	runs, err := p.failedRuns(ctx, "--branch", o.Branch)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if failed {
+	if len(runs) > 0 {
 		if p.judged == o.Branch {
 			fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s judgment=already\n", oneline.Field(o.Branch))
 			return o, 1
 		}
 		p.judged = o.Branch
-		o.Judgment = &promoteJudgment{
-			What:      "a merge-group run failed",
-			Tail:      logTail(logText),
-			Decisions: append([]string(nil), promoteDecisions...),
-		}
-		fmt.Fprintf(stdout, "JUDGMENT merge-group failed branch=%s decisions=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","), o.Judgment.Tail)
+		o.Judgment = p.redJudgment(ctx, runs, "a check of the pull request failed", "the pull request of "+o.Branch, promoteDecisions, stderr)
+		fmt.Fprintf(stdout, "JUDGMENT promotion red branch=%s decisions=%s cards=%s open=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","),
+			oneline.Field(dashed(strings.Join(o.Judgment.Cards, ","))), oneline.Field(dashed(strings.Join(o.Judgment.Open, ","))), o.Judgment.Tail)
 		return o, 1
 	}
 	// the queue may have merged it between the view and the run list
@@ -518,32 +537,34 @@ func (p *promoter) confirm(ctx context.Context, id string) (string, error) {
 	return resp.Data.Node.MergeQueueEntry.ID, nil
 }
 
-// mergeGroup reports a failed merge-group run for the branch and its log.
-func (p *promoter) mergeGroup(ctx context.Context, branch string) (failed bool, logText string, err error) {
-	raw, err := p.gh(ctx, "run", "list", "--branch", branch, "--event", "merge_group", "--json", "databaseId,conclusion,status,name", "--limit", "5")
+// ghRunRow is one run gh run list prints.
+type ghRunRow struct {
+	DatabaseID int    `json:"databaseId"`
+	Conclusion string `json:"conclusion"`
+	Status     string `json:"status"`
+	Name       string `json:"name"`
+}
+
+// failedRuns is the failed runs gh run list names under the filter: a
+// branch's (the pull request's checks and its merge group's), or the base's
+// at one commit.
+func (p *promoter) failedRuns(ctx context.Context, filter ...string) ([]ghRunRow, error) {
+	args := append(append([]string{"run", "list"}, filter...), "--json", "databaseId,conclusion,status,name", "--limit", "20")
+	raw, err := p.gh(ctx, args...)
 	if err != nil {
-		return false, "", err
+		return nil, err
 	}
-	var runs []struct {
-		DatabaseID int    `json:"databaseId"`
-		Conclusion string `json:"conclusion"`
-		Status     string `json:"status"`
-		Name       string `json:"name"`
-	}
+	var runs []ghRunRow
 	if jerr := json.Unmarshal([]byte(raw), &runs); jerr != nil {
-		return false, "", fmt.Errorf("merge-group runs: %s", oneLine(raw))
+		return nil, fmt.Errorf("runs: %s", oneLine(raw))
 	}
+	var failed []ghRunRow
 	for _, r := range runs {
-		if r.Conclusion != "failure" {
-			continue
+		if r.Conclusion == "failure" {
+			failed = append(failed, r)
 		}
-		logText, err = p.gh(ctx, "run", "view", strconv.Itoa(r.DatabaseID), "--log-failed")
-		if err != nil {
-			return true, logText, nil
-		}
-		return true, logText, nil
 	}
-	return false, "", nil
+	return failed, nil
 }
 
 func (p *promoter) git(ctx context.Context, args ...string) (string, error) {
