@@ -81,7 +81,8 @@ type rateLimitEvent struct {
 // ReadLimit reads a command's output at now for the harness's limit: the
 // last rate_limit_event anywhere in it (Claude Code), else a limit line in
 // its tail with the reset beside it (a clock time, today or else tomorrow
-// in now's zone; "in N hours"; an epoch after "limit reached|"). found is
+// in now's zone or the zone it names, on the date it names; "in N hours";
+// an epoch after "limit reached|"; resetOfText). found is
 // whether the output said anything of the limit at all. A provider's
 // transient rate_limit_error is no limit (ProviderRefusal passes it).
 func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
@@ -105,7 +106,7 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 		if !limitWords.MatchString(line) {
 			continue
 		}
-		if until, ok := resetOf(line, now); ok && until.After(now) {
+		if until, ok := resetOfText(stripANSI(line), now); ok {
 			lim = Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
 			found = true
 		}
@@ -217,6 +218,11 @@ type Limits struct {
 	Nonce func() string // six random characters when nil
 	Down  func(until time.Time, reason string)
 	Up    func(nonce string)
+	// Unread is the judgment when a limit's text names no reset this reads: the
+	// friend is held for Rest and the text goes to the coordinator, once until
+	// a wake is answered, so the reset is set by a person (friend down --until)
+	// and not guessed again each Rest (usage-limit-reset-read-from-the-message-b.w1).
+	Unread func(text string)
 	// Harness is the harness whose own wording a failed turn is read in
 	// (ParseLimit), and Rest how long it is down when the text names no
 	// reset (DefaultLimitWait when zero): --limit-rest.
@@ -242,6 +248,7 @@ type Limits struct {
 	episodes int    // limits seen, so a turn knows it hit one
 	waking   string
 	answered bool
+	judged   bool // Unread said for this hold; cleared when a wake is answered
 }
 
 // Limited is the limit now: until when and why, and whether there is one.
@@ -282,12 +289,12 @@ func (l *Limits) see(out string, failed bool) {
 	now := l.Now()
 	lim, found := ReadLimit(out, now)
 	uses := ReadRateLimitEvents(out, now)
-	kind := ""
+	kind, named := "", true
 	if !strings.Contains(out, `"rate_limit_event"`) && failed {
 		// the harness's own wording of a failed turn, with its kind and a default reset
 		// when it names none; a successful turn that only talks of limits is no limit
 		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok {
-			lim, found, kind = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind
+			lim, found, kind, named = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind, hit.Named
 		}
 	}
 	if found && lim.Limited && kind == "" {
@@ -308,9 +315,16 @@ func (l *Limits) see(out string, failed bool) {
 	}
 	l.limited, l.until, l.reason, l.kind, l.waking, l.answered = true, lim.Until, lim.Reason, kind, "", false
 	l.episodes++
+	judge := !named && !l.judged
+	if judge {
+		l.judged = true
+	}
 	l.mu.Unlock()
 	if l.Down != nil {
 		l.Down(lim.Until, lim.Reason)
+	}
+	if judge && l.Unread != nil {
+		l.Unread(lim.Reason)
 	}
 }
 
@@ -383,6 +397,19 @@ func LimitDownText(friend string, until time.Time, reason string) (subject, body
 	subject = fmt.Sprintf("friend %s down: her harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
 	body = fmt.Sprintf("%s: %s\nHer daemon beats down with that reset and reason and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
 		subject, reason, friend, shellQuote("harness limit: "+reason), until.UTC().Format(time.RFC3339))
+	return subject, body
+}
+
+// LimitUnreadText is the one judgment the coordinator is told when friend's
+// harness refused at its limit with a text that names no reset this reads:
+// the text, the rest she is held for, and the line that sets the true reset.
+func LimitUnreadText(friend string, rest time.Duration, text string) (subject, body string) {
+	if rest <= 0 {
+		rest = DefaultLimitWait
+	}
+	subject = fmt.Sprintf("friend %s held: her harness is at its limit and its message names no reset I can read", friend)
+	body = fmt.Sprintf("%s: %q\nHer daemon holds her and tries a wake every %s until one is answered; this is said once until then. A judgment: read the reset from the text and set it (nova-sprint friend down %s --reason %s --until <RFC3339>), and add the text to internal/friend/testdata/limits.tsv so the next one is read.\n",
+		subject, text, rest, friend, shellQuote("harness limit: "+text))
 	return subject, body
 }
 
@@ -469,7 +496,7 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		l.mu.Lock()
 		again, answered := l.episodes != episodes, l.answered && exit == 0 && err == nil
 		if answered && !again {
-			l.limited, l.waking = false, ""
+			l.limited, l.waking, l.judged = false, "", false
 		}
 		until, reason = l.until, l.reason
 		l.mu.Unlock()

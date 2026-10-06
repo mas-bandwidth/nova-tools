@@ -452,6 +452,39 @@ subsection's. `install` does not pass
 `--limit-rest` into the launchd plist yet (`launchd.go`), so a daemon so installed
 uses the 1h default.
 
+### usage-limit-reset-read-from-the-message-b.w1: the reset read from the message, in its zone
+
+The finding of 2026-10-05: four Claude accounts hit their weekly limits, and
+"You've hit your weekly limit · resets Oct 10 at 5am (America/New_York)" named no
+reset the parser read, so each friend was down for the one-hour rest and would
+have woken into the same wall; the coordinator set each reset by hand.
+`resetOfText` (`internal/friend/limits.go`, `clockReset`) now reads a clock time
+with the month and day and the zone the provider names beside it: `resets 8pm
+(America/New_York)`, `resets Oct 10 at 5am (America/New_York)`, `resets Oct 8, 1am
+(...)`, after `resets`, `refresh`, `try again` or `available again`. The time is in
+the named zone (`time.LoadLocation`; the daemon's zone when none is named), today
+or, when it has passed, tomorrow; with a date, that date this year or, when it has
+passed, next year. A zone that does not load, or a date that is none (`Feb 30`), is
+no reset: never a guess in another zone. `ReadLimit` reads its limit lines with the
+same `resetOfText`. The friend is down until that instant (`Down`, `friend down
+--until`), and the gate's wake after it brings her back by herself (`Up`).
+
+A limit whose text names no reset this reads still holds her for `--limit-rest`
+and wakes after it, and now says so once: `Limits.Unread` is called with the text
+on the first such limit of a hold, and not again until a wake is answered, so the
+hourly wakes into the same wall send no second word. The daemon records it and
+tells the seat (else `--coordinator`) `LimitUnreadText`: one judgment naming the
+text, with the `nova-sprint friend down <me> --until` line to set the true reset
+and the fixture file to add the text to.
+`TestAUsageLimitMessageSetsDownUntilItsStatedReset`, over fakes, an injected
+clock and `bustest.Fake` for the judgment.
+
+Owed: `tla/Friend.tla` does not model the judgment (`judged`, cleared by `Wake`;
+at most one judgment per hold); `tla/` is outside this card's paths. The daemon
+does not read a hand-set `friend down --until` back from the sprint server, so a
+person's reset shows on her row while her own wake still runs on `--limit-rest`.
+`testdata/limits.tsv` has no line for the zone forms yet (outside this card's paths).
+
 ### limits-mean-down-w-r5.w1~15: the beat says down with the until and the reason
 
 While limited the daemon's beat says so instead of going missing:
