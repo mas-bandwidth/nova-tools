@@ -79,10 +79,17 @@ func readWhere(raw string, ok bool) (WhereRecord, bool) {
 // shape and the record, two exchanges); else the sprint from the twin, brought
 // up to date, and the record written. A twin held by another step of this
 // process, or a clear under the read, leaves it to the next tick.
+//
+// First, every tick, the card log index takes the log's new lines
+// (keepLogIndex, load.go): the cursor read and the lines after it, two
+// exchanges, and their entries written in one more when there are any.
 func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	kv, err := st.kv()
 	if err != nil {
 		return nil // a store that keeps no records: where counts the cards
+	}
+	if err := st.keepLogIndex(ctx); err != nil {
+		return fmt.Errorf("the card log index: %w", err)
 	}
 	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Work)})
 	if err != nil {

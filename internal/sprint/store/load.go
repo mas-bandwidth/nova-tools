@@ -2,13 +2,16 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/redis/go-redis/v9"
 )
 
 // errMoved is a read that saw a table change between its exchanges.
@@ -272,4 +275,330 @@ func (st *Store) readSet(ctx context.Context, table string, ids []string) (ntabl
 	res, err := st.B.ReadSet(ctx, table, ids)
 	st.stats().rows.Add(int64(len(res.Members)))
 	return res, err
+}
+
+// The card log index (card-read-speed.w2, docs/SPEC-SPRINT.md section 17, the card
+// log index): `card <id>` tells one primary's story from the log lines about it,
+// and on 2026-10-04 it read the whole log for them, 240,119 lines (330 MB) at
+// the 11:36 PM backup, 3.4 s a call. The tick indexes the log by card as it
+// grows (keepLogIndex, from keepWhere): each line's stream id under every name
+// a card read finds it by (logKeys), up to a cursor, the last line indexed. A
+// card read takes its ids from the index, those lines by id, and the lines after
+// the cursor, the log's tail the tick has not indexed yet, never the log from
+// its start. Indexing is idempotent: a line indexed twice is one entry, and a
+// cursor written back by a racing tick only makes the next read's tail longer.
+const (
+	keyLogIndex   = "logindex"   // ZSET, score 0, members "<name>\x00<log stream id>"
+	keyLogIndexed = "logindexed" // STRING, the stream id of the last line indexed
+)
+
+// the index is an epoch's sprint key: teardown removes it with the log
+func init() { sprintKeys = append(sprintKeys, keyLogIndex, keyLogIndexed) }
+
+// logIndexPages is how many pages of the log one tick indexes, at most: a log
+// that was never indexed (a store from before the index) is caught up a few
+// ticks at a time, never in one long tick.
+const logIndexPages = 4
+
+// logIndex is a store that keeps the card log index; each call is one exchange.
+type logIndex interface {
+	// logIndexed is the index's cursor ("" when nothing is indexed).
+	logIndexed(ctx context.Context) (string, error)
+	// indexLog adds the stream ids under each name and sets the cursor.
+	indexLog(ctx context.Context, entries map[string][]string, cursor string) error
+	// cardLogIDs is the cursor and the stream ids indexed under the name.
+	cardLogIDs(ctx context.Context, name string) (string, []string, error)
+	// logAt is the log's lines at the stream ids, with their ids, in the
+	// order given; an id with no line is left out.
+	logAt(ctx context.Context, ids []string) ([]sprint.Line, []string, error)
+}
+
+var (
+	_ logIndex = (*Redis)(nil)
+	_ logIndex = (*Mem)(nil)
+)
+
+// logKeys is every name a line is indexed under: each card it names and each
+// dot-prefix of that card's id, and a move line's primary, so the lines a
+// card read finds under a primary's id are exactly those sprint.Line.About
+// says are about it (a work card <primary>.w<n>, a read card
+// <primary>.r<n>.<reader>, found under their primary).
+func logKeys(l sprint.Line) []string {
+	var out []string
+	add := func(k string) {
+		if k != "" && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	for _, n := range l.Names() {
+		for i := range len(n) {
+			if n[i] == '.' {
+				add(n[:i])
+			}
+		}
+		add(n)
+	}
+	if l.Note == nil {
+		add(l.Primary)
+	}
+	return out
+}
+
+// keepLogIndex is the tick's index of the log's new lines: the cursor read,
+// the lines after it (at most logIndexPages pages), and, when there were any,
+// their entries and the new cursor written in one exchange. A store that keeps
+// no index is left alone.
+func (st *Store) keepLogIndex(ctx context.Context) error {
+	ix, ok := st.B.(logIndex)
+	if !ok {
+		return nil
+	}
+	cur, err := ix.logIndexed(ctx)
+	if err != nil {
+		return err
+	}
+	entries := map[string][]string{}
+	last := cur
+	for range logIndexPages {
+		lines, ids, err := st.B.LogSince(ctx, last, logPage)
+		if err != nil {
+			return err
+		}
+		for i := range lines {
+			for _, k := range logKeys(lines[i]) {
+				entries[k] = append(entries[k], ids[i])
+			}
+		}
+		if len(ids) > 0 {
+			last = ids[len(ids)-1]
+		}
+		if len(ids) < logPage {
+			break
+		}
+	}
+	if last == cur {
+		return nil
+	}
+	return ix.indexLog(ctx, entries, last)
+}
+
+// CardLog is the log's lines about one primary (sprint.Line.About), in log
+// order: from the card log index, its indexed lines read by id and the lines
+// after the index's cursor; from the whole log when the store keeps no index
+// or nothing of the epoch is indexed yet (no tick has run since it began).
+// It is what a card's story is told from (cmd/nova-sprint card).
+func (st *Store) CardLog(ctx context.Context, id string) ([]sprint.Line, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	about := func(lines []sprint.Line) []sprint.Line {
+		var out []sprint.Line
+		for _, l := range lines {
+			if l.About(id) {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	ix, ok := st.B.(logIndex)
+	if !ok {
+		lines, err := st.Log(ctx)
+		return about(lines), err
+	}
+	cur, ids, err := ix.cardLogIDs(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if cur == "" {
+		lines, err := st.Log(ctx)
+		return about(lines), err
+	}
+	slices.SortFunc(ids, func(a, b string) int {
+		switch {
+		case streamIDAfter(a, b):
+			return 1
+		case streamIDAfter(b, a):
+			return -1
+		}
+		return 0
+	})
+	ids = slices.Compact(ids)
+	out, _, err := ix.logAt(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	after := cur
+	for {
+		lines, tail, err := st.B.LogSince(ctx, after, logPage)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, about(lines)...)
+		if len(tail) < logPage {
+			return out, nil
+		}
+		after = tail[len(tail)-1]
+	}
+}
+
+func (r *Redis) logIndexed(ctx context.Context) (string, error) {
+	v, err := r.C.Get(ctx, r.key(keyLogIndexed)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return v, err
+}
+
+// logIndexChunk is how many members one ZADD of the index carries.
+const logIndexChunk = 1000
+
+func (r *Redis) indexLog(ctx context.Context, entries map[string][]string, cursor string) error {
+	var members []redis.Z
+	for _, k := range slices.Sorted(maps.Keys(entries)) {
+		for _, id := range entries[k] {
+			members = append(members, redis.Z{Member: k + "\x00" + id})
+		}
+	}
+	_, err := r.C.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		for start := 0; start < len(members); start += logIndexChunk {
+			p.ZAdd(ctx, r.key(keyLogIndex), members[start:min(start+logIndexChunk, len(members))]...)
+		}
+		p.Set(ctx, r.key(keyLogIndexed), cursor, 0)
+		return nil
+	})
+	return err
+}
+
+func (r *Redis) cardLogIDs(ctx context.Context, name string) (string, []string, error) {
+	p := r.C.Pipeline()
+	cur := p.Get(ctx, r.key(keyLogIndexed))
+	ms := p.ZRangeByLex(ctx, r.key(keyLogIndex), &redis.ZRangeBy{Min: "[" + name + "\x00", Max: "(" + name + "\x01"})
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return "", nil, err
+	}
+	members, err := ms.Result()
+	if err != nil {
+		return "", nil, err
+	}
+	ids := make([]string, 0, len(members))
+	for _, m := range members {
+		ids = append(ids, m[len(name)+1:])
+	}
+	return cur.Val(), ids, nil
+}
+
+func (r *Redis) logAt(ctx context.Context, ids []string) ([]sprint.Line, []string, error) {
+	if len(ids) == 0 {
+		return nil, nil, nil
+	}
+	p := r.C.Pipeline()
+	cmds := make([]*redis.XMessageSliceCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = p.XRangeN(ctx, r.key(keyLog), id, id, 1)
+	}
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, nil, err
+	}
+	var lines []sprint.Line
+	var out []string
+	for _, c := range cmds {
+		for _, m := range c.Val() {
+			var l sprint.Line
+			if s, ok := m.Values["line"].(string); ok && json.Unmarshal([]byte(s), &l) == nil {
+				lines = append(lines, l)
+				out = append(out, m.ID)
+			}
+		}
+	}
+	return lines, out, nil
+}
+
+// The stand-in keeps the index among its machine records, under the epoch's
+// names (Names.KeyAt), as the store's keys are named: the entries as one JSON
+// record of name -> stream ids, and the cursor.
+func (m *Mem) logIndexKeys() (string, string) {
+	return keyLogIndex + epochSuffix(m.epoch), keyLogIndexed + epochSuffix(m.epoch)
+}
+
+func (m *Mem) logIndexed(context.Context) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("logindex")
+	if err := m.fail("logindex"); err != nil {
+		return "", err
+	}
+	_, cur := m.logIndexKeys()
+	return m.kv[cur], nil
+}
+
+func (m *Mem) indexLog(_ context.Context, entries map[string][]string, cursor string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("logindex")
+	if err := m.fail("logindex"); err != nil {
+		return err
+	}
+	ixKey, cur := m.logIndexKeys()
+	ix := map[string][]string{}
+	if raw, ok := m.kv[ixKey]; ok {
+		if err := json.Unmarshal([]byte(raw), &ix); err != nil {
+			return err
+		}
+	}
+	for k, ids := range entries {
+		for _, id := range ids {
+			if !slices.Contains(ix[k], id) {
+				ix[k] = append(ix[k], id)
+			}
+		}
+	}
+	b, err := json.Marshal(ix)
+	if err != nil {
+		return err
+	}
+	if m.kv == nil {
+		m.kv = map[string]string{}
+	}
+	m.kv[ixKey], m.kv[cur] = string(b), cursor
+	return nil
+}
+
+func (m *Mem) cardLogIDs(_ context.Context, name string) (string, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("logindex")
+	if err := m.fail("logindex"); err != nil {
+		return "", nil, err
+	}
+	ixKey, cur := m.logIndexKeys()
+	ix := map[string][]string{}
+	if raw, ok := m.kv[ixKey]; ok {
+		if err := json.Unmarshal([]byte(raw), &ix); err != nil {
+			return "", nil, err
+		}
+	}
+	return m.kv[cur], ix[name], nil
+}
+
+func (m *Mem) logAt(_ context.Context, ids []string) ([]sprint.Line, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("logat")
+	if err := m.fail("logat"); err != nil {
+		return nil, nil, err
+	}
+	at := map[string]sprint.Line{}
+	for _, x := range m.log().lines {
+		at[x.id] = x.line
+	}
+	var lines []sprint.Line
+	var out []string
+	for _, id := range ids {
+		if l, ok := at[id]; ok {
+			lines = append(lines, l)
+			out = append(out, id)
+		}
+	}
+	return lines, out, nil
 }

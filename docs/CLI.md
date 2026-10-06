@@ -1167,7 +1167,8 @@ nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
 nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
-nova-sprint card <id>
+nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
+nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
@@ -1191,6 +1192,14 @@ nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>]
 nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
+
+`card <id> --json` reads that card: its lines of the log from the card log index the
+tick keeps (and the tail it has not indexed yet), never the whole log, and its own
+records, its needs, its place in line and its hold from one read of the tables
+(docs/SPEC-SPRINT.md section 17, the card log index). `card --all --json` prints every card on the table in one call,
+one JSON object a line: `id`, `stream`, `column`, `score`, `needs`, `brief_len` and
+the other fields (the brief's text is `card <id> --brief`); `card --stream <s>
+--json` prints one stream's.
 
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
