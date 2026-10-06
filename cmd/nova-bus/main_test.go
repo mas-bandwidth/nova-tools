@@ -22,7 +22,7 @@ var start = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 // clock, no seat. exec is what --exec's command does with the text it is
 // handed; signals is the loop's context, which a test cancels.
 type rig struct {
-	store   *bustest.Fake
+	store   *waitFake
 	env     map[string]string
 	exec    func(stdin string) int
 	execIn  []string
@@ -34,6 +34,8 @@ type rig struct {
 	fleetAt []string
 	names   []string  // the names newRig keeps heard
 	clock   time.Time // the store's clock as advance moved it (each trip adds a second more)
+	now     time.Time // the wait verbs' clock; the fake store's block moves it, never real time
+	wake    []string  // the wake-file reader's answers, one per look: "" is nothing new
 }
 
 // newRig is the rig with every name heard: each has a proven inbox push,
@@ -47,7 +49,7 @@ func newRig(names ...string) *rig {
 }
 
 func deafRig(names ...string) *rig {
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start}
+	return &rig{store: &waitFake{Fake: bustest.NewFake(start, names...)}, env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start}
 }
 
 // prove writes each name's push proof at the instant at, up or down, as the
@@ -74,6 +76,43 @@ func (r *rig) advance(d time.Duration) {
 	r.store.Advance(d)
 	r.clock = r.clock.Add(d)
 	r.prove(r.clock, true, r.names...)
+}
+
+// waitFake is the fake store with the wait's two reads, answered from its
+// range read: Tail is the last entry id, BlockRead the entries past the
+// cursor, and a block that finds none waits its duration out on Sleep, the
+// test's clock, never real time.
+type waitFake struct {
+	*bustest.Fake
+	Sleep func(d time.Duration)
+}
+
+var _ bus.Store = (*waitFake)(nil)
+
+func (f *waitFake) Tail(ctx context.Context, stream string) (string, bool, error) {
+	es, err := f.Range(ctx, stream, "-", "+", 0)
+	if err != nil || len(es) == 0 {
+		return "0-0", false, err
+	}
+	return es[len(es)-1].Entry, true, nil
+}
+
+func (f *waitFake) BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]bus.Entry, error) {
+	es, err := f.Range(ctx, stream, "("+after, "+", count)
+	if err != nil || len(es) > 0 {
+		return es, err
+	}
+	if f.Sleep != nil {
+		f.Sleep(block)
+	}
+	return nil, nil
+}
+
+// waitClock wires the fake store's block to the rig's clock: a block that finds
+// nothing past its cursor waits its duration out on r.now, so a test's
+// timeout runs on no real time.
+func (r *rig) waitClock() {
+	r.store.Sleep = func(d time.Duration) { r.now = r.now.Add(d) }
 }
 
 func (r *rig) world() world {
@@ -111,6 +150,16 @@ func (r *rig) world() world {
 				"far.test":   {netip.AddrFrom4([4]byte{203, 0, 113, 9})}, // the internet
 				"lan.test":   {netip.AddrFrom4([4]byte{10, 0, 0, 5})},    // a private network that is not the tailnet
 			}[host], nil
+		},
+		now:      func() time.Time { return r.now },
+		fileSize: func(string) (int64, error) { return 0, nil },
+		fileLine: func(_ string, from int64) (string, int64, error) {
+			if len(r.wake) == 0 {
+				return "", from, nil
+			}
+			line := r.wake[0]
+			r.wake = r.wake[1:]
+			return line, from + int64(len(line)) + 1, nil
 		},
 	}
 }
