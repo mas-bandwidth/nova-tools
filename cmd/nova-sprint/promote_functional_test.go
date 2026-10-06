@@ -19,7 +19,8 @@ import (
 // funcGH records gh and answers a pull request that is admitted and not yet
 // merged, so the pass cuts the branch and stops at the queue.
 type funcGH struct {
-	calls [][]string
+	calls  [][]string
+	queued bool
 }
 
 func (f *funcGH) call(_ context.Context, _ string, args ...string) (string, error) {
@@ -30,8 +31,13 @@ func (f *funcGH) call(_ context.Context, _ string, args ...string) (string, erro
 		return "https://example.invalid/nova/pull/7", nil
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view":
 		return `{"id":"PR_func","state":"OPEN"}`, nil
+	case len(args) >= 2 && args[0] == "pr" && args[1] == "checks":
+		return `[{"name":"ci","bucket":"pass"}]`, nil
 	case strings.Contains(joined, "enqueuePullRequest"):
+		f.queued = true
 		return `{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"id":"MQ_func"}}}}`, nil
+	case len(args) > 0 && args[0] == "api" && !f.queued:
+		return `{"data":{"node":{"mergeQueueEntry":null}}}`, nil
 	case len(args) > 0 && args[0] == "api":
 		return `{"data":{"node":{"mergeQueueEntry":{"id":"MQ_func","state":"AWAITING_CHECKS"}}}}`, nil
 	case len(args) >= 2 && args[0] == "run" && args[1] == "list":

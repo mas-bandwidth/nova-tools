@@ -19,6 +19,7 @@ type promoteScript struct {
 	gitCalls, ghCalls                     [][]string
 	gated                                 string
 	cfg                                   map[string]string
+	queued                                bool
 }
 
 func (s *promoteScript) config(args []string) (string, error) {
@@ -52,9 +53,9 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 	case "rev-parse":
 		rev := args[len(args)-1]
 		switch rev {
-		case s.live, "refs/heads/" + s.live:
+		case "refs/remotes/origin/" + s.live:
 			return s.tip, nil
-		case "dev", "refs/heads/dev":
+		case "refs/remotes/origin/dev":
 			return s.baseSHA, nil
 		case "refs/promoted/last":
 			return "", errors.New("missing")
@@ -66,6 +67,13 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 		}
 	case "log":
 		return s.logText, nil
+	case "fetch":
+		return "", nil
+	case "rev-list":
+		if strings.HasSuffix(args[len(args)-1], "..refs/remotes/origin/dev") {
+			return "0", nil // the target is in the tip: no merge
+		}
+		return "2", nil
 	case "branch":
 		return "", nil
 	case "config":
@@ -85,8 +93,13 @@ func (s *promoteScript) gh(_ context.Context, _ string, args ...string) (string,
 		return "https://example.invalid/nova-tools/pull/42", nil
 	case args[0] == "pr" && args[1] == "view":
 		return `{"id":"PR_node_1","state":"OPEN"}`, nil
+	case args[0] == "pr" && args[1] == "checks":
+		return `[{"name":"ci","bucket":"pass"}]`, nil
 	case strings.Contains(joined, "enqueuePullRequest"):
+		s.queued = true
 		return `{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}`, nil
+	case args[0] == "api" && !s.queued:
+		return `{"data":{"node":{"mergeQueueEntry":null}}}`, nil
 	case args[0] == "api":
 		return `{"data":{"node":{"mergeQueueEntry":{"id":"MQE_1","state":"AWAITING_CHECKS"}}}}`, nil
 	case args[0] == "run" && args[1] == "list":

@@ -48,7 +48,7 @@ var verbEffect = map[string]string{
 	"routes":            "inspection: reads the route table and prints each route, writes nothing",
 	"cost reconcile":    "local write: reads each provider's usage of today through the seat's key and writes the reconciliation and its gap judgment to the sprint's store; --dry-run writes nothing",
 	"backup":            "local write: writes the store to --file (a new file, owner-only), restores it into a twin, compares and scans it for secrets, and removes the file when any step fails; --dry-run writes nothing; the store is only read",
-	"promote":           "delivery: promotes the landed cards toward the development branch and records the promotion in the sprint's store; --dry-run prints the branch and the landed cards and changes nothing",
+	"promote":           "delivery: promotes the landed cards toward the development branch and records the promotion in the sprint's store; --dry-run prints the branch and the landed cards and changes nothing; cuts from origin's branch, merges the base into the cut (a conflict is one judgment naming the files), opens the pull request, queues it once its checks pass and records the merge",
 	"friend clean":      "local write: removes the friends' finished job directories and listings past --days under --root; --dry-run prints every removal with the bytes it would free and removes nothing",
 	"where":             "inspection: reads the sprint table and its rows, writes nothing",
 	"card":              "inspection: reads one card, its brief and its attempts, writes nothing",
