@@ -21,9 +21,9 @@ import (
 // progress and the callers' results. Each epoch has its own.
 var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue, keyAliases, keyAnswered}
 
-// machineKeys are the machine's records and the people's goals: one for the
+// machineKeys are the machine's records, the people's goals and the timers: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere, KeySeatPushers}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyTimers, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere, KeySeatPushers}
 
 // KeySeatPushers is the names whose seat has a push record (SeatPushKey), a
 // JSON list the writer of a record adds its name to (cmd/nova-sprint
