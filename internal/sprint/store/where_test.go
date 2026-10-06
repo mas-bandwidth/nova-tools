@@ -366,5 +366,5 @@ func TestTheWhereCountsTripsArePinned(t *testing.T) {
 // work table, as measured: the shape and the record read, the twin's catch-up
 // (no table read whole), and the record written.
 // whereMovedTrips counts the seat record read with the coordinator (store/seat.go,
-// the seat's generation every step reads): one trip more since 2026-10-04.
-const whereMovedTrips = 9
+// the seat's generation every step reads), plus RTT record: one trip more since 2026-10-04.
+const whereMovedTrips = 10

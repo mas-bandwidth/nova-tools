@@ -165,7 +165,8 @@ type StoreRTTRecord struct {
 // MeasureStoreRTT times one round trip to the store by the injected clock (the
 // read of the record itself) and records it from the time it began
 // (RecordStoreRTT); it returns the round trip. A store without the KV records
-// measures nothing.
+// measures nothing. If st.Pinger is set (a test), it calls it to get RTT samples
+// instead of timing the KV read.
 func (st *Store) MeasureStoreRTT(ctx context.Context) (time.Duration, error) {
 	kv, err := st.kv()
 	if err != nil {
@@ -173,9 +174,19 @@ func (st *Store) MeasureStoreRTT(ctx context.Context) (time.Duration, error) {
 	}
 	t0 := st.now()
 	v, ok, err := kv.GetKey(ctx, keyStoreRTT)
-	d := st.now().Sub(t0)
 	if err != nil {
-		return d, err
+		return 0, err
+	}
+	d := st.now().Sub(t0)
+	// Use injected pinger if available (for tests)
+	if st.Pinger != nil {
+		samples, err := st.Pinger(ctx, 20)
+		if err != nil {
+			return 0, err
+		}
+		if len(samples) > 0 {
+			d = samples[0] // use first sample as the RTT
+		}
 	}
 	return d, st.keepStoreRTT(ctx, kv, readStoreRTT(v, ok), t0, d)
 }

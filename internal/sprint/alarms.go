@@ -99,6 +99,10 @@ func alarmFacts(s *Snapshot) map[string]string {
 			out[NAlarmFleet] = fmt.Sprintf("the members up work %d of their width %d, below the alarm of %d%%, with %d primaries ready or waiting; run: nova-sprint where", working, width, pct, ready+waiting)
 		}
 	}
+	// Check store RTT alarm: if median RTT is above 5ms, the store is slow
+	if s.HasStoreRTT && s.StoreRTTP50MS > 5.0 {
+		out[NAlarmSlowStore] = fmt.Sprintf("the store is slow: %.1f ms", s.StoreRTTP50MS)
+	}
 	return out
 }
 
@@ -150,6 +154,11 @@ func alarmNow(s *Snapshot, typ string) string {
 		return fmt.Sprintf("%d primaries merging", len(s.Work.Column(Merging)))
 	case NAlarmReady:
 		return fmt.Sprintf("%d primaries ready, %d waiting", len(s.Work.Column(Ready)), len(s.Work.Column(Waiting)))
+	case NAlarmSlowStore:
+		if s.HasStoreRTT {
+			return fmt.Sprintf("store RTT median %.1f ms", s.StoreRTTP50MS)
+		}
+		return "no store RTT data"
 	}
 	return "the fleet works at its alarm or above, or has no work ready or waiting"
 }

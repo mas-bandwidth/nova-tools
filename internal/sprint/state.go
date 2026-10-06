@@ -374,6 +374,11 @@ type Snapshot struct {
 	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
 	Running bool
+	// HasStoreRTT and StoreRTTP50MS/StoreRTTP99MS are the store round trip facts
+	// measured by the server (store-latency-row-r.w2); false/0 when no recent measurement.
+	HasStoreRTT   bool
+	StoreRTTP50MS float64
+	StoreRTTP99MS float64
 	// rests is the routes resting at Now, settled once by a step that deals
 	// (withRests, route_rest.go); nil is not yet settled.
 	rests map[string]RouteRest

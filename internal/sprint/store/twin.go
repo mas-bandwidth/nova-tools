@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -368,6 +370,16 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 			tw.kept[name], tw.shown[name], tw.absent[name] = map[string]*sprint.Card{}, map[string]*sprint.Card{}, map[string]bool{}
 		}
 		tw.seeded = true
+	}
+	// Read store RTT data into the snapshot
+	if kv, err := st.kv(); err == nil {
+		val, ok, err := kv.GetKey(ctx, keyStoreRTT)
+		if err == nil && ok {
+			var r StoreRTTRecord
+			if json.Unmarshal([]byte(val), &r) == nil && len(r.Samples) > 0 && st.now().Sub(time.UnixMilli(r.At)) <= StoreRTTWindow {
+				s.HasStoreRTT, s.StoreRTTP50MS, s.StoreRTTP99MS = true, r.P50MS, r.P99MS
+			}
+		}
 	}
 	for i, shape := range shapes {
 		t := tw.tables[load[i]]

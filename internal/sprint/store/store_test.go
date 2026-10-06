@@ -27,12 +27,13 @@ const proBrief = "tier: pro"
 var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
 type harness struct {
-	t   *testing.T
-	st  *Store
-	m   *Mem
-	ctx context.Context
-	mu  sync.Mutex
-	now time.Time
+	t    *testing.T
+	st   *Store
+	m    *Mem
+	ctx  context.Context
+	mu   sync.Mutex
+	now  time.Time
+	pinger func(context.Context, int) ([]time.Duration, error) // injected pinger for RTT tests
 	// live is the members that beat, at the start and at every step of the
 	// clock: the fleet machines alive (a test that has one fall silent takes
 	// it out).

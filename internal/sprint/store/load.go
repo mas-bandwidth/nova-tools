@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -106,6 +107,16 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 	}
 	if s.SeatGeneration, err = st.seatGeneration(ctx); err != nil {
 		return nil, err
+	}
+	// Read store RTT data
+	if kv, err := st.kv(); err == nil {
+		val, ok, err := kv.GetKey(ctx, keyStoreRTT)
+		if err == nil && ok {
+			var r StoreRTTRecord
+			if json.Unmarshal([]byte(val), &r) == nil && len(r.Samples) > 0 && st.now().Sub(time.UnixMilli(r.At)) <= StoreRTTWindow {
+				s.HasStoreRTT, s.StoreRTTP50MS, s.StoreRTTP99MS = true, r.P50MS, r.P99MS
+			}
+		}
 	}
 	if extras != nil {
 		for table, want := range extras(s) {

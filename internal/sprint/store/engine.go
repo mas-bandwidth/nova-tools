@@ -93,6 +93,10 @@ type Store struct {
 	// from the tick's twin with a fresh read of the same generation: an error
 	// fails the step (twin.go).
 	CheckTwin func(twin, fresh *sprint.Snapshot) error
+	// Pinger, when set (a test), is called to measure store round trip samples.
+	// It returns 20 samples of RTT durations. When nil, MeasureStoreRTT times
+	// the KV read itself.
+	Pinger func(context.Context, int) ([]time.Duration, error)
 	tw        *Twin // the store's twin (twin.go): kept from one tick to the next
 	// LockAfterLoss has a part of the tick that lost a try take the fence
 	// before its next read (lock.go). The program's stores set it; a test
