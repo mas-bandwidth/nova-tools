@@ -165,17 +165,12 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 
 		code, stdout, stderr := dogfoodRunWith(seams, args[1:]...)
 		require.Equal(t, 0, code, "exit %d, stderr: %s", code, stderr)
-		// The receipt's name ends in a hash of its content, which the document
-		// records as 8e9b64a4 and this run computes as something else. The one
-		// receipt this run wrote is renamed to the documented hash on the tool's
-		// side; every other character of the line is compared as written.
-		written, err := filepath.Glob(filepath.Join(receipts, "*.json"))
-		require.NoError(t, err)
-		require.Len(t, written, 1)
-		name := strings.TrimSuffix(filepath.Base(written[0]), ".json")
-		stdout = strings.ReplaceAll(stdout, name, name[:len(name)-8]+"8e9b64a4")
+		// The receipts directory is this run's, and the receipt's name ends in a
+		// hash of the receipt: both are run-owned and named from the table.
 		res := onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}
-		for _, p := range one(*stepDogfood, res, onboarding.Field{Name: "tmpdir", Doc: "./dogfood-receipts", Run: receipts}) {
+		for _, p := range one(*stepDogfood, res,
+			onboarding.Field{Name: "tmpdir", Doc: "./dogfood-receipts", Run: receipts},
+			onboarding.Field{Name: "receipt"}) {
 			assert.Fail(t, "check failed", p.Error())
 		}
 	})
@@ -220,19 +215,14 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 		var out, errb bytes.Buffer
 		code := run(args, &out, &errb)
 		require.Equal(t, 1, code, "exit %d, stderr: %s", code, errb.String())
-		// The `--repo` the MORE line quotes is the lab, where the document
-		// quotes the `.` the reader typed.
-		got := strings.ReplaceAll(out.String()+errb.String(), `"`+labDir+`"`, `"."`)
-
-		// The foreign commit's sha belongs to this run; the document records
-		// the one it was written against. Only that commit's own twelve digits
-		// are rewritten, so any other `at=` value is compared as written.
-		sha, err := exec.Command("git", "-C", labDir, "rev-parse", "--short=12", "card").Output()
-		require.NoError(t, err)
-		got = strings.ReplaceAll(got, "at="+strings.TrimSpace(string(sha)), "at=0a19082d2973")
-		res := onboarding.Result{Code: code, Stdout: got, Stderr: ""}
-
-		for _, p := range one(*stepHygieneMax, res, onboarding.Field{Name: "tmpdir", Doc: ".", Run: labDir}) {
+		res := onboarding.Result{Code: code, Stdout: out.String() + errb.String(), Stderr: ""}
+		// The lab is this run's directory, which the MORE line quotes back as
+		// `--repo "<lab>"` where the document quotes the `.` the reader typed;
+		// the foreign commit a finding names is the lab's, made at this run's
+		// instant. Both are named from the table.
+		for _, p := range one(*stepHygieneMax, res,
+			onboarding.Field{Name: "tmpdir", Doc: `"."`, Run: `"` + labDir + `"`},
+			onboarding.Field{Name: "commit"}) {
 			assert.Fail(t, "check failed", p.Error())
 		}
 	})
