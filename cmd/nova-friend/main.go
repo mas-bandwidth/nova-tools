@@ -1033,18 +1033,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
 			}
 			// while her harness is at its limit her beat says down with the until and the
-			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before; the
-			// inner check is the last before the up beat, so a limit seen during the step is
-			// never beaten up
+			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before,
+			// ahead of the look; the inner check is the last before the up beat, so a limit
+			// seen during the step is never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
 				return w.beatDown(ctx, server, name, active, until, reason)
 			}
-			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), func(ctx context.Context, until time.Time, reason string) error {
-				if !perCard {
-					sc.Step(ctx)
-				}
-				return down(ctx, until, reason)
-			})(ctx)
+			if _, _, limited := fl.Limited(); limited && !perCard {
+				sc.Step(ctx)
+			}
+			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
