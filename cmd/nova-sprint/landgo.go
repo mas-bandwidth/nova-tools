@@ -13,7 +13,8 @@ package main
 // head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
 // that test the tree itself (treeTests, where the clone has them) pass. The base's tip
 // is gated once a batch before any head is merged, so a base that is red refuses the
-// batch and blames no card. A head whose merged tree is red is taken off the batch branch
+// batch and blames no card, unless a head of the batch cures it (cureBase): that head lands
+// first as the base fix. A head whose merged tree is red is taken off the batch branch
 // and ends the batch as a head that does not merge does, the gate's run and output its
 // finding. A clone with no go.mod has no module and no gate.
 
@@ -275,4 +276,62 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 		return "", "the batch branch could not be reset after " + c.id + " failed the tree gate: " + firstLine("", err)
 	}
 	return "the head " + c.head + " of " + c.id + " fails the tree gate: " + why, ""
+}
+
+// cureBase looks for the red base's fix among the batch's cards (sprint.FindBaseCure; docs/
+// SPEC-SPRINT.md section 8, the base cure): each head merged onto the base alone, through the
+// lander's own checks (mergeHead, checkCard) and the base's tree gate with the tree tests.
+// The first green is the cure: its index in cards, the batch branch left at its merge, and its
+// landing note naming the fix; -1 when no head cures the base, the branch at the base again.
+// A head found no cure on this base is not tried on it again. env is a failure that is not a
+// card's.
+func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landCard, baseSha, why string) (cured int, env string) {
+	if l.cureTried == nil {
+		l.cureTried = map[string]bool{}
+	}
+	tried := func(h sprint.CureHead) string { return baseSha + " " + h.ID + "@" + h.Head }
+	heads := make([]sprint.CureHead, len(cards))
+	at := map[string]int{}
+	for i, c := range cards {
+		heads[i], at[c.id] = sprint.CureHead{ID: c.id, Head: c.head}, i
+	}
+	notes, repairs := map[string]string{}, map[string]string{}
+	cure, err := sprint.FindBaseCure(ctx, sprint.BaseCureReq{RepoDir: dir, Base: baseSha, Heads: heads, Env: l.a.gitEnv,
+		Merge: func(ctx context.Context, h sprint.CureHead) (string, string) {
+			c := cards[at[h.ID]]
+			card, env, note := l.mergeHead(ctx, dir, stream, c)
+			if card == "" && env == "" {
+				var repaired string
+				if card, env, repaired = l.checkCard(ctx, dir, stream, c, baseSha); repaired != "" {
+					note = strings.TrimPrefix(note+"; "+repaired, "; ")
+				}
+				repairs[h.ID] = repaired
+			}
+			notes[h.ID] = note
+			return card, env
+		},
+		Gate:  func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
+		Tried: func(h sprint.CureHead) bool { return l.cureTried[tried(h)] },
+	})
+	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop
+	for _, t := range cure.Tried {
+		l.cureTried[tried(t.CureHead)] = true
+	}
+	if err != nil {
+		return -1, "the search for a fix of the red base " + shortSha(baseSha) + " failed: " + oneline.Err(err)
+	}
+	if !cure.Found() {
+		return -1, ""
+	}
+	i := at[cure.ID]
+	c := &cards[i]
+	c.resolved = cure.Note(baseSha, why)
+	if n := notes[cure.ID]; n != "" {
+		c.resolved = n + "; " + c.resolved
+	}
+	if r := repairs[cure.ID]; r != "" {
+		l.ledgerLog = append(l.ledgerLog, cure.ID+": "+r)
+	}
+	l.baseFix = cure.ID + " " + c.resolved
+	return i, ""
 }

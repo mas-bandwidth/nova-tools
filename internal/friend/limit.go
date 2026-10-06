@@ -220,8 +220,15 @@ type Limits struct {
 	// AllowOverage is the owner's word that this friend may spend paid
 	// overage; without it a harness on overage reads down.
 	AllowOverage bool
+	// Pacing is the row's pacing (the fraction of each subscription window the
+	// sprint may spend), read at each batch turn; nil, or out of (0, 1], is
+	// DefaultPacing. Every output's rate_limit_event feeds the pacer, and a batch
+	// turn while a window is at the pacing is Deferred until it resets
+	// (pacing.go).
+	Pacing func() float64
 
 	mu       sync.Mutex
+	pace     Pacer
 	limited  bool
 	until    time.Time
 	reason   string
@@ -250,7 +257,9 @@ func (l *Limits) Watch(run Exec) Exec {
 func (l *Limits) see(out string) {
 	now := l.Now()
 	lim, found := ReadLimit(out, now)
+	uses := ReadRateLimitEvents(out, now)
 	l.mu.Lock()
+	l.pace.Observe(uses)
 	if l.waking != "" && strings.Contains(out, l.waking) {
 		l.answered = true
 	}
@@ -268,6 +277,26 @@ func (l *Limits) see(out string) {
 	if l.Down != nil {
 		l.Down(lim.Until, lim.Reason)
 	}
+}
+
+// WindowUse is the subscription windows' use as the harness last reported
+// it in any command's output ("5h 62% 7d 31%"), empty when none is live.
+func (l *Limits) WindowUse() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.pace.Use(l.Now())
+}
+
+// pacedOut is why a batch turn at now is held by the pacing, empty when it
+// is not: a batch turn is one lane, so it is held when the pacer allows none.
+func (l *Limits) pacedOut(now time.Time) string {
+	pacing := DefaultPacing
+	if l.Pacing != nil {
+		pacing = PacingOf(l.Pacing())
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.pace.held(now, pacing)
 }
 
 // Beat is beat held back while the harness is at its limit: no beat goes
@@ -389,6 +418,9 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		if l.Up != nil {
 			l.Up(nonce)
 		}
+	}
+	if why := l.pacedOut(now); why != "" {
+		return 0, Deferred{Reason: why}
 	}
 	l.mu.Lock()
 	episodes := l.episodes

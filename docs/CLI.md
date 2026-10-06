@@ -1043,6 +1043,7 @@ nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] |
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup --file <path>
 nova-sprint fleet beat <member> [--load <percent>]
@@ -1066,6 +1067,8 @@ nova-sprint reader away <reader>...
 nova-sprint reader up <reader>...
 nova-sprint reader remove <reader>...
 nova-sprint stream remove <stream>...
+nova-sprint stream archive <stream>...
+nova-sprint stream unarchive <stream>...
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
@@ -1075,8 +1078,9 @@ nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
-nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
+nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
@@ -1159,7 +1163,7 @@ curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
 ```
 
 The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
-`/api/view/worker?as=<name>`. `nova-sprint friend cards <friend> --json` is every card held on
+`/api/view/worker?as=<name>`. `nova-sprint view cards --col review --by tier --json` counts the primaries by column, tier, stream or holder (also `/api/view/cards?col=review&by=tier`). `nova-sprint friend cards <friend> --json` is every card held on
 a friend's row (working, then ready) with its packet and its `BRIEF.md` as friend sync writes
 it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
 her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
@@ -2138,6 +2142,32 @@ exit 2 and nothing is written.
 
 See [SPEC-CI.md](SPEC-CI.md).
 
+### bench run
+
+`nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>]
+[--cache <dir>] [--with-git] -- <go command>` runs one command on a Linux bench
+against a copy of a local tree, in place of the ssh, rsync and ssh recipe a
+brief used to carry. It makes a fresh run directory under `--root` on the bench
+(`mktemp -d`, default `nova-bench/runs` under the login's home), copies the tree
+into `<run>/repo` (a tar stream this process writes onto ssh's stdin, unpacked
+by the bench's tar; nothing but ssh runs here) with `.git` left out unless
+`--with-git`, runs the command
+there under `nice -n 19` with `GOCACHE` (`--cache`, default
+`nova-bench/cache/go-build`), `GOFLAGS=-mod=readonly` and `NOVA_TEST_NO_HOST=1`,
+streams its output to stdout and stderr as it arrives, and removes the run
+directory it made and nothing else, whether the command passed, failed or was
+interrupted. A `--host` that does not answer (ssh's own exit 255) is passed over
+for `--fallback` with one `CI BENCH PASSED host=<h> reason=<why> next=<h>` line;
+a host that answers is never passed over. The run ends with one line on stderr,
+`CI BENCH host=<h> run=<dir> exit=<n> removed=yes|no`, so stdout is exactly the
+command's. The exit status is the command's own; a run that never reached the
+command (usage, no bench answered, the copy failed) is one `BENCH-RUN REFUSED:`
+line at exit 2. The verb is on internal/tool, so its flags come before `--` and
+every word after the first `--` is the command. Neither bench is guessed: `--host` is required, and
+`--root` and `--cache` are plain paths, relative to the login's home or
+absolute, never `~`, `..`, the home or `/`. For example, `nova-ci bench run
+--host <bench> --fallback <other-bench> --dir . -- go test -count=1 ./cmd/nova-ci/`.
+
 ### github receipt
 
 `nova-ci github receipt --from-runner --redis <addr> --repo owner/name --sha <40hex>
@@ -2863,10 +2893,10 @@ the last good frame and one `store unreachable since <time>` line until recovery
 nova-card is pre-alpha: not ready for production use.
 
 ```
-nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
-nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card lint --card <file> [--card <file>...]
+nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
 nova-card template
 nova-card version
 nova-card help [<verb>]
@@ -2908,8 +2938,12 @@ carries the transcript; `cmd/nova-card/firstrun_test.go` runs it.
 `--from ledger --ledger <name>` reads one of internal/ci's ratchet ledgers from
 the checkout: `serial-tests`, `slowwaits`, `sleeps-skips`, `fixed-waits`
 (flash), `dead-code`, `namedpaths`, `transcripts`, `generality-fixtures` (pro).
-One card per file the rows name; the card's PATHS are the file, its package's
-test files and the ledger; its TEST is the class test that holds the ledger;
+One card per file the rows name; the card's PATHS are computed from its START
+line, never typed: every directory a START file lives in, as its Go files and its
+tests (`<dir>/*.go`, `<dir>/*_test.go`), and the docs the card names (a ledger
+card: the row's file's package, its test's package and the ledger; a findings
+card: the file's package and its test's package; a help card: `cmd/<tool>` and
+`docs/CLI.md`); its TEST is the class test that holds the ledger;
 its task is the ledger's template with the rows substituted, and it says to
 write the draft early and commit before any probe. `--from findings --file
 <tsv>` reads `file:line`, finding, remedy, test columns (a header row is
@@ -2934,7 +2968,9 @@ Every brief is held to the lint `nova-sprint add` runs (the model lines, the
 child rules under the default rule set, a tree card's steps), and past the add
 to the typed header and the template's unfilled `<...>` lines, which the add
 does not read, before anything is written (a sprint initialised with `--rules`
-holds a brief to that file at the add); one red brief prints its
+holds a brief to that file at the add), and to the card checks the add runs
+too: a tier on line 1, a TEST whose package PATHS names, no name `--name` gives
+outside double-quoted words, no card `--dropped` gives; one red brief prints its
 `LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>` line and nothing is
 written, exit 1. A PATHS entry that names nothing in `--repo-dir` is the same
 refusal. An `--out` that already holds a brief is refused, exit 2. `--dry-run`

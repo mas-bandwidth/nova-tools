@@ -16,7 +16,7 @@ const benchRunnerBaseSHA = "ce8631be6"
 
 // benchRunnerAtBase is the site set derived at benchRunnerBaseSHA (the 18
 // rows of the #2932 rev 4 inventory, less the sites since deleted;
-// harvest.SSHPusher moved onto internal/benchsh in the same
+// harvest.SSHPusher moved onto the bench runner in the same
 // build and has no row). It is the allow file's ceiling: every row and every
 // site the rule finds is one of these, so nothing is added after the base. A
 // site retired by #3350 or #3291 leaves the allow file (NOVA_CI_UPDATE=1 drops
@@ -51,7 +51,7 @@ func readBenchRunnerAllow(t *testing.T) *allowlist.List {
 }
 
 // TestCIOneBenchRunner (#2932 control 4): every ssh exec site outside
-// internal/benchsh is a row of testdata/bench-runners.allow, every row is
+// internal/bench is a row of testdata/bench-runners.allow, every row is
 // still a site (the file shrinks as sites retire), and no row is added after
 // the base the inventory was derived at.
 func TestCIOneBenchRunner(t *testing.T) {

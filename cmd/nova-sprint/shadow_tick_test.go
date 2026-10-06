@@ -73,6 +73,7 @@ func TestShadowTickStoreRefusesEveryWrite(t *testing.T) {
 		"Create":         func() error { return ro.Create(ctx, ntable.Table{}) },
 		"RowsAdd":        func() error { return ro.RowsAdd(ctx, "t", []string{"r"}) },
 		"RowsHide":       func() error { return ro.RowsHide(ctx, "t", []string{"r"}) },
+		"RowsShow":       func() error { return ro.RowsShow(ctx, "t", []string{"r"}) },
 		"RowsDel":        func() error { return ro.RowsDel(ctx, "t", []string{"r"}) },
 		"RowsDelIf":      func() error { _, err := ro.RowsDelIf(ctx, "t", nil); return err },
 		"KeysDelIf":      func() error { _, err := ro.KeysDelIf(ctx, "t", nil); return err },

@@ -23,7 +23,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		cli := r.cli()
-		for _, h := range []string{"claude", "cursor"} {
+		for _, h := range []string{"cursor"} {
 			remedy := "run: the adapter card: give internal/friend a deliver command for " + h + " (NewDeliverer), or run the friend under a harness that has one: opencode, codex, antigravity, dsh, gemini, grok"
 			cli.Do(t, "run", "--as", "bob", "--harness", h, "--dir", "/w/bob").Exit(2).
 				Err("RUN REFUSED: no deliver command for "+h, "the daemon did not start", remedy)

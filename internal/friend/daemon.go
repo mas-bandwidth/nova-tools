@@ -123,6 +123,10 @@ type Daemon struct {
 	// read every step so a change takes effect without a restart; nil, or
 	// empty answers, deliver in batch at Width.
 	Row func() (mode string, width int)
+	// Pacing is the row's pacing as the daemon last read it (ParsePacing off its
+	// beat): the fraction of each subscription window the lanes may spend, read
+	// every step; nil, or out of (0, 1], is DefaultPacing (pacing.go).
+	Pacing func() float64
 	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,
 	// WriteLanes over the state files); nil keeps it in memory only.
 	LoadLanes func() (LaneState, error)
@@ -133,14 +137,22 @@ type Daemon struct {
 	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
 	// sprint server); nil stamps none.
 	Progress func(ctx context.Context, cards []Card) error
-	// Finish sends one finish verb to the sprint server (FinishArgv): a lane's card whose
-	// run ended with no REPORT.md (lane_end.go). Nil, or a finish not answered, leaves it to
-	// friend sync, which reads the REPORT.md the lane wrote.
+	// Finish sends one finish verb to the sprint server: a lane's card whose run ended with
+	// no REPORT.md (FinishArgv, lane_end.go), and every working card on her row whose job's
+	// REPORT.md says a verdict, whoever wrote its brief (OutboxFinishArgv, outbox.go). Nil,
+	// or a finish not answered, leaves it to friend sync, which reads the same REPORT.md.
 	Finish func(ctx context.Context, argv []string) error
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
 	Held func(ctx context.Context) (Row, error)
+	// Sprint sends one verb to the sprint server and answers what it printed: the reader row's
+	// queue, begin, verdict and return (read_lanes.go). Nil runs no reads. ReadSlots is the
+	// row's read slots, read each step (nil: DefaultReadSlots), and ReadModel the model of a
+	// read's tier ("": the harness's own).
+	Sprint    func(ctx context.Context, argv []string) (string, error)
+	ReadSlots func() int
+	ReadModel func(tier string) string
 
 	m           *Machine
 	status      Status
@@ -154,6 +166,7 @@ type Daemon struct {
 	heldIDs     []string  // the cards on her row at it
 	heldCards   []HeldCard
 	inboxSaid   map[string]bool // the inbox lines the last reconcile said that are said once while they stand
+	outbox      outboxState     // the outbox jobs finished, tried and noted (outbox.go)
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
@@ -259,10 +272,12 @@ type loop struct {
 	broken, told bool
 	results      chan result
 	lanes        *laneSet
+	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
 	dealt        []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal  string   // the card runner's refusal last recorded, "" when it runs
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -282,7 +297,7 @@ type loop struct {
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
-		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
+		lanes: &laneSet{results: make(chan laneResult, 64)}, reads: newReadSet(), mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
 		l.silentStop = DefaultSilentStop
@@ -320,10 +335,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.batchDone(r, now)
 		case r := <-l.lanes.results:
 			l.laneDone(r, now)
+		case r := <-l.reads.results:
+			l.readDone(r, now)
 		default:
 		}
 		// a change of mode waits for the other mode's turns to end
-		if mode != l.mode && l.busy == nil && !l.lanes.running() {
+		if mode != l.mode && l.busy == nil && !l.lanes.running() && len(l.reads.running) == 0 {
 			d.Record(fmt.Sprintf("%s mode: %s, from %s (the friend row)", now.UTC().Format(time.RFC3339), mode, l.mode))
 			l.mode = mode
 		}
@@ -333,6 +350,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case l.broken:
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
+			l.readStep(now)
 			d.status.Lanes = l.lanes.said(width)
 		case l.busy == nil && len(l.hand) > 0:
 			l.startBatch(now)
@@ -432,7 +450,9 @@ func (l *loop) idle(now time.Time) {
 
 // row is the mode and width the daemon delivers by: the friend's row when
 // Row says it (one-shot needs a harness that opens sessions, LaneHarness,
-// else the daemon delivers in batch and says why once), else batch at Width.
+// else the daemon delivers in batch and says why once; or a CardRunner that
+// can run a card, else its refusal is recorded once and nothing runs), else
+// batch at Width.
 func (l *loop) row(now time.Time) (mode string, width int) {
 	d := l.d
 	mode, width = ModeBatch, d.Width
@@ -449,6 +469,17 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		width = 1
 	}
 	d.status.Width = width
+	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {
+		// a lane per card process: refused, with its remedy, until it can run one
+		why := runner.Refusal()
+		if why != "" && why != l.saidRefusal {
+			d.Record(now.UTC().Format(time.RFC3339) + " mode: one-shot REFUSED: " + why + "; no lane runs")
+		}
+		if l.saidRefusal = why; why != "" {
+			mode = ModeBatch
+		}
+		return mode, width
+	}
 	if mode == ModeOneShot {
 		if _, ok := d.Deliver.(LaneHarness); !ok || l.passive {
 			if !l.saidNoLanes {

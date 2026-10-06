@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // loadPackagesWithJSON loads packages using go list -json to avoid conflicts with -f flag.

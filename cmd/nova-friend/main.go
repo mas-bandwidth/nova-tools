@@ -341,14 +341,20 @@ no beat goes to the sprint server (her row reads down), nothing is delivered, an
 --coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
 nonce from inside the session before she beats again, and the seat is told she is back. The friend
-row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
+row's mode and width come with each beat's answer (row_mode=, row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A lane
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A claude
+lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
+/dev/null, inside the lane wall with the row's config_dir as its --config-dir), its result read from the
+card's outbox; a claude row in one-shot mode with no config_dir (nor --config-dir) is refused on the
+record with the remedy, and no lane runs. A lane
 turn the provider rate-limits (429, "rate limit reached", "too many requests", "input token limit
 exceeded") keeps its card and pauses new lanes for a backoff (30s doubling to 10m), lowers the live lane
 cap by a quarter and raises it one lane per clean 10m, no hold; three lowerings in an hour are one
-blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. Every
+blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. With a sprint server the daemon also serves the friend's reader row (reader-<friend>): every 10s it asks queue --as reader-<friend> --json,
+begins each asked read up to the row's read slots (row_read_slots=, 2 until the beat says; read slots are in addition to width, never taken by cards and never lent to them), writes <dir>/reads/<card>/{READ.md,BRIEF.md,WORKER-REPORT.txt},
+runs it as a one-shot of the harness (a claude account's model by the read's tier) inside the lane wall, and records read --ok|--broken --finding --usage from the RESULT.md, or read --return --reason --usage when it names no verdict or the provider's usage limit stops it. Every
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
 (row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
 --dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that
@@ -360,13 +366,16 @@ dir= state= redis=): no store is opened and nothing is written.`,
 					daemonFlags(f)
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
-					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR)")
+					f.String("config-dir", "", "the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)")
 					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
+						}
+						if d := c.Str("config-dir"); d != "" && !filepath.IsAbs(d) {
+							c.Problem(fmt.Sprintf("--config-dir %q wants an absolute path: CLAUDE_CONFIG_DIR is read as given, never expanded", d))
 						}
 					})
 					f.Prints()
@@ -747,7 +756,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
 	var rowProfile atomic.Pointer[string]
-	wall := friend.Wall{Dir: dir, ConfigDir: c.Str("config-dir"), Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
+	var rowConfigDir atomic.Pointer[string] // her row's config_dir as her beat last answered; read by the lanes' runs and the wall
+	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
 	if bin, err := w.binary(); err == nil {
 		wall.Self = []string{bin}
 	} // else no Self: a lane's child is refused, never run outside the wall
@@ -756,6 +766,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return w.exec(ctx, d, prog, args, stdin)
 		}
 		wl := wall
+		// the wall's config directory: --config-dir, else her row's config_dir, else CLAUDE_CONFIG_DIR
+		if wl.ConfigDir = c.Str("config-dir"); wl.ConfigDir == "" {
+			if d := rowConfigDir.Load(); d != nil && *d != "" {
+				wl.ConfigDir = *d
+			} else {
+				wl.ConfigDir = w.getenv("CLAUDE_CONFIG_DIR")
+			}
+		}
 		wl.Profile = c.Str("profile")
 		if p := rowProfile.Load(); p != nil {
 			wl.Profile = *p
@@ -769,9 +787,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
+	if friend.RunsCards(c.Str("harness")) {
+		deliver = friend.NewClaude(name, dir, fl.Watch(walled), c.Stdout) // a card a process: the adapter with a lane
+	}
 	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike
 	dry := c.DryRun()
-	if o := undriven(c.Str("harness"), dir, "the daemon did not start"); o != nil {
+	// a harness that runs each card as a process of its own (friend.CardRunner) has no session to
+	// push into: no push proof and no session check stand for it (docs/SPEC-FRIEND.md, one-shot lanes)
+	_, perCard := deliver.(friend.CardRunner)
+	if o := undriven(c.Str("harness"), dir, "the daemon did not start"); o != nil && !perCard {
 		return o
 	}
 	if dry {
@@ -786,8 +810,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 			oc.Allow = append(oc.Allow, alias)
 		}
 	}
-	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
+	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
+	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
+	rowReadSlots.Store(friend.DefaultReadSlots)
+	if cl, ok := deliver.(*friend.Claude); ok {
+		cl.Friend = name
+		cl.ConfigDir = func() string {
+			if d := c.Str("config-dir"); d != "" {
+				return d // the override
+			}
+			if d := rowConfigDir.Load(); d != nil {
+				return *d
+			}
+			return ""
+		}
+	}
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
@@ -834,7 +872,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 	defer closeStore()
 	// the push proof: the first SESSION CHECK round trip, before the loop; no pong within
 	// friend.ProofWithin and the daemon does not start (docs/SPEC-FRIEND.md, The push proof)
-	proof, remedy, _ := friend.PushProof(ctx, w.conformance(c, name, c.Str("harness"), state, c.Str("coordinator"), friend.ProofWithin, deliver, st))
+	var proof friend.CheckResult
+	remedy := ""
+	if !perCard {
+		proof, remedy, _ = friend.PushProof(ctx, w.conformance(c, name, c.Str("harness"), state, c.Str("coordinator"), friend.ProofWithin, deliver, st))
+	}
 	if proof.Stage != "" {
 		if ctx.Err() != nil {
 			return tool.Exit(0) // a signal during the proof
@@ -846,7 +888,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		o.Remedy = remedy
 		return o
 	}
-	record(w.now().UTC().Format(time.RFC3339) + " push proof: " + proof.Line())
+	if perCard {
+		record(w.now().UTC().Format(time.RFC3339) + " push proof: none owed: " + c.Str("harness") + " runs each card as a process of its own, no session to push into")
+	} else {
+		record(w.now().UTC().Format(time.RFC3339) + " push proof: " + proof.Line())
+	}
 	// the seat the last ping named, from the daemon's status: whom the session check's answer goes to
 	var seatMu sync.Mutex
 	seat := ""
@@ -895,14 +941,26 @@ func (w world) run(c *tool.Call) *tool.Out {
 		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
 		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
 		Beat: func(ctx context.Context, active time.Time) error {
-			return sc.Beat(fl.Beat(func(ctx context.Context) error {
+			held := sc.Beat // the session's answer holds the beat back; a per-card harness has no session, its process is the daemon
+			if perCard {
+				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
+			}
+			return held(fl.Beat(func(ctx context.Context) error {
 				var pong time.Time
 				if at := proved.Load(); at != nil {
 					pong = *at
 				}
+				if perCard {
+					pong = w.now() // the daemon beating is the proof: nothing else can be asked of a process per card
+				}
 				answer, err := w.beat(ctx, server, name, active, pong)
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
+					dir := friend.RowConfigDir(answer)
+					rowConfigDir.Store(&dir)
+				}
+				if n, ok := friend.ParseReadSlots(answer); err == nil && ok {
+					rowReadSlots.Store(int64(n))
 				}
 				if p, ok := friend.ParseProfile(answer); err == nil && ok {
 					rowProfile.Store(&p)
@@ -917,6 +975,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return rowMode, rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		Sprint:    w.sprintAsk(server),
+		ReadSlots: func() int { return int(rowReadSlots.Load()) },
+		ReadModel: func(tier string) string {
+			if c.Str("harness") == "claude" {
+				return friend.ReadModels[tier] // a tier with none is the account's own model
+			}
+			return ""
+		},
 		Progress: func(ctx context.Context, cards []friend.Card) error {
 			if w.progress == nil {
 				return nil // a world that sends none (a test's)
@@ -971,6 +1037,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
+}
+
+// sprintAsk is the daemon's Sprint: one verb to the sprint server, what it printed; nil in a
+// world that asks none (a test's), which runs no reads.
+func (w world) sprintAsk(server string) func(context.Context, []string) (string, error) {
+	if w.cards == nil {
+		return nil
+	}
+	return func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }
 }
 
 // held is the daemon's Held: the cards on her row, asked of the sprint server each loop, its
@@ -1031,9 +1106,12 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if o := c.Refused(); o != nil {
 		return o
 	}
-	// a harness nothing pushes into is refused before anything is written (friend.PushProof)
-	if o := undriven(c.Str("harness"), c.Str("dir"), "nothing was written or loaded"); o != nil {
-		return o
+	// a harness nothing pushes into is refused before anything is written (friend.PushProof); one that
+	// runs each card as a process of its own (claude) has no session to push into and is not
+	if !friend.RunsCards(c.Str("harness")) {
+		if o := undriven(c.Str("harness"), c.Str("dir"), "nothing was written or loaded"); o != nil {
+			return o
+		}
 	}
 	a, err := w.agent(c)
 	if err != nil {
