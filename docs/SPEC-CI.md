@@ -2997,6 +2997,20 @@ the original failed measurement.
 
 **`secrets-check-reads-fixtures` — the secrets-in-errors check is held against openers whose answer is known.** *The rule.* The check that reads an opener's output for a secret finds an opener that echoes its DSN, one that wraps the secret with `%w`, one that logs it and one that panics with it; it passes an opener that names only a type; it puts the boundary at exactly eight bytes; it does not count a token's public prefix as the secret; each shape's marker is its own; and the comparison of the table with the tree refuses a function the table lacks and a row the tree lacks. *The mistake it prevents.* A check that passes everything reads like cover: a scan that looked in the wrong text, or at the wrong length, would be green over a tree that leaks. *The test.* `TestSecretCheckReadsItsFixtures` (`internal/ci/secrets_in_errors_class_test.go`). *Its allowlist.* None. *Its remedy line.* None of its own; it fails with the assertion that names the case. *Its narrowings.* It holds the check's decisions, not the openers: which functions leak is `TestNoSecretReachesAnError`'s answer.
 
+### never-force-everywhereb-b.w1
+
+**The rule.** Nothing in nova-tools rewrites a shared ref. Every `.go` file, shell script, `Makefile` and `.github/workflows/*.yml` in the repository is read as text and refused for the force-push patterns `push --force`, `push -f`, `--force-with-lease` (unless guarded by `=refs/heads/<local-branch>`), `push origin +` and `reset --hard origin/`; the shared refs are `origin/<anything>`, `dev` and `main`, and the caller's own job branch is the one ref a lease may guard. The verb line is `never-force read every .go, shell script, Makefile and .github/workflows/*.yml; refuse patterns that rewrite shared refs without allowlist entry`.
+
+**The mistake it prevents.** A tool that force-pushes or hard-resets a shared ref rewrites history other workers are building on, losing their commits.
+
+**The test.** `TestNoForcePushOrHardResetOfASharedRef` (`internal/ci/never_force_class_test.go`), with `TestNeverForceVerbLineMatchesTheSpec` holding the verb line above and `TestNeverForceRefusesAForcePushToDev` proving the checker refuses a fixture script that force-pushes `dev`.
+
+**Its allowlist.** `internal/ci/never_force_allowlist.txt`, `file:line kind date reason`, matched by file and kind and shrink-only: a row names a test fixture that asserts the refusal, the checker naming the pattern it refuses, or a private-clone reset to a fetched tip.
+
+**Its remedy lines.** `remedy="remove the force-push pattern; use --force-with-lease=refs/heads/<local-branch> only for local work, never shared refs; cite docs/SPEC-CI.md"`, and `remedy="delete the stale row; the allowlist only shrinks"`.
+
+**Its narrowings.** It reads text, so a pattern in a comment or a string is a finding; a guarded `--force-with-lease=refs/heads/<branch>` is not; `.git`, `testdata` and `vendor` are skipped.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

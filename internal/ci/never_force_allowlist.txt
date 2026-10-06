@@ -1,0 +1,42 @@
+# never_force_allowlist.txt: the legitimate uses of the force-push patterns the
+# never-force class test refuses. One row per site: `file:line kind date reason`.
+# The list only shrinks: fixing a site removes its row, and adding one is a
+# refusal. Every row is a test fixture that asserts the refusal, or the checker
+# and its contract naming the pattern they refuse, per docs/SPEC-CI.md.
+cmd/nova-sprint/lintbrief_test.go:41 push-force 2026-10-06 test fixture: a brief carrying a forbidden force push the linter must refuse
+cmd/nova-swarm/lintchild_test.go:111 push-force 2026-10-06 test fixture: a card carrying a forbidden force push the linter must refuse
+cmd/nova-swarm/slow_test.go:4393 force-with-lease 2026-10-06 test fixture: the push flags the member must never use
+internal/cardcontract/openai_functional_test.go:198 push-force 2026-10-06 test fixture: the force-push line the contract refuses
+internal/cardcontract/shims_functional_test.go:103 force-with-lease 2026-10-06 test fixture: a leased push to a shared branch the contract refuses
+internal/cardcontract/shims_functional_test.go:103 push-force 2026-10-06 test fixture: a force push the contract refuses
+internal/cardcontract/shims_functional_test.go:368 force-with-lease 2026-10-06 test fixture: a leased push the shim allows
+internal/cardcontract/shims_functional_test.go:368 push-force 2026-10-06 test fixture: a force push the shim refuses
+internal/ci/ci_never_force.go:16 force-with-lease 2026-10-06 checker: names the pattern it refuses
+internal/ci/ci_never_force.go:16 push-f 2026-10-06 checker: names the pattern it refuses
+internal/ci/ci_never_force.go:16 push-force 2026-10-06 checker: names the pattern it refuses
+internal/ci/ci_never_force.go:17 push-origin-plus 2026-10-06 checker: names the pattern it refuses
+internal/ci/ci_never_force.go:17 reset-hard-origin 2026-10-06 checker: names the pattern it refuses
+internal/ci/ci_never_force.go:72 force-with-lease 2026-10-06 checker: the pattern regexp it refuses
+internal/ci/ci_never_force.go:224 force-with-lease 2026-10-06 checker: the guarded form it reads as safe
+internal/ci/never_force_class_test.go:16 force-with-lease 2026-10-06 contract test: names the patterns it refuses
+internal/ci/never_force_class_test.go:16 push-f 2026-10-06 contract test: names the patterns it refuses
+internal/ci/never_force_class_test.go:16 push-force 2026-10-06 contract test: names the patterns it refuses
+internal/ci/never_force_class_test.go:17 push-origin-plus 2026-10-06 contract test: names the patterns it refuses
+internal/ci/never_force_class_test.go:17 reset-hard-origin 2026-10-06 contract test: names the patterns it refuses
+internal/ci/never_force_class_test.go:42 push-force 2026-10-06 test fixture: the force push to dev the checker must refuse
+internal/swarm/lint_patterns_block_test.go:24 push-force 2026-10-06 test fixture: a quoted block naming the pattern the linter refuses
+internal/swarm/lint_patterns_block_test.go:47 push-force 2026-10-06 test fixture: an unquoted force push the linter must refuse
+internal/swarm/lint_patterns_block_test.go:52 push-force 2026-10-06 test fixture: a force push outside the block the linter must refuse
+internal/swarm/lintbase_test.go:84 push-force 2026-10-06 test fixture: a card's leased push to its own branch
+internal/swarm/lintchild.go:37 push-force 2026-10-06 linter rule: names the pattern it refuses
+internal/swarm/lintchild.go:177 force-with-lease 2026-10-06 linter rule: names the pattern it refuses
+internal/swarm/lintchild_test.go:291 force-with-lease 2026-10-06 test fixture: the force pushes the linter must refuse
+internal/swarm/lintchild_test.go:291 push-f 2026-10-06 test fixture: the force pushes the linter must refuse
+internal/swarm/lintchild_test.go:291 push-force 2026-10-06 test fixture: the force pushes the linter must refuse
+internal/swarm/lintchild_test.go:291 push-origin-plus 2026-10-06 test fixture: the force pushes the linter must refuse
+internal/swarm/lintchild_test.go:292 push-force 2026-10-06 test fixture: the force pushes the linter must refuse
+internal/swarm/lintchild_test.go:367 push-force 2026-10-06 test fixture: a force push in the template the linter must refuse
+internal/swarm/lintchild_test.go:383 push-force 2026-10-06 test fixture: a force push after a negation the linter must refuse
+internal/swarm/lintchild_test.go:416 push-force 2026-10-06 test fixture: a force push the linter must refuse
+tools/ci/revertonred_test.go:279 push-f 2026-10-06 test fixture: the forced push the revert script must not use
+tools/ci/revertonred_test.go:316 push-f 2026-10-06 test fixture: the forced push fallback the revert script runs
