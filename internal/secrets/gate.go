@@ -47,11 +47,11 @@ func RunGate(in GateInput) (string, int) {
 	}
 	base, err := gateResolveCommit(storeDir, "--base", base)
 	if err != nil {
-		return gateRefuse(0, "", err.Error()), 2
+		return gateRefuse(0, 0, "", err.Error()), 2
 	}
 	head, err = gateResolveCommit(storeDir, "--head", head)
 	if err != nil {
-		return gateRefuse(0, "", err.Error()), 2
+		return gateRefuse(0, 0, "", err.Error()), 2
 	}
 
 	// The registry is read FIRST and read WHOLE, before any judgement leans on it: half a
@@ -59,7 +59,7 @@ func RunGate(in GateInput) (string, int) {
 	// refusal here and never a rule that quietly did not run.
 	fleetSeats, err := gateFleetSeats(in.MachinesPath)
 	if err != nil {
-		return gateRefuse(0, in.MachinesPath, err.Error()), 2
+		return gateRefuse(0, 0, in.MachinesPath, err.Error()), 2
 	}
 
 	changed, err := gitChangedFiles(storeDir, base, head)
