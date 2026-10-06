@@ -438,11 +438,12 @@ observation, however fresh the beat; `FriendDownWhy` says `her beat says down un
 the reason, then up; `TestFriendBeatDownUntilCarriesTheReasonAndTheUntil`
 (cmd/nova-sprint) the row.
 
-Owed, outside this card's paths: the sprint server's beat lane takes only the flags
-`friendBeatFlags` names (`cmd/nova-sprint/serve.go`: `--running --working --queue
---width --load --active --pong`), so until `--until` (an RFC3339 time) and
-`--reason` are added there, a down beat sent to the server is refused, and the
-daemon reads that refusal as no beat: her row reads down by the lapse, as before.
+The sprint server's beat lane takes the down beat: `friendBeatFlags`
+(`cmd/nova-sprint/serve.go`) names `--until` (an RFC3339 time) and `--reason` (not
+empty, one line, no control character) beside `--running --working --queue --width
+--load --active --pong`, each once with its value; any other shape is refused, exit 2,
+nothing changed (`TestTheServerTakesAFriendsDownBeat`). Before this (r7.w1) the lane
+refused the down beat and her row read down only by the lapse.
 The table's status cell shows reason and until for a hold and an observation only
 (`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
 report and in why she is down.
