@@ -882,20 +882,29 @@ func TestTheEnvelopeNamesWhatDidNotFit(t *testing.T) {
 	text, shown := Envelope(msgs, now, "bob", 300, "", "")
 	assert.Equal(t, 1, shown)
 	assert.Contains(t, text, head(1, 3, msgs[0], 10)+strings.Repeat("x", 200)+"\n")
-	assert.Contains(t, text, "\nand 2 more: nova-bus recv --as bob --all\n"+head(2, 3, msgs[1], 9)+head(3, 3, msgs[2], 8))
+	assert.True(t, strings.HasSuffix(text, "\nand 2 more: nova-bus recv --as bob --all\n"), "the first message alone passes the limit: only the count line follows it: %q", text)
 	assert.NotContains(t, text, "\ny\n")
-	assert.LessOrEqual(t, len(text), 300)
+
+	text, shown = Envelope(msgs, now, "bob", 460, "", "")
+	assert.Equal(t, 2, shown)
+	assert.LessOrEqual(t, len(text), 460)
+	assert.True(t, strings.HasSuffix(text, "\nand 1 more: nova-bus recv --as bob --all\n"), "the id line does not fit, the count line does: %q", text)
 
 	many := make([]bus.Message, 20)
 	for i := range many {
 		many[i] = bus.Message{ID: fmt.Sprintf("n%02d", i), From: "ada", At: t0.Add(time.Duration(i) * time.Second), Subject: "s", Body: "b"}
 	}
-	for _, limit := range []int{400, 500, 700, 1000} {
+	named := 0
+	for limit := 400; limit <= 1000; limit += 7 {
 		text, shown = Envelope(many, now, "bob", limit, "", "")
 		assert.LessOrEqual(t, len(text), limit, "limit %d, shown %d", limit, shown)
 		assert.Less(t, shown, len(many))
 		assert.Contains(t, text, fmt.Sprintf("and %d more: nova-bus recv --as bob --all\n", len(many)-shown))
+		if strings.Contains(text, fmt.Sprintf("[%d/20] n%02d ", shown+1, shown)) {
+			named++
+		}
 	}
+	assert.Positive(t, named, "where the limit allows, the rest are named by id after the count")
 
 	text, shown = Envelope(msgs, now, "bob", 0, "", "")
 	assert.Equal(t, 3, shown, "no limit: every message")
