@@ -83,7 +83,7 @@ func parseRun(args []string) (runConfig, error) {
 	fs.StringVar(&c.gocache, "gocache-volume", "", "")
 	fs.StringVar(&c.gomod, "gomod-volume", "", "")
 	fs.BoolVar(&c.freshGocache, "fresh-gocache", false, "")
-	fs.StringVar(&c.podman, "podman", "podman", "")
+	fs.StringVar(&c.podman, "podman", "", "")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -168,7 +168,7 @@ func parseReap(args []string) (reapConfig, error) {
 	var c reapConfig
 	fs.DurationVar(&c.grace, "grace", 30*time.Second, "")
 	fs.BoolVar(&c.dryRun, "dry-run", false, "")
-	fs.StringVar(&c.podman, "podman", "podman", "")
+	fs.StringVar(&c.podman, "podman", "", "")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
