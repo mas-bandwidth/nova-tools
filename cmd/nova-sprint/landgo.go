@@ -53,7 +53,9 @@ func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...str
 		env = os.Environ()
 	}
 	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append([]string{readonlyGoFlags(env)}, set...)...)
-	out, err := b.Cmd.CombinedOutput()
+	// the group carries the compiled test binary a `go test` starts, and the
+	// record is what a later run's start reads (landproc.go)
+	out, err := landChildOutput(b.Cmd, landGatesDir(l.root), true)
 	return string(out), b.Wrap(strings.Join(run, " "), err)
 }
 
