@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -553,8 +554,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				if v := costs[pr.ID][FieldCostTotal]; v != "" {
 					at = withField(pr, FieldCostTotal, v)
 				}
-				if bb, ok := AtBriefBound(at, r.Finding, s.AttemptsCap(pr.Row)); ok {
-					// the same finding as the attempt before, or too many attempts on one brief:
+				if bb, ok := briefStopAt(s, at, c.Row, r.Finding); ok {
+					// the same finding as the attempts before (briefStopAt: the same reader class,
+					// file and line, two in a row by default), or too many attempts on one brief:
 					// the brief is wrong, not the worker, and the judgment offers brief and drop
 					// (brief_bound.go)
 					n = judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
@@ -1033,10 +1035,10 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				continue
 			}
 		}
-		// the brief's bound: the same finding twice, or too many attempts on one brief, and
-		// the brief is wrong, not the worker; a --fix changes the brief not at all, so it does
-		// not lift it (brief_bound.go)
-		if bb, ok := AtBriefBound(c, brokenFindings(s, c), s.AttemptsCap(c.Row)); ok {
+		// the brief's bound: the same finding twice (briefStopAt), or too many attempts on one
+		// brief, and the brief is wrong, not the worker; a --fix changes the brief not at all,
+		// so it does not lift it (brief_bound.go)
+		if bb, ok := briefStopAt(s, c, finderOf(s, c), brokenFindings(s, c)); ok {
 			p.refuse(c.ID, bb.Why())
 			stays()
 			continue
@@ -1079,6 +1081,12 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		if lines := findingsOf(c, c.Int("attempt"), found); len(lines) > 0 {
 			set[FieldFindings] = findingsLine(lines)
+		}
+		// and its key, which the identical-finding bound compares (FindingKey): the reader
+		// who found it, none for failed work
+		if k := FindingKey(finderOf(s, c), found); k != "" {
+			keys := slices.DeleteFunc(strings.Split(c.F(FieldFindingKeys), "\n"), func(l string) bool { return l == "" })
+			set[FieldFindingKeys] = findingsLine(append(keys, "attempt "+c.F("attempt")+": "+k))
 		}
 		// the reader who found it broken checks the fix: the next attempt's first read is
 		// asked of them (Ask, finderFirst); a rework of failed work names none
@@ -1248,6 +1256,183 @@ func brokenFindings(s *Snapshot, c *Card) string {
 		}
 	}
 	return strings.Join(found, "; ")
+}
+
+// The bound is two identical findings (docs/SPEC-SPRINT.md, "The brief is wrong, not
+// the worker"; the card the-bound-is-two-identical-findings, after the night of
+// 2026-10-05 in which cards with the fix first in their brief still ran three and four
+// lanes on one finding, reworded each time, before the attempt cap stopped them). Two
+// findings are identical when the same class of reader names the same file and line
+// (FindingKey); a finding that names no file and line keeps the whole-text class
+// (FindingClass). The second attempt on one brief that comes back with the finding the
+// attempt before it came back with stops the card at once, the brief defect raised
+// carrying both findings; the attempt cap (AttemptsCap) stays only for findings that
+// differ. How many identical findings in a row stop a card is a setting
+// (IdenticalBound), 2 by default.
+
+// PropIdentical is the work table's property holding the sprint's identical-finding
+// bound, FieldIdentical a stream's control card field holding the stream's, over the
+// sprint's; IdenticalDefault is the bound when neither is set. A value under 2 is no
+// setting: one finding is never a repeat.
+const (
+	PropIdentical    = "identical"
+	FieldIdentical   = "identical"
+	IdenticalDefault = 2
+)
+
+// FieldFindingKeys is the primary's list of each attempt's finding key (FindingKey),
+// one line an attempt ("attempt <n>: <key>"), appended by Rework beside FieldFindings and
+// cut the same way: what the identical-finding bound reads back past the attempt before.
+const FieldFindingKeys = "finding_keys"
+
+// IdenticalBound is how many identical findings in a row on one brief stop a card in
+// the stream: the stream's setting, else the sprint's, else IdenticalDefault.
+func (s *Snapshot) IdenticalBound(stream string) int {
+	if s.Merge != nil {
+		if n := s.StreamCtl(stream).Int(FieldIdentical); n >= 2 && n <= AttemptsMax {
+			return n
+		}
+	}
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropIdentical); ok {
+			if n, err := ParseAttempts(v); err == nil && n >= 2 {
+				return n
+			}
+		}
+	}
+	return IdenticalDefault
+}
+
+// findingAt matches the first file and line a finding names (internal/sprint/state.go:31), a
+// leading ./ not part of it.
+var findingAt = regexp.MustCompile(`(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z0-9]+:[0-9]+`)
+
+// FindingKey is what makes two findings identical: the reader's class and the first
+// file and line the finding names, "<reader> at <file>:<line>"; a finding that names
+// no file and line is its whole-text class (FindingClass), whoever found it. The
+// reader's class is its row of the readers table, case folded: one reader is one
+// class of reader, and a friend's row (friend.<name>) is hers; a finding with no
+// reader (the report of failed work) is the class "work". "" for an empty finding.
+func FindingKey(reader, finding string) string {
+	at := findingAt.FindString(finding)
+	for strings.HasPrefix(at, "./") {
+		at = at[len("./"):]
+	}
+	if at == "" {
+		return FindingClass(finding)
+	}
+	class := strings.ToLower(strings.TrimSpace(reader))
+	if class == "" {
+		class = "work"
+	}
+	return class + " at " + at
+}
+
+// IdenticalFindings is a primary stopped by the identical-finding bound: the attempts
+// that came back with the one finding (Attempts, in order, Bound of them) and what
+// each of them found (Findings, one an attempt, as said).
+type IdenticalFindings struct {
+	ID       string
+	Key      string
+	Attempts []int
+	Findings []string
+	Bound    int
+}
+
+// String is the bound said in one line: the attempts, the key and every finding, then
+// the verdict. A key of whole text at the default bound is said as the brief's bound
+// has always said it (BriefBound): the first finding, the second the same class.
+func (b IdenticalFindings) String() string {
+	first, last := b.Attempts[0], b.Attempts[len(b.Attempts)-1]
+	if findingAt.FindString(b.Key) == "" && len(b.Attempts) == 2 {
+		return BriefBound{ID: b.ID, Attempts: [2]int{first, last}, Finding: firstSentence(b.Findings[0])}.String()
+	}
+	times := "twice"
+	if len(b.Attempts) > 2 {
+		times = itoa(len(b.Attempts)) + " times"
+	}
+	var each []string
+	for i, f := range b.Findings {
+		each = append(each, "attempt "+itoa(b.Attempts[i])+": "+firstSentence(f))
+	}
+	return fmt.Sprintf("%s has failed the same way %s (attempts %d to %d, the same finding: %s); the brief is wrong, not the worker; findings: %s",
+		b.ID, times, first, last, b.Key, strings.Join(each, "; "))
+}
+
+// Why is the rework's refusal of a card at the bound: the line, and the remedy.
+func (b IdenticalFindings) Why() string {
+	return b.String() + "; " + BriefBound{ID: b.ID}.Remedy()
+}
+
+// briefStop is why a primary's brief is wrong: BriefBound (the attempt cap) or
+// IdenticalFindings.
+type briefStop interface {
+	String() string
+	Why() string
+}
+
+// AtIdenticalFindings is whether the primary c, whose readers (reader, the first that
+// found it broken; "" for failed work) found finding at its current attempt, has come
+// back with that finding at bound attempts in a row since its brief last changed. The
+// attempts before are read from the primary: its FieldFindingKeys, and for the attempt
+// its `finding` carries (FieldFindingAttempt) with no key kept, the key of that finding
+// and its reader (FieldFindingReader).
+func AtIdenticalFindings(c *Card, reader, finding string, bound int) (IdenticalFindings, bool) {
+	attempt, briefAt := c.Int("attempt"), c.Int(FieldBriefAttempt)
+	key := FindingKey(reader, finding)
+	if attempt == 0 || key == "" {
+		return IdenticalFindings{}, false
+	}
+	if bound < 2 {
+		bound = IdenticalDefault
+	}
+	keys, said := map[int]string{}, map[int]string{}
+	for _, l := range strings.Split(c.F(FieldFindingKeys), "\n") {
+		var n int
+		if head, k, ok := strings.Cut(l, ": "); ok {
+			if _, err := fmt.Sscanf(head, "attempt %d", &n); err == nil && n > 0 {
+				keys[n] = k
+			}
+		}
+	}
+	for _, l := range strings.Split(c.F(FieldFindings), "\n") {
+		var n int
+		if head, f, ok := strings.Cut(l, ": "); ok {
+			if _, err := fmt.Sscanf(head, "attempt %d", &n); err == nil && n > 0 {
+				said[n] = f
+			}
+		}
+	}
+	if prev, prevAt := c.F("finding"), c.Int(FieldFindingAttempt); prev != "" {
+		if prevAt == 0 {
+			prevAt = attempt - 1
+		}
+		if _, ok := keys[prevAt]; !ok {
+			keys[prevAt] = FindingKey(c.F(FieldFindingReader), prev)
+		}
+		said[prevAt] = prev
+	}
+	b := IdenticalFindings{ID: c.ID, Key: key, Bound: bound, Attempts: []int{attempt}, Findings: []string{finding}}
+	for a := attempt - 1; a > briefAt && len(b.Attempts) < bound && keys[a] == key; a-- {
+		b.Attempts = append([]int{a}, b.Attempts...)
+		b.Findings = append([]string{said[a]}, b.Findings...)
+	}
+	return b, len(b.Attempts) >= bound
+}
+
+// briefStopAt is the primary's brief's bound, the identical-finding bound first: its
+// readers' finding at its current attempt (reader the first that found it broken) the
+// same as the attempts before it, as many as the stream's IdenticalBound, else the
+// attempt cap's attempts on one brief (AtBriefBound, its own whole-text repeat taken
+// over by the bound here, so a setting above 2 holds for it too).
+func briefStopAt(s *Snapshot, c *Card, reader, finding string) (briefStop, bool) {
+	if b, ok := AtIdenticalFindings(c, reader, finding, s.IdenticalBound(c.Row)); ok {
+		return b, true
+	}
+	if bb, ok := AtBriefBound(withField(c, "finding", ""), finding, s.AttemptsCap(c.Row)); ok {
+		return bb, true
+	}
+	return nil, false
 }
 
 // MaxCardTextBytes bounds each text field a card carries, the brief excepted (the store
