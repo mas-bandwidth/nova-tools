@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,14 +14,16 @@ import (
 
 // A friend's daemon beats down through the sprint's server while her harness is at its
 // limit (friend beat <me> --until <RFC3339> --reason <text>, limits-mean-down-w-r7.w1~15):
-// the server runs it, her row reads down with the pair, and a beat without --until has her
-// up again. An --until that is no time and a --reason that is empty or more than one line
+// the server runs it, her row reads down with the pair over a wake ping her session
+// answered, and a beat without --until withdraws the word, so that pong has her up again
+// (a beat alone never does: presence-from-session-only). An --until that is no time and a --reason that is empty or more than one line
 // are refused, exit 2, and change nothing.
 func TestTheServerTakesAFriendsDownBeat(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2")
 	r.a.friends = friendRows("amy")
 	r.boss("nova-sprint friend sync --root " + t.TempDir())
+	r.pong("amy")
 
 	until := r.a.now().Add(time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
 	active := r.a.now().UTC().Truncate(time.Second).Format(time.RFC3339)
@@ -49,7 +52,17 @@ func TestTheServerTakesAFriendsDownBeat(t *testing.T) {
 	res = r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.NotContains(t, res.Stdout, "down=true")
-	assert.Equal(t, "up", r.friendRow("amy").Status, "a beat without --until is up again")
+	assert.Equal(t, "up", r.friendRow("amy").Status, "a beat without --until withdraws the word: her session's pong has her up again")
+}
+
+// pong is a wake ping the friend's session answered, as the coordinator writes it on the
+// server's line: friend health --state up at the clock now, by the seat's holder at its
+// generation.
+func (r *serverRig) pong(friend string) {
+	r.t.Helper()
+	var s seatJSON
+	require.NoError(r.t, json.Unmarshal([]byte(r.boss("nova-sprint seat --json")), &s))
+	r.boss(fmt.Sprintf("nova-sprint friend health %s --state up --seen %s --generation %d --actor %s", friend, r.a.now().UTC().Format(time.RFC3339), s.Generation, s.Holder))
 }
 
 // friendRow is the named friend's row as where --json gives it, read on the server's line.

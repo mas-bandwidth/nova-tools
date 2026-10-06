@@ -119,16 +119,15 @@ value of the wrong shape is refused, exit 2; a friend not in the record is
 refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). Her status is the friends' rule (`sprint.FriendStatus`):
 `held` while the coordinator holds her (`hold <friend> --reason <text>`,
 section 11, and `friend down`; `unhold <friend>` and `friend up` release the
-hold), whatever she beats or the coordinator observes; else, once the
-coordinator has observed her (`friend health`, below), the observation's word
-alone, `up` or `down`, and never her beat again while the observation stands; else `up` while her last beat
-is under `FriendDownAfter` (15 s) old; else `down`, and `down` when she has
-never beaten (`friend down` holds her and shows `held`, never `down`). An
-observation stands until it is removed: `friend health <friend> --clear` (the
-seat's holder) and the stall ladder's release (section friend-stall-ladder-r.w1)
-remove it, and her status is her beat rule again. A beat
-wakes an unobserved friend at once. `friend up` is not a beat: a friend
-released with no beat in the last 15 s is `down` until she beats. `friend up
+hold), whatever she beats or the coordinator observes; else `up` only on
+evidence from her own session (docs/SPEC-FRIEND.md, "Presence is her
+session's evidence"): a wake ping her session answered (`friend health --state
+up`, below) under `FriendPongWindow` (10 minutes) old, or a card of hers
+finished under `FriendFinishWindow` (30 minutes) old; else `down` (`friend
+down` holds her and shows `held`, never `down`). Her beat is recorded and
+never evidence, whoever sends it; `where --json` names the evidence and its
+age (`friends[].evidence`). `friend up` is no evidence: a friend released with
+none in its window is `down` until her session gives some. `friend up
 <friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
 sets a machine's, until `friend sync` sets her nova-config row's again (a
 release without it leaves the width as it is;
@@ -261,26 +260,17 @@ the word, `seen`, `generation`, the counts, the reason and the until; `where
 width, status, replayed}`.
 
 The table's word from an observation (`sprint.ObservedStatus`): `up` only when
-the observation says `up`, under the seat's generation now, with its proof
-under `FriendObservedDownAfter` (10 s) old and not dated after now (a negative
-age is no proof); `down` otherwise, at exactly ten
-seconds, under any other generation (an old seat's proof never looks up under
+the observation says `up` (her session answered a wake ping), under the seat's
+generation now, with its proof under `FriendPongWindow` (10 minutes) old and
+not dated after now (a negative age is no proof); `down` otherwise, at exactly
+ten minutes, unless a card of hers finished under `FriendFinishWindow` (30
+minutes) old (docs/SPEC-FRIEND.md, "Presence is her session's evidence"),
+under any other generation (an old seat's proof never looks up under
 a new seat, and no fallback to her beat once observed), and for every finer
 word the row keeps (`asleep` is the daemon's, shown as `down`). The first
 valid observation makes her `up` at once. Her own `friend beat` stays what it
-is, the friend's own beat, and once she is observed it decides nothing: the
-observation wins the word. No observation holds a friend: `held` is `friend
-down` by the seat alone, lifted by `friend up`. `friend health <friend> --clear`
-(the seat's holder alone, refused otherwise with nothing written; `--dry-run`
-says what stood and writes nothing; no observation's flag beside it) removes
-her observation (`friend-health:<f>`, by the step's commit,
-`OpRecord.HealthClear`), and her status falls back to her beat rule: `FRIEND-HEALTH
-OK <friend> cleared=true was=<word|none> status=<up|held|down>`, `--json`
-`{friend, cleared, was, status}`; a friend with no observation is cleared all
-the same (`TestFriendHealthClearFallsBackToHerBeat`). It is the way back for a
-friend observed once with no keepalive renewing it, whom her own beat would never
-bring up again (2026-10-05: one write by the stall ladder's release held
-working friends down). The model is
+is, the friend's own beat, and it decides nothing, observed or not. No observation holds a friend: `held` is `friend
+down` by the seat alone, lifted by `friend up`. The model is
 `tla/SeatHealth.tla` (six reversed witnesses); the tests
 `TestAProofDatedAfterTheServersClockIsRefused`,
 `TestHealthIsFencedBySeatHolderAndGeneration`,
@@ -310,7 +300,7 @@ checks the selection and the hard pin; the reversed only witness permits fallbac
 and violates `OnlyToItsFriend`. The tick reads the friends' roster before each pump,
 because a queued change can make work ready in the same tick. The tick's deal offers
 ready work, in the deal's stream turns, to a
-friend up (the friends' rule: not held, a beat within 15 s) below her room: in
+friend up (the friends' rule: not held, with evidence from her own session) below her room: in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, count against it; the owner,
@@ -912,16 +902,16 @@ showed both friends up; `sprint.takeSeat`, `sprint.FriendDownWhy`). A friend's
 fleet row has no control card status: only a machine's has one, written by the
 tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
 (`take --as friend.<f>`, her own or her daemon's through the server) is
-admitted by `FriendStatus`, the friends table's word: up by her beat within
-`FriendDownAfter` with a live session proof, or by the coordinator's
-observation. `TakeStep` reads the friends' seats when it names a friend's row.
+admitted by `FriendStatus`, the friends table's word: up only on evidence from
+her own session (a wake ping her session answered within `FriendPongWindow`, or
+a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
+"Presence is her session's evidence"), never on her beat. `TakeStep` reads the friends' seats when it names a friend's row.
 Her take is held to her width (1 in one-shot mode), as a machine's is to its
 own. It is refused only when she is not up, and the refusal names why: "friend
 <f> is held: held by the coordinator (friend down)[: <reason>]", "friend <f>
-is down: observed <word> by the coordinator (friend health)" (or an
-observation under an older seat generation, or one too old), "friend <f> is
-down: silent: no beat for <age>, past 15s", "friend <f> is down: she has never
-beaten", or her session's proof lapsed; a friend not on the roster is "no
+is down: her beat says down until <t>: <reason>", or "friend <f> is down: no
+session evidence: ..." naming the wake ping and the finish she lacks, the age of
+the last of each, and her beat's age as no evidence (`sprint.FriendEvidence`); a friend not on the roster is "no
 friend <f> on the roster". A machine's take keeps its control card's rule
 ("member <m> is <status>"). The model is `tla/FriendPresence.tla` (`Take`,
 `TakeOnlyWhenUp`, `ReadyTakenWhileUp`, and the reversed witness `ctlstatus`,
@@ -3753,13 +3743,13 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); `up <member> --deadline <duration|default>` pins the deadline every card dealt to the member gets, or takes the pin off (section 5, the deadline by machine); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (her cards wait ready), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a friend keeps her cards, a stream's working cards finish. `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a friend's cards and a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back the cards she has not started (`--until` and her started cards' NOTE lines are its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold |
-| unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's and a friend's state is then their beat's; a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
+| unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's state is then its beat's and a friend's her session's evidence (a wake ping her session answered, or a card of hers finished, within its window); a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1); `--every <d>` loops as the seat each pass, and `friend sync install --every <d>` / `friend sync uninstall` put that loop in place as this machine's service ("Handing over the seat") |
 | friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
-| friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready and a card she has started finishes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (not a beat: `down` until she beats or is observed up; `--width <n>` sets her width) |
+| friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her she has not started goes back to ready and a card she has started finishes; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (no evidence: `down` until her session answers a wake ping or she finishes a card; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
 | friend level | even the ready queues of the friends up, idle lanes first and by the card's tier, as fleet level evens the members'; the tick runs it too (friend-deal-idle-lanes-first.w1) |
 | friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer; `friend health <friend> --clear [--dry-run]` removes her observation, so her status falls back to her beat rule |
@@ -4760,10 +4750,10 @@ configurable via `nova-sprint set --friend-stall-step`):
    `up` by the tick itself at her first activity after it (session, running beat or
    finish; never card progress alone): the release clears the stall properties, sets her
    fleet row `up`, and removes the coordinator's observation of her (`p.HealthClear`, the
-   same removal as `friend health --clear`), writing none, so her status falls back to her
-   beat rule (`sprint.FriendStatus`). It once wrote an `up` observation: that stood for
-   `FriendObservedDownAfter` (10 s) and then held her `down` for good, since nothing renews
-   an observation every ten seconds and her own beat never brings an observed friend up.
+   same removal as `friend health --clear`), writing none, so her status is her session's
+   evidence alone (`sprint.FriendStatus`). It once wrote an `up` observation: that read as a
+   wake ping her session answered, which it never was, and her status rests on her
+   session's evidence only.
 
 Every rung emits a happened note (`Kind: Happened`, `Type: "friend stall"`). Any activity
 or card progress resets her to rung 0.

@@ -1119,9 +1119,10 @@ func Take(s *Snapshot, r TakeReq) Plan {
 // takeSeat is the width a take for as is held to, or why it takes nothing. A machine
 // takes while its control card says up, to its width. A friend's row has no control card
 // status (only a machine's has; docs/SPEC-SPRINT.md section 1, a take for a friend): she
-// takes while FriendStatus says up, as the snapshot's friend seats carry it (her beat, or
-// the coordinator's observation), to her width (1 in one-shot mode), and is refused when
-// she is held, observed down, or silent past FriendDownAfter, the refusal naming which.
+// takes while FriendStatus says up, as the snapshot's friend seats carry it (her session's
+// evidence: a wake ping her session answered, or a card of hers finished), to her width
+// (1 in one-shot mode), and is refused when she is held, her beat says down, or her session
+// has given no evidence within its window, the refusal naming which (FriendDownWhy).
 // The model is tla/FriendPresence.tla (Take, TakeOnlyWhenUp, ReadyTakenWhileUp; the
 // witness "ctlstatus" is the control card read that refused every friend up).
 func takeSeat(s *Snapshot, as string) (width int, why string) {

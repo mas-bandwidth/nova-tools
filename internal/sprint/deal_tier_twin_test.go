@@ -41,6 +41,8 @@ func TestADealtPacketAlwaysNamesItsTier(t *testing.T) {
 	r.must(store.BriefStep(sprint.BriefReq{ID: "s1-3", Tier: "pro", Who: "coordinator"}))
 	_, err = r.st.FriendBeat(r.ctx, "fay")
 	require.NoError(t, err)
+	_, _, _, err = r.st.FriendHealth(r.ctx, "fay", "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: r.st.Now(), Generation: sprint.FirstSeatGeneration}, "")
+	require.NoError(t, err)
 	r.tick()
 
 	s := r.snap()

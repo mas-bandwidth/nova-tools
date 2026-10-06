@@ -765,6 +765,12 @@ func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p
 		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
 		return false, nil
 	}
+	// a finish from the report her session wrote is her session's evidence: her row reads up
+	// on it for sprint.FriendFinishWindow (docs/SPEC-FRIEND.md, "Presence is her session's
+	// evidence"); a record not written costs her that, never the finish
+	if err := st.FriendFinished(ctx, name, a.now()); err != nil {
+		say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the finish is not recorded as her evidence: %s", name, p.Card, oneline.Escape(err.Error())))
+	}
 	result := "ok"
 	if r.Failed {
 		result = "failed"
