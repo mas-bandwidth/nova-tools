@@ -111,6 +111,44 @@ func (s *Snapshot) FriendStallStep() time.Duration {
 	return FriendStallStepDefault
 }
 
+// TestProcsPerWidth is the default cap on live processes whose name ends in
+// .test: four times the member's width. A count over it is one judgment
+// (NRunawayTests) for the episode.
+const TestProcsPerWidth = 4
+
+// PropTestProcs is the work table's property: that cap as a whole number, in
+// place of four times the width, when it is set.
+const PropTestProcs = "test_procs"
+
+// RunawayTestLimit is how many live test processes a fresh beat may report
+// before the tick raises NRunawayTests. It is the work table's test_procs
+// when that property is a whole number above zero, otherwise TestProcsPerWidth
+// times the member's width. A machine's width is its fleet row's; a friend's
+// is her fleet row's (friend.<name>). A width below 1, and a name with no
+// row, counts as 1, so the episode can end.
+func (s *Snapshot) RunawayTestLimit(name string) int {
+	w := 1
+	if s != nil && s.Fleet != nil {
+		switch {
+		case s.Fleet.HasRow(name):
+			w = s.Width(name)
+		case s.Fleet.HasRow(FriendRow(name)):
+			w = s.Width(FriendRow(name))
+		}
+	}
+	if w < 1 {
+		w = 1
+	}
+	if s != nil && s.Work != nil {
+		if v, ok := s.Work.Prop(PropTestProcs); ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return TestProcsPerWidth * w
+}
+
 // readTierSetting is the read tier set for the stream's reads: the stream's own,
 // else the sprint's, else "" (each card's own tier).
 func (s *Snapshot) readTierSetting(stream string) string {

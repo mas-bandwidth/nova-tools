@@ -51,7 +51,7 @@ the same way and removed (its row and width out of the fleet) once no card stays
 on it, and comes back when its machine row does; nothing else changes, and a
 second sync writes nothing. --check
 prints the drift and writes nothing: exit 0 none, 2 some, 3 the config cannot
-be read.`) + "\n"
+be read. --tests <n> records how many live processes on the machine have a name ending in .test, and --oldest <pid> the parent pid of the oldest of them. A count over four times the member's width is one judgment for the episode, closed when a later beat's count is under half that.`) + "\n"
 }
 
 // readerWords is how a reader's state comes about, in nova-sprint help and
@@ -118,12 +118,88 @@ type beatReport struct {
 	Last   float64   `json:"last"`
 	How    string    `json:"how"`
 	Cores  int       `json:"cores"`
+	Tests  int       `json:"tests,omitempty"`
+	Oldest int       `json:"oldest,omitempty"`
+}
+
+// beatKV is the store's record read and write, the part a beat's test-process
+// count is patched through after the beat itself is written.
+type beatKV interface {
+	GetKey(context.Context, string) (string, bool, error)
+	SetKey(context.Context, string, string) error
+}
+
+// parseTestCount reads --tests and --oldest. set is false when --tests was
+// omitted. --oldest without --tests is refused, and so is a negative count.
+func parseTestCount(tests, oldest string) (n, pid int, set bool, err error) {
+	if oldest != "" && tests == "" {
+		return 0, 0, false, fmt.Errorf("--oldest names the oldest parent pid, and wants --tests")
+	}
+	if tests == "" {
+		return 0, 0, false, nil
+	}
+	v, conv := strconv.Atoi(tests)
+	if conv != nil || v < 0 {
+		return 0, 0, false, fmt.Errorf("--tests wants a whole number of at least 0, found %s", oneline.Escape(tests))
+	}
+	if oldest != "" {
+		p, conv := strconv.Atoi(oldest)
+		if conv != nil || p < 1 {
+			return 0, 0, false, fmt.Errorf("--oldest wants a pid of at least 1, found %s", oneline.Escape(oldest))
+		}
+		pid = p
+	}
+	return v, pid, true, nil
+}
+
+// stampTestsOn writes the test-process count onto the beat record key.
+// friend forces an empty friend report when the record has none, so the tick
+// sees a friend's count.
+func stampTestsOn(ctx context.Context, b store.Backend, key string, tests, oldest int, friend bool) error {
+	kv, ok := b.(beatKV)
+	if !ok {
+		return fmt.Errorf("this store keeps no beat records")
+	}
+	raw, ok, err := kv.GetKey(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no beat record to count test processes on")
+	}
+	stamped, err := sprint.StampTests(raw, tests, oldest, friend)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, key, stamped)
+}
+
+// keptTestCount is the count already on key, when it is above zero or names a pid.
+func keptTestCount(ctx context.Context, b store.Backend, key string) (tests, oldest int, ok bool, err error) {
+	kv, is := b.(beatKV)
+	if !is {
+		return 0, 0, false, nil
+	}
+	raw, found, err := kv.GetKey(ctx, key)
+	if err != nil || !found {
+		return 0, 0, false, err
+	}
+	var beat sprint.Beat
+	if err := json.Unmarshal([]byte(raw), &beat); err != nil {
+		return 0, 0, false, err
+	}
+	if beat.Tests == 0 && beat.Oldest == 0 {
+		return 0, 0, false, nil
+	}
+	return beat.Tests, beat.Oldest, true, nil
 }
 
 func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("fleet beat")
 	load := fs.String("load", "", "the load as a percent of all the machine's cores, instead of measuring it (a test's, or another meter's)")
 	cores := fs.Int("cores", 0, "the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half")
+	tests := fs.String("tests", "", "live processes whose name ends in .test")
+	oldest := fs.String("oldest", "", "the parent pid of the oldest such process")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
@@ -142,6 +218,10 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if *cores < 0 {
 		return refuse(stderr, "fleet beat", fmt.Sprintf("--cores wants a count of logical cores of at least 1, found %d", *cores))
 	}
+	nTests, nOldest, setTests, err := parseTestCount(*tests, *oldest)
+	if err != nil {
+		return refuse(stderr, "fleet beat", err.Error())
+	}
 	src := a.meter
 	if *cores > 0 {
 		src.NCPU = *cores
@@ -156,15 +236,28 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
+	if setTests {
+		if err := stampTestsOn(context.Background(), st.B, sprint.BeatRecordKey(pos[0]), nTests, nOldest, false); err != nil {
+			fmt.Fprintf(stderr, "%s fleet beat: the beat was written and the test-process count was not: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
 	last := 0.0
 	if n := len(b.Samples); n > 0 {
 		last = b.Samples[n-1].Pct
 	}
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Tests: nTests, Oldest: nOldest})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
-	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d\n", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
+	line := fmt.Sprintf("FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
+	if setTests {
+		line += fmt.Sprintf(" tests=%d", nTests)
+		if nOldest > 0 {
+			line += fmt.Sprintf(" oldest=%d", nOldest)
+		}
+	}
+	fmt.Fprintln(stdout, line)
 	return 0
 }

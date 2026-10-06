@@ -22,6 +22,11 @@ import (
 // MachineActor is who the tick's moves and notifications are recorded as.
 const MachineActor = "machine"
 
+// NRunawayTests is the judgment a fresh beat raises when the live processes
+// whose name ends in .test are over RunawayTestLimit. One episode, one
+// judgment; it closes when a fresh beat falls under half that limit.
+const NRunawayTests = "runaway test processes"
+
 // The bounds of one tick, and the one queue length the dealing keeps.
 const (
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
@@ -1049,7 +1054,8 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 // TickDeadlines writes one judgment for each card or stream past its
 // deadline, in running time (N4, N5, N6), and closes it when the card or the
 // stream moves. It keeps the backlog alarms too (tickAlarms, docs/SPEC-SPRINT.md
-// section 8, "Backlog alarms").
+// section 8, "Backlog alarms"), and the runaway test-process episode
+// (TickRunawayTests).
 func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
@@ -1132,7 +1138,82 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// the backlog alarms, on a plan of their own: each notify closes and judges after its own closes
 	a, alarmsDue := tickAlarms(s, r)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, a.Notes...), append(p.Closes, a.Closes...), append(p.Updates, a.Updates...)
+	// the runaway test-process episode. An empty plan leaves this plan's
+	// slices as they were (a nil stays nil).
+	if extra := TickRunawayTests(s, r); len(extra.Notes)+len(extra.Closes) > 0 {
+		p.Notes = append(p.Notes, extra.Notes...)
+		p.Closes = append(p.Closes, extra.Closes...)
+	}
 	return p, due + alarmsDue
+}
+
+// TickRunawayTests raises one judgment an episode when a fresh beat counts
+// more live test processes than RunawayTestLimit, and closes that judgment
+// when a fresh beat falls under half the limit. A count from half the limit
+// up to the limit, and a beat that is not fresh, leaves the episode as it is.
+// A second beat while the judgment or an acknowledgement of it is open raises
+// none and does not rewrite the judgment.
+func TickRunawayTests(s *Snapshot, r TickReq) Plan {
+	var p Plan
+	if s == nil || len(r.Beats) == 0 {
+		return p
+	}
+	type hold struct {
+		open Open
+		have bool
+		acks []Open
+	}
+	by := map[string]*hold{}
+	consider := func(o Open) {
+		if o.Note.Type != NRunawayTests {
+			return
+		}
+		h := by[o.Subject()]
+		if h == nil {
+			h = &hold{}
+			by[o.Subject()] = h
+		}
+		if o.Note.Kind == Judgment {
+			h.open, h.have = o, true
+		} else if o.Note.Kind == Acknowledged {
+			h.acks = append(h.acks, o)
+		}
+	}
+	for _, o := range s.Open {
+		consider(o)
+	}
+	for _, o := range s.Acked {
+		consider(o)
+	}
+	for _, m := range slices.Sorted(maps.Keys(r.Beats)) {
+		b := r.Beats[m]
+		if !b.Fresh(s.Now) {
+			continue
+		}
+		n := b.Tests
+		limit := s.RunawayTestLimit(m)
+		h := by[StreamSubject(MemberSubject(m))]
+		over := n > limit
+		under := int64(n)*2 < int64(limit)
+		switch {
+		case over && (h == nil || (!h.have && len(h.acks) == 0)):
+			what := fmt.Sprintf("runaway test processes on %s: %d", m, n)
+			if b.Oldest > 0 {
+				what += fmt.Sprintf(", oldest parent %d", b.Oldest)
+			}
+			p.Notes = append(p.Notes, Note{
+				Kind: Judgment, Type: NRunawayTests, Stream: MemberSubject(m), StreamLevel: true,
+				What: what, Who: r.who(), At: s.Now, Marked: true,
+				Decisions: []string{"ack", "wait"},
+			})
+		case under && h != nil:
+			if h.have {
+				p.Closes = append(p.Closes, h.open)
+			}
+			p.Closes = append(p.Closes, h.acks...)
+		}
+	}
+	return p
 }
 
 // TickOverdue marks each open judgment overdue once, when it passes its due

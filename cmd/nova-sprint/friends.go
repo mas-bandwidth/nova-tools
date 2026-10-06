@@ -119,7 +119,7 @@ func friendVerbWords(name string) string {
 	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
 	switch name {
 	case "friend beat":
-		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. Her nova-friend daemon runs it every " + every + " while it runs, and nothing else beats for her: no loop beside the daemon. The beat is recorded, and its age shown on her row, and it never makes her up, whoever sends it: she is up only on evidence from her own session, a wake ping her session answered (friend health --state up) under " + pong + " old or a card of hers finished under " + finish + " old, and down otherwise, her row naming the evidence missing. --until <RFC3339> and --reason <text> are her daemon's word that she is down until then and why (her harness at its usage limit or out of credits): while her last beat says so she is down, whatever her session's evidence, with the pair shown in why she is down and on her report; a beat can say down, never up, and a beat without --until withdraws the word. " + sync + "\n"
+		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. Her nova-friend daemon runs it every " + every + " while it runs, and nothing else beats for her: no loop beside the daemon. The beat is recorded, and its age shown on her row, and it never makes her up, whoever sends it: she is up only on evidence from her own session, a wake ping her session answered (friend health --state up) under " + pong + " old or a card of hers finished under " + finish + " old, and down otherwise, her row naming the evidence missing. --until <RFC3339> and --reason <text> are her daemon's word that she is down until then and why (her harness at its usage limit or out of credits): while her last beat says so she is down, whatever her session's evidence, with the pair shown in why she is down and on her report; a beat can say down, never up, and a beat without --until withdraws the word. --tests <n> is how many live processes whose name ends in .test she reports, as fleet beat --tests does for a machine, and --oldest <pid> the parent pid of the oldest of them; a beat that omits --tests keeps the last count. " + sync + "\n"
 	case "friend down":
 		return "friend down holds the named friend, as fleet down holds a machine: held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes; the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. --reason <text> and --until <RFC3339> say why and when you expect her back, shown in her status cell. friend up releases the hold. friend down is hold <friend> in the old words, kept for one release: run nova-sprint hold <friend> --reason <text> (her cards finish; --return withdraws them), and unhold <friend>. " + sync + "\n"
 	case "friend up":
@@ -285,6 +285,8 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	pong := fs.String("pong", "", "her session's last pong, as her daemon has it (status last_pong), RFC3339: the coordinator's pass judges her session deaf when it is older than "+sprint.FriendDeafAfter.String())
 	until := fs.String("until", "", "her daemon's word that she is down until then, RFC3339: her harness at its usage limit or out of credits")
 	reason := fs.String("reason", "", "why she is down until --until, as her daemon read it")
+	tests := fs.String("tests", "", "live processes whose name ends in .test, as fleet beat --tests gives a machine's")
+	oldest := fs.String("oldest", "", "the parent pid of the oldest such process")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -341,14 +343,36 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		}
 		given = &v
 	}
+	nTests, nOldest, setTests, err := parseTestCount(*tests, *oldest)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
 	c.orActor(friend)
 	st, err := open(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
+	var keepTests, keepOldest int
+	var keep bool
+	if !setTests {
+		keepTests, keepOldest, keep, err = keptTestCount(ctx, st.B, sprint.FriendBeatRecordKey(friend))
+		if err != nil {
+			return refuse(stderr, name, err.Error())
+		}
+	}
 	b, err := st.FriendBeatPong(ctx, friend, rep, given, ponged)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
+		return 1
+	}
+	switch {
+	case setTests:
+		err = stampTestsOn(ctx, st.B, sprint.FriendBeatRecordKey(friend), nTests, nOldest, true)
+	case keep:
+		err = stampTestsOn(ctx, st.B, sprint.FriendBeatRecordKey(friend), keepTests, keepOldest, true)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "%s %s: the beat was written and the test-process count was not: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
 	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
@@ -393,6 +417,14 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if !rep.Until.IsZero() {
 		line += " down=true until=" + rep.Until.Format(time.RFC3339)
 		facts["down"], facts["until"], facts["reason"] = true, rep.Until, rep.Reason
+	}
+	if setTests {
+		line += fmt.Sprintf(" tests=%d", nTests)
+		facts["tests"] = nTests
+		if nOldest > 0 {
+			line += fmt.Sprintf(" oldest=%d", nOldest)
+			facts["oldest"] = nOldest
+		}
 	}
 	sayOK(stdout, c.json, name, line, facts)
 	return 0

@@ -2265,6 +2265,12 @@ by selection without `--as` is refused. A finish that arrives first moves the ca
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
+### fleet-test-process-alarm-b.w1
+
+A fleet beat carries how many live processes have a name ending in `.test`. `nova-sprint fleet beat <member> --tests <n>` records that count on the member's beat, and `--oldest <pid>` the parent pid of the oldest of them. `friend beat` takes the same two flags. The verb records the count it is given; the beat loop that counts those processes on the machine is outside this card's paths. A later machine beat that omits `--tests` keeps the last count. A friend's beat record is rewritten whole, and a later friend beat that omits `--tests` keeps the last count the same way.
+
+While the machine is RUNNING, the tick raises one judgment for the episode when a fresh beat's count is over the threshold, `runaway test processes on <member>: <n>`, and `, oldest parent <pid>` when the beat named a pid. The threshold is four times the member's width. A width below 1 counts as 1, and a name with no fleet row counts as width 1. A friend's width is her fleet row's (`friend.<name>`). The work table's property `test_procs`, when it is a whole number above zero, is that threshold instead. A second fresh beat while that judgment is open raises none and leaves the words as they were. The episode ends, and the tick closes the judgment, when a fresh beat's count is under half the threshold (twice the count is below the threshold). A count from half the threshold through the threshold leaves the episode as it is. A beat that is not fresh changes nothing. `TestFleetBeatRunawayTestsRaisesOneAlarm`.
+
 ## 6. The readers
 
 - A reader row has a state, as a fleet member has: up, away or down. The rows

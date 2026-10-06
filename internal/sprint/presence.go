@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
@@ -86,6 +87,61 @@ type Beat struct {
 	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
 	// when her beat carried none; the friend beat record keeps it under "pong".
 	Proof time.Time `json:"pong,omitzero"`
+	// Tests is how many live processes whose name ends in .test the beat reported
+	// (fleet beat --tests, friend beat --tests). Oldest is the parent pid of the
+	// oldest of them when the beat named one (fleet beat --oldest).
+	Tests  int `json:"tests,omitempty"`
+	Oldest int `json:"oldest,omitempty"`
+}
+
+// BeatRecordKey is the store key of a machine's beat record, the same key the
+// store writes (beat:<member>).
+func BeatRecordKey(member string) string { return "beat:" + member }
+
+// FriendBeatRecordKey is the store key of a friend's beat record, the same key
+// the store writes (friend-beat:<friend>).
+func FriendBeatRecordKey(friend string) string { return "friend-beat:" + friend }
+
+// StampTests sets the test-process count and the oldest parent pid on a beat
+// record as the store keeps it. A friend's record with no friend report gets
+// an empty one, so the tick's read of friend beats (which keeps a beat only
+// when that report is set) still sees the count. Every other field is left
+// as the record held it.
+func StampTests(raw string, tests, oldest int, friend bool) (string, error) {
+	m := map[string]json.RawMessage{}
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			return "", err
+		}
+	}
+	if tests > 0 {
+		b, err := json.Marshal(tests)
+		if err != nil {
+			return "", err
+		}
+		m["tests"] = b
+	} else {
+		delete(m, "tests")
+	}
+	if oldest > 0 {
+		b, err := json.Marshal(oldest)
+		if err != nil {
+			return "", err
+		}
+		m["oldest"] = b
+	} else {
+		delete(m, "oldest")
+	}
+	if friend {
+		if fr, ok := m["friend"]; !ok || string(fr) == "null" {
+			m["friend"] = json.RawMessage(`{}`)
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -160,6 +216,9 @@ func NextBeat(prev Beat, now time.Time, pct float64, how string, meter hostload.
 	for _, s := range b.Samples {
 		b.Load = max(b.Load, s.Pct)
 	}
+	// a beat that does not name a new count keeps the last one: the episode
+	// ends on a beat that reports a low count, not on the next load sample
+	b.Tests, b.Oldest = prev.Tests, prev.Oldest
 	return b
 }
 
