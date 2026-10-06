@@ -177,6 +177,30 @@ func friendStarted(s *Snapshot, f FriendSeat, c *Card) bool {
 	return false
 }
 
+// laneRunsIt is the friend whose last beat names the primary c running, by its own id, its
+// current attempt's work card, or the withdrawn work card wc and its job; "" when no beat
+// does. The deal never places a card on a second row while a lane runs it
+// (docs/SPEC-SPRINT.md section 1, one lane per card): a card taken back or handed back
+// while her lane still runs it waits ready until her beat stops naming it.
+func laneRunsIt(s *Snapshot, seats []FriendSeat, c, wc *Card) string {
+	names := []string{c.ID, WorkCardID(c.ID, c.Int("attempt"))}
+	if wc != nil {
+		job := StoredID(wc.ID, s.Epoch)
+		if g := wc.Int("gen"); g > 1 {
+			job += ".g" + itoa(g)
+		}
+		names = append(names, wc.ID, job)
+	}
+	for _, f := range seats {
+		for _, r := range f.Running {
+			if r != "" && slices.Contains(names, r) {
+				return f.Name
+			}
+		}
+	}
+	return ""
+}
+
 // friendRoom is the friend's room and her lanes: DealAhead times her width and her width
 // in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card").
 func friendRoom(f FriendSeat) (room, width int) {
@@ -259,7 +283,8 @@ func friendLoad(s *Snapshot, name string) int {
 // then the most room, then by name (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
 // unless it says WHO: only friend <name> (OnlyFriend), the one hard pin: it waits ready for
-// her, and so does one whose friend's tiers do not hold its tier. A withdrawn attempt at its
+// her, and so does one whose friend's tiers do not hold its tier. A card a friend's beat
+// names running (laneRunsIt) is placed on no row while it does. A withdrawn attempt at its
 // redeal bound at its ceiling or its attempt cap (AtRedealBound), or refused at staging by
 // every member up, stays with the machines' deal and its judgment; one at its redeal bound
 // below its ceiling is offered at the tier it escalates to (escalating), as the machines
@@ -334,6 +359,9 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		}
 		if held, _ := AtStagingBound(s, c, members); held != nil {
 			continue
+		}
+		if laneRunsIt(s, seats, c, wc) != "" {
+			continue // one live lane per card: no second row while her lane runs it
 		}
 		escalated := wc != nil && redealBound(wc)
 		tier := cardTierOf(escalating(s, c))

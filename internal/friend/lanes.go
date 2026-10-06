@@ -220,6 +220,8 @@ type lane struct {
 	tier     string        // the card's tier as her row said it when the lane took it
 	cap      time.Duration // the card's wall cap by its tier (lane_cap.go)
 	t        *turn
+	marked   time.Time // when the lane last wrote its running mark on its card's job (one_lane.go)
+	ended    string    // the lane that finished the card this lane still runs: its run is being stopped
 }
 
 type laneResult struct {
@@ -238,11 +240,12 @@ type laneSet struct {
 	state   LaneState
 	loaded  bool
 	results chan laneResult
-	gov     LaneGovernor // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	pace    Pacer        // the effective width under the subscription windows (pacing.go)
-	paced   int          // the paced width at the last step
-	width   int          // the row's width at the last step
-	now     time.Time    // the last step's clock
+	refused map[string]string // each job a lane was refused, and who held it, said once while it stands
+	gov     LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace    Pacer             // the effective width under the subscription windows (pacing.go)
+	paced   int               // the paced width at the last step
+	width   int               // the row's width at the last step
+	now     time.Time         // the last step's clock
 }
 
 func (s *laneSet) running() bool {
@@ -378,15 +381,27 @@ func (l *loop) laneStep(now time.Time, width int) {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
+	l.oneLaneStep(now)
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
+	asking := 0 // the lane the hand is asked for
 	held := func(c Card) bool {
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
 		if s.given[id] || (legacy && s.given[c.ID]) {
 			return true
 		}
-		return slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox })
+		if slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox }) {
+			return true
+		}
+		if exists(c.Result()) || exists(c.Report()) {
+			return true // done: no lane is owed it, and none is refused it
+		}
+		if who, how := l.laneHolder(c, now); who != "" { // one live lane per card
+			l.refuseLane(asking, c, who, how, now)
+			return true
+		}
+		return false
 	}
 	for _, ln := range s.lanes {
 		if ln.t != nil || ln.opening {
@@ -416,6 +431,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.card == nil {
+			asking = ln.n
 			c, found, err := d.nextCard(held)
 			if err != nil {
 				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
@@ -424,7 +440,18 @@ func (l *loop) laneStep(now time.Time, width int) {
 			if !found {
 				continue // messages wait: they ride only with a card
 			}
-			ln.card, ln.attempts = &c, 0
+			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
+			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+			if err != nil {
+				d.Record(fmt.Sprintf("%s lane %d: card %s not started: its lane mark cannot be written: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+				continue
+			}
+			if holder != "" {
+				l.refuseLane(ln.n, c, holder, "runs it", now)
+				continue
+			}
+			delete(s.refused, filepath.Base(c.Outbox))
+			ln.card, ln.attempts, ln.marked = &c, 0, now
 			ln.tier = d.cardTier(c)
 			ln.cap = d.laneCap(ln.tier)
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
@@ -487,6 +514,19 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
+	if ln.ended != "" {
+		// another lane finished the card: its messages go back pending, counted toward nothing
+		for _, e := range t.entries {
+			delete(l.inHand, e)
+		}
+		if t.notice != nil && l.notice == nil {
+			l.notice = t.notice
+			l.saidSilent = t.notice.Subject != "coordinator silent"
+		}
+		d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s card=ended reason=%q", at, ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), "card finished by "+ln.ended))
+		l.setDown(ln, now)
+		return
+	}
 	s.pace.Observe(r.turn.Windows)
 	var rate RateLimited
 	var funds OutOfFunds

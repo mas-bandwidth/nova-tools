@@ -1529,6 +1529,64 @@ friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at
 Head unread, breaks `LandOnTip` in 6 states. The test is
 `TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
 
+### one-lane-per-card.w1 — one live lane per card (internal/friend/one_lane.go)
+
+On the night of 2026-10-05 the same card ran in two lanes at once more than once:
+a WHO-pinned audit dealt to one friend while another worked the same slot from
+her outbox, reruns of dead lanes beside a twin's lane, and a friend's duplicate
+runners starting four jobs twice. When one lane finished, the other kept running
+for nothing. A card now has one live lane:
+
+- **The lane mark.** Before a card's first turn, a lane claims the card's job by
+  writing `jobs/<job>/LANE` (`ClaimLane`). The write succeeds only where there is
+  no mark yet, by an exclusive hard link, so of two lanes asking at once only one
+  wins. The mark reads `running: <friend> lane <n> (daemon <pid>.<run>) at <t>`.
+  The daemon tag tells apart two daemons on one working directory. The lane
+  rewrites the mark every `LaneMarkEvery` (30 s) while it holds the card. A mark
+  that has not been rewritten for `LaneMarkStale` (2 m 30 s) belongs to a lane
+  that is gone with its daemon, and a new lane may take the card over. The mark
+  is the daemon's own write, so the activity walk skips it.
+- **A second lane is refused.** A daemon never starts a lane for a card in two
+  cases. The first is a card whose mark names another lane running it or says it
+  ended. The second is a card her row's running list names another friend
+  running (`Daemon.Running`: a card id or job mapped to the friend whose beat
+  names it running). The refusal is said once while it stands:
+  `lane <n>: card <id> refused: <who> runs it (one live lane per card)`, or
+  `... <who> ended it ...`. A card with a `RESULT.md` or `REPORT.md` is skipped
+  silently.
+- **A finish or a move ends the other lane.** A lane that ends its card (a lane's
+  end, above, including a daemon's restart ending a card its lanes began) writes
+  `ended: card finished by <friend> lane <n> (daemon ...)` on the mark. Each step,
+  a lane still running a card is checked in two ways. Its mark may say another
+  lane ended the card, or name another lane running it. Or the card may have left
+  her row while the server has said what is on it and no report is in her outbox
+  (in which case the card went to the friend her running list names, else to "the
+  sprint server"). In either case the daemon cancels the lane's turn and writes
+  `ended: card finished by <who>` on the job (or leaves the other lane's line if
+  it is already there). It says `lane <n>: card <id> ended: card finished by
+  <who>; its run is stopped and nothing is finished by this lane`. When the turn
+  comes back, the card is set down: `card=ended reason="card finished by <who>"`.
+  The card is no longer started and is never handed to this daemon again, no
+  report is written and no finish is sent, because the card's finish belongs to
+  the other lane. The messages the turn carried go back to pending, counted
+  toward nothing.
+
+The model is `internal/friend/tla/OneLane.tla` (TLC on a Linux bench, three lanes:
+48 distinct states, `OneLive` and `NoneLeft` hold). Its reversed witness is
+`MCOneLaneBrokenNoClaim.cfg`, lanes that start without the mark as before this card
+(each daemon checking only its own lanes and the outbox). It breaks `OneLive` in 7
+states: two daemons on one directory each start the card. The test is
+`TestOneLaneRunsPerCard`, which runs two daemons on one directory and sees the
+second lane refused, refuses a card the running list names, and ends a lane whose
+card leaves her row or whose job another lane finished.
+
+Not done here, all outside this card's paths: nova-friend (cmd/nova-friend) does
+not yet wire `Daemon.Running`. Its beat's answer carries her own `running=` list
+alone, so the sprint server has no per-card lane in that answer, and a card on two
+friends' rows at once is ended on her side only when it leaves her row. The lane
+marks still hold for every daemon on one working directory. The daemon still
+sends no `--running` on its beat.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
