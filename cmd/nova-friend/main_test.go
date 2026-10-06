@@ -485,6 +485,22 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
+// A claude friend is reached by the open session's own wait: install
+// prints the one line the session runs, and status says the route is
+// passive with that line, never a silent loss.
+func TestClaudeInstallPrintsTheSessionsWaitAndStatusSaysPassive(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
+	wait := "nova-bus wait --as bob --after <cursor> --wake-file " + filepath.Join(state, "bob.wake")
+	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", dir, "--dry-run").Exit(0).Out("NOTE run as a background task", wait)
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", dir, "--dry-run").Exit(0).NotOut("nova-bus wait")
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "claude", At: start, Connection: friend.Connected, Challenge: friend.Quiet}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("route=passive", wait)
+}
+
 // The daemon's new flags reach the agent's command line when they are set
 // and not the default, so a reinstall with the same flags writes the same
 // plist.

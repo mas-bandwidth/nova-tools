@@ -68,3 +68,20 @@ func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)
 	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp`)
 }
+
+func TestClaudeIsPassiveAndInstallPrintsTheSessionsWait(t *testing.T) {
+	t.Parallel()
+	d, err := NewDeliverer("claude", "/work/bob", "", nil, nil)
+	require.NoError(t, err)
+	_, passive := d.(interface{ Passive() })
+	assert.True(t, passive, "the daemon takes nothing off the stream for claude")
+
+	wake := ClaudeWakePath("/state", "bob")
+	assert.Equal(t, "/state/bob.wake", wake)
+	line := ClaudeInstallLine("claude", "bob", wake)
+	assert.Contains(t, line, "nova-bus wait --as bob --after <cursor> --wake-file "+wake)
+	assert.Contains(t, line, "background task")
+	for _, h := range []string{"grok", "opencode", "codex", "dsh", ""} {
+		assert.Empty(t, ClaudeInstallLine(h, "bob", wake), h)
+	}
+}

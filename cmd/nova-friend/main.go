@@ -308,7 +308,9 @@ cannot be made is refused and the agent is not loaded. --secrets NAME[,NAME] wra
 exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
 opening exactly those names to the harness and refusing to start without every one; nova-secrets
 and sops are found on PATH at install and written by absolute path. --dry-run prints the plan and
-writes nothing. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
+writes nothing. For harness claude, a NOTE prints the one line the open session runs as a background task, ` + friend.ClaudeWaitLine("<me>", "<file>.wake") + `
+(the session's own blocking read, re-run with the cursor it printed each time it returns; the daemon is passive for claude, answers
+the coordinator's ping, and appends one line per message to that wake file). For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
 (--session names the wake file in place of <file>.wake): one command in the session, not a flag, an
 environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
 (the message stays pending and is tried again), never failed and never dropped. Once the agent is
@@ -455,13 +457,14 @@ or WAIT-PONG NONE at exit 1.`,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
 (once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
-status=<up|down> why= evidence=, and for harness grok route=<push|defer>,
+status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
-` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
+` + friend.GrokMonitorLine("") + `, when none does. For harness claude route=passive (the daemon takes nothing off the stream; the
+session's own wait reads it), with a NOTE of the line install prints. JSON carries route as a string (push, defer or passive) and
+that NOTE in notes; other harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
 (known for grok, a tail under the window: running; unknown elsewhere, never down on its own); at a limit (the state directory's
 ` + friend.LimitFile + `) is down until the reset; no session answer (the pong file) under ` + friend.AnswerBound.String() + ` is down; a bus that cannot
 deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes it up. why
@@ -800,7 +803,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + a.Said())
-		return noteGrokMonitor(o, a.Harness, a.Session)
+		return noteClaudeWait(noteGrokMonitor(o, a.Harness, a.Session), a.Harness, a.Friend, friend.ClaudeWakePath(w.stateDir(c), a.Friend))
 	}
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -816,7 +819,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 		o.Item("ran", "command", tool.Text(r))
 	}
 	if err != nil {
-		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
+		return noteClaudeWait(noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session), a.Harness, a.Friend, friend.ClaudeWakePath(w.stateDir(c), a.Friend))
 	}
 	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
 	res, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.stateDir(c), "", c.Dur("within"))
@@ -825,7 +828,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 	} else {
 		o.Note("check: " + res.Line())
 	}
-	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+	return noteClaudeWait(noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session), a.Harness, a.Friend, friend.ClaudeWakePath(w.stateDir(c), a.Friend))
 }
 
 // check is the delivery check against the live session (friend.Conformance).
@@ -906,6 +909,14 @@ func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, t
 // noteGrokMonitor appends the one line a grok session runs, when harness is grok.
 func noteGrokMonitor(o *tool.Out, harness, session string) *tool.Out {
 	if line := friend.GrokInstallLine(harness, session); line != "" {
+		o.Note(line)
+	}
+	return o
+}
+
+// noteClaudeWait appends the one line a claude session runs, when harness is claude.
+func noteClaudeWait(o *tool.Out, harness, friendName, wake string) *tool.Out {
+	if line := friend.ClaudeInstallLine(harness, friendName, wake); line != "" {
 		o.Note(line)
 	}
 	return o
@@ -1024,6 +1035,9 @@ func (w world) status(c *tool.Call) *tool.Out {
 				o.Note("grok route: " + rerr.Error())
 			}
 		}
+	}
+	if s.Harness == "claude" {
+		o.Fact("route", "passive").Note(friend.ClaudeWaitLine(c.Str("as"), friend.ClaudeWakePath(state, c.Str("as"))))
 	}
 	return o
 }
