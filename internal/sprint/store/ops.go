@@ -358,8 +358,11 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 		return v, err
 	}
 	req := sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale, Prefix: st.Names.Prefix, Epoch: st.epoch}
-	if snap, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil {
-		req.Weights = sprint.Weights(snap) // the heaviest judgments first (weight.go)
+	if snap, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil); err == nil {
+		// the judgments holding the most cards first: the cards blocked behind each, through
+		// needs and stream order (needs_rank.go; docs/SPEC-SPRINT.md, judgment-answer-latencyb.w1)
+		snap.Open, snap.Now = v.Open, req.Now
+		req.Weights = sprint.NeedWeights(snap)
 	}
 	var machine []sprint.Group
 	if _, ok := st.B.(KV); ok {
@@ -375,6 +378,30 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	}
 	v.Groups = append(machine, sprint.Inbox(req)...)
 	return v, nil
+}
+
+// AnswerWaits is the waits of the judgments answered in the window before the clock's
+// reading: the median and p90 of raise to answer, a rule's answer at raise counting none
+// (sprint.AnswerWaits; where shows it).
+func (st *Store) AnswerWaits(ctx context.Context, window time.Duration) (sprint.AnswerWait, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return sprint.AnswerWait{}, err
+	}
+	var all []sprint.Note
+	after := ""
+	for {
+		notes, ids, err := st.B.NotesSince(ctx, after, logPage)
+		if err != nil {
+			return sprint.AnswerWait{}, err
+		}
+		all = append(all, notes...)
+		if len(ids) < logPage {
+			break
+		}
+		after = ids[len(ids)-1]
+	}
+	return sprint.AnswerWaits(all, st.now(), window), nil
 }
 
 // machineGroups is what the machine's record says the coordinator must act

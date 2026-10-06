@@ -496,15 +496,18 @@ type whereView struct {
 	// cards landed in the last 24 h, overall and per stream, from the tick's where record
 	// (sprint.CycleTimes, docs/SPEC-SPRINT.md, cycle-time-breakdownb.w1); absent before
 	// the first tick of an epoch or with no landing in the window.
-	StageTimes  *sprint.StageTimes    `json:"stage_times,omitempty"`
-	Stalled     []string              `json:"stalled,omitempty"`
-	Critical    []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
-	Coordinator string                `json:"coordinator,omitempty"`
-	Pending     string                `json:"pending,omitempty"`
-	Epoch       uint64                `json:"epoch"`
-	Cleared     time.Time             `json:"cleared,omitempty"` // when the epoch began
-	Machine     string                `json:"machine,omitempty"`
-	Goals       []goalView            `json:"goals,omitempty"`
+	StageTimes *sprint.StageTimes    `json:"stage_times,omitempty"`
+	Stalled    []string              `json:"stalled,omitempty"`
+	Critical   []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
+	// AnswerWait is the median and p90 wait of the judgments answered in the last 24 h, raise
+	// to answer (docs/SPEC-SPRINT.md, judgment-answer-latencyb.w1); absent when none were.
+	AnswerWait  *sprint.AnswerWait `json:"answer_wait,omitempty"`
+	Coordinator string             `json:"coordinator,omitempty"`
+	Pending     string             `json:"pending,omitempty"`
+	Epoch       uint64             `json:"epoch"`
+	Cleared     time.Time          `json:"cleared,omitempty"` // when the epoch began
+	Machine     string             `json:"machine,omitempty"`
+	Goals       []goalView         `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -1051,6 +1054,15 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	// the day's read spend per route, from the same record (cost_view.go)
 	if v.ReadSpend = sprint.ReadSpendLine(facts.Streams); v.ReadSpend != "" {
 		b.WriteString(v.ReadSpend + "\n")
+	}
+	// the wait of the judgments answered in the last day, median and p90
+	aw, err := st.AnswerWaits(ctx, 24*time.Hour)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	if line := aw.Line(); line != "" {
+		v.AnswerWait = &aw
+		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n")
 	parts := map[string]string{}

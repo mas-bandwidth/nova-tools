@@ -197,6 +197,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "tick", err.Error())
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
+	a.setAnswersByRule(rules)
 	st.WakeFriend = a.stallWaker(st, stderr)
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
@@ -648,6 +649,21 @@ machine (STOPPED, every provider is out of credit) and start is refused
 until one is paid. Low on funds never stops it. Every
 verb works in both states. run stops (exit 3) when its own binary is replaced
 on disk, so its supervisor starts the new build.`) + "\n"
+}
+
+// answersByRule is run --answer-rules as the verbs of the same process read it, per app: a
+// finish (the worker's through the server, a friend's collected by friend sync) is its own
+// store, so the flag the loop's store holds does not reach it. The finish then answers a
+// failure the failed rule answers in its own step (sprint.FinishReq.AnswerRules, docs/SPEC-SPRINT.md,
+// judgment-answer-latencyb-t.w1) instead of raising it for a later pass.
+var answersByRule sync.Map // *app -> bool
+
+func (a *app) setAnswersByRule(on bool) { answersByRule.Store(a, on) }
+
+func (a *app) answersByRule() bool {
+	on, _ := answersByRule.Load(a)
+	b, _ := on.(bool)
+	return b
 }
 
 // answerRulesFlag is run's and tick's --answer-rules: the tick answers the mechanical

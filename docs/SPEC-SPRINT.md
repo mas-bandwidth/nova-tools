@@ -4076,6 +4076,36 @@ and in the end stopped as above (`TestALanderLandsTheHeadThatCuresARedBase`,
 `TestARedBaseWithNoCuringHeadIsLeftAsItWas`, internal/sprint/land_cure_test.go;
 `TestTheLanderLandsTheBaseFixFirst`, cmd/nova-sprint/land_go_test.go).
 
+#### judgment-answer-latencyb-t-b.w1
+
+The wall-clock lens (the owner, 2026-10-04, 4:47 PM): the time from add to landed, measured
+per stage, and the waits removed. A judgment a rule answers waited for the next pass of the
+run loop; now it does not. A failed finish the failed rule answers (`ruleFailed`) is
+answered in the step that raises it (`FinishReq.AnswerRules`, `answerAtRaise`,
+internal/sprint/rules.go): the rule is read over the tables as the finish leaves them, the
+primary's next attempt is made in the finish's own unit, and the judgment `work came back
+failed` is never written, so it is never open. The unit records a decided note of the type
+with no `answers` and no wait, `answered by rule failed: answered at raise, <act>: <why>`.
+A primary the rule leaves (a friend's card, a brief defect, the same failure on three cards,
+a bound), the rule turned off (`answer_rules_off`), or a rework the step refuses keeps its
+judgment as before. `run --answer-rules` (on by default in `run`) switches it on at runtime:
+the finish verb, which the server runs for a worker, and the finish a friend's report gives
+her card (friend sync, `friendCollect`) each set `FinishReq.AnswerRules` from the run's flag
+(`app.answersByRule`, cmd/nova-sprint/run.go), so a failed finish is answered in the same step
+when the run answers by rule and raises its judgment when `--answer-rules=false`
+(`TestTheFinishVerbAnswersAFailedFinishAtRaiseWhenTheRunAnswersByRule`,
+cmd/nova-sprint/judgment_answer_verb_test.go).
+
+The judgments that stay are ordered in the inbox by the cards blocked behind each, the
+ranking of view-coordinator-needs (`sprint.NeedWeights` over `sprint.NeedsRank`: through
+needs and stream order, ties by age), and each answer records its wait, raise to answer, on
+its decided note (`Note.Waited`, `waited_ns`; `decided`). The inbox shows a group's wait
+(`waited=`), `view coordinator --needs` a need's age, and `where` the median and p90 of the
+waits of the answers of the last 24 h (`sprint.AnswerWaits`, a line `answered 24h: n=<n>
+wait p50=<d> p90=<d>` and the JSON field `answer_wait`; no line while none were answered).
+`TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait`
+(internal/sprint/judgment_wait_test.go) drives it on the twin store with an injected clock.
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared
