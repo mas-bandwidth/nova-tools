@@ -303,11 +303,18 @@ var TickEnd = []TickPartDef{
 // overdue part, each a step that may write any table, as a coordinator's verb does, its
 // work-table changes queued for the next pump; with idle (TickReq.IdleAlarm, run
 // --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part.
-// With neither the end is TickEnd's alone, as before them.
+// With neither the end is TickEnd's alone, as before them. The widen rule's part (widen.go)
+// runs before the rule rework, which reworks nothing the widen rule leaves to a mind.
 func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {
-		out = append(out, TickRules...)
+		for _, p := range TickRules {
+			if p.Name == PartRuleRework {
+				out = append(out, TickPartDef{PartRuleWiden, TickRuleWiden})
+				p.Fn = TickRuleReworkUnwidened
+			}
+			out = append(out, p)
+		}
 	}
 	out = append(out, TickEnd[2])
 	if idle {
