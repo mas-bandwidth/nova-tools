@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -119,7 +120,7 @@ type capture []byte
 
 func (c *capture) Write(p []byte) (int, error) { *c = append(*c, p...); return len(p), nil }
 
-func TestClockBasics(t *testing.T) {
+func TestClockAdvanceMovesNowByTheDuration(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	c := testkit.NewClock(start)
@@ -128,18 +129,30 @@ func TestClockBasics(t *testing.T) {
 	assert.Equal(t, start.Add(5*time.Minute), c.Now())
 }
 
-func TestClockConcurrent(t *testing.T) {
+func TestClockAdvancesFromManyGoroutinesLoseNoTime(t *testing.T) {
 	t.Parallel()
-	c := testkit.NewClock(time.Time{})
+	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	c := testkit.NewClock(start)
+	const goroutines = 10
+	const steps = 10
+	startAdvance := make(chan struct{})
 	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			<-startAdvance
+			for range steps {
+				c.Advance(time.Second)
+			}
+		}()
+	}
+	close(startAdvance)
 	go func() {
-		for i := 0; i < 100; i++ {
-			_ = c.Now()
-		}
+		wg.Wait()
 		close(done)
 	}()
-	for i := 0; i < 100; i++ {
-		c.Advance(time.Second)
-	}
 	<-done
+	assert.Equal(t, start.Add(100*time.Second), c.Now())
 }

@@ -9,25 +9,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// clockAdapter wraps testkit.Clock to provide the clock interface expected by filelock tests.
+// clockAdapter is testkit.Clock behind filelock's clock interface. That
+// interface needs Sleep; Sleep advances the clock and does not block.
 type clockAdapter struct {
 	c     *testkit.Clock
 	start time.Time
 }
 
-func newClockAdapter() *clockAdapter {
-	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
-	return &clockAdapter{c: testkit.NewClock(start), start: start}
-}
-
 func newClockForTest(start time.Time) *clockAdapter {
-	if start.IsZero() {
-		start = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
-	}
-	return &clockAdapter{c: testkit.NewClock(start), start: start}
+	c := testkit.NewClock(start)
+	return &clockAdapter{c: c, start: c.Now()}
 }
 
-func (a *clockAdapter) Now() time.Time       { return a.c.Now() }
+func (a *clockAdapter) Now() time.Time        { return a.c.Now() }
 func (a *clockAdapter) Sleep(d time.Duration) { a.c.Advance(d) }
 func (a *clockAdapter) Waited() time.Duration { return a.c.Now().Sub(a.start) }
 
@@ -42,7 +36,7 @@ type rig struct {
 // newRig makes a rig over a fresh temp dir and a virtual clock at its origin.
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	return &rig{t: t, dir: t.TempDir(), clock: newClockAdapter()}
+	return &rig{t: t, dir: t.TempDir(), clock: newClockForTest(time.Time{})}
 }
 
 // path is the lock file named base under the rig's temp dir.
