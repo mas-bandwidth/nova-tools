@@ -864,6 +864,38 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### opencode-lanes-parity-r2 — the lanes do what the runner stopgaps did
+
+The owner, 2026-10-05: "We need to get away from these one shot shell scripts."
+Two friends ran their cards through two zsh copies of one runner because the
+opencode one-shot lanes lacked what the runner did. Each behaviour is a small
+function in `internal/friend/lane_parity.go`, configured on the friend's row
+(the beat's answer carries `row_tiers=`, `row_streams=`, `row_token_cap=`,
+`row_load_max=`, `row_load_width=`, `row_provider_stop=`, `row_model=`,
+`row_route=` and `row_price_input|cache_read|cache_write|output=`), never in
+code; a row naming none of them leaves the lanes as they were. Each has a table
+test (`TestOpencodeLanesDoWhatTheRunnerStopgapsDid`, and the loop tests in
+`lane_parity_loop_test.go`).
+
+| Behaviour | Function | Rule |
+|---|---|---|
+| card filter | `LaneRow.Filter` | a tier outside `row_tiers` is taken back; an id or stream matching none of `row_streams` (globs) is skipped, never handed |
+| take back | `TakeArgv`, `loop.takeBack` | a dealt card the filter takes back, with no `jobs/<job>` and no report, is taken once (`friend take <me> <card> --reason`) |
+| job name | `JobName` | `<card>~<epoch>`, `.g<gen>` from the second generation, as friend sync names the inbox directory |
+| width under load | `LaneRow.LaneWidth` | the row's width, held to `row_load_width` (3) while the 1-minute load is above `row_load_max`, never raised by it |
+| token cap | `LaneRow.OverCap`, `WriteCapReport` | a card whose tokens since it began reach `row_token_cap` gets a HOLD `REPORT.md` naming the cap (`Head: none`), its turn is stopped, and the lane's end finishes it |
+| provider failure | `ProviderFailureLine`, `DownArgv`, `loop.holdDown` | out of funds (and, with `row_provider_stop=true`, any 402, 429 or rate limit) holds every lane, stops the running turns, and holds the friend down (`friend down <me> --reason provider failure (<model>): <exact message>`); nothing resumes until a person runs `friend up` and restarts the daemon |
+| cost | `ReadUsage`, `RouteRow.Cost`, `PublishCost` | the card's tokens are its lane session's and its children's, read from opencode's database with the sqlite3 CLI, less what the session had when the card began; priced by the row's route, rounded up to the cent, `unpriced (<why>)` when there is no row or a missing price; published as a `Cost:` line under `Head:` on `REPORT.md` and `tokens:` and `cost:` lines on `RESULT.md` |
+| refusal shims | `WriteShims`, `ShimMain`, `LaneEnv` | `<state>/shims/go` and `gofmt` are symlinks to nova-friend, which refuses when run by those names; the daemon's PATH starts with them and GOROOT names no toolchain |
+| finish note | `FinishNote` | one bus note to the coordinator at each finish: the card, the report's verdict line, the cost, the wall |
+
+Not built here: the sprint server's beat answer does not yet carry these row
+keys, nor a card's stream (`HeldCard.Stream` is read when the server sends it;
+id globs work now), and nova-config has no fields for them; until they do the
+row is configured by those keys alone and the runners stay until the beat
+carries them. The rate-limit governor of one-shot lanes (backoff, a lower cap)
+is unchanged; `row_provider_stop` is the runner's stop-at-any-failure.
+
 ### lane-end-finishes-the-card.w1 — a lane's end is a finish
 
 The owner, 2026-10-05: "Now let's look at friends. Are they actually doing

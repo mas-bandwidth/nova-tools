@@ -142,6 +142,15 @@ type Daemon struct {
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
 	Held func(ctx context.Context) (Row, error)
 
+	// The lanes' parity with the runner stopgaps (lane_parity.go), each nil to leave it off.
+	// LaneRow is her row's lane settings as her beat last answered them; Load the machine's
+	// 1-minute load; Verb sends one verb to the sprint server (friend take, friend down);
+	// Usage reads a session's tokens, its children's with it, from opencode's database.
+	LaneRow func() LaneRow
+	Load    func() float64
+	Verb    func(ctx context.Context, argv []string) error
+	Usage   func(ctx context.Context, session string) (TokenUsage, error)
+
 	m           *Machine
 	status      Status
 	written     time.Time
@@ -174,6 +183,8 @@ type turn struct {
 	seenN    int64
 	lastOut  time.Time // when the daemon last saw the turn print, or its start
 	stopped  bool      // the daemon stopped it: silent past SilentStop
+	capped   bool      // the daemon stopped it at the row's token cap (lane_parity_loop.go)
+	held     bool      // the daemon stopped it: the provider failed and the lanes are held
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 }

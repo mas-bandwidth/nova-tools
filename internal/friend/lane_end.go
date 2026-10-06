@@ -32,6 +32,10 @@ type Started struct {
 	Lane int       `json:"lane"`
 	Card Card      `json:"card"`
 	At   time.Time `json:"at"`
+	// Session and Base are the lane's session and what it had used when the card began, so
+	// the card's tokens are the session's now less Base (a lane's session spans cards).
+	Session string     `json:"session,omitempty"`
+	Base    TokenUsage `json:"base"`
 }
 
 // LaneEnd is how a card's last run in a lane ended, as its finish says it.

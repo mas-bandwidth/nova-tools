@@ -66,6 +66,7 @@ type world struct {
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	load      func() float64                                                                                      // the machine's 1-minute load; nil reads none (a test's)
 	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
@@ -190,6 +191,7 @@ func realWorld() world {
 			return res[0].Stdout, nil
 		},
 		progress: sprintVerb,
+		load:     oneMinuteLoad,
 		finish:   sprintVerb,
 		cards:    sprintAsk,
 		view:     sprintView,
@@ -219,7 +221,14 @@ func realWorld() world {
 	return w
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
+func main() {
+	if refusal, code, is := friend.ShimMain(os.Args[0]); is {
+		// run through a lane's go or gofmt shim (a symlink to this binary): refused, never run
+		fmt.Fprintln(os.Stderr, refusal)
+		os.Exit(code)
+	}
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld()))
+}
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
 	if len(args) > 0 && args[0] == friend.WallVerb {
@@ -342,7 +351,7 @@ nonce from inside the session before she beats again, and the seat is told she i
 row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A lane
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. The row's lane settings (row_tiers=, row_streams=, row_token_cap=, row_load_max=, row_load_width=, row_provider_stop=, row_model=, row_route=, row_price_*=, on the beat's answer) add: a card filter that takes back a dealt card outside the tiers, a per-card token cap that writes a HOLD REPORT.md, the width held down under load, a provider failure that holds every lane and the friend down, the card's cost (Cost: on REPORT.md, tokens: and cost: on RESULT.md) and one bus note per finish; the lane's PATH has go and gofmt shims that refuse. A lane
 turn the provider rate-limits (429, "rate limit reached", "too many requests", "input token limit
 exceeded") keeps its card and pauses new lanes for a backoff (30s doubling to 10m), lowers the live lane
 cap by a quarter and raises it one lane per clean 10m, no hold; three lowerings in an hour are one
@@ -731,6 +740,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
 	}
+	if _, ok := deliver.(*friend.OpenCode); ok {
+		// no go on this machine: the lane's PATH holds shims that refuse, GOROOT no toolchain
+		shims := filepath.Join(state, "shims")
+		if bin, err := w.binary(); err == nil {
+			if _, err := friend.WriteShims(shims, bin); err != nil {
+				fmt.Fprintln(c.Stderr, "RUN the go refusal shims cannot be made: "+err.Error())
+			} else {
+				for _, kv := range friend.LaneEnv(os.Environ(), shims) {
+					k, v, _ := strings.Cut(kv, "=")
+					if k == "PATH" || k == "GOROOT" {
+						os.Setenv(k, v) // ignored: a failed set leaves the lane as it was
+					}
+				}
+			}
+		}
+	}
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
@@ -740,6 +765,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
 	rowMode, rowWidth := "", 0
+	var laneRow atomic.Pointer[friend.LaneRow]
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
@@ -856,6 +882,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 				}
+				if err == nil {
+					lr := friend.ParseLaneRow(answer)
+					laneRow.Store(&lr)
+				}
 				if p, ok := friend.ParseProfile(answer); err == nil && ok {
 					rowProfile.Store(&p)
 				}
@@ -869,6 +899,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return rowMode, rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		LaneRow: func() friend.LaneRow {
+			if lr := laneRow.Load(); lr != nil {
+				return *lr
+			}
+			return friend.LaneRow{}
+		},
+		Load: w.load,
+		Verb: func(ctx context.Context, argv []string) error {
+			if w.finish == nil {
+				return errors.New("this world sends no verb")
+			}
+			return w.finish(ctx, server, argv)
+		},
+		Usage: func(ctx context.Context, session string) (friend.TokenUsage, error) {
+			return friend.ReadUsage(ctx, w.exec, filepath.Join(w.home, ".local", "share", "opencode", "opencode.db"), session)
+		},
 		Progress: func(ctx context.Context, cards []friend.Card) error {
 			if w.progress == nil {
 				return nil // a world that sends none (a test's)

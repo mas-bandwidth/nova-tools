@@ -56,6 +56,16 @@ minutes. Her beat carries her session's last proof, and the sprint deals
 nothing to a friend whose proof is older than fifteen minutes
 (docs/SPEC-FRIEND.md, "The push proof").
 
+## One-shot lanes on a friend's row
+
+A friend's row can carry lane settings that her beat's answer hands the daemon (`row_tiers`,
+`row_streams`, `row_token_cap`, `row_load_max`, `row_load_width`, `row_provider_stop`, `row_model`,
+`row_route`, `row_price_*`): the tiers and streams she works (a dealt card outside them and not
+started is taken back for the dealer), a per-card token cap that writes a HOLD report, a width held
+down while the machine is loaded, a stop at a provider failure that holds her down until a person runs
+`nova-sprint friend up`, and the card's cost on `REPORT.md` (`Cost:`) and `RESULT.md`. The lane's PATH
+refuses `go` and `gofmt`. docs/SPEC-FRIEND.md, opencode-lanes-parity-r2, has the table.
+
 ## Generation-specific jobs
 
 The queue file, `inbox/QUEUE.json`, records each task's `id`, `state`, `gen`
