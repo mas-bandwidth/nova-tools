@@ -386,7 +386,10 @@ the body, and the finish's report carries its address.
 A child that holds because its card's PATHS are too narrow says which globs it needs on one
 line of its report or result body: `PATHS-PROPOSED: <glob>[,<glob>...]`, each a path or a glob
 relative to the repository root, never climbing out with `..`, each naming a file at the card's
-base or one its pushed head creates. The child still pushes what it did and reports its head.
+base or one its pushed head creates. A path may be followed by the writer's reason: the reader
+takes each comma-separated item's path up to its first whitespace, dash or semicolon, reads the
+rest as prose, and refuses an item with no path before its prose, printing that item. The child
+still pushes what it did and reports its head.
 The member keeps that line at the end of the finish's report, inside the 500-byte cut
 (`member.CarryProposed`), and friend sync keeps it on a friend's HOLD, with the HOLD's `Head`
 when it is origin's tip of the card's branch; so the line is on the card, and `nova-sprint recut

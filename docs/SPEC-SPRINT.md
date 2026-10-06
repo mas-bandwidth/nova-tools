@@ -1838,10 +1838,13 @@ attempt's pushed head, where the twin's first attempt starts (the member's packe
 `base_head` when no attempt of the twin pushed one); the verb says `NEXT <twin> starts from <id>
 attempt <n> head=<sha>`. The base's files and the head's are read in `--repo-dir`, else land's
 clone of the card's `REPO:`, the head's branch and the base fetched from origin when the clone
-lacks them. Refused, exit 1, nothing written, naming every problem: a card with no attempt, a
-report with no PATHS-PROPOSED line, an attempt with no pushed head, no clone, a glob that
-climbs out with `..` or is absolute, and a glob that names no file at the base nor at the head;
-and as `recut` is refused otherwise (`TestRecutWidenAppliesPathsProposed`).
+lacks them. Each item is read permissively, the path up to its first whitespace, dash or
+semicolon and the rest its writer's reason, and an item with no path before its prose is
+refused, that item printed. Refused, exit 1, nothing written, naming every problem: a card with
+no attempt, a report with no PATHS-PROPOSED line, an attempt with no pushed head, no clone, a
+glob that climbs out with `..` or is absolute, and a glob that names no file at the base nor at
+the head; and as `recut` is refused otherwise (`TestRecutWidenAppliesPathsProposed`,
+`TestAWidenReadsThePathBeforeTheProse`).
 
 ## 3. The lifecycle of a primary
 

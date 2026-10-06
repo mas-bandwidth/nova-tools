@@ -24,7 +24,7 @@ func (a *app) cmdRecut(args []string, stdout, stderr io.Writer) int {
 	tier := fs.String("tier", "", "the tier the twin is pinned to ("+cardhdr.RouteList+"): every deal and read of it draws its route from it (default: the old card's pin)")
 	briefFile := fs.String("brief-file", "", "the twin's brief, read from this file and held to the card lint as brief holds one; its DEPENDS-ON: line's needs are taken with the old card's (default: the old card's brief)")
 	rules := fs.String("rules", "", "with --brief-file: the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)")
-	widen := fs.Bool("widen", false, "the twin's brief is the old one with its PATHS widened by the PATHS-PROPOSED line of its latest attempt's report, and its first attempt starts from that attempt's pushed head (CARRY: line); refused, exit 1, for no line, a glob that climbs out with .. or names no file at the base or the head")
+	widen := fs.Bool("widen", false, "the twin's brief is the old one with its PATHS widened by the PATHS-PROPOSED line of its latest attempt's report, each item's path read up to its first whitespace, dash or semicolon and the rest its writer's reason, and its first attempt starts from that attempt's pushed head (CARRY: line); refused, exit 1, for no line, an item with no path before its prose, a glob that climbs out with .. or names no file at the base or the head")
 	repoDir := fs.String("repo-dir", "", "with --widen: the clone the base's and the head's files are read in (default: land's clone of the card's REPO:)")
 	nw := fs.String("new", "", "the twin's `id` (default: the old id with the next letter, b for a card never re-cut, c for its twin re-cut, and so on)")
 	ids, err := parse(fs, args)
