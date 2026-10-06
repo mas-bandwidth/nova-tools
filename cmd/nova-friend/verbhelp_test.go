@@ -25,10 +25,11 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "ping", Flags: store},
 		{Verb: "pong", Flags: store},
 		{Verb: "wait-pong", Flags: store},
+		{Verb: "watch", Flags: []string{"--redis", "{addr}", "--state-dir", "{dir}"}},
 		{Verb: "status"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -78,5 +79,37 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 	} {
 		require.Contains(t, help, text)
 		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))
+	}
+}
+
+// The watch verb's help and docs/CLI.md carry the same text: every output
+// line, the JSON fields, the exit codes and the example (docs/SPEC-FRIEND.md, Watch).
+func TestWatchHelpMatchesTheCommandReference(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "watch", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	doc := string(raw)
+	const marker = "example: nova-friend watch --as ada --timeout 1s"
+	start := strings.Index(help, "Watches the coordinator's own stream")
+	end := strings.Index(help, marker)
+	require.Greater(t, start, 0)
+	require.Greater(t, end, start)
+	body := help[start : end+len(marker)]
+	require.Contains(t, doc, body)
+	for _, text := range []string{
+		"WATCH MESSAGE id=<id> from=<f> subject=<s>",
+		"WATCH EVENT id=<id> from=<f> subject=<s>",
+		"WATCH WAKE line=<text>",
+		"WATCH OK after=<cursor>",
+		"WATCH NONE waited=<duration>",
+		"A background session is re-invoked by this verb's exit.",
+		`"word":"OK|NONE"`,
+		"Exit 2 when it could not run",
+		"--timeout", "--state-dir", "--redis", "--json",
+		marker,
+	} {
+		require.Contains(t, help, text)
+		require.Contains(t, doc, text)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -17,7 +19,8 @@ import (
 // never on the friend's volume: a background process on this platform may
 // not touch a removable volume without the person's permission (measured
 // 2026-10-04, "operation not permitted" on the mkdir). The daemon writes
-// Status and the log; the pong verb writes Pong. The queue file is the
+// Status and the log; the pong verb writes Pong; the watch verb writes the
+// cursor. The queue file is the
 // coordinator's and the session's, under the working directory
 // (SPEC-FRIEND.md, the files).
 const (
@@ -25,6 +28,10 @@ const (
 	PongFile   = "pong.json"
 	LogFile    = "deliver.log"
 	QueueFile  = "inbox/QUEUE.json"
+	// WatchCursorFile is the watch verb's cursor in the state directory: the
+	// stream entry id the next run starts past, and the wake file's byte
+	// offset (docs/SPEC-FRIEND.md, Watch).
+	WatchCursorFile = "watch.cursor"
 )
 
 // DaemonStale is how old the status file may be while the daemon counts
@@ -188,6 +195,63 @@ func pongPath(stateDir string) string   { return filepath.Join(stateDir, PongFil
 // LogPath is the daemon's own log in the state directory: one line per
 // delivery (launchd's own log is elsewhere: Plist).
 func LogPath(stateDir string) string { return filepath.Join(stateDir, LogFile) }
+
+// WatchCursorPath is the watch verb's cursor file in the state directory
+// (docs/SPEC-FRIEND.md, Watch).
+func WatchCursorPath(stateDir string) string { return filepath.Join(stateDir, WatchCursorFile) }
+
+// watchStreamID is a stream entry id, <ms>-<seq>, both numbers: the cursor a
+// watch re-arms with (docs/SPEC-FRIEND.md, Watch).
+func watchStreamID(s string) bool {
+	ms, seq, ok := strings.Cut(s, "-")
+	if !ok || ms == "" || seq == "" || strings.Contains(seq, "-") {
+		return false
+	}
+	_, errMS := strconv.ParseUint(ms, 10, 64)
+	_, errSeq := strconv.ParseUint(seq, 10, 64)
+	return errMS == nil && errSeq == nil
+}
+
+// ReadWatchCursor reads the cursor the last watch saved. A file that is not
+// there is found false: the first run arms at the stream's tail and at the
+// wake file's current size. A file that is not a stream entry id and a byte
+// offset, one per line, is an error (docs/SPEC-FRIEND.md, Watch).
+func ReadWatchCursor(stateDir string) (id string, offset int64, found bool, err error) {
+	raw, err := os.ReadFile(WatchCursorPath(stateDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, err
+	}
+	text := strings.TrimRight(string(raw), "\n")
+	id, rest, ok := strings.Cut(text, "\n")
+	if !ok || strings.Contains(rest, "\n") || !watchStreamID(id) {
+		return "", 0, true, fmt.Errorf("%s: a watch cursor is a stream entry id and a byte offset, one per line", WatchCursorPath(stateDir))
+	}
+	offset, err = strconv.ParseInt(rest, 10, 64)
+	if err != nil || offset < 0 {
+		return "", 0, true, fmt.Errorf("%s: a watch cursor is a stream entry id and a byte offset, one per line", WatchCursorPath(stateDir))
+	}
+	return id, offset, true, nil
+}
+
+// WriteWatchCursor saves the cursor by a write and a rename, so a reader
+// never sees half a cursor. The next run starts at id on the stream and at
+// offset in the wake file (docs/SPEC-FRIEND.md, Watch).
+func WriteWatchCursor(stateDir, id string, offset int64) error {
+	if !watchStreamID(id) {
+		return fmt.Errorf("watch cursor: %q is not a stream entry id", id)
+	}
+	if offset < 0 {
+		return fmt.Errorf("watch cursor: offset %d is negative", offset)
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return err
+	}
+	body := id + "\n" + strconv.FormatInt(offset, 10) + "\n"
+	return atomicfile.WriteFile(WatchCursorPath(stateDir), []byte(body), 0o644)
+}
 
 // write writes v as JSON to path atomically, making the directory.
 func write(path string, v any) error {

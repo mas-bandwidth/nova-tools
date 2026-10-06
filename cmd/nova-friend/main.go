@@ -6,7 +6,7 @@
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
 // second. The verbs are run, install, uninstall, check, status, pong, ping,
-// wait-pong, host and serve; the
+// wait-pong, host, serve and watch; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -366,7 +366,7 @@ nova-bus stream and, when the session is free, pushes every waiting message in a
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
-		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
+		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer; watch: nothing came), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
 			{
@@ -786,6 +786,7 @@ or WAIT-PONG NONE at exit 1.`,
 				},
 				Run: w.waitPong,
 			},
+			watchVerb(w),
 			{
 				Name:    "status",
 				Usage:   "status --as <me> --dir <d> [--state-dir <d>]",

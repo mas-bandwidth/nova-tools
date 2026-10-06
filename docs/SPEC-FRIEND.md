@@ -2041,6 +2041,37 @@ answer is still the session check's (Presence, above). Each `PING` reopens the
 daemon's challenge, so the challenge's `deaf` is not reached while this loop
 runs (Chaos, below); presence is what says a silent session.
 
+## Watch
+
+`nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` is the coordinator's wake. It waits on three things at once: the coordinator's own stream, the coordinator's wake file in the state directory (`<state>/<coordinator>.wake`, the file a harness appends one line to), and events. An event is a bus message on that stream whose subject starts with `event:`, from any sender, for example `event: machine stopped unasked`.
+
+It skips messages from the coordinator, and messages whose subject starts with `ping`, `pong`, `daemon-pong` or `keepalive` (matched without case). A skipped entry moves the cursor and is not printed. Which entries count, and the cursor past them, is the bus wait's decision (`WaitPick`, docs/SPEC-BUS.md, the verbs: wait): at most five lines, and the entries after them stay for the next run. That rule lives in one place.
+
+The cursor is saved in the state directory after each run, by a write and then a rename. The file holds the stream entry id and the wake file's byte offset, so the next run starts where this one ended. The printed cursor is the stream entry id (`WATCH OK after=<cursor>`). A first run, with no saved cursor, arms at the stream's last id (`0-0` when the stream is empty) and at the wake file's current size, so what is already there is not a wake.
+
+It prints, in the order it read them, then the closing line, and exits 0:
+
+```
+WATCH MESSAGE id=<id> from=<f> subject=<s>
+WATCH EVENT id=<id> from=<f> subject=<s>
+WATCH WAKE line=<text>
+WATCH OK after=<cursor>
+```
+
+A wake-file line ends the watch on its own. Past `--timeout` (a Go duration; 0, the default, is for ever) it prints `WATCH NONE waited=<duration>` on standard error and exits 1. Exit 2 when it could not run: a flag, a name that is not on the roster, a store that did not answer, or a cursor that cannot be read or saved. Nothing is printed when the cursor cannot be saved, so a retry still sees what this run saw.
+
+`--json` prints one object:
+
+```json
+{"status":"ok","word":"OK|NONE","after":"<cursor>","waited":"<duration>","messages":[{"id":"<id>","from":"<f>","subject":"<s>"}],"events":[{"id":"<id>","from":"<f>","subject":"<s>"}],"wake":{"line":"<text>"}}
+```
+
+`waited` and `wake` are left out when they hold nothing. `messages` and `events` are always arrays.
+
+A background session is re-invoked by this verb's exit. The line to run again, from the cursor the state directory holds, is `nova-friend watch --as <coordinator>`.
+
+The hand loop `tmp/buswatch/watch.sh` is retired by fg-adopt-friend-daemons. This verb is the wake that loop's bus read and wake file become.
+
 ## The wake ping loop (cmd/nova-friend ping --wake --to-friends; internal/friend/wakeping.go)
 
 The owner, 2026-10-05: "there is no value in things that are answered just by

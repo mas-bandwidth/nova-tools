@@ -742,6 +742,30 @@ the check once after loading the agent (its `--within`) and says the line in a
 NOTE; a fail never undoes the install. It runs once a night on each friend's
 machine as a nova-config loop record ([TESTING.md](TESTING.md)).
 
+### The coordinator's watch
+
+The help of `nova-friend watch -h` says, and this is the same text:
+
+```
+Watches the coordinator's own stream, the wake file in the state directory, and events. A background session is re-invoked by this verb's exit. The line to run again, from the cursor this run saved, is: nova-friend watch --as <coordinator>
+It waits on three things. The stream is the coordinator's (--as). The wake file is <state-dir>/<coordinator>.wake, the file a harness appends one line to; a line appended after this run armed ends the watch. An event is a bus message on that stream whose subject starts with event:, from any sender (event: machine stopped unasked).
+Messages from --as itself are skipped. So is a subject that starts with ping, pong, daemon-pong or keepalive, matched without case. A skipped entry moves the cursor and is not printed. Which entries count, and the cursor past them, is the bus wait's decision, so that rule lives in one place: at most 5 lines, and the entries after them stay for the next run.
+The cursor is saved in the state directory after each run, by a write and then a rename: the stream entry id and the wake file's byte offset. The next run starts there and misses nothing between runs. A first run arms at the stream's last id (0-0 when the stream is empty) and at the wake file's current size.
+It prints, in the order it read them, then the closing line, and exits 0:
+WATCH MESSAGE id=<id> from=<f> subject=<s>
+WATCH EVENT id=<id> from=<f> subject=<s>
+WATCH WAKE line=<text>
+WATCH OK after=<cursor>
+A wake line ends the watch on its own. Past --timeout (a Go duration; 0, the default, is for ever) it prints WATCH NONE waited=<duration> on standard error and exits 1. --state-dir is where the cursor and the wake file live (default: ~/.nova-friend/<coordinator>). --redis is the bus store (default: NOVA_BUS_REDIS). --json prints one object on stdout, for a result and for a timeout alike: {"status":"ok","word":"OK|NONE","after":"<cursor>","waited":"<duration>","messages":[{"id":"<id>","from":"<f>","subject":"<s>"}],"events":[{"id":"<id>","from":"<f>","subject":"<s>"}],"wake":{"line":"<text>"}} (waited and wake are left out when they hold nothing; messages and events are always arrays). Exit 2 when it could not run: a flag, a name that is not on the roster, a store that did not answer, or a cursor that cannot be read or saved. Nothing is printed when the cursor cannot be saved, so a retry still sees what this run saw.
+example: nova-friend watch --as ada --timeout 1s
+```
+
+Example, as written:
+
+```
+nova-friend watch --as ada --timeout 1s
+```
+
 ### The coordinator's ping loop
 
 ```sh
