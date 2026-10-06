@@ -85,6 +85,7 @@ const (
 	NCross           = "stream stopped: needs a card of another stream first"
 	NRejected        = "stream stopped: the merge queue rejected"
 	NBaseRed         = "stream stopped: the base fails its tree gate" // the base-gate rule's third failure (rules.go)
+	NMissingBase     = "the base branch is gone"                      // a land whose base branch is missing (rebase.go)
 	NBlocked         = "a primary is blocked on something dropped"
 	NMissingNeed     = "a primary is blocked on something missing"
 	NCIRed           = "ci red"
@@ -111,6 +112,7 @@ var Decisions = map[string][]string{
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
 	NBaseRed:         {"resume", "wait"},
+	NMissingBase:     {"rebase", "wait", "drop"},
 	NBlocked:         {"drop", "ack"},
 	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
