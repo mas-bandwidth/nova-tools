@@ -89,7 +89,7 @@ builder checks each line below against a screenshot at 1440 and 375 and fixes an
 from the owner edits one line here and nothing else moves.
 
 ## Page
-- Dark only: no theme toggle (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed). Panels full width, stacked: header, progress bar, Work, Fleet,
+- Dark only: no theme toggle (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed). Panels full width, stacked: header, progress bar, Merge, Work, Fleet,
   Friends, Lanes, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
 - Base type 28 px (doubled). Labels and headers: system proportional face. All numbers: monospace (ui-monospace,
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
@@ -119,6 +119,24 @@ from the owner edits one line here and nothing else moves.
 ## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
+
+## Merge (title "Merge"; the card v11-merge-row-on-dashboard-b, 2026-10-06; the owner's line is quoted under LOCK 2)
+- One dark row under the progress bar, the house style: a label over each figure, side by side, wrapping at a narrow
+  width, never scrolled. It reads `where --json`'s `merge_row`, and the coordinator reads the same object there:
+  `merging` and `review` (the cards in each, the work table's counts); `landed_per_30m` (landed per 30 minutes, the
+  where record's landing stamps); `oldest_merging_min` (the oldest merging card's age by its accepted stamp, read
+  only with `--cards` or `--rows`, which read the merging cards; null without); `base_gate` and `failing_test` (red
+  on an open base-red judgment, the base-gate rule's stop or the drift alarm's whole-tree gate, naming the first
+  test its finding names, or the finding itself when it names none; green when none is open and the lander's tree
+  gate passed at a stream's last landing; empty, not known, otherwise: never green by default); `base_lacks` and
+  `dev_lacks` (the drift between the base and the development branch the last dev sync measured: commits dev has
+  that the base lacks, and the base has that dev lacks); `sync_minutes` and `promotion_minutes` (since the last dev
+  sync and the last promotion into dev; null when none is recorded).
+- Drawn: merging | review | landed / 30m | oldest merging | base gate | drift | since sync | since promotion. The
+  gate is a pill, red (critical), green (good) or "-" (neutral), with the failing test after it; the drift reads
+  "base lacks X · dev lacks Y"; a minute not known is "-". Nothing in the row flashes.
+- The base-red judgments are read only when a stream is stopped, so a plain where makes no exchange more on a
+  sprint that runs; a drift alarm that the base is red while no stream is stopped is in the inbox, not this row.
 
 ## Work (title exactly "Work"; subtitle "<n> streams · <l> landed · <h> held")
 - Columns: stream | status | waiting | ready | working | review | merging | landed | cost (headers exactly so, all lowercase). The "landed" header is centred over its "n / total" cell (the owner, 7:34 PM: "Landed column in work stream table, please horizontal center align the column header"); every other numeric header stays right-aligned. The status column with its pills stays (the owner, after the lock, 7:32 PM: "we just lost the nice state tabs in the workstream table. undo pls."); the sort by status stays; a thin rule separates the groups (landed, working, stopped, held).
@@ -182,3 +200,6 @@ This specification is locked. No line changes without his words, quoted here wit
   them in the table (and reads "· hide") when clicked and hides them again on the next click. The
   subtitle counts the streams shown; the total row, the progress bar and the hero count every stream,
   archived ones included. Nothing else moves.
+- 2026-10-04, the owner, a quoted change after the lock, asking after the merge backlog:
+  "Is this progress visible in the sprint dashboard yet?" The page shows one Merge row under the progress bar (the Merge section
+  above), read from `where --json`'s `merge_row`. Nothing else moves.

@@ -158,6 +158,10 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .panel-head h2 { margin: 0; font-size: 2rem; line-height: 3rem; font-weight: 600; }
 .panel-head .muted { font-size: 1.625rem; }
 .panel-head .archived { background: none; border: 0; padding: 0; font: inherit; font-size: 1.625rem; cursor: pointer; text-decoration: underline dotted; }
+/* Merge (docs/SPEC-SPRINT-DASHBOARD.md, "Merge"): one row of the merge state, label over figure. */
+.merge-facts { display: flex; flex-wrap: wrap; gap: 1.5rem 4rem; padding: 0.5rem 3rem 2.5rem; }
+.merge-facts .label { display: block; color: var(--text-2); font-size: 1.5rem; }
+.merge-facts .num { font-family: var(--mono); font-size: 2rem; }
 .empty { padding: 1rem 3rem 3rem; color: var(--text-2); font-size: 1.625rem; }
 .empty code { font: 1.5rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
@@ -359,6 +363,20 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
+</section>
+
+<section class="panel merge" id="merge-row">
+  <div class="panel-head"><h2>Merge</h2></div>
+  <div class="merge-facts">
+    <div><span class="label">merging</span><span class="num" id="mr-merging">-</span></div>
+    <div><span class="label">review</span><span class="num" id="mr-review">-</span></div>
+    <div><span class="label">landed / 30m</span><span class="num" id="mr-landed">-</span></div>
+    <div><span class="label">oldest merging</span><span class="num" id="mr-oldest">-</span></div>
+    <div><span class="label">base gate</span><span id="mr-gate"></span></div>
+    <div><span class="label">drift</span><span class="num" id="mr-drift">-</span></div>
+    <div><span class="label">since sync</span><span class="num" id="mr-sync">-</span></div>
+    <div><span class="label">since promotion</span><span class="num" id="mr-promoted">-</span></div>
+  </div>
 </section>
 
 <section class="panel streams">
