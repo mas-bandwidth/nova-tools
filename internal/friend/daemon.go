@@ -61,6 +61,13 @@ const (
 	BatchBytes = 256 << 10
 )
 
+// ActedKept is how many message ids the daemon remembers it pushed into a
+// turn that ended acted: a second delivery of one (the claim hands a message
+// in again when its ack was lost) is dropped and acked, never pushed in twice.
+// Past the memory, the message's receipt says acted all the same (Entry.Stage;
+// docs/SPEC-BUS.md, message-receipts; tla/Bus2Receipts.tla, Take).
+const ActedKept = 4096
+
 // SeatCacheFor is how long the daemon keeps the seat holder it read from the
 // sprint server: the authority of a message is never older than this
 // (docs/SPEC-FRIEND.md, bus-authority-labels.w3).
@@ -349,6 +356,9 @@ type loop struct {
 	silentStop   time.Duration
 	brokenAfter  int
 	answered     map[string]bool // entries whose ping the daemon has ponged
+	acted        map[string]bool // message ids pushed into a turn that ended acted, at most ActedKept
+	actedOrder   []string        // the same ids, oldest first, for the bound
+	now          time.Time       // the step's clock, for a line said beside a verb (OnStampError)
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
 	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
@@ -396,6 +406,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
 	_, l.passive = d.Deliver.(interface{ Passive() })
+	l.acted = map[string]bool{}
+	l.b.OnStampError = func(err error) { d.Record(l.now.UTC().Format(time.RFC3339) + " " + oneLine(err.Error(), 300)) }
 	if l.silentStop <= 0 {
 		l.silentStop = DefaultSilentStop
 	}
@@ -413,6 +425,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
+		l.now = now
 		for _, p := range d.m.Tick(now) {
 			l.say(p)
 		}
@@ -725,6 +738,13 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
+			} else if l.acted[msg.ID] || e.Stage == bus.Acted {
+				// a second delivery of a message a turn acted on: dropped and acked, never pushed in twice
+				d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
 			} else if !l.inHand[e.Entry] {
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
@@ -847,6 +867,9 @@ func (l *loop) startBatch(now time.Time) {
 // working; one silent past SilentStop is stopped, said on the record.
 func (l *loop) watch(t *turn, now time.Time) {
 	if n := t.seen.Load(); n != t.seenN {
+		if t.seenN == 0 {
+			l.stampTurn(t, bus.Read) // the session took the turn: it printed
+		}
 		t.seenN, t.lastOut = n, now
 	}
 	if !t.stopped && !t.capped && now.Sub(t.lastOut) >= l.silentStop {
@@ -902,6 +925,8 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		l.remember(t)
+		line += l.stampTurn(t, bus.Acted)
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -929,6 +954,7 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		}
 	default:
 		l.streak, l.refusal = 0, ""
+		line += l.stampTurn(t, bus.Read) // the turn ran and failed: read, never acted
 		var given []string
 		for _, e := range t.entries {
 			l.failed[e]++
@@ -964,6 +990,41 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 			now.UTC().Format(time.RFC3339), d.status.SessionID, d.status.SessionReason, l.brokenAfter)
 	}
 	return line
+}
+
+// stampTurn moves the receipts of the messages t carries to state (read when
+// the session took the turn, acted when it ended at exit 0), forward only, in
+// one trip; it answers the record's words when the store did not write them.
+// (docs/SPEC-BUS.md, message-receipts; tla/Bus2Receipts.tla: Take, Print, TurnEnd, TurnFail)
+func (l *loop) stampTurn(t *turn, state string) string {
+	if len(t.msgs) == 0 {
+		return ""
+	}
+	ids := make([]string, len(t.msgs))
+	for i, m := range t.msgs {
+		ids[i] = m.ID
+	}
+	if _, err := l.b.Stamp(l.ctx, l.d.Friend, state, ids...); err != nil {
+		return fmt.Sprintf(" receipt=%s-not-written error=%q", state, oneLine(err.Error(), 200))
+	}
+	return ""
+}
+
+// remember keeps the ids of the messages t carried, a turn that ended acted,
+// the newest ActedKept of them: what the take drops when the claim hands one
+// in again.
+func (l *loop) remember(t *turn) {
+	for _, m := range t.msgs {
+		if l.acted[m.ID] {
+			continue
+		}
+		l.acted[m.ID] = true
+		l.actedOrder = append(l.actedOrder, m.ID)
+	}
+	for len(l.actedOrder) > ActedKept {
+		delete(l.acted, l.actedOrder[0])
+		l.actedOrder = l.actedOrder[1:]
+	}
 }
 
 // batchDone is the batch turn's end: a session that cannot take a turn

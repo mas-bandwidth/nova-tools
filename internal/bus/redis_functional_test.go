@@ -297,10 +297,96 @@ func TestRedisFriendACLSetsOnlyItsOwnTokenRecords(t *testing.T) {
 		assert.ErrorContains(t, ada.Get(ctx, k).Err(), "NOPERM", "GET %s", k)
 	}
 	require.NoError(t, ada.Set(ctx, SentOf("ada", "own"), "x", 0).Err())
+
+	// the receipts under the line: recv stamps delivered, the daemon read, a reply acted
+	to, err := (&Bus{Store: Redis{C: admin}}).Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "for ada", Body: "x\n"})
+	require.NoError(t, err)
+	var stampErr error
+	b.OnStampError = func(err error) { stampErr = err }
+	_, ok, err := b.Recv(ctx, "ada", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, stampErr)
+	_, err = b.Stamp(ctx, "ada", Read, to.ID)
+	require.NoError(t, err)
+	_, err = b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "re", Body: "x\n", Re: to.ID})
+	require.NoError(t, err)
+	got, _, err := b.Stages(ctx, "ada", to.ID)
+	require.NoError(t, err)
+	assert.Equal(t, Acted, got[0].State)
 	friends, err := admin.SMembers(ctx, friendsKey).Result()
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"ada", "bob"}, friends, "the roster is untouched")
 
 	wide := apply("wide", strings.Replace(line, " (~bus2:sent:ada:* +get +set)", " +get +set", 1))
 	require.NoError(t, wide.Set(ctx, "machines", "x", 0).Err(), "reversed: +set on the root overwrites a roster key")
+}
+
+// The receipts on a real store: recv stamps delivered at the server's time,
+// a stamp moves only forward and never starts past delivered, a reply acts
+// in the send's transaction and in the token's script, a message the claim
+// hands in again comes back acted, and overdue lists only what no reader
+// took (SPEC-BUS.md, message-receipts).
+func TestRedisReceiptsMoveForwardOnlyAndOverdueListsTheUntaken(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	m1, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "one", Body: "x"})
+	require.NoError(t, err)
+	m2, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "two", Body: "x"})
+	require.NoError(t, err)
+	late, now, err := b.Overdue(ctx, 0)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now(), now, time.Minute)
+	require.Len(t, late, 2)
+	assert.Equal(t, m1.ID, late[0].ID)
+
+	e, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "", e.Stage)
+	got, now, err := b.Stages(ctx, "bob", m1.ID, m2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, Delivered, got[0].State)
+	assert.WithinDuration(t, now, got[0].At, 2*time.Second, "the server's time")
+	assert.Equal(t, "", got[1].State)
+	late, _, err = b.Overdue(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, late, 1)
+	assert.Equal(t, m2.ID, late[0].ID)
+
+	prior, err := b.Stamp(ctx, "bob", Acted, m2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{""}, prior, "never acted before delivered")
+	prior, err = b.Stamp(ctx, "bob", Read, m1.ID, m2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{Delivered, ""}, prior)
+	prior, err = b.Stamp(ctx, "bob", Delivered, m1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{Read}, prior)
+	v, err := c.HGet(ctx, StagesOf("bob"), m1.ID).Result()
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(v, "read "), "never back: %q", v)
+
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "re one", Body: "x", Re: m1.ID})
+	require.NoError(t, err)
+	e2, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, m2.ID, e2.Message().ID)
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "re two", Body: "x", Re: m2.ID, Token: "t-re"})
+	require.NoError(t, err)
+	got, _, err = b.Stages(ctx, "bob", m1.ID, m2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{Acted, Acted}, []string{got[0].State, got[1].State}, "a reply acts, with a token or without")
+
+	require.NoError(t, b.Store.Release(ctx, StreamOf("bob"), "bob", e.Entry))
+	again, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, m1.ID, again.Message().ID)
+	assert.Equal(t, Acted, again.Stage, "handed in again, it says it was acted")
+	got, _, err = b.Stages(ctx, "bob")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, Acted, got[0].State)
 }

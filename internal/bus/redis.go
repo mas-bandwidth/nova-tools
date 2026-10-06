@@ -46,9 +46,12 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 		pipe.XAdd(ctx, &redis.XAddArgs{Stream: s, ID: "*", Values: toValues(fields)})
 	}
 	for _, m := range marks {
-		if m.Clear {
+		switch {
+		case m.Clear:
 			pipe.HDel(ctx, m.Key, m.Field)
-		} else {
+		case m.Forward:
+			forward.Eval(ctx, pipe, []string{m.Key}, m.Value, m.Field) // the script's text: a pipeline cannot fall back from EVALSHA
+		default:
 			pipe.HSet(ctx, m.Key, m.Field, m.Value)
 		}
 	}
@@ -59,8 +62,8 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 // other send under the key comes between its GET and its writes. KEYS are the
 // record's key, the streams, then each mark's hash; ARGV are the record, its
 // expiry in ms, the count of streams, the count of field pairs, the pairs,
-// then each mark as "set" field value or "del" field.
-var addOnce = redis.NewScript(`
+// then each mark as "set" field value, "del" field or "fwd" field state.
+var addOnce = redis.NewScript(forwardLua + `
 local prior = redis.call('GET', KEYS[1])
 if prior then return {1, prior} end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
@@ -69,10 +72,14 @@ local fields = {}
 for i = 1, nf * 2 do fields[i] = ARGV[4 + i] end
 for i = 1, ns do redis.call('XADD', KEYS[1 + i], '*', unpack(fields)) end
 local j, k = 5 + nf * 2, 2 + ns
+local now = redis.call('TIME')[1]
 while j <= #ARGV do
   if ARGV[j] == 'del' then
     redis.call('HDEL', KEYS[k], ARGV[j + 1])
     j = j + 2
+  elseif ARGV[j] == 'fwd' then
+    forward(KEYS[k], ARGV[j + 2], ARGV[j + 1], now)
+    j = j + 3
   else
     redis.call('HSET', KEYS[k], ARGV[j + 1], ARGV[j + 2])
     j = j + 3
@@ -91,9 +98,12 @@ func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Durati
 	}
 	for _, m := range marks {
 		keys = append(keys, m.Key)
-		if m.Clear {
+		switch {
+		case m.Clear:
 			args = append(args, "del", m.Field)
-		} else {
+		case m.Forward:
+			args = append(args, "fwd", m.Field, m.Value)
+		default:
 			args = append(args, "set", m.Field, m.Value)
 		}
 	}
@@ -135,6 +145,49 @@ func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, 
 		out[i] = c.Val()
 	}
 	return out, nil
+}
+
+// forwardLua is the receipt rule Forward (stages.go) keeps, as the store's
+// scripts run it: the receipt of id on the hash key moves to state at now
+// (the store's TIME, in seconds) only forward, and only delivered starts one;
+// it answers the state before ("" none).
+const forwardLua = `
+local rank = {delivered = 1, read = 2, acted = 3}
+local function forward(key, state, id, now)
+  local cur = redis.call('HGET', key, id)
+  local prior = ''
+  if cur then prior = string.match(cur, '^[^ ]*') end
+  local have, want = rank[prior] or 0, rank[state] or 0
+  if want > have and (have > 0 or want == 1) then
+    redis.call('HSET', key, id, state .. ' ' .. now)
+  end
+  return prior
+end
+`
+
+// forward is Store.Forward's one atomic step: KEYS[1] the receipts hash,
+// ARGV[1] the state, the rest the ids, each moved by forwardLua; the answer
+// is each id's state before. A call carries the ids of one turn, never a table.
+var forward = redis.NewScript(forwardLua + `
+local now = redis.call('TIME')[1]
+local out = {}
+for i = 2, #ARGV do out[#out + 1] = forward(KEYS[1], ARGV[1], ARGV[i], now) end
+return out
+`)
+
+func (r Redis) Forward(ctx context.Context, key, state string, ids ...string) ([]string, error) {
+	args := []any{state}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	res, err := forward.Run(ctx, r.C, []string{key}, args...).StringSlice()
+	if err != nil {
+		return nil, err
+	}
+	if len(res) != len(ids) {
+		return nil, fmt.Errorf("the receipt script answered %d states for %d ids", len(res), len(ids))
+	}
+	return res, nil
 }
 
 func (r Redis) EnsureGroup(ctx context.Context, stream, group string) error {

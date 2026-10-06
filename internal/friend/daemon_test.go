@@ -610,3 +610,102 @@ func TestStatusSaysTheChallengeIsAnsweredTheSecondAfterAPongIsWritten(t *testing
 	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce should end the challenge")
 	assert.Equal(t, 1, s.Pongs, "the pongs count should be incremented")
 }
+
+// lostAck is the store whose next acks are lost: the XACK never lands, so the
+// message stays pending and the claim hands it in again (bus.ClaimAfter).
+type lostAck struct {
+	*bustest.Fake
+	lose int
+}
+
+func (s *lostAck) Ack(ctx context.Context, stream, group string, entries ...string) (int64, error) {
+	if s.lose > 0 {
+		s.lose--
+		return 0, errors.New("i/o timeout")
+	}
+	return s.Fake.Ack(ctx, stream, group, entries...)
+}
+
+// A message a turn acted on whose ack was lost is handed in again by the
+// claim; the take drops it with one record line and acks it, never pushing
+// it in twice: by the daemon's memory, by the receipt the store holds (a
+// restarted daemon remembers nothing), and by the memory when the acted
+// stamp was not written (docs/SPEC-BUS.md, message-receipts;
+// tla/Bus2Receipts.tla, NoIdActedTwice).
+func TestARedeliveredIdAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		restart bool // a second Run: the memory is gone, the receipt stands
+		noStamp bool // the acted stamp is refused: the memory stands
+	}{
+		{name: "the memory"},
+		{name: "the receipt, across a restart", restart: true},
+		{name: "the memory, with no acted stamp", noStamp: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			st := &lostAck{Fake: r.store, lose: 1}
+			r.d.Store = st
+			m := r.send(t, "ada", "hello", "once")
+			if tc.noStamp {
+				r.at[1] = func() { r.store.FailForward = errors.New("NOPERM receipts") } // after the delivered stamp, before the turn ends
+			}
+			if !tc.restart {
+				r.at[4] = func() { r.store.Advance(bus.ClaimAfter) }
+				r.run(t, 8)
+			} else {
+				r.run(t, 4)
+				r.store.Advance(bus.ClaimAfter)
+				r.run(t, r.beats+4)
+			}
+			require.Len(t, r.delivered, 1, "pushed in once: %v", r.records)
+			pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+			require.NoError(t, err)
+			assert.Empty(t, pending, "the second delivery is acked")
+			assert.Empty(t, fresh)
+			dropped := 0
+			for _, line := range r.records {
+				if strings.HasSuffix(line, " duplicate dropped id="+m.ID) {
+					dropped++
+				}
+			}
+			assert.Equal(t, 1, dropped, "%v", r.records)
+			assert.Contains(t, strings.Join(r.records, "\n"), "ack=failed")
+			r.store.FailForward = nil
+			got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
+			require.NoError(t, err)
+			want := bus.Acted
+			if tc.noStamp {
+				want = bus.Delivered
+			}
+			assert.Equal(t, want, got[0].State)
+		})
+	}
+}
+
+// A turn's messages are stamped read when the turn ran and failed, and acted
+// when it ended at exit 0 (docs/SPEC-BUS.md, message-receipts).
+func TestATurnStampsItsMessagesReadAndActed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.exit = 3
+	m := r.send(t, "ada", "hello", "x")
+	r.at[4] = func() {
+		r.mu.Lock()
+		r.exit = 0
+		r.mu.Unlock()
+		r.store.Advance(bus.ClaimAfter)
+	}
+	r.at[3] = func() {
+		got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
+		require.NoError(t, err)
+		assert.Equal(t, bus.Read, got[0].State, "a turn that ran and failed read it")
+	}
+	r.run(t, 8)
+	require.Len(t, r.delivered, 2)
+	got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
+	require.NoError(t, err)
+	assert.Equal(t, bus.Acted, got[0].State)
+}

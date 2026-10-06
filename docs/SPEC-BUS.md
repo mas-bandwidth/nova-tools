@@ -308,7 +308,59 @@ caller's `Raise`, never over the bus that is failing.
 
 The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
 store with users: a sender marks the recipients' hashes, as it writes their
-streams.
+streams. message-receipts adds `~bus2:receipt:*` and `+hget`: a send naming
+a message stamps the sender's own receipts, and recv its own.
+
+### message-receipts: delivered, read, acted; overdue; a redelivered id is dropped
+
+A message is pending or acked on its stream, and that alone cannot tell a
+message that reached the friend daemon from one the session read or one it
+acted on. Every message therefore has a receipt per recipient that moves
+only forward: `delivered` (the recipient's reader took it off its stream:
+`recv`, which the daemon runs), `read` (the turn carrying it started: the
+daemon marks it when the session took the turn, its first output, or when a
+turn that ran ended non-zero), `acted` (the turn ended at exit 0, or the
+recipient sent a message whose `re` is its id). The receipts are one hash
+per recipient beside its stream, `bus2:receipt:<name>`, field the message
+id, value the state and the store's time it was reached in Unix seconds
+(`acted 1791288000`). Only the bus writes it, through one rule
+(`internal/bus/stages.go`, `Forward`) that the store runs as one script
+(`redis.go`, `forwardLua`) and both fakes call: a receipt moves only
+forward, and only `delivered` starts one, so a message is never read or
+acted before it was delivered. `recv` stamps `delivered` (one trip more)
+and hands the reader the state it found (`Entry.Stage`); a stamp the store
+refuses never fails the recv (`Bus.OnStampError` hears it, and the message
+stays overdue). A send naming a message (`re`) stamps it `acted` for the
+sender in the send's own transaction, or its token's script, so a send
+stays two trips. The daemon stamps `read` and `acted` (`Bus.Stamp`).
+
+`nova-bus receipts --as <name> [--id <id,...>]` prints each message's
+state and age by the store's clock (`none` for an id with no receipt).
+`nova-bus overdue [--older <d>]` (default 10m) is the alarm the
+coordinator's loop and the seat check run: every message on every known
+name's stream still short of delivered (new, or pending with no receipt)
+sent longer ago than `<d>`, oldest first, and exit 1 when there is one. An
+acked message is never listed. It reads the roster, peeks each stream, and
+reads every receipts hash in one pipeline.
+
+Delivery stays at least once (a claim after `ClaimAfter` hands a message in
+again); the take is idempotent. The friend daemon remembers the ids it
+pushed into a turn that ended acted (the newest `ActedKept`, 4096), and a
+second delivery of one, or of any message whose receipt `recv` found
+`acted`, is dropped with one record line, `duplicate dropped id=<id>`, and
+acked, never pushed in twice. The receipt covers a restarted daemon, which
+remembers nothing; the memory covers an `acted` stamp the store did not
+write. Both lost at once (the stamp refused, then the daemon restarted
+before its ack landed) pushes the message in once more.
+
+The model is `tla/Bus2Receipts.tla`, `ReceiptSpec`, which extends
+`tla/Bus2.tla` (so Bus2's own cases read the machine unchanged): the receipt
+states over the delivery machine, the daemon's take, turn, ack, a lost ack and a crash,
+with `ReceiptNeverMovesBack`, `ActedImpliesDelivered` and `NoIdActedTwice`
+(`MCBus2Receipts`), and two reversed witnesses: a take that pushes a
+redelivered id (`MCBus2BrokenPushDup`, `NoIdActedTwice`) and a recv that
+writes `delivered` over the receipt (`MCBus2BrokenBackStamp`,
+`ReceiptNeverMovesBack`).
 
 ## The identity
 
@@ -332,8 +384,8 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`; with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL`, and `GET` when the push gate refuses a retry | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:sent:<f>:*` with a token |
-| recv | `SMEMBERS`, `TIME`, `HGETALL`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>` |
+| send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`; with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL`, and `GET` when the push gate refuses a retry | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
+| recv | `SMEMBERS`, `TIME`, `HGETALL`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
@@ -354,9 +406,9 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hgetall
+  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hget +hgetall
   +eval +evalsha (~bus2:sent:<f>:* +get +set)
 ```
 
@@ -397,7 +449,7 @@ its machine rows; no new kind or field was needed.
 send: two (the roster and `TIME` in one pipeline, then the transaction, or
 with a token the script; a third, `EVAL`, the first time a connection's server
 has not the script, and a `GET` when the push gate refuses a retry). recv:
-four (the roster, the group, the claim, the read). wait: two to arm (the
+five (the roster, the group, the claim, the read, the delivered stamp). wait: two to arm (the
 roster, the stream's tail), then one `XREAD` per block (one parked read when
 nothing else is watched). ack: five (group, pending,
 the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
