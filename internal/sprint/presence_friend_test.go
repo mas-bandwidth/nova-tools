@@ -96,8 +96,8 @@ func TestFriendIsUpOnlyOnEvidenceFromHerSession(t *testing.T) {
 	assert.Contains(t, row.Evidence, "no wake ping answered by her session within 10m0s")
 	assert.Contains(t, row.Evidence, "no card finished within 30m0s")
 
-	// her daemon's own pong (asleep) is no evidence either
-	r.observe(sprint.Asleep)
+	// her daemon's own pong is no evidence either
+	r.observe(sprint.DaemonPong)
 	assert.Equal(t, sprint.Down, r.row().Status, "a pong the daemon answered is not her session")
 
 	// one wake ping her session answered: up, naming it and its age
@@ -152,7 +152,7 @@ func TestFriendEvidenceRule(t *testing.T) {
 		{"a pong the window old", sprint.FriendPresence{Health: pong, Generation: 2}, t0.Add(sprint.FriendPongWindow), sprint.Down},
 		{"a pong under an old seat", sprint.FriendPresence{Health: pong, Generation: 3}, t0, sprint.Down},
 		{"a pong from the future", sprint.FriendPresence{Health: pong, Generation: 2}, t0.Add(-time.Second), sprint.Down},
-		{"a daemon pong", sprint.FriendPresence{Health: sprint.FriendHealth{State: sprint.Asleep, Seen: t0, Generation: 2}, Generation: 2}, t0, sprint.Down},
+		{"a daemon pong", sprint.FriendPresence{Health: sprint.FriendHealth{State: sprint.DaemonPong, Seen: t0, Generation: 2}, Generation: 2}, t0, sprint.Down},
 		{"a fresh finish", sprint.FriendPresence{Finished: t0, Generation: 2}, t0.Add(sprint.FriendFinishWindow - time.Second), sprint.Up},
 		{"a finish the window old", sprint.FriendPresence{Finished: t0, Generation: 2}, t0.Add(sprint.FriendFinishWindow), sprint.Down},
 	}
