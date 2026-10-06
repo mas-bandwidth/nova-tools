@@ -101,6 +101,15 @@ const templateFixCard = `fix-card — take one card and land the fix
 // generators cannot drift.
 const GoCacheLine = "GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it."
 
+// FriendGoCacheLine is the cache line of a friend's card (WHO: friend): a friend works
+// in her own working directory, so her GOCACHE is her own build cache, named by path
+// and said so, warm across her cards, not the machine's cache the fleet's children
+// share (docs/FRIENDS.md, the working directory; docs/SPEC-CARD-CONTRACT.md section 2).
+// cmd/nova-sprint's friendBrief writes it into the working-directory line it delivers.
+func FriendGoCacheLine(name string) string {
+	return "GOCACHE=~/" + name + "-working/.cache/go-build is your own build cache, warm across your cards: keep it"
+}
+
 // GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
 // the card's steps): a red gate line names its file and says whether the file is the child's own
 // (yours) or is unchanged from BASE, so the child neither fixes a file it may not touch nor

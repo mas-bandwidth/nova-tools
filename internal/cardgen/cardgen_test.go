@@ -1,6 +1,9 @@
 package cardgen
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -8,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -316,14 +320,59 @@ func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
 	assert.Less(t, len(tmpl), cardlimits.BriefAdvisoryBytes)
 }
 
-// Every card the generators write, and the card template, carries the one GOCACHE
-// sentence and no instruction to create or choose a cache of its own: GOCACHE is the
-// machine's shared, warm build cache JOB.md names, already set, and the child keeps it
-// (docs/SPEC-CARD-CONTRACT.md section 2, the staged environment). cardgen.Render and the
-// card template share swarm.GoCacheLine, so the two generators cannot drift.
+// A card whose PATHS reach tla/ runs the model in its own gate: STEP 4 names make tlc for
+// the groups of the cases it touched and the merge into tla/RUNS.tsv, the PATHS line
+// carries tla/RUNS.tsv so the record can be committed, and the brief still passes the
+// lint; a card that touches no model has neither.
+func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
+	t.Parallel()
+	gateStep := func(brief string) string {
+		for _, line := range strings.Split(brief, "\n") {
+			if strings.HasPrefix(line, "STEP 4.") {
+				return line
+			}
+		}
+		return ""
+	}
+	for _, paths := range [][]string{{"tla/Land.tla", "tla/MCLand.cfg"}, {"tla/*", "internal/sprint/land*.go"}, {"tla/**"}} {
+		c := Card{ID: "model-land", File: paths[0], Paths: paths, Test: "internal/tlc TestTLCRecordsCoverCurrentModels", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix the model."}
+		brief := Render(header, c)
+		step := gateStep(brief)
+		assert.Contains(t, step, "make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g", paths)
+		assert.Contains(t, step, "go run ./tools/tlacheck groups --root . --stale", paths)
+		assert.Contains(t, step, "go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv", paths)
+		assert.Contains(t, step, swarm.GateNamesWhoseFile, paths)
+		var line []string
+		for _, l := range strings.Split(brief, "\n") {
+			if rest, ok := strings.CutPrefix(l, "PATHS: "); ok {
+				line = strings.Split(rest, ", ")
+			}
+		}
+		assert.True(t, slices.ContainsFunc(line, func(g string) bool { return hygiene.MatchGlob(g, "tla/RUNS.tsv") }), "PATHS covers the records: %v", line)
+		assert.LessOrEqual(t, strings.Count(strings.Join(line, " ")+" ", "tla/RUNS.tsv "), 1, "named at most once: %v", line)
+		assert.Empty(t, Lint(c.ID, brief), paths)
+		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, paths)
+		assert.Equal(t, paths, c.Paths, "the card's own PATHS are not changed")
+	}
+	plain := Render(header, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
+	assert.NotContains(t, plain, "make tlc")
+	assert.NotContains(t, plain, "tla/RUNS.tsv")
+}
+
+// Every place the repository writes a card's GOCACHE sentence says the one thing JOB.md
+// says (docs/SPEC-CARD-CONTRACT.md section 2, the staged environment): the machine's
+// shared, warm build cache is already set and the child keeps it. Each card the
+// generators write and the card template carry swarm.GoCacheLine, once, with no
+// instruction to create or choose a cache of its own; the `gocache` rule the member
+// injects from fleet/child-rules.txt quotes that same sentence, and the step-go-clean
+// remedy says to keep the shared cache. A friend's card (WHO: friend) is the exception:
+// it names the friend's own cache and says so (swarm.FriendGoCacheLine, written into
+// the working-directory line by cmd/nova-sprint's friendBrief), so the `GOCACHE=`
+// refusal holds only the child cards. cardgen.Render, the card template, the rules
+// file and the remedy reach the sentence through swarm.GoCacheLine, so none can drift.
 func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 	t.Parallel()
-	stale := []string{"private GOCACHE", "GOCACHE=", "Export GOCACHE", "own GOCACHE", "choose a GOCACHE", "GOCACHE path"}
+	createOrChoose := []string{"private GOCACHE", "Export GOCACHE", "own GOCACHE", "choose a GOCACHE", "GOCACHE path"}
 	cards := map[string]string{}
 
 	rows, _ := ParseLedger(Ledgers["serial-tests"], serialFixture)
@@ -343,11 +392,41 @@ func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 	require.NoError(t, err)
 	cards["card-template"] = tmpl
 
+	rules, err := swarm.HeldRules(swarm.DefaultRulesName)
+	require.NoError(t, err)
+	var gocache swarm.ChildRule
+	for _, r := range rules {
+		if r.Name == "gocache" {
+			gocache = r
+		}
+	}
+	require.NotEmpty(t, gocache.Name, "fleet/child-rules.txt carries no [gocache] rule")
+	cards["rule-gocache"] = gocache.Sentence
+	cards["remedy-step-go-clean"] = swarm.ChildRemedy(rules, "step-go-clean")
+
 	for name, card := range cards {
 		assert.Contains(t, card, swarm.GoCacheLine, name)
 		assert.Equal(t, 1, strings.Count(card, swarm.GoCacheLine), "%s: the one sentence, once", name)
-		for _, s := range stale {
-			assert.NotContains(t, card, s, "%s: no stale GOCACHE instruction", name)
+		assert.NotContains(t, card, "GOCACHE=", "%s: a child card assigns no GOCACHE of its own", name)
+		for _, s := range createOrChoose {
+			assert.NotContains(t, card, s, "%s: no instruction to create or choose a GOCACHE", name)
 		}
 	}
+
+	// A friend's card (WHO: friend) names the friend's own cache and says so: her
+	// working directory holds her own build cache, warm across her cards. `GOCACHE=`
+	// is legitimate there, which is why the refusal above holds only the child cards.
+	friend := swarm.FriendGoCacheLine("amy")
+	assert.Contains(t, friend, "GOCACHE=~/amy-working/.cache/go-build", "a friend card names the friend's own cache")
+	assert.Contains(t, friend, "your own", "and says so")
+	for _, s := range createOrChoose {
+		assert.NotContains(t, friend, s, "a friend card gives no instruction to create or choose a cache")
+	}
+	// friendBrief (cmd/nova-sprint/friendcards.go) writes the friend's own cache line
+	// through the one helper, so a friend card cannot carry a stale cache path.
+	src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nova-sprint", "friendcards.go"))
+	require.NoError(t, err)
+	writes := string(src)
+	assert.True(t, strings.Contains(writes, "swarm.FriendGoCacheLine("), "friendBrief names the friend's own cache through the one line")
+	assert.False(t, strings.Contains(writes, "GOCACHE=~/"), "the friend's cache path lives in the one line, never hand-written in friendBrief")
 }

@@ -68,7 +68,7 @@ func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
-	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
+	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, "+swarm.FriendGoCacheLine(name)+", and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a twin recut --widen made starts from the held attempt's head (member.Carried)
 		p.BaseHead, p.BaseAttempt = c.Head, c.Attempt
