@@ -1614,6 +1614,10 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 	for _, f := range cardtree.Lint(brief) {
 		findings = append(findings, swarm.CardHeaderFinding{Check: f.Check, Line: f.Line, Excerpt: f.Excerpt})
 	}
+	// honest attribution: a brief must not tell a worker to hide or misstate its model.
+	for _, hf := range swarm.LintBriefHiding([]byte(brief)) {
+		findings = append(findings, swarm.CardHeaderFinding{Check: "honest-attribution", Line: hf.Line, Excerpt: hf.Excerpt})
+	}
 	return "", findings
 }
 

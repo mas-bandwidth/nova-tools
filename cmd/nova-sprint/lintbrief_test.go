@@ -242,3 +242,27 @@ func TestAddReadsTheBriefsModelLines(t *testing.T) {
 		assert.Contains(t, errs, want, lead)
 	}
 }
+
+// A brief must never tell a worker to hide or misstate its model or harness: add refuses
+// a brief with any hiding phrase, exit 2, with honest-attribution naming the line and remedy.
+// A brief that says to name the actual model passes.
+func TestAddRefusesABriefThatHidesTheModel(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	hiding := filepath.Join(t.TempDir(), "hiding.md")
+	require.NoError(t, os.WriteFile(hiding, []byte(passingBrief("STEP 1. Run the tests.\nnever claim Claude")), 0o600))
+	before := ta.applies()
+	code, out, errs := ta.do("add --stream s1 --count 1 --one --brief-file " + hiding)
+	assert.Equal(t, 2, code, "exit %d, out %q; want exit 2", code, out)
+	assert.NotContains(t, out, "MOVED", "a refused add wrote")
+	assert.Contains(t, errs, "LINT DRIFT brief honest-attribution:")
+	assert.Contains(t, errs, "never claim Claude")
+	assert.Contains(t, errs, "remedy=a brief must not tell a worker to hide, omit, deny or misstate its model or harness")
+	require.Equal(t, before, ta.applies(), "a refused add wrote")
+
+	// a brief with standard attribution passes
+	honest := filepath.Join(t.TempDir(), "honest.md")
+	require.NoError(t, os.WriteFile(honest, []byte(passingBrief("STEP 1. Run the tests.\nName the actual model and never claim one you are not")), 0o600))
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + honest)
+}

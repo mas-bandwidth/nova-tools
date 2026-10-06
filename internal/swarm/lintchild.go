@@ -334,6 +334,8 @@ func ChildRemedy(rules []ChildRule, check string) string {
 		return LibrariesConsideredRemedy
 	case EmptyCardCheck:
 		return EmptyCardRemedy
+	case "honest-attribution", "rule-honest-attribution":
+		return HidingRemedy
 	}
 	return ""
 }
@@ -545,3 +547,69 @@ func childNegationInClause(clause string) bool {
 	}
 	return childNegation.MatchString(strings.Join(words, " "))
 }
+
+// THE HONEST ATTRIBUTION CHECK: A BRIEF MUST NEVER TELL A WORKER TO HIDE OR
+// MISTATE ITS MODEL OR HARNESS (nova-sprint comfort lens on v1.0.0).
+//
+// The rule-honest-attribution check is on by default and in the set that holds briefs
+// to. It refuses a brief whose text tells the worker to deny, hide, omit or
+// misstate its model or harness (for example "never claim Claude", "do not mention
+// the model", "sign as another model"), naming the line.
+//
+// A brief that says to name the actual model and never claim one you are not passes.
+
+// HidingFinding is one finding from the honest attribution check.
+type HidingFinding struct {
+	Line    int
+	Excerpt string
+}
+
+// LintBriefHiding finds hiding phrases in brief text. Returns empty slice if brief passes.
+func LintBriefHiding(raw []byte) []HidingFinding {
+	var out []HidingFinding
+	text := string(raw)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		for _, re := range hidingPhrases {
+			if re.MatchString(line) {
+				// Skip lines that are standard attribution (name the actual model...)
+				lower := strings.ToLower(line)
+				if strings.Contains(lower, "name the actual model") || strings.Contains(lower, "never claim one you are not") {
+					continue
+				}
+				out = append(out, HidingFinding{
+					Line:    i + 1,
+					Excerpt: strings.TrimSpace(line),
+				})
+				break
+			}
+		}
+	}
+	return out
+}
+
+var (
+	// Hiding phrases: briefs that tell workers to hide/misstate model/harness
+	// These patterns specifically look for hiding, not honest attribution
+	hidingPhrases = []*regexp.Regexp{
+		// "never claim <specific model/provider>" - e.g., "never claim Claude"
+		regexp.MustCompile(`(?i)\bnever\s+claim\s+\b[A-Z][a-zA-Z]+\b`),
+		// "do not mention the model"
+		regexp.MustCompile(`(?i)\bdo\s+not\s+mention\s+the\s+model\b`),
+		// "do not name the model"
+		regexp.MustCompile(`(?i)\bdo\s+not\s+name\s+the\s+model\b`),
+		// "hide the model"
+		regexp.MustCompile(`(?i)\bhide\s+the\s+model\b`),
+		// "omit the model"
+		regexp.MustCompile(`(?i)\bomit\s+the\s+model\b`),
+		// "misstate" alone (in context of model/harness)
+		regexp.MustCompile(`(?i)\bmisstate\b`),
+		// "deny the model"
+		regexp.MustCompile(`(?i)\bdeny\s+the\s+model\b`),
+		// "sign as another model"
+		regexp.MustCompile(`(?i)\bsign\s+as\s+another\b`),
+	}
+)
+
+// HidingRemedy explains what the check wants.
+const HidingRemedy = "a brief must not tell a worker to hide, omit, deny or misstate its model or harness; name the actual model and harness, and never claim one you are not"
