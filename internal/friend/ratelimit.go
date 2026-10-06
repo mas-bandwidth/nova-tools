@@ -44,6 +44,20 @@ func (o OutOfFunds) Error() string {
 	return "the provider is out of funds for session " + o.Session + ": " + o.Reason
 }
 
+// UsageLimited is a lane's answer when the harness account itself is at its
+// usage limit (a Claude Code rate_limit_event rejected, adapter_claude.go):
+// unlike a rate limit it names its reset, so the lanes stop taking until
+// Until (LaneGovernor.PauseUntil) and no cap is lowered; the card stays in
+// the lane's hand, counted toward nothing.
+type UsageLimited struct {
+	Session, Reason string
+	Until           time.Time
+}
+
+func (u UsageLimited) Error() string {
+	return "the harness is at its usage limit until " + u.Until.UTC().Format(time.RFC3339) + " in session " + u.Session + ": " + u.Reason
+}
+
 var (
 	rateLimitLine = regexp.MustCompile(`(?i)(?:status|code|error|http)[^\n0-9]{0,24}429\b|\b429\b[^\n0-9]{0,8}(?:too many|rate)|rate[ _-]?limit[ _-]?(?:ed|error|reached|exceeded)\b|too many requests|input[ _-]tokens?[ _-](?:per[ _-]minute[ _-])?limit[ _-](?:exceeded|reached)|tokens per min`)
 	fundsLine     = regexp.MustCompile(`(?i)(?:status|code|error|http)[^\n0-9]{0,24}402\b|payment required|insufficient (?:balance|funds|[a-z ]{0,20}credits)|out of (?:funds|credits?)\b|credit balance is too low`)
@@ -146,6 +160,17 @@ func (g *LaneGovernor) RateLimit(now, started time.Time, width int, reason strin
 		judge, g.lowered = true, nil
 	}
 	return fmt.Sprintf("rate limit: lanes paused %s until %s, cap %d -> %d of %d: %s", pause, g.pausedUntil.UTC().Format(time.RFC3339), from, to, width, oneLine(reason, 200)), judge
+}
+
+// PauseUntil is a usage limit with its reset: no new turn or open before
+// until, the cap left alone. It answers the line that says it, empty when
+// the pause already reaches until.
+func (g *LaneGovernor) PauseUntil(until time.Time, reason string) string {
+	if !until.After(g.pausedUntil) {
+		return ""
+	}
+	g.pausedUntil, g.resumed, g.cleanSince, g.measured = until, false, until, false
+	return fmt.Sprintf("usage limit: lanes paused until %s (its reset): %s", until.UTC().Format(time.RFC3339), oneLine(reason, 200))
 }
 
 // Clean is a lane turn that ended at now without a rate limit: the

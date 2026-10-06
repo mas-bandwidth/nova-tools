@@ -467,7 +467,8 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	ln.t = nil
 	var rate RateLimited
 	var funds OutOfFunds
-	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds)) && !t.stopped
+	var usage UsageLimited
+	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage)) && !t.stopped
 	if limited && exists(ln.card.Result()) {
 		r.err, limited = nil, false // the card is done: the words were the card's, not the provider's answer
 	}
@@ -546,8 +547,11 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 	d, ln, t := l.d, r.ln, r.t
 	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	var funds OutOfFunds
+	var usage UsageLimited
 	if errors.As(r.err, &funds) {
 		line += fmt.Sprintf(" out_of_funds=%q", funds.Reason)
+	} else if errors.As(r.err, &usage) {
+		line += fmt.Sprintf(" usage_limited=%q until=%s", usage.Reason, usage.Until.UTC().Format(time.RFC3339))
 	} else {
 		line += fmt.Sprintf(" rate_limited=%q", oneLine(r.err.Error(), 300))
 	}
@@ -572,7 +576,13 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 	at := now.UTC().Format(time.RFC3339)
 	var rate RateLimited
 	var funds OutOfFunds
+	var usage UsageLimited
 	switch {
+	case errors.As(err, &usage):
+		if line := s.gov.PauseUntil(usage.Until, usage.Reason); line != "" {
+			d.Record(at + " " + line)
+		}
+		return true
 	case errors.As(err, &funds):
 		if s.gov.Hold(funds.Reason) {
 			d.Record(fmt.Sprintf("%s out of funds: lanes held until the daemon restarts, every card kept in hand: %s", at, oneLine(funds.Reason, 200)))

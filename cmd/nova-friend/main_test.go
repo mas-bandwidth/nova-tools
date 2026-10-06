@@ -839,8 +839,6 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	r.deaf = true
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
 		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
-	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
-		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude: nothing the bus holds`, "CHECK NOTE remedy: the adapter card: give internal/friend a deliver command for claude")
 	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
 		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor (not installed here`)
 

@@ -805,6 +805,38 @@ OpenCode's documented permission map; it is not yet measured on a live lane.
 A refusal the turn's output still shows is the lane's `rejected=` on the
 record and the card's reason.
 
+### Claude lanes: a headless account runs one-shot lanes (internal/friend/adapter_claude.go)
+
+On 2026-10-04 four Claude Code accounts ran sprint cards through hand-written
+zsh runners and readers (`runner.zsh`, `reader.zsh`) that wrote PAUSED files
+on a limit and guessed reset times; the owner: "Golang nova-tools and
+nova-sprint verbs only". They are retired: `nova-friend run --harness claude
+--config-dir <dir> --width <n>` is the lane (`Claude`, a `LaneHarness`), and
+no script is needed. A lane's session is opened by `claude -p --session-id
+<uuid> <seed>` and each card is `claude -p --resume <uuid> <turn>`, run
+directly (never a shell) as `env CLAUDE_CONFIG_DIR=<dir> claude ...` so the
+call is the friend's own account. Every call is the trimmed one,
+`--output-format stream-json --verbose --strict-mcp-config
+--disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob`,
+which cut the context of each call from about 50k tokens to 12.7k (measured
+2026-10-04). Each run's stream-json is read for its cost (the result line's
+`total_cost_usd`, summed per daemon) and its `rate_limit_event` (the
+five-hour and weekly utilization and each `resetsAt`, `ReadLimit`); both are
+one line on the daemon's record per run: `claude: cost=$<run> total=$<sum>
+five_hour=<f> seven_day=<f> five_hour_resets=<t> seven_day_resets=<t>`. A
+rejected event, or a limit line with its reset beside it, is `UsageLimited`:
+the card stays in the lane's hand counted toward nothing, and the governor
+pauses every new turn and open until the reset itself (`PauseUntil`, one
+record line `usage limit: lanes paused until <t> (its reset): <why>`), with
+no cap lowered and no backoff guessed. The same output is read by `Limits`
+for the beat, so her row reads down until a wake after the reset is answered.
+A bud's reader reads the same record lines and the sprint's cards; no script.
+`TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit`,
+`TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap`. Not here: the
+sprint server's beat carries no cost or utilization field, so they are on the
+record, not on her row; the OpenCode lane's cost from its own session record
+is owed.
+
 ### rate-limit-backs-off-not-down.w1 — a rate limit backs off; out of funds holds
 
 A rate limit passes in a minute; out of funds does not (the finding of

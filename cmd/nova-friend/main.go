@@ -731,6 +731,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
 	}
+	if cl, ok := deliver.(*friend.Claude); ok {
+		cl.ConfigDir, cl.Now = c.Str("config-dir"), w.now // her own account: every run's cost and limit on the record
+	}
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
