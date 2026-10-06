@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,6 +25,18 @@ import (
 )
 
 var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
+
+// TestMain starts the runtime's signal-mask goroutine outside any synctest
+// bubble. Every run goes through signal.NotifyContext (internal/tool's
+// RunContext); the first such call in the process makes that goroutine and its
+// channels, and made inside a bubble they belong to it, so another bubble's
+// Notify blocks durably on them and the bubble panics as deadlocked.
+func TestMain(m *testing.M) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	signal.Stop(c)
+	os.Exit(m.Run())
+}
 
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
