@@ -335,24 +335,30 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", *day, "tokens", allTokens,
 		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allPricedTokens, allPriced),
 		"unpriced", allTokens-allPricedTokens))
-	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
-	// what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED lines above it,
-	// the TOKENS NOTE, and exit 1. Under --dry-run --note was not written, and the line
-	// says so.
+	// The closing line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE
+	// section): what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED
+	// lines above it, the TOKENS NOTE, and exit 1. Under --dry-run --note was not
+	// written, and the line says so.
 	subject := tokens.Subject(*day, stamp(now), buildVersion(), sorted)
-	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
-		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
 	s.fact("at", stamp(now))
 	s.fact("build", buildVersion())
 	s.fact("subject", tool.Text(subject))
 	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
 	// and a line that did not parse is the same wall under fold. The body still printed and
 	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
-	// the bus is told it does not cover what it claims.
+	// the bus is told it does not cover what it claims. The status word follows the exit
+	// (skeleton contract 1.5), so that run says FAILED: a report that printed the body
+	// over a source it could not read whole said REPORT OK and exited 1, while --json
+	// already said status=failed.
 	if unreadable > 0 || unparsed > 0 {
+		fmt.Fprintf(s.err(), "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
+			oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
+			oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
 		return s.done(1, *max)
 	}
+	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
+		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
+		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
 	return s.done(0, *max)
 }
 

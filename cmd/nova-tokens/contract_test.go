@@ -415,6 +415,30 @@ func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
 	wantContains(t, r.stdout, "2026-09-11\temma\tf\tschema\tinput\t3")
 }
 
+// TestReportSaysFailedWhenASourceIsUnreadable pins skeleton contract 1.5 on the report
+// verb: the status word follows the exit, so a run that printed the body over a source it
+// could not read whole and exits 1 says REPORT FAILED, never REPORT OK. The --json
+// rendering of the same result already said status=failed, so the text line was the half
+// that disagreed.
+func TestReportSaysFailedWhenASourceIsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repos := reposFile(t, dir)
+	good := mkdir(t, filepath.Join(dir, "good"))
+	write(t, filepath.Join(good, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
+	bad := mkdir(t, filepath.Join(dir, "bad"))
+	makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
+
+	r := invoke(t, "report", "--who", "ada", "--day", "2026-09-11", "--repos", repos,
+		"--claude", "g="+good, "--claude", "b="+bad)
+	wantExit(t, r, 1)
+	wantContains(t, r.stdout, "2026-09-11\tada\tf\tschema\tinput\t3")
+	wantContains(t, r.stderr, "TOKENS UNREADABLE label=claude:b")
+	wantContains(t, r.stderr, "REPORT FAILED who=ada day=2026-09-11 rows=1")
+	wantNotContains(t, r.stderr, "REPORT OK")
+}
+
 // TestAHalfReadSuccessorDoesNotReplaceItsPredecessor pins rule 6: "the successor is
 // validated whole -- header, Date:, every body line -- before it replaces anything." A
 // note with one unparsed body line was not dead, entered the superseded map, and its
