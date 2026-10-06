@@ -399,7 +399,8 @@ down), nothing is delivered, and the seat (else
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
 nonce from inside the session before she beats again, and the seat is told she is back. Each harness's own
 wording is read (claude, codex, opencode, grok, antigravity, dsh, gemini), its kind (limit or credits) and its
-reset when it names one, else --limit-rest; status says session=limited limit_kind= limit_until= while it stands. The friend
+reset when it names one (a clock time in the zone it names, "resets Oct 10 at 5am (America/New_York)"), else
+--limit-rest, and the seat is told once, as a judgment, the text it could not read; status says session=limited limit_kind= limit_until= while it stands. The friend
 row's mode and width come with each beat's answer (row_mode=, row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
@@ -970,6 +971,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: the presence file: " + err.Error())
 		}
 		tellSeat(friend.LimitDownText(name, until, reason))
+	}
+	fl.Unread = func(text string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: the message names no reset I can read; held, a judgment to the seat: " + text)
+		tellSeat(friend.LimitUnreadText(name, c.Dur("limit-rest"), text))
 	}
 	fl.Up = func(nonce string) {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
