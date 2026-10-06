@@ -684,6 +684,36 @@ JSON fields: session, dir, attach (command on a dry run)
 Exit 0 started, 1 refused, 2 could not run (no launch command, no prompt pattern for the harness, tmux missing or failing)
 ```
 
+### Reach a silent friend
+
+`nova-friend reach` climbs a ladder until one proof: a bus message, then a push into the session, then the friend's window. It stops at the first proof. The friend is `--to`. A verb other than the default takes no bare word.
+
+```sh
+nova-friend reach --as ada --to bob --dry-run
+```
+
+`reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run] [--json]`
+
+wake is the sleep pair (`nova-friend wake --as <me>` ends that friend's own recorded sleep); this verb is reach. see also: nova-friend wake --as <me> ends that friend's own recorded sleep; reach is this ladder, because wake is that verb.
+
+Each step waits up to `--step-timeout` (default 60s). A proof is a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is not a proof. The bus step's line is `REACH STEP step=bus sent=<id> nonce=<n>`. The push is skipped when the daemon is down: `REACH NONE step=push waited=0s: daemon down: <reason>`. The window of a GUI harness needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask.
+
+The help of `nova-friend reach -h` says, and this is the same text:
+
+```
+REACH STEP step=bus sent=<id> nonce=<n>
+REACH NONE step=push waited=0s
+REACH PROOF step=<s> after=<duration> by=<pong|message>
+REACH OK friend=<f> step=<s>
+REACH FAILED friend=<f> tried=<steps>
+REACH DRY-RUN
+Exit 0 a proof. Exit 1 no proof. Exit 2 could not run (a flag, a store that did not answer, or the window step without the accessibility permission).
+--as --to --step-timeout --from --harness --dir --session --state-dir --redis --dry-run --json
+example: nova-friend reach --as ada --to bob --dry-run
+```
+
+The result line is first, then one line per step in the order it happened. `--json` carries facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`, and items `STEP`, `PROOF` and `NONE`.
+
 ### The friend health check
 
 The help of `nova-friend check -h` says, and this is the same text:
