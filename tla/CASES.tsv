@@ -401,3 +401,8 @@ MCCoordinatorPassBehind.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordin
 MCCoordinatorPassBrokenDoublePush.cfg	MCCoordinatorPass.tla	invariant	OnePushATick	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
+MCFriendReadyTake.cfg	MCFriendReadyTake.tla	pass	-	ignore-terminal	friendreadytake	required	-
+MCFriendReadyTakeBrokenNoFill.cfg	MCFriendReadyTake.tla	action	FilledAfterTick	ignore-terminal	friendreadytake	required	-
+MCFriendReadyTakeBrokenPastWidth.cfg	MCFriendReadyTake.tla	invariant	LanesHard	ignore-terminal	friendreadytake	required	-
+MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	ignore-terminal	friendreadytake	required	-
+MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
