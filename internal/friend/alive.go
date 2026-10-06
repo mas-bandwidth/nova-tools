@@ -80,6 +80,38 @@ type SessionTurns struct {
 	session string
 	exit    int
 	err     string
+	running int       // turns begun and not yet ended
+	began   time.Time // when the latest of them began
+}
+
+// begin is a turn's process starting; end is it ended, whatever it answered.
+// Together they are the adapter's own word on whether a turn runs
+// (TurnUnderWay), read by the session check instead of any lock.
+func (s *SessionTurns) begin() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	s.running++
+	s.began = now()
+}
+
+func (s *SessionTurns) end() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running > 0 {
+		s.running--
+	}
+}
+
+// TurnUnderWay is the record's word: a turn has begun and not ended, since the
+// latest's start.
+func (s *SessionTurns) TurnUnderWay() (bool, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running > 0, s.began
 }
 
 // sessionTurner is an adapter that keeps a SessionTurns.
@@ -246,10 +278,15 @@ func headlessAlive(t *SessionTurns, harness string, look func(string) (string, e
 	return l
 }
 
-func (c *Codex) sessionTurns() *SessionTurns    { return &c.turns }
-func (d *DSH) sessionTurns() *SessionTurns      { return &d.turns }
-func (g *Gemini) sessionTurns() *SessionTurns   { return &g.turns }
-func (o *OpenCode) sessionTurns() *SessionTurns { return &o.turns }
+func (c *Codex) sessionTurns() *SessionTurns  { return &c.turns }
+func (d *DSH) sessionTurns() *SessionTurns    { return &d.turns }
+func (g *Gemini) sessionTurns() *SessionTurns { return &g.turns }
+
+// The headless adapters' own turn records (TurnRecord): each turn a one-shot
+// process into the session.
+func (d *DSH) TurnUnderWay() (bool, time.Time)    { return d.turns.TurnUnderWay() }
+func (g *Gemini) TurnUnderWay() (bool, time.Time) { return g.turns.TurnUnderWay() }
+func (o *OpenCode) sessionTurns() *SessionTurns   { return &o.turns }
 
 // Alive: the session's last turn (codex exec resume, codex queue); the
 // ChatGPT app is not read.

@@ -56,6 +56,16 @@ type Status struct {
 	Beats          int       `json:"beats"`
 	LastBeat       time.Time `json:"last_beat"`
 	BeatError      string    `json:"beat_error,omitempty"`
+	// Push is the push proof this run (PushProved, or PushUnproven while the
+	// session has not answered its check: nothing is delivered), PushNonce the
+	// check's nonce and PushSince when the daemon started waiting, while unproven;
+	// empty for a harness with no session to prove. ProofSent is the session's
+	// proof (the presence file's last_heard) the sprint server last took on her
+	// beat, zero before any (docs/SPEC-FRIEND.md, The push proof).
+	Push      string    `json:"push,omitempty"`
+	PushNonce string    `json:"push_nonce,omitempty"`
+	PushSince time.Time `json:"push_since,omitzero"`
+	ProofSent time.Time `json:"proof_sent,omitzero"`
 	// HarnessSeen is what the harness check last read (HarnessRunning,
 	// HarnessNotSeen, or empty: cannot tell). Advisory: it
 	// never makes the friend down (alive.go, HarnessWatch).

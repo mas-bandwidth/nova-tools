@@ -138,7 +138,9 @@ func TestLineFormatting(t *testing.T) {
 		Connection: "connected", Challenge: "quiet", PongAge: "5s",
 		Presence: "up", SeenAge: "2s",
 	}
-	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok connection=connected challenge=quiet pong_age=5s presence=up seen_age=2s", df.Line())
+	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok connection=connected challenge=quiet pong_age=5s presence=up seen_age=2s proof=none proof_age=-", df.Line())
+	df.Proof, df.ProofAge = "pending", "4m0s"
+	assert.Contains(t, df.Line(), " proof=pending proof_age=4m0s", "a daemon waiting for its push proof says so")
 
 	hf := HarnessFacts{
 		Friend: "bob", Harness: "opencode", Route: "push",

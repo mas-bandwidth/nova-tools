@@ -375,12 +375,17 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
-				Detail: `The loop launchd runs (install writes it). It starts only on a push proof: a harness with no deliver
-command (claude, the surveyed ones) is refused at once, exit 2, the adapter card its remedy; then one SESSION
-CHECK goes in through the harness and its pong must reach the bus within ` + friend.ProofWithin.String() + `, else exit 2 with the remedy
-(a dsh session under an agent preset: start a session in <dir> with no agent preset and name it with
---session <id>). Every beat carries the session's last proof (--pong), and the sprint deals nothing to a
-friend whose proof has lapsed. Each second, when the session is free: every waiting
+				Detail: `The loop launchd runs (install writes it). A harness with no deliver command (the surveyed ones) is
+refused at once, exit 2, the adapter card its remedy. Otherwise the daemon starts with its push unproven
+(status push=unproven, check proof=pending): its first SESSION CHECK goes in through the harness at once,
+and it delivers nothing into the session until the session answers it (or writes on the bus), then turns
+live without a restart; unanswered within ` + friend.SessionBound.String() + `, one "push proof: unproven" line names the check's nonce, and
+the check is asked again with the same nonce every ` + friend.SessionQuiet.String() + ` (a check the last run queued and never saw
+answered keeps its nonce). A session the adapter cannot drive is one "presence: REFUSED" line with the
+remedy (a dsh session under an agent preset: start a session in <dir> with no agent preset and name it
+with --session <id>). Every beat carries the session's last proof (--pong), which the sprint server reads
+as her session's evidence; while the session is down the beat says so (--until, --reason: the push
+unproven, or no session answer, with the check's nonce). Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
@@ -391,8 +396,10 @@ carries messages. Presence is the session's, never the daemon's: after ` + frien
 the session (the daemon's own sends never count), a SESSION CHECK <nonce> goes in through the harness
 as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
 deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `
-and the friend is down, "no session answer", the beat to the sprint server held back until the next
-answer brings it up; it starts down until the first answer. A turn runs as long as it prints; one
+and the friend is down, "no session answer", her beat saying down until the next answer brings it up; it
+starts down until the first answer. On a headless harness (dsh, gemini: a one-shot process per turn) the
+check waits only while the adapter's own record says a turn runs, and a check owed ` + friend.SessionQuiet.String() + ` that has not
+gone in is one "presence: REFUSED" line naming why. A turn runs as long as it prints; one
 silent past --silent-stop is stopped with its process group, the reason on the record. The same provider refusal (an invalid_request_error)
 on --broken-after turns in a row marks the session broken: nothing more is delivered, every message
 stays pending, status says session=broken, and the seat (else --coordinator) is told once on the
@@ -555,7 +562,7 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
-CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
 CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
@@ -569,7 +576,7 @@ consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","worki
 - for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
 with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
-friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
+friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
 reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
@@ -1055,17 +1062,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
-	// the session's last proof (its answer or its own bus message), as the presence file
-	// last said it: every beat carries it (--pong), so the sprint deals only to a friend
-	// whose proof is live and tells the coordinator when it lapses
-	var proved atomic.Pointer[time.Time]
+	// the session's last proof (its answer or its own bus message, sc.Proved): every up beat
+	// carries it (--pong), the sprint server reads it as her session's evidence, and sent is
+	// the last one it took (status proof_sent, check proof=sent)
+	var sent atomic.Pointer[time.Time]
 	// the presence file says a limit while there is one, whatever the session check saw; the
 	// harness's process never decides it (friend.HarnessWatch is advisory)
 	writePresence := func(p friend.PresenceStatus) error {
-		if !p.LastHeard.IsZero() {
-			at := p.LastHeard
-			proved.Store(&at)
-		}
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
 		}
@@ -1116,28 +1119,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(0) // a signal while the store was down
 	}
 	defer closeStore()
-	// the push proof: the first SESSION CHECK round trip, before the loop; no pong within
-	// friend.ProofWithin and the daemon does not start (docs/SPEC-FRIEND.md, The push proof)
-	var proof friend.CheckResult
-	remedy := ""
-	if !perCard {
-		proof, remedy, _ = friend.PushProof(ctx, w.conformance(c, name, c.Str("harness"), state, c.Str("coordinator"), friend.ProofWithin, deliver, st))
-	}
-	if proof.Stage != "" {
-		if ctx.Err() != nil {
-			return tool.Exit(0) // a signal during the proof
-		}
-		if remedy == "" {
-			remedy = fmt.Sprintf("open the friend's %s session in %s, then prove it answers: nova-friend check --as %s --harness %s --dir %s", c.Str("harness"), dir, name, c.Str("harness"), dir)
-		}
-		o := tool.Refuse("no push proof: " + proof.Line() + "; the daemon did not start")
-		o.Remedy = remedy
-		return o
-	}
+	// the push proof is a state, never an exit (docs/SPEC-FRIEND.md, The push proof): the
+	// daemon starts, its first SESSION CHECK goes in at once (the presence's own), and it
+	// delivers nothing into the session until the session answers it; a check the last run
+	// queued and never saw answered keeps its nonce, so the session's late answer proves it
 	if perCard {
 		record(w.now().UTC().Format(time.RFC3339) + " push proof: none owed: " + c.Str("harness") + " runs each card as a process of its own, no session to push into")
 	} else {
-		record(w.now().UTC().Format(time.RFC3339) + " push proof: " + proof.Line())
+		record(w.now().UTC().Format(time.RFC3339) + " push proof: pending: the first session check goes into the " + c.Str("harness") + " session now; nothing is delivered until the session answers it")
 	}
 	// the seat the last ping named, from the daemon's status: whom the session check's answer goes to
 	var seatMu sync.Mutex
@@ -1154,8 +1143,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// presence saved is also the bus's push proof, without which nova-bus refuses this name
 	// as deaf (docs/SPEC-BUS.md, bus-requires-inbox-push-proof)
 	prover := &friend.PushProver{Friend: name, Harness: c.Str("harness"), Store: st, Now: w.now, Record: record}
+	keep := ""
+	if pr, found, err := friend.ReadPresence(state); err == nil && found {
+		keep = pr.Nonce // the last run's check, never answered: its answer still proves the push
+	}
 	sc := &friend.SessionCheck{
-		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record,
+		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
 		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
 			bin, err := w.binary()
@@ -1181,6 +1174,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
+		Sent: func() time.Time {
+			if at := sent.Load(); at != nil {
+				return *at
+			}
+			return time.Time{}
+		},
 		Limited: func() (string, time.Time, bool) {
 			until, _, limited := fl.Limited()
 			return fl.Kind(), until, limited
@@ -1198,15 +1197,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if perCard {
 				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
 			}
+			pong := time.Time{}
 			up := func(ctx context.Context) error {
-				var pong time.Time
-				if at := proved.Load(); at != nil {
-					pong = *at
-				}
+				pong = sc.Proved() // the session's last proof, the second it moves
 				if perCard {
 					pong = w.now() // the daemon beating is the proof: nothing else can be asked of a process per card
 				}
 				answer, err := w.beat(ctx, server, name, active, pong)
+				if err == nil && !pong.IsZero() && !perCard {
+					at := pong
+					sent.Store(&at) // the server took the session's proof on her beat
+				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 					dir := friend.RowConfigDir(answer)
@@ -1236,6 +1237,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 			// seen during the step is never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
 				return w.beatDown(ctx, server, name, active, until, reason)
+			}
+			if !perCard {
+				// while her session is down her beat says so, with the check's nonce and why; a
+				// limit seen during the step is the reason first, with its reset
+				sessionDown := func(ctx context.Context, until time.Time, reason string) error {
+					if u, r, limited := fl.Limited(); limited {
+						until, reason = u, "harness limit: "+r
+					}
+					return down(ctx, until, reason)
+				}
+				held = func(beat func(context.Context) error) func(context.Context) error {
+					return sc.BeatOr(beat, sessionDown)
+				}
 			}
 			// a provider failure paused her lanes: her beat says her down with its exact
 			// message until a person clears the marker (nova-friend resume; friend.PauseBeat)
@@ -1324,6 +1338,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
+	}
+	if !perCard {
+		d.Proof = sc.Proof // nothing goes into the session until it answers its check
 	}
 	if c.Str("harness") == "opencode" {
 		db := c.Str("db")

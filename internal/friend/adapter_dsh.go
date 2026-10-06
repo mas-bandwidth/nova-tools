@@ -88,6 +88,8 @@ func NewestDSHSession(sessions, dir string) (string, error) {
 }
 
 func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
+	d.turns.begin()
+	defer d.turns.end()
 	id := d.Session
 	if id == "" {
 		root := d.Sessions

@@ -105,6 +105,11 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 	require.False(t, cleared.IsZero())
 	require.NotEmpty(t, downs, "she beats down while paused\n%s", out.String())
 	for _, b := range downs {
+		if strings.HasPrefix(b.reason, "push unproven: ") {
+			// resumed, her session is asked again before it is beaten up: its own word, down
+			assert.False(t, b.at.Before(cleared), "the session check's down beat follows the resume: %s before %s", b.at, cleared)
+			continue
+		}
 		assert.False(t, b.at.After(cleared), "a down beat only while the marker stands: %s after %s", b.at, cleared)
 		assert.Equal(t, "provider failure (inception/mercury-2.5): 402 Payment Required: insufficient balance", b.reason, "the provider's exact message")
 		assert.InDelta(t, friend.PauseBeatAhead.Seconds(), b.until.Sub(b.at).Seconds(), 10, "until an hour ahead, sent again each beat")

@@ -203,6 +203,17 @@ type Daemon struct {
 	// error, an empty name or a nil Seat is the seat unknown, and while it is
 	// unknown no message is delivered as an instruction (BatchFor).
 	Seat func(ctx context.Context) (string, error)
+	// Proof is whether the push is proved this run and, while it is not, the nonce
+	// its session check carries (SessionCheck.Proof); nil is proved (a harness that
+	// runs each card as a process of its own has no session to prove). Until it is
+	// proved the daemon delivers nothing into the session: no batch turn, no dealt
+	// brief, no wake, no idle wake, no lane, no read; it beats, answers pings and
+	// keeps every message pending (docs/SPEC-FRIEND.md, The push proof). The status
+	// says push=unproven with the nonce and since when.
+	Proof func() (proven bool, nonce string)
+	// Sent is the session's proof the sprint server last took on her beat (friend
+	// beat --pong answered with it), zero before any; the status carries it.
+	Sent func() time.Time
 
 	m           *Machine
 	status      Status
@@ -422,6 +433,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.notice = nil
 		}
 		mode, width := l.row(now)
+		proven := l.proof(now)
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
 		storeOK := l.read(now)
 		if ctx.Err() != nil {
@@ -450,6 +462,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
 		switch {
 		case l.broken:
+		case !proven: // the push rule: nothing goes into a session that has not answered
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
 			l.readStep(now)
@@ -479,7 +492,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		}
-		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil {
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven {
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now
 			}
@@ -493,6 +506,34 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.flush(now)
 	}
 	return nil
+}
+
+// The push proof's words in the status file.
+const (
+	PushProved   = "proved"
+	PushUnproven = "unproven"
+)
+
+// proof is whether the daemon may deliver into the session at now (Proof), with
+// the status saying the push proof and the session proof the server last took.
+func (l *loop) proof(now time.Time) bool {
+	d := l.d
+	if d.Sent != nil {
+		d.status.ProofSent = d.Sent()
+	}
+	if d.Proof == nil {
+		return true
+	}
+	proven, nonce := d.Proof()
+	if proven {
+		d.status.Push, d.status.PushNonce, d.status.PushSince = PushProved, "", time.Time{}
+		return true
+	}
+	if d.status.PushSince.IsZero() {
+		d.status.PushSince = now
+	}
+	d.status.Push, d.status.PushNonce = PushUnproven, nonce
+	return false
 }
 
 // held is the cards she holds: her row as the server last said it (Held), else

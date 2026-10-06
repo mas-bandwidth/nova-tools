@@ -138,12 +138,18 @@ refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). He
 section 11, and `friend down`; `unhold <friend>` and `friend up` release the
 hold), whatever she beats or the coordinator observes; else `up` only on
 evidence from her own session (docs/SPEC-FRIEND.md, "Presence is her
-session's evidence"): a wake ping her session answered (`friend health --state
-up`, below) under `FriendPongWindow` (10 minutes) old, or a card of hers
-finished under `FriendFinishWindow` (30 minutes) old; else `down` (`friend
-down` holds her and shows `held`, never `down`). Her beat is recorded and
-never evidence, whoever sends it; `where --json` names the evidence and its
-age (`friends[].evidence`). `friend up` is no evidence: a friend released with
+session's evidence"; one definition, `sprint.FriendEvidence`): a wake ping her
+session answered (`friend health --state up`, below) under `FriendPongWindow`
+(10 minutes) old, or her session's own answer her daemon proves on her beat
+(`friend beat --pong <t>`: her session's pong to her daemon's SESSION CHECK
+nonce, or its own bus message; `Beat.Proof`) under `FriendProofLive` (15
+minutes) old, or a card of hers finished under `FriendFinishWindow` (30
+minutes) old; else `down` (`friend down` holds her and shows `held`, never
+`down`); a beat that says down (`--until`, `--reason`) is down with its reason
+whatever else stands. Her beat itself is recorded and never evidence, whoever
+sends it, only the session's answer it carries; `where --json` names the
+evidence and its age (`friends[].evidence`: `session pong`, `session proof`,
+`finish`). `friend up` is no evidence: a friend released with
 none in its window is `down` until her session gives some. `friend up
 <friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
 sets a machine's, until `friend sync` sets her nova-config row's again (a
@@ -1057,15 +1063,16 @@ fleet row has no control card status: only a machine's has one, written by the
 tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
 (`take --as friend.<f>`, her own or her daemon's through the server) is
 admitted by `FriendStatus`, the friends table's word: up only on evidence from
-her own session (a wake ping her session answered within `FriendPongWindow`, or
+her own session (a wake ping her session answered within `FriendPongWindow`,
+her session's answer her daemon proves on her beat within `FriendProofLive`, or
 a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
-"Presence is her session's evidence"), never on her beat. `TakeStep` reads the friends' seats when it names a friend's row.
+"Presence is her session's evidence"), never on her beat itself. `TakeStep` reads the friends' seats when it names a friend's row.
 Her take is held to her width (1 in one-shot mode), as a machine's is to its
 own. It is refused only when she is not up, and the refusal names why: "friend
 <f> is held: held by the coordinator (friend down)[: <reason>]", "friend <f>
 is down: her beat says down until <t>: <reason>", or "friend <f> is down: no
-session evidence: ..." naming the wake ping and the finish she lacks, the age of
-the last of each, and her beat's age as no evidence (`sprint.FriendEvidence`); a friend not on the roster is "no
+session evidence: ..." naming the wake ping, the proof on her beat and the
+finish she lacks, the age of the last of each, and her beat's age as no evidence (`sprint.FriendEvidence`); a friend not on the roster is "no
 friend <f> on the roster". A machine's take keeps its control card's rule
 ("member <m> is <status>"). The model is `tla/FriendPresence.tla` (`Take`,
 `TakeOnlyWhenUp`, `ReadyTakenWhileUp`, and the reversed witness `ctlstatus`,
