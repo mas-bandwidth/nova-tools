@@ -44,9 +44,12 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 		pipe.XAdd(ctx, &redis.XAddArgs{Stream: s, ID: "*", Values: toValues(fields)})
 	}
 	for _, m := range marks {
-		if m.Clear {
+		switch {
+		case m.Forward != "":
+			advance.Eval(ctx, pipe, []string{m.Key}, m.Forward, strings.Join(ReceiptStates, ","), m.Field)
+		case m.Clear:
 			pipe.HDel(ctx, m.Key, m.Field)
-		} else {
+		default:
 			pipe.HSet(ctx, m.Key, m.Field, m.Value)
 		}
 	}
@@ -55,6 +58,36 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 
 func (r Redis) Unmark(ctx context.Context, key string, fields ...string) (int64, error) {
 	return r.C.HDel(ctx, key, fields...).Result()
+}
+
+// advance is Forward and ReceiptValue as one script, so the check and the
+// write are one step on the server: KEYS[1] the hash, ARGV[1] the state,
+// ARGV[2] the states in order (comma-separated), then the ids. The loop is
+// over the ids given, never over the hash. It answers how many moved.
+var advance = redis.NewScript(`
+local rank, n = {}, 0
+for s in string.gmatch(ARGV[2], '[^,]+') do n = n + 1; rank[s] = n end
+local to = rank[ARGV[1]]
+local at = redis.call('TIME')[1]
+local moved = 0
+for i = 3, #ARGV do
+  local cur = redis.call('HGET', KEYS[1], ARGV[i])
+  local from = 0
+  if cur then from = rank[string.match(cur, '^(%S+)')] or 0 end
+  if to and to > from and (cur or to == 1) then
+    redis.call('HSET', KEYS[1], ARGV[i], ARGV[1] .. ' ' .. at)
+    moved = moved + 1
+  end
+end
+return moved
+`)
+
+func (r Redis) AdvanceReceipts(ctx context.Context, key, state string, ids ...string) (int64, error) {
+	args := []any{state, strings.Join(ReceiptStates, ",")}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	return advance.Run(ctx, r.C, []string{key}, args...).Int64()
 }
 
 func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, error) {

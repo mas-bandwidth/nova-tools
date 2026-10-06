@@ -250,6 +250,7 @@ type loop struct {
 	passive      bool
 	silentStop   time.Duration
 	brokenAfter  int
+	acted        map[string]bool // message ids a turn that ended acted carried: a second delivery of one is dropped
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
@@ -289,7 +290,7 @@ type loop struct {
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
-		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		acted: map[string]bool{}, answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, reads: newReadSet(), mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
@@ -593,7 +594,15 @@ func (l *loop) read(now time.Time) bool {
 		e, ok, err := b.Recv(l.ctx, d.Friend, block)
 		for err == nil && ok {
 			msg := e.Message()
-			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
+			if l.acted[msg.ID] {
+				// handed in again after a turn that acted on it ended: acked, never pushed in twice
+				// (tla/Bus2.tla: Push is not enabled for an acted id, NoIdActedTwice; SPEC-BUS.md, message-receipts-r2.w2)
+				d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
+			} else if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
 				// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
 				l.ping(e, msg, nonce, seat, since, now)
 				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
@@ -662,11 +671,26 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	seen := &atomic.Int64{}
 	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
+	l.receipt(t, bus.ReceiptRead, now)
 	switch f := deliver.(type) {
 	case func(context.Context) result:
 		go func() { r := f(tctx); cancel(); l.results <- r }()
 	case func(context.Context) laneResult:
 		go func() { r := f(tctx); cancel(); l.lanes.results <- r }()
+	}
+}
+
+// receipt moves the receipt of every message the turn carries to state: read
+// when the turn starts (the adapter accepts it), acted when it ends at exit 0.
+// A receipt that cannot be written is said on the record and never holds the
+// turn. (tla/Bus2.tla: Push, TurnEnd)
+func (l *loop) receipt(t *turn, state string, now time.Time) {
+	ids := make([]string, len(t.msgs))
+	for i, m := range t.msgs {
+		ids[i] = m.ID
+	}
+	if _, err := l.b.Advance(l.ctx, l.d.Friend, state, ids...); err != nil {
+		l.d.Record(fmt.Sprintf("%s receipt=%s failed messages=%d: %s", now.UTC().Format(time.RFC3339), state, len(ids), oneLine(err.Error(), 300)))
 	}
 }
 
@@ -751,6 +775,10 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		for _, m := range t.msgs {
+			l.acted[m.ID] = true
+		}
+		l.receipt(t, bus.ReceiptActed, now)
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()

@@ -75,6 +75,120 @@ func TestAFriendOwesAReceiptUntilHerSessionAcksOrAnswers(t *testing.T) {
 	assert.ErrorAs(t, err, &refusal)
 }
 
+// A message's receipt moves delivered, read, acted and never back, by the
+// store's clock; a field begins only at delivered; an answer (re) is acted; a
+// message still short of delivered past the bound is overdue; and a message
+// handed in again after ClaimAfter moves nothing back: the receipt stays acted
+// for the daemon to drop it (SPEC-BUS.md, message-receipts-r2.w2).
+func TestReceiptsMoveDeliveredReadActedAndDropDuplicates(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	start := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	f := NewFake(start, "rowan", "ada")
+	f.Friends = []string{"ada"}
+	b := &Bus{Store: f}
+	state := func(as, id string) string {
+		t.Helper()
+		got, _, err := b.Receipts(ctx, as, id)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		return got[0].State
+	}
+
+	m1, err := b.Send(ctx, Message{From: "rowan", To: []string{"ada"}, Subject: "one", Body: "one"})
+	require.NoError(t, err)
+	m2, err := b.Send(ctx, Message{From: "rowan", To: []string{"ada"}, Subject: "two", Body: "two"})
+	require.NoError(t, err)
+	assert.Equal(t, "none", state("ada", m1.ID))
+
+	t.Run("overdue lists what no reader took, past the bound, and nothing before it", func(t *testing.T) {
+		late, _, err := b.Overdue(ctx, 10*time.Minute)
+		require.NoError(t, err)
+		assert.Empty(t, late)
+		f.Advance(11 * time.Minute)
+		late, now, err := b.Overdue(ctx, 10*time.Minute)
+		require.NoError(t, err)
+		require.Len(t, late, 2)
+		assert.Equal(t, []string{m1.ID, m2.ID}, []string{late[0].ID, late[1].ID}, "oldest first")
+		assert.Equal(t, "ada", late[0].Name)
+		assert.Greater(t, now.Sub(late[0].At), 10*time.Minute)
+	})
+
+	t.Run("a field begins only at delivered", func(t *testing.T) {
+		n, err := b.Advance(ctx, "ada", ReceiptActed, m1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, n)
+		assert.Equal(t, "none", state("ada", m1.ID))
+	})
+
+	t.Run("a recv delivers, and the message is no longer overdue", func(t *testing.T) {
+		e, ok, err := b.Recv(ctx, "ada", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, m1.ID, e.Message().ID)
+		assert.Equal(t, ReceiptDelivered, state("ada", m1.ID))
+		late, _, err := b.Overdue(ctx, 10*time.Minute)
+		require.NoError(t, err)
+		require.Len(t, late, 1)
+		assert.Equal(t, m2.ID, late[0].ID)
+	})
+
+	t.Run("a receipt moves forward only, by the store's time", func(t *testing.T) {
+		f.Advance(time.Minute)
+		n, err := b.Advance(ctx, "ada", ReceiptRead, m1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		got, now, err := b.Receipts(ctx, "ada", m1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, ReceiptRead, got[0].State)
+		assert.Less(t, got[0].Age(now), 5*time.Second, "read at the store's now")
+		for _, back := range []string{ReceiptDelivered, ReceiptRead} {
+			n, err = b.Advance(ctx, "ada", back, m1.ID)
+			require.NoError(t, err)
+			assert.Equal(t, 0, n, "%s is not forward of read", back)
+		}
+		n, err = b.Advance(ctx, "ada", ReceiptActed, m1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		for _, back := range ReceiptStates {
+			n, err = b.Advance(ctx, "ada", back, m1.ID)
+			require.NoError(t, err)
+			assert.Equal(t, 0, n, "%s never moves acted back", back)
+		}
+		assert.Equal(t, ReceiptActed, state("ada", m1.ID))
+	})
+
+	t.Run("a message handed in again moves nothing back", func(t *testing.T) {
+		f.Advance(ClaimAfter) // the reader that took m1 never acked: the claim hands it in again
+		e, ok, err := b.Recv(ctx, "ada", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, m1.ID, e.Message().ID, "at-least-once: the same message again")
+		assert.Equal(t, ReceiptActed, state("ada", m1.ID), "its receipt stays acted, which tells the daemon to drop it")
+	})
+
+	t.Run("an answer naming a delivered message is acted", func(t *testing.T) {
+		e, ok, err := b.Recv(ctx, "ada", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, m2.ID, e.Message().ID)
+		assert.Equal(t, ReceiptDelivered, state("ada", m2.ID))
+		_, err = b.Send(ctx, Message{From: "ada", To: []string{"rowan"}, Subject: "re two", Re: m2.ID, Body: "done"})
+		require.NoError(t, err)
+		assert.Equal(t, ReceiptActed, state("ada", m2.ID))
+	})
+
+	t.Run("a refusal names what it wants", func(t *testing.T) {
+		var refusal *Refusal
+		_, err := b.Advance(ctx, "ada", "seen", m1.ID)
+		assert.ErrorAs(t, err, &refusal)
+		_, err = b.Advance(ctx, "Bad Name", ReceiptRead, m1.ID)
+		assert.ErrorAs(t, err, &refusal)
+		_, _, err = b.Receipts(ctx, "Bad Name")
+		assert.ErrorAs(t, err, &refusal)
+	})
+}
+
 // An alarm is raised once per outage and cleared once, and its text names the
 // store and the user and never more of a refused login than its word.
 func TestASendAlarmIsOncePerOutage(t *testing.T) {

@@ -107,6 +107,10 @@ func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]str
 		f.streams[s] = append(f.streams[s], bus.Entry{Stream: s, Entry: id, Fields: maps.Clone(fields)})
 	}
 	for _, m := range marks {
+		if m.Forward != "" {
+			f.forward(m.Key, m.Forward, m.Field)
+			continue
+		}
 		if m.Clear {
 			delete(f.hashes[m.Key], m.Field)
 			continue
@@ -136,6 +140,37 @@ func (f *Fake) Unmark(_ context.Context, key string, fields ...string) (int64, e
 		}
 	}
 	return n, nil
+}
+
+func (f *Fake) AdvanceReceipts(_ context.Context, key, state string, ids ...string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return 0, err
+	}
+	return f.forward(key, state, ids...), nil
+}
+
+// forward moves each id's receipt in the hash at key to state when bus.Forward
+// says so, at the clock's now, and counts those that moved; the caller holds
+// the lock.
+func (f *Fake) forward(key, state string, ids ...string) int64 {
+	var n int64
+	for _, id := range ids {
+		cur, _, _ := bus.ParseReceiptValue(f.hashes[key][id]) // ignored: a value that is no receipt is a field not there
+		if !bus.Forward(cur, state) {
+			continue
+		}
+		if f.hashes == nil {
+			f.hashes = map[string]map[string]string{}
+		}
+		if f.hashes[key] == nil {
+			f.hashes[key] = map[string]string{}
+		}
+		f.hashes[key][id] = bus.ReceiptValue(state, f.now)
+		n++
+	}
+	return n
 }
 
 func (f *Fake) Marks(_ context.Context, keys ...string) ([]map[string]string, error) {

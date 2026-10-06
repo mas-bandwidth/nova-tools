@@ -167,6 +167,39 @@ func TestAMessageIsPushedIntoTheSessionAndAckedWhenTheTurnEndsAtZero(t *testing.
 	require.NotEmpty(t, r.records)
 	assert.Contains(t, r.records[0], `subject="hello"`)
 	assert.Contains(t, r.records[0], "acked=true")
+	got, _, err := r.bus.Receipts(context.Background(), "bob", m.ID)
+	require.NoError(t, err)
+	assert.Equal(t, bus.ReceiptActed, got[0].State, "delivered, read at the turn's start, acted at its exit 0")
+}
+
+// A turn's start moves the receipts of its messages to read and its end at
+// exit 0 to acted; the same message id handed in again afterwards is dropped
+// with one record line and acked, never pushed into the session twice
+// (SPEC-BUS.md, message-receipts-r2.w2; tla/Bus2.tla: Push, NoIdActedTwice).
+func TestAMessageHandedInAgainAfterAnActedTurnIsDroppedAndAcked(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t)
+	m := r.send(t, "ada", "hello", "are you there?")
+	r.at[3] = func() { // the claim hands the same message in again: a second entry carrying its id
+		require.NoError(t, r.store.AddAll(ctx, []string{bus.StreamOf("bob")}, m.Fields()))
+	}
+	r.run(t, 8)
+	require.Len(t, r.delivered, 1, "never pushed in twice")
+	got, _, err := r.bus.Receipts(ctx, "bob", m.ID)
+	require.NoError(t, err)
+	assert.Equal(t, bus.ReceiptActed, got[0].State)
+	pending, fresh, err := r.bus.Peek(ctx, "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "the duplicate is acked")
+	assert.Empty(t, fresh)
+	var dropped int
+	for _, line := range r.records {
+		if strings.Contains(line, "duplicate dropped id="+m.ID) {
+			dropped++
+		}
+	}
+	assert.Equal(t, 1, dropped, "one record line")
 }
 
 func TestATurnThatExitsNonZeroLeavesTheMessagePending(t *testing.T) {

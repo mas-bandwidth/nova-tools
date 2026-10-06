@@ -182,11 +182,15 @@ type Store interface {
 	// a send knows which recipients are friends, owed a receipt.
 	Members(ctx context.Context) (friends, machines []string, now time.Time, err error)
 	// AddAll appends one entry with fields to every stream, and makes every
-	// mark (HSET, or HDEL when it clears), in one MULTI/EXEC: the entry and its
+	// mark (HSET, HDEL when it clears, or the receipt's move forward), in one MULTI/EXEC: the entry and its
 	// marks are on all of them or on none.
 	AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error
 	// Unmark clears fields of the hash at key (HDEL) and says how many were there.
 	Unmark(ctx context.Context, key string, fields ...string) (int64, error)
+	// AdvanceReceipts moves the receipt of each id in the hash at key to state, only
+	// forward (Forward), the value the state and the store's TIME
+	// (ReceiptValue), in one trip, and says how many moved.
+	AdvanceReceipts(ctx context.Context, key, state string, ids ...string) (int64, error)
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
 	// a key that is not there is an empty map.
 	Marks(ctx context.Context, keys ...string) ([]map[string]string, error)
@@ -243,7 +247,8 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // A message to a friend is owed her session's receipt (receipt.go): the
 // transaction marks it on bus2:owed:<friend> for each friend it names but the
 // sender, and a message from a friend naming another (re) is her receipt of
-// that one, cleared in the same transaction.
+// that one, cleared in the same transaction, which also moves the sender's
+// receipt of it to acted (Mark.Forward), so a send stays two round trips.
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -372,7 +377,7 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			break
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
-			return got[0], true, release()
+			return b.took(ctx, as, got[0], release())
 		}
 		skipped = append(skipped, got[0].Entry)
 	}
@@ -385,12 +390,27 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			return Entry{}, false, err
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
-			return got[0], true, nil
+			return b.took(ctx, as, got[0], nil)
 		}
 		if err := b.Store.Release(ctx, stream, as, got[0].Entry); err != nil {
 			return Entry{}, false, err
 		}
 	}
+}
+
+// took is a recv's answer for the entry its reader took off the stream: the
+// message is delivered, by the store's time, before the reader has it. A
+// receipt that cannot be written fails the recv and the entry stays pending,
+// handed in again after ClaimAfter, so delivery stays at-least-once.
+// (tla/Bus2.tla: Recv)
+func (b *Bus) took(ctx context.Context, as string, e Entry, err error) (Entry, bool, error) {
+	if err != nil {
+		return Entry{}, false, err
+	}
+	if _, err := b.Advance(ctx, as, ReceiptDelivered, e.Fields["id"]); err != nil {
+		return Entry{}, false, err
+	}
+	return e, true, nil
 }
 
 // AckEntry acks one entry the recipient was handed (XACK); acking it again

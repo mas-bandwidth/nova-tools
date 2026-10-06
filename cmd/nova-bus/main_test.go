@@ -452,3 +452,24 @@ func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
 		cli.Do(t, c...).Exit(2).Err("RECV REFUSED")
 	}
 }
+
+// receipts prints each message's state and age; overdue lists what no reader
+// took past the bound and exits 1, and is silent at exit 0 once it is taken
+// (SPEC-BUS.md, message-receipts-r2.w2).
+func TestReceiptsAndOverdueSayWhatNoReaderTook(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+	mid := id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "hello", "--body", "x").Stdout)
+
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0 older=10m0s")
+	r.advance(11 * time.Minute)
+	cli.Do(t, "overdue").Exit(1).Err("OVERDUE OVERDUE count=1 older=10m0s", "short of delivered past 10m0s", "OVERDUE LATE name=bob id="+mid+" from=ada")
+	cli.Do(t, "overdue", "--older", "1h").Exit(0).Out("OVERDUE OK count=0 older=1h0m0s")
+	cli.Do(t, "overdue", "--older", "-1m").Exit(2).Err("--older wants a duration of zero or more")
+	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("RECEIPTS OK count=1", "RECEIPTS RECEIPT id="+mid+" state=none age=-")
+
+	cli.OK(t, "recv", "--as", "bob")
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0")
+	cli.Do(t, "receipts", "--as", "bob").Exit(0).Out("RECEIPTS OK count=1", "RECEIPTS RECEIPT id="+mid+" state=delivered age=")
+}

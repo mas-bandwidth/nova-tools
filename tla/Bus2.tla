@@ -37,13 +37,17 @@
 
 EXTENDS Naturals, FiniteSets, Sequences
 
-CONSTANTS Recipients, Messages, Consumers, MaxCrashes, Broken
+CONSTANTS Recipients, Messages, Consumers, MaxCrashes, Broken, WithReceipts
 
-VARIABLES st, holder, log, to, alive, crashes
-vars == <<st, holder, log, to, alive, crashes>>
+VARIABLES st, holder, log, to, alive, crashes, rc, held, turns
+vars == <<st, holder, log, to, alive, crashes, rc, held, turns>>
 
 States == {"none", "new", "pending", "acked"}
 NoOne == "-"
+Receipts == {"none", "delivered", "read", "acted"}
+Rank(x) == CASE x = "none" -> 0 [] x = "delivered" -> 1 [] x = "read" -> 2 [] x = "acted" -> 3
+\* A receipt moves to a later state only, and begins at delivered.
+Forward(cur, nxt) == IF Rank(nxt) > Rank(cur) /\ (cur # "none" \/ nxt = "delivered") THEN nxt ELSE cur
 
 TypeOK ==
   /\ st \in [Messages -> [Recipients -> States]]
@@ -51,6 +55,9 @@ TypeOK ==
   /\ to \in [Messages -> SUBSET Recipients]
   /\ alive \subseteq Consumers
   /\ crashes \in 0..MaxCrashes
+  /\ rc \in [Messages -> [Recipients -> Receipts]]
+  /\ held \in [Messages -> [Recipients -> BOOLEAN]]
+  /\ turns \in [Messages -> [Recipients -> 0..2]]
 
 Sent == {m \in Messages : \E i \in 1..Len(log) : log[i] = m}
 Position(m) == CHOOSE i \in 1..Len(log) : log[i] = m
@@ -75,6 +82,9 @@ Init ==
   /\ to \in [Messages -> (SUBSET Recipients) \ {{}}]
   /\ alive = Consumers
   /\ crashes = 0
+  /\ rc = [m \in Messages |-> [r \in Recipients |-> "none"]]
+  /\ held = [m \in Messages |-> [r \in Recipients |-> FALSE]]
+  /\ turns = [m \in Messages |-> [r \in Recipients |-> 0]]
 
 \* nova-bus2 send: one entry on every recipient's stream and the log, in
 \* one transaction. The partial witness writes some subset of the streams.
@@ -84,7 +94,7 @@ Send(m) ==
        /\ (Broken = "partial" \/ got = to[m])
        /\ st' = [st EXCEPT ![m] = [r \in Recipients |-> IF r \in got THEN "new" ELSE @[r]]]
   /\ log' = Append(log, m)
-  /\ UNCHANGED <<holder, to, alive, crashes>>
+  /\ UNCHANGED <<holder, to, alive, crashes, rc, held, turns>>
 
 \* nova-bus2 recv for r by consumer c: the oldest claimable pending
 \* message, else the oldest new one.
@@ -92,7 +102,8 @@ RecvPending(r, c) ==
   /\ c \in alive
   /\ Claimable(r, c) # {}
   /\ holder' = [holder EXCEPT ![OldestClaimable(r, c)][r] = c]
-  /\ UNCHANGED <<st, log, to, alive, crashes>>
+  /\ rc' = [rc EXCEPT ![OldestClaimable(r, c)][r] = Forward(@, "delivered")]
+  /\ UNCHANGED <<st, log, to, alive, crashes, held, turns>>
 
 RecvNew(r, c) ==
   /\ c \in alive
@@ -101,7 +112,8 @@ RecvNew(r, c) ==
   /\ LET m == Oldest(r, "new") IN
        /\ st' = [st EXCEPT ![m][r] = "pending"]
        /\ holder' = [holder EXCEPT ![m][r] = c]
-  /\ UNCHANGED <<log, to, alive, crashes>>
+       /\ rc' = [rc EXCEPT ![m][r] = Forward(@, "delivered")]
+  /\ UNCHANGED <<log, to, alive, crashes, held, turns>>
 
 Recv(r, c) == RecvPending(r, c) \/ RecvNew(r, c)
 
@@ -115,25 +127,60 @@ Ack(r, m) ==
        THEN st' = [st EXCEPT ![m][r] = "new"]
        ELSE st' = [st EXCEPT ![m][r] = "acked"]
   /\ holder' = [holder EXCEPT ![m][r] = NoOne]
-  /\ UNCHANGED <<log, to, alive, crashes>>
+  /\ UNCHANGED <<log, to, alive, crashes, rc, held, turns>>
 
 \* A consumer dies holding what it holds: the store keeps it pending.
 Crash(c) ==
   /\ c \in alive /\ crashes < MaxCrashes
   /\ alive' = alive \ {c}
   /\ crashes' = crashes + 1
-  /\ UNCHANGED <<st, holder, log, to>>
+  /\ UNCHANGED <<st, holder, log, to, rc, held, turns>>
 
 Restart(c) ==
   /\ c \notin alive
   /\ alive' = alive \cup {c}
-  /\ UNCHANGED <<st, holder, log, to, crashes>>
+  /\ UNCHANGED <<st, holder, log, to, crashes, rc, held, turns>>
+
+\* The daemon starts a turn carrying m: read. A message already acted is not
+\* pushed in (the drop: it is acked instead); "repush" pushes it anyway.
+Push(r, m) ==
+  /\ WithReceipts
+  /\ st[m][r] = "pending" /\ ~held[m][r]
+  /\ rc[m][r] \in {"delivered", "read"} \/ (Broken = "repush" /\ rc[m][r] = "acted")
+  /\ held' = [held EXCEPT ![m][r] = TRUE]
+  /\ rc' = [rc EXCEPT ![m][r] = Forward(@, "read")]
+  /\ UNCHANGED <<st, holder, log, to, alive, crashes, turns>>
+
+\* The turn ends at exit 0: acted, and one more turn that carried m ended well
+\* (bounded at two, enough for the witness to show a second).
+TurnEnd(r, m) ==
+  /\ WithReceipts
+  /\ held[m][r] /\ turns[m][r] < 2
+  /\ held' = [held EXCEPT ![m][r] = FALSE]
+  /\ turns' = [turns EXCEPT ![m][r] = @ + 1]
+  /\ rc' = [rc EXCEPT ![m][r] = Forward(@, "acted")]
+  /\ UNCHANGED <<st, holder, log, to, alive, crashes>>
+
+\* The turn ends at a non-zero exit: m is back in hand, read as it was.
+TurnFail(r, m) ==
+  /\ WithReceipts
+  /\ held[m][r]
+  /\ held' = [held EXCEPT ![m][r] = FALSE]
+  /\ UNCHANGED <<st, holder, log, to, alive, crashes, rc, turns>>
+
+\* r sends a message whose re is m: acted, once delivered.
+Reply(r, m) ==
+  /\ WithReceipts
+  /\ rc[m][r] \in {"delivered", "read"}
+  /\ rc' = [rc EXCEPT ![m][r] = Forward(@, "acted")]
+  /\ UNCHANGED <<st, holder, log, to, alive, crashes, held, turns>>
 
 Next ==
   \/ \E m \in Messages : Send(m)
   \/ \E r \in Recipients, c \in Consumers : Recv(r, c)
   \/ \E r \in Recipients, m \in Messages : Ack(r, m)
   \/ \E c \in Consumers : Crash(c) \/ Restart(c)
+  \/ \E r \in Recipients, m \in Messages : Push(r, m) \/ TurnEnd(r, m) \/ TurnFail(r, m) \/ Reply(r, m)
 
 \* Fairness, per action: every recipient keeps reading new messages and
 \* acking what it was handed, and a dead consumer comes back; a crash is
@@ -187,6 +234,20 @@ AckOnlyDelivered ==
 \* Ack is idempotent: once acked, acked (the second ack changes nothing).
 AckedStaysAcked ==
   [][\A m \in Messages, r \in Recipients : st[m][r] = "acked" => st'[m][r] = "acked"]_vars
+
+\* A receipt never moves back: delivered, read, acted, in that order only.
+ReceiptNeverBack ==
+  [][\A m \in Messages, r \in Recipients : Rank(rc'[m][r]) >= Rank(rc[m][r])]_vars
+
+\* A receipt past none says the message was taken off the stream: a message
+\* acted was delivered (and one read was too).
+ActedImpliesDelivered ==
+  \A m \in Messages, r \in Recipients :
+    rc[m][r] # "none" => st[m][r] \in {"pending", "acked"}
+
+\* No message id is acted twice: at most one turn carrying it ends at exit 0.
+NoIdActedTwice ==
+  \A m \in Messages, r \in Recipients : turns[m][r] <= 1
 
 \* Liveness: every sent message is acked by every recipient it names, once
 \* the crashes stop (they are bounded) and some consumer keeps reading.
