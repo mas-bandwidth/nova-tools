@@ -1570,6 +1570,43 @@ friend row and `friend beat` printing it as `row_lane_caps=` (cmd/nova-sprint);
 until they are, every lane runs on `DefaultLaneCaps`. The batch turn is not
 capped (it carries messages, not a card).
 
+### opencode-lanes-parity-r2b.w1 — the runner's behaviours in the opencode lanes (internal/friend/lane_parity.go)
+
+Two friends ran their cards through two zsh copies of one runner
+(`runner.zsh` in each friend's directory), because the opencode one-shot lanes lacked what it did. The owner, 2026-10-05:
+"We need to get away from these one shot shell scripts." Each behaviour whose
+input reaches the daemon is now a small function the lane's turn calls
+(`lane_parity_loop.go`, from `laneStep` and `laneDone` in `lanes.go`), on
+when the daemon has a `LaneParity`: `nova-friend run` gives every opencode
+friend one. Friend beat's answer carries none of the runner's settings (it says
+`row_mode`, `row_width`, `row_config_dir` and the like), so each is a run flag
+with a default:
+
+| Behaviour | Function | Flag (default) |
+|---|---|---|
+| The card filter | `LaneParity.Filter`, from the lanes' hand (`parityRefuses`): a tier outside the list, or an id matching none of the globs, is never handed | `--lane-tiers` (every tier), `--lane-streams` (every card) |
+| Take back | `TakeBackText`: a card outside the filter and not started (no lane mark, no `jobs/<job>/repo`) is one blocker to the coordinator, once while it stands, with the `nova-sprint friend take` line; a started one is skipped | none |
+| The job's name | `JobName(card, epoch, gen)`: `<card>~<epoch>`, `.g<gen>` from the second generation, as friend sync names the inbox; the filter finds a held card's tier by it (`heldJob`) | none |
+| Width under load | `LoadWidthAt`: new cards held to the lower width while the 1-minute load (`/proc/loadavg`, else `sysctl -n vm.loadavg`, read once a `LoadEvery`) is above the bound; a lane past it hands its card back between turns; the hold said on the record and told to the coordinator | `--lane-load-max` (none), `--lane-load-width` (3) |
+| The token cap | `OverCap` and `CapReport`: once a `CapEvery` a running card's tokens since it began are read; at the cap its `REPORT.md` is a HOLD naming the cap, the tokens and the turn's last line, and its turn is ended, so the lane finishes it from that report | `--lane-token-cap` (none) |
+| A provider failure | `ProviderFailureLine` on each running turn's output (an `Error:` line saying 402, 429, out of funds, a rate limit), or the turn's own `RateLimited` or `OutOfFunds`: every running turn is ended (`parityStop`), each card kept (`parityKept`: not started, its lane mark removed, never set aside, no attempt counted), the lanes held with the exact message in `<state>/LANES-HELD`, and the coordinator told once with the `nova-sprint friend down` line; nothing starts until a person removes the file, which a restart keeps | the hold file is fixed |
+| The cost | `ReadTokenUsage` (sqlite3 `-readonly` on opencode's database through the Exec seam: the session and its children; the tree has no sqlite driver) less the tokens at the card's start, priced by `RouteOf` (the route row for the model in `nova-sprint routes --json`, a read verb) with `RouteRow.Cost`, rounded up to the cent, else `unpriced (<why>)`; `PublishCost` puts the `Cost:` line under `Head:` on `REPORT.md` and at the end of `RESULT.md` | `--lane-model` (the model `<dir>/opencode.json` names), `--opencode-db` (`~/.local/share/opencode/opencode.db`) |
+| The go refusal shims | `WriteShims` links `go` and `gofmt` in `<state>/bin` to nova-friend, which refuses when run by those names (exit 126); `WithShims` on the turn's context puts them first on the turn's `PATH`, `GOROOT` pointing nowhere (`ShimEnv`, in `RealExec`) | `--refuse-go` (off) |
+| The note at each finish | `FinishNote`: the job, the report's first line, the cost and the wall, to the coordinator | none |
+
+The provider hold's model is `internal/friend/tla/LaneHold.tla` (TLC on a Linux
+bench, three cards, two lanes: 873 distinct states, `TypeOK`, `HeldStopsAll`,
+`HeldFailsNone` and `KeptUncounted` hold). Its first run found a card handed
+again after a failed turn, between turns when the lanes were held, still marked
+started, so a restart would have finished it failed; the stop keeps it too.
+Its reversed witness `MCLaneHoldBrokenRunsOn.cfg`, the running lanes left going
+on a provider failure, breaks `HeldStopsAll` in 4 states.
+
+The test is `TestOpencodeLanesDoWhatTheRunnerStopgapsDid`: a table per
+behaviour and the lanes run over a fake harness for each; with the wiring
+off (the daemon's `LaneParity` ignored) every lane case fails. No test has a
+server accept `friend take` or `friend down`: the daemon never sends them.
+
 ### the-daemon-reads-every-outbox-job.w1 — the daemon finishes every report on her row (internal/friend/outbox.go)
 
 The night of 2026-10-05, a friend held eight working cards whose
@@ -2083,6 +2120,29 @@ records them for pacing. Claude has no deliver command, so its
 `rate_limit_event` is read only once a Claude run's output passes through
 `Watch`. The state machine (up, down until a reset, waking on a nonce) wants
 its TLA+ module beside `tla/Friend.tla`.
+
+The opencode lanes' runner behaviours (opencode-lanes-parity-r2b.w1, above)
+leave three blockers at the sprint server, so the two runner.zsh stopgaps
+stand until each is served. Take back: `friend take` is a coordinator verb
+(`cmd/nova-sprint/coordinator.go`, the worker class is take, finish,
+progress, read, fleet beat, friend beat, lane take, lane give), so the daemon
+tells the coordinator the line instead; it needs a worker-class verb a friend
+may run on her own row, a card she holds and has not started (`friend give
+<friend> <card> --reason <why>`, say). Friend down: the same class, so a
+provider hold is on her daemon and in a blocker, not on her row; it needs
+`friend beat` to carry a hold with no reset (`--held <reason>`, kept until
+`friend up`), since `--until` wants a reset a provider failure does not name.
+The row keys: friend beat's answer (`cmd/nova-sprint/friends.go`) carries no
+card filter, token cap or load bound, so they are run flags; each needs a
+nova-config friend row column and its key on the answer, `row_tiers=`,
+`row_streams=`, `row_token_cap=`, `row_load_max=` and `row_load_width=`.
+Beside those: her row's cards carry no stream (`HeldCard`), so a stream glob
+matches the card id only until `friend cards` says it; the runner's raise of
+the width after a quiet load, its invoice-effective rate beside the price and
+its `adopt` of an orphaned run are not ported; a card's tokens are read once a
+`CapEvery`, so a cap can be passed by up to that window's use; and a tool's own
+output with an `Error:` line naming 429 or a rate limit reads as a provider
+failure, as it did in the runner.
 
 ## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
 

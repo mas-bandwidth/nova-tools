@@ -220,8 +220,11 @@ type lane struct {
 	tier     string        // the card's tier as her row said it when the lane took it
 	cap      time.Duration // the card's wall cap by its tier (lane_cap.go)
 	t        *turn
-	marked   time.Time // when the lane last wrote its running mark on its card's job (one_lane.go)
-	ended    string    // the lane that finished the card this lane still runs: its run is being stopped
+	marked   time.Time  // when the lane last wrote its running mark on its card's job (one_lane.go)
+	ended    string     // the lane that finished the card this lane still runs: its run is being stopped
+	base     TokenUsage // its session's tokens when the card began (lane_parity_loop.go)
+	baseOK   bool       // base was read
+	capAt    time.Time  // when its tokens were last read against the cap
 }
 
 type laneResult struct {
@@ -246,6 +249,7 @@ type laneSet struct {
 	paced   int               // the paced width at the last step
 	width   int               // the row's width at the last step
 	now     time.Time         // the last step's clock
+	parity  parityState       // the runner's behaviours (lane_parity_loop.go)
 }
 
 func (s *laneSet) running() bool {
@@ -353,7 +357,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
 	}
 	l.paceStep(now, width)
-	limit, paused := min(s.gov.Cap(width), s.paced), s.gov.Paused(now)
+	l.parityStep(now) // a provider stop holds the lanes before anything is handed
+	limit, paused := min(s.gov.Cap(width), s.paced, l.parityWidth(now, width)), s.gov.Paused(now)
 	if !s.loaded {
 		s.loaded = true
 		s.given = map[string]bool{}
@@ -396,6 +401,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		if exists(c.Result()) || exists(c.Report()) {
 			return true // done: no lane is owed it, and none is refused it
+		}
+		if l.parityRefuses(c, now) { // outside her filter
+			return true
 		}
 		if who, how := l.laneHolder(c, now); who != "" { // one live lane per card
 			l.refuseLane(asking, c, who, how, now)
@@ -456,6 +464,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.cap = d.laneCap(ln.tier)
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
+			l.parityBegin(ln, now)
 		}
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, *ln.card
@@ -482,7 +491,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		t.text = CardText(*ln.card, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
 		ln.t = t
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
-			lt, err := lh.DeliverTo(LaneContext(ctx), ln.session, t.text)
+			lt, err := lh.DeliverTo(l.parityContext(LaneContext(ctx)), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}
@@ -495,6 +504,12 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	at := now.UTC().Format(time.RFC3339)
 	if r.open {
 		ln.opening = false
+		if why, stop := l.parityStops(r.err); stop {
+			ln.openAt = now
+			l.parityStop(why, "(a lane's session open)", now)
+			d.Record(fmt.Sprintf("%s lane %d: no session: %s; tried again when the lanes are up", at, ln.n, oneLine(r.err.Error(), 300)))
+			return
+		}
 		if l.providerLimit(r.err, ln.openFrom, now) {
 			ln.openAt = now // the governor's pause or hold says when it is tried again
 			d.Record(fmt.Sprintf("%s lane %d: no session: %s; tried again when the lanes resume", at, ln.n, oneLine(r.err.Error(), 300)))
@@ -527,6 +542,10 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		l.setDown(ln, now)
 		return
 	}
+	if t.halted {
+		l.parityKept(ln, t, "a provider failure stopped every lane", now)
+		return
+	}
 	s.pace.Observe(r.turn.Windows)
 	var rate RateLimited
 	var funds OutOfFunds
@@ -534,6 +553,12 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage)) && !t.stopped && !t.capped
 	if limited && exists(ln.card.Result()) {
 		r.err, limited = nil, false // the card is done: the words were the card's, not the provider's answer
+	}
+	if why, stop := l.parityStops(r.err); limited && stop {
+		id := ln.card.ID
+		l.parityKept(ln, t, "provider failure: "+oneLine(why, 200), now) // before the stop, which keeps cards between turns
+		l.parityStop(why, id, now)
+		return
 	}
 	if limited {
 		l.limitedTurn(r, now)
@@ -552,6 +577,9 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	if t.capped {
 		line += fmt.Sprintf(" capped=%q", ln.cap.String()+" tier "+dash(ln.tier))
+	}
+	if t.tokenCapped {
+		line += fmt.Sprintf(" token_capped=%d", l.parity().TokenCap)
 	}
 	if r.turn.Rejected != "" {
 		line += fmt.Sprintf(" rejected=%q", r.turn.Rejected)
@@ -573,6 +601,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
+		line += l.parityFinish(ln, card, end.Started, now) // the cost on the report before it is finished
 		line += " card=done " + l.endCard(ln.n, card, end, now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
@@ -585,7 +614,8 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		end.Cap = ""
 		ln.attempts++
 		job := filepath.Base(card.Outbox)
-		d.Record(line + fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)) + l.endCard(ln.n, card, end, now))
+		words := l.endCard(ln.n, card, end, now)
+		d.Record(line + fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)) + words + l.parityFinish(ln, card, end.Started, now))
 		s.given[job] = true
 		s.state.GivenUp = append(s.state.GivenUp, job)
 		l.saveLanes(now)
@@ -608,7 +638,8 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		d.Record(line + fmt.Sprintf(" card=again turn=%d/%d reason=%q", ln.attempts, CardTurns, why))
 		return
 	}
-	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
+	words := l.endCard(ln.n, card, end, now)
+	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + words + l.parityFinish(ln, card, end.Started, now))
 	job := filepath.Base(card.Outbox)
 	s.given[job] = true
 	s.state.GivenUp = append(s.state.GivenUp, job)

@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -253,7 +254,12 @@ func realWorld() world {
 	return w
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
+func main() {
+	if friend.ShimRefuses(os.Args[0]) {
+		os.Exit(friend.RunShim(os.Stderr)) // run as go or gofmt from a lane's PATH (run --refuse-go): the refusal, never a toolchain
+	}
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld()))
+}
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
 	if len(args) > 0 && args[0] == friend.WallVerb {
@@ -363,7 +369,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--lane-tiers <t,...>] [--lane-streams <glob,...>] [--lane-token-cap <n>] [--lane-load-max <load>] [--lane-load-width <n>] [--lane-model <provider/model>] [--opencode-db <path>] [--refuse-go] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -418,6 +424,19 @@ lane child (the harness's session open and each card's turn) runs inside the wal
 --dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that
 denies nothing is refused), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Prints
 one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
+An opencode friend's one-shot lanes do what the runner.zsh stopgaps did (docs/SPEC-FRIEND.md, the runner's
+behaviours), each set by a flag here, since her beat's answer carries none of them: --lane-tiers and
+--lane-streams filter the cards a lane takes (a card of another tier, not started, is a blocker to the
+coordinator with the nova-sprint friend take line: that verb is the coordinator's); --lane-load-max holds new
+cards to --lane-load-width lanes while the 1-minute load is above it; --lane-token-cap stops a card's turn at
+that many tokens (its session's and its children's, read from --opencode-db with sqlite3), its REPORT.md a
+HOLD naming the cap; a provider failure (402, 429, out of funds, rate limit) on any lane ends every running
+turn, keeps each card to run again (no attempt counted), holds the lanes in <state>/LANES-HELD with the exact
+message and tells the coordinator the nova-sprint friend down line; nothing starts until a person removes
+that file. Each finished card gets a Cost: line on REPORT.md (under Head:) and RESULT.md: its tokens since it
+began, priced by the route row of --lane-model in nova-sprint routes --json, rounded up to the cent, else
+"unpriced (<why>)"; and a bus note to the coordinator. --refuse-go puts go and gofmt shims (this binary,
+which refuses by that name, exit 126) first on every lane turn's PATH, GOROOT pointing nowhere.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
 dir= state= redis=): no store is opened and nothing is written.`,
 				Flags: func(f *tool.Flags) {
@@ -428,6 +447,7 @@ dir= state= redis=): no store is opened and nothing is written.`,
 					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
 					f.String("wall-jobs", "", "job directories outside --dir that are writable inside the lane's wall, comma-separated")
 					f.String("wall-reads", "", "directories the harness reads inside the lane's wall beyond the system roots and its own, comma-separated")
+					laneParityFlags(f)
 					f.Check(func(c *tool.Call) {
 						if m := c.Str("mode"); m != "" && m != friend.ModeBatch && m != friend.ModeOneShot {
 							c.Problem(fmt.Sprintf("--mode %q wants batch or one-shot", m))
@@ -935,6 +955,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		deliver = &friend.OpenCodePriced{OpenCode: oc} // every lane run priced from her own session record
 	}
+	parity, err := w.laneParity(c, dir, server, state)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
@@ -1157,6 +1181,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		Held:      w.held(name, server),
+		Parity:    parity,
 		Seat:      w.seat(server),
 		Stage:     stager.stage(),
 		Prune:     stager.prune(),
@@ -1921,4 +1946,74 @@ func (w world) host(c *tool.Call) *tool.Out {
 		return tool.Refuse("the session " + res.Session + " runs, and its state could not be saved: " + err.Error())
 	}
 	return tool.Done().Fact("session", res.Session).Fact("dir", dir).Fact("attach", tool.Text(res.Attach))
+}
+
+// laneParityFlags are run's flags for the runner's behaviours in an opencode friend's one-shot
+// lanes (friend.LaneParity): friend beat's answer carries none of them.
+func laneParityFlags(f *tool.Flags) {
+	f.String("lane-tiers", "", "harness opencode: the card tiers her lanes take, comma-separated; a card of another tier, not started, is told to the coordinator to take back (default: every tier)")
+	f.String("lane-streams", "", "harness opencode: stream or card id globs her lanes take, comma-separated (security*,sec-*); a card matching none is skipped (default: every card)")
+	f.Int("lane-token-cap", 0, "harness opencode: the tokens one card may use, every kind, before its lane is stopped with a HOLD naming the cap; 0 is none")
+	f.String("lane-load-max", "", "harness opencode: the 1-minute load above which new cards are held to --lane-load-width lanes (default: none)")
+	f.Int("lane-load-width", friend.DefaultLoadWidth, "harness opencode: the lanes new cards are held to while the load is above --lane-load-max")
+	f.String("lane-model", "", "harness opencode: the provider/model a card is priced as, by its route row in nova-sprint routes --json (default: the model <dir>/opencode.json names)")
+	f.String("opencode-db", "", "harness opencode: opencode's database, read with sqlite3 for a card's tokens (default: ~/.local/share/opencode/opencode.db)")
+	f.Bool("refuse-go", false, "harness opencode: go and gofmt refused on every lane turn's PATH (shims in <state>/bin), GOROOT pointing nowhere: a machine that runs no go")
+	f.Check(func(c *tool.Call) {
+		if v := c.Str("lane-load-max"); v != "" {
+			if n, err := strconv.ParseFloat(v, 64); err != nil || n <= 0 {
+				c.Problem(fmt.Sprintf("--lane-load-max %q wants a load above 0", v))
+			}
+		}
+		if c.Int("lane-token-cap") < 0 {
+			c.Problem("--lane-token-cap wants 0 (none) or more tokens")
+		}
+		if c.Int("lane-load-width") < 1 {
+			c.Problem("--lane-load-width wants at least 1 lane")
+		}
+	})
+}
+
+// laneParity is the daemon's friend.LaneParity for an opencode friend from run's flags (nil for
+// any other harness), the shims written when --refuse-go asks; its settings are said on the
+// record at the lanes' first step.
+func (w world) laneParity(c *tool.Call, dir, server, state string) (*friend.LaneParity, error) {
+	if c.Str("harness") != "opencode" {
+		return nil, nil
+	}
+	p := &friend.LaneParity{
+		Tiers: commaList(strings.ToLower(c.Str("lane-tiers"))), Streams: commaList(c.Str("lane-streams")),
+		TokenCap: int64(c.Int("lane-token-cap")), LoadWidth: c.Int("lane-load-width"),
+		StopOnProvider: true, Model: c.Str("lane-model"), HoldFile: filepath.Join(state, "LANES-HELD"),
+	}
+	if p.Model == "" {
+		p.Model = friend.ModelInOpenCodeConfig(dir)
+	}
+	if v := c.Str("lane-load-max"); v != "" {
+		p.LoadMax, _ = strconv.ParseFloat(v, 64) // ignored: the flag's check refused what does not parse
+	}
+	p.Load = func(ctx context.Context) (float64, error) { return friend.ReadLoad(ctx, w.exec) }
+	db := c.Str("opencode-db")
+	if db == "" {
+		db = filepath.Join(w.home, ".local", "share", "opencode", "opencode.db")
+	}
+	p.Usage = func(ctx context.Context, session string) (friend.TokenUsage, error) {
+		return friend.ReadTokenUsage(ctx, w.exec, db, session)
+	}
+	if w.cards != nil {
+		p.Routes = func(ctx context.Context) (string, error) { return w.cards(ctx, server, []string{"routes", "--json"}) }
+	}
+	if c.Bool("refuse-go") {
+		bin, err := w.binary()
+		if err != nil {
+			return nil, fmt.Errorf("--refuse-go: this binary's path is unknown, so no shim can run it: %v", err)
+		}
+		p.Shims = filepath.Join(state, "bin")
+		if _, err := friend.WriteShims(p.Shims, bin); err != nil {
+			return nil, fmt.Errorf("--refuse-go: the shims in %s: %v", p.Shims, err)
+		}
+	}
+	p.Said = fmt.Sprintf("lanes: tiers=%s streams=%s token_cap=%d load_max=%s load_width=%d model=%s db=%s shims=%s hold_file=%s",
+		dash(strings.Join(p.Tiers, ",")), dash(strings.Join(p.Streams, ",")), p.TokenCap, dash(c.Str("lane-load-max")), p.LoadWidth, dash(p.Model), db, dash(p.Shims), p.HoldFile)
+	return p, nil
 }

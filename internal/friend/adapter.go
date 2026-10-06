@@ -149,6 +149,9 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	tail, _ := ctx.Value(tailKey{}).(func([]byte))
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	if shims := shimsOf(ctx); shims != "" {
+		cmd.Env = ShimEnv(os.Environ(), shims) // a lane's turn: go refused on its PATH (lane_parity.go)
+	}
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} // else /dev/null: a headless opencode run with stdin left open hangs at init (measured 2026-10-04)

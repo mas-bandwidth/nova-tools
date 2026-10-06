@@ -185,6 +185,9 @@ type Daemon struct {
 	// it names another friend running, and a lane whose card left her row names its friend
 	// on the job's lane mark (one_lane.go). Nil says none; the lane marks still hold.
 	Running func() map[string]string
+	// Parity is the runner's behaviours in the one-shot lanes' turn (lane_parity.go), from
+	// nova-friend run's flags for an opencode friend; nil runs none of them.
+	Parity *LaneParity
 	// Seat is the coordinator seat holder as the sprint server says it. An
 	// error, an empty name or a nil Seat is the seat unknown, and while it is
 	// unknown no message is delivered as an instruction (BatchFor).
@@ -222,21 +225,23 @@ const IdleWalkEvery = time.Minute
 // turn is one delivery into the session: the messages it carries (acked
 // together at exit 0) and the daemon's word about the coordinator, if any.
 type turn struct {
-	entries  []string // the stream entries to ack
-	msgs     []bus.Message
-	notice   *Push
-	text     string
-	started  time.Time
-	running  bool // a Deliver is under way (false while a deferral waits)
-	cancel   context.CancelFunc
-	seen     *atomic.Int64 // outputs the command printed
-	seenN    int64
-	lastOut  time.Time // when the daemon last saw the turn print, or its start
-	stopped  bool      // the daemon stopped it: silent past SilentStop
-	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
-	tail     *outputTail
-	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
-	subjects string
+	entries     []string // the stream entries to ack
+	msgs        []bus.Message
+	notice      *Push
+	text        string
+	started     time.Time
+	running     bool // a Deliver is under way (false while a deferral waits)
+	cancel      context.CancelFunc
+	seen        *atomic.Int64 // outputs the command printed
+	seenN       int64
+	lastOut     time.Time // when the daemon last saw the turn print, or its start
+	stopped     bool      // the daemon stopped it: silent past SilentStop
+	capped      bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
+	halted      bool      // a provider failure stopped every lane: its card is kept (lane_parity_loop.go)
+	tokenCapped bool      // its card reached the per-card token cap: its REPORT.md is the HOLD
+	tail        *outputTail
+	stamped     time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
+	subjects    string
 }
 
 type result struct {
@@ -791,6 +796,7 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	tail := &outputTail{}
 	tctx = WithOutputTail(tctx, tail.add)
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped, t.capped, t.tail = now, true, cancel, seen, 0, now, false, false, tail
+	t.halted, t.tokenCapped = false, false
 	switch f := deliver.(type) {
 	case func(context.Context) result:
 		go func() { r := f(tctx); cancel(); l.results <- r; l.turnEnded() }()

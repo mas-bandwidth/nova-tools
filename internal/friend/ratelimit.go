@@ -225,6 +225,9 @@ func (g *LaneGovernor) Hold(reason string) bool {
 	return true
 }
 
+// Release ends a hold: a person brought the lanes up (lane_parity_loop.go, the hold file).
+func (g *LaneGovernor) Release() { g.held = "" }
+
 // RateJudgmentText is what the coordinator is told when a friend's lane cap
 // was lowered RateJudgeAfter times within RateJudgeWithin: one judgment.
 func RateJudgmentText(friend string, cap, width int, reason string) (subject, body string) {

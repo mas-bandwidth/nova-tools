@@ -103,6 +103,23 @@ nova-config apply --kind friend
 A claude row in one-shot mode without `config_dir` runs no lane: her daemon
 says so on its record with the `nova-config friend set` that fixes it.
 
+## OpenCode friends: the runner's behaviours are run flags
+
+An opencode friend's one-shot lanes do what the runner.zsh stopgaps did, each
+set by a `nova-friend run` flag (her beat's answer carries none of them;
+docs/SPEC-FRIEND.md, opencode-lanes-parity-r2b.w1):
+
+```
+nova-friend run --as <flash-friend> --harness opencode --dir <dir> --lane-tiers flash --lane-token-cap 6000000 --lane-load-max 90 --lane-load-width 3 --refuse-go ...
+nova-friend run --as <security-friend> --harness opencode --dir <dir> --lane-streams 'security*,sec-*,security-*,fp-sec*' ...
+```
+
+A card outside `--lane-tiers` or `--lane-streams` is never handed; one not
+started is a blocker to the coordinator with the `nova-sprint friend take`
+line to run. A provider failure stops every lane, keeps each card, and holds
+them in `<state>/LANES-HELD` with the exact message; remove that file to bring
+them up. Each finished card's `REPORT.md` and `RESULT.md` get a `Cost:` line.
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
