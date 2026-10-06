@@ -653,6 +653,12 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 					session, filepath.Join(store, "log.jsonl"), strings.Join(Policies, "|"))
 			}
 			publish = rec.Publish
+		} else if rec.Found && publish != rec.Publish {
+			return res, &ConflictError{
+				Msg: fmt.Sprintf("--publish %q disagrees with session %q which is open with publish=%s; pick one",
+					publish, session, rec.Publish),
+				Remedy: command("append", "--store", store, "--session", session, "--entry", id, "--publish", rec.Publish),
+			}
 		}
 	}
 	final := entryPath(store, session, id)

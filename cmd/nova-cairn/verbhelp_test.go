@@ -28,7 +28,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 	help := cli.OK(t, "help").Stdout
 	for _, want := range []string{
-		"--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish records the entry's own word, and one that differs from the session's is recorded as given, not a conflict (exit 0).",
+		"--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish must match the session's policy or be omitted to use the session's.",
 		"Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).",
 		"exit codes: 0 done, 2 usage or could not run, for every verb; by verb:",
 		"  open: 0 ",
@@ -40,14 +40,17 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	// open records the policy; append --publish records the entry's own word, even
-	// one that differs from the session's.
+	// open records the policy; append --publish must match it or be omitted to use it.
 	require.Equal(t, 0, cli.Run("open", "--store", dir, "--session", "s1", "--publish", "manual").Code)
+	// append with a differing --publish is refused at exit 1.
 	r := cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w", "--publish", "immediate")
+	require.Equal(t, 1, r.Code, "append with a differing --publish should be refused: %+v", r)
+	// append with a matching --publish succeeds.
+	r = cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w", "--publish", "manual")
 	require.Equal(t, 0, r.Code)
-	require.Contains(t, r.Stdout, "publish=immediate", "a differing append --publish is recorded as given")
+	require.Contains(t, r.Stdout, "publish=manual", "append with matching --publish succeeds")
 	// The same id and words is a duplicate at exit 0; other words a conflict at exit 1.
-	r = cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w", "--publish", "immediate")
+	r = cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w", "--publish", "manual")
 	require.Equal(t, 0, r.Code)
 	require.Contains(t, r.Stdout, "duplicate=true", "the duplicate the help names prints duplicate=true")
 	require.Equal(t, 1, cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "other").Code)

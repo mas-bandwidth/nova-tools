@@ -93,15 +93,15 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 			"  open: 0 the record stands (opened, or already matching); 1 a re-open naming\n" +
 			"    another policy or source; 2 usage, or a store that did not answer\n" +
 			"  append: 0 the words are written, or the entry already holds them\n" +
-			"    (duplicate=true); 1 the entry id holds other words; 2 usage, or a store that\n" +
-			"    did not answer\n" +
+			"    (duplicate=true); 1 the entry id holds other words or --publish disagrees with\n" +
+			"    the session; 2 usage, or a store that did not answer\n" +
 			"  index: 0 listed; 2 usage, or a store that did not answer\n" +
 			"  receipt: 0 read; 2 usage, or no such session or entry",
 		Verbs: []tool.Verb{
 			{
 				Name: "open",
 				Usage: "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]\n" +
-					"NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish records the entry's own word, and one that differs from the session's is recorded as given, not a conflict (exit 0).",
+					"NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish must match the session's policy or be omitted to use the session's.",
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
 				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +

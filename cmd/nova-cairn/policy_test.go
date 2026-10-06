@@ -12,8 +12,9 @@ import (
 )
 
 // The policy is named once, at open: an append with no --publish carries the
-// session's, an append naming one keeps its own, and a flat record, which
-// records no policy, says publish=unknown rather than inventing one.
+// session's, and a flat record, which records no policy, says publish=unknown
+// rather than inventing one. An append naming a policy that disagrees with the
+// session's is refused.
 func TestAnAppendCarriesTheSessionsPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -21,7 +22,10 @@ func TestAnAppendCarriesTheSessionsPolicy(t *testing.T) {
 	c.ok("open", "--session", "s", "--publish", "deferred")
 	printed(t, c.ok("append", "--session", "s", "--entry", "inherits", "--text", "w"), " publish=deferred ")
 	printed(t, c.ok("receipt", "--session", "s", "--entry", "inherits"), " publish=deferred")
-	printed(t, c.ok("append", "--session", "s", "--entry", "own", "--text", "w", "--publish", "never"), " publish=never ")
+	// An append with a --publish that matches the session's policy succeeds
+	printed(t, c.ok("append", "--session", "s", "--entry", "matches", "--text", "w", "--publish", "deferred"), " publish=deferred ")
+	// An append with a --publish that disagrees with the session's is refused
+	require.Equal(t, 1, c.run("append", "--session", "s", "--entry", "disagrees", "--text", "w", "--publish", "never").Code)
 
 	testkit.WriteFile(t, c.path("flat.md"), "# by hand\n")
 	printed(t, c.ok("append", "--session", "flat", "--entry", "e", "--text", "w"), " publish=unknown ")
