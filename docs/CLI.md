@@ -551,7 +551,7 @@ last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (br
 her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
 daemon writes every card she holds"), or `STATUS NONE` at exit 1 where no
 daemon ever ran. What a first run gets wrong: a `--harness` that is not one
-of opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor,
+of opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor,
 amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
 without a delivery route are known but passive, with their refusal reasons);
 a `pong --as` that is not the
@@ -607,6 +607,43 @@ These are codex's writable root, the DeepSeek Harness agent preset
 claude's config directory, and opencode's directory allow-list and model.
 A friend's directory, writable root, wake directory or config directory that
 is a symlink is refused, and nothing is written or loaded.
+
+### Hosting a terminal harness in tmux
+
+`nova-friend host` runs a terminal harness (OpenCode, Grok, Aider, any TUI) in a detached tmux session,
+so the friend's session is the TUI in the pane: the daemon types into it as a person would, and a
+person can attach and watch. Hosting is opt-in: a TUI started outside tmux keeps its own harness.
+
+```sh
+nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
+nova-friend host --as bob --harness aider --dir ./bob -- aider
+nova-friend install --as bob --harness tmux --dir ./bob
+tmux attach -t friend-bob
+```
+
+`host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>`
+runs `tmux new-session -d -s friend-<me> -c <d> -- <launch command...>` and refuses when `friend-<me>`
+exists. `--harness` names the harness whose idle prompt pattern is used (opencode, grok, aider);
+`--prompt <regexp>` overrides it and is wanted for any other harness: the pattern the last non-empty
+line of the pane matches while the harness waits for input. The session name and the pattern are saved
+in `<state-dir>/host.json` (`--state-dir`, else `~/.nova-friend/<me>`), so `run` and `install` need
+no flag beyond `--harness tmux` (one of the harnesses, chosen over a `--host` flag: the adapter registry
+takes a harness name). With that harness a delivery captures the pane (`tmux capture-pane -p -t friend-<me>`);
+when its last non-empty line matches the idle prompt it types the text on one line, each newline
+shown as ` ⏎ ` (`tmux send-keys -l`), then Enter as a second call, and is accepted once the prompt
+line has gone, polled each half second for up to a minute. While the prompt is absent a turn runs,
+the delivery is deferred and nothing is typed, so no second turn lands beside one. A missing session
+is deferred with the line to host it again, never a failure.
+
+The help of `nova-friend host -h` says, and this is the same text:
+
+```
+HOST OK session=friend-<name> dir=<d> attach="tmux attach -t friend-<name>"
+HOST REFUSED: friend-<name> runs already; run: tmux attach -t friend-<name>
+HOST DRY-RUN session= dir= command= (the tmux command); starts and saves nothing
+JSON fields: session, dir, attach (command on a dry run)
+Exit 0 started, 1 refused, 2 could not run (no launch command, no prompt pattern for the harness, tmux missing or failing)
+```
 
 ### The friend health check
 

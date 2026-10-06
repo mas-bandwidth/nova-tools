@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1041,4 +1042,24 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`daemon=down`, `status=down why="bus cannot deliver: daemon down 31s (2 undelivered)"`)
 
 	cli.Do(t, "status", "--as", "bob", "--dir", dir, "--redis", "").Exit(0).Out(`undelivered not counted`)
+}
+
+// TestHostHelpExampleIsWhatTheToolPrints runs the host verb's help example as
+// written, over a fake tmux, through the one comparator: the line a reader
+// pastes prints the line the help shows (docs/SPEC-FRIEND.md, "Hosted in tmux").
+func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+	step := onboarding.Step{
+		Line: "$ nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider",
+		Args: []string{"host", "--as", "bob", "--harness", "aider", "--dir", "./bob", "--dry-run", "--", "aider"},
+		Want: []string{"HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command=\"tmux new-session -d -s friend-bob -c ./bob -- aider\""},
+	}
+	var out, errb strings.Builder
+	w := newRig(t).world()
+	code := run(step.Args, strings.NewReader(""), &out, &errb, w)
+	got := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
+	require.Equal(t, 0, code, errb.String())
+	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{got}, nil) {
+		assert.Fail(t, "the help example differs", p.Message)
+	}
 }
