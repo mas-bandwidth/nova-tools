@@ -40,18 +40,23 @@ type askTally struct {
 	// rows is the rows the committed steps changed, by table.
 	rows map[string][]string
 	// unfinished says the ask left something for the next tick: a primary
-	// given up, or the budget spent with primaries left.
+	// given up, the budget spent with primaries left, or a batch lost and
+	// not tried again alone before the ask stopped.
 	unfinished bool
 	// left is the primaries the ask did not reach before its budget.
 	left int
+	// lost is the primaries of a batch that lost its tries and that the ask
+	// stopped before trying again alone: due for the next tick, and said in
+	// the TIMES line (TickResult.TimesLine, <n>lost).
+	lost int
 }
 
 // askBudget is the ask's budget: AskBudget, or half the time the tick's
-// context has left when that is less.
-func askBudget(ctx context.Context) time.Duration {
+// context has left at now (the store's clock, Store.now) when that is less.
+func askBudget(ctx context.Context, now time.Time) time.Duration {
 	b := AskBudget
 	if dl, ok := ctx.Deadline(); ok {
-		if share := time.Until(dl) / 2; share < b {
+		if share := dl.Sub(now) / 2; share < b {
 			b = max(share, 0)
 		}
 	}
@@ -64,7 +69,9 @@ func askBudget(ctx context.Context) time.Duration {
 // plan's judgments while none has committed yet. A step that loses its
 // AskTries tries to other writers is tried again a primary at a time; a
 // primary that loses its own tries is one refusal, its own, and the next tick
-// asks it. No step begins past the budget. The tick holds the server's line
+// asks it. No step begins past the budget: a lost batch the ask stops before
+// trying again alone is counted due (askTally.lost) and leaves the ask
+// unfinished, as the primaries it did not reach do. The tick holds the server's line
 // through the ask, as through every part (cmd/nova-sprint run.go, TickLock):
 // the budget is what bounds the wait of the verbs behind it.
 func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
@@ -72,23 +79,27 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 	tally := askTally{rows: map[string][]string{}}
 	out := Result{Verb: step.Verb, Tables: map[string]int{}}
 	begin := st.now()
-	until := begin.Add(askBudget(t.ctx))
+	until := begin.Add(askBudget(t.ctx, begin))
 	done := map[string]bool{}   // primaries written this tick, or refused by the plan
 	gaveUp := map[string]bool{} // primaries given up this tick: the next tick asks them
 	single := map[string]bool{} // primaries of a lost batch: tried again alone
 	notesDone := false          // a step committed the plan's judgments
 	committed, lost := false, false
 	inner := step.Plan
+	// lostBatch is the last step's batch when it lost its tries: tried again
+	// alone by the steps after it, and due while no plan has counted it since
+	var lostBatch []string
 	for n := 0; ; n++ {
 		if n > 0 && !st.now().Before(until) {
-			if tally.left > 0 {
+			tally.lost = len(lostBatch)
+			if tally.left > 0 || tally.lost > 0 {
 				tally.unfinished = true
 			}
 			break
 		}
 		var chosen []string
 		var kept sprint.Plan
-		left := 0
+		left, planned := 0, false
 		s := step
 		s.Tries, s.Until = AskTries, until
 		s.Plan = func(sn *sprint.Snapshot) sprint.Plan {
@@ -99,6 +110,7 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 				p.Notes, p.Closes, p.Updates, p.Said = nil, nil, nil, nil
 			}
 			chosen, left = askBatchOf(p, done, gaveUp, single)
+			planned = true
 			kept = sprint.KeepUnits(p, func(u sprint.Unit) bool { return slices.Contains(chosen, u.Key) })
 			return kept
 		}
@@ -109,7 +121,11 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 			// the fenced read itself lost to other writers: this step changed
 			// nothing, and the rest is the next tick's
 			tally.unfinished, lost = true, true
-			tally.left = left + len(chosen)
+			if planned {
+				tally.left = left + len(chosen)
+			} else {
+				tally.lost = len(lostBatch) // no plan counted the lost batch since
+			}
 			break
 		}
 		if err != nil {
@@ -124,6 +140,9 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 			break
 		}
 		tally.left = left
+		if planned {
+			lostBatch = nil // this plan counted it: chosen alone, or in left
+		}
 		out.Attempts += r.Attempts
 		out.Repaired = append(out.Repaired, r.Repaired...)
 		out.Drained = append(out.Drained, r.Drained...)
@@ -136,6 +155,7 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 				for _, k := range chosen {
 					single[k] = true
 				}
+				lostBatch = chosen
 				continue
 			}
 			k := chosen[0]

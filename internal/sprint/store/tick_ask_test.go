@@ -184,6 +184,41 @@ func TestAnAskConflictIsOneCardsRefusalNotTheTicks(t *testing.T) {
 	h.clean("after the next tick")
 }
 
+// A batch that loses its tries and that the budget cuts before it is tried again a
+// primary at a time is not lost from sight: its primaries are due for the next tick, the
+// ask is unfinished, and the TIMES line says how many (<n>lost). Here every write of more
+// than one primary loses, and the first batch's three tries spend the budget on the
+// harness's clock.
+func TestALostBatchIsCountedAsDue(t *testing.T) {
+	t.Parallel()
+	h := inReview(t, 10)
+	writes := 0
+	h.st.B = racingAsk{Mem: h.m, h: h, writes: &writes,
+		cost: func([]string) time.Duration { return 700 * time.Millisecond },
+		lose: func(ps []string) bool { return len(ps) > 1 }}
+	res, err := h.st.Tick(h.ctx)
+	require.NoError(t, err, "the tick")
+	t.Logf("the ask's writes: %d; due %d; %s", writes, res.Due, res.TimesLine())
+	asked, refused := askOf(res)
+	require.Empty(t, asked)
+	require.Empty(t, refused, "a lost batch is no primary's refusal")
+	require.Regexp(t, regexp.MustCompile(` readers/ask=\d+ms/\d+t/0asked/0refused/5lost`), res.TimesLine())
+	require.GreaterOrEqual(t, res.Due, 10, "the lost batch's five and the five the ask did not reach are due")
+	h.st.B = h.m
+	h.tick(time.Second)
+	res = h.machine()
+	asked, refused = askOf(res)
+	require.Len(t, asked, 10, "the next tick asks them all: refused %v", refused)
+	h.clean("after the next tick")
+
+	// the budget's share of the tick's deadline is read on the store's clock
+	dl := time.Now().Add(time.Hour)
+	ctx, cancel := context.WithDeadline(context.Background(), dl)
+	defer cancel()
+	require.Equal(t, 1500*time.Millisecond, askBudget(ctx, dl.Add(-3*time.Second)))
+	require.Equal(t, AskBudget, askBudget(context.Background(), t0))
+}
+
 // friendRead closes a friend's read of the primary at its attempt with her
 // report, as friend sync does (cmd/nova-sprint friendcards.go).
 func (h *harness) friendRead(name, primary, report string) {

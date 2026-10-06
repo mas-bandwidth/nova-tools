@@ -218,7 +218,9 @@ func newHeld(h HeldState, now time.Time) *held {
 	// ready primary (judgment), each a map read (route_rest.go)
 	sp, _ := s.withRests()
 	s = *sp
-	c := &held{h: h, s: &s, req: TickReq{Who: MachineActor, Stopped: h.Stopped},
+	// the friends' deal is a part of the next tick too: it deals with the friends the
+	// snapshot holds (friendDeal), as the tick does
+	c := &held{h: h, s: &s, req: TickReq{Who: MachineActor, Stopped: h.Stopped, Friends: s.Friends},
 		tick: map[string]string{}, tickStream: map[string]string{}, marks: map[string]bool{},
 		judged: map[string][]string{}, memo: map[string]Hold{}, on: map[string]bool{}}
 	for _, o := range s.Open {
@@ -454,6 +456,11 @@ func (c *held) judgment(pr *Card) string {
 		if tier, why := c.s.noRoute(pr); why != "" && tier != "" && len(c.judged[StreamSubject(TierSubject(tier))]) > 0 {
 			return "no route serves tier " + tier + "; open: " + strings.Join(c.judged[StreamSubject(TierSubject(tier))], ", ")
 		}
+		// friends alone serve its tier and none up who serves it may be dealt it: the same
+		// judgment of the tier names it (TickDeal)
+		if _, tier, _, byFriend := c.s.routeOf(escalating(c.s, pr), nil, nil); byFriend && len(c.s.friendsFor(pr, tier)) == 0 && len(c.judged[StreamSubject(TierSubject(tier))]) > 0 {
+			return "no worker is left for it on tier " + tier + "; open: " + strings.Join(c.judged[StreamSubject(TierSubject(tier))], ", ")
+		}
 	}
 	if pr.Col == Ready && !IsSentinel(pr) && len(c.s.UpMembers()) == 0 {
 		for _, j := range c.judged[StreamSubject("")] {
@@ -549,6 +556,11 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			// deals it to another member, so what holds it is its bench's beat and hold
 			return benchWaits(b), "", true
 		}
+		if _, tier, _, byFriend := s.routeOf(escalating(s, pr), nil, nil); byFriend {
+			// friends alone serve its tier (tierServed): the friends' deal's, never a
+			// machine's, so what holds it is their room, not the machines'
+			return c.friendWaits(pr, tier)
+		}
 		if len(up) == 0 {
 			return "no fleet member is up, and no judgment says so", "", false
 		}
@@ -585,6 +597,37 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		return "its merge card is " + placeWord(orEmpty(m, pr.ID)) + " in a stream " + orDash(s.StreamCtl(pr.Row).F("state")) + ", and no judgment is open on it", "", false
 	}
 	return "nothing holds it", "", false
+}
+
+// friendWaits is (d) for a ready primary whose tier friends alone serve: the friends up
+// who may be dealt it (friendsFor) and their free places, DealAhead times each one's width
+// less her load (friendRoom, friendLoad), go to the ready primaries in the deal's order, as
+// the machines' do. With none left for it, or a lane still running it (laneRunsIt), it
+// waits on that; it is stalled only when a friend of its tier has room for it and the deal
+// still does not hand it over.
+func (c *held) friendWaits(pr *Card, tier string) (string, string, bool) {
+	s := c.s
+	fs := s.friendsFor(pr, tier)
+	if len(fs) == 0 {
+		return "its tier " + tier + " is served by friends alone, and none up who serves it may be dealt it (withdrawn or taken back from each): it waits for another friend of its tier", "", true
+	}
+	var wc *Card
+	if w := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); w != nil && w.Col == Withdrawn {
+		wc = w
+	}
+	if f := laneRunsIt(s, s.Friends, pr, wc); f != "" {
+		return "a lane of friend " + f + " still runs it: placed on no row until her beat stops naming it", "", true
+	}
+	room := 0
+	for _, f := range fs {
+		r, _ := friendRoom(f)
+		room += max(0, r-friendLoad(s, f.Name))
+	}
+	ahead := c.dealTurn(pr.ID)
+	if ahead < room {
+		return "a friend serving its tier is below her room (DealAhead times her width), and nothing deals it", "", false
+	}
+	return fmt.Sprintf("waits for a friend serving tier %s below her room (DealAhead times her width): %d free, %d ready ahead of it", tier, room, ahead), "", true
 }
 
 // overdueUnmarked is every judgment past its due time that no overdue mark

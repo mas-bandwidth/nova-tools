@@ -124,3 +124,20 @@ func TestFinishRefusesAReadWithTheOutboxRemedy(t *testing.T) {
 		require.NotContains(t, why, "generation")
 	}
 }
+
+// A friend's read returned with read --as friend.<f> --usage records what it spent, as a
+// reader's read does (the owner's rule: the complete cost is tracked): the usage kept on
+// the read card, and its record and total on the primary.
+func TestAFriendReadReturnedWithUsageCarriesItsTokens(t *testing.T) {
+	t.Parallel()
+	w, id := friendReadAsked(t)
+	w.must(Read(w.s, ReadReq{Sel: Sel{IDs: []string{id}}, As: FriendRow("amy"), Verdict: "ok", Who: FriendRow("amy"),
+		Usage: "input=1200 output=340 model=anthropic/claude-opus"}))
+	rc := w.s.Fleet.Card(id)
+	require.False(t, rc.Placed())
+	require.Contains(t, rc.F(FieldUsage), "input=1200", "the read card keeps its usage")
+	require.Contains(t, rc.F(FieldUsage), "output=340")
+	pr := w.s.Work.Card("s1-1")
+	require.Contains(t, pr.F(FieldCostRecord+id+"#v"), "input=1200", "the primary records the read")
+	require.Contains(t, pr.F(FieldCostTotal), "1200", "the primary's total counts it")
+}

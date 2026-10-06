@@ -86,6 +86,9 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 		brief, rules = r.Brief, r.Rules
 	}
 	tier := cmp.Or(r.Tier, c.F(FieldTier))
+	if _, why := PriorityOfBrief(brief); why != "" {
+		return refuse(why) // a PRIORITY line naming no level is never recut at the card's (priority.go)
+	}
 	if m, _ := cardhdr.ReadModel(brief); m.Pin != "" && r.Tier != "" {
 		return refuse("the brief pins model " + m.Pin + ", which it runs on whatever its tier")
 	}
@@ -108,7 +111,7 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 	// the card's own level goes to the twin as its tier does (priority.go): a hand-set or a
 	// seeded level is the card's, not the brief's, unless a new brief names its own
 	level := c.F(FieldPriority)
-	if own, _ := PriorityOfBrief(brief); own != "" && r.Brief != "" {
+	if own, _ := PriorityOfBrief(brief); own != "" && r.Brief != "" { // why was refused above
 		level = ""
 	}
 	if len(p.Refused) > 0 || (tier == "" && level == "") {

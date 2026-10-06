@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,8 +29,9 @@ import (
 // (the docs, AGENTS.md, TESTING.md, READMEs), every card template
 // (CardTemplateDirs) and every brief source the no-gh rule reads
 // (briefSources). No allowlist:
-// the offenders in the tree when it landed were rewritten. One narrowing: the
-// reports under reportDirs are not read. A rating, a dogfood run, a stranger run
+// the offenders in the tree when it landed were rewritten. One narrowing: a report
+// (reportPathRe: a file under a report directory's dated, release or snapshot
+// directory, named for a tool, a rater or a run) is not read. A rating, a dogfood run, a stranger run
 // or an acceptance record quotes the commands its author ran, as they were run;
 // it is a record of what happened, not an instruction to anyone, and a report
 // that could not quote its own `go test ./...` would have to misreport it
@@ -58,14 +58,18 @@ func wholeTreeViolations(src []byte) []string {
 	return out
 }
 
-// reportDirs are the directories of reports, records of runs that quote the commands
-// run (internal/docs/catalog.go names each): the rule does not read them.
-var reportDirs = []string{"docs/acceptance/", "docs/dogfood/", "docs/ratings/", "docs/stranger/"}
+// reportPathRe is a report's path, a record of a run that quotes the commands run, as
+// the report directories lay them out (internal/docs/catalog.go names each directory):
+// docs/ratings/<release>/<tool>-<read|use>.md or <tool>-<rater>.md, and
+// docs/ratings/snapshots/<commit>/<tool>.md; docs/dogfood/<date>/<friend>/<tool>.md;
+// docs/acceptance/v<release>/<requirement>.md; docs/stranger/<run>.md. A name is lower
+// case, so a README.md or an AGENTS.md beside the reports is a how-to the rule reads.
+var reportPathRe = regexp.MustCompile(`^docs/(?:ratings/(?:\d+\.\d+\.\d+|snapshots/[0-9a-f]{7,40})|dogfood/\d{4}-\d{2}-\d{2}/[a-z0-9-]+|acceptance/v\d+\.\d+\.\d+|stranger)/[a-z0-9][a-z0-9.-]*\.md$`)
 
 // wholeTreeDoc says the rule reads the Markdown file rel: every one but a report (outside
 // testdata, which the caller leaves out).
 func wholeTreeDoc(rel string) bool {
-	return strings.HasSuffix(rel, ".md") && !slices.ContainsFunc(reportDirs, func(d string) bool { return strings.HasPrefix(rel, d) })
+	return strings.HasSuffix(rel, ".md") && !reportPathRe.MatchString(rel)
 }
 
 // wholeTreeSources lists the repo-relative files the rule reads, sorted and
@@ -159,8 +163,8 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 	}
 }
 
-// TestReportsMayQuoteWholeTreeCommands holds the rule's one narrowing: a report under
-// reportDirs is a record of what a friend ran, quoted as it was run, not an instruction,
+// TestReportsMayQuoteWholeTreeCommands holds the rule's one narrowing: a report
+// (reportPathRe) is a record of what a friend ran, quoted as it was run, not an instruction,
 // so it may say `go test ./...`; every other doc is read (rerate-emma-ci-b, refused at
 // the tree gate 2026-10-06 18:14 ET for quoting its own run in docs/ratings/).
 func TestReportsMayQuoteWholeTreeCommands(t *testing.T) {
@@ -170,10 +174,15 @@ func TestReportsMayQuoteWholeTreeCommands(t *testing.T) {
 		"docs/dogfood/2026-10-06/antigravity/self-talk.md",
 		"docs/stranger/three-card-sprint.md",
 		"docs/acceptance/v1.0.0/landing.md",
+		"docs/ratings/1.1.0/ci-read.md",
+		"docs/ratings/snapshots/0c5803c2de40/ci-use.md",
 	} {
 		assert.Falsef(t, wholeTreeDoc(rel), "%s is a report: a record, not an instruction", rel)
 	}
-	for _, rel := range []string{"AGENTS.md", "docs/AGENTS.md", "docs/SPEC-CI.md", "docs/TESTING.md", "cmd/nova-ci/README.md", "docs/ratings.md", "docs/ratingsx/a.md"} {
+	for _, rel := range []string{"AGENTS.md", "docs/AGENTS.md", "docs/SPEC-CI.md", "docs/TESTING.md", "cmd/nova-ci/README.md", "docs/ratings.md", "docs/ratingsx/a.md",
+		// a how-to beside the reports is read: only report-shaped paths are not
+		"docs/ratings/README.md", "docs/ratings/AGENTS.md", "docs/dogfood/README.md", "docs/dogfood/2026-10-06/README.md",
+		"docs/acceptance/README.md", "docs/stranger/AGENTS.md", "docs/ratings/1.2.0/README.md", "docs/ratings/howto.md"} {
 		assert.Truef(t, wholeTreeDoc(rel), "%s is a doc the rule reads", rel)
 	}
 }

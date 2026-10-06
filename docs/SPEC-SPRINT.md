@@ -685,7 +685,9 @@ way). Its job directory is the card id at every epoch and generation
 says how it is returned: the outbox report, or
 `nova-sprint read --as friend.<name> (--ok | --broken) <read> --epoch <n> [--finding ...]`,
 which writes the same close as her report (`friendReadVerb`): the verdict
-stored, the read retired off her row, a broken verdict's judgment raised; a
+stored, the read retired off her row, a broken verdict's judgment raised, and
+what the read spent, when `--usage` carries it, kept on the read and recorded on
+its primary as a reader's read is (`TestAFriendReadReturnedWithUsageCarriesItsTokens`); a
 read on her row has no `--begin` and no `--return`. `queue --as friend.<name>`
 names a read with that verb, never `finish`, and `finish` of a read is refused
 with the outbox form as its remedy (`TestFriendSyncClosesAFriendRowReadFromItsOutboxReport`,
@@ -1336,7 +1338,10 @@ default) and `low` (it fills only an idle lane).
   (below), never set by hand. A primary is
   `normal` unless a level is set on it: its brief's header line `PRIORITY: <level>` seeds it
   at admission (`add`), else its stream's default seeds it (a card's own line wins over its
-  stream's), and the verb `priority` sets it afterwards. `critical` is also computed: a card
+  stream's), and the verb `priority` sets it afterwards. A `PRIORITY:` line that names no
+  settable level (`PRIORITY: urgent`) is refused by `add` and `recut`, naming the level found
+  and the ladder's six, never taken as no line (`TestAMisspelledPriorityIsRefused`).
+  `critical` is also computed: a card
   with CriticalBehind (10) or more cards behind it (weight.go) is `critical` unless a level is
   set by hand; the computed `critical` is shown as `critical (by weight, not yet ordered)`
   (on `where`, in `--json`'s `priorities` under that key, and on the dashboard's dark red
@@ -2160,7 +2165,7 @@ and it is the coordinator's decision, receipted.
   a card put on the table makes a new cell, never once a card dealt: the deal
   costs the cards it deals, not those times the member's history
   (`TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut`; the tick gate under
-  load, `TestTheTickGateHoldsUnderLoad`). A tier is served by an enabled fleet route or by a friend up (not held, not down) whose row lists it, one check for every verb that validates a tier (`tierServed`; a tier friends alone serve is the friends' deal's, and a rework at it waits ready for them, `TestReworkAcceptsATierAFriendServes`). A card no route serves stays ready: the deal refuses it naming the
+  load, `TestTheTickGateHoldsUnderLoad`). A tier is served by an enabled fleet route or by a friend up (not held, not down) whose row lists it, one check for every verb that validates a tier (`tierServed`; a tier friends alone serve is the friends' deal's, and a rework at it waits ready for them, `TestReworkAcceptsATierAFriendServes`). A card of such a tier withdrawn or taken back from every friend up who serves it has no worker left: the tick names it in its tier's one `no route serves the tier` judgment (`TestACardWithdrawnFromItsLastFriendRaisesOneJudgment`). A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
   (its subject `stream:tier:<tier>`, the primaries listed), never one per
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
@@ -3237,9 +3242,11 @@ three tries is refused alone, `its ask lost <n> tries this tick in a step of its
 writer moved the fence, or the store refused the write as planned); nothing was written for it;
 the next tick asks it again`, and the steps go on with the rest. The steps begin no try past the
 ask's budget (`store.AskBudget`, 2 s, or half of the time the tick's context has left when that
-is less): the ask stops there with what it asked, the primaries it did not reach are due, and
-the next tick reads them. The tick's `TIMES` line prints the ask as `readers/ask=<ms>ms/<trips>t/
-<asked>asked/<refused>refused`. The tick holds the server's line of control through the ask, as
+is less, read on the store's clock): the ask stops there with what it asked, the primaries it did
+not reach are due, and the next tick reads them. A batch that lost its tries and that the budget
+cut before it was tried again one primary at a time is due too, and leaves the ask unfinished.
+The tick's `TIMES` line prints the ask as `readers/ask=<ms>ms/<trips>t/
+<asked>asked/<refused>refused/<lost>lost`, `<lost>` the primaries of such a batch. The tick holds the server's line of control through the ask, as
 through every part (section 14, The server): the ask does not give the line up between its
 steps, and its budget is what bounds the wait of the workers' verbs behind it. On 2026-10-06,
 with 297 cards in review, the ask planned forty primaries in one write and lost all twelve tries
@@ -3608,7 +3615,11 @@ catalog names is dropped, the map family runs once, and what it wrote is
 amended into the merge commit, told on a land log line and the card's note as
 `map regenerated`; a run that fails or writes outside the family and the
 catalog is undone, and the tree gate judges the merge as git made it
-(`TestTheLanderRegeneratesTheMapWhenStale`, cmd/nova-sprint/land_catalog_test.go).
+(`TestTheLanderRegeneratesTheMapWhenStale`, cmd/nova-sprint/land_catalog_test.go). A
+failure of git after the run wrote (listing what it wrote, staging it, amending the
+merge) undoes it too, so the clone is left clean as the merge left it and a
+`--repo-dir` clone is not refused as dirty by the next `land`
+(`TestAFailedRemapLeavesTheCloneClean`).
 
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
@@ -4636,7 +4647,11 @@ exactly, member by member, never by their counts.
     what it waits on, itself held, followed through the chain (a need not
     landed, a sentinel not released, a place in the ready queues, counted on
     the members the deal may give it: a member below its room that refused
-    its card at staging holds no place for it); (e) with
+    its card at staging holds no place for it; a card whose tier friends alone
+    serve is counted on the room of the friends up who serve it and may be
+    dealt it, never on the machines', and is stalled only when one of them has
+    room for it and the deal does not hand it over,
+    `TestAFriendHeldCardIsNotAStall`); (e) with
     the machine STOPPED, the next tick. A chain that ends in nothing or in a
     cycle holds nothing. A judgment past its due time that no overdue mark
     holds, a stopped stream with no open judgment, and an operation pending
