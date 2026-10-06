@@ -13,6 +13,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	store := []string{"--redis", "{addr}"}
 	cli := newRig().cli().NoStdin()
 	testverbhelp.Check(t, cli, []testverbhelp.Case{
+		{Verb: "wait", Flags: store},
 		{Verb: "send", Flags: store},
 		{Verb: "recv", Flags: store},
 		{Verb: "ack", Flags: store},
@@ -21,5 +22,5 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "names", Flags: store},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-bus", "send", "peek", "recv", "ack", "log", "names", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-bus", "wait", "send", "peek", "recv", "ack", "log", "names", "version")
 }
