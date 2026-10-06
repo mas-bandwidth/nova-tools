@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +27,7 @@ import (
 // a real delivery through nova-friend's Deliverer, never a file write.
 
 // keySeatPush is name's push record, a key of the sprint's (store.KV).
-func keySeatPush(name string) string { return "seat-push:" + name }
+func keySeatPush(name string) string { return store.SeatPushKey(name) }
 
 // pushAdapterCards is the card that brings a harness its deliver command, for a
 // harness whose adapter is still the Stub: the seat cannot be taken from it
@@ -105,7 +106,26 @@ func writePush(ctx context.Context, st *store.Store, rec sprint.PushRecord) erro
 	if err != nil {
 		return err
 	}
-	return kv.SetKey(ctx, keySeatPush(rec.Name), string(b))
+	if err := kv.SetKey(ctx, keySeatPush(rec.Name), string(b)); err != nil {
+		return err
+	}
+	// the name joins the list teardown deletes the records by
+	var names []string
+	raw, ok, err := kv.GetKey(ctx, store.KeySeatPushers)
+	if err != nil {
+		return err
+	}
+	if ok {
+		_ = json.Unmarshal([]byte(raw), &names) // ignored: an unreadable list is written again whole
+	}
+	if slices.Contains(names, rec.Name) {
+		return nil
+	}
+	l, err := json.Marshal(append(names, rec.Name))
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, store.KeySeatPushers, string(l))
 }
 
 // pushGate is the line name's coordinator verbs are refused with while its seat

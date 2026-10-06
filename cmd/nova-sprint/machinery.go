@@ -308,6 +308,17 @@ func (a *app) seatCheck(ctx context.Context, st *store.Store, redisAddr string) 
 		}
 	}
 
+	// 12. the push proof: the holder's push record (pushproof.go)
+	if holder, err := st.B.Coordinator(ctx); err != nil {
+		m.Errs[sprint.SeatCheckPush] = err.Error()
+	} else if holder != "" && pushArmed(holder) {
+		rec, ok, err := readPush(ctx, st, holder)
+		if err != nil {
+			m.Errs[sprint.SeatCheckPush] = err.Error()
+		}
+		m.Push = sprint.PushM{Measured: true, Holder: holder, Record: rec, Recorded: ok}
+	}
+
 	return sprint.JudgeSeatCheck(m, now)
 }
 

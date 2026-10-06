@@ -122,6 +122,12 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	code, out, _ := ta.do("seat push")
 	require.Equal(t, 1, code, out)
 	assert.Contains(t, out, "PUSH DOWN name="+name+" harness=- target=-", out)
+	// seat check says PUSH DOWN with the remedy
+	ta.a.outside = mockHealthyOutside()
+	code, out, _ = ta.do("seat check")
+	require.Equal(t, 1, code, out)
+	assert.Contains(t, out, "MACHINERY push DOWN holder="+name+" harness=- why=", out)
+	assert.Contains(t, out, "remedy=\"nova-sprint seat install --actor "+name, out)
 
 	// the seat is given to no name without a live proof
 	other := "pushproof-b"
@@ -176,6 +182,8 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	// proven: the coordinator's verbs run, and seat push says so
 	ta.ok("add --stream s1 --count 2")
 	assert.Contains(t, ta.ok("seat push"), "PUSH OK name="+name+" harness=opencode")
+	_, out, _ = ta.do("seat check")
+	assert.Contains(t, out, "MACHINERY push OK holder="+name+" harness=opencode proven=", out)
 
 	// the judgments go into the session too; the file stays the record
 	said.Reset()
@@ -210,4 +218,13 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	require.NoError(t, writePush(ctx, st, pushed))
 	out = ta.ok("coordinator " + other + " --reason 'its push is proven'")
 	assert.Contains(t, out, "COORDINATOR OK holder="+other, out)
+
+	// teardown deletes every push record by name
+	_, err = st.Teardown(ctx)
+	require.NoError(t, err)
+	for _, n := range []string{name, other} {
+		_, ok, err := readPush(ctx, st, n)
+		require.NoError(t, err)
+		assert.False(t, ok, "teardown left %s's push record", n)
+	}
 }
