@@ -79,8 +79,8 @@ const (
 // Everything it reaches outside itself is a field, so a test runs it over
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
-	Friend, Harness, Dir string
-	Width                int
+	Friend, Harness, Dir, StateDir string
+	Width                        int
 	Store                bus.Store
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
@@ -339,7 +339,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	// Load failed delivery counts from the status file on startup so they persist across restarts.
+	var failed map[string]int
+	if d.StateDir != "" {
+		if s, found, _ := ReadStatus(d.StateDir); found && s.Failed != nil {
+			failed = s.Failed
+		}
+	}
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width, Failed: failed}
 	if !l.passive {
 		d.status.Session = SessionOK
 	}
@@ -824,6 +831,7 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 				for _, e := range t.entries {
 					delete(l.failed, e)
 				}
+				d.status.Failed = l.failed
 			}
 		}
 	case errors.As(err, &refused) && !t.stopped:
@@ -848,6 +856,7 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 				given = append(given, e)
 			}
 		}
+		d.status.Failed = l.failed
 		if len(t.entries) > 0 {
 			line += fmt.Sprintf(" deliveries=%d/%d", l.failed[t.entries[0]], MaxDeliveries)
 		}
@@ -864,6 +873,7 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 				for _, e := range given {
 					delete(l.failed, e)
 				}
+				d.status.Failed = l.failed
 			}
 		}
 	}
@@ -983,6 +993,8 @@ func (d *Daemon) flush(now time.Time) {
 	}
 	d.written0, d.written = s, now
 	s.At, s.LastBeat, s.Beats = now, d.status.LastBeat, d.status.Beats
+	// Copy failed map to status for persistence across restarts.
+	s.Failed = d.status.Failed
 	if err := d.Status(s); err != nil {
 		if now.Sub(d.statusErrAt) >= StatusErrorEvery {
 			d.statusErrAt = now

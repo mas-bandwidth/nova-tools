@@ -1050,7 +1050,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 	}
 	d := &friend.Daemon{
-		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: dir, StateDir: state, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		Limited: func() (string, time.Time, bool) {
 			until, _, limited := fl.Limited()
