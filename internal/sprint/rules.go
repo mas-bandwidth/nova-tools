@@ -35,9 +35,15 @@ const (
 	RuleHoldNeed    = "hold-need"    // failed work whose report HOLDs naming a card that has not landed: waits for it, reworked once it lands (judgment_rules.go)
 	RuleLate        = "late"         // a work card past its deadline: a wait once with progress; returned and redealt only once its holder stamped and went silent
 	RuleReadLate    = "read-late"    // a read past its deadline: taken back and asked of another reader, once an attempt (judgment_rules.go)
+	// RulePaths: a failed attempt whose report proposes PATHS (PATHS-PROPOSED): its widened
+	// twin, or one judgment with the twin's command when a proposed file is shared
+	// (paths_proposed.go). Not in RuleNames: nova-config's answer_rules_off enum
+	// (config.AnswerRules, held equal to RuleNames) does not name it yet, so only run
+	// --answer-rules=false turns it off.
+	RulePaths = "paths"
 )
 
-// RuleNames is every rule, in name order.
+// RuleNames is every rule nova-config's answer_rules_off names, in name order.
 var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
 
 // The fields the rules write.
@@ -175,6 +181,7 @@ type RuleAnswer struct {
 	set   map[string]string
 	until time.Time
 	open  Open
+	paths *PathsProposal // the paths rule's proposal, its twin and brief
 }
 
 // Answers says the answer acts: a rule answers it and the rule is on.
@@ -192,25 +199,11 @@ func RuleAnswers(s *Snapshot, r TickReq) []RuleAnswer {
 		}
 		a := RuleAnswer{Judgment: o.Note.ID, Type: o.Note.Type, Subject: o.Subject(), Card: o.Note.Card, open: o,
 			Waited: s.Now.Sub(o.Note.At).Round(time.Second).String()}
-		switch o.Note.Type {
-		case NWorkFailed:
-			ruleFailed(s, &a)
-		case NBound:
-			ruleBound(s, &a)
-		case NWorkLate:
-			ruleLate(s, r, &a)
-		case NConflict:
-			ruleConflict(s, &a)
-		case NReturned:
-			ruleRedo(s, &a)
-		case NBriefWrong:
-			ruleBrief(s, &a)
-		case NReadBroken:
-			ruleReadBroken(s, &a)
-		case NReadLate:
-			ruleReadLate(s, &a)
+		switch {
+		case rulePaths(s, &a):
+			// a failed attempt that proposed PATHS: never the same brief again
 		default:
-			a.Act, a.Why = ActLeft, "no rule answers it"
+			ruleByType(s, r, &a)
 		}
 		if a.Rule != "" && a.Act != ActLeft && s.RuleOff(a.Rule) {
 			a.Act, a.Why = ActOff, "nova-config's sprint row answer_rules_off turns the rule "+a.Rule+" off: "+a.Why
@@ -218,6 +211,30 @@ func RuleAnswers(s *Snapshot, r TickReq) []RuleAnswer {
 		out = append(out, a)
 	}
 	return out
+}
+
+// ruleByType is the rule of the judgment's type answering it.
+func ruleByType(s *Snapshot, r TickReq, a *RuleAnswer) {
+	switch a.open.Note.Type {
+	case NWorkFailed:
+		ruleFailed(s, a)
+	case NBound:
+		ruleBound(s, a)
+	case NWorkLate:
+		ruleLate(s, r, a)
+	case NConflict:
+		ruleConflict(s, a)
+	case NReturned:
+		ruleRedo(s, a)
+	case NBriefWrong:
+		ruleBrief(s, a)
+	case NReadBroken:
+		ruleReadBroken(s, a)
+	case NReadLate:
+		ruleReadLate(s, a)
+	default:
+		a.Act, a.Why = ActLeft, "no rule answers it"
+	}
 }
 
 func left(a *RuleAnswer, why string) { a.Act, a.Why = ActLeft, why }
@@ -527,6 +544,7 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
 // tick. With TickReq.AnswerRules false each is empty.
 const (
+	PartRulePaths  = "rule paths"
 	PartRuleReturn = "rule return"
 	PartRuleResume = "rule resume"
 	PartRuleRework = "rule rework"
@@ -536,6 +554,7 @@ const (
 
 // TickRules is the rule parts, run at the tick's end before its checks.
 var TickRules = []TickPartDef{
+	{PartRulePaths, TickRulePaths},
 	{PartRuleReturn, TickRuleReturn},
 	{PartRuleResume, TickRuleResume},
 	{PartRuleTwin, TickRuleTwin},
