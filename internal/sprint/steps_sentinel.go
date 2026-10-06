@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -479,4 +480,124 @@ func releaseHeld(s *Snapshot, c *Card, r ReleaseReq) Unit {
 	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, set, FieldHeld))},
 		Moved: fmt.Sprintf("%s waiting -> ready (released by %s)", c.ID, r.Who)}
+}
+
+// FieldNeedsSet is a sentinel's record of its needs re-pointed (sentinel set): "<before> ->
+// <after> <stamp> by <who>", the last set.
+const FieldNeedsSet = "needs_set"
+
+// SentinelSetReq replaces a sentinel's needs (sentinel set <id> --needs a,b).
+type SentinelSetReq struct {
+	ID    string
+	Needs []string
+	Who   string
+}
+
+// SentinelSet replaces the needs of a waiting sentinel in one step (docs/SPEC-SPRINT.md
+// section 16; 2026-10-04: the cards a release sentinel waited on were deferred, and the
+// sentinel could only be dropped and added again, which lost its id, its place and its
+// log). The sentinel keeps its id, stream, score and log; one line names its needs before
+// and after. A sentinel the new needs leave waiting for nothing is marked reached, as the
+// step that lands its last need marks it; one reached that waits again is reached no more,
+// and its reached judgment is answered. The blocked or missing judgments on it that named
+// only needs it no longer names are answered. The coordinator's alone. Refused whole,
+// writing nothing, for no needs (a sentinel with nothing to wait on is released, not
+// emptied), an id that is no sentinel waiting on the table, a need named twice, the
+// sentinel itself, needs that are no card on the table (every one named at once), the
+// needs it has already, and a cycle the new needs would close.
+func SentinelSet(s *Snapshot, r SentinelSetReq) Plan {
+	var p Plan
+	p.on(s)
+	if why := notCoordinator(s, r.Who, "sentinel set"); why != "" {
+		p.refuse(r.ID, strings.Replace(why, "answers a judgment, which is", "is", 1))
+		return p
+	}
+	if len(r.Needs) == 0 {
+		p.refuse(r.ID, "sentinel set wants --needs <a,b>: a sentinel with nothing to wait on is released, not emptied: nova-sprint release "+r.ID+" --reason '<why>'")
+		return p
+	}
+	c := s.Work.Placed(r.ID)
+	switch {
+	case c == nil:
+		p.refuse(r.ID, r.ID+" is no sentinel on the table")
+		return p
+	case !IsSentinel(c):
+		p.refuse(r.ID, r.ID+" is no sentinel: a primary's needs change with its brief's DEPENDS-ON line (nova-sprint brief)")
+		return p
+	case c.Col != Waiting:
+		p.refuse(r.ID, r.ID+" is "+c.Col+": a sentinel's needs are set while it waits")
+		return p
+	}
+	var why, gone []string
+	seen := map[string]bool{}
+	for _, n := range r.Needs {
+		switch {
+		case seen[n]:
+			why = append(why, n+" is named twice")
+		case n == r.ID:
+			why = append(why, "a sentinel does not need itself")
+		case s.Work.Card(n) == nil:
+			gone = append(gone, n+" (no card)")
+		case s.Work.Placed(n) == nil:
+			gone = append(gone, n+" (off the table, "+orDash(s.Work.Card(n).F("outcome"))+")")
+		}
+		seen[n] = true
+	}
+	if len(gone) > 0 {
+		why = append(why, "not a card on the table: "+strings.Join(gone, ", "))
+	}
+	old := c.F("needs")
+	now := strings.Join(r.Needs, ",")
+	if len(why) == 0 && old == now {
+		why = append(why, r.ID+" needs "+now+" already")
+	}
+	if len(why) > 0 {
+		p.refuse(r.ID, strings.Join(why, "; ")+"; nothing was changed")
+		return p
+	}
+	waived := Split(c.F("waived"))
+	var live []string
+	for _, n := range r.Needs {
+		if !contains(waived, n) {
+			live = append(live, n)
+		}
+	}
+	g := newNeedGraph(s, map[string][]string{c.ID: live}, nil, nil)
+	if cycle := g.closes([]string{c.ID}); cycle != nil {
+		p.refuse(r.ID, "the needs would make a cycle: "+g.tellLoop(cycle)+"; nothing was changed")
+		return p
+	}
+	after := withField(c, "needs", now)
+	set := map[string]string{"needs": now, FieldNeedsSet: fmt.Sprintf("%s -> %s %s by %s", orDash(old), now, stamp(s.Now), orDash(r.Who))}
+	var unset []string
+	moved := fmt.Sprintf("sentinel %s needs %s -> %s", c.ID, orDash(old), now)
+	u := Unit{Key: c.ID, Stream: c.Row}
+	waits := WaitsFor(s, after, nil)
+	switch {
+	case c.F("reached") != "" && len(waits) > 0:
+		unset = append(unset, "reached")
+		moved += "; reached no more: it waits for " + strings.Join(waits, ",")
+		for _, o := range closesFor(s.Open, []string{NSentinelReached}, c.ID) {
+			u.Closes = append(u.Closes, o)
+			u.Notes = append(u.Notes, decided(o, "not reached: "+moved, r.Who, s.Now, c.ID))
+		}
+	case c.F("reached") == "" && !IsHeld(c) && len(waits) == 0 && Reachable(s, after, nil):
+		set["reached"] = stamp(s.Now)
+		u.Notes = append(u.Notes, reachedNote(s, after, nil, 0, r.Who))
+		moved += "; reached"
+	}
+	for _, o := range s.Open {
+		if o.Subject() != c.ID || (o.Note.Type != NBlocked && o.Note.Type != NMissingNeed) {
+			continue
+		}
+		if len(o.Note.Needs) > 0 && slices.ContainsFunc(o.Note.Needs, func(n string) bool { return contains(r.Needs, n) }) {
+			continue // it still names a need the sentinel keeps
+		}
+		u.Closes = append(u.Closes, o)
+		u.Notes = append(u.Notes, decided(o, moved, r.Who, s.Now, c.ID))
+	}
+	u.Changes = []Change{change(Work, setEntry(c, set, unset...))}
+	u.Moved = moved
+	p.Units = append(p.Units, u)
+	return Lawful(p)
 }
