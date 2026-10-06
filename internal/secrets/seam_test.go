@@ -116,7 +116,7 @@ func TestSealEncryptFailureRefusalNamesTheChildExit(t *testing.T) {
 		err:  fakeExit(7),
 	})
 	const value = "topsecret-value"
-	_, err := sealEncrypt(run, "sops", "/keys/rowan.key", "/store", "rowan.yaml", []byte("TARGET: "+value+"\n"))
+	_, err := sealEncrypt(run, "sops", "/keys/rowan.key", "/store", "rowan.yaml", "seal", []byte("TARGET: "+value+"\n"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sops encrypt failed: exit 7", "the refusal does not name the exit sops returned: %v", err)
 	assert.Contains(t, err.Error(), "rowan.yaml", "the refusal does not name the seat file: %v", err)

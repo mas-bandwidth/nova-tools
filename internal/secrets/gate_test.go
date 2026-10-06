@@ -15,6 +15,9 @@ const (
 	gateSeatKey     = "age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh"
 )
 
+// gateMarkLine is the clear root key every verb-written seat file carries (SPEC-SECRETS "gate").
+const gateMarkLine = "NOVA_SECRETS_WRITTEN_BY: seal dev\n"
+
 var gateThirdKey = "age1" + strings.Repeat("q", 58)
 
 func gateGit(t *testing.T, dir string, args ...string) string {
@@ -68,7 +71,8 @@ func gateSealedFile() string {
 		"            -----BEGIN AGE ENCRYPTED FILE-----\n" +
 		"    lastmodified: \"2026-09-17T00:00:00Z\"\n" +
 		"    mac: ENC[AES256_GCM,data:aaaaaaaa,iv:bbbbbbbb,tag:cccccccc,type:str]\n" +
-		"GH_TOKEN: ENC[AES256_GCM,data:xyz,iv:abc,tag:def,type:str]\n"
+		"GH_TOKEN: ENC[AES256_GCM,data:xyz,iv:abc,tag:def,type:str]\n" +
+		gateMarkLine
 }
 
 func TestGateApprovesAGoodSeatPR(t *testing.T) {

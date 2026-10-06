@@ -194,7 +194,7 @@ func RunSeal(opts SealOptions) (line string, err error) {
 	plaintext := sealApply(existing, opts.Name, value)
 
 	opts.say("encrypting to the seat's recipients")
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, plaintext)
+	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, "seal", plaintext)
 	if err != nil {
 		return "", err
 	}
@@ -613,7 +613,13 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 // "no file specified"), and it finds .sops.yaml from its working directory, whose
 // path_regex rules are relative to the store. So the child runs inside the store and
 // the verb works from any directory the caller happens to be in.
-func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, plaintext []byte) ([]byte, error) {
+//
+// Every seat file a verb writes goes through here, and here the verb's mark is put into the
+// plaintext (sealMarked), so no verb can write a seat file the gate cannot tell from a hand
+// seal (SPEC-SECRETS "gate", the mark; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15,
+// the MCSecretsSeatReachHandSeal config).
+func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile, verb string, plaintext []byte) ([]byte, error) {
+	plaintext = sealMarked(plaintext, verb)
 	tmpDir, err := os.MkdirTemp("", "nova-secrets-seal-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
@@ -627,6 +633,32 @@ func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, 
 		return nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only); the usual cause is a recipient in the .sops.yaml rule for %s that is not an age1… public key, such as keygen's <recovery key> placeholder left in; the same call with --dry-run lists the recipients", exitCode, seatFile)
 	}
 	return out, nil
+}
+
+// SeatMarkKey is the root key every verb-written seat file carries in the clear. A rule that
+// lists it in `unencrypted_regex` keeps sops from sealing it, and the gate reads it.
+const SeatMarkKey = "NOVA_SECRETS_WRITTEN_BY"
+
+// MarkVersion is the tool version the mark names; the command sets it from its build stamp.
+var MarkVersion = "dev"
+
+// sealMarked returns plaintext with its one mark line for verb ("seal", "seat add" or
+// "seat inject"): an older mark is dropped, so a re-seal states the verb that wrote it now.
+// A mark is not a signature; the spec says what it catches and what it does not
+// (SPEC-SECRETS "gate").
+func sealMarked(plaintext []byte, verb string) []byte {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(string(plaintext), "\n") {
+		if strings.HasPrefix(line, SeatMarkKey+":") {
+			continue
+		}
+		b.WriteString(line)
+	}
+	out := b.String()
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return []byte(out + SeatMarkKey + ": " + verb + " " + MarkVersion + "\n")
 }
 
 // sealApply drops any existing --name line and appends the new one.

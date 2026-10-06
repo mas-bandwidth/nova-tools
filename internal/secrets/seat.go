@@ -154,7 +154,7 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 	}
 
 	opts.say("encrypting %d value(s) to the new seat's recipients", len(names))
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, carried)
+	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, "seat add", carried)
 	if err != nil {
 		return nil, restore(err)
 	}
@@ -329,7 +329,7 @@ func seatAddAppendRule(config []byte, asName, pub, recoveryKey string) []byte {
 	if !strings.HasSuffix(out, "\n") {
 		out += "\n"
 	}
-	out += fmt.Sprintf("  - path_regex: ^%s\\.yaml$\n    age: %s,%s\n", regexp.QuoteMeta(asName), pub, recoveryKey)
+	out += fmt.Sprintf("  - path_regex: ^%s\\.yaml$\n    unencrypted_regex: ^%s$\n    age: %s,%s\n", regexp.QuoteMeta(asName), SeatMarkKey, pub, recoveryKey)
 	return []byte(out)
 }
 

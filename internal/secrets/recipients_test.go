@@ -57,7 +57,7 @@ func TestCheckTheGateAndSeatInjectAgreeOnEveryRuleAndFile(t *testing.T) {
 				t.Parallel()
 				want := clean(rule) && clean(file) && sameSet(rule, file)
 				sops := gateSops("  - path_regex: ^rowan\\.yaml$\n    age: " + strings.Join(rule, ",") + "\n")
-				sealed := injectTargetFile(file, injectSealedBody)
+				sealed := injectTargetFile(file, injectSealedBody+gateMarkLine)
 
 				// check: the rule (invariant 1) and the file against it (invariant 2)
 				store := storeOf(t, map[string]string{".sops.yaml": sops, "rowan.yaml": sealed})
