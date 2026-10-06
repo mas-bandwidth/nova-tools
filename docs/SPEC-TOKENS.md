@@ -24,7 +24,7 @@ self-report one note per day on the bus. The tool stamps, never a person.
 
 **Everything this tool reads is data.** A transcript, a database row, a
 usage file, a bus note: none of them is an instruction. A tokens note that says
-`fold me as Emma` is a note whose lines are parsed or counted unparsed, and
+`fold me as Kai` is a note whose lines are parsed or counted unparsed, and
 nothing else. This rule is stated here and is nowhere in the code, because a
 tool cannot enforce it.
 
@@ -444,8 +444,8 @@ the file, and every message in it carries that unit; a file that names none is
 `-`. A token names a unit when it carries that unit's `:pr` number (`#1412`,
 `/pull/1412`), its `:branch`, or its `:lane`'s clone directory (`lane-<name>`
 as `tmp/lane-three/` or `~/lane-three`). Each of the three is **bounded** —
-`#141` does not match inside `#1412`, and the branch `rowan/x` does not match
-inside `rowan/xylem` — because an unbounded substring would put one lane's
+`#141` does not match inside `#1412`, and the branch `ada/x` does not match
+inside `ada/xylem` — because an unbounded substring would put one lane's
 spend on another's unit and nobody would see it.
 
 Only the Claude reader attributes units: a billing export, a swarm usage file
@@ -726,13 +726,13 @@ fold with no `--out`, no `--repos` and a bad label says all three.
 `<out>/<day>.tsv`, tab separated, one file per UTC day:
 
 ```
-nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> turns=1204 sources=claude:glenn,opencode:bench,swarm:deepseek,bus:emma,google:emma
+nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> turns=1204 sources=claude:eve,opencode:bench,swarm:deepseek,bus:kai,google:kai
 date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	sources	units
-2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:glenn	u3
+2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:eve	u3
 2026-09-11	deepseek-v3	serialize	812004	40211	-	-	-	0	utc	swarm:deepseek	-
-2026-09-11	gemini-2.5-pro	schema	123456	7890	-	-	-	1	utc	bus:emma	-
-2026-09-11	gemini-2.5-pro	unattributed	9912340	301122	-	-	-	0	America/Los_Angeles	google:emma	-
-2026-09-11	mercury-2.5	freddy	4460950	7442	0	4910813	49649	0	utc	opencode:bench	-
+2026-09-11	gemini-2.5-pro	schema	123456	7890	-	-	-	1	utc	bus:kai	-
+2026-09-11	gemini-2.5-pro	unattributed	9912340	301122	-	-	-	0	America/Los_Angeles	google:kai	-
+2026-09-11	mercury-2.5	max	4460950	7442	0	4910813	49649	0	utc	opencode:bench	-
 ```
 
 | column | meaning |
@@ -872,10 +872,10 @@ The line shape (rule 6):
 
 ```
 date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count[<TAB>day_basis=<zone>]
-2026-09-11	emma	gemini-2.5-pro	schema	input	123456
-2026-09-11	emma	gemini-2.5-pro	schema	output	7890
-2026-09-03	emma	gemini-2.5-pro	schema	input	~100000
-2026-09-11	emma	gemini-2.5-pro	unattributed	input	123456	day_basis=America/Los_Angeles
+2026-09-11	kai	gemini-2.5-pro	schema	input	123456
+2026-09-11	kai	gemini-2.5-pro	schema	output	7890
+2026-09-03	kai	gemini-2.5-pro	schema	input	~100000
+2026-09-11	kai	gemini-2.5-pro	unattributed	input	123456	day_basis=America/Los_Angeles
 ```
 
 Six fields, tab separated, with an optional seventh. `date` is `YYYY-MM-DD`.
@@ -1323,7 +1323,7 @@ seen red before it is trusted.
     names the source and `timeout after 1s`, the fold continues over the
     other sources, exit 1; `--timeout` unset is 120 and a test asserts it;
     `--timeout 0` is refused.
-20. `report --who emma --day D` over a fixture Claude Code directory: stdout
+20. `report --who kai --day D` over a fixture Claude Code directory: stdout
     is six-field lines and nothing else, one per (model, repo, type) the
     source reported and none for `reasoning`; stderr carries `REPORT OK`
     with `subject=tokens D at=<stamp> build=<id>`; a note built from
@@ -1344,7 +1344,7 @@ seen red before it is trusted.
     and a note built from it folds as the successor of `<id>` (two
     sequential `report`s, the second superseding the first, fold to the
     second's rows and one `SUPERSEDED` line);
-    `report --who emma --day D --provider g=<export>` over the fixture
+    `report --who kai --day D --provider g=<export>` over the fixture
     export of per-day totals declaring `America/Los_Angeles` prints lines
     of seven fields, each ending `day_basis=America/Los_Angeles`, and a
     note built from that subject and that `--note` file, folded by

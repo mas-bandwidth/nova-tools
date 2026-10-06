@@ -102,7 +102,7 @@ a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
 other. A `ref` field naming no row is refused (`--store space names no
 machine row`), and a row a `ref` field of another kind names cannot be
-removed (`machine studio is the --coordinator of the fleet`, `friend rowan
+removed (`machine bench1 is the --coordinator of the fleet`, `friend rowan
 is the --coordinator of the sprint`): the structure enforces it (a foreign
 key), the tool names it.
 

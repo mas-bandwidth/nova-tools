@@ -57,7 +57,7 @@ prefix of the truth and calls it clean.
 
 ### What `--security-read` may be
 
-A note id (`johnny-4b9200ddc994`) or the url of the comment carrying the read. It is held to the field law
+A note id (`sam-4b9200ddc994`) or the url of the comment carrying the read. It is held to the field law
 before anything is tagged — no whitespace, no `=`, one token — because it travels into the one-line receipt
 above, and a read nobody could print is a read nobody could look up in six months.
 
@@ -406,7 +406,7 @@ cannot be read refuses naming its path: an I/O error is not a tool outside the r
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
 `--source` for `build`). `--receipts` names the receipts directory and defaults to
-`~/rowan-working/dogfood` **when that directory exists** — the single exception to SPEC-UPDATE rule 1,
+`~/ada-working/dogfood` **when that directory exists** — the single exception to SPEC-UPDATE rule 1,
 taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
 run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
 

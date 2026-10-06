@@ -3154,7 +3154,7 @@ was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 
 **`Host` is which MACHINE posted, and it is optional.** One name can post from
 two places — the keeper on the Studio and the bud on the Air both post as
-`Rowan` — and without this line they would be told apart in the subject,
+`Ada` — and without this line they would be told apart in the subject,
 which spends the subject on routing. `send --host <name>` and
 `reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
 `host=<name>` line, read when the flag is absent, so a bench sets it once. A
@@ -4985,7 +4985,7 @@ is trusted.
 ## The efficiency card, nova-bus
 
 The card is a measurement, taken read-only against the live checkout
-`/Users/glenn/rowan-working/rowan-stella` as Rowan. That bus held **3,401
+`$HOME/ada-working/ada-lin` as Rowan. That bus held **3,401
 notes** on disk, **65 MB** of `.git`, and one reader carrying `carrying=986`.
 This section is the part of the efficiency-card set that binds `nova-bus`.
 
@@ -5008,7 +5008,7 @@ the cursor and pays only for what changed:
 
 ```
 $ nova-bus check --bus . --full      342 lines  76,616 B  0.15 s  rc=1
-$ nova-bus check --bus . --as Rowan    2 lines     135 B  0.09 s  rc=0
+$ nova-bus check --bus . --as Ada    2 lines     135 B  0.09 s  rc=0
 ```
 
 `check --full` is the whole-history walk and no cursor bounds it; `check --as
@@ -5019,8 +5019,8 @@ this card prices.
 
 ```
 $ nova-bus names --bus .                                          8 lines     693 B
-$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20         5 lines     509 B   (carrying=986)
-$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20 --full 63 lines  12,035 B
+$ nova-bus inbox --bus . --as Ada --receipt-max-words 20         5 lines     509 B   (carrying=986)
+$ nova-bus inbox --bus . --as Ada --receipt-max-words 20 --full 63 lines  12,035 B
 $ nova-bus check --bus . --full                                 342 lines  76,616 B
 ```
 

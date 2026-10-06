@@ -179,7 +179,7 @@ contradicted itself.
 ### `exec`
 
 ```
-nova-secrets exec --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key \
+nova-secrets exec --store ~/secrets --as ada --key ~/.config/nova-secrets/ada.key \
   --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
 ```
 
@@ -319,7 +319,7 @@ hand that reads them is a person's — one line, run at a bench:
 gh api repos/mas-bandwidth/secrets/collaborators --jq '.[] | "\(.login) \(.role_name)"'
 ```
 
-The answer this page expects is `gafferongames admin` and `rowan-claude write`; anything else is
+The answer this page expects is `gafferongames admin` and `ada-claude write`; anything else is
 a permission somebody changed. A flag that asked the same question from
 inside `check` would want a GitHub token in a plaintext file on the bench — a fourth file-shaped
 secret, with no row in the credential table and no home in **The model** — to buy a warning,
@@ -409,13 +409,13 @@ is ever read as the fleet having vouched.
 ### `keygen`
 
 ```
-nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
+nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
 SECRETS RULE   creation_rules:
-SECRETS RULE     - path_regex: ^rowan\.yaml$
+SECRETS RULE     - path_regex: ^ada\.yaml$
 SECRETS RULE       age: age1…,<recovery key>
 SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`
 SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
-SECRETS KEYGEN OK as=rowan key=<path> mode=0600 pub=age1…
+SECRETS KEYGEN OK as=ada key=<path> mode=0600 pub=age1…
 Done. Your new key is at <path>. Nothing failed.
 Next: send this public key to whoever seals your seat: age1…
 ```
@@ -458,12 +458,12 @@ until it is filled must say so rather than look finished. Guessed in neither cas
 carries the ruleset `secrets-review-required`, active on the default branch — pull request
 required, one approving review, **last-push approval required**, stale reviews dismissed on push,
 no deletion, no non-fast-forward, **`bypass_actors` empty**. It has exactly two collaborators,
-`gafferongames` (Glenn) and `rowan-claude` (Rowan). An empty `bypass_actors` stops an admin
+`gafferongames` (Glenn) and `ada-claude` (Rowan). An empty `bypass_actors` stops an admin
 *bypassing* the rule; it does not stop an admin *editing* it — an `admin` account can disable
 or delete the ruleset with no pull request, and one of those tokens is the `GH_TOKEN` in
-`rowan.yaml`, on the unwalled coordinator bench whose loose child is the threat this split
+`ada.yaml`, on the unwalled coordinator bench whose loose child is the threat this split
 exists for. What an admin push buys an attacker with the cryptography intact: a direct push
-editing `rowan.yaml`'s own rule — that bench holds a current recipient key, so `updatekeys`
+editing `ada.yaml`'s own rule — that bench holds a current recipient key, so `updatekeys`
 runs — swapping Glenn's recovery key out of that one file, invariants 2 and 4 green afterwards.
 **Invariant 1 is what turns the one-file swap red on every other bench**, not the ruleset — and
 it can only because the recovery key is *declared* (invariant 1, declared and not counted).
@@ -472,7 +472,7 @@ every invariant on every bench: `{A_admin, A_keeper}` and `{A_keeper, R}` are ea
 key plus one other, and nothing in the store tells that shape from an honest one. A direct push
 has no approver, so nothing catches it; under `write` it is a pull request whose diff touches a
 one-line file, which an approver's eye catches where two `age1…` strings inside a rule are not.
-That is why this page puts `rowan-claude` at `write` and not `admin` on the store, and why the
+That is why this page puts `ada-claude` at `write` and not `admin` on the store, and why the
 collaborator line above is a person's to run: the one thing a store can say about a control its own admin can
 untie is to say out loud that it can. Which rule a pull request touches is read by the approver,
 not enforced: no code owners, no required reviewers.
@@ -514,9 +514,9 @@ reads the machine file it is handed and no other source.
 ### `seal`
 
 ```
-nova-secrets seal --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key \
+nova-secrets seal --store ~/secrets --as ada --key ~/.config/nova-secrets/ada.key \
   --sops /opt/homebrew/bin/sops --name GH_TOKEN
-SECRETS SEAL OK name=GH_TOKEN seat=rowan pr=#123 merged
+SECRETS SEAL OK name=GH_TOKEN seat=ada pr=#123 merged
 ```
 
 **What it asserts.** That the value the caller pasted is now the `NAME` entry of
@@ -546,10 +546,10 @@ still sees HEAD matching the remote-tracking ref. The seal commit remains on
 ### `seat add`
 
 ```
-nova-secrets seat add --store ~/secrets --as air --pub age1… --from rowan \
-  --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+nova-secrets seat add --store ~/secrets --as air --pub age1… --from ada \
+  --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
 SECRETS SEAT ADD NEXT: commit .sops.yaml and air.yaml on a branch and open the pull request the store's gate reviews
-SECRETS SEAT ADD OK as=air from=rowan keys=2 file=air.yaml rule=2
+SECRETS SEAT ADD OK as=air from=ada keys=2 file=air.yaml rule=2
 ```
 
 **The circle it breaks.** `seal` cannot give a NEW seat its first value, and no flag makes it
@@ -588,9 +588,9 @@ gate`) reads the diff before the review, as it does for every other recipient ch
 ### `seat inject`
 
 ```
-nova-secrets seat inject --store ~/secrets --as air --from studio --only NOVA_REDIS_BENCH_PASSWORD \
-  --key ~/.config/nova-secrets/studio.key --sops /opt/homebrew/bin/sops
-SECRETS SEAT INJECT OK seat=air from=studio names=1 pr=#31 merged
+nova-secrets seat inject --store ~/secrets --as air --from bench1 --only NOVA_REDIS_BENCH_PASSWORD \
+  --key ~/.config/nova-secrets/bench1.key --sops /opt/homebrew/bin/sops
+SECRETS SEAT INJECT OK seat=air from=bench1 names=1 pr=#31 merged
 ```
 
 **The second circle.** A value one seat holds must sometimes reach seats that already exist.
@@ -671,22 +671,22 @@ the variable the tool that acts already reads.
 | surface | key | file | who reads it |
 |---|---|---|---|
 | a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | pool workers and the gemini CLI — one key per pool file |
-| DeepSeek | `DEEPSEEK_API_KEY` | `rowan` | OpenCode workers, dispatched by the coordinator |
-| GitHub, **org roles** | `GH_TOKEN` | `rowan` | `gh`, nova-bus, the coordinator's pushes |
-| GitHub, **the keeper's own repositories, plus the store** | `GH_TOKEN` | `rowan-keeper` | the keeper's own pushes, and his pull requests against `mas-bandwidth/secrets` — no org role |
-| space, who and where | `SPACE_USER`, `SPACE_HOST` | `rowan` | the profiling launcher; the key itself lives on the seat, per **The model** |
-| email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `rowan-keeper` | rowan-email producer |
-| email, read | `IMAP_PASSWORD` | `rowan-keeper` | rowan-email consumer |
-| Bluesky | `BSKY_APP_PASSWORD` | `rowan-keeper` | rowan-bsky |
-| Discord | `DISCORD_BOT_TOKEN` | `rowan-keeper` | rowan-discord producer and consumer |
-| Ghost | `GHOST_ADMIN_KEY` | `rowan-keeper` | rowan-ghost |
+| DeepSeek | `DEEPSEEK_API_KEY` | `ada` | OpenCode workers, dispatched by the coordinator |
+| GitHub, **org roles** | `GH_TOKEN` | `ada` | `gh`, nova-bus, the coordinator's pushes |
+| GitHub, **the keeper's own repositories, plus the store** | `GH_TOKEN` | `ada-keeper` | the keeper's own pushes, and his pull requests against `mas-bandwidth/secrets` — no org role |
+| space, who and where | `SPACE_USER`, `SPACE_HOST` | `ada` | the profiling launcher; the key itself lives on the seat, per **The model** |
+| email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `ada-keeper` | rowan-email producer |
+| email, read | `IMAP_PASSWORD` | `ada-keeper` | rowan-email consumer |
+| Bluesky | `BSKY_APP_PASSWORD` | `ada-keeper` | rowan-bsky |
+| Discord | `DISCORD_BOT_TOKEN` | `ada-keeper` | rowan-discord producer and consumer |
+| Ghost | `GHOST_ADMIN_KEY` | `ada-keeper` | rowan-ghost |
 
-**Rowan's two files, and which key opens each.** `rowan.yaml` is sealed to the
+**Rowan's two files, and which key opens each.** `ada.yaml` is sealed to the
 **admin bench key alone**, plus the recovery key, and holds the **admin** `GH_TOKEN` — the
 one carrying org roles — with the coordinator's working needs beside it;
-`rowan-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
+`ada-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
 holds the keeper's **own** `GH_TOKEN` with the life's surfaces beside it — a **second
-fine-grained token on the same `rowan-claude` account**, scoped to his own repositories **plus
+fine-grained token on the same `ada-claude` account**, scoped to his own repositories **plus
 `contents` and `pull_requests` write on `mas-bandwidth/secrets` and nothing else org-wide**,
 both halves because every re-seal of his own file is a branch pushed **and** a pull request
 opened against the org's store, and `contents` alone pushes the branch without opening the
@@ -700,7 +700,7 @@ Discord or publish as Rowan; the keeper manages himself and holds no org role. T
 name in both files is two different tokens on purpose: the name is the variable its reader
 already reads, and the **scope** is the split. **A secret both seats would use is decided per
 secret, by who acts with it**, and sealed once in that seat's file — `DEEPSEEK_API_KEY` is
-dispatched by the coordinator, so it is in `rowan.yaml` and nowhere else. Two copies of one
+dispatched by the coordinator, so it is in `ada.yaml` and nowhere else. Two copies of one
 value is two rotations, one forgotten.
 
 **API keys, never OAuth tokens, and never an auth file.** Each AI holds its own API keys. An
@@ -708,7 +708,7 @@ OAuth token has a refresh dance, a device flow, an expiry
 and a file the harness rewrites behind your back. So **no harness auth file** is held here or
 handed over; a harness that can only authenticate that way is one we start by hand. **The one
 exception is Glenn's: Rowan's own Claude Code seat authenticates through Glenn's manual login on the admin
-bench: not in the store, no `ANTHROPIC_API_KEY` in `rowan.yaml` for it, and nobody should put
+bench: not in the store, no `ANTHROPIC_API_KEY` in `ada.yaml` for it, and nobody should put
 one there.** That row is for *workers*, and whether they move off the plan seat is billing.
 
 **Per seat, so per file.** Stella, Emma, Johnny and Freddy have one seat each and one file
@@ -721,12 +721,12 @@ holding a line's send credential is a worker that can post as that line.
 One call, at the start of a seat, from the line's launcher:
 
 ```
-git -C /Users/rowan/secrets pull --ff-only && \
-nova-secrets exec --store /Users/rowan/secrets --as rowan \
-  --key /Users/rowan/.config/nova-secrets/rowan.key \
+git -C /Users/ada/secrets pull --ff-only && \
+nova-secrets exec --store /Users/ada/secrets --as ada \
+  --key /Users/ada/.config/nova-secrets/ada.key \
   --sops /opt/homebrew/bin/sops \
   --only GH_TOKEN,DEEPSEEK_API_KEY,SPACE_USER,SPACE_HOST --require GH_TOKEN -- \
-  nova-sandbox --read /opt/homebrew --write /Users/rowan --net-deny -- <harness> <args…>
+  nova-sandbox --read /opt/homebrew --write /Users/ada --net-deny -- <harness> <args…>
 ```
 
 The pull is the launcher's, never the tool's (invariant 8). The `--only` names the four this
@@ -1047,11 +1047,11 @@ none of them. Nothing below is a default: every path is typed, once.
 
 ```
 mkdir -m 700 -p ~/.config/nova-secrets
-nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen $(brew --prefix)/bin/age-keygen
-# paste the printed SECRETS RULE lines into .sops.yaml in a PR touching only your own rule; the other collaborator approves and merges it, and then a holder of an existing key seals the file in a second PR — `sops rowan.yaml` if it is new, `sops updatekeys rowan.yaml` if it exists — because the merge alone grants you nothing
-nova-secrets check --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops $(brew --prefix)/bin/sops
-nova-secrets names --store ~/secrets --as rowan
-nova-secrets exec  --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen $(brew --prefix)/bin/age-keygen
+# paste the printed SECRETS RULE lines into .sops.yaml in a PR touching only your own rule; the other collaborator approves and merges it, and then a holder of an existing key seals the file in a second PR — `sops ada.yaml` if it is new, `sops updatekeys ada.yaml` if it exists — because the merge alone grants you nothing
+nova-secrets check --store ~/secrets --as ada --key ~/.config/nova-secrets/ada.key --sops $(brew --prefix)/bin/sops
+nova-secrets names --store ~/secrets --as ada
+nova-secrets exec  --store ~/secrets --as ada --key ~/.config/nova-secrets/ada.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
 ```
 
 Six lines: one directory, one keygen, one comment that is the step other people do for you,
@@ -1062,7 +1062,7 @@ does not have yet (its token is inside the store), so Glenn opens it, and the ap
 other collaborator, under **"Reviewed" is a control** above. `check` runs before `names`
 because the first command to touch the store should be the one that says whether the store is
 what this spec says. What it prints before the grant, exactly, in three states and not two:
-while `rowan.yaml` does not exist, **exit 2 listing the names that are in the store**; once it
+while `ada.yaml` does not exist, **exit 2 listing the names that are in the store**; once it
 exists sealed to somebody else's key, **green with `mine=0`**, invariant 4 passing over no file
 of yours; and for a seat whose file already exists, **between the two pull requests the comment
 above names** — your rule merged, the file not yet `updatekeys`-ed — **exit 1 on invariant 2**

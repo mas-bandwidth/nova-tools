@@ -54,14 +54,14 @@ binaries or from this file, the runs come from receipts, and the gate is one
 exit code a release lane can call.
 
 ```
-$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check dogfood record --tool nova-check --verb links --by Lin --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
-DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
+DOGFOOD RECORD OK tool=nova-check verb=links by=Lin at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-lin-8e9b64a4.json
 
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
-DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-check verb=links by=Lin at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
@@ -94,7 +94,7 @@ finding and the same eight that end the receipt's filename, so a reader with an
 id can find the file:
 
 ```
-DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Stella at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Stella running it again: the verb refused a relative path
+DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Lin at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Lin running it again: the verb refused a relative path
 ```
 
 A `--closes` naming an id nothing carries closes nothing and leaves the edge
@@ -168,12 +168,12 @@ nothing else, so a kind the tool does not hold used to unlock nothing and print
 now refused by name, listing the kinds there are (#1848):
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@mas-bandwidth.com>" --kind fix-with-red-test
 nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@mas-bandwidth.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 ```
 
@@ -186,10 +186,10 @@ command that prints the rest — the same run with the cap lifted, quoted so it
 can be pasted (#1804):
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@mas-bandwidth.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@mas-bandwidth.com>" --paths "sign/**" --max 0
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
@@ -204,10 +204,10 @@ travel.
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
     --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/rowan-working/dogfood \
-    --retired ~/rowan-working/bin/retired/README.md \
-    --bin ~/rowan-working/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+    --receipts ~/ada-working/dogfood \
+    --retired ~/ada-working/bin/retired/README.md \
+    --bin ~/ada-working/bin --repo-dir . \
+    --since 2026-09-18T00:00:00Z --state ~/ada-working/convergence.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24
@@ -517,10 +517,10 @@ nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --remote origin --br
 
 A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. The `.nova-bus/` directory is the tool's own per-clone state, never a note, so a `<bus>/.nova-bus/defaults` file written for `inbox` does not count as a dirty checkout; a fresh clone runs `inbox` then `send` with no hand step in between. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
 
-**`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — the keeper on the Studio and the bud on the Air both post as `Rowan` — and the `[bud air]` subject convention that told them apart spent the subject line on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
+**`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — the keeper on the Studio and the bud on the Air both post as `Ada` — and the `[bud air]` subject convention that told them apart spent the subject line on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
 
 ```
-nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Rowan --host air --remote origin --branch main
+nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --host air --remote origin --branch main
 ```
 
 A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 characters — because it is printed as one space-separated field. A draft that carries its own `Host:` line keeps it, and a `--host` naming a different machine is refused rather than guessed at, the same way `--as` is against a `From:` line that names somebody else. Everything about it is optional: a note sent without it carries no `Host:` line, lists with no `host=` field, and is byte for byte the note this tool has always written. It is not part of the id.
@@ -582,7 +582,7 @@ It fetches every `--interval` and returns the moment your inbox would list somet
 
 ```
 WAIT BLIND commits=500 remedy="raise --max-commits or close --before <instant>"
-WAIT REFUSED: as=Johnny cursor=8cd06f5a... is further behind than this walk may cross, ...
+WAIT REFUSED: as=Sam cursor=8cd06f5a... is further behind than this walk may cross, ...
 ```
 
 exit 2. That is a loop stopping rather than a loop running green and deaf for hours. The two ways out are the ones the line names: raise the bound for this read, or `close --before <instant>` to empty the backlog the cursor is behind.
@@ -1022,7 +1022,7 @@ What a first run gets wrong, and what each one wants:
 - **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
 - **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another. The daily ledger `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes keeps the rule: its columns are `day`, `model`, `tokens_in`, `tokens_out`, `usd`, `cards`, `dashes`, a kept field a card did not report is `-` never 0, and the trailing `dashes` column counts the cards that left input, output and usd unknown.
 - **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
-- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:emma=<export>` — so two friends' exports from one provider are `google:emma` and `google:freddy`.
+- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:kai=<export>` — so two friends' exports from one provider are `google:kai` and `google:max`.
 - **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.
 - **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
@@ -1031,7 +1031,7 @@ What a first run gets wrong, and what each one wants:
 
 ```
 nova-tokens fold --out ./days --day 2026-09-18 --repos ./repos.tsv \
-  --claude glenn=~/.claude/projects --units work/pitstop-2026-09-18-units.lisp
+  --claude eve=~/.claude/projects --units work/pitstop-2026-09-18-units.lisp
 nova-tokens sum --out ./days --month 2026-09 --by unit
 ```
 
@@ -1137,7 +1137,7 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
-(`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/rowan-working/dogfood`
+(`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/ada-working/dogfood`
 when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing
 quietly. The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
@@ -1167,7 +1167,7 @@ and clears this release's own files out of `--retire`. Run it **on the coordinat
 refuses and says so.
 
 ```sh
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from hulk:/home/gaffer/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench2:/home/gaffer/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
 ```
 
 `adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
@@ -1353,8 +1353,8 @@ pending; it does not mean the replacement is active.
 ### Give a new seat its first values
 
 ```sh
-nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan \
-  --only GH_TOKEN,DEEPSEEK_API_KEY --key /path/to/rowan.key --sops /path/to/sops
+nova-secrets seat add --store ./secrets --as air --pub age1… --from ada \
+  --only GH_TOKEN,DEEPSEEK_API_KEY --key /path/to/ada.key --sops /path/to/sops
 ```
 
 `seal` cannot do this: it decrypts a seat file before it writes one, and only the
@@ -1373,8 +1373,8 @@ gate reads them in a pull request as it does every other recipient change.
 ### Re-seal values into an existing seat
 
 ```sh
-nova-secrets seat inject --store ./secrets --as air --from rowan \
-  --only NOVA_REDIS_BENCH_PASSWORD --key /path/to/rowan.key --sops /path/to/sops
+nova-secrets seat inject --store ./secrets --as air --from ada \
+  --only NOVA_REDIS_BENCH_PASSWORD --key /path/to/ada.key --sops /path/to/sops
 ```
 
 `seal` runs only where the target seat's own key lives, and `seat add` refuses a
@@ -1385,7 +1385,7 @@ recovery key, held equal to its rule first), then walks `seal`'s road: a
 `seal/<seat>-<NAMES>-<stamp>` branch, one commit, a push, the pull request the
 store's gate approves, the squash merge, the pull and `check`. `--no-pr` stops
 after the commit, returns the store to its starting branch and names the branch
-on the OK line: `SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`.
+on the OK line: `SECRETS SEAT INJECT OK seat=air from=ada names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`.
 
 This key cannot open the target, so every sealed value the target holds is
 re-sealed from the source's current value; a value the rule permits in the clear
@@ -1523,19 +1523,19 @@ The real first run needs a Postgres and a Redis — local prerequisites: a throw
 ```sh
 export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
 nova-config migrate
-nova-config machine add studio --user glenn --seat studio --slots 64 --as rowan
-nova-config fleet set --store studio --coordinator studio --as rowan
-nova-config friend add rowan --slots 32 --tiers frontier,pro --roles builder --as rowan
-nova-config sprint set --coordinator rowan --as rowan
+nova-config machine add bench1 --user eve --seat bench1 --slots 64 --as ada
+nova-config fleet set --store bench1 --coordinator bench1 --as ada
+nova-config friend add ada --slots 32 --tiers frontier,pro --roles builder --as ada
+nova-config sprint set --coordinator ada --as ada
 nova-config apply --check --redis 127.0.0.1:6379
-nova-config apply --redis 127.0.0.1:6379 --as rowan
+nova-config apply --redis 127.0.0.1:6379 --as ada
 ```
 
 **What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write (omitted on `apply --check`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
 
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 
-**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
+**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine bench1 exists; run: nova-config machine set bench1 ...`, `--store space names no machine row`, `machine bench1 is the --coordinator of the fleet`, `friend ada is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING bench1: friend lin makes the sum 65 over the machine ceiling 64`, `friend kai has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
 
 ## nova-redis
 

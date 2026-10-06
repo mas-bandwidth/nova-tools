@@ -373,10 +373,10 @@ One header line, then one entry per line, tabs between fields; `#` opens a comme
 
 ```
 name	kind	installed	latest	apply	owner
-gh	tool	gh --version	github:cli/cli	brew upgrade gh	rowan
-sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	rowan
-opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	freddy
-qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	stella
+gh	tool	gh --version	github:cli/cli	brew upgrade gh	ada
+sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	ada
+opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	max
+qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	lin
 ```
 
 `owner` is the line who answers when that entry is not current, on every STALE, NEWER or
@@ -811,7 +811,7 @@ install` or `npm install`.
 24. `TestTheBaseReportNeedsNoBus`: with no bus checkout, no `--as`, no `--to` and a `PATH`
     without `nova-bus`, `report` prints its lines and exits by its inventory; `--draft --as
     rowan --to stella --host studio` prints a body whose first four lines are `From: rowan`,
-    `To: stella`, `Subject: versions on studio at <the run's at=>` and a blank line — any
+    `To: lin`, `Subject: versions on bench1 at <the run's at=>` and a blank line — any
     other Subject is the mutation that matters here — then the report's lines, a 30-tool
     file under `--max 20` carrying its `REPORT MORE` line in the body, and starts no
     `nova-bus` (a fake on `PATH` counts zero runs); `--send`
@@ -820,7 +820,7 @@ install` or `npm install`.
     `--prepared-stdin`, `--bus`, `--remote`, `--branch`, `--as` and the prepared artifact
     on stdin. Preparation refusal is `REPORT FAIL`, `sent=no`; interrupted or unconfirmed
     dispatch is `REPORT FAIL`, `sent=uncertain` with its prepared ID. No absent result
-    line establishes that nothing was sent. A file whose owner names `stella` and no
+    line establishes that nothing was sent. A file whose owner names `lin` and no
     `--to` never sends to her.
 25. `TestUnchangedStateIsTheCallersToSuppress`: without `--snapshot`, `HOME` and the cwd are
     fresh temp dirs and empty after the run; `--snapshot s.json` first writes it — JSON,
@@ -831,11 +831,11 @@ install` or `npm install`.
     `changed=yes`; a tool turning UNKNOWN is a change, and back is another. Delivery, with a
     fake `nova-bus` on `PATH`: a `--send --snapshot s.json` the fake confirms (`SEND OK …
     pushed=true`) writes `delivered` for its scope, and the same send on the unchanged run
-    starts no `nova-bus`, prints `REPORT NOTE unchanged since <id> to stella; nothing sent`
+    starts no `nova-bus`, prints `REPORT NOTE unchanged since <id> to lin; nothing sent`
     and `sent=no` — the quiet repeat; a local-only `--snapshot` run, then the first `--send`
     for that scope, sends — a send quieted by an observation nobody was sent is the mutation
     that matters; the fake refusing (`SEND REFUSED`), then the same send unchanged, sends
-    again; a send confirmed `--to stella`, then the same observation `--to emma`, sends; the
+    again; a send confirmed `--to lin`, then the same observation `--to kai`, sends; the
     real bare-Git cases from SPEC-BUS-DELIVERY.md prove recovery: refused push followed
     by an unchanged retry lands one original note; lost acknowledgment finds the same
     published note; child death before output reuses saved pending identity. Exercise
