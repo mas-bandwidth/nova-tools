@@ -205,7 +205,8 @@ This specification is locked. No line changes without his words, quoted here wit
   total; the cost tile and its tooltip cover the same streams, a sprint done (`done`) every stream of
   the epoch as the hero's count does, and the unreconciled spend, the epoch's, is never in the tile but
   on its own line, "$X unreconciled since <the epoch's first day>";
-  the throughput samples `landed + archived_landed`, so an archive does not start it again. Nothing
+  the throughput samples the epoch's landed cards (`landed + archived_landed`, `landed` alone when
+  `done`), so an archive does not start it again and a finish does not spike it. Nothing
   else moves.
 - 2026-10-04, the owner, a quoted change after the lock, asking after the merge backlog:
   "Is this progress visible in the sprint dashboard yet?" The page shows one Merge row under the progress bar (the Merge section

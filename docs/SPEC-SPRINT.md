@@ -762,9 +762,10 @@ post-archive..."). Nothing is lost: `where --json` carries `archived_cards` and
 `archived` carries the archived streams, their cards, their landed cards and
 their cost; `stream_costs` keeps each one's spend; `--archived` carries their
 rows. The landing rate is over the epoch's landings, an archived stream's too,
-as archiving lands nothing, and the dashboard's throughput samples
-`landed + archived_landed` for the same reason, so an archive is not a fall
-that starts its samples again. The five landed cards the ETA waits for are the
+as archiving lands nothing, and the dashboard's throughput samples the epoch's
+landed cards for the same reason (`landed + archived_landed`, or `landed` alone
+when `done`, which carries the epoch's in `landed`), so an archive is not a
+fall that starts its samples again and a finish is not a spike. The five landed cards the ETA waits for are the
 epoch's too, and the 10 s hold of the estimate is over the epoch's cards and
 the held ones, which an archive does not change. A sprint done (every card of
 the epoch landed) has no progress left to count, and the tick archives each of
