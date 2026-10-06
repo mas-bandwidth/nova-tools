@@ -30,10 +30,13 @@ type SeatChange struct {
 
 // SeatReq asks for the seat to move to To. Owner is the sprint's owner ("" when
 // it names none); Take with ApprovedBy is a take, else the seat is given.
+// Generation is the seat's generation the move was decided at (0: none named):
+// a move decided at another generation is stale (StaleSeat).
 type SeatReq struct {
 	To, Who, Reason   string
 	Take              bool
 	ApprovedBy, Owner string
+	Generation        uint64
 }
 
 // NotSeat is why who may not move the seat to the request's name, "" is may:
@@ -70,13 +73,30 @@ func NotSeat(holder string, r SeatReq) string {
 	return ""
 }
 
+// StaleSeat is why a move decided at r.Generation is stale on a seat at
+// generation gen, "" when it is not or names none: a retry, or an old holder's or
+// owner's line, read before the seat last moved, would undo that move, and the
+// rules of who moves the seat (NotSeat) cannot tell it from a fresh decision
+// (handover-is-a-restart-checkpoint.w4). gen is FirstSeatGeneration or more.
+func StaleSeat(gen uint64, r SeatReq) string {
+	gen = max(gen, FirstSeatGeneration)
+	if r.Generation == 0 || r.Generation == gen {
+		return ""
+	}
+	return "the seat is at generation " + u64(gen) + ", not " + u64(r.Generation) + ": it moved after this was decided; read nova-sprint handover again, and decide at generation " + u64(gen) + "; nothing was changed"
+}
+
 // MoveSeat is the seat moved to r.To: a happened note, which is the log's line
 // of it, and the change the commit writes. A take's note is addressed to the
 // holder it was taken from, so they see it when they wake; a given seat's to
 // the new holder.
 func MoveSeat(s *Snapshot, r SeatReq) Plan {
 	var p Plan
-	if why := NotSeat(s.Coordinator, r); why != "" {
+	why := StaleSeat(s.SeatGeneration, r)
+	if why == "" {
+		why = NotSeat(s.Coordinator, r)
+	}
+	if why != "" {
 		p.refuse(r.To, why)
 		return p
 	}

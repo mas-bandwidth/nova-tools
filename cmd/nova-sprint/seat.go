@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -46,6 +48,7 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 	take := fs.Bool("take", false, "take the seat as <name>, who runs this, when the holder is away (asleep, out of credits): wants --approved-by")
 	approved := fs.String("approved-by", "", "with --take, the sprint's owner who approved it (init --owner, else "+OwnerEnv+"): the take is refused without the owner's name")
 	dry := fs.Bool("dry-run", false, "say whether the seat would move, and how, and write nothing")
+	gen := fs.Uint64("generation", 0, "the seat's generation the move was decided at, as handover prints it: refused when the seat has moved since (default: the generation read now)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, "coordinator", argErr("wants one name, the seat's next holder, ", err, pos...))
@@ -59,12 +62,21 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("coordinator", err, stderr)
 	}
-	holder, err := st.B.Coordinator(ctx)
+	seat, err := st.SeatCheck(ctx)
 	if err != nil {
 		return a.readFailed("coordinator", err, stderr)
 	}
-	req := sprint.SeatReq{To: pos[0], Who: c.actor, Reason: *reason, Take: *take, ApprovedBy: *approved, Owner: owner}
-	if why := sprint.NotSeat(holder, req); why != "" {
+	// the record names the seat, not a key a configuration refresh wrote over it
+	holder := orDashStr(seat.Record, seat.Holder)
+	req := sprint.SeatReq{To: pos[0], Who: c.actor, Reason: *reason, Take: *take, ApprovedBy: *approved, Owner: owner, Generation: *gen}
+	if req.Generation == 0 {
+		req.Generation = seat.Generation // the step refuses the move when the seat moves before it commits
+	}
+	why := sprint.StaleSeat(seat.Generation, req)
+	if why == "" {
+		why = sprint.NotSeat(holder, req)
+	}
+	if why != "" {
 		return refuse(stderr, "coordinator", why)
 	}
 	// the seat goes only to a session the push loop has reached (pushproof.go)
@@ -114,6 +126,7 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdHandover(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("handover")
+	pg := fs.String("pg", "", "the address of nova-config's store, whose sprint row and revisions the handover holds to the seat and the store: host:port, or a postgres:// URI; else NOVA_PG_DSN; with neither the config side is shown unread")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, "handover", argErr("takes no words ", err, pos...))
 	}
@@ -121,7 +134,7 @@ func (a *app) cmdHandover(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "handover", err.Error())
 	}
-	h, text, err := a.handover(context.Background(), st)
+	h, text, err := a.handoverFrom(context.Background(), st, a.handoverSources(*pg))
 	if err != nil {
 		return a.readFailed("handover", err, stderr)
 	}
@@ -134,30 +147,39 @@ func (a *app) cmdHandover(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// handoverView is what the next seat needs, as handover --json carries it.
+// handoverView is what the next seat needs, as handover --json carries it: a
+// restart checkpoint (handover-is-a-restart-checkpoint.w4; the nova-sprint
+// review, item 5), so the next seat recovers its next safe actions from it alone
+// and keeps no ledger of its own beside it.
 type handoverView struct {
 	At        time.Time       `json:"at"`
 	Seat      seatView        `json:"seat"`
 	Owner     string          `json:"owner,omitempty"`
 	Server    *serverView     `json:"server,omitempty"`
+	Revisions revisionsView   `json:"revisions"`
+	Ownership []ownerView     `json:"ownership"`
 	Machine   string          `json:"machine"`
 	Summary   string          `json:"summary"`
 	Streams   []streamCounts  `json:"streams"`
 	Sentinels []sentinelView  `json:"sentinels"`
 	Judgments []inboxJudgment `json:"judgments"`
+	Cards     []cardEvidence  `json:"cards"`
 	Members   []memberView    `json:"members"`
 	Routes    routesView      `json:"routes"`
+	Installs  installsView    `json:"installs"`
 	Decisions []decisionView  `json:"decisions"`
 	Rules     []string        `json:"rules"`
+	Next      []string        `json:"next"`
 	First     []string        `json:"first"`
 	groups    []sprint.Group  // the open judgments, as inbox prints them
 }
 
-// seatView is the holder, the seat's generation and the last change of the
-// seat; Since is nil while the seat has not moved since init.
+// seatView is the holder, the seat's generation and the sprint's epoch, and the
+// last change of the seat; Since is nil while the seat has not moved since init.
 type seatView struct {
 	Holder     string             `json:"holder"`
 	Generation uint64             `json:"generation"`
+	Epoch      uint64             `json:"epoch"`
 	Since      *time.Time         `json:"since,omitempty"`
 	Last       *sprint.SeatChange `json:"last,omitempty"`
 }
@@ -167,6 +189,93 @@ type seatView struct {
 type serverView struct {
 	Actor  string `json:"actor"`
 	Change string `json:"change,omitempty"`
+}
+
+// revisionsView is what the seat runs on: Source, the revision of the binary
+// that wrote the handover (buildinfo); Config, nova-config's revision of each
+// kind in its store, and Applied, the revision of each kind applied to the
+// sprint's store (config:decl); Pending, the kinds whose revision in nova-config
+// is ahead of the one applied. ConfigUnread and AppliedUnread say why a side was
+// not read ("" when it was).
+type revisionsView struct {
+	Source        string           `json:"source"`
+	Config        map[string]int64 `json:"config"`
+	Applied       map[string]int64 `json:"applied"`
+	Pending       []string         `json:"pending"`
+	ConfigUnread  string           `json:"config_unread,omitempty"`
+	AppliedUnread string           `json:"applied_unread,omitempty"`
+}
+
+// The states of a place that names the seat's holder (ownerView).
+const (
+	ownReconciled = "reconciled"
+	ownPending    = "pending"
+	ownUnread     = "unread"
+)
+
+// ownerView is one place that names the seat's holder, and whether it follows
+// the accepted handover: the seat's record (the handover itself), the
+// coordinator key in the store, the server's actor, nova-config's sprint row,
+// and the wake path (the holder's push proof). Pending names the line that
+// reconciles it; a pending place never moves the seat: the record does.
+type ownerView struct {
+	Place string `json:"place"`
+	Names string `json:"names"`
+	State string `json:"state"`
+	Why   string `json:"why,omitempty"`
+	Fix   string `json:"fix,omitempty"`
+}
+
+// cardEvidence is an open primary as the next seat needs it: where it is, the
+// branch and head its work finished at, the reads given (each reader's verdict
+// and the head it read), the gate (the last CI result, the head and run it was
+// for), its row in the merge table, and Lineage, each attempt with the remedy it
+// was given and how it ended, so a remedy already tried is not tried again.
+type cardEvidence struct {
+	ID      string         `json:"id"`
+	Stream  string         `json:"stream"`
+	State   string         `json:"state"`
+	Attempt int            `json:"attempt"`
+	Branch  string         `json:"branch,omitempty"`
+	Head    string         `json:"head,omitempty"`
+	Reads   []readEvidence `json:"reads"`
+	Gate    *gateEvidence  `json:"gate,omitempty"`
+	Merge   string         `json:"merge,omitempty"`
+	Lineage []attemptView  `json:"lineage"`
+}
+
+type readEvidence struct {
+	Reader  string `json:"reader"`
+	Attempt int    `json:"attempt"`
+	Verdict string `json:"verdict"`
+	Head    string `json:"head,omitempty"`
+}
+
+type gateEvidence struct {
+	Result string `json:"result"`
+	Head   string `json:"head,omitempty"`
+	Run    string `json:"run,omitempty"`
+	Source string `json:"source,omitempty"`
+}
+
+// attemptView is one attempt of a card: the fix it was dealt with ("" for the
+// first, or a redeal with none), its result ("" while it runs), the first line of
+// its report, and the head it finished at.
+type attemptView struct {
+	Attempt int    `json:"attempt"`
+	Fix     string `json:"fix,omitempty"`
+	Result  string `json:"result,omitempty"`
+	Report  string `json:"report,omitempty"`
+	Head    string `json:"head,omitempty"`
+}
+
+// installsView is the install receipts of the machine handover runs on: each
+// unit a running sprint needs, installed, missing or different, from the unit
+// files in Dir (units --check's reading); Unread says why they were not read.
+type installsView struct {
+	Dir    string             `json:"dir,omitempty"`
+	Units  []sprint.UnitState `json:"units"`
+	Unread string             `json:"unread,omitempty"`
 }
 
 type streamCounts struct {
@@ -209,15 +318,104 @@ const handoverDecisions = 10
 // step that wrote the line: rework only with a fix.
 var decisionVerbs = []string{"release", "drop", "rework", "redo"}
 
-// handover reads what the next seat needs and renders it: the holder and since
-// when, the machine and the progress, each stream's counts, the sentinels held
-// with what waits behind each, every open judgment with its answer lines, the
-// members held or down and by whom, the routes disabled, the last decisions
-// from the log with their reasons, and the lines the next seat runs first.
+// configSide is nova-config's side of the seat: its sprint row's coordinator
+// and the revision of each kind in its store.
+type configSide struct {
+	Coordinator string
+	Revs        map[string]int64
+}
+
+// handoverSources is what handover reads beside the sprint's store: the
+// binary's revision, nova-config's side (nil: no config store named), the
+// revisions applied to the store (nil: the store keeps none) and the units of
+// this machine (nil: not read). A test gives fakes.
+type handoverSources struct {
+	Source  string
+	Config  func(context.Context) (configSide, error)
+	Applied func(context.Context, *store.Store) (map[string]int64, error)
+	Units   func() (string, []sprint.UnitState, error)
+}
+
+// handoverSources is the sources of the binary: nova-config's store at pg (else
+// NOVA_PG_DSN) when either names one, the store's config:decl, and the unit
+// directory of this machine.
+func (a *app) handoverSources(pg string) handoverSources {
+	src := handoverSources{Source: buildinfo.Version(version), Applied: appliedRevs}
+	if pg != "" || a.getenv(config.EnvPG) != "" {
+		src.Config = func(ctx context.Context) (configSide, error) {
+			side := configSide{Revs: map[string]int64{}}
+			err := a.withConfig(ctx, pg, func(ctx context.Context, st config.Store) error {
+				row, found, err := st.Get(ctx, config.KindSprint, config.KindSprint)
+				if err != nil {
+					return err
+				}
+				if found {
+					side.Coordinator = row.Fields["coordinator"]
+				}
+				for _, k := range config.Kinds {
+					if side.Revs[k.Name], err = st.Rev(ctx, k.Name); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			return side, err
+		}
+	}
+	src.Units = func() (string, []sprint.UnitState, error) {
+		goos := a.seatOS()
+		dir, err := a.seatDir(goos)
+		if err != nil {
+			return "", nil, err
+		}
+		states, err := sprint.CheckUnits(dir, goos, sprint.UnitKinds)
+		return dir, states, err
+	}
+	return src
+}
+
+// appliedRevs is the revision of each kind nova-config applied to the store, as
+// its stamp (config:decl, rev:<kind>) holds it; nil for a store that keeps none.
+func appliedRevs(ctx context.Context, st *store.Store) (map[string]int64, error) {
+	r, ok := st.B.(*store.Redis)
+	if !ok {
+		return nil, nil
+	}
+	h, err := r.C.HGetAll(ctx, config.DeclKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	revs := map[string]int64{}
+	for f, v := range h {
+		if kind, ok := strings.CutPrefix(f, "rev:"); ok {
+			var n int64
+			_, _ = fmt.Sscan(v, &n) // ignored: a stamp that is no number reads 0, never applied
+			revs[kind] = n
+		}
+	}
+	return revs, nil
+}
+
+// handover is the handover from the binary's sources (handoverSources), with no
+// config store named but by NOVA_PG_DSN: coordinator's receipt.
 func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, string, error) {
+	return a.handoverFrom(ctx, st, a.handoverSources(""))
+}
+
+// handoverFrom reads what the next seat needs and renders it: the holder and
+// since when, the seat's generation and the epoch, the revisions it runs on,
+// every place that names the holder and whether it follows the handover, the
+// machine and the progress, each stream's counts, the sentinels held with what
+// waits behind each, every open judgment with its answer lines, every open card
+// with its evidence and the remedies already tried, the members held or down and
+// by whom, the routes disabled, the install receipts, the last decisions from
+// the log with their reasons, the next safe lines, and the lines the next seat
+// runs first.
+func (a *app) handoverFrom(ctx context.Context, st *store.Store, src handoverSources) (handoverView, string, error) {
 	now := a.now()
 	h := handoverView{At: now, Streams: []streamCounts{}, Sentinels: []sentinelView{}, Judgments: []inboxJudgment{}, Members: []memberView{},
-		Decisions: []decisionView{}, Routes: routesView{Disabled: []string{}}}
+		Decisions: []decisionView{}, Routes: routesView{Disabled: []string{}}, Ownership: []ownerView{}, Cards: []cardEvidence{}, Next: []string{},
+		Installs: installsView{Units: []sprint.UnitState{}}}
 	v, _, err := a.where(ctx, st, defaultStale, false) // the view carries every table; the frame is not drawn here
 	if err != nil {
 		return h, "", err
@@ -229,16 +427,17 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	if h.Owner, err = a.owner(ctx, st); err != nil {
 		return h, "", err
 	}
-	server, err := st.ServerActor(ctx)
+	seat, err := st.SeatCheck(ctx)
 	if err != nil {
 		return h, "", err
 	}
-	if server != "" {
-		holder := h.Seat.Holder
-		if v.Seat != nil {
-			holder = v.Seat.Holder // the record's: the key follows it
-		}
-		h.Server = &serverView{Actor: server, Change: sprint.SeatDrift(holder, holder, server)}
+	// the record is the accepted handover: the seat is its holder's, whatever a key says
+	h.Seat.Holder, h.Seat.Epoch = orDashStr(seat.Record, seat.Holder), seat.Epoch
+	if seat.Server != "" {
+		h.Server = &serverView{Actor: seat.Server, Change: sprint.SeatDrift(h.Seat.Holder, h.Seat.Holder, seat.Server)}
+	}
+	if err := a.handoverOwnership(ctx, st, &h, seat, src); err != nil {
+		return h, "", err
 	}
 	for _, s := range sortedKeys(v.Tables[sprint.Work]) {
 		sc := streamCounts{Stream: s, Counts: map[string]int{}}
@@ -264,6 +463,9 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 			}
 			h.Sentinels = append(h.Sentinels, sv)
 		}
+	}
+	if h.Cards, err = openCards(ctx, st, snap); err != nil {
+		return h, "", err
 	}
 	in, err := st.Inbox(ctx, defaultDeadline, defaultStale, 10000)
 	if err != nil {
@@ -313,9 +515,165 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 			h.Members = append(h.Members, memberView{Member: m, Status: status})
 		}
 	}
+	if src.Units == nil {
+		h.Installs.Unread = "not read"
+	} else if dir, states, err := src.Units(); err != nil {
+		h.Installs.Unread = err.Error()
+	} else {
+		h.Installs.Dir, h.Installs.Units = dir, append(h.Installs.Units, states...)
+	}
 	h.Rules = []string{handoverWaves}
+	h.Next = handoverNext(h)
 	h.First = []string{"nova-sprint where", "nova-sprint inbox --wait --push " + pushSeat, `read docs/SPEC-SPRINT.md, "Handing over the seat"`}
 	return h, a.handoverText(h), nil
+}
+
+// handoverOwnership fills the revisions and the places that name the holder:
+// the record, the key, the server, nova-config's sprint row and the wake path.
+func (a *app) handoverOwnership(ctx context.Context, st *store.Store, h *handoverView, seat store.SeatCheck, src handoverSources) error {
+	holder := h.Seat.Holder
+	h.Revisions = revisionsView{Source: src.Source, Config: map[string]int64{}, Applied: map[string]int64{}, Pending: []string{}}
+	var side configSide
+	if src.Config == nil {
+		h.Revisions.ConfigUnread = "no config store named: give --pg <host:port> or NOVA_PG_DSN"
+	} else if c, err := src.Config(ctx); err != nil {
+		h.Revisions.ConfigUnread = err.Error()
+	} else {
+		side, h.Revisions.Config = c, c.Revs
+	}
+	if src.Applied == nil {
+		h.Revisions.AppliedUnread = "the store keeps no config stamp"
+	} else if revs, err := src.Applied(ctx, st); err != nil {
+		h.Revisions.AppliedUnread = err.Error()
+	} else if revs == nil {
+		h.Revisions.AppliedUnread = "the store keeps no config stamp"
+	} else {
+		h.Revisions.Applied = revs
+	}
+	if h.Revisions.ConfigUnread == "" && h.Revisions.AppliedUnread == "" {
+		for _, k := range sortedKeys(h.Revisions.Config) {
+			if h.Revisions.Config[k] > h.Revisions.Applied[k] {
+				h.Revisions.Pending = append(h.Revisions.Pending, k)
+			}
+		}
+	}
+
+	record := ownerView{Place: "record", Names: orDashStr(seat.Record, seat.Holder), State: ownReconciled,
+		Why: fmt.Sprintf("the accepted handover, generation %d", h.Seat.Generation)}
+	if seat.Record == "" {
+		record.Why = "init's key: the seat has not moved since init"
+	}
+	key := ownerView{Place: "key", Names: orDashStr(seat.Holder, "-"), State: ownReconciled}
+	if seat.Holder != holder {
+		key.State, key.Why, key.Fix = ownPending, "the key names "+orDashStr(seat.Holder, "no one")+" and the record "+holder+" (a configuration apply writes the key; it does not move the seat)",
+			"nova-sprint seat --repair --reason <text>"
+	}
+	server := ownerView{Place: "server", Names: orDashStr(seat.Server, "-"), State: ownReconciled}
+	switch {
+	case seat.Server == "":
+		server.State, server.Why = ownUnread, "no server's record is fresh: the server is not running, or has not said so in "+store.ServerTTL.String()
+	case seat.Server != sprint.MachineActor && seat.Server != holder:
+		server.State, server.Why, server.Fix = ownPending, "the server runs as "+seat.Server, sprint.SeatDrift(holder, holder, seat.Server)
+	}
+	cfg := ownerView{Place: "config", Names: orDashStr(side.Coordinator, "-"), State: ownReconciled}
+	switch {
+	case h.Revisions.ConfigUnread != "":
+		cfg.State, cfg.Why = ownUnread, h.Revisions.ConfigUnread
+	case side.Coordinator != holder:
+		cfg.State, cfg.Why, cfg.Fix = ownPending,
+			"nova-config's sprint row names "+orDashStr(side.Coordinator, "no one")+": an apply of it is held (APPLY HELD) and does not move the seat, and the deal's coordinator role follows the row",
+			"nova-config sprint set --coordinator "+holder
+	}
+	wake := ownerView{Place: "wake", State: ownReconciled}
+	rec, ok, err := readPush(ctx, st, holder)
+	if err != nil {
+		return err
+	}
+	wake.Names = "-"
+	if ok {
+		wake.Names = rec.Name + " adapter=" + rec.AdapterName()
+	}
+	if why := sprint.PushWhy(holder, rec, ok, h.At); why != "" {
+		wake.State, wake.Why, wake.Fix = ownPending, why, sprint.PushSetup(holder, rec, ok)
+	}
+	h.Ownership = []ownerView{record, key, server, cfg, wake}
+	return nil
+}
+
+// openCards is every primary of the work table not landed, with its evidence and
+// lineage, in the table's order; a sentinel is no card.
+func openCards(ctx context.Context, st *store.Store, snap *sprint.Snapshot) ([]cardEvidence, error) {
+	out := []cardEvidence{}
+	for _, s := range snap.Streams() {
+		for _, col := range sprint.States {
+			if col == sprint.Landed {
+				continue
+			}
+			for _, c := range snap.Work.Cell(s, string(col)) {
+				if sprint.IsSentinel(c) {
+					continue
+				}
+				e := cardEvidence{ID: c.ID, Stream: s, State: string(col), Attempt: c.Int("attempt"), Branch: c.F("branch"), Head: c.F("head"),
+					Reads: []readEvidence{}, Lineage: []attemptView{}}
+				if r := c.F("ci"); r != "" {
+					e.Gate = &gateEvidence{Result: r, Head: c.F("ci_head"), Run: c.F("ci_run"), Source: c.F("ci_source")}
+				}
+				if e.Attempt > 0 {
+					info, err := st.CardOf(ctx, c.ID)
+					if err != nil {
+						return nil, err
+					}
+					cardTrail(&e, info)
+				}
+				out = append(out, e)
+			}
+		}
+	}
+	return out, nil
+}
+
+// cardTrail is a card's attempts, its reads and its merge row, from its records.
+func cardTrail(e *cardEvidence, info store.CardInfo) {
+	for _, w := range info.Work {
+		n := w.Int("attempt")
+		if n == 0 {
+			_, _ = fmt.Sscan(strings.TrimPrefix(w.ID[strings.LastIndex(w.ID, ".w")+1:], "w"), &n) // ignored: an id with no attempt reads 0
+		}
+		report, _, _ := strings.Cut(strings.TrimSpace(w.F("report")), "\n")
+		// a finished work card says ok=yes or ok=no (its finish, steps_work.go)
+		result := map[string]string{"yes": "ok", "no": "failed"}[w.F("ok")]
+		e.Lineage = append(e.Lineage, attemptView{Attempt: n, Fix: w.F("fix"), Result: result, Report: report, Head: w.F("head")})
+		if e.Branch == "" {
+			e.Branch = w.F("branch")
+		}
+	}
+	slices.SortFunc(e.Lineage, func(x, y attemptView) int { return x.Attempt - y.Attempt })
+	for _, r := range info.Reads {
+		if r.F("verdict") == "" {
+			continue
+		}
+		e.Reads = append(e.Reads, readEvidence{Reader: r.F("reader"), Attempt: r.Int("attempt"), Verdict: r.F("verdict"), Head: r.F("head")})
+	}
+	if m := info.Merge; m != nil {
+		e.Merge = m.Col
+	}
+}
+
+// handoverNext is the next safe lines, from the generated state alone: each
+// place that does not follow the handover, each kind whose configuration is not
+// applied, and the seat's own move, pinned to the generation it was read at (a
+// line read before the seat moves again is refused, never applied).
+func handoverNext(h handoverView) []string {
+	next := []string{}
+	for _, o := range h.Ownership {
+		if o.State == ownPending && o.Fix != "" {
+			next = append(next, o.Fix)
+		}
+	}
+	for _, k := range h.Revisions.Pending {
+		next = append(next, fmt.Sprintf("nova-config apply --kind %s (revision %d is not applied; the store has %d)", k, h.Revisions.Config[k], h.Revisions.Applied[k]))
+	}
+	return append(next, fmt.Sprintf("nova-sprint coordinator <name> --generation %d --reason <text> (the seat moves only from generation %d)", h.Seat.Generation, h.Seat.Generation))
 }
 
 // decisionOf is the log line as one of the coordinator's decisions: a seat
@@ -373,8 +731,25 @@ func (a *app) handoverText(h handoverView) string {
 		}
 	}
 	line("%s", head)
+	line("SEAT holder=%s generation=%d epoch=%d", h.Seat.Holder, h.Seat.Generation, h.Seat.Epoch)
 	if h.Server != nil && h.Server.Change != "" {
 		line("SERVER %s", h.Server.Change)
+	}
+	r := h.Revisions
+	rev := "REVISION source=" + orDashStr(r.Source, "-") + " config=" + revsText(r.Config, r.ConfigUnread) + " applied=" + revsText(r.Applied, r.AppliedUnread)
+	if r.ConfigUnread == "" && r.AppliedUnread == "" {
+		rev += " pending=" + orDashStr(strings.Join(r.Pending, ","), "none")
+	}
+	line("%s", rev)
+	for _, o := range h.Ownership {
+		s := "OWNER " + o.Place + " names=" + o.Names + " " + o.State
+		if o.Why != "" {
+			s += ": " + o.Why
+		}
+		if o.Fix != "" {
+			s += "; run: " + o.Fix
+		}
+		line("%s", s)
 	}
 	line("%s", strings.TrimSpace(h.Machine+"  progress "+h.Summary))
 	for _, s := range h.Streams {
@@ -394,6 +769,23 @@ func (a *app) handoverText(h handoverView) string {
 	for _, g := range h.groups {
 		b.WriteString(groupText(g, h.At, false))
 	}
+	for _, c := range h.Cards {
+		line("%s", cardText(c))
+		for _, t := range c.Lineage {
+			if t.Fix == "" && t.Result != "failed" {
+				continue // the first try, or one that ran with no remedy and did not fail, is no lineage
+			}
+			s := fmt.Sprintf("TRIED %s attempt=%d", c.ID, t.Attempt)
+			if t.Fix != "" {
+				s += " fix: " + t.Fix + ";"
+			}
+			s += " " + orDashStr(t.Result, "running")
+			if t.Report != "" && t.Result == "failed" {
+				s += ": " + t.Report
+			}
+			line("%s", s)
+		}
+	}
 	for _, m := range h.Members {
 		if m.By != "" {
 			line("MEMBER %s %s by %s", m.Member, m.Status, m.By)
@@ -409,6 +801,28 @@ func (a *app) handoverText(h handoverView) string {
 	default:
 		line("ROUTES enabled=%d disabled=%s", h.Routes.Enabled, strings.Join(h.Routes.Disabled, ","))
 	}
+	if h.Installs.Unread != "" {
+		line("INSTALLS unread: %s", h.Installs.Unread)
+	} else {
+		n := 0
+		for _, u := range h.Installs.Units {
+			if u.State == sprint.UnitInstalled {
+				n++
+				continue
+			}
+			s := "INSTALL " + u.Kind + " " + u.State
+			if u.Why != "" {
+				s += " (" + u.Why + ")"
+			}
+			if u.Owed != "" {
+				s += "; owed: " + u.Install + " (" + u.Owed + ")"
+			} else {
+				s += "; run: " + u.Install
+			}
+			line("%s", s)
+		}
+		line("INSTALLS installed=%d of %d dir=%s", n, len(h.Installs.Units), h.Installs.Dir)
+	}
 	for _, d := range h.Decisions {
 		s := "DECISION " + a.clock12(d.At, h.At) + " " + d.Verb + " " + d.What
 		if !strings.HasPrefix(d.Verb, sprint.NSeat) {
@@ -422,11 +836,63 @@ func (a *app) handoverText(h handoverView) string {
 	for _, r := range h.Rules {
 		line("RULE %s", r)
 	}
+	for _, n := range h.Next {
+		line("NEXT %s", n)
+	}
 	for _, f := range h.First {
 		line("FIRST %s", f)
 	}
 	line("HANDOVER OK judgments=%d sentinels=%d members=%d decisions=%d", len(h.Judgments), len(h.Sentinels), len(h.Members), len(h.Decisions))
 	return b.String()
+}
+
+// revsText is each kind's revision, kind:rev in the kinds' order, "unread" with
+// why when the side was not read, and "none" when it holds none.
+func revsText(revs map[string]int64, unread string) string {
+	if unread != "" {
+		return "unread"
+	}
+	var ks []string
+	for _, k := range sortedKeys(revs) {
+		ks = append(ks, fmt.Sprintf("%s:%d", k, revs[k]))
+	}
+	return orDashStr(strings.Join(ks, ","), "none")
+}
+
+// cardText is an open card's line: where it is, its branch and head, its reads,
+// its gate and its merge row.
+func cardText(c cardEvidence) string {
+	s := fmt.Sprintf("CARD %s stream=%s state=%s attempt=%d", c.ID, c.Stream, c.State, c.Attempt)
+	if c.Branch != "" {
+		s += " branch=" + c.Branch
+	}
+	if c.Head != "" {
+		s += " head=" + c.Head
+	}
+	if len(c.Reads) > 0 {
+		var rs []string
+		for _, r := range c.Reads {
+			w := r.Reader + ":" + r.Verdict
+			if r.Head != "" {
+				w += "@" + r.Head
+			}
+			rs = append(rs, w)
+		}
+		s += " reads=" + strings.Join(rs, ",")
+	}
+	if g := c.Gate; g != nil {
+		s += " gate=" + g.Result
+		if g.Head != "" {
+			s += "@" + g.Head
+		}
+		if g.Run != "" {
+			s += " run=" + g.Run
+		}
+	}
+	if c.Merge != "" {
+		s += " merge=" + c.Merge
+	}
+	return s
 }
 
 // clock12 is a time as the owner reads it: 12-hour, "5:21 PM", in the zone times

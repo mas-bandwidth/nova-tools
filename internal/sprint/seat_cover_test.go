@@ -82,3 +82,23 @@ func TestSeatCoverMoveSeat(t *testing.T) {
 		})
 	}
 }
+
+// A move decided at another generation than the seat's is stale: refused by
+// StaleSeat, and by MoveSeat on the generation its step read, with no change
+// planned; a move that names none, or the seat's, is not
+// (handover-is-a-restart-checkpoint.w4).
+func TestSeatCoverStaleSeat(t *testing.T) {
+	t.Parallel()
+	give := SeatReq{To: "someone", Who: "owner", Reason: "x", Owner: "owner"}
+	assert.Empty(t, StaleSeat(3, give), "a move that names no generation")
+	give.Generation = 3
+	assert.Empty(t, StaleSeat(3, give), "a move decided at the seat's generation")
+	give.Generation = 1
+	assert.Empty(t, StaleSeat(0, give), "a seat with no record is at the first generation")
+	give.Generation = 2
+	want := "the seat is at generation 3, not 2: it moved after this was decided; read nova-sprint handover again, and decide at generation 3; nothing was changed"
+	assert.Equal(t, want, StaleSeat(3, give))
+	p := MoveSeat(&Snapshot{Coordinator: "coord", SeatGeneration: 3, Now: time.Unix(0, 0)}, give)
+	assert.Nil(t, p.Seat, "a stale move planned a change")
+	assert.Equal(t, []Refusal{{Key: "someone", Why: want}}, p.Refused)
+}
