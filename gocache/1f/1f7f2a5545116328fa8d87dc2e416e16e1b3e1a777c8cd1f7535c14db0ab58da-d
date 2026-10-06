@@ -1,0 +1,14 @@
+=== RUN   TestIssue1451EveryMissingFlagRefusalNamesTheDoor
+=== PAUSE TestIssue1451EveryMissingFlagRefusalNamesTheDoor
+=== CONT  TestIssue1451EveryMissingFlagRefusalNamesTheDoor
+=== RUN   TestIssue1451EveryMissingFlagRefusalNamesTheDoor/open
+=== RUN   TestIssue1451EveryMissingFlagRefusalNamesTheDoor/append
+=== RUN   TestIssue1451EveryMissingFlagRefusalNamesTheDoor/index
+=== RUN   TestIssue1451EveryMissingFlagRefusalNamesTheDoor/receipt
+--- PASS: TestIssue1451EveryMissingFlagRefusalNamesTheDoor (0.00s)
+    --- PASS: TestIssue1451EveryMissingFlagRefusalNamesTheDoor/open (0.00s)
+    --- PASS: TestIssue1451EveryMissingFlagRefusalNamesTheDoor/append (0.00s)
+    --- PASS: TestIssue1451EveryMissingFlagRefusalNamesTheDoor/index (0.00s)
+    --- PASS: TestIssue1451EveryMissingFlagRefusalNamesTheDoor/receipt (0.00s)
+PASS
+ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-cairn	0.136s
