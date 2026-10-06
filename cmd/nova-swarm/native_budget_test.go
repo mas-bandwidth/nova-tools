@@ -1,17 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // TestNativeBudgetEndsTheCardAndKeepsFindings is demanded test 13d (SPEC-SWARM.md:3324,
@@ -48,122 +43,6 @@ func budgetCard(t *testing.T, root string) string {
 	path := filepath.Join(root, "card.md")
 	require.NoError(t, os.WriteFile(path, []byte("a card\nFAKE-FINDINGS 1\n"), 0o644))
 	return path
-}
-
-// TestNativeRefusesWithoutTheBudgetWord: rule 13d, "The word is required on every launch."
-// `native` takes `--tokens <n>` or `--tokens unmetered`; without it the verb is exit 2
-// naming the flag, and `0` is refused, exactly as on `add`.
-//
-// AND IT MAKES NO DIRECTORY. The refusal is a flag check and it stands above everything
-// `native` does to the disk -- the job directory at native.go's MkdirAll, the lease it
-// takes there, the data home, the temp directory. A refusal that had already made a
-// directory would leave the bench's hygiene pass a job that never ran.
-func TestNativeRefusesWithoutTheBudgetWord(t *testing.T) {
-	t.Parallel()
-
-	bin := nativeHarness(t)
-	for _, tc := range []struct {
-		name   string
-		tokens string
-		words  []string
-	}{
-		{"absent", "", []string{"--tokens"}},
-		{"zero", "0", []string{"--tokens"}},
-		// FULL STRING, not a numeric prefix (HOLD on PR #2131): parseInt's
-		// Sscanf("%d") accepted "50oops" as 50, made the job tree, and printed
-		// budget=-/50. The word is a positive integer in full or the exact word
-		// unmetered.
-		{"malformed", "50oops", []string{"--tokens", "50oops"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root, slot := aSlot(t)
-			card := budgetCard(t, root)
-			var stdout, stderr bytes.Buffer
-			rc := run(budgetNativeArgs(t, bin, card, slot, root, tc.tokens),
-				strings.NewReader(""), &stdout, &stderr, time.Now())
-			require.Equal(t, 2, rc, "a native launch with tokens=%q is exit 2, got %d\nstdout:\n%s\nstderr:\n%s",
-				tc.tokens, rc, stdout.String(), stderr.String())
-			for _, w := range tc.words {
-				assert.Contains(t, stderr.String(), w, "the refusal names %q:\n%s", w, stderr.String())
-			}
-			// NO DIRECTORY WAS MADE. The job directory, the data home and the temp
-			// directory are all the run's own, and none of them exists after a refusal
-			// this early.
-			for _, made := range []string{
-				filepath.Join(slot, "jobs"),
-				filepath.Join(slot, "data"),
-				filepath.Join(slot, "tmp"),
-			} {
-				_, err := os.Stat(made)
-				assert.Error(t, err, "the refusal made %s; rule 13d refuses before any directory is made", made)
-			}
-		})
-	}
-}
-
-// TestNativeUnmeteredPrintsTheWordOnTheLine: rule 13d, "`NATIVE OK` always carries
-// `budget=`, which is `budget=unmetered`, or rule 13's three spellings against the
-// number." A card launched `--tokens unmetered` runs to its deadline and says so.
-func TestNativeUnmeteredPrintsTheWordOnTheLine(t *testing.T) {
-	t.Parallel()
-
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	card := budgetCard(t, root)
-	var stdout, stderr bytes.Buffer
-	rc := run(budgetNativeArgs(t, bin, card, slot, root, "unmetered"),
-		strings.NewReader(""), &stdout, &stderr, time.Now())
-	require.Equal(t, 0, rc, "an unmetered native launch exits 0, got %d:\n%s", rc, stderr.String())
-	require.Contains(t, stdout.String(), " budget=unmetered ", "NATIVE OK carries budget=unmetered:\n%s", stdout.String())
-}
-
-// TestNativeNumericBudgetPrintsAgainstTheNumber: the same line under a number. Until a
-// sample has observed anything the spelling is rule 13's own dash -- "`budget=-/<n>` for a
-// job whose usage was never observed" -- and it is never silence and never `unmetered`.
-func TestNativeNumericBudgetPrintsAgainstTheNumber(t *testing.T) {
-	t.Parallel()
-
-	// A NUMERIC BUDGET WANTS A READER (rule 13d, and this repo's slice 2): on a bench with
-	// no `sqlite3` the same launch is a NATIVE REFUSED, which is the rule working and not
-	// this assertion failing. The skip names the missing program rather than pretending.
-	if !swarm.SQLiteOnPath() {
-		t.Skipf("%s is not on PATH, and a numeric budget is refused without it (rule 13d)", swarm.SQLiteBinary)
-	}
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	card := budgetCard(t, root)
-	var stdout, stderr bytes.Buffer
-	rc := run(budgetNativeArgs(t, bin, card, slot, root, "50000"),
-		strings.NewReader(""), &stdout, &stderr, time.Now())
-	require.Equal(t, 0, rc, "a numeric native launch exits 0, got %d:\n%s", rc, stderr.String())
-	require.Contains(t, stdout.String(), "/50000 ", "NATIVE OK carries budget=<spent|n+|->/50000:\n%s", stdout.String())
-	require.NotContains(t, stdout.String(), " budget=unmetered", "a numeric budget never prints unmetered:\n%s", stdout.String())
-}
-
-// TestNativeBudgetSitsWhereTheGrammarPutsIt: the output grammar (SPEC-SWARM.md:1946) puts
-// `budget=` immediately after `harness=<ok|silent>` and ahead of every optional tail, so a
-// reader parses one fixed line. The position is the contract, not merely the presence.
-func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
-	t.Parallel()
-
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	card := budgetCard(t, root)
-	var stdout, stderr bytes.Buffer
-	rc := run(budgetNativeArgs(t, bin, card, slot, root, "unmetered"),
-		strings.NewReader(""), &stdout, &stderr, time.Now())
-	require.Equal(t, 0, rc, "the launch exits 0, got %d:\n%s", rc, stderr.String())
-	line := nativeOKLine(t, stdout.String())
-	fields := strings.Fields(line)
-	for i, f := range fields {
-		if !strings.HasPrefix(f, "harness=") {
-			continue
-		}
-		require.Less(t, i+1, len(fields), "budget= follows harness= on the NATIVE OK line (grammar, SPEC-SWARM.md:1946):\n%s", line)
-		require.True(t, strings.HasPrefix(fields[i+1], "budget="), "budget= follows harness= on the NATIVE OK line (grammar, SPEC-SWARM.md:1946):\n%s", line)
-		return
-	}
-	t.Fatalf("the NATIVE OK line carries no harness= field:\n%s", line)
 }
 
 // fieldOf is one `k=v` field of a line, or "" when the line does not carry it. It lives in

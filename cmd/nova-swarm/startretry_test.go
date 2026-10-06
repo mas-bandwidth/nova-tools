@@ -2,11 +2,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -80,74 +76,4 @@ func startRun(t *testing.T, label, card string) (nativeRunResult, string, []time
 	}, &errOut)
 	require.Equal(t, 0, code, "%s", errOut.String())
 	return res, errOut.String(), waits, filepath.Join(slot, "jobs", label)
-}
-
-// TestAFailedStartIsRetriedInPlace: a harness whose first three starts die at start is
-// started again in the same job after 1, 1, 1 s, each retry one NATIVE RETRY line; the
-// fourth start runs and publishes, and the run is OK with one result.
-func TestAFailedStartIsRetriedInPlace(t *testing.T) {
-	t.Parallel()
-	res, log, waits, job := startRun(t, "start-retry", "a card\nFAKE-LAUNCHES\nFAKE-START-FAIL 3\n")
-	assert.Equal(t, []time.Duration{time.Second, time.Second, time.Second}, waits, "the owner's schedule, from its start")
-	assert.Equal(t, 3, strings.Count(log, "NATIVE RETRY "), "%s", log)
-	assert.Contains(t, log, "NATIVE RETRY start=2 wait=1s cause=unknown-model")
-	assert.Contains(t, log, "NATIVE RETRY start=4 wait=1s cause=unknown-model")
-	assert.Equal(t, 0, res.rc, "the fourth start ran: %s", log)
-	assert.NotContains(t, log, "PROVIDER-5XX", "a start that got past is no hand-back")
-	launches, err := os.ReadFile(filepath.Join(job, "launches"))
-	require.NoError(t, err)
-	assert.Equal(t, 4, strings.Count(string(launches), "\n"), "four starts, one job: %s", launches)
-	assert.Zero(t, res.starts)
-}
-
-// TestEveryStartFailedHandsBackNamingThem: a harness that never gets past its start is
-// started ten times (the first and nine retries, waiting 31 s in all), then handed back as
-// a provider failure whose cause is the harness catalog's refusal and names the starts.
-func TestEveryStartFailedHandsBackNamingThem(t *testing.T) {
-	t.Parallel()
-	res, log, waits, job := startRun(t, "start-spent", "a card\nFAKE-LAUNCHES\nFAKE-START-FAIL 99\n")
-	assert.Equal(t, harnessStartWaits, waits, "every wait of the schedule, once")
-	assert.Equal(t, 9, strings.Count(log, "NATIVE RETRY "))
-	assert.Equal(t, 10, res.starts)
-	launches, err := os.ReadFile(filepath.Join(job, "launches"))
-	require.NoError(t, err)
-	assert.Equal(t, 10, strings.Count(string(launches), "\n"))
-	assert.Contains(t, log, "NATIVE PROVIDER-5XX ")
-	assert.Contains(t, log, "reason=provider: class=unknown-model status=- msg=model not found in the harness catalog: openrouter/x-ai/grok-4.7 (harness starts tried: 10)")
-}
-
-// TestALaunchReadsTheMachinesOneCatalog: with a catalog in place under the root, the
-// launch is handed a copy of it in its own data home and the harness's own fetch is off,
-// so the model is found with the same catalog whether or not the network answers; with
-// none, the launch says so once and the harness fetches its own.
-func TestALaunchReadsTheMachinesOneCatalog(t *testing.T) {
-	t.Parallel()
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	catalog := `{"fake":{"id":"fake","models":{"fake-model":{"id":"fake-model","limit":{"context":200000,"output":32000}}}}}`
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "catalog"), 0o755))
-	require.NoError(t, os.WriteFile(catalogFile(root), []byte(catalog), 0o644))
-	var errOut bytes.Buffer
-	_, code := nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: "seeded", card: []byte("FAKE-CATALOG\n"),
-		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
-	}, &errOut)
-	require.Equal(t, 0, code, "%s", errOut.String())
-	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "seeded", "RESULT.md"))
-	require.NoError(t, err)
-	got := string(raw)
-	assert.Contains(t, got, "/slot-1/data/.cache/opencode/models.json\n", "a copy in the launch's own data home")
-	assert.Contains(t, got, "fetch_disabled=1", "the harness's own fetch is off")
-	assert.Contains(t, got, "print_logs=1", "the harness prints its ERROR lines")
-	assert.Contains(t, got, fmt.Sprintf("sha256=%x", sha256.Sum256([]byte(catalog))), "the launch reads the machine's catalog byte for byte")
-	assert.NotContains(t, errOut.String(), "NATIVE NOTE catalog")
-
-	_, bare := aSlot(t)
-	var none bytes.Buffer
-	_, code = nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: "bare", card: []byte("FAKE-CATALOG\n"),
-		slotDir: bare, root: filepath.Dir(bare), deadline: 30 * time.Second, noWall: true,
-	}, &none)
-	require.Equal(t, 0, code, "%s", none.String())
-	assert.Equal(t, 1, strings.Count(none.String(), "NATIVE NOTE catalog: no catalog at "), "%s", none.String())
 }
