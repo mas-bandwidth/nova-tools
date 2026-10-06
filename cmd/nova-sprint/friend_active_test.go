@@ -44,6 +44,7 @@ func TestAFriendHoldingCardsWhoseSessionWritesNothingIsAnAlarm(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	ta.ok(beatActive(ta, "amy", 5*time.Minute))
 	_, ok := item(ta.coordView(""), "f:amy")
 	assert.False(t, ok, "she wrote five minutes ago")

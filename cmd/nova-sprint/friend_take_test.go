@@ -78,7 +78,7 @@ func TestFriendTakeTakesBackAnUnstartedCardAndTheTickDealsItToAnother(t *testing
 	assert.Equal(t, sprint.Working, c.Primary.Col)
 	out = ta.ok("friend sync --root " + root)
 	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=bob card=s1-1.w1 job=s1-1.w1.g3 branch=sprint/s1-1.w1.g3.e0")
-	assert.Equal(t, "working", queueStates(t, root, "bob")["s1-1.w1"])
+	assert.Equal(t, "queued", queueStates(t, root, "bob")["s1-1.w1"], "ready on his row until he starts it")
 	ta.clean()
 }
 

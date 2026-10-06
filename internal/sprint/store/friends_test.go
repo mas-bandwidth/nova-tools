@@ -76,6 +76,8 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 
 	h.startMachine()
 	h.machine()
+	h.start("amy", 2) // each starts what her lanes hold: dealt ready, working once started
+	h.start("bob", 1)
 
 	snap := h.snap()
 	amyRow := sprint.FriendRow("amy")
@@ -105,8 +107,9 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	snap = h.snap()
 	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Working), "no ready card auto-advances for one-shot friend")
 
-	// Next tick deals the next card to bob
+	// Next tick deals the next card to bob, and he starts it
 	h.machine()
+	h.start("bob", 1)
 	snap = h.snap()
 	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
 	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
@@ -142,6 +145,7 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 
 	h.startMachine()
 	h.machine()
+	h.start("amy", 2) // she starts what her lanes hold
 
 	snap := h.snap()
 	amyRow := sprint.FriendRow("amy")

@@ -50,8 +50,8 @@ func TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick(t *testing.T) {
 		h.up("bob")
 		h.machine()
 		snap := h.snap()
-		assert.Equal(t, 2, snap.Fleet.Count(bob, sprint.Working), "his idle lanes first")
-		assert.Equal(t, 4, held(snap, bob), "then evened to his room")
+		assert.Zero(t, snap.Fleet.Count(bob, sprint.Working), "ready on his row until he starts them")
+		assert.Equal(t, 4, held(snap, bob), "his idle lanes first, then evened to his room")
 		assert.Equal(t, 12, held(snap, amy))
 		assert.Equal(t, amy, snap.Fleet.Placed(newest).Row)
 		assert.Empty(t, sprint.Check(snap, nil))
@@ -82,6 +82,7 @@ func fullAmy(t *testing.T) (*harness, string) {
 	h.up("amy")
 	h.startMachine()
 	h.machine()
+	h.start("amy", 8) // she starts what her lanes hold: dealt ready, working once started
 	amy := sprint.FriendRow("amy")
 	snap := h.snap()
 	require.Equal(t, 8, snap.Fleet.Count(amy, sprint.Working))

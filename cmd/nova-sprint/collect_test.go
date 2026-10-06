@@ -20,6 +20,7 @@ func TestCollectFinishesAReportInAnotherFriendsTreeOnce(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy", "bob")
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	// written ahead, in bob's tree: friend sync reads amy's alone
 	outboxReport(t, root, "bob", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nDone in bob's tree.\n")
 	out := ta.ok("collect --root " + root)
@@ -38,6 +39,7 @@ func TestCollectFailsAHoldAndADeadLane(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: HOLD\n\nThe gate is red.\n")
 	out := ta.ok("collect amy --root " + root)
 	assert.Contains(t, out, "COLLECT s1-1.w1 FAILED friend amy HOLD: Verdict: HOLD The gate is red.")
@@ -47,6 +49,7 @@ func TestCollectFailsAHoldAndADeadLane(t *testing.T) {
 	// a lane ended with no report, and no live run: failed only with --dead-lanes
 	ta2, root2 := friendCardApp(t, "friend amy", "amy")
 	ta2.ok("tick")
+	ta2.startFriend("amy", 1)
 	dir := filepath.Join(root2, "amy-working")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	end := "2026-10-06 07:10:00 AM END s1-1.w1 model=m exit=1 wall=600s report=no"
@@ -68,6 +71,7 @@ func TestCollectRefusesAHeadNotOnOrigin(t *testing.T) {
 	const tip = "fedcba9876543210fedcba9876543210fedcba98"
 	ta.a.tip = tipIs(t, tip)
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nPushed.\n")
 	out := ta.ok("collect --root " + root)
 	assert.Contains(t, out, "COLLECT s1-1.w1 REFUSED Head "+landHead+" is not origin's tip of sprint/s1-1.w1.g1.e0, "+tip)

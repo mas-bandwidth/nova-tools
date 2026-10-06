@@ -16,7 +16,7 @@ func TestACappedLaneIsReDealtOnceAtTheNextTierUp(t *testing.T) {
 	w := friendWorld(t, friendBrief("only friend amy"))
 	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash,pro,heavy"}}
 	amy := FriendRow("amy")
-	dealWith(w, seats...)
+	dealStarted(w, seats...)
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 	capped := "friend amy HOLD: nova-friend lane 1 of amy finished card s1-1.w1: capped at 15m0s (tier flash, overrun 3s): the card's wall reached its tier's cap and the daemon ended the lane, exit -1, wall 15m3s; no pushed head found."
 
@@ -38,7 +38,7 @@ func TestACappedLaneIsReDealtOnceAtTheNextTierUp(t *testing.T) {
 	assert.Equal(t, "15m0s", cons.Consumers[0].Cap, "the cost record reads back with its cap")
 	assert.Empty(t, Check(w.s, nil))
 
-	dealWith(w, seats...)
+	dealStarted(w, seats...)
 	w2 := w.s.Fleet.Card("s1-1.w2")
 	require.NotNil(t, w2, "the next deal cuts the next attempt")
 	assert.Equal(t, amy, w2.Row)
