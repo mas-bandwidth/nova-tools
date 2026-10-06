@@ -36,7 +36,7 @@ func TestLandRepairsAStrayBackquoteOnItsMergeAndSaysSo(t *testing.T) {
 			r.commit("doc.md", "# Bus\n\nThe `push` verb.\n", "the doc")
 			r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
 			r.git(r.worker, "fetch", "-q", "origin")
-			r.ok("add --stream s1 --one --brief-file " + writeNeedsBrief(t, t.TempDir(), "c1", "Fix c1.\nPATHS: doc.md, security/**", ""))
+			r.ok("add --stream s1 --one --brief-file " + writeNeedsBrief(t, t.TempDir(), "c1", "Fix c1. tier: flash\nPATHS: doc.md, security/**", ""))
 			require.NoError(t, os.MkdirAll(filepath.Join(r.worker, "security"), 0o755))
 			heads := map[string]string{"c1": r.head("c1", "main", tc.file, tc.text)}
 			r.queued(heads, "c1")
