@@ -28,6 +28,7 @@ func cmdSpelling(e env, args []string, stdout, stderr io.Writer) int {
 	dryRun := fs.Bool("dry-run", false, "with --write, print the corrections it would make and write nothing")
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned (repeatable; empty by default)")
+	allowEmpty := fs.Bool("allow-empty", false, "answer OK when zero files are read; without it, a run that read nothing is FAILED")
 	maxFlag := addMax(fs)
 
 	if !parseFlags(fs, args, stderr) {
@@ -113,9 +114,18 @@ func cmdSpelling(e env, args []string, stdout, stderr io.Writer) int {
 	// One verdict for both renderings: what was asked (a check, a write, or a
 	// write planned by --dry-run) decides the status, the exit, the facts and
 	// the listing's bound; the line form and the JSON print the same value.
-	v := spellingVerdictOf(res, *write, *dryRun, *maxFlag)
+	v := spellingVerdictOf(res, *write, *dryRun, *maxFlag, *allowEmpty)
 	if asJSON {
 		return renderSpelling(stdout, root, res, v)
+	}
+	if v.empty {
+		// No green over nothing: the run read no file, so it read nothing, and
+		// an OK over nothing is not green (STANDARD §2, exit codes tell the
+		// truth). The FAILED names the count and the flag that accepts the
+		// empty set.
+		fmt.Fprintf(stderr, "SPELLING FAILED %s=0 misspellings=0: looked at nothing: %s=0; run: nova-check spelling --dir %s --allow-empty if nothing is the answer\n",
+			oneline.Field(looks["spelling"]), oneline.Field(looks["spelling"]), oneline.Field(root))
+		return 1
 	}
 	if v.planned {
 		list := bounded.Capped(stdout, v.max, "SPELLING", "misspelling", maxRemedy)
@@ -159,17 +169,21 @@ func cmdSpelling(e env, args []string, stdout, stderr io.Writer) int {
 type spellingVerdict struct {
 	planned bool // --write --dry-run: corrections listed, nothing written
 	failed  bool
+	empty   bool // the run read no file and --allow-empty did not accept that
 	exit    int
 	max     int // the listing's bound: --max, except a real write lists every correction it made
 }
 
-func spellingVerdictOf(res check.SpellingResult, write, dryRun bool, maxFlag int) spellingVerdict {
+func spellingVerdictOf(res check.SpellingResult, write, dryRun bool, maxFlag int, allowEmpty bool) spellingVerdict {
 	v := spellingVerdict{planned: write && dryRun, max: maxFlag}
 	if write && !dryRun {
 		v.max = 0
 	}
 	if !write && len(res.Findings) > 0 {
 		v.failed, v.exit = true, 1
+	}
+	if res.FilesScanned == 0 && !allowEmpty {
+		v.empty, v.failed, v.exit = true, true, 1
 	}
 	return v
 }
