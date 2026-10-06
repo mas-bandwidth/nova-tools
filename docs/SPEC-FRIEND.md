@@ -384,6 +384,47 @@ no usage flag yet (the Claude lanes, below).
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
+### limits-mean-down-w-r.w1~15: each harness's limit and credits texts, down until the reset
+
+The decision of 2026-10-04: "out of credits = down". `internal/friend/limits.go` has one
+parser per harness (claude, codex, opencode, grok, antigravity, dsh, gemini):
+`ParseLimit(harness, out, now, rest)` reads the last 2 KiB of a **failed** turn
+(a reply that succeeded and only talks of a limit is none) for that harness's
+own wording, the 429 and 402 bodies and what it prints itself, and answers the
+kind, `limit` or `credits` (credits first: a line that says both is the
+balance), and the reset when the line names one (an epoch or `resets_in_seconds`
+in a 429 body, a stamp, a date and time in UTC, a duration like `after 3h12m5s`
+or `in 2 days 3 hours`, a clock time), else now plus `--limit-rest` (1h, `Limits.Rest`).
+The texts are `internal/friend/testdata/limits.tsv`, one line each with the kind
+and reset they parse to (`TestEachHarnessUsageLimitAndCreditsTextParsesWithItsReset`);
+a text not in a harness's words, a transient `rate_limit_error` among them,
+stays an ordinary failed turn. They are the harnesses' documented wordings, not
+captures of a live run, so a text a harness prints that is not in the file is
+one line to add. A Claude `rate_limit_event` is still read first (`ReadLimit`).
+
+On a match `Limits` holds the friend down as before (`Gate`: nothing delivered,
+every message pending and counted toward nothing; one wake turn after the reset,
+and if the text still says limited the next reset is taken from it; the seat is
+told once of the limit and once of the wake). The daemon keeps answering pings
+with the daemon pong (a ping is no turn) and writes `session=limited
+limit_kind=<k> limit_until=<RFC3339>` into status.json (`Status.LimitKind`,
+`LimitUntil`, from `Daemon.Limited`) and `session=limited kind=<k> until=<t>`
+on the record, once per reset. `TestUsageLimitMarksDownUntilReset` runs it over
+`bustest.Fake`, a fake harness and an injected clock.
+
+Model: `tla/Friend.tla` has `lim` and `limUntil`, `HitLimit` and `Wake`; no turn
+starts while limited (`NoTurnWhileLimited`, reversed witness
+`MCFriendBrokenDeliverLimited`) and limited ends (`LimitedEnds`, reversed witness
+`MCFriendBrokenNeverWake`, which holds the friend limited for ever).
+
+Owed: the beat still goes **missing** while limited (`Limits.Beat` holds it back, so
+her row reads down by the lapse), and does not carry down with the reason and the
+until. That needs `friend beat` to take `--down --reason --until` (the pair
+`friend down --until` carries), in `cmd/nova-sprint/friends.go` and
+`internal/sprint`, outside this card's paths. `install` does not pass
+`--limit-rest` into the launchd plist yet (`launchd.go`), so a daemon so installed
+uses the 1h default.
+
 ### The harness check (internal/friend/alive.go)
 
 Presence is the session's check (above); this one says what the process
