@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -381,3 +382,72 @@ func (s *Stager) localJobProtected(job string, mark LaneMark, marked bool) bool 
 	_, err = os.Lstat(laneMarkPath(s.Dir, job))
 	return !errors.Is(err, fs.ErrNotExist)
 }
+
+// ClaimJob serializes a fresh lane's mark with staging and deletion. A reported
+// job cannot be claimed even if it was selected before its report appeared.
+func (s *Stager) ClaimJob(job, who string, now time.Time) (string, error) {
+	if !s.admission.TryLock() {
+		return "job collection or staging", nil
+	}
+	defer s.admission.Unlock()
+	for _, file := range []string{"REPORT.md", "RESULT.md"} {
+		_, err := os.Lstat(filepath.Join(s.Dir, "outbox", job, file))
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "reported job", nil
+		}
+	}
+	return ClaimLane(s.Dir, job, who, now)
+}
+
+type capacityResult struct {
+	jobs int64
+	err  error
+	at   time.Time
+}
+
+// CapacityAdmission measures afresh for each prospective claim, asynchronously.
+// It consumes each result once and refuses old results, preserving beat liveness.
+type CapacityAdmission struct {
+	Dir     string
+	Cap     int64
+	Now     func() time.Time
+	Measure func(string) (int64, error)
+	pending chan capacityResult
+	wg      sync.WaitGroup
+}
+
+func (a *CapacityAdmission) Check(ctx context.Context, _ Card) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if a.pending != nil {
+		select {
+		case sample := <-a.pending:
+			a.pending = nil
+			if a.Now().Sub(sample.at) > 2*BeatEvery {
+				return fmt.Errorf("jobs cap %d bytes refuses a new lane: admission measurement expired", a.Cap)
+			}
+			if sample.err != nil {
+				return fmt.Errorf("jobs cap %d bytes refuses a new lane: %w", a.Cap, sample.err)
+			}
+			if sample.jobs >= a.Cap {
+				return fmt.Errorf("jobs cap %d bytes refuses a new lane: jobs=%d", a.Cap, sample.jobs)
+			}
+			return nil
+		default:
+			return fmt.Errorf("jobs cap %d bytes refuses a new lane until fresh admission measurement completes", a.Cap)
+		}
+	}
+	a.pending = make(chan capacityResult, 1)
+	pending := a.pending
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		jobs, err := a.Measure(a.Dir)
+		pending <- capacityResult{jobs: jobs, err: err, at: a.Now()}
+	}()
+	return fmt.Errorf("jobs cap %d bytes refuses a new lane until fresh admission measurement completes", a.Cap)
+}
+
+// Wait joins the admission measurement during a daemon's orderly stop.
+func (a *CapacityAdmission) Wait() { a.wg.Wait() }

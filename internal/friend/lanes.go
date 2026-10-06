@@ -466,7 +466,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 				}
 			}
 			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
-			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+			claim := d.Claim
+			if claim == nil {
+				claim = func(job, who string, now time.Time) (string, error) { return ClaimLane(d.Dir, job, who, now) }
+			}
+			holder, err := claim(filepath.Base(c.Outbox), l.laneWho(ln.n), now)
 			if err != nil {
 				d.Record(fmt.Sprintf("%s lane %d: card %s not started: its lane mark cannot be written: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
 				continue

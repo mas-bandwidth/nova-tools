@@ -191,7 +191,8 @@ type Daemon struct {
 	// Stage stages a held work card's job (Stager.Stage: jobs/<job>/repo and its JOB.md) and
 	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
 	// its brief alone.
-	Admit func(context.Context, Card) error // SPEC-FRIEND, jobs capacity: before claiming a new lane
+	Claim func(job, who string, now time.Time) (string, error) // same guard as collection
+	Admit func(context.Context, Card) error                    // SPEC-FRIEND, jobs capacity: before claiming a new lane
 	Stage func(ctx context.Context, p Packet) (string, error)
 	// Prune runs the guarded collector off the beat path, protecting held, running
 	// and staging jobs; nil collects none.

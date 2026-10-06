@@ -1366,7 +1366,8 @@ without waiting for filesystem walks or origin. It protects the row's held
 jobs, its lanes and stages, every inbox directory and fresh running lane mark.
 A stale running mark is eligible only with the same report and publication
 proof. Staging and collection share admission: a collector never races a stage.
-Retained reports prevent a lane from claiming a collected job. Each pass scans
+Lane claims share the same guard and recheck retained reports before writing a
+lane mark, so collection and a new claim cannot overlap. Each pass scans
 at most 32 candidate jobs in oldest-first windows and checks at most four
 publication proofs, including failed proofs; subsequent passes rotate the
 window. It removes at most four jobs. A locked worktree, inaccessible origin or
@@ -1377,8 +1378,10 @@ stays. The next beat retries deferred work.
 `run` and `install` accept `--jobs-cap <bytes>` (positive, default 21474836480,
 20 GiB). Staging reserves the next worktree's blob sizes plus metadata before
 creating it, serialized across repositories. A new one-shot card is refused
-when the latest measured jobs bytes reach the cap or are unknown; the refusal
-names the cap. The same admission applies to Claude process-per-card lanes.
+after a fresh asynchronous admission measurement reaches the cap or fails; the refusal
+names the cap. Admission consumes each result once and rejects results older
+than two beat intervals; it never relies on the row’s cached below-cap sample.
+The same admission applies to Claude process-per-card lanes.
 Running work is never killed to enforce the cap. The cap is an admission
 budget, not a filesystem quota: a running card can grow its own scratch.
 
