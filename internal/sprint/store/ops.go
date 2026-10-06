@@ -191,6 +191,11 @@ func (st *Store) heldState(ctx context.Context, s *sprint.Snapshot, pending *OpR
 	return h, nil
 }
 
+// pendingWhy is the hold of every primary while an operation is half done.
+func pendingWhy(f Fence) string {
+	return "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"
+}
+
 // Held is what holds one primary now: the no-stall rule's answer for it.
 func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 	st, err := st.pin(ctx)
@@ -202,7 +207,7 @@ func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 		return sprint.Hold{}, err
 	}
 	if f.Pending != nil {
-		return sprint.Hold{ID: id, Place: id, Why: "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}, nil
+		return sprint.Hold{ID: id, Place: id, Why: pendingWhy(f)}, nil
 	}
 	s, err := st.Load(ctx, All, func(s *sprint.Snapshot) map[string][]string {
 		return map[string][]string{sprint.Work: append(sprint.ResolveExtras(s), id)}
