@@ -1,0 +1,11 @@
+./cairn.go
+./open_remedy.go
+./read_existing.go
+./atomic_entry_test.go
+./benchstore_test.go
+./cairn_cover_test.go
+./cairn_test.go
+./coverage_test.go
+./open_remedy_cover_test.go
+./read_existing_test.go
+./validid_test.go

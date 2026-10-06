@@ -75,7 +75,7 @@ func TestCairnCoverPlanOpen(t *testing.T) {
 		store := t.TempDir()
 		rec, err := PlanOpen(store, "s", "bench-a/session-7", now, PublishManual)
 		require.NoError(t, err, "PlanOpen")
-		assert.Equal(t, OpenRecord{Source: "bench-a/session-7", Publish: PublishManual, Found: true}, rec,
+		assert.Equal(t, OpenRecord{Source: "bench-a/session-7", Publish: PublishManual, Stamp: now, Found: true}, rec,
 			"the plan is the open's own: the source, the policy, found")
 		assert.NoFileExists(t, filepath.Join(store, "sessions", "s.md"), "the plan must write no session record")
 		assert.NoFileExists(t, filepath.Join(store, "log.jsonl"), "the plan must write no log line")
@@ -87,7 +87,7 @@ func TestCairnCoverPlanOpen(t *testing.T) {
 		require.NoError(t, Open(store, "s", "src", now, PublishManual), "Open")
 		rec, err := PlanOpen(store, "s", "src", now, PublishManual)
 		require.NoError(t, err, "PlanOpen")
-		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Found: true}, rec)
+		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Stamp: now, Found: true}, rec)
 		raw, err := os.ReadFile(filepath.Join(store, "log.jsonl"))
 		require.NoError(t, err, "ReadFile log.jsonl")
 		assert.Equal(t, 1, len(strings.Split(strings.TrimSpace(string(raw)), "\n")), "the plan must add no log line")
@@ -101,7 +101,7 @@ func TestCairnCoverPlanOpen(t *testing.T) {
 		require.Error(t, err, "PlanOpen must refuse another policy")
 		var ce *ConflictError
 		assert.ErrorAs(t, err, &ce, "the refusal must be the caller's conflict, not a crash")
-		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Found: true}, rec)
+		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Stamp: now, Found: true}, rec)
 	})
 
 	t.Run("a flat record plans with no open record behind it", func(t *testing.T) {

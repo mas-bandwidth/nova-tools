@@ -198,13 +198,16 @@ func TestIndexSessionCountsOnlyTheSelection(t *testing.T) {
 	// An empty session is counted and named: sessions= is the selection's count,
 	// not the store's, and INDEX SESSION lists it with entries=0.
 	out := c.ok("index", "--session", "s2")
-	printed(t, out, "INDEX SESSION session=s2 entries=0", "INDEX OK sessions=1 entries=0")
+	require.Contains(t, out, "INDEX SESSION session=s2 publish=manual opened=", "index --session s2 should print session line with publish and opened")
+	require.Contains(t, out, "entries=0", "index --session s2 should print entries count")
+	require.Contains(t, out, "INDEX OK sessions=1 entries=0", "index --session s2 should print final line")
 	require.NotContains(t, out, "sessions=2", "sessions= counted the whole store, not the selection: %s", out)
 
 	// The full index names every session, empty or not.
 	out = c.ok("index")
-	printed(t, out, "INDEX SESSION session=s1 entries=1", "INDEX SESSION session=s2 entries=0",
-		"INDEX OK sessions=2 entries=1")
+	require.Contains(t, out, "INDEX SESSION session=s1 publish=manual opened=", "full index should print s1 session line with publish and opened")
+	require.Contains(t, out, "INDEX SESSION session=s2 publish=manual opened=", "full index should print s2 session line with publish and opened")
+	require.Contains(t, out, "INDEX OK sessions=2 entries=1", "full index should print final line")
 }
 
 // TestHelpWithMoreThanOneWordRefusesAsHelp pins the second half of the finding:

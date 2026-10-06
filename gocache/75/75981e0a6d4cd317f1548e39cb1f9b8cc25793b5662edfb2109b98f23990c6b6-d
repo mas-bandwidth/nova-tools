@@ -1,0 +1,7 @@
+./dryrun.go
+./git.go
+./skip.go
+./testkit.go
+./tree.go
+./verb.go
+./waits.go

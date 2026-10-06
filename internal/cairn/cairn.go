@@ -425,6 +425,7 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 // for the session (a flat store, or no log at all).
 type OpenRecord struct {
 	Source, Publish string
+	Stamp           time.Time
 	Found           bool
 }
 
@@ -467,7 +468,8 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 			continue
 		}
 		if rec["event"] == "open" && rec["session"] == session {
-			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Found: true}, nil
+			stamp, _ := time.Parse(time.RFC3339Nano, rec["stamp"])
+			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Stamp: stamp, Found: true}, nil
 		}
 	}
 	return OpenRecord{}, nil
@@ -515,7 +517,7 @@ func open(store, session, source string, now time.Time, publish string, write bo
 			return rec, nil
 		}
 		if !rec.Found {
-			planned := OpenRecord{Source: source, Publish: publish, Found: true}
+			planned := OpenRecord{Source: source, Publish: publish, Stamp: now.UTC(), Found: true}
 			if !write {
 				return planned, atomicfile.CheckAppend(filepath.Join(store, "log.jsonl"))
 			}
@@ -535,7 +537,7 @@ func open(store, session, source string, now time.Time, publish string, write bo
 		}
 		return rec, nil
 	}
-	planned := OpenRecord{Source: source, Publish: publish, Found: true}
+	planned := OpenRecord{Source: source, Publish: publish, Stamp: now.UTC(), Found: true}
 	if !write {
 		// The plan is this open's own: the record and the log line it would
 		// write, checked as the write checks them, nothing written.

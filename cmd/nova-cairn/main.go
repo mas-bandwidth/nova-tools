@@ -354,7 +354,12 @@ func index(c *tool.Call) *tool.Out {
 	}
 	o := tool.Done()
 	for _, s := range names {
-		o.Item("session", "session", s, "entries", perSession[s])
+		rec, _ := cairn.ReadOpen(store, s)
+		publish := "unknown"
+		if rec.Found {
+			publish = rec.Publish
+		}
+		o.Item("session", "session", s, "publish", publish, "opened", stampOf(rec.Stamp), "entries", perSession[s])
 	}
 	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {

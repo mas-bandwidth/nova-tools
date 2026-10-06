@@ -1,0 +1,10 @@
+./main.go
+./badid_test.go
+./bare_verb_refusal_names_door_test.go
+./dryplan_test.go
+./firstrun_test.go
+./main_test.go
+./policy_test.go
+./read_existing_test.go
+./retry_stamp_test.go
+./verbhelp_test.go
