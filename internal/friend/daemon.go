@@ -102,6 +102,10 @@ type Daemon struct {
 	// Pong is the session's recorded answer, read each step while a
 	// challenge is open (ReadPong over the state files).
 	Pong func() (Pong, bool, error)
+	// Limited is the harness's limit now: its kind and reset, and whether there is one
+	// (Limits.Limited, Limits.Kind); nil: none. While there is one the status says
+	// session=limited with them, and the turns the Gate defers stay pending.
+	Limited func() (kind string, until time.Time, limited bool)
 	// Status receives the daemon's state whenever it changes, and every
 	// StatusEvery (WriteStatus over the state files).
 	Status func(Status) error
@@ -152,6 +156,7 @@ type Daemon struct {
 	m           *Machine
 	status      Status
 	written     time.Time
+	limitSaid   time.Time // the reset of the limit last said on the record
 	written0    Status
 	statusErrAt time.Time
 	active      time.Time // the last walk's answer
@@ -899,6 +904,18 @@ func (d *Daemon) flush(now time.Time) {
 	s := d.status
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
+	if d.Limited != nil && s.Session != SessionBroken {
+		if kind, until, limited := d.Limited(); limited {
+			s.Session, s.LimitKind, s.LimitUntil = SessionLimited, kind, until
+			if d.limitSaid != until {
+				d.limitSaid = until
+				d.Record(fmt.Sprintf("%s session=limited kind=%s until=%s: nothing is delivered, every message stays pending, pings are answered", now.UTC().Format(time.RFC3339), kind, until.UTC().Format(time.RFC3339)))
+			}
+		} else if !d.limitSaid.IsZero() {
+			d.limitSaid = time.Time{}
+			d.Record(now.UTC().Format(time.RFC3339) + " session=ok: the harness answered after its reset")
+		}
+	}
 	s.At, s.LastBeat, s.Beats = time.Time{}, time.Time{}, 0 // what every beat changes is not a change
 	if s == d.written0 && now.Sub(d.written) < StatusEvery {
 		return
