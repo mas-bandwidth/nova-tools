@@ -150,7 +150,11 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	// reader's $ORG and $REPO where the recording's names are printed.
 	// `id` joined on 2026-10-03 with nova-bus's first run: a message's id is
 	// a ULID made from the store's time, so it belongs to the run.
-	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch"}
+	// `receipt` and `commit` joined on 2026-10-06 with nova-check's CLI
+	// examples: a dogfood receipt's name ends in a hash of the receipt, which
+	// holds the run's instant, and a hygiene finding names a commit of the
+	// repository the reader builds at their own instant.
+	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch", "receipt", "commit"}
 	got := VolatileNames()
 	require.Equal(t, len(want), len(got), "onboarding.Volatile holds %v, want %v", got, want)
 	for i := range want {
@@ -252,6 +256,7 @@ func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
 		{name: "took", field: "took", docValue: "5ms", runValue: "9h", mine: "8ms"},
 		{name: "created", field: "created", docValue: "2026-09-16T08:22:37Z", runValue: "2026-09-16T09:00:00Z", mine: "2026-09-16T08:22:37Z"},
 		{name: "sha", field: "sha", docValue: "abc1234", runValue: "0000000", mine: "def5678"},
+		{name: "commit", field: "at", docValue: "0a19082d2973:", runValue: "5be0c1d2e3f4:", mine: "7c1e2d3f4a5b:"},
 		{name: "branch", field: "branch", docValue: "seal/air-GH_TOKEN-20260927-013000", runValue: "seal/air-GH_TOKEN-20260927-020000", mine: "seal/air-GH_TOKEN-20260926-120000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -298,6 +303,27 @@ func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
 	}
 	descendantRun := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3/cache n=0\n"}}
 	compare(t, "a descendant of the run's directory was not normalised", descendantDoc, descendantRun, []Field{field}, 0)
+}
+
+// `receipt` is not token-anchored either: the sum it covers is the tail of a
+// path. It replaces the eight hex digits and `.json` at the end of a token and
+// nothing else, so the directory, stamp and slugs in front of the sum are
+// still compared, and a sum that is not the end of the name stays on the line.
+func TestTheReceiptEntryTouchesNothingButTheSum(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{
+		"$ nova-bus read --root ./r",
+		"BUS READ file=./r/20260918T090000Z-nova-check-links-ada-8e9b64a4.json",
+	}
+	field := []Field{{Name: "receipt"}}
+	run := func(line string) []Result { return []Result{{Stdout: line + "\n"}} }
+
+	compare(t, "a receipt's sum was not normalised", doc, run("BUS READ file=./r/20260918T090000Z-nova-check-links-ada-70e69505.json"), field, 0)
+	compare(t, "a sum that differs with nothing declared", doc, run("BUS READ file=./r/20260918T090000Z-nova-check-links-ada-70e69505.json"), nil, 1)
+	compare(t, "the stamp in front of the sum was swallowed", doc, run("BUS READ file=./r/20260918T100000Z-nova-check-links-ada-70e69505.json"), field, 1)
+	compare(t, "the directory in front of the sum was swallowed", doc, run("BUS READ file=./s/20260918T090000Z-nova-check-links-ada-70e69505.json"), field, 1)
+	compare(t, "a sum inside a longer name was swallowed", doc, run("BUS READ file=./r/20260918T090000Z-nova-check-links-ada-70e69505.json.bak"), field, 1)
 }
 
 // A value that is not what the entry says it is stays on the line and is
