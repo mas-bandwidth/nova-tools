@@ -405,7 +405,15 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 	recipe := strings.Join(mk.recipes["test"], "\n")
 	assert.Truef(t, strings.Count(recipe, "SLOWTESTS_ENFORCE") == 1 && strings.Contains(recipe, "$(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,)"), "the test recipe reads SLOWTESTS_ENFORCE other than to pass --enforce:\n%s", recipe)
-	assert.Containsf(t, recipe, `|| { [ "$$status" -ne 0 ] || status=2; }; exit $$status`, "the test recipe does not carry slowtests' exit through:\n%s", recipe)
+	// The clean-tree check (git status --porcelain, TestNoTestWritesIntoTheSourceTree)
+	// stands between slowtests' status and the exit. The exit is still that
+	// status: a slowtests failure is not swallowed, and a file a test left fails too.
+	const carry = `|| { [ "$$status" -ne 0 ] || status=2; }`
+	idx := strings.Index(recipe, carry)
+	require.Greaterf(t, idx, -1, "the test recipe does not carry slowtests' exit through:\n%s", recipe)
+	rest := recipe[idx+len(carry):]
+	assert.Containsf(t, rest, `exit $$status`, "the test recipe does not exit with the status slowtests set:\n%s", recipe)
+	assert.NotContainsf(t, rest, "exit 0", "the test recipe exits 0 after slowtests, which swallows its failure:\n%s", recipe)
 }
 
 // TestMeasuredBenchesAreCIRunners: the benches a row may name as where it was
