@@ -2514,10 +2514,10 @@ and it is the coordinator's decision, receipted.
   While STOPPED, beats are accepted and the fleet's cells show the derived
   status, but nothing is dealt; the first tick after `start` applies what
   changed.
-- The status cell shows held, up or down. The load cell shows the highest load
+- The status cell shows adopting, held, up or down. The load cell shows the highest load
   of the last 10 s with one decimal while the beat is fresh, and is empty
   otherwise, never a zero.
-- The fleet table's rows are ordered by status, up first, then held, then
+- The fleet table's rows are ordered by status, up first, then held (adopting with the held), then
   down, and by machine name within each (the owner, 2026-10-01: "Please sort
   the fleet table such that we sort first alphabetically by machine name (as
   is current), then stable sort by status, such that "up" is first, then
@@ -2536,6 +2536,42 @@ A take by selection (`--as` and `--max`) takes the live generation; a finish
 by selection without `--as` is refused. A finish that arrives first moves the card to
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
+
+### Back from down: adopt the latest
+
+The owner, 2026-10-05 ~10:00 AM ET: "when fleet machines come back after a long time
+down, we need to remember to bring them back up and have them adopt latest. Just like
+friends." A member that was down (not held) and beats again is not brought up by the
+presence part at once: with an adopter installed (`sprint.InstallFleetBack`; the
+binary installs the release adopt path for one machine when `NOVA_SPRINT_ADOPT_FLAGS`
+names adopt's flags and it was built with a release stamp), the tick holds it in the
+same plan that sees the beat: its control card's status is `adopting`, it is held by
+the tick (`held`, `held_by=adopt`, reason `adopting <release>: back from down`), and
+`adopt_since` (the episode) and `adopt_to` (the release the coordinator's own machine
+runs) are written. A member held is dealt nothing, and the fleet table's status
+cell shows `adopting`, its own status beside `up`, `held` and `down`
+(`sprint.FleetRowStatus`: `adopting` while the tick holds it to adopt, whatever it
+beats, through a failed adoption too, and never `up`; the table orders it with the
+held). While it is held so, each tick asks the adopter for the episode's adoption:
+
+- none: it is started for that machine alone (`nova-update release adopt` with a
+  machine list of the one machine: a dry run reads the version installed, the adopt,
+  a dry run reads it back), beside the tick. One machine has at most one adoption in
+  flight; a start while one runs, or of an episode that ran, starts nothing.
+- running: nothing.
+- done, and the version read back is `adopt_to`: the hold comes off, the member is
+  up at its row's width, and one happened note goes to the coordinator, `fleet member
+  back`: `<m> is back: <old> -> <new>`. The next level and deal reach it.
+- failed, or the version read back is another: `adopt_failed` is written and the
+  failure is the hold's reason; the deal holds one judgment open (`a member's
+  adoption failed`, subject `member:<m>`, decisions `fleet up <m>`, `wait`) while it
+  stays so, and the tick starts no second adoption. `fleet up <m>` releases it as it
+  is; `hold <m>` makes the hold the coordinator's.
+
+With no adopter, or one that knows no release, presence is as above: a member back
+is up at once. The part is `sprint.FleetBackPresence` (internal/sprint/fleet_back.go),
+the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
+`TestAMachineBackFromDownAdoptsTheLatestBeforeItIsDealt`.
 
 ## 6. The readers
 

@@ -577,6 +577,20 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 
 Each later card of stream sprint-v1-release adds its row here with its check.
 
+## 17. Adopting one machine
+
+`release.OneMachine` is adopt for one machine at a time, as a library: the sprint's
+tick adopts the release the coordinator's machine runs onto a fleet member back from
+down (SPEC-SPRINT.md section 5, "Back from down: adopt the latest"). It runs adopt
+itself three times with a machine list naming the one machine: `--dry-run`, whose
+`RELEASE WOULD ADOPT ... installed=` is the version before; the adopt, which must
+print `RELEASE ADOPTED machine=<m>`; and `--dry-run` again, the version read back.
+The flags are the coordinator's (everything but `--machines`, `--version` and
+`--dry-run`), so the certification rule, the stage's digest and every refusal of this
+file apply unchanged. A machine has at most one adoption in flight, and an episode is
+adopted once. Tests: `TestOneMachineAdoptsOneAtATime`,
+`TestOneMachineRefusesANameAdoptRefuses`.
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
