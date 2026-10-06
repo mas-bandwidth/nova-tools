@@ -350,11 +350,9 @@ func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits [
 		if f.Status != Up {
 			continue
 		}
-		// her reads have their own room, as her work cards have theirs (friendReadLoad):
-		// her reads are no lanes of her work, and her work fills no read room of hers
 		room, width := friendRoom(f)
-		free[f.Name] = room - friendReadLoad(s, f.Name)
-		lanes[f.Name] = width - friendRowCount(s, f.Name, true, Working)
+		free[f.Name] = room - friendLoad(s, f.Name)
+		lanes[f.Name] = width - s.Fleet.Count(FriendRow(f.Name), Working)
 		up = append(up, f)
 	}
 	declared := map[string]bool{}

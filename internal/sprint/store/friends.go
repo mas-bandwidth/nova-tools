@@ -79,8 +79,8 @@ type FriendRow struct {
 	Name    string `json:"name"`
 	Ready   int    `json:"ready"`
 	Working int    `json:"working"`
-	// DealtFleet is the fleet's cards among them: work cards whose primary's WHO line
-	// names no friend (sprint.FriendsDealtFleet, from the tick's where record).
+	// DealtFleet is the fleet's cards among them: work cards whose primary carries no
+	// WHO line (sprint.FriendsDealtFleet, from the tick's where record, up to a tick behind).
 	DealtFleet int    `json:"dealt_fleet"`
 	Width      int    `json:"width"`
 	OK         int    `json:"ok"`
