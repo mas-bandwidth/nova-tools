@@ -127,12 +127,15 @@ mirror at the same tip (df30ce08); no clone was made.
 
     go test -count=1 -timeout 600s ./internal/docs ./internal/ci
 
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	2.181s
-    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	15.618s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	2.445s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	16.281s
 
     go test -count=1 -timeout 600s ./internal/docs -run TestDocsTreeIsConsistent
 
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.008s [no tests to run]
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.011s [no tests to run]
+
+Both runs of the gate (before the commit and on the pushed tip, on the Linux
+bench) passed whole.
 
 READ 8/10 — the banner answers what/how/use with a runnable example and a working throwaway-store recipe, and the spec page is precise and honest about limits; against that, one receipt shape is undocumented, batch's usage line hides its flags, and the primary read verbs have no JSON rendering.
 USE 8/10 — every verb ran as documented with refusals that almost always name the exact cell, member, epoch or key and a remedy that runs, marred by the empty `ROW []` duplicate-row refusal and the silent label reset on a re-added row.
