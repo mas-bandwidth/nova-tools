@@ -137,6 +137,13 @@ type FriendSeat struct {
 	// Answered is when her session last answered the coordinator's wake ping (her
 	// FriendHealth observation, up), zero when it has not.
 	Answered time.Time
+	// Models is her row's model per tier (config.FriendModels): the deal writes the model
+	// of the card's tier on the work card it places on her row (friend_model.go); a tier
+	// with none is dealt with no model.
+	Models map[string]string
+	// Probes is the model her probe card of each tier reported: a tier whose model it is not
+	// is dealt no real card until it is (FriendProven).
+	Probes map[string]string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -183,11 +190,13 @@ func friendDealable(s *Snapshot, f FriendSeat) bool {
 }
 
 // friendTakes says the friend may be given a card of the tier: it is one of her tiers
-// (friendTiers), never her class as a whole. A friend whose row names no tier takes none,
-// and every friend deal and move is gated on it, whatever the card's WHO line, so a
-// frontier card never reaches a friend without frontier.
+// (friendTiers), never her class as a whole, and its model is proven (FriendProven: her
+// probe of the tier returned her row's model, or her row names none). A friend whose row
+// names no tier takes none, and every friend deal and move is gated on it, whatever the
+// card's WHO line, so a frontier card never reaches a friend without frontier, nor a heavy
+// card one whose heavy model has not answered its probe.
 func friendTakes(f FriendSeat, tier string) bool {
-	return slices.Contains(friendTiers(f), tier)
+	return slices.Contains(friendTiers(f), tier) && FriendProven(f.Models, f.Probes, tier)
 }
 
 // friendsLeft is the friends the work card has left (FieldFriendsLeft), with the one it
@@ -483,14 +492,15 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		default:
 			u = friendDealUnit(s, c, card, row, Ready, tierNowSet(c, tier))
 		}
+		placedID := card
+		if wc != nil && !escalated {
+			placedID = wc.ID
+		}
 		if pinnedCard && pinned != "" && !OnlyFriend(c) && name != pinned {
-			placedID := card
-			if wc != nil && !escalated {
-				placedID = wc.ID
-			}
 			u.Notes = append(u.Notes, pinIgnoredNote(s, c, placedID, pinned, pinSkipWhy(seats, pinned, leftAtPin, tier, free), row, Ready))
 		}
-		p.Units = append(p.Units, u)
+		// her row's model for the card's tier rides on the card she is dealt (friend_model.go)
+		p.Units = append(p.Units, withFriendModel(u, placedID, tier, friendModelOf(seat[name], tier)))
 	}
 	// then her idle lanes take what the fleet dealt ahead and no lane has taken yet
 	if reclaim {
@@ -724,9 +734,10 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, _ string, set map[string]st
 // friendJobOf), ready until she starts it (friendStartUnits), and its primary ready ->
 // working on it, its attempt as it was: a take-back is no attempt and spends no bound.
 func friendRedealUnit(s *Snapshot, c, wc *Card, row string, set map[string]string) Unit {
-	// a card the fleet held before carries its fleet route; a friend runs her own model, so
-	// the route comes off as a first deal to her writes none (2026-10-04: a resting route
-	// kept on a friend's card withdrew it every tick, and each deal again was a new inbox copy)
+	// a card the fleet held before carries its fleet route; a friend runs her row's model for
+	// the tier, so the route comes off as a first deal to her writes none, and the deal writes
+	// her model back (withFriendModel) (2026-10-04: a resting route kept on a friend's card
+	// withdrew it every tick, and each deal again was a new inbox copy)
 	// set rides the primary's move: the tier the deal drew when it names none (tierNowSet)
 	prim := map[string]string{"work": wc.ID}
 	maps.Copy(prim, set)
