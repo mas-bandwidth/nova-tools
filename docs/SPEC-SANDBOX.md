@@ -103,6 +103,12 @@ The test requirements are listed under **Tests this spec demands**.
    absent root would refuse on the majority of machines. A `--read` or
    `--write` the caller typed is a different thing — it is a claim about this
    job — and an absent one is still a refusal.
+   Because following a symlink needs read on the link itself, a `--read`,
+   `--read-noexec` or `--write` the caller spelled through a symlink also records that
+   cleaned spelling (`Policy.LinkSpellings`), and the darwin profile grants
+   `(allow file-read* (literal "<spelling>"))` for it and for each symlink component of
+   it, as the template does for `/etc`, `/tmp` and `/var` (security#67 finding 1); a path
+   spelled as its resolved form adds nothing.
 6. **The secret is never inside either list.** The caller reads its credential
    file **before** the wrap and passes the value by environment: the key is
    read as data, never sourced, never an argument.

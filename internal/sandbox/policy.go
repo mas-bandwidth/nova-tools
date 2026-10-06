@@ -108,22 +108,26 @@ type Policy struct {
 	Reads       []string // resolved, read-only, recursive; carries EXECUTE
 	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
 	Writes      []string // resolved, read+write, recursive; the first is load-bearing
-	OptRoots    []string // the platform's optional roots that EXIST on this machine
-	PathDirs    []string // existing directories from PATH granted file-read-metadata
-	Cwd         string
-	Tmp         string
-	Home        string
-	Name        string
-	NetDeny     bool
-	NetListen   bool
-	NetAllow    []string // host:port the profile opens back up by name
-	NetPorts    []int    // TCP ports a --net-deny wall opens outbound (Input.NetPorts)
-	Deny        []string // resolved paths no write reaches (Input.Deny)
-	GPUMode     GPUMode
-	MaxProcs    int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
-	MaxMem      int64    // the tree's resident-memory cap in bytes, set by Build; 0 is unbounded
-	Command     string   // the resolved absolute path of the executable
-	Argv        []string // Command followed by its arguments, verbatim
+	// LinkSpellings is the caller's cleaned absolute spelling of a --read, --read-noexec or
+	// --write whose resolved path differs from it (rule 5): following a symlink needs read
+	// on the link itself, which the resolved READn/WRITEn grants do not name.
+	LinkSpellings []string
+	OptRoots      []string // the platform's optional roots that EXIST on this machine
+	PathDirs      []string // existing directories from PATH granted file-read-metadata
+	Cwd           string
+	Tmp           string
+	Home          string
+	Name          string
+	NetDeny       bool
+	NetListen     bool
+	NetAllow      []string // host:port the profile opens back up by name
+	NetPorts      []int    // TCP ports a --net-deny wall opens outbound (Input.NetPorts)
+	Deny          []string // resolved paths no write reaches (Input.Deny)
+	GPUMode       GPUMode
+	MaxProcs      int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
+	MaxMem        int64    // the tree's resident-memory cap in bytes, set by Build; 0 is unbounded
+	Command       string   // the resolved absolute path of the executable
+	Argv          []string // Command followed by its arguments, verbatim
 
 	// Available is an optional seam for tests checking refusal when the backend is absent.
 	// When nil, package Available() is called.
@@ -493,6 +497,23 @@ func badPathTextFor(goos, path string) string {
 	return ""
 }
 
+// noteSpelling records the caller's cleaned absolute spelling of a granted path when it is not
+// the resolved path (rule 5), so DarwinProfile can grant read on the link itself: following a
+// symlink needs read on the link, and the READn/WRITEn grants name only the resolved
+// directory (security#67 finding 1). The spelling goes into the profile text, so it is
+// checked with badPathText like any other path that does.
+func (p *Policy) noteSpelling(bad []Refusal, reason, flag, raw, resolved string) []Refusal {
+	spelling := filepath.Clean(raw)
+	if spelling == resolved || slices.Contains(p.LinkSpellings, spelling) {
+		return bad
+	}
+	if text := badPathText(spelling); text != "" {
+		return append(bad, refuse(reason, "%s %s %s", flag, spelling, text))
+	}
+	p.LinkSpellings = append(p.LinkSpellings, spelling)
+	return bad
+}
+
 // resolvePath validates one caller path as absolute and existing, with symlinks resolved. A
 // relative path is refused with the absolute form it WOULD have taken, so the refusal is
 // a line the caller can edit rather than a complaint.
@@ -664,6 +685,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			continue
 		}
 		p.Reads = append(p.Reads, got)
+		bad = p.noteSpelling(bad, "bad_read", "--read", raw, got)
 	}
 	for _, raw := range in.ReadsNoExec {
 		got, r := resolvePath("bad_read", "--read-noexec", raw)
@@ -672,6 +694,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			continue
 		}
 		p.ReadsNoExec = append(p.ReadsNoExec, got)
+		bad = p.noteSpelling(bad, "bad_read", "--read-noexec", raw, got)
 	}
 	for _, raw := range in.Writes {
 		got, r := resolvePath("bad_write", "--write", raw)
@@ -680,6 +703,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			continue
 		}
 		p.Writes = append(p.Writes, got)
+		bad = p.noteSpelling(bad, "bad_write", "--write", raw, got)
 	}
 	// A path given to both lists is a refusal naming both flags, never a silent merge
 	// The caller asked for two different things about one directory.
