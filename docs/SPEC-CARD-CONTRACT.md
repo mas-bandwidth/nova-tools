@@ -428,8 +428,8 @@ push to land.
 A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
 (the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the
 scripted child of section 1 layer 5, which runs once per family in `cardcontract.Families`
-with `internal/cardcontract/testdata/scripted/<family>.sh` as the harness (`plain.sh` for a
-family with none): write the script the family's models follow (how they clone, branch,
+with the Go test binary `internal/cardcontract/testdata/scripted/child` placed as `<family>` as the
+harness (`plain` for a family with none): add the steps the family's models follow (how they clone, branch,
 commit, push and finish), and the test asserts the member pushed the child's commit to the
 card's branch on origin and, when the child ran `gh pr create`, opened the pull request with
 its title and body. Run it with `go test -tags functional -run TestTheScriptedChildEndToEnd

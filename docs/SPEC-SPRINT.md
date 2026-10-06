@@ -197,6 +197,18 @@ reported activity raises none of this kind: her silence is the report rule's (15
 without a beat). The column is a field of a table locked on 2026-10-01 and is added by the card
 friend-session-liveness.w1 (internal/sprint/TABLES.lock, the 2026-10-04 entry).
 
+**A subscription friend's window use** (subscription-pacing-is-a-setting.w1; the owner,
+2026-10-05 ~10:45 PM, "Please try to go easy on <friend> (<machine>) and this session until
+11PM, or you will run out of credits"). A friend on a subscription is paced by her daemon against
+her 5-hour and 7-day windows (docs/SPEC-FRIEND.md, subscription pacing). Her beat's report
+carries what her daemon last read (`sprint.FriendReport`: `paced`, the lanes' effective width,
+and `window`, the windows' use as text, `5h 62% 7d 31%`), and the dashboard shows the
+`window` cell of her row beside her working / width, muted, escaped (`.win`;
+`TestFriendsRowShowsTheWindowUseBesideTheWidth`); a row with none shows the width alone. Not
+built yet, outside this card's paths: `friend beat` taking `--paced` and `--window`, the beat
+record and `where --json` carrying them onto her row, and the row's `pacing` setting in
+nova-config printed on the beat's answer as `row_pacing=<percent>`.
+
 **A friend's health** (2026-10-04, with the author of the coordinator's
 daemon, nova-friend: "the coordinate daemon is the keepalive SERVER. The
 existing sprint server is the authority/table service"). The coordinator's
@@ -3734,6 +3746,22 @@ between reads. A cursor of another shape is refused, exit 2.
 The sprint's server serves both read-only (section 14, the server): `GET
 /api/view/coordinator[?all=1][&since=<cursor>]` and `GET
 /api/view/worker?as=<name>[&since=<cursor>]`, the verb's JSON as it prints it.
+
+#### view-cards-by-r2.w1
+
+`nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by
+tier|stream|col|holder] [--json]` lists, or with `--by` counts, the work table's primaries
+(sentinels aside), so the coordinator scans no keys by hand to learn what is in review by tier.
+It is `sprint.CardRows` and `sprint.CardsBy` (internal/sprint/cards_view.go) over one read of
+the work and fleet tables at one epoch, and writes nothing. `--col` is a column
+(waiting, ready, working, review, merging, landed); `--holder` is the member or friend whose
+fleet row holds the primary's working card. The tier is read as the dealer reads it
+(`sprint.CardTier`): the tier its last deal drew, a pinned tier or model, else its brief's
+line 1, flash when it names none. The JSON (schema 1) carries `view` ("cards"), `schema`,
+`at`, `epoch`, the filters given, `by`, `total`, and either `counts` (with `--by`; `"-"` is
+no holder) or `cards`, each with `id`, `stream`, `col`, `tier` and `holder`. The text is one
+`key=count` line per key then `total=<n>`, or one line per card. The server serves it at
+`GET /api/view/cards[?col=][&stream=][&holder=][&by=]` (no `since`).
 
 #### view-coordinator-needs.w1
 

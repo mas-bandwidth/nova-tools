@@ -108,6 +108,11 @@ type FriendReport struct {
 	// her session moves, which a daemon pong does not say (docs/SPEC-FRIEND.md, last
 	// session activity).
 	Active time.Time `json:"active,omitzero"`
+	// Paced and Window are her lanes' effective width under her subscription windows' pacing
+	// and those windows' use as her harness last reported it ("5h 62% 7d 31%"), as her daemon
+	// last read them (docs/SPEC-FRIEND.md, subscription pacing); absent when it reported none.
+	Paced  *int   `json:"paced,omitempty"`
+	Window string `json:"window,omitempty"`
 }
 
 // Beaten says the member has beaten at least once.

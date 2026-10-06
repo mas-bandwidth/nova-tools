@@ -123,6 +123,10 @@ type Daemon struct {
 	// read every step so a change takes effect without a restart; nil, or
 	// empty answers, deliver in batch at Width.
 	Row func() (mode string, width int)
+	// Pacing is the row's pacing as the daemon last read it (ParsePacing off its
+	// beat): the fraction of each subscription window the lanes may spend, read
+	// every step; nil, or out of (0, 1], is DefaultPacing (pacing.go).
+	Pacing func() float64
 	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,
 	// WriteLanes over the state files); nil keeps it in memory only.
 	LoadLanes func() (LaneState, error)
@@ -133,9 +137,10 @@ type Daemon struct {
 	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
 	// sprint server); nil stamps none.
 	Progress func(ctx context.Context, cards []Card) error
-	// Finish sends one finish verb to the sprint server (FinishArgv): a lane's card whose
-	// run ended with no REPORT.md (lane_end.go). Nil, or a finish not answered, leaves it to
-	// friend sync, which reads the REPORT.md the lane wrote.
+	// Finish sends one finish verb to the sprint server: a lane's card whose run ended with
+	// no REPORT.md (FinishArgv, lane_end.go), and every working card on her row whose job's
+	// REPORT.md says a verdict, whoever wrote its brief (OutboxFinishArgv, outbox.go). Nil,
+	// or a finish not answered, leaves it to friend sync, which reads the same REPORT.md.
 	Finish func(ctx context.Context, argv []string) error
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
@@ -162,6 +167,7 @@ type Daemon struct {
 	heldCards   []HeldCard
 	inboxSaid   map[string]bool // the inbox lines the last reconcile said that are said once while they stand
 	turnEnded   func()          // a test's hook: a turn's result is on its channel (nil: none)
+	outbox      outboxState     // the outbox jobs finished, tried and noted (outbox.go)
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
