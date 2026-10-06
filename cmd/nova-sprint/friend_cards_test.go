@@ -66,6 +66,14 @@ func outboxReport(t *testing.T, root, friend, job, report string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "REPORT.md"), []byte(report), 0o644))
 }
 
+// outboxResult writes the friend's RESULT.md of the job, the usage line the tokens column sums.
+func outboxResult(t *testing.T, root, friend, job, body string) {
+	t.Helper()
+	dir := filepath.Join(root, friend+"-working", "outbox", job)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "RESULT.md"), []byte(body), 0o644))
+}
+
 func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "bob", "amy")

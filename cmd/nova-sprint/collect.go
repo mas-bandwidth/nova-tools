@@ -217,6 +217,10 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 				say(fmt.Sprintf("COLLECT %s REFUSED %s", x.Card, oneline.Escape(why)))
 				continue
 			}
+			// the report may sit in another friend's tree; the sum is hers
+			if x.From != "" {
+				a.noteFriendTokens(ctx, st, x.Friend, p.Card, filepath.Join(*root, x.From+"-working"), x.Job, say, true)
+			}
 		}
 		dryWord := ""
 		if *dry {

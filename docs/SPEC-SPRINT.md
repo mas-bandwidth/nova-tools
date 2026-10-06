@@ -101,7 +101,14 @@ Start at 8 for each?"), which friend sync writes to her row each pass (a row
 whose width is below 1 is refused, exit 1, nothing written), summed in the
 footer; `ok` and `failed` count her cards done; `done` is `sum(ok+failed)` and
 `ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the fleet
-table's own formulas.
+table's own formulas. The friends table has a `tokens` column after `active`.
+Each finished friend card's `RESULT.md` carries a line `usage: in=<n> out=<n> cache=<n>`,
+and the store sums `in`, `out` and `cache` per friend; a later note of the same card
+replaces the earlier one, and a file with no usage line adds nothing. A subscription
+friend shows that sum as a compact count (`1.2M`). The cell reads the friend row's
+billing field: empty, or any word but `api` or `metered`, is subscription and shows
+the count; `api` or `metered` shows dollars to the cent, rounded up (`$1.24`), from
+the lines' `usd=` amounts. Until a billing field is set, every friend is subscription.
 
 A friend says she is there with `friend beat <friend>` (answered `FRIEND-BEAT OK
 <friend> at=<t> ... row_mode=<batch|one-shot> row_width=<n>`, her nova-config row

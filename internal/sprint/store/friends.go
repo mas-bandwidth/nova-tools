@@ -59,6 +59,12 @@ type friendEntry struct {
 	Reason string    `json:"reason,omitempty"`
 	Until  time.Time `json:"until,omitzero"`
 	Return bool      `json:"return,omitempty"`
+	// Billing is how her tokens column is shown. Empty is subscription, a compact
+	// count. api or metered shows dollars to the cent. friend sync leaves it.
+	Billing string `json:"billing,omitempty"`
+	// Usage is each of her cards' result usage, by card id. A later note of the
+	// same card replaces the earlier one. friend sync leaves it.
+	Usage map[string]sprint.ResultUsage `json:"usage,omitempty"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
@@ -109,6 +115,11 @@ type FriendRow struct {
 	// back, when the hold or the observation said (friend down, friend health).
 	Reason string    `json:"reason,omitempty"`
 	Until  time.Time `json:"until,omitzero"`
+	// Billing is her roster's billing field, empty until one is set. The tokens
+	// cell treats empty, and any word but api or metered, as subscription.
+	Billing string `json:"billing,omitempty"`
+	// Usage is the sum of her cards' result usage, in card-id order.
+	Usage sprint.ResultUsage `json:"usage,omitzero"`
 }
 
 // roster is the friends record, by name; empty when there is none.
@@ -337,7 +348,8 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At,
+			Billing: r[n].Billing, Usage: sumFriendUsage(r[n].Usage)}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -415,6 +427,64 @@ func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return slices.Sorted(maps.Keys(r)), nil
+}
+
+// sumFriendUsage adds one friend's card notes in card-id order, so the sum is stable.
+func sumFriendUsage(m map[string]sprint.ResultUsage) sprint.ResultUsage {
+	if len(m) == 0 {
+		return sprint.ResultUsage{}
+	}
+	ids := slices.Sorted(maps.Keys(m))
+	parts := make([]sprint.ResultUsage, len(ids))
+	for i, id := range ids {
+		parts[i] = m[id]
+	}
+	return sprint.SumResultUsage(parts)
+}
+
+// NoteFriendResult records the usage line of one friend card's RESULT.md on her
+// roster entry, replacing an earlier note of the same card. A body with no usage
+// line changes nothing, including a note already there. An empty card id is
+// refused. A friend the roster lacks is refused and nothing is written.
+func (st *Store) NoteFriendResult(ctx context.Context, friend, card, result string) error {
+	if strings.TrimSpace(card) == "" {
+		return fmt.Errorf("a friend card usage note wants a card id")
+	}
+	u, ok := sprint.ParseResultUsage(result)
+	if !ok {
+		return nil
+	}
+	r, kv, err := st.roster(ctx)
+	if err != nil {
+		return err
+	}
+	e, found := r[friend]
+	if !found {
+		return noFriend(r, friend)
+	}
+	if e.Usage == nil {
+		e.Usage = map[string]sprint.ResultUsage{}
+	}
+	e.Usage[card] = u
+	r[friend] = e
+	return putRoster(ctx, kv, r)
+}
+
+// SetFriendBilling sets the friend's billing field, the word the tokens cell
+// reads. Any word is kept; the cell treats empty, and every word but api or
+// metered, as subscription. A friend the roster lacks is refused.
+func (st *Store) SetFriendBilling(ctx context.Context, friend, billing string) error {
+	r, kv, err := st.roster(ctx)
+	if err != nil {
+		return err
+	}
+	e, found := r[friend]
+	if !found {
+		return noFriend(r, friend)
+	}
+	e.Billing = billing
+	r[friend] = e
+	return putRoster(ctx, kv, r)
 }
 
 // FriendBeatOf is the friend's last beat; the zero beat when she has never beaten.

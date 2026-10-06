@@ -145,6 +145,14 @@
 # and outbox ("4m ago", "-" when her beat reported none), after status. Held by
 # TestSprintTablesAreLocked; the rule is docs/SPEC-SPRINT.md, last session activity.
 #
+# Change, 2026-10-06, card friends-tokens-column-b.w1. friends.tokens is the new column:
+# a text cell with no fold, after active. Each finished friend card's RESULT.md line
+# usage: in= out= cache= is summed per friend. Empty billing, and any word but api or
+# metered, is subscription and shows the sum compact (1.2M). api or metered shows
+# dollars to the cent, rounded up, from the lines' usd= amounts. Until a billing field
+# is set, every friend is subscription. Held by TestSprintTablesAreLocked and
+# TestFriendTokensSumPerFriendFromTheResultUsage.
+#
 # Change, 2026-10-05, asked by the owner that morning: a reader row had no tiers,
 # so the ask gave a flash reader pro reads and a heavy one. readers.tiers is the
 # column: text, no fold, shown, after broken. An empty cell means every tier.
@@ -193,6 +201,7 @@ friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
 friends.active text none shown
+friends.tokens text none shown
 friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet

@@ -212,7 +212,7 @@ func (a *app) reconcileFriend(ctx context.Context, st *store.Store, r reconcileR
 			collected++
 			say(fmt.Sprintf("FRIEND-RECONCILE COLLECT friend=%s card=%s job=%s: %s%s", friend, p.Card, oneline.Field(job), oneline.Escape(why), dryWord))
 		default:
-			done, err := a.friendCollect(ctx, st, friend, p, report, r.op, at, say)
+			done, err := a.friendCollect(ctx, st, friend, p, report, r.op, at, dir, job, say)
 			if err != nil {
 				return t, err
 			}

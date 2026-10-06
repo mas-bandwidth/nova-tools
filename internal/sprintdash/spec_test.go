@@ -244,6 +244,8 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 	for _, c := range splitList(match(t, `same shape as Fleet without load \(([^;)]+)`, friendsSec, "Friends' columns"), ",") {
 		assert.Contains(t, friends, c, "Friends names column %q, which the shape of Fleet without load has not", c)
 	}
+	friends = append(friends, "tokens")
+	assert.Contains(t, friendsSec, "tokens")
 	// A fraction column ("n / total", "n / width") and the status pill are not numbers;
 	// the first column is the row's name; every other column is a number, right-aligned.
 	fractionsOf := func(section string) map[string]bool {

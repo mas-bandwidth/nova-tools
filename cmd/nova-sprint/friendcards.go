@@ -268,9 +268,17 @@ func friendInbox(dir string, p sprint.Packet) (in, why string, err error) {
 // why is "skip it, still working" — the caller says the why and continues so
 // the next sync reads it again.
 func friendReadReport(dir, job string) (report, why string, at time.Time, err error) {
+	return friendReadOutbox(dir, job, "REPORT.md")
+}
+
+// friendReadOutbox reads outbox/<job>/<name> when it is a regular file no larger
+// than friendReportReadCap. A missing file is an empty body. A symlink, or a
+// file over the cap, is a why and an empty body: os.ReadFile follows a symlink,
+// so the link is refused before the read. The caller says the why and continues.
+func friendReadOutbox(dir, job, name string) (body, why string, at time.Time, err error) {
 	outDir := filepath.Join(dir, "outbox", job)
 	outName := filepath.Join("outbox", job)
-	reportName := filepath.Join(outName, "REPORT.md")
+	fileName := filepath.Join(outName, name)
 	fi, err := os.Lstat(outDir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -280,22 +288,47 @@ func friendReadReport(dir, job string) (report, why string, at time.Time, err er
 	case !fi.IsDir():
 		return "", outName + " is a symlink or a file, not a directory", time.Time{}, nil
 	}
-	fi, err = os.Lstat(filepath.Join(outDir, "REPORT.md"))
+	fi, err = os.Lstat(filepath.Join(outDir, name))
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return "", "", time.Time{}, nil
 	case err != nil:
 		return "", "", time.Time{}, err
 	case !fi.Mode().IsRegular():
-		return "", reportName + " is a symlink or a non-regular file", time.Time{}, nil
+		return "", fileName + " is a symlink or a non-regular file", time.Time{}, nil
 	case fi.Size() > friendReportReadCap:
-		return "", reportName + " is larger than " + strconv.Itoa(friendReportReadCap) + " bytes", time.Time{}, nil
+		return "", fileName + " is larger than " + strconv.Itoa(friendReportReadCap) + " bytes", time.Time{}, nil
 	}
-	b, err := os.ReadFile(filepath.Join(outDir, "REPORT.md"))
+	b, err := os.ReadFile(filepath.Join(outDir, name))
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
 	return string(b), "", fi.ModTime(), nil
+}
+
+// noteFriendTokens records the card's RESULT.md usage on the friend's roster
+// after a finish. A missing file, or a body with no usage line, changes nothing.
+// A read or a store error is said and never undoes the finish. collect is the
+// collect verb's line; otherwise the line is friend sync's.
+func (a *app) noteFriendTokens(ctx context.Context, st *store.Store, friend, card, dir, job string, say func(string), collect bool) {
+	body, why, _, err := friendReadOutbox(dir, job, "RESULT.md")
+	switch {
+	case err != nil:
+		why = err.Error()
+	case why != "":
+	default:
+		if err := st.NoteFriendResult(ctx, friend, card, body); err != nil {
+			why = err.Error()
+		}
+	}
+	if why == "" {
+		return
+	}
+	if collect {
+		say(fmt.Sprintf("COLLECT %s NOTE the token count is not recorded: %s", card, oneline.Escape(why)))
+		return
+	}
+	say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the token count is not recorded: %s", friend, card, oneline.Escape(why)))
 }
 
 // friendCardsOf delivers and collects one friend's sprint cards in her working directory
@@ -398,7 +431,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			}
 			continue
 		}
-		done, err := a.friendCollect(ctx, st, name, p, report, "", at, say)
+		done, err := a.friendCollect(ctx, st, name, p, report, "", at, dir, job, say)
 		if err != nil {
 			return delivered, finished, err
 		}
@@ -745,7 +778,7 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 // when not empty, is the caller's --op: the finish runs under op.collect.<its args> (one
 // operation id per card, as land.go gives each merge its own), so a retry of the verb with
 // the same --op returns the recorded result.
-func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p sprint.Packet, report, op string, at time.Time, say func(string)) (done bool, err error) {
+func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p sprint.Packet, report, op string, at time.Time, dir, job string, say func(string)) (done bool, err error) {
 	r, err := friendFinish(ctx, name, p, report, a.tip)
 	if err != nil {
 		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
@@ -771,6 +804,8 @@ func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p
 	if err := st.FriendFinished(ctx, name, a.now()); err != nil {
 		say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the finish is not recorded as her evidence: %s", name, p.Card, oneline.Escape(err.Error())))
 	}
+	// her RESULT.md usage sums onto the tokens column; a miss costs the count, never the finish
+	a.noteFriendTokens(ctx, st, name, p.Card, dir, job, say, false)
 	result := "ok"
 	if r.Failed {
 		result = "failed"

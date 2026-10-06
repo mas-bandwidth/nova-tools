@@ -142,7 +142,7 @@ from the owner edits one line here and nothing else moves.
 - OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready and Done and OK% numbers, no cells.
 
 ## Friends (title "Friends"): same shape as Fleet without load (ready, working, done, ok%, status; headers lowercase); honest empty
-  state until the JSON carries tables.friends.
+  state until the JSON carries tables.friends. The tokens column is the last one: a friend's summed token count, compact (`1.2M`), or dollars to the cent when her billing field is api or metered (docs/SPEC-SPRINT.md, the friends table). Until that field is set, every friend shows the count.
 
 ## Lanes (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed)
 - The page shows a lanes panel: one row per machine's lane of a kind, the friends or machines
@@ -175,6 +175,7 @@ This specification is locked. No line changes without his words, quoted here wit
 - 2026-10-03 11:30 AM, the owner, a quoted change after the lock: "nova sprint website is not updating once
   per-second. something is chug." The page's refresh is the event stream, the timer's poll its fallback (the
   Refresh line above); nothing else moves.
+- 2026-10-06, card friends-tokens-column-b.w1: "The friends table has a tokens column." The Friends panel's last column is tokens, the compact count, or dollars to the cent when a friend is api-billed. The columns inside the shape parenthetical are unchanged.
 - 2026-10-05 ~11:45 PM ET, the owner, a quoted change after the lock: "I would like you to remove all the
   already landed work streams." The Work panel shows only the live streams by default; the archived
   ones (`stream archive`, read from `where --json --archived`'s `archived`) are behind one line in the

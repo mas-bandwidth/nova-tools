@@ -253,7 +253,7 @@ footer a:hover { color: var(--text); }
    plus 8 px each side (the cells' padding), so the bar reads centred in its own column */
 .fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
 .fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
-.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
+.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; padding: 0 .5rem; }
 .fleet .row.head > :nth-child(4), .friends .row.head > :nth-child(4) { margin-left: .5rem; }
 
@@ -268,7 +268,7 @@ footer a:hover { color: var(--text); }
 .fleet.compact .row, .friends.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(7rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet.compact .row > :nth-child(5), .friends.compact .row > :nth-child(5) { padding-left: 0; }
 .fleet.compact .row > :nth-child(3), .fleet.compact .row > :nth-child(4), .fleet.compact .row > :nth-child(6), .fleet.compact .row > :nth-child(8),
-.friends.compact .row > :nth-child(3), .friends.compact .row > :nth-child(4), .friends.compact .row > :nth-child(6) { display: none; }
+.friends.compact .row > :nth-child(3), .friends.compact .row > :nth-child(4), .friends.compact .row > :nth-child(6), .friends.compact .row > :nth-child(8) { display: none; }
 .fleet.compact .pill > span:last-child, .friends.compact .pill > span:last-child { display: none; }
 .fleet.compact .row.head .alt, .friends.compact .row.head .alt { display: inline; }
 @media (max-width: 600px) {
@@ -379,7 +379,7 @@ footer a:hover { color: var(--text); }
 
 <section class="panel friends">
   <div class="panel-head"><h2>Friends</h2><span class="muted" id="friends-sub"></span></div>
-  <div class="scroll"><div class="rows" id="friends"><div class="row head"><div>friend</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div></div></div></div>
+  <div class="scroll"><div class="rows" id="friends"><div class="row head"><div>friend</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">tokens</div></div></div></div>
 </section>
 
 <section class="panel lanes">
