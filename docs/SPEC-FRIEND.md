@@ -37,22 +37,25 @@ below): the daemon answering is never the session.
   minutes after the read (`ClaimAfter`, SPEC-BUS.md). A turn may run longer
   than that: the daemon reads nothing while a turn runs (it only peeks), so a
   live daemon mid-turn is never handed its own message twice.
-- The files, one writer each. The state files live in the state directory,
-  `~/.nova-friend/<friend>` under the home directory unless `--state-dir` names
-  another, never on the friend's volume (a background process on this platform
-  may not touch a removable volume without the person's permission; measured
-  2026-10-04, the mkdir refused with "operation not permitted"): `status.json`
-  (the daemon: its state, rewritten whole every five seconds and when it
-  changes; a reader calls the daemon up while the file is under thirty seconds
-  old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
-  (the daemon: one line per delivery). The queue file is under the friend's
-  working directory: `inbox/QUEUE.json` (the coordinator and the session: one
-  record per task with `id`, `state` of queued, working or done, and
-  `deliverable`).
+- The files, one writer each. The daemon's state directory defaults to
+  `<dir>/.nova-friend` (`StateDirUnder`) so a sandboxed session can write
+  `pong.json` beside its work. `--state-dir` still names another directory.
+  The `pong` verb has no `--dir`; with no `--state-dir` it writes
+  `~/.nova-friend/<friend>` (`DefaultStateDir`), and the health check of a
+  named friend reads there too, because that check is not given each friend's
+  `--dir`. The daemon's session check embeds `--state-dir` of the directory
+  it reads, so the pong the session runs lands where the daemon looks.
+  `status.json` (the daemon: its state, rewritten whole every five seconds and
+  when it changes; a reader calls the daemon up while the file is under thirty
+  seconds old), `pong.json` (the `pong` verb: the session's last answer),
+  `deliver.log` (the daemon: one line per delivery). The queue file is under
+  the friend's working directory: `inbox/QUEUE.json` (the coordinator and the
+  session: one record per task with `id`, `state` of queued, working or done,
+  and `deliverable`).
 - The launchd agent `com.nova.friend-<friend>`: RunAtLoad, KeepAlive, a five
   second throttle. launchd opens its own log before the daemon runs and cannot
   open one on a network volume (EX_CONFIG, measured 2026-10-03), so that log
-  is under the home directory, beside the state directory. The binary is the
+  is under the home directory. The binary is the
   same wall, one step earlier: a binary under `/Volumes` starts and then does
   nothing. `install` copies it to `~/.nova-friend/bin/nova-friend` before
   writing the plist, and the plist names the copy. A copy that cannot be made
@@ -204,7 +207,10 @@ released) and the checks keep going in.
 "A friend shown up has a running harness", read at every state, cannot hold:
 the table cannot see the app close, only the answers stop, so for up to the
 bound after a close the friend is still shown up (the finding case
-`MCFriendPresenceFindingRunningNow`). The bound is the promise.
+`MCFriendPresenceFindingRunningNow`). The bound is the promise. The code
+now matches that finding: a harness process is advisory and never takes the
+friend down. The model still has the closed-harness-down rule. A model of
+the advisory harness word is owed; this card does not commit one.
 
 Where the code today differs: a card stays with a friend who goes down
 (internal/sprint/friend_deal.go: "a friend who goes quiet keeps her card");
@@ -220,22 +226,24 @@ friends actually doing work?" The daemon's beat says only that its loop runs.
 A friend's status is decided by one function, `FriendStatus`, from what the
 friend did, in order, the first rule that holds deciding it:
 
-1. the harness not running is down (`harness not running`);
-2. at a limit is down until the reset (`limit until Mon 1:00 PM`, or
-   `weekly limit until ...` when the limit has a name);
-3. no session answer within the bound, `AnswerBound`, two windows (six
+1. at a limit is down until the reset (`limit until Mon 1:00 PM`, or
+   `weekly limit until ...` when the limit has a name), including when the
+   harness was not seen;
+2. no session answer within the bound, `AnswerBound`, two windows (six
    minutes: a ping each window and a challenge open for less than one), is
    down (`no session answer 12m`, `no session answer ever`);
-4. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n>
+3. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n>
    undelivered)`);
-5. otherwise up (`session answer 40s`).
+4. otherwise up (`session answer 40s`).
 
 Messages waiting on her stream are work waiting, never down on their own.
-Unknown harness evidence is no evidence and decides nothing; the session
-answer is the proof the harness ran. The beat decides nothing.
+The harness word is advisory and decides nothing: `harness=running` when a
+process was seen (the app, or a command-line session: `dsh headless`,
+`codex exec`, `claude -p`), else `harness=not-seen`. A session that answered
+is up whatever process the table shows. The beat decides nothing.
 
 The evidence, each piece shown beside the status whatever decided it: the
-harness (`harness running`, `harness not running`, `harness unknown`); the
+harness (`harness=running`, `harness=not-seen`); the
 age of the session's last answer (the pong file); the limit and its reset
 (`limit.json` in the state directory, `{"reason":..,"until":<RFC3339>}`, the
 daemon its one writer, no file no limit); the messages waiting on her stream,
@@ -358,20 +366,23 @@ usage is on the beat as `--five-hour <pct> --seven-day <pct>`
 
 ### The harness check (internal/friend/alive.go)
 
-A session that cannot answer is caught by the challenge only after a window;
-a harness that has closed is caught at once. Every adapter answers `Alive`,
-from the cheapest true signal it has, the process table (`ps -axww -o
-user=,pid=,args=`, through the adapter's own runner, no shell): Codex, the
-ChatGPT app (`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`);
-Antigravity, its app; DSH, the DeepSeek Harness app; each its main
-executable, matched whole, of the daemon's user, never a helper. Grok, a
-window (the TUI process) open in the friend's directory: a pid of
-`active_sessions.json` with that cwd, alive in `ps -axww -o pid=,ppid=,args=`.
-OpenCode, batch and lanes, and Gemini run no standing process (every turn
-starts the runner afresh), so a runner that cannot be found is not running
-and a runner that is found cannot tell. An adapter that cannot tell says so
-(a stub; a desktop app off macOS; a listing that cannot be read), the record
-says it once, and its friend relies on the session check alone.
+A session that cannot answer is caught by the challenge only after a window.
+Whether a harness process is in the table is advisory and never decides.
+Every adapter answers `Alive`, from the cheapest true signal it has, the
+process table (`ps -axww -o user=,pid=,args=`, through the adapter's own
+runner, no shell). A command-line session is first-class: `dsh headless`,
+`codex exec`, and `claude -p` count as the harness running, with or without
+the desktop app. Codex is the ChatGPT app
+(`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`) or `codex exec`;
+Antigravity, its app; DSH, the DeepSeek Harness app or `dsh headless`; each
+app its main executable, matched whole, of the daemon's user, never a
+helper. Claude has no deliver command and stays a Stub; `claude -p` is still
+seen. Grok, a window (the TUI process) open in the friend's directory: a pid
+of `active_sessions.json` with that cwd, alive in `ps -axww -o
+pid=,ppid=,args=`. OpenCode, batch and lanes, and Gemini run no standing
+process (every turn starts the runner afresh), so a runner that cannot be
+found is not seen and a runner that is found cannot tell. An adapter that
+cannot tell is not-seen. None of these hold the beat.
 
 `Alive` is its own interface, `Aliver`, beside the deliver adapter's, so it is
 optional by assertion: every adapter implements it
@@ -384,16 +395,16 @@ wires it just before `d.Run`: `friend.WatchHarness(d, deliver)`
 (`TestRunPutsTheHarnessWatchInFrontOfTheBeat`).
 
 `WatchHarness` puts the check in front of the daemon's beat. Every thirty
-seconds (`AliveEvery`) it asks; a harness not running makes the friend down
-at once, independent of the challenge: no beat goes to the sprint server
-(down after fifteen seconds without one, so within three quarters of a
-minute of the close), the beat's error, so the status, says `harness not
-running`, and the record says `down:` with what was read. It is up again only
-when the harness runs (or cannot be told) and the session has answered the
-daemon's current nonce, one the pong file did not hold when the harness
-closed; a harness that comes back is not yet a session that answers. Tested
-over a fake process table and a fake clock,
-`TestAClosedHarnessMakesItsFriendDownWithinAMinute`.
+seconds (`AliveEvery`) it asks and records `harness=running` or
+`harness=not-seen` with what was read. It always calls the beat behind it.
+A missing process does not hold the beat, does not set the beat's error to
+`harness not running`, and does not mark presence down. The friend is up
+when the session answered the last session check, or sent a bus message,
+within the window, whatever process is or is not running. A harness that is
+seen and a session that has not answered is down. Tested over a fake process
+table and a fake clock,
+`TestAClosedHarnessIsAdvisoryAndDoesNotHoldTheBeat`, and on a twin store,
+`TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess`.
 
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader, its stdin `/dev/null` when there is no text for it (a
@@ -1181,12 +1192,14 @@ the daemon, and a plain `touch` launchd starts, both refused with "operation
 not permitted" where the same commands from a shell succeed, and tccd logged
 the access request). The permission is granted to the binary in the system's
 privacy settings, by the person, never by the tool, and a rebuilt binary is a
-new one to it. The state files are out of its way, under the home directory;
-until it is granted the daemon beats and answers the daemon pong but cannot
-run the harness on the volume, and the record says so. `install` does not
-point the agent at a binary on that volume: it copies the binary under the
-home directory, or it refuses. The harness and the friend's directory can
-still sit on the volume, and that still needs the person's permission.
+new one to it. That wall is the launchd log and the binary copy, which stay
+under the home directory. The daemon's state defaults under `--dir` so the
+session can write `pong.json`; until the binary is granted permission the
+daemon may still be unable to run the harness on the volume, and the record
+says so. `install` does not point the agent at a binary on that volume: it
+copies the binary under the home directory, or it refuses. The harness and
+the friend's directory can still sit on the volume, and that still needs the
+person's permission.
 
 Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
 code is not yet held to it where the two differ. A session check waits for the
@@ -1197,8 +1210,16 @@ nowhere for the check to go until a lane opens one, and its lanes wait on the
 row, which comes with a beat; it stays down until a session exists.
 
 The harness check (internal/friend/alive.go) is wired in `cmd/nova-friend/main.go`
-before `d.Run` (`TestRunPutsTheHarnessWatchInFrontOfTheBeat`). The watch's down
-and up is not in `tla/FriendPresence.tla` yet.
+before `d.Run` (`TestRunPutsTheHarnessWatchInFrontOfTheBeat`). It no longer
+takes the friend down. `tla/FriendPresence.tla` still describes a closed
+harness as down within the bound. A model of the advisory harness word is
+owed.
+
+On start the daemon compares its arguments with the installed plist under
+the home's LaunchAgents (`InstalledArgsDrift`). A missing plist says nothing.
+A difference records `args differ from the installed plist` and the daemon
+still starts, so a kickstart that kept old arguments is caught. The comparison
+reads a file. It does not call launchctl.
 
 The server side of the ping is `serve` (The coordinator's ping, above); the
 daemon's side still waits a window of three minutes for a ping, not ten

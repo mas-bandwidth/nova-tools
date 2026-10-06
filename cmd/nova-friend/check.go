@@ -32,7 +32,7 @@ func (w world) check(c *tool.Call) *tool.Out {
 
 // deliveryCheckVerb is the delivery check against the live session (friend.Conformance).
 func (w world) deliveryCheckVerb(c *tool.Call) *tool.Out {
-	name, harness, dir, state := c.Str("as"), c.Str("harness"), c.Str("dir"), w.stateDir(c)
+	name, harness, dir, state := c.Str("as"), c.Str("harness"), c.Str("dir"), w.daemonState(c)
 	if c.DryRun() {
 		if _, err := friend.NewDeliverer(harness, dir, c.Str("session"), w.exec, nil); err != nil {
 			return tool.Refuse(err.Error())

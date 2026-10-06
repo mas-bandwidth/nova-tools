@@ -13,15 +13,18 @@ import (
 	"time"
 )
 
-// AliveEvery is how often the daemon asks the adapter whether its harness is
-// running (SPEC-FRIEND.md, the harness check). With the sprint's fifteen
-// seconds without a beat, a harness that closes makes its friend down within
-// three quarters of a minute.
+// AliveEvery is how often the daemon asks the adapter whether its harness
+// process is in the table (SPEC-FRIEND.md, the harness check). The answer is
+// advisory: it never holds the beat and never marks the friend down.
 const AliveEvery = 30 * time.Second
 
-// HarnessNotRunning is the reason a friend is down while its harness is not
-// running: the beat's error, so status says it.
+// HarnessNotRunning is the old beat error. The check no longer returns it
+// and no longer marks the friend down; status says harness=not-seen instead.
 const HarnessNotRunning = "harness not running"
+
+// HarnessNotSeen is the advisory word when Alive did not see a harness
+// process. It decides nothing: the session's answer does.
+const HarnessNotSeen = "not-seen"
 
 // Liveness is an adapter's answer about its harness: Known false when the
 // adapter cannot tell (its friend relies on the session check alone), else
@@ -100,6 +103,83 @@ func appAlive(ctx context.Context, run Exec, dir, goos, username, name, exe stri
 	return notRunning(fmt.Sprintf("the %s app is not running: no %s of %s in the process table", name, exe, username))
 }
 
+// CLIRunning says whether listing has a process of username whose command is
+// program (the executable's base name) with mark as one argument: dsh
+// headless, codex exec, claude -p. ps keeps no argv boundaries, so the
+// executable is the first field of the command and mark is a later field.
+func CLIRunning(listing, username, program, mark string) bool {
+	for line := range strings.SplitSeq(listing, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[0] != username {
+			continue
+		}
+		if filepath.Base(f[2]) != program {
+			continue
+		}
+		for _, arg := range f[3:] {
+			if arg == mark {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// appOrCLI is the advisory liveness of a harness that is either a desktop
+// app or a command-line session (program mark). A process of either is
+// running. Seeing neither is not running, which status says as not-seen
+// and which never marks the friend down. A listing that cannot be read
+// cannot tell.
+func appOrCLI(ctx context.Context, run Exec, dir, goos, username, appName, exe, program, mark string) Liveness {
+	if username == "" {
+		u, err := user.Current()
+		if err != nil {
+			return cannotTell("current user: " + err.Error())
+		}
+		username = u.Username
+	}
+	if run == nil {
+		return cannotTell("ps: no process listing")
+	}
+	listing, exit, err := run(ctx, dir, "ps", PSArgs, "")
+	if err != nil || exit != 0 {
+		return cannotTell(fmt.Sprintf("ps: exit=%d error=%v", exit, err))
+	}
+	if goos == "darwin" && AppRunning(listing, username, exe) {
+		return running(fmt.Sprintf("the %s app runs (%s)", appName, exe))
+	}
+	if CLIRunning(listing, username, program, mark) {
+		return running(fmt.Sprintf("%s %s runs", program, mark))
+	}
+	if goos != "darwin" {
+		return notRunning(fmt.Sprintf("no %s %s process, and the %s app is a macOS app", program, mark, appName))
+	}
+	return notRunning(fmt.Sprintf("no %s app and no %s %s process of %s", appName, program, mark, username))
+}
+
+// cliSessionAlive is the advisory liveness of a harness that is only a
+// command-line session (claude -p). No process listing cannot tell.
+func cliSessionAlive(ctx context.Context, run Exec, dir, username, program, mark string) Liveness {
+	if username == "" {
+		u, err := user.Current()
+		if err != nil {
+			return cannotTell("current user: " + err.Error())
+		}
+		username = u.Username
+	}
+	if run == nil {
+		return cannotTell("ps: no process listing")
+	}
+	listing, exit, err := run(ctx, dir, "ps", PSArgs, "")
+	if err != nil || exit != 0 {
+		return cannotTell(fmt.Sprintf("ps: exit=%d error=%v", exit, err))
+	}
+	if CLIRunning(listing, username, program, mark) {
+		return running(fmt.Sprintf("%s %s runs", program, mark))
+	}
+	return notRunning(fmt.Sprintf("no %s %s process of %s", program, mark, username))
+}
+
 // runnerAlive is the answer of a harness that runs no standing process, one
 // whose every turn is a fresh run of program (opencode run, gemini
 // --resume): a program that cannot be found means no turn can run, and the
@@ -112,9 +192,10 @@ func runnerAlive(look func(string) (string, error), program string) Liveness {
 	return cannotTell(fmt.Sprintf("%s runs no standing process (each turn starts %s); the session check alone", program, path))
 }
 
-// Alive: the ChatGPT app, whose Codex chat the friend sits in.
+// Alive: the ChatGPT app, or a `codex exec` process. A command-line session
+// is a first-class session: the app is not required.
 func (c *Codex) Alive(ctx context.Context) Liveness {
-	return appAlive(ctx, c.Run, c.Dir, runtime.GOOS, "", "ChatGPT", CodexApp)
+	return appOrCLI(ctx, c.Run, c.Dir, runtime.GOOS, "", "ChatGPT", CodexApp, "codex", "exec")
 }
 
 // Alive: the Antigravity app, whose language server Deliver reaches.
@@ -122,9 +203,10 @@ func (a *Antigravity) Alive(ctx context.Context) Liveness {
 	return appAlive(ctx, a.Run, a.Dir, runtime.GOOS, a.User, "Antigravity", AntigravityApp)
 }
 
-// Alive: the DeepSeek Harness app, the friend's window onto the session.
+// Alive: the DeepSeek Harness app, or a `dsh headless` process. A command-line
+// session is a first-class session: the app is not required.
 func (d *DSH) Alive(ctx context.Context) Liveness {
-	return appAlive(ctx, d.Run, d.Dir, runtime.GOOS, "", "DeepSeek Harness", DSHApp)
+	return appOrCLI(ctx, d.Run, d.Dir, runtime.GOOS, "", "DeepSeek Harness", DSHApp, "dsh", "headless")
 }
 
 // Alive: a grok window (the TUI process) open in Dir: a pid of the
@@ -179,32 +261,32 @@ func (g *Gemini) Alive(context.Context) Liveness {
 	return runnerAlive(exec.LookPath, program)
 }
 
-// Alive: a stub delivers nothing and watches nothing.
-func (s Stub) Alive(context.Context) Liveness {
+// Alive: a stub delivers nothing. Claude is the exception that can be seen:
+// a `claude -p` process is a first-class session. With no runner, or for any
+// other stub, the adapter cannot tell.
+func (s Stub) Alive(ctx context.Context) Liveness {
+	if s.Harness == "claude" && s.Run != nil {
+		return cliSessionAlive(ctx, s.Run, s.Dir, "", "claude", "-p")
+	}
 	return cannotTell(s.Harness + " has no adapter that reads its process; the session check alone")
 }
 
-// HarnessWatch is the harness check in front of the daemon's beat
+// HarnessWatch is the harness check beside the daemon's beat
 // (SPEC-FRIEND.md, the harness check). Every Every (AliveEvery when zero)
-// it asks Alive; a harness not running makes the friend down at once: no
-// beat goes to the sprint server, whose friend is down after fifteen seconds
-// without one, and the beat's error, so the status, says HarnessNotRunning.
-// This is independent of the session check. The friend is up again only
-// once the harness runs (or cannot be told) and the session has answered
-// the daemon's current nonce, one it had not answered when the harness
-// closed. An adapter that cannot tell changes nothing.
+// it asks Alive and records the advisory word, harness=running or
+// harness=not-seen. It never holds the beat and never marks the friend
+// down: a session that answered its check, or sent a bus message, within
+// the window is up whatever process the table shows. An adapter that
+// cannot tell is not-seen, which decides nothing.
 type HarnessWatch struct {
 	Alive Aliver
 	Every time.Duration
 	Now   func() time.Time
 
-	d        *Daemon
-	beat     func(ctx context.Context, active time.Time) error
-	checked  time.Time
-	live     Liveness
-	down     bool
-	before   string // the nonce the pong file held when the harness closed
-	saidOnce bool
+	d       *Daemon
+	beat    func(ctx context.Context, active time.Time) error
+	checked time.Time
+	live    Liveness
 }
 
 // WatchHarness puts a HarnessWatch over adapter in front of d's beat; call
@@ -225,10 +307,12 @@ func WatchHarness(d *Daemon, adapter Deliverer) *HarnessWatch {
 	return w
 }
 
-// Down says whether the watch holds the friend down, and why.
-func (w *HarnessWatch) Down() (bool, string) { return w.down, w.live.Why }
+// Down reports that the watch does not hold the friend down. The second
+// result is what Alive last read, for a caller that still asks.
+func (w *HarnessWatch) Down() (bool, string) { return false, w.live.Why }
 
-// Beat is the daemon's beat behind the check.
+// Beat is the daemon's beat behind the advisory check. The check never
+// holds the beat and never marks the friend down.
 func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 	now := w.Now()
 	every := w.Every
@@ -238,37 +322,18 @@ func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 	if w.Alive != nil && (w.checked.IsZero() || now.Sub(w.checked) >= every) {
 		w.checked = now
 		w.live = w.Alive.Alive(ctx)
-		switch {
-		case w.live.Known && !w.live.Running && !w.down:
-			w.down, w.before = true, w.pongNonce()
-			w.record(now, "down: "+HarnessNotRunning+": "+w.live.Why+"; up again when the session answers its next nonce")
-		case !w.live.Known && !w.saidOnce:
-			w.saidOnce = true
-			w.record(now, "harness check: cannot tell: "+w.live.Why)
+		seen := HarnessNotSeen
+		if w.live.Known && w.live.Running {
+			seen = HarnessRunning
 		}
-	}
-	if w.down && !(w.live.Known && !w.live.Running) {
-		if n := w.pongNonce(); n != "" && n != w.before && w.d.m != nil && n == w.d.m.Nonce {
-			w.down = false
-			w.record(now, "up: the harness runs and the session answered nonce "+n)
+		if w.d != nil && w.d.status.Seen != seen {
+			w.d.status.Seen = seen
+			w.record(now, "harness="+seen+": "+w.live.Why)
+		} else if w.d != nil {
+			w.d.status.Seen = seen
 		}
-	}
-	if w.down {
-		return errors.New(HarnessNotRunning)
 	}
 	return w.beat(ctx, active)
-}
-
-// pongNonce is the nonce the session last answered, from the pong file.
-func (w *HarnessWatch) pongNonce() string {
-	if w.d.Pong == nil {
-		return ""
-	}
-	p, found, err := w.d.Pong()
-	if err != nil || !found {
-		return ""
-	}
-	return p.Nonce
 }
 
 func (w *HarnessWatch) record(now time.Time, line string) {

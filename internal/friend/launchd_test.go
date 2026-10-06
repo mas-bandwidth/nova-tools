@@ -40,6 +40,24 @@ func TestThePlistRunsTheDaemonAtLoadAndKeepsItAlive(t *testing.T) {
 	assert.Equal(t, "/home/bob/Library/LaunchAgents/com.nova.friend-bob.plist", a.PlistPath())
 }
 
+func TestInstalledArgsDrift(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	a.Dir = "/w/a&b"
+	got, err := PlistProgramArguments(a.Plist())
+	require.NoError(t, err)
+	assert.Equal(t, a.Args(), got, "a round trip keeps an ampersand")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "com.nova.friend-bob.plist")
+	assert.Empty(t, InstalledArgsDrift(a.Args(), path), "a missing plist is no drift")
+	require.NoError(t, os.WriteFile(path, []byte(a.Plist()), 0o644))
+	assert.Empty(t, InstalledArgsDrift(a.Args(), path))
+	assert.Equal(t, "args differ from the installed plist", InstalledArgsDrift(append(a.Args(), "--stale"), path))
+	require.NoError(t, os.WriteFile(path, []byte("not a plist"), 0o644))
+	assert.Contains(t, InstalledArgsDrift(a.Args(), path), "the installed plist could not be read:")
+}
+
 func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 	t.Parallel()
 	var ran []string

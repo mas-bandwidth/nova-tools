@@ -12,14 +12,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
-// The friend's files, one writer each. The state files live in the state
-// directory (DefaultStateDir under the home directory, or --state-dir),
-// never on the friend's volume: a background process on this platform may
-// not touch a removable volume without the person's permission (measured
-// 2026-10-04, "operation not permitted" on the mkdir). The daemon writes
-// Status and the log; the pong verb writes Pong. The queue file is the
-// coordinator's and the session's, under the working directory
-// (SPEC-FRIEND.md, the files).
+// The friend's files, one writer each. The daemon's state directory defaults
+// to StateDirUnder(<dir>), so a sandboxed session can write pong.json.
+// --state-dir still names another directory. The pong verb with no
+// --state-dir, and the health check of a named friend, stay at
+// DefaultStateDir under the home directory. launchd's own log and the binary
+// copy stay under home: a background process on this platform may not touch
+// a removable volume without the person's permission (measured 2026-10-04,
+// "operation not permitted" on the mkdir), and that wall is the log and the
+// binary, not the session's pong. The daemon writes Status and the log; the
+// pong verb writes Pong. The queue file is the coordinator's and the
+// session's, under the working directory (SPEC-FRIEND.md, the files).
 const (
 	StatusFile = "status.json"
 	PongFile   = "pong.json"
@@ -80,6 +83,9 @@ type Status struct {
 	// HeldFrom is where the last answer came from: friend cards, or the worker view while the
 	// server does not serve it (no brief is written from the view).
 	HeldFrom string `json:"held_from,omitempty"`
+	// Seen is the advisory harness word the watch last recorded: running or
+	// not-seen. It never decides whether the friend is up.
+	Seen string `json:"harness_seen,omitempty"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside
@@ -122,9 +128,16 @@ func (q Queue) Counts() (queue, working int) {
 	return queue, working
 }
 
-// DefaultStateDir is where a friend's state files live unless --state-dir
-// names another directory: ~/.nova-friend/<friend>.
+// DefaultStateDir is the home fallback: ~/.nova-friend/<friend>. The pong
+// verb with no --state-dir uses it, and so does the health check of a named
+// friend. The daemon, when --dir is set and --state-dir is not, uses
+// StateDirUnder instead.
 func DefaultStateDir(home, friend string) string { return filepath.Join(home, ".nova-friend", friend) }
+
+// StateDirUnder is the daemon's state directory under the friend's working
+// directory: <dir>/.nova-friend, with no friend subdirectory. A sandboxed
+// session can write pong.json there. --state-dir still names another.
+func StateDirUnder(dir string) string { return filepath.Join(dir, ".nova-friend") }
 
 func statusPath(stateDir string) string { return filepath.Join(stateDir, StatusFile) }
 func pongPath(stateDir string) string   { return filepath.Join(stateDir, PongFile) }

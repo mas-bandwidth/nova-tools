@@ -181,7 +181,9 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	case "antigravity":
 		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "claude":
-		return Stub{Harness: harness}, nil
+		// no deliver command: still a Stub, so install and run refuse it.
+		// Dir and Run let Alive see a `claude -p` process.
+		return Stub{Harness: "claude", Dir: dir, Run: run}, nil
 	case "dsh":
 		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "gemini":
@@ -278,8 +280,14 @@ func Head(s string, n int) string {
 // with the way a session of that harness still reads the bus, so the tool
 // is honest. It is Passive: the daemon takes nothing off the stream for it
 // (the session's own blocking read does), only peeks, so a ping is still
-// answered by the daemon at once and the beat is real.
-type Stub struct{ Harness, Reason string }
+// answered by the daemon at once and the beat is real. Dir and Run are set
+// for claude so Alive can see a `claude -p` process; they are zero for a
+// surveyed harness, and they do not give Stub a deliver command.
+type Stub struct {
+	Harness, Reason string
+	Dir             string
+	Run             Exec
+}
 
 func (s Stub) Deliver(context.Context, string) (int, error) {
 	if s.Reason != "" {

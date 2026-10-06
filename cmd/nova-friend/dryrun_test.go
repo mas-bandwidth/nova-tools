@@ -55,6 +55,18 @@ func TestTheWritingVerbsDryRunWritesNothing(t *testing.T) {
 	cli.Do(t, "run", "--as", "bob", "--harness", "nope", "--dir", filepath.Join(dir, "x"), "--dry-run").Exit(2).Err("is no harness")
 }
 
+func TestTheDaemonStateDirDefaultsUnderDir(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := t.TempDir()
+	cli.Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--dry-run").Exit(0).
+		Out("state=" + friend.StateDirUnder(dir))
+	state := t.TempDir()
+	cli.Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--state-dir", state, "--dry-run").Exit(0).
+		Out("state=" + state)
+}
+
 // cliOf is the tool over a world a test changed.
 func cliOf(w world) testkit.Main {
 	return testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {

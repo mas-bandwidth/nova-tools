@@ -540,9 +540,11 @@ the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
 under that label, bootstrap the new one; without `--dry-run` it does them
 (`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
 nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
-OK nonce= to= id= at=` and writes the pong file under `~/.nova-friend/<me>`
-(the state directory, `--state-dir` to move it; the daemon and the queue file
-keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
+OK nonce= to= id= at=` and writes the pong file where `--state-dir` says.
+The daemon's state defaults to `<dir>/.nova-friend`, and the session check
+embeds that `--state-dir`, so the pong the session runs lands beside its
+work. This verb has no `--dir`: with no `--state-dir` it still writes
+`~/.nova-friend/<me>`. `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
@@ -561,7 +563,8 @@ with no `--to` before any ping has named a seat; a daemon whose record says
 "operation not permitted" running the harness on a removable volume, which is
 the system's privacy permission for background processes, granted to the
 binary by the person in the privacy settings and lost when the binary is
-rebuilt (the state files are under the home directory, out of its way).
+rebuilt (the launchd log and the binary copy stay under the home directory;
+the daemon's state defaults under `--dir` so the session can write `pong.json`).
 
 ### The daemon
 

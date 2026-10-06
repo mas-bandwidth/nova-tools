@@ -5,9 +5,11 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -92,8 +94,10 @@ func (a Agent) Args() []string {
 // login and is restarted when it dies (pending messages redeliver first,
 // nova-bus's rule). launchd opens its own log itself, before the daemon
 // runs, and cannot open one on a network volume (EX_CONFIG, measured
-// 2026-10-03), so that log is LaunchdLog, under the home directory, and so
-// are the daemon's state files and record (DefaultStateDir).
+// 2026-10-03), so that log is LaunchdLog, under the home directory. The
+// daemon's state files default under --dir (StateDirUnder) unless StateDir
+// is set, which writes --state-dir. A kickstart that kept old arguments is
+// caught by InstalledArgsDrift, not by rewriting this plist here.
 func (a Agent) Plist() string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
@@ -129,6 +133,61 @@ func esc(s string) string {
 	var b strings.Builder
 	xml.EscapeText(&b, []byte(s)) // ignored: a strings.Builder never fails to write
 	return b.String()
+}
+
+// PlistProgramArguments is the <string> values inside the ProgramArguments
+// array, unescaped. A plist with no such array is an error.
+func PlistProgramArguments(raw string) ([]string, error) {
+	i := strings.Index(raw, "<key>ProgramArguments</key>")
+	if i < 0 {
+		return nil, errors.New("no ProgramArguments")
+	}
+	rest := raw[i:]
+	a := strings.Index(rest, "<array>")
+	b := strings.Index(rest, "</array>")
+	if a < 0 || b < a {
+		return nil, errors.New("no ProgramArguments array")
+	}
+	body := rest[a+len("<array>") : b]
+	var args []string
+	for {
+		s := strings.Index(body, "<string>")
+		if s < 0 {
+			break
+		}
+		body = body[s+len("<string>"):]
+		e := strings.Index(body, "</string>")
+		if e < 0 {
+			return nil, errors.New("a ProgramArguments string was not closed")
+		}
+		args = append(args, html.UnescapeString(body[:e]))
+		body = body[e+len("</string>"):]
+	}
+	return args, nil
+}
+
+// InstalledArgsDrift compares the running command line with the installed
+// agent's plist. A missing plist is no drift (nothing is installed). A plist
+// that cannot be read or parsed says so. Equal arguments say nothing. Any
+// other difference is the line a kickstart that kept old arguments is caught
+// by: "args differ from the installed plist". It does not call launchctl and
+// it does not fail the start.
+func InstalledArgsDrift(running []string, plistPath string) string {
+	raw, err := os.ReadFile(plistPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		return "the installed plist could not be read: " + err.Error()
+	}
+	args, err := PlistProgramArguments(string(raw))
+	if err != nil {
+		return "the installed plist could not be read: " + err.Error()
+	}
+	if slices.Equal(running, args) {
+		return ""
+	}
+	return "args differ from the installed plist"
 }
 
 // Launchctl runs launchctl with args and answers what it printed; the

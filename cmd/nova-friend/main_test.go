@@ -264,7 +264,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	dir := t.TempDir()
-	state := friend.DefaultStateDir(r.home, "bob")
+	state := friend.StateDirUnder(dir)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).Err("STATUS NONE: no daemon has run as bob (no status file in "+state+")", "nova-friend install --as bob --harness <h> --dir "+dir)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
@@ -376,8 +376,10 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
-	assert.NoDirExists(t, filepath.Join(dir, ".nova-friend"), "nothing of the daemon's on the friend's volume")
-	s, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	_, homeFound, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	require.NoError(t, err)
+	assert.False(t, homeFound, "the daemon's state is under --dir, not the home default")
+	s, found, err := friend.ReadStatus(friend.StateDirUnder(dir))
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "bob", s.Friend)
@@ -498,7 +500,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	dir := t.TempDir()
-	state := friend.DefaultStateDir(r.home, "bob")
+	state := friend.StateDirUnder(dir)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
@@ -594,13 +596,13 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
 		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 --dir "+dir+" nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
 		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
-		lanes, err := friend.ReadLanes(friend.DefaultStateDir(r.home, "bob"))
+		lanes, err := friend.ReadLanes(friend.StateDirUnder(dir))
 		require.NoError(t, err)
 		assert.Equal(t, map[int]string{1: "ses_lane1"}, lanes.Sessions)
 		raw, err := os.ReadFile(filepath.Join(dir, "opencode.json"))
 		require.NoError(t, err)
 		assert.Contains(t, string(raw), `"`+filepath.Join(r.home, "bob-working")+`/**": "allow"`)
-		s, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+		s, _, err := friend.ReadStatus(friend.StateDirUnder(dir))
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)
 		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
@@ -660,7 +662,7 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 	assert.Contains(t, checks[1], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
 	assert.Contains(t, checks[1], "--to ada")
 	mu.Unlock()
-	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	st, _, err := friend.ReadStatus(friend.StateDirUnder(dir))
 	require.NoError(t, err)
 	r.now = st.At // read as the daemon last wrote it: up
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
@@ -677,7 +679,8 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
 	require.NoError(t, err)
-	state := friend.DefaultStateDir(r.home, "bob")
+	dir := t.TempDir()
+	state := friend.StateDirUnder(dir)
 	w := r.world()
 	var mu sync.Mutex
 	clock := start
@@ -738,7 +741,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		return "", 0, nil
 	}
 	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
 	require.Equal(t, 0, code, errb.String())
 	mu.Lock()
 	defer mu.Unlock()
@@ -773,6 +776,57 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	assert.Contains(t, all, "friend bob back", "and that she is back")
 }
 
+// A daemon whose installed plist names different arguments says so on start.
+// The plist is a temp file under the rig's home, never an installed agent,
+// and nothing calls launchctl.
+func TestADaemonWhosePlistChangedSaysSoOnStart(t *testing.T) {
+	t.Parallel()
+	t.Run("args differ", func(t *testing.T) {
+		t.Parallel()
+		out := runWithPlist(t, true)
+		assert.Contains(t, out, "args differ from the installed plist")
+	})
+	t.Run("args match", func(t *testing.T) {
+		t.Parallel()
+		out := runWithPlist(t, false)
+		assert.NotContains(t, out, "args differ from the installed plist")
+	})
+}
+
+func runWithPlist(t *testing.T, differ bool) string {
+	t.Helper()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	beats := 0
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+		beats++
+		if beats == 2 {
+			cancel()
+		}
+		return "", nil
+	}
+	dir := t.TempDir()
+	a := friend.Agent{Friend: "bob", Harness: "opencode", Dir: dir, Binary: "/opt/nova/bin/nova-friend",
+		Redis: "store.test:6379", Server: w.server(), Home: r.home, Path: "/usr/bin:/bin",
+		LaunchdLog: filepath.Join(r.home, "Library", "Logs", "nova-friend-bob.log")}
+	require.NoError(t, os.MkdirAll(filepath.Dir(a.PlistPath()), 0o755))
+	require.NoError(t, os.WriteFile(a.PlistPath(), []byte(a.Plist()), 0o644))
+	w.argv = append([]string{}, a.Args()...)
+	if differ {
+		w.argv = append(w.argv, "--stale")
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, errb.String())
+	assert.Equal(t, 2, beats)
+	return out.String()
+}
+
 // lockedBuilder is a strings.Builder under the test's lock: the daemon writes
 // its lines and the harness's output from the turn's goroutine and its own.
 type lockedBuilder struct {
@@ -789,10 +843,9 @@ func (l *lockedBuilder) Write(p []byte) (int, error) {
 // String is read with the lock held by the caller.
 func (l *lockedBuilder) String() string { return l.b.String() }
 
-// A friend whose harness is not running is down at once: run wires
-// HarnessWatch in front of the daemon's beat, beats fail with harness not
-// running, status says so on the beat's error, and no beat reaches the
-// sprint server while the harness is down (docs/SPEC-FRIEND.md, the harness check).
+// The harness watch sits in front of the beat and records an advisory word.
+// A harness that is not seen does not hold the beat and does not mark the
+// friend down (docs/SPEC-FRIEND.md, the harness check).
 func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
@@ -810,16 +863,19 @@ func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
-	assert.Zero(t, beats, "no beat reaches the sprint server while harness is not running")
-	assert.Contains(t, out.String(), "down: harness not running: the harness app is closed")
+	assert.Positive(t, beats, "a harness that is not seen does not hold the beat")
+	assert.Contains(t, out.String(), "harness=not-seen: the harness app is closed")
+	assert.NotContains(t, out.String(), "the last beat failed: "+friend.HarnessNotRunning)
 
-	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	st, _, err := friend.ReadStatus(friend.StateDirUnder(dir))
 	require.NoError(t, err)
-	assert.Equal(t, friend.HarnessNotRunning, st.BeatError)
+	assert.NotEqual(t, friend.HarnessNotRunning, st.BeatError)
+	assert.Equal(t, friend.HarnessNotSeen, st.Seen)
 
 	r.now = st.At
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("NOTE the last beat failed: harness not running")
+		Out("harness=not-seen").
+		NotOut("the last beat failed: " + friend.HarnessNotRunning)
 }
 
 // check runs the delivery check against the live session: one line, OK with
@@ -868,10 +924,10 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	dir := t.TempDir()
-	state := friend.DefaultStateDir(r.home, "bob")
+	state := friend.StateDirUnder(dir)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet, Beats: 40, LastBeat: start}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`daemon=up`, `status=down why="no session answer ever" evidence="harness unknown; no session answer ever; no limit; 0 undelivered; no result yet"`)
+		Out(`daemon=up`, `status=down why="no session answer ever" evidence="harness=not-seen; no session answer ever; no limit; 0 undelivered; no result yet"`)
 
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-time.Minute)}))
 	b := &bus.Bus{Store: r.store}
@@ -881,7 +937,7 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	}
 	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 took=3s exit=0 acked=true"))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`status=up why="session answer 1m" evidence="harness unknown; session answer 1m; no limit; 2 undelivered; last result 10m exit=0"`)
+		Out(`status=up why="session answer 1m" evidence="harness=not-seen; session answer 1m; no limit; 2 undelivered; last result 10m exit=0"`)
 
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-12 * time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="no session answer 12m"`)

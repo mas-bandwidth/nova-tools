@@ -31,8 +31,8 @@ func TestStatusIsUpOnlyWithASessionAnswerInsideTheBound(t *testing.T) {
 	}{
 		{"every piece of evidence good is up", live, "up", "session answer 40s"},
 		{"an unknown harness does not stop an answering session", with(func(e *Evidence) { e.Harness = HarnessUnknown }), "up", "session answer 40s"},
-		{"harness not running is down, whatever else", with(func(e *Evidence) { e.Harness = HarnessNotRunning }), "down", "harness not running"},
-		{"harness not running outranks a limit", with(func(e *Evidence) { e.Harness = HarnessNotRunning; e.LimitUntil = reset }), "down", "harness not running"},
+		{"a harness not seen does not stop an answering session", with(func(e *Evidence) { e.Harness = HarnessNotRunning }), "up", "session answer 40s"},
+		{"a limit still downs when the harness is not seen", with(func(e *Evidence) { e.Harness = HarnessNotRunning; e.LimitUntil = reset }), "down", "limit until Mon 1:00 PM"},
 		{"at a limit is down until the reset", with(func(e *Evidence) { e.LimitUntil = reset }), "down", "limit until Mon 1:00 PM"},
 		{"a limit says its reason", with(func(e *Evidence) { e.LimitUntil = reset; e.Limit = "weekly" }), "down", "weekly limit until Mon 1:00 PM"},
 		{"a limit past its reset is no limit", with(func(e *Evidence) { e.LimitUntil = now.Add(-time.Minute) }), "up", "session answer 40s"},
@@ -56,9 +56,9 @@ func TestStatusIsUpOnlyWithASessionAnswerInsideTheBound(t *testing.T) {
 
 	// The evidence is shown beside the status, every piece of it.
 	v := FriendStatus(with(func(e *Evidence) { e.Undelivered = 2; e.LimitUntil = reset; e.LastExit = 1 }), now, AnswerBound, ny)
-	assert.Equal(t, []string{"harness running", "session answer 40s", "limit until Mon 1:00 PM", "2 undelivered", "last result 3m exit=1"}, v.Evidence)
+	assert.Equal(t, []string{"harness=running", "session answer 40s", "limit until Mon 1:00 PM", "2 undelivered", "last result 3m exit=1"}, v.Evidence)
 	v = FriendStatus(Evidence{}, now, AnswerBound, ny)
-	assert.Equal(t, []string{"harness unknown", "no session answer ever", "no limit", "0 undelivered", "no result yet"}, v.Evidence)
+	assert.Equal(t, []string{"harness=not-seen", "no session answer ever", "no limit", "0 undelivered", "no result yet"}, v.Evidence)
 }
 
 func TestLastResultIsTheNewestTurnLineOfTheLog(t *testing.T) {

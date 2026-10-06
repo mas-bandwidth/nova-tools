@@ -84,6 +84,7 @@ type world struct {
 	random    func() string
 	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+	argv      []string          // the process arguments compared with the installed plist; nil is os.Args
 }
 
 // sprintVerb sends one worker verb (progress, finish) to the sprint server and answers its
@@ -249,13 +250,35 @@ func (w world) openRedis(ctx context.Context, addr string) (bus.Store, func(), e
 	return bus.Redis{C: conn.Client()}, func() { conn.Close() }, nil // ignored: closing the store connection at exit, nothing is left to report it to
 }
 
-// stateDir is where the state files of the friend --as names live: --state-dir,
+// stateDir is where the pong verb, which has no --dir, writes: --state-dir,
 // else the default under the home directory.
 func (w world) stateDir(c *tool.Call) string {
 	if s := c.Str("state-dir"); s != "" {
 		return s
 	}
 	return friend.DefaultStateDir(w.home, c.Str("as"))
+}
+
+// daemonState is where the daemon's state files live. --state-dir wins.
+// Otherwise, when --dir is set, they live under that directory
+// (StateDirUnder), so a sandboxed session can write its pong. With neither,
+// the home default. Call it only from a verb that declares --dir.
+func (w world) daemonState(c *tool.Call) string {
+	if s := c.Str("state-dir"); s != "" {
+		return s
+	}
+	if dir := c.Str("dir"); dir != "" {
+		return friend.StateDirUnder(dir)
+	}
+	return friend.DefaultStateDir(w.home, c.Str("as"))
+}
+
+// procArgs is the command line compared with the installed plist.
+func (w world) procArgs() []string {
+	if w.argv != nil {
+		return w.argv
+	}
+	return os.Args
 }
 
 func (w world) server() string {
@@ -270,7 +293,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("redis", w.getenv(RedisEnv), "the bus store's Redis address, host:port (default: "+RedisEnv+")")
 	}
 	stateDir := func(f *tool.Flags) {
-		f.String("state-dir", "", "where the state files live (default: ~/.nova-friend/<me>)")
+		f.String("state-dir", "", "where the state files live (daemon default: <dir>/.nova-friend when --dir is set, else ~/.nova-friend/<me>; this flag is honoured)")
 	}
 	settingFlags := func(f *tool.Flags) {
 		f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)")
@@ -303,7 +326,7 @@ func friendTool(w world) *tool.Tool {
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong, never presence); presence is the session's answer to a nonce.
-state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
+state: <dir>/.nova-friend for the daemon when --dir is set (or --state-dir), else ~/.nova-friend/<me>/; the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT"},
 		Verbs: []tool.Verb{
@@ -391,9 +414,10 @@ that is one) is refused and nothing is written or loaded. nova-friend check --se
 Then writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
 restarted when it dies, pending messages redelivered first), boots out whatever that label runs,
 and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
-~/Library/Logs (launchd cannot open one on a network volume), and the daemon's state files and
-record under ~/.nova-friend/<me> (a background process may not touch a removable volume without
-the person's permission); --state-dir moves them. A binary on a removable volume (/Volumes) is copied to
+~/Library/Logs (launchd cannot open one on a network volume). The daemon's state files
+default under <dir>/.nova-friend, so a sandboxed session can write pong.json; --state-dir moves
+them. The launchd log and the binary copy stay under the home directory (a background process may
+not touch a removable volume without the person's permission). A binary on a removable volume (/Volumes) is copied to
 ~/.nova-friend/bin/nova-friend before the plist is written, and the plist names the copy; a copy that
 cannot be made is refused and the agent is not loaded. --secrets NAME[,NAME] wraps the daemon in nova-secrets
 exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
@@ -600,8 +624,10 @@ removes its plist.`,
 				DryRun:  true,
 				Detail: `What the session runs when a PING <nonce> arrives, first and before anything else: sends
 "pong <nonce> queue=<n> working=<n> width=<n>" to the coordinator (--to, else the seat the last
-ping named, read from the status file) and records it in the state directory (~/.nova-friend/<me>,
-or --state-dir as the daemon runs with), where the daemon reads it. The name is the daemon's: a
+ping named, read from the status file) and records it where --state-dir says. The daemon's
+session check embeds --state-dir of the directory it reads, <dir>/.nova-friend unless the daemon
+was started with --state-dir. This verb's own default, when --state-dir is omitted, stays
+~/.nova-friend/<me> (pong has no --dir). The name is the daemon's: a
 --as that is not the friend whose state is there is refused. --dry-run checks the note as send checks it and prints
 the line it would send; nothing is sent and no pong file is written.`,
 				Flags: func(f *tool.Flags) {
@@ -649,8 +675,9 @@ session_pong_age is the session's own pong (the pong file), daemon_pong_age the 
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
 ` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): harness not running is down
-(known for grok, a tail under the window: running; unknown elsewhere, never down on its own); at a limit (the state directory's
+harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md): the harness
+word is advisory, harness=running or harness=not-seen, and never decides (a command-line session, dsh headless,
+codex exec or claude -p, counts as seen); at a limit (the state directory's
 ` + friend.LimitFile + `) is down until the reset; no session answer (the pong file) under ` + friend.AnswerBound.String() + ` is down; a bus that cannot
 deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes it up. why
 is the rule that decided it, as a person reads it ("no session answer 12m", "limit until Mon 1:00 PM"); evidence is every piece,
@@ -743,7 +770,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if o := c.Refused(); o != nil {
 		return o
 	}
-	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.stateDir(c)
+	name, dir, server, state := c.Str("as"), c.Str("dir"), c.Str("server"), w.daemonState(c)
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
 	var rowProfile atomic.Pointer[string]
@@ -792,6 +819,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
+	// a kickstart that kept the previous arguments: the installed plist is a
+	// file under this home, never launchctl, and a difference does not stop the start
+	if line := friend.InstalledArgsDrift(w.procArgs(), filepath.Join(w.home, "Library", "LaunchAgents", "com.nova.friend-"+name+".plist")); line != "" {
+		record(w.now().UTC().Format(time.RFC3339) + " " + line)
+	}
 	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
 	// the session's last proof (its answer or its own bus message), as the presence file
@@ -805,10 +837,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
-		} else if watch != nil {
-			if down, why := watch.Down(); down {
-				p.Presence, p.Reason = friend.PresenceDown, friend.HarnessNotRunning+": "+why
-			}
 		}
 		return friend.WritePresence(state, p)
 	}
@@ -1091,7 +1119,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
 	}
 	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
-	res, remedy, cannot, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.stateDir(c), "", c.Dur("within"))
+	res, remedy, cannot, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.daemonState(c), "", c.Dur("within"))
 	if cannot {
 		// a session the adapter cannot drive: the agent would refuse at every start, so it goes again
 		undone, uerr := friend.Uninstall(context.Background(), a, w.uid, w.launchctl, os.Remove)
@@ -1236,7 +1264,7 @@ func stamp(t time.Time) string {
 }
 
 func (w world) status(c *tool.Call) *tool.Out {
-	dir, name, state := c.Str("dir"), c.Str("as"), w.stateDir(c)
+	dir, name, state := c.Str("dir"), c.Str("as"), w.daemonState(c)
 	s, found, err := friend.ReadStatus(state)
 	if err != nil {
 		return tool.Refuse("the status file cannot be read: " + err.Error())
@@ -1341,10 +1369,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 // that is down, a broken session and a store that does not answer are a bus
 // that cannot deliver to her. What cannot be read is a NOTE on o.
 func (w world) evidence(c *tool.Call, s friend.Status, p friend.Pong, now time.Time, daemonUp bool, route string, o *tool.Out) friend.Evidence {
-	state := w.stateDir(c)
-	e := friend.Evidence{DaemonUp: daemonUp, LastAnswer: p.At, Undelivered: -1}
-	if route == "push" {
-		e.Harness = friend.HarnessRunning // a tail runs under the open window's pid
+	state := w.daemonState(c)
+	e := friend.Evidence{DaemonUp: daemonUp, LastAnswer: p.At, Undelivered: -1, Harness: friend.HarnessNotSeen}
+	if s.Seen == friend.HarnessRunning || route == "push" {
+		e.Harness = friend.HarnessRunning // a tail under the open window, or the watch saw a process
 	}
 	l, _, err := friend.ReadLimitFile(state)
 	if err != nil {

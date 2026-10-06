@@ -20,7 +20,7 @@ func TestStatusPrintsHeldInboxAndMissing(t *testing.T) {
 	r := newRig(t, "friend-a", "friend-b")
 	cli := r.cli()
 	dir := t.TempDir()
-	state := friend.DefaultStateDir(r.home, "friend-b")
+	state := friend.StateDirUnder(dir)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "friend-b", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		HeldKnown: true, Held: 7, InboxJobs: 6, Missing: 1, InboxError: "inbox/x~15: permission denied"}))
 	cli.Do(t, "status", "--as", "friend-b", "--dir", dir).Exit(0).
@@ -34,7 +34,7 @@ func TestStatusSaysTheRowIsReadFromTheView(t *testing.T) {
 	r := newRig(t, "friend-a", "friend-b")
 	cli := r.cli()
 	dir := t.TempDir()
-	state := friend.DefaultStateDir(r.home, "friend-b")
+	state := friend.StateDirUnder(dir)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "friend-b", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		HeldKnown: true, Held: 7, InboxJobs: 0, Missing: 7, HeldFrom: friend.FromView}))
 	cli.Do(t, "status", "--as", "friend-b", "--dir", dir).Exit(0).
