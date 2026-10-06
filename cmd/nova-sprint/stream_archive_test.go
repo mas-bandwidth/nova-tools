@@ -32,8 +32,10 @@ func (ta *testApp) workRowsDrawn() (rows []string, under string) {
 // stream archive and unarchive end to end on the twin (the owner, 2026-10-05: "I would like
 // you to remove all the already landed work streams"): on a RUNNING machine, refused for a
 // stream with a card not landed, naming it; the archived stream leaves the drawn table and
-// where --json's tables and rows, one line under the work table counts it, and --archived,
-// the footer and the summary keep it; unarchive draws it again.
+// where --json's tables and rows, one line under the work table counts it, --archived keeps
+// its row, and the summary leaves it, archived_cards and archived_landed carrying its cards
+// (the owner, 2026-10-06: the headline counts only the streams on the table); unarchive
+// draws it again.
 func TestStreamArchiveTakesALandedStreamOffTheTable(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -74,10 +76,11 @@ func TestStreamArchiveTakesALandedStreamOffTheTable(t *testing.T) {
 		assert.NotEqual(t, "s1", r.Stream, "an archived stream's primaries are in --rows only with --archived")
 	}
 	require.NotNil(t, v.Archived)
-	assert.Equal(t, archivedView{Streams: []string{"s1"}, Landed: 2, Cost: "$3.00"}, *v.Archived)
-	assert.Equal(t, before.Landed, v.Landed, "the summary counts it")
-	assert.Equal(t, before.All, v.All)
-	assert.Equal(t, before.Summary, v.Summary)
+	assert.Equal(t, archivedView{Streams: []string{"s1"}, Cards: 2, Landed: 2, Cost: "$3.00"}, *v.Archived)
+	assert.Equal(t, before.Landed-2, v.Landed, "the summary leaves it")
+	assert.Equal(t, before.All-2, v.All)
+	assert.Equal(t, [2]int64{2, 2}, [2]int64{v.ArchivedCards, v.ArchivedLanded})
+	assert.NotEqual(t, before.Summary, v.Summary)
 	assert.Equal(t, before.StreamCosts["s1"], v.StreamCosts["s1"], "its costs stay in stream_costs")
 	var all whereView
 	ta.json("where --rows --archived", &all)

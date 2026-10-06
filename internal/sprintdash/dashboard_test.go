@@ -179,6 +179,27 @@ func TestDashboardThroughput(t *testing.T) {
 	assert.InDelta(t, 0, v["throughputMinutes"], 0)
 }
 
+// An archive moves landed cards off the headline (landed falls by them, archived_landed
+// rises by them) and lands nothing: the throughput's samples are the epoch's landed cards,
+// so it is no fall that starts them again.
+func TestDashboardThroughputHoldsAcrossAnArchive(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	landed, archived := 100, 0
+	r.next = func() ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"at":"2026-10-02T19:00:00Z","landed":%d,"archived_landed":%d,"all":100,"summary":"x","tables":{"work":{}}}`, landed, archived)), nil
+	}
+	r.api()
+	r.advance(10 * time.Minute)
+	landed = 110
+	assert.InDelta(t, 60, r.api()["throughput"], 0)
+	r.advance(10 * time.Minute)
+	landed, archived = 20, 100 // 100 landed cards archived, 10 more landed
+	v := r.api()
+	assert.InDelta(t, 60, v["throughput"], 0, "20 cards in 20 minutes, the archive's 100 not a fall")
+	assert.InDelta(t, 20, v["throughputMinutes"], 0)
+}
+
 // The read-time summary is one line a minute.
 func TestDashboardLogsAReadSummaryAMinute(t *testing.T) {
 	t.Parallel()

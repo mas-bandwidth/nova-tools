@@ -198,8 +198,11 @@ This specification is locked. No line changes without his words, quoted here wit
   ones (`stream archive`, read from `where --json --archived`'s `archived`) are behind one line in the
   panel head after the subtitle, "<N> archived streams, <M> cards landed, $<X> · show", which shows
   them in the table (and reads "· hide") when clicked and hides them again on the next click. The
-  subtitle counts the streams shown; the total row, the progress bar and the hero count every stream,
-  archived ones included. Nothing else moves.
+  subtitle counts the streams shown; the total row, the progress bar, the hero and its cost count only
+  the streams on the table, an archived one shown or not (the owner, 2026-10-06 2:43 PM ET: "I really
+  don't think we have 2.8k cards post-archive..."), and the archived line carries the archived ones;
+  the throughput samples `landed + archived_landed`, so an archive does not start it again. Nothing
+  else moves.
 - 2026-10-04, the owner, a quoted change after the lock, asking after the merge backlog:
   "Is this progress visible in the sprint dashboard yet?" The page shows one Merge row under the progress bar (the Merge section
   above), read from `where --json`'s `merge_row`. Nothing else moves.

@@ -21,8 +21,9 @@ process.stdout.write(JSON.stringify({ cost: doc.getElementById('cost').textConte
 
 // The cost tile shows the reads as their own number beside the work (reads are priced like
 // work; the owner, 2026-10-05: "do we have the cost for readers properly calculated yet in
-// nova sprint?"), over every stream, the archived ones off the table included, as the
-// total counts them.
+// nova sprint?"), over the streams on the table, as the total counts them: an archived
+// stream's spend is on its archived line (the owner, 2026-10-06: "I really don't think we
+// have 2.8k cards post-archive..."). The readers' tooltip is every stream's.
 func TestTheCostTileShowsReadsBesideWork(t *testing.T) {
 	t.Parallel()
 	nodePath, err := exec.LookPath("node")
@@ -61,9 +62,10 @@ func TestTheCostTileShowsReadsBesideWork(t *testing.T) {
 	var res struct{ Cost, Per, Title string }
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &res), outBuf.String())
 
-	assert.Contains(t, res.Cost, "$4.50", "the complete cost holds work and reads of every stream")
-	assert.Contains(t, res.Per, "$3.00 work · $1.50 reads", "the reads beside the work, the archived stream's included")
-	assert.Contains(t, res.Per, "$1.50 reads (33%)", "and their share of work and reads together")
+	assert.Contains(t, res.Cost, "$3.00", "the complete cost holds work and reads of the streams on the table")
+	assert.NotContains(t, res.Cost, "$4.50", "the archived stream's $1.50 leaves it")
+	assert.Contains(t, res.Per, "$2.00 work · $1.00 reads", "the reads beside the work, the archived stream's left out")
+	assert.Contains(t, res.Per, "$1.00 reads (33%)", "and their share of work and reads together")
 	assert.Equal(t, "reader-a $0.88 ($0.13 last hour)\nreader-b $0.63 ($0.00 last hour)", res.Title,
 		"the tooltip names each reader's spend over every stream, most first; a subscription reader has no dollars")
 }

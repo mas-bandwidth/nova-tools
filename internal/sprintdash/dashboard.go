@@ -229,8 +229,12 @@ func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err err
 		}
 		s.snap.OK, s.snap.Error = false, &why
 	} else {
+		// the samples are the epoch's landed cards: the table's and the archived streams'
+		// (stream archive), so an archive, which lands nothing, is not a fall that starts
+		// them again
 		var v struct {
-			Landed int64 `json:"landed"`
+			Landed         int64 `json:"landed"`
+			ArchivedLanded int64 `json:"archived_landed"`
 		}
 		// ignored: sprintJSON has read body as JSON; a landed that is no number is 0
 		_ = json.Unmarshal(body, &v)
@@ -238,7 +242,7 @@ func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err err
 		if up != nil {
 			at, rate, minutes = *up.FetchedAt, up.Throughput, up.ThroughputMinutes
 		} else {
-			rate, minutes = s.sampleLanded(start, v.Landed)
+			rate, minutes = s.sampleLanded(start, v.Landed+v.ArchivedLanded)
 		}
 		s.fresh.at = at
 		var c sprintCopy

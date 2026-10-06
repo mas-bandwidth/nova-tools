@@ -234,7 +234,9 @@ function streamStatus(state, c, total) {
 // The archived streams (stream archive; the owner, 2026-10-05: "I would like you to remove all
 // the already landed work streams"): off the table by default, one line saying how many, the
 // cards landed in them and their cost, which shows them or hides them again when clicked. The
-// total row, the progress bar and the hero count them either way.
+// total row, the progress bar and the hero count only the streams on the table, shown or not
+// (the owner, 2026-10-06: "I really don't think we have 2.8k cards post-archive..."); the
+// archived line carries theirs.
 var showArchived = false, lastStreams = null;
 function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
 function renderArchived(d) {
@@ -285,16 +287,19 @@ function renderStreams(d) {
     return r;
   }, function (r, k) {
     var w = work[k], m = merge[k] || {}, s = states[k] || {}, c = {}, total = 0;
-    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; sum[st] += c[st]; });
-    var ct = cents(w.cost); if (ct) sum.cost += ct;
-    var sc = (d.stream_costs || {})[k] || {};
-    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
-    // the reads beside the work: the same total split by kind (sprint.TierCosts)
-    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
-    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
-    // the sprint's unreconciled spend rides on every stream's record: read once, never summed
-    var uc = cents(sc.unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
-    sum.unpriced += int(sc.unpriced_runs);
+    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; });
+    var ct = cents(w.cost);
+    // an archived stream shown is drawn, and counted only on its archived line
+    if (!arch[k]) {
+      FLOW.forEach(function (st) { sum[st] += c[st]; });
+      if (ct) sum.cost += ct;
+      var sc = (d.stream_costs || {})[k] || {};
+      var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+      // the reads beside the work: the same total split by kind (sprint.TierCosts)
+      var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+      var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
+      sum.unpriced += int(sc.unpriced_runs);
+    }
     var status = statusOf[k];
     if (status === "held") held++;
     if (status === "landed") landedStreams++;
@@ -310,16 +315,10 @@ function renderStreams(d) {
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
   }, box._total);
-  // an archived stream off the table still counts in the total row
-  streamOrder(d).forEach(function (k) {
-    if (showArchived || !arch[k]) return;
-    FLOW.forEach(function (st) { sum[st] += int(work[k][st]); });
-    var ct = cents(work[k].cost); if (ct) sum.cost += ct;
-    var sc = (d.stream_costs || {})[k] || {};
-    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
-    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
-    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
-    sum.unpriced += int(sc.unpriced_runs);
+  // the sprint's unreconciled spend rides on every stream's record, an archived one's too:
+  // read once, never summed
+  Object.keys(d.stream_costs || {}).forEach(function (k) {
+    var uc = cents(d.stream_costs[k].unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
   });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
@@ -551,7 +550,7 @@ function renderHero(d, s) {
     var ms = etaMs(m[1]);
     var etaAt = new Date(at.getTime() + ms);
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
-  } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
+  } else if ((all && landed >= all) || / done$/.test(String(d.summary || ""))) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
   // the complete cost (docs/SPEC-SPRINT.md, "What a card cost"): every take and read of
   // every card in any column, plus what the providers counted beyond those records; the

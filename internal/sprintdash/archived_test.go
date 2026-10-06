@@ -32,7 +32,8 @@ process.stdout.write(JSON.stringify(out));
 // The Work panel shows only the live streams by default (stream archive; the owner,
 // 2026-10-05: "I would like you to remove all the already landed work streams"), with one
 // line "N archived streams, M cards landed, $X" that shows them, and hides them again, when
-// clicked; the total row counts them either way.
+// clicked; the total row counts only the streams on the table, shown or not (the owner,
+// 2026-10-06: "I really don't think we have 2.8k cards post-archive...").
 func TestTheWorkPanelHidesArchivedStreamsBehindOneLine(t *testing.T) {
 	t.Parallel()
 	nodePath, err := exec.LookPath("node")
@@ -72,6 +73,6 @@ func TestTheWorkPanelHidesArchivedStreamsBehindOneLine(t *testing.T) {
 	assert.ElementsMatch(t, []string{"ci", "old"}, res.Shown, "the line shows them")
 	assert.Equal(t, "1 archived stream, 4 cards landed, $1.00 · hide", res.ShownLine)
 	assert.Equal(t, []string{"ci"}, res.Again, "and hides them again")
-	assert.Contains(t, res.Total, "$3.15", "the total row counts the archived stream's cost")
+	assert.Contains(t, res.Total, "$2.15", "the total row leaves the archived stream's $1.00")
 	assert.Equal(t, res.Total, res.ShownTotal, "the total row is the same either way")
 }
