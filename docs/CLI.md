@@ -2104,7 +2104,7 @@ secrets store checkout, `--base` and `--head` are the pull request's two shas, a
 The store's own review, as a verb: run it in CI on every pull request against the
 secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
 `GATE APPROVE files=<n> machines=<registry|->` at exit 0, or one
-`GATE REFUSE rule=<n> file=<f>: <why>` line at exit 2.
+`GATE REFUSE rule=<n> check=<k> file=<f>: <why>` line at exit 2.
 
 `--base` and `--head` each name one commit. A ref beginning with `-`, a ref that
 names no commit, and any gate flag given twice are each refused at exit 2 with one

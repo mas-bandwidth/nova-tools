@@ -45,6 +45,6 @@ func TestFirstPlainValueNamesABrokenRegex(t *testing.T) {
 		})
 		line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
 		require.Equal(t, 2, code, "RunGate = (%q, %d), want exit 2 fail-closed", line, code)
-		assert.Equal(t, "GATE REFUSE rule=1 file=rowan.yaml: unencrypted_regex \""+broken+"\" is not a valid regular expression", line)
+		assert.Equal(t, "GATE REFUSE rule=1 check=2 file=rowan.yaml: unencrypted_regex \""+broken+"\" is not a valid regular expression", line)
 	})
 }

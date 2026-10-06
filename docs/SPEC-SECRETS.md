@@ -358,8 +358,18 @@ proven by one line is a store proven for one line), or who has cloned the store.
 ```
 nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 GATE APPROVE files=<n> machines=<registry|->
-GATE REFUSE rule=<n> file=<f>: <why>
+GATE REFUSE rule=<n> check=<k> file=<f>: <why>
 ```
+
+**Gate checks (k = 1..5):**
+
+1. **Rule's recipients and path_regex**: Every changed `.sops.yaml` rule has exactly two age recipients (one the declared recovery key) and a `path_regex` naming exactly one seat file.
+2. **Seat file's encryption and its rule**: Every changed seat file `<seat>.yaml` is encrypted (with `sops:` metadata present and no plain values outside `unencrypted_regex`) and its rule exists in `.sops.yaml`.
+3. **No other file changes**: No files other than `.sops.yaml`, `README.md`, and seat `.yaml` files change.
+4. **New recipient needs the registry's seat** (inside check 1): A recipient key this diff introduces is permitted only when a machine in `--machines` carries this rule's seat.
+5. **Seat gone at head**: A seat file in the store at `--base` must still be in the store at `--head`; removing a seat is never part of adding one.
+
+numbers identify checks; the gate runs them in the order 3, 1, 4, 5, 2. check=0 means the gate refused before any numbered check ran.
 
 **The store's own gate, as a verb.** What the store repo ran as a shell gate lives here in
 the tool instead, so the workflow calls this tool and the rule
@@ -372,7 +382,7 @@ is the shape of a git option and is refused at exit 2 as
 `SECRETS GATE REFUSED: --head <ref> begins with "-", the shape of an option, not a git ref`
 before git sees it. Every other ref is resolved with
 `git rev-parse --verify --end-of-options <ref>^{commit}`; a ref that names no commit (an
-unknown name, a tree, two words) is `GATE REFUSE rule=0 file=: --head <ref> does not name a
+unknown name, a tree, two words) is `GATE REFUSE rule=0 check=0 file=: --head <ref> does not name a
 commit in the store <dir>` at exit 2. The diff, the tree listings and every file read are
 then made from the two resolved SHAs, each behind `--end-of-options`, so no value the caller
 passes is ever read by git as an option. Two refs naming one commit are an empty diff, and an
@@ -404,7 +414,7 @@ it is adding one, and it is never part of adding a seat. Keep what exists.
 **It also refuses, at exit 2, a changed seat file no verb wrote.** `seal`, `seat add` and
 `seat inject` each put one root key into the file they write, in the clear:
 `NOVA_SECRETS_WRITTEN_BY: <seal|seat add|seat inject> <tool version>`, and the gate refuses a
-changed seat file that lacks it, `GATE REFUSE rule=<n> file=<f>: the seat file was not written
+changed seat file that lacks it, `GATE REFUSE rule=<n> check=2 file=<f>: the seat file was not written
 by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand`. **The
 decision, and why.** Without the mark the gate is a check on bytes, and a seat file sealed by
 hand (`sops <seat>.yaml`, `sops updatekeys <seat>.yaml`, any editor that leaves sops metadata
@@ -439,7 +449,7 @@ the `<seat>` of the single `<seat>.yaml` the rule's `path_regex` names.** A row 
 because the seat is what a reader goes and checks:
 
 ```
-GATE REFUSE rule=1 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
+GATE REFUSE rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
 ```
 
 The registry is read **first and whole**, before any judgement leans on it — an unreadable or
