@@ -35,25 +35,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SLOW: 1.0 s on bench-tier at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
 // TestNativeRunKillsAtDeadline: a child that sleeps past the wall is killed by it, and the
-// run records a non-zero exit rather than hanging.
+// run records a non-zero exit rather than hanging. The deadline is an event injected through
+// nativeDeadline once the harness has started, rather than waiting out a wall clock.
+// This test does not run in parallel. It swaps the package seam nativeDeadline, and a
+// parallel run would hand that deadline to every other native run.
 func TestNativeRunKillsAtDeadline(t *testing.T) {
-	t.Parallel()
-
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 
+	realDeadline := nativeDeadline
+	t.Cleanup(func() { nativeDeadline = realDeadline })
+	quit := make(chan struct{})
+	defer close(quit)
+	nativeDeadline = func(time.Duration) (<-chan time.Time, func() bool) {
+		fire := make(chan time.Time)
+		go func() {
+			tick := time.NewTicker(5 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				if _, err := os.Stat(filepath.Join(slot, "jobs", "lbl", "argv")); err == nil {
+					close(fire)
+					return
+				}
+				select {
+				case <-quit:
+					return
+				case <-tick.C:
+				}
+			}
+		}()
+		return fire, func() bool { return true }
+	}
+
 	var errOut bytes.Buffer
-	start := time.Now()
 	res, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: "lbl",
-		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: time.Second, noWall: true,
+		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	elapsed := time.Since(start)
 	require.Equal(t, 0, code, "a deadline kill is not a refusal, got exit %d:\n%s", code, errOut.String())
-	require.NotEqual(t, 0, res.rc, "the deadline killed the child, and the run records a non-zero exit")
-	require.True(t, elapsed <= 30*time.Second, "the deadline should cut the run short, but it took %v", elapsed)
+	require.Equal(t, -1, res.rc, "the deadline killed the child, and the run records rc=-1")
 }
 
 // SLOW: 25.2 s on bench-tier at dev 64b9bec48, over the five-second line.
