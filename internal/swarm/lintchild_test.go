@@ -123,7 +123,7 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 	for _, need := range []string{
 		"gocache", "no-go-clean", "no-redis-server", "no-kill", "go-test-timeout", "no-rm-rf", "no-force-push", "no-rebase",
 		"functional-in-container", "parallel", "class-tests", "no-names", "present-tense", "commit-trailer", "pr-line",
-		"never-merge", "pr-diffstat", "report-not-done", "no-stash",
+		"never-merge", "pr-diffstat", "report-not-done", "no-stash", "honest-attribution",
 	} {
 		assert.True(t, have[need], "the rule %s the coordinator gives every child is not a row of fleet/child-rules.txt", need)
 	}
@@ -302,6 +302,9 @@ func TestChildScansRefuseTheCommandAndAllowTheRest(t *testing.T) {
 		{"step-go-test-timeout",
 			[]string{"STEP 7. go test ./...", "STEP 7. Run go test -count=1 ./x/", "STEP 7. go test ./a && go test -timeout 600s ./b"},
 			[]string{"STEP 7. go test -timeout 600s ./...", "STEP 7. go test -count=1 -timeout 600s ./x/ -run TestY", "STEP 7. go vet ./...", "STEP 7. Never go test the whole tree."}},
+		{"step-honest-attribution",
+			[]string{"STEP 7. Never claim Claude.", "STEP 7. Do not mention the model.", "STEP 7. Hide the model.", "STEP 7. Sign as another model.", "STEP 7. Omit the model.", "STEP 7. Use a fixed model."},
+			[]string{"STEP 7. Name the actual model and never claim one you are not.", "STEP 7. Never use a redis-server.", "STEP 7. Test the model."}},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {

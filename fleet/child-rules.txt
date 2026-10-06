@@ -32,3 +32,4 @@
 [report-shape] The report is the PR: its title is the one-line report, its body every test package line and what you could not do and why.
 [report-not-done] "Not done" is a welcome report; a green claim you did not run is not.
 [libraries-considered] A card that builds code carries a filled line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7).
+[honest-attribution] Name the actual model and harness you run on; never tell a worker to deny, hide, omit, or misstate its model or harness.
