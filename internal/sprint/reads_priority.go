@@ -81,6 +81,9 @@ func readsWaitingCards(s *Snapshot) []*Card {
 // ReadsWaiting is the count of reads waiting to be asked: the reads wanted now (ReadsWanted)
 // over every primary in review whose work did not fail.
 func ReadsWaiting(s *Snapshot) int {
+	if s.ReadCardsOn() {
+		return readCardsWaitingCount(s)
+	}
 	n := 0
 	for _, pr := range readsWaitingCards(s) {
 		n += ReadsWanted(s, pr)
