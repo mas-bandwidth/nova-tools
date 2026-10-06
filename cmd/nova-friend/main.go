@@ -285,6 +285,7 @@ func friendTool(w world) *tool.Tool {
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
+		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		stateDir(f)
 		redis(f)
@@ -340,7 +341,9 @@ try again at") makes the friend down until the reset: the presence file says dow
 no beat goes to the sprint server (her row reads down), nothing is delivered, and the seat (else
 --coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
-nonce from inside the session before she beats again, and the seat is told she is back. The friend
+nonce from inside the session before she beats again, and the seat is told she is back. Each harness's own
+wording is read (claude, codex, opencode, grok, antigravity, dsh, gemini), its kind (limit or credits) and its
+reset when it names one, else --limit-rest; status says session=limited limit_kind= limit_until= while it stands. The friend
 row's mode and width come with each beat's answer (row_mode=, row_width=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
@@ -766,7 +769,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
-	fl := &friend.Limits{Now: w.now, Nonce: w.random}
+	fl := &friend.Limits{Now: w.now, Nonce: w.random, Harness: c.Str("harness"), Rest: c.Dur("limit-rest")}
 	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(walled), c.Stdout)
 	if err != nil {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
@@ -892,6 +895,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
+		Limited: func() (string, time.Time, bool) {
+			until, _, limited := fl.Limited()
+			return fl.Kind(), until, limited
+		},
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
