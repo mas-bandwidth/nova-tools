@@ -9,16 +9,14 @@ import (
 // The push proof (docs/SPEC-FRIEND.md, The push proof): a friend nothing
 // pushes into is deaf, and the bus waits on her unread. nova-friend install
 // and run refuse, at the start, a harness whose adapter has no deliver
-// command (a Stub) and a session the adapter cannot drive (Deferred with a
-// Remedy: dsh, a session under an agent preset), each with its remedy; and
-// run proves the push with the first SESSION CHECK round trip (Conformance)
-// before the daemon starts, refusing when no pong returns within ProofWithin.
-// The model is the presence model's Ask then Answer within the bound
-// (tla/FriendPresence.tla), asked once before the loop.
-
-// ProofWithin is how long run waits at its start for the session's pong to
-// the first check: the session check's own bound.
-const ProofWithin = SessionBound
+// command (a Stub), with its remedy; install also runs the first SESSION
+// CHECK round trip (PushProof over Conformance) and refuses a session the
+// adapter cannot drive (Deferred with a Remedy: dsh, a session under an agent
+// preset). run never waits on the round trip: the daemon starts with its push
+// unproven and its presence's first check (SessionCheck) is the proof, nothing
+// delivered into the session until the session answers it (Daemon.Proof). The
+// model is the presence model's Ask then Answer within the bound
+// (tla/FriendPresence.tla).
 
 // Undriven says nova-friend can push nothing into a session of harness
 // through d: a Stub, with why and the remedy (AdapterRemedy); ok is false

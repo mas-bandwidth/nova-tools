@@ -159,12 +159,25 @@ refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). He
 section 11, and `friend down`; `unhold <friend>` and `friend up` release the
 hold), whatever she beats or the coordinator observes; else `up` only on
 evidence from her own session (docs/SPEC-FRIEND.md, "Presence is her
-session's evidence"): a wake ping her session answered (`friend health --state
-up`, below) under `FriendPongWindow` (10 minutes) old, or a card of hers
-finished under `FriendFinishWindow` (30 minutes) old; else `down` (`friend
-down` holds her and shows `held`, never `down`). Her beat is recorded and
-never evidence, whoever sends it; `where --json` names the evidence and its
-age (`friends[].evidence`). `friend up` is no evidence: a friend released with
+session's evidence"; one definition, `sprint.FriendEvidence`): a wake ping her
+session answered (`friend health --state up`, below) under `FriendPongWindow`
+(10 minutes) old, or her session's answer to a check her daemon asked, under
+`FriendProofLive` (15 minutes) old while her beat is fresh (`BeatDeadline`): her beat
+says `--check <nonce> --run <run>` when her daemon asks and `--pong <nonce>
+--run <run>` when her session answers, and the answer proves only when it
+names a check that run asked, once, within `CheckAnswerWithin` (15 minutes) of
+the ask (`sprint.ProveBeat`; anything else, a bare time included, is a beat
+with no proof, `no_proof=` on the beat's line, never evidence, except the old
+`--pong <time>` for `LegacyPongGrace`, an hour, after the server starts; a stopped
+beat stops the proof; the verb trusts its caller's actor, so one beat that asks
+and answers as her proves her: the nonce keeps a bare time and an answer to
+nothing asked out, never a caller who speaks as her), or a card of hers finished under `FriendFinishWindow` (30
+minutes) old; else `down` (`friend down` holds her and shows `held`, never
+`down`); a beat that says down (`--until`, `--reason`) is down with its reason
+whatever else stands. Her beat itself is recorded and never evidence, whoever
+sends it, only the session's answer it carries; `where --json` names the
+evidence and its age (`friends[].evidence`: `session pong`, `session proof`,
+`finish`). `friend up` is no evidence: a friend released with
 none in its window is `down` until her session gives some. `friend up
 <friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
 sets a machine's, until `friend sync` sets her nova-config row's again (a
@@ -1108,15 +1121,16 @@ fleet row has no control card status: only a machine's has one, written by the
 tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
 (`take --as friend.<f>`, her own or her daemon's through the server) is
 admitted by `FriendStatus`, the friends table's word: up only on evidence from
-her own session (a wake ping her session answered within `FriendPongWindow`, or
+her own session (a wake ping her session answered within `FriendPongWindow`,
+her session's answer to a check her daemon asked within `FriendProofLive` while her beats go on, or
 a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
-"Presence is her session's evidence"), never on her beat. `TakeStep` reads the friends' seats when it names a friend's row.
+"Presence is her session's evidence"), never on her beat itself. `TakeStep` reads the friends' seats when it names a friend's row.
 Her take is held to her width (1 in one-shot mode), as a machine's is to its
 own. It is refused only when she is not up, and the refusal names why: "friend
 <f> is held: held by the coordinator (friend down)[: <reason>]", "friend <f>
 is down: her beat says down until <t>: <reason>", or "friend <f> is down: no
-session evidence: ..." naming the wake ping and the finish she lacks, the age of
-the last of each, and her beat's age as no evidence (`sprint.FriendEvidence`); a friend not on the roster is "no
+session evidence: ..." naming the wake ping, the proof on her beat and the
+finish she lacks, the age of the last of each, and her beat's age as no evidence (`sprint.FriendEvidence`); a friend not on the roster is "no
 friend <f> on the roster". A machine's take keeps its control card's rule
 ("member <m> is <status>"). The model is `tla/FriendPresence.tla` (`Take`,
 `TakeOnlyWhenUp`, `ReadyTakenWhileUp`, and the reversed witness `ctlstatus`,
@@ -3898,17 +3912,12 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
 `TickCoordinatorPass`). The conditions the tick keeps, each a judgment:
 
 - **a friend's session is deaf** (`a friend's session is deaf`), one on each friend not
-  held whose beat carries a session pong (`friend beat --pong <RFC3339>`, her daemon's
-  `last_pong`) older than 10 minutes of running time (`FriendDeafAfter`); it names her,
+  held whose beat record carries a session proof (the server's time of her session's
+  last answer to a check her daemon asked: `friend beat --check`, then `--pong`) older
+  than `FriendDeafAfter` of running time; it names her,
   her pong age and the remedy: a wake note (`nova-friend ping --to <friend> --wake`),
   then the debug steps of docs/SPEC-FRIEND.md (Presence, The harness check). A beat that
-  carries no pong judges nothing: deafness is read only from the session's own answer.
-  **Not yet live:** the nova-friend daemon's beat (cmd/nova-friend main.go, `beat`)
-  sends only `--active` and not `--pong` yet, and nothing else in the tree sends a
-  pong, so on the running machine no beat carries one and this judgment stays silent
-  until the daemon passes `--pong <status last_pong>` (a follow-up card, PATHS
-  cmd/nova-friend/**). Until then a deaf session shows only as the idle judgment below,
-  30 minutes on, and only if she holds working cards.
+  carries no proof judges nothing: deafness is read only from the session's own answer.
 - **a friend holds working cards and finishes none** (`a friend holds working cards and
   finishes none`), one on each friend not held holding working cards on her row when
   neither her last working-to-done finish (`finished` of her done cards, ok or failed) nor

@@ -81,10 +81,11 @@ const (
 	// could do wait elsewhere, before the pass tells the coordinator once.
 	EmptyRowAfter = 10 * time.Minute
 	// FriendDeafAfter is how old a friend's last session pong may be before her
-	// session is deaf: FriendProofLive, since her daemon asks a quiet session after ten
-	// minutes and waits five for the answer (docs/SPEC-FRIEND.md, The push proof), so a
-	// session that answers is never proved longer ago than that. Shorter, and a quiet
-	// friend whose session answers is judged deaf every ten minutes and cleared again.
+	// session is deaf: FriendProofLive, since her daemon asks her session eight minutes
+	// after its last ask and waits up to five for the answer (nova-friend's ProveEvery and
+	// SessionBound; docs/SPEC-FRIEND.md, The push proof), so a session that answers is
+	// never proved longer ago than thirteen minutes. Shorter, and a friend whose session
+	// answers slowly is judged deaf and cleared again every cycle.
 	FriendDeafAfter = FriendProofLive
 	// FriendFinishDefault is the friend-finish window when the coordinator set none.
 	FriendFinishDefault = 30 * time.Minute

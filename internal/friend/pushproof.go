@@ -81,6 +81,9 @@ func (p *PushProver) Step(s PresenceStatus) {
 	}
 	if s.Answers > p.answers {
 		p.nonce, p.proven = p.asked, now
+		if s.Answered != "" {
+			p.nonce = s.Answered // the check answered, never one asked after it in the same step
+		}
 	}
 	p.answers = s.Answers
 	due := !p.wrote || up != p.up || reason != p.reason || (up && now.Sub(p.wroteAt) >= PushRenewEvery)

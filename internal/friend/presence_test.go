@@ -86,10 +86,11 @@ func (r *presenceRig) present(t *testing.T) (bool, string) {
 // with a fresh nonce through the adapter; the daemon's own pong, a pong the
 // daemon writes, another friend's pong and a wrong nonce all leave it down;
 // five minutes without the session's answer is down "no session answer", and
-// no beat goes to the sprint server; the session's answer brings it up; ten
-// minutes with no bus message from the session asks again with a new nonce,
-// and the old nonce is no answer to it; a message the session writes brings
-// it up as an answer does (docs/SPEC-FRIEND.md, presence).
+// no beat goes to the sprint server; the session's answer brings it up; a check
+// goes in ProveEvery after it whatever the session says, the old nonce no
+// answer to it; silence with it unanswered is down; a check the session has not
+// read is not asked again before ReaskAfter; a message the session writes
+// brings it up as an answer does (docs/SPEC-FRIEND.md, presence).
 func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	t.Parallel()
 	r := newPresenceRig(t)
@@ -126,37 +127,37 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	assert.Empty(t, reason)
 	assert.Equal(t, 1, r.beats, "and the beat flows again")
 
-	for range 5 { // a session that talks on the bus needs no check
+	for range 5 { // a session that talks on the bus is still checked every ProveEvery: only an answer proves it to the server
 		r.send(t, r.direct, "bob", "status", "working on it\n")
 		r.step(t, 4*time.Minute)
 	}
-	assert.Len(t, r.app.got(), 1, "no check while the session's own messages keep coming")
-	up, _ = r.present(t)
-	assert.True(t, up)
-
-	r.step(t, SessionQuiet)
-	require.Len(t, r.app.got(), 2, "ten minutes with no bus message from the session: a fresh check")
+	require.Len(t, r.app.got(), 2, "one check ProveEvery after the answer, whatever the session says")
 	assert.True(t, strings.HasPrefix(r.app.got()[1], SessionCheckPrefix+"n2"), "a new nonce: %q", r.app.got()[1])
 	up, _ = r.present(t)
-	assert.True(t, up, "up while the check is open, within the bound")
+	assert.True(t, up, "her messages keep her up while the check waits for its answer")
 
 	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
 	r.send(t, r.daemon, "bob", DaemonPongSubject, "daemon-pong n2\n")
-	r.step(t, SessionBound)
+	r.step(t, SessionQuiet+SessionBound)
 	up, reason = r.present(t)
-	assert.False(t, up, "the old nonce and the daemon's pong answer nothing")
+	assert.False(t, up, "silent, and the old nonce and the daemon's pong answer nothing")
 	assert.Equal(t, NoSessionAnswer, reason)
+	assert.Len(t, r.app.got(), 2, "the check the session has not read is not asked again before ReaskAfter")
 
 	r.send(t, r.direct, "bob", "status", "hello\n")
 	r.step(t, BeatEvery)
 	up, _ = r.present(t)
 	assert.True(t, up, "while down, any message the session writes brings it back up: the session is alive (the finding of 2026-10-05)")
 
-	r.step(t, SessionQuiet)
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n2", 0, 0, 4)+"\n")
+	r.step(t, BeatEvery)
+	require.Len(t, r.app.got(), 3, "a late answer: the next check is timed from the ask, so it goes in at once")
+	r.step(t, ReaskAfter)
+	require.Len(t, r.app.got(), 4, "and the one after on the cadence")
 	r.step(t, SessionBound)
 	up, _ = r.present(t)
 	require.False(t, up, "quiet again, and the next check unanswered")
-	r.send(t, r.direct, "bob", PongSubject, PongLine("n3", 0, 0, 4)+"\n")
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n4", 0, 0, 4)+"\n")
 	r.step(t, BeatEvery)
 	up, _ = r.present(t)
 	assert.True(t, up, "the next answer brings it back up")

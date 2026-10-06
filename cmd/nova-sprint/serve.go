@@ -382,7 +382,7 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		lns[addr] = a
 	}
-	a.serveAddr, a.serveLog = redis, stdout
+	a.serveAddr, a.serveLog, a.serveStarted = redis, stdout, a.now()
 	// the lanes are made before the first batch, while the line is free: a batch never
 	// waits for the line to make them (servelanes.go)
 	a.lanesFor(context.Background())
@@ -422,7 +422,9 @@ var friendBeatFlags = map[string]func(string) bool{
 		return err == nil && f >= 0
 	},
 	"--active": rfc3339,
-	"--pong":   rfc3339,
+	"--pong":   oneLineText, // any word: the server's proof step says a beat with no proof
+	"--check":  sprint.ValidID,
+	"--run":    sprint.ValidID,
 	"--until":  rfc3339,
 	"--reason": oneLineText,
 }
