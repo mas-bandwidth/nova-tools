@@ -53,6 +53,7 @@ type rig struct {
 	alive        friend.Aliver
 	deaf         bool                // bob's opencode session takes a turn and never runs the pong line
 	fs           *friend.MemFS       // the harness settings' filesystem: bob's directory /w/bob
+	exec         friend.Exec         // custom exec seam handler; nil falls back to r.opencode
 	windowReader friend.WindowReader // the fake accessibility window reader
 }
 
@@ -106,7 +107,12 @@ func (r *rig) world() world {
 		},
 		random:       func() string { return "r4nd0m" },
 		alive:        r.alive,
-		exec:         r.opencode,
+		exec: func(ctx context.Context, dir, name string, args []string, in string) (string, int, error) {
+			if r.exec != nil {
+				return r.exec(ctx, dir, name, args, in)
+			}
+			return r.opencode(ctx, dir, name, args, in)
+		},
 		settings:     r.fs,
 		windowReader: r.windowReader,
 	}
