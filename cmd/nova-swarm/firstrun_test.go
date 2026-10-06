@@ -154,6 +154,7 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 // documented path: it moves to a temp directory where `./pool` is the test's to
 // create, and the tool echoes back the relative `./pool` it was handed.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	require.NoError(t, err)
