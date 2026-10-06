@@ -512,6 +512,33 @@ such flag; ordinary-launch and idle-session behavior remain separate live
 checks. A later end-to-end check was sent at 17:11:00 and answered by the
 session at 17:11:10, but its transport was not independently identified.
 
+### Hosted in tmux
+
+A terminal harness (OpenCode, Grok, Aider, any TUI) started by `nova-friend host` runs in a detached
+tmux session `friend-<name>`; the friend's session is the TUI in that pane, and `--harness tmux` is
+its adapter (internal/friend/adapter_tmux.go). Hosting is opt-in: a TUI a person launched outside
+tmux keeps its own harness adapter.
+
+- **Host.** `nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] -- <launch command...>`
+  runs `tmux new-session -d -s friend-<me> -c <d> -- <launch command...>`, refuses (exit 1) when the
+  session exists, and saves the session name and the idle prompt pattern in `host.json` in the
+  friend's state directory, so `run` and `install` need no flag. The idle prompt pattern is data per
+  harness (`HostPrompts`); `--prompt` overrides it.
+- **The idle rule.** The pane is captured (`tmux capture-pane -p -t friend-<me>`). It is idle when
+  its last non-empty line matches the pattern. Deliver then types the text literally, newlines shown
+  as ` ⏎ ` (`tmux send-keys -l`), and Enter as a second call, and is accepted once the prompt line
+  has gone (the turn started), polled each half second for up to a minute; a prompt that stays is an
+  error, never a second typing. While the prompt is absent a turn runs: Deferred, nothing typed, and
+  `Busy` is true, so no second turn lands beside one. A missing session is Deferred with the host
+  line, counted toward nothing.
+- **The model.** Per session the pane is the delivery model's busy and idle state: a visible prompt is
+  the free state, the typed line is the action that starts the turn, and the prompt gone is its
+  acceptance; Deferred is the wait the model has while busy. The adapter is a function of captured
+  screens and a clock; every tmux call goes through the Exec seam.
+- **The screen.** The last screen of a hosted friend is the pane's capture, the verb `nova-friend
+  screen`; this section does not define it.
+- **To watch.** `tmux attach -t friend-<me>`; detach with the tmux prefix and `d`.
+
 ### Antigravity
 
 Antigravity (Google's agent IDE, 2.19.1 as measured) has no deliver command
