@@ -1,0 +1,80 @@
+# PostgreSQL on the fleet_store host: the distro's server, enabled; the
+# configuration role nova_bootstrap_pg_user made once with the password the
+# owner names (the environment variable nova_pg_password_key on the machine
+# running the play, the same secret the seat holds), never changed after (a
+# role keeps the password it has, as a Redis user does); its database
+# nova_bootstrap_pg_db; and the schema migrated by the installed nova-config
+# under the seat, the step every steady-state run repeats (tools.yml).
+- name: postgresql
+  ansible.builtin.apt: { name: postgresql, state: present, install_recommends: false }
+  register: bootstrap_pg_pkg
+  become: true
+
+# Under --check a server not yet installed has no unit: the install says so.
+- name: postgresql, enabled and running
+  ansible.builtin.systemd_service: { name: postgresql, enabled: true, state: started }
+  when: not (ansible_check_mode and bootstrap_pg_pkg is changed)
+  become: true
+
+- name: the configuration role, if it exists
+  ansible.builtin.command:
+    argv: [psql, -tAc, "SELECT 1 FROM pg_roles WHERE rolname = '{{ nova_bootstrap_pg_user }}'"]
+  register: bootstrap_pg_role
+  when: not (ansible_check_mode and bootstrap_pg_pkg is changed)
+  changed_when: false
+  check_mode: false
+  # ignored: a server that does not answer leaves the role missing, and the create says why
+  failed_when: false
+  become: true
+  become_user: postgres
+
+- name: the configuration role, made with the owner's password
+  ansible.builtin.command:
+    argv: [psql, -v, ON_ERROR_STOP=1, -d, postgres]
+    stdin: "CREATE ROLE \"{{ nova_bootstrap_pg_user }}\" LOGIN PASSWORD '{{ lookup('env', nova_pg_password_key) | replace(\"'\", \"''\") }}';"
+  when: not ansible_check_mode and bootstrap_pg_role.stdout | default('') | trim != '1'
+  changed_when: true
+  no_log: true
+  become: true
+  become_user: postgres
+
+- name: the configuration database, if it exists
+  ansible.builtin.command:
+    argv: [psql, -tAc, "SELECT 1 FROM pg_database WHERE datname = '{{ nova_bootstrap_pg_db }}'"]
+  register: bootstrap_pg_db
+  when: not (ansible_check_mode and bootstrap_pg_pkg is changed)
+  changed_when: false
+  check_mode: false
+  # ignored: as the role's
+  failed_when: false
+  become: true
+  become_user: postgres
+
+- name: what --check would make
+  ansible.builtin.debug:
+    msg: "WOULD-MAKE {{ item }} on {{ inventory_hostname }}"
+  loop: >-
+    {{ (['role ' ~ nova_bootstrap_pg_user] if bootstrap_pg_role.stdout | default('') | trim != '1' else [])
+       + (['database ' ~ nova_bootstrap_pg_db] if bootstrap_pg_db.stdout | default('') | trim != '1' else []) }}
+  when: ansible_check_mode
+
+- name: the configuration database, owned by the role
+  ansible.builtin.command:
+    argv: [createdb, --owner, "{{ nova_bootstrap_pg_user }}", "{{ nova_bootstrap_pg_db }}"]
+  when: not ansible_check_mode and bootstrap_pg_db.stdout | default('') | trim != '1'
+  changed_when: true
+  become: true
+  become_user: postgres
+
+- name: nova-config migrate, under the seat
+  ansible.builtin.command:
+    argv: >-
+      {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+          '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_bin_dir ~ '/sops',
+          '--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
+          nova_bin_dir ~ '/nova-config', 'migrate', '--pg', bootstrap_pg_dsn] }}
+  environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
+  vars:
+    bootstrap_pg_dsn: "postgres://{{ nova_bootstrap_pg_user }}@localhost:5432/{{ nova_bootstrap_pg_db }}"
+  register: bootstrap_migrate
+  changed_when: bootstrap_migrate.stdout is search('applied=[1-9]|MIGRATE APPLIED')

@@ -1,0 +1,3 @@
+# /etc/tmpfiles.d/nova-store-backup.conf: written by fleet/bootstrap.yml
+d {{ nova_bootstrap_backup_dir }}/pg 0700 postgres - {{ nova_bootstrap_backup_keep }}
+d {{ nova_bootstrap_backup_dir }}/redis 0700 {{ ansible_user_id }} - {{ nova_bootstrap_backup_keep }}

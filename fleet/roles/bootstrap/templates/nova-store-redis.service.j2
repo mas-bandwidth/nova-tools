@@ -1,0 +1,23 @@
+{# fleet/roles/bootstrap/tasks/redis.yml renders this on the fleet_store host:
+   the fleet's Redis, `nova-redis serve` under the seat that holds
+   NOVA_REDIS_PASSWORD, bound to loopback and the host's tailnet address. #}
+# /etc/systemd/system/nova-store-redis.service: written by fleet/bootstrap.yml
+[Unit]
+Description=the fleet's Redis (nova-redis serve)
+Wants=network-online.target
+After=network-online.target tailscaled.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User={{ ansible_user_id }}
+WorkingDirectory={{ nova_home }}
+Environment="HOME={{ nova_home }}"
+Environment="PATH={{ nova_bin_dir }}:/usr/bin:/bin"
+ExecStart="{{ nova_bin_dir }}/nova-secrets" "exec" "--store" "{{ nova_secrets_store }}" "--as" "{{ nova_seat }}" "--key" "{{ nova_secrets_key_dir }}/{{ nova_seat }}.key" "--sops" "{{ nova_bin_dir }}/sops" "--only" "NOVA_REDIS_PASSWORD" "--require=NOVA_REDIS_PASSWORD" "--" "{{ nova_bin_dir }}/nova-redis" "serve" "--bind" "127.0.0.1{{ (',' ~ nova_bootstrap_tailnet_ip) if nova_bootstrap_tailnet_ip | default('') else '' }}" "--port" "{{ nova_bootstrap_redis_port }}" "--dir" "{{ nova_bootstrap_redis_dir }}"
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

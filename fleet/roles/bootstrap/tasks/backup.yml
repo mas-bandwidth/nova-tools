@@ -1,0 +1,51 @@
+# The backups of the fleet_store host, daily, in nova_bootstrap_backup_dir
+# (the owner's: a mounted volume when the copy should outlive the disk):
+# pg/ holds the configuration database's pg_dump (custom format) and redis/
+# the fleet Redis's RDB, each the newest under its own name and the earlier
+# ones beside it as name.~N~ (cp --backup=numbered); systemd-tmpfiles removes
+# any older than nova_bootstrap_backup_keep. The timers are Persistent, so a
+# day the host was down is taken at its next boot.
+- name: the backup directories
+  ansible.builtin.file: { path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", mode: "{{ item.mode }}" }
+  loop:
+    - { path: "{{ nova_bootstrap_backup_dir }}", owner: root, mode: "0755" }
+    - { path: "{{ nova_bootstrap_backup_dir }}/pg", owner: postgres, mode: "0700" }
+    - { path: "{{ nova_bootstrap_backup_dir }}/redis", owner: "{{ ansible_user_id }}", mode: "0700" }
+  become: true
+
+- name: the backups' age limit
+  ansible.builtin.template:
+    src: nova-store-backup.tmpfiles.j2
+    dest: /etc/tmpfiles.d/nova-store-backup.conf
+    mode: "0644"
+  become: true
+
+- name: the backup timers, if they are written
+  ansible.builtin.stat: { path: "/etc/systemd/system/nova-store-backup-{{ item }}.timer", get_checksum: false }
+  loop: [pg, redis]
+  register: bootstrap_backup_was
+
+- name: the backup units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - { src: nova-store-backup-pg.service.j2, dest: nova-store-backup-pg.service, unit: pg }
+    - { src: nova-store-backup-redis.service.j2, dest: nova-store-backup-redis.service, unit: redis }
+    - { src: nova-store-backup.timer.j2, dest: nova-store-backup-pg.timer, unit: pg }
+    - { src: nova-store-backup.timer.j2, dest: nova-store-backup-redis.timer, unit: redis }
+  vars:
+    backup_unit: "{{ item.unit }}"
+  register: bootstrap_backup_units
+  become: true
+
+- name: the backup timers, enabled and running
+  ansible.builtin.systemd_service:
+    name: "nova-store-backup-{{ item }}.timer"
+    daemon_reload: "{{ bootstrap_backup_units is changed }}"
+    enabled: true
+    state: started
+  loop: [pg, redis]
+  when: not ansible_check_mode or bootstrap_backup_was.results | map(attribute='stat.exists') | min
+  become: true

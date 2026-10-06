@@ -1,0 +1,107 @@
+# bootstrap.yml: the first phase of a fleet, a fresh Linux host (Debian or
+# Ubuntu, reachable by ssh as a login with sudo) to a host the steady-state
+# plays (tools.yml, redis.yml, loops.yml, read from `nova-config inventory`)
+# can carry. docs/FLEET.md, "From a fresh host", is the contract.
+#
+#   nova-secrets exec --only NOVA_PG_CONFIG_PASSWORD,TS_AUTHKEY --require=NOVA_PG_CONFIG_PASSWORD --require=TS_AUTHKEY -- \
+#     ansible-playbook -i fleet/inventory.bootstrap.example.ini fleet/bootstrap.yml \
+#       -e nova_version=<v> -e nova_source=$PWD -e nova_dogfood_receipts=<dir> --check --diff </dev/null 2>&1 | cat
+#   (the same without --check --diff)
+#
+# The phase reads nothing from nova-config: nova-config's store does not exist
+# until this phase has made it. Its inventory is a static file the owner
+# writes (fleet/inventory.bootstrap.example.ini): the hosts, and the one of
+# them in fleet_store. Every input it cannot know is the owner's and is named
+# by the first play, which refuses the run, before any host is touched, with
+# one line per input missing; no input has an invented default. Secrets are
+# read from the environment of the machine running the play by name (the
+# owner runs it under `nova-secrets exec`), never from a file of this
+# repository, and every task that holds one is no_log.
+#
+# On every host: the base packages and the harness dependencies, the login's
+# directories and linger, sops at nova_bootstrap_sops_version, the host on the
+# tailnet, the seat (its key and the sealed secrets store), and the nova build
+# nova_version (tools.yml). On the fleet_store host besides: PostgreSQL with
+# the configuration role and database, the schema migrated, the fleet's
+# Redis supervised as nova-store-redis (`nova-redis serve`: AOF every second,
+# an RDB every minute after a write, no eviction, loopback and the tailnet
+# only), the distro's own redis-server stopped and masked, and the daily
+# backup timers. Each host ends with one BOOTSTRAP receipt line. A second run
+# changes nothing.
+- name: the owner's inputs
+  hosts: localhost
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: every input is named (one line per input missing)
+      ansible.builtin.assert:
+        that: bootstrap_missing | length == 0
+        fail_msg: "{{ [bootstrap_refused] + bootstrap_missing }}"
+        quiet: true
+      vars:
+        bootstrap_refused: 'BOOTSTRAP REFUSED: the owner names these inputs (docs/FLEET.md, "The owner''s inputs")'
+        bootstrap_missing: >-
+          {{ (['-e nova_version=<the build to install>'] if nova_version is not defined else [])
+             + (['-e nova_source=<a nova-tools checkout at that build>'] if nova_source is not defined else [])
+             + (['fleet_store: exactly one host in the inventory group fleet_store'] if (groups['fleet_store'] | default([]) | length) != 1 else [])
+             + (groups['all'] | reject('in', groups['fleet_store'] | default([]) + groups['fleet_members'] | default([])) | map('regex_replace', '^(.*)$', '\\1: in neither fleet_store nor fleet_members') | list)
+             + (groups['all'] | map('extract', hostvars) | selectattr('nova_seat', 'undefined') | map(attribute='inventory_hostname')
+                | map('regex_replace', '^(.*)$', '\\1: nova_seat=<the seat the host opens its secrets as>') | list)
+             + (['nova_bootstrap_seat_keys=<the directory holding <seat>.key for each seat, on this machine>'] if nova_bootstrap_seat_keys is not defined else [])
+             + (['nova_bootstrap_secrets_store=<the sealed secrets store directory, on this machine>'] if nova_bootstrap_secrets_store is not defined else [])
+             + (['nova_bootstrap_backup_dir=<the absolute directory the store host keeps its backups in>'] if nova_bootstrap_backup_dir is not defined else [])
+             + (['the environment variable ' ~ nova_bootstrap_tailscale_authkey_env ~ ': a Tailscale auth key of the tailnet the fleet is on'] if lookup('env', nova_bootstrap_tailscale_authkey_env) == '' else [])
+             + (['the environment variable ' ~ nova_pg_password_key ~ ': the password of the configuration role ' ~ nova_bootstrap_pg_user] if lookup('env', nova_pg_password_key) == '' else []) }}
+
+- name: the base of every host
+  hosts: fleet_store:fleet_members
+  gather_facts: true
+  gather_subset: [min]
+  tags: [base, harness]
+  tasks:
+    - name: the base, the harness dependencies and sops
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: base.yml, apply: { tags: [base, harness] } }
+
+- name: every host on the tailnet
+  hosts: fleet_store:fleet_members
+  gather_facts: false
+  tags: [tailscale]
+  tasks:
+    - name: tailscale
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: tailscale.yml, apply: { tags: [tailscale] } }
+
+- name: the seat on every host
+  hosts: fleet_store:fleet_members
+  gather_facts: false
+  tags: [seat]
+  tasks:
+    - name: the seat's key and the sealed store
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: seat.yml, apply: { tags: [seat] } }
+
+# The nova build on every host, the steady-state play itself: the bootstrap
+# inventory has no store_deployer and no tla group, so tools.yml's store and
+# tla plays match no host here; the steady-state run loads the library.
+- name: the nova build on every host
+  ansible.builtin.import_playbook: tools.yml
+  tags: [tools]
+
+- name: the stores on the fleet_store host
+  hosts: fleet_store
+  gather_facts: true
+  gather_subset: [min]
+  tags: [postgres, redis, services, backup]
+  tasks:
+    - name: postgresql, the configuration role and database, the schema migrated
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: postgres.yml, apply: { tags: [postgres] } }
+    - name: the fleet's redis, supervised
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: redis.yml, apply: { tags: [redis, services] } }
+    - name: the backup timers
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: backup.yml, apply: { tags: [backup] } }
+
+- name: the receipt of every host
+  hosts: fleet_store:fleet_members
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: the receipt
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: receipt.yml }
