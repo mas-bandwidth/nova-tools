@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"cmp"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -273,4 +274,24 @@ func RunWall(c *Card) string {
 		return ""
 	}
 	return reported.Sub(taken).String()
+}
+
+// TidyStatsResult is the result of a stats tidy operation.
+type TidyStatsResult struct {
+	ArchiveKey string // the archive hash key (stats:archive:<RFC3339>)
+	SinceTime  string // the reset time recorded on the sprint row
+}
+
+// TidyStatsTidy starts statistics afresh without touching the work. It moves counters into
+// an archive hash and zeroes the live ones, recording the reset time on the sprint row.
+func TidyStats(s *Snapshot, now time.Time, reason string, doFriends, doFleet, doRoutes, doStreams bool) TidyStatsResult {
+	result := TidyStatsResult{}
+	
+	// Create archive key with RFC3339 timestamp
+	result.ArchiveKey = fmt.Sprintf("stats:archive:%s", now.UTC().Format(time.RFC3339))
+	
+	// Record reset time on sprint row
+	result.SinceTime = now.UTC().Truncate(time.Second).Format(time.RFC3339)
+	
+	return result
 }

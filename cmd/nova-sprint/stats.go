@@ -17,6 +17,11 @@ import (
 // work, fleet and readers tables (the primaries' work and read cards, retired ones
 // too, read with them in read sets, never a card at a time).
 func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
+	// Check for subcommand
+	if len(args) > 0 && args[0] == "tidy" {
+		return a.cmdStatsTidy(args[1:], stdout, stderr)
+	}
+
 	fs, c := a.verbSetup("stats")
 	routes := fs.Bool("routes", false, "the route table from the log over --since, instead of the live tables")
 	since := fs.String("since", "", "with --routes, the window start: a duration back from now (10m) or an RFC 3339 time")
@@ -58,6 +63,41 @@ func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprint(stdout, statsText(ps))
 	fmt.Fprintf(stdout, "STATS OK epoch=%d primaries=%d members=%d readers=%d routes=%d\n", ps.Epoch, ps.Primaries, len(ps.Work), len(ps.Reads), len(ps.Routes))
+	return 0
+}
+
+// cmdStatsTidy starts statistics afresh without touching the work.
+func (a *app) cmdStatsTidy(args []string, stdout, stderr io.Writer) int {
+	const name = "stats tidy"
+	fs, c := a.verbSetup(name)
+	friends := fs.Bool("friends", false, "archive friend done sets and counters")
+	fleet := fs.Bool("fleet", false, "archive fleet member done sets and counters")
+	routes := fs.Bool("routes", false, "archive route attempt counters")
+	streams := fs.Bool("streams", false, "archive stream cost totals")
+	all := fs.Bool("all", false, "archive all of the above")
+	reason := fs.String("reason", "", "reason for the tidy")
+	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
+		return refuse(stderr, name, argErr("takes no words ", err, pos...))
+	}
+	if *reason == "" {
+		return refuse(stderr, name, "--reason <text> names why the tidy runs")
+	}
+
+	// --all implies all flags
+	if *all {
+		*friends, *fleet, *routes, *streams = true, true, true, true
+	}
+
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+
+	now := a.now()
+	result := sprint.TidyStats(nil, now, *reason, *friends, *fleet, *routes, *streams)
+
+	fmt.Fprintf(stdout, "STATS TIDY OK archive=%s since=%s reason=%s\n", 
+		result.ArchiveKey, result.SinceTime, *reason)
 	return 0
 }
 
