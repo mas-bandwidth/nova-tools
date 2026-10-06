@@ -996,6 +996,15 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		if logical == sprint.Readers {
 			// each reader's width beside reading, derived from its fleet row
 			t = readersWidths(t, shapes[slices.Index(sprint.ViewOrder, sprint.Fleet)])
+			var keys []string
+			for _, r := range t.Rows {
+				keys = append(keys, r.Key)
+			}
+			served, err := st.ReadersServed(ctx, keys, now)
+			if err != nil {
+				return whereView{}, "", err
+			}
+			t = readersServed(t, served)
 		}
 		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
@@ -1244,6 +1253,15 @@ func readersAll(t ntable.Table) ntable.Table {
 		width = strconv.Itoa(total)
 	}
 	texts := map[string]string{sprint.FieldWidth: width}
+	if slices.Contains(columnNames(t.Columns), servedColumn) {
+		n := 0
+		for _, r := range t.Rows {
+			if r.Texts[servedColumn] == servedWord {
+				n++
+			}
+		}
+		texts[servedColumn] = fmt.Sprintf("%d/%d", n, len(t.Rows))
+	}
 	if slices.Contains(columnNames(t.Columns), sprint.ReaderTiers) {
 		word := readerTiersSummary(t)
 		if word == "" {
@@ -1299,6 +1317,45 @@ func readersWidths(t ntable.Table, fleet ntable.Table) ntable.Table {
 		if slices.Contains(columnNames(cols), sprint.ReaderTiers) {
 			row.Texts[sprint.ReaderTiers] = sprint.ReaderTiersShown(row.Texts[sprint.ReaderTiers])
 		}
+		rows[i] = row
+	}
+	t.Columns, t.Rows = cols, rows
+	return t
+}
+
+// servedColumn is the readers table's served column: whether a process serves
+// the reader, from its beat alone (store.ReadersServed), whatever the coordinator's
+// hold says. reader up refuses a reader that reads unserved.
+const (
+	servedColumn  = "served"
+	servedWord    = "served"
+	unservedWord  = "unserved"
+	servedUnknown = "-"
+)
+
+// readersServed is the readers table with a served column after width: served
+// or unserved on each reader's row, "-" when the store keeps no beats. Display
+// only, like readersWidths: where --json carries it on each reader's row.
+func readersServed(t ntable.Table, served map[string]bool) ntable.Table {
+	at := slices.Index(columnNames(t.Columns), sprint.FieldWidth) + 1
+	cols := slices.Clone(t.Columns)
+	cols = slices.Insert(cols, at, ntable.Column{Name: servedColumn, Projection: ntable.Text, Fold: ntable.None})
+	rows := make([]ntable.Row, len(t.Rows))
+	for i, r := range t.Rows {
+		row := r
+		row.Cells = slices.Insert(slices.Clone(r.Cells), min(at, len(r.Cells)), ntable.Cell{})
+		row.Texts = maps.Clone(r.Texts)
+		if row.Texts == nil {
+			row.Texts = map[string]string{}
+		}
+		word := servedUnknown
+		if served != nil {
+			word = unservedWord
+			if served[r.Key] {
+				word = servedWord
+			}
+		}
+		row.Texts[servedColumn] = word
 		rows[i] = row
 	}
 	t.Columns, t.Rows = cols, rows

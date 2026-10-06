@@ -43,13 +43,21 @@ const (
 	ReaderBeatBound = BeatDeadline
 )
 
+// ReaderServed says a process serves a reader at now: its last beat is within
+// ReaderBeatBound. Reads are served by a bud's reader loop or a friend's
+// harness asking for the reader's queue (queue --as <reader>), never by the
+// row, so a reader no beat serves is up for no longer than it takes to lapse.
+func ReaderServed(b Beat, now time.Time) bool {
+	return b.Beaten() && now.Sub(b.At) <= ReaderBeatBound
+}
+
 // ReaderState is a reader's state at now, from the coordinator's hold and its
 // last beat.
 func ReaderState(away bool, b Beat, now time.Time) string {
 	switch {
 	case away:
 		return ReaderAway
-	case b.Beaten() && now.Sub(b.At) <= ReaderBeatBound:
+	case ReaderServed(b, now):
 		return ReaderUp
 	case b.Beaten():
 		return ReaderAway

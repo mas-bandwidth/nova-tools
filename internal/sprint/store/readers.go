@@ -190,6 +190,38 @@ func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Ti
 	return out, nil
 }
 
+// ReadersServed says for each of readers whether a process serves it: its beat
+// is within sprint.ReaderBeatBound at now, whatever the coordinator's hold says
+// (sprint.ReaderServed). A store that keeps no beats answers nil: it holds
+// every reader up, and none is unserved.
+func (st *Store) ReadersServed(ctx context.Context, readers []string, now time.Time) (map[string]bool, error) {
+	kv, err := st.rootKV()
+	if err != nil {
+		return nil, nil
+	}
+	out := map[string]bool{}
+	if len(readers) == 0 {
+		return out, nil
+	}
+	names := make([]string, len(readers))
+	for i, r := range readers {
+		names[i] = readerBeatKey(r)
+	}
+	vals, oks, err := getKeys(ctx, kv, names)
+	if err != nil {
+		return nil, err
+	}
+	for i, r := range readers {
+		var b sprint.Beat
+		if oks[i] {
+			// ignored: an unreadable record is no beat, which the next beat replaces
+			_ = json.Unmarshal([]byte(vals[i]), &b)
+		}
+		out[r] = sprint.ReaderServed(b, now)
+	}
+	return out, nil
+}
+
 // readerStatesInto gives a snapshot its readers' states: the readers table's
 // rows as the snapshot holds them.
 func (st *Store) readerStatesInto(ctx context.Context, s *sprint.Snapshot) error {
