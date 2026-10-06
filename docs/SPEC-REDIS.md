@@ -81,7 +81,7 @@ a restart on the same `--dir` replays every key.
 or a hostname, is refused before anything starts. The password is read from
 `NOVA_REDIS_PASSWORD`, which `nova-secrets exec` fills; it is written into the
 config `redis-server` reads on stdin (`redis-server -`), dropped from the
-child's environment, and never written to a file. The config is the fleet
+child's environment, never written to a file, and never printed. The config is the fleet
 store's rules, one config owned by `nova-redis`: `dir` is `--dir`, absolute,
 created 0700 when missing and never defaulted; `appendonly yes` with
 `appendfsync everysec`, so a crash loses at most one second; `save 60 1`, an
@@ -149,3 +149,4 @@ an injected clock, `cmd/nova-redis/serve_test.go` proves 6, 7 and 8, and
 16. `TestEveryVerbLogsInAsTheUserItIsGiven` — every verb that dials a store logs in as the `--user` it is given.
 17. `TestFnVerbsOnARedisServer` — `fn load` and `fn check` against a real `redis-server`.
 18. `TestAclUsersSurviveARestart` — users set by `acl apply` (saved to the ACL file) still log in after `serve` restarts on the same `--dir`, the default user still wants the password, the file is 0600 and holds no password, and a restart whose file lacks a `--users` user is refused (`cmd/nova-redis/acl_restart_test.go` with the launch faked; `cmd/nova-redis/acl_restart_functional_test.go` on a real `redis-server`).
+19. `TestServePrintsNoSecretOnAnyPath` — every line `serve` prints, on stdout or stderr, on every path (the dry-run plan, START and STOP, each refusal, a missing `redis-server`, a failed launch), is free of the password it was given; the START receipt names the addresses, the store directory, the ACL file and its user count, and nothing more (`cmd/nova-redis/serve_test.go`). A test fixture password holds one of `!#%@^` in every six bytes, so no temp directory or program path can carry a fragment of it and read as a leak.
