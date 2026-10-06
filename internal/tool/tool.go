@@ -536,7 +536,7 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 	c := &Call{Ctx: ctx, Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{},
 		token: strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
-		o := Refuse(oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes))
+		o := Refuse(flagProblems(&v, f, args, err)...)
 		o.Remedy = t.Name + " " + v.Name + " -h"
 		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
 	}
@@ -586,6 +586,72 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 		o.Cap(c.Int("max"))
 	}
 	return t.emit(&v, o, asJSON, stdout, stderr)
+}
+
+// flagProblems is every flag failure of one run, in the one wording (STANDARD §2:
+// a refusal names every problem of one invocation at once; §3 point 2). The flag
+// package stops at the first word a flag cannot take, so the skeleton reads the
+// rest of the words itself and words each failure with verbflag.Explain, the
+// skeleton's wording of the flag package's three fixable errors. The first
+// failure is the parse error itself; the rest are tried against a fresh flag set
+// of the verb's own declarations, so no value reaches the run's own set. A value
+// is never repeated, since it may be a secret. The reading ends at a word that
+// is no flag, as the flag package reads it: that word is the unknown flag's value
+// or the first argument.
+func flagProblems(v *Verb, f *Flags, args []string, err error) []string {
+	out := []string{oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes)}
+	probe := v.flags().FlagSet
+	first := true // the scan's first failure is the parse error, which out already holds
+	add := func(m string) {
+		if first {
+			first = false
+			return
+		}
+		if m = oneline.Cap(m, oneline.TailBytes); !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	isFlag := func(a string) bool { return len(a) > 1 && a[0] == '-' }
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !isFlag(a) {
+			return out // the terminator, or the first argument, ends the flags
+		}
+		name, value, inline := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		fl := probe.Lookup(name)
+		switch {
+		case fl == nil:
+			add(verbflag.Explain(f.FlagSet, fmt.Errorf("flag provided but not defined: -%s", name)))
+			if !inline && i+1 < len(args) && !isFlag(args[i+1]) {
+				return out
+			}
+		case inline || !boolFlag(fl):
+			if !inline {
+				if i+1 >= len(args) {
+					add(verbflag.Explain(f.FlagSet, fmt.Errorf("flag needs an argument: -%s", name)))
+					return out
+				}
+				i, value = i+1, args[i+1]
+			}
+			if perr := probe.Set(name, value); perr != nil {
+				// Explain words a bad value without repeating it, so the value stands
+				// empty here and the flag's name is the reading's only key.
+				m := verbflag.Explain(f.FlagSet, fmt.Errorf("invalid value %q for flag -%s: %v", "", name, perr))
+				if !strings.HasPrefix(m, "invalid value for --"+name+":") {
+					m = verbflag.Explain(f.FlagSet, fmt.Errorf("flag provided but not defined: -%s", name))
+				}
+				add(m)
+			}
+		}
+	}
+	return out
+}
+
+// boolFlag reports whether the flag takes no value, the way the flag package
+// reads its boolFlag interface.
+func boolFlag(f *flag.Flag) bool {
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
 }
 
 // flags is the verb's flag set: its own flags and the standard ones.
