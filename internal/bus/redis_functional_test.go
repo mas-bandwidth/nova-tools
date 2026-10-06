@@ -174,3 +174,47 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	_, err = gated.Send(ctx, Message{From: "ada", To: []string{"m1"}, Subject: "s", Body: "x"})
 	assert.ErrorContains(t, err, "deaf: m1")
 }
+
+// The receipt script is Advance on the server: its stamp is the server's
+// TIME as RFC 3339, it moves only forward, read or acted never starts a
+// receipt, and a send's reply mark runs it inside the MULTI/EXEC.
+func TestRedisForwardIsAdvanceInOneScript(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	key := ReceiptsOf("bob")
+	n, err := b.Store.Forward(ctx, key, ReceiptRead, "m1")
+	require.NoError(t, err)
+	assert.Zero(t, n, "read never starts a receipt")
+	n, err = b.Store.Forward(ctx, key, ReceiptDelivered, "m1", "m2")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, n)
+	n, err = b.Store.Forward(ctx, key, ReceiptActed, "m1")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n)
+	n, err = b.Store.Forward(ctx, key, ReceiptRead, "m1")
+	require.NoError(t, err)
+	assert.Zero(t, n, "never back")
+	h, err := c.HGetAll(ctx, key).Result()
+	require.NoError(t, err)
+	state, at, ok := ParseReceipt(h["m1"])
+	require.True(t, ok, h["m1"])
+	assert.Equal(t, ReceiptActed, state)
+	now, err := c.Time(ctx).Result()
+	require.NoError(t, err)
+	assert.WithinDuration(t, now, at, 5*time.Second, "the stamp is the server's TIME")
+	_, err = b.Store.Forward(ctx, key, "seen", "m2")
+	assert.Error(t, err)
+
+	m, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "s", Body: "x"})
+	require.NoError(t, err)
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "re", Re: m.ID, Body: "y"})
+	require.NoError(t, err)
+	_, ok, err = b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "re", Re: m.ID, Body: "z"})
+	require.NoError(t, err)
+	acted, err := b.Acted(ctx, "bob", m.ID)
+	require.NoError(t, err)
+	assert.True(t, acted, "the reply after the take is acted, in the send's transaction")
+}

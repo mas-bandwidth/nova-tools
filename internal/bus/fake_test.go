@@ -107,6 +107,10 @@ func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]str
 			delete(f.hashes[m.Key], m.Field)
 			continue
 		}
+		if m.Forward {
+			f.forward(m.Key, m.Field, m.Value)
+			continue
+		}
 		if f.hashes == nil {
 			f.hashes = map[string]map[string]string{}
 		}
@@ -148,6 +152,47 @@ func (f *Fake) Marks(_ context.Context, keys ...string) ([]map[string]string, er
 		}
 	}
 	return out, nil
+}
+
+func (f *Fake) Forward(_ context.Context, key, state string, fields ...string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, k := range fields {
+		if f.forward(key, k, state) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// forward is one field's receipt moved to state by Advance, under the lock:
+// the read and the write are one step, as the Lua script is on Redis.
+func (f *Fake) forward(key, field, state string) bool {
+	next, moved := Advance(f.hashes[key][field], state, f.now)
+	if !moved {
+		return false
+	}
+	if f.hashes == nil {
+		f.hashes = map[string]map[string]string{}
+	}
+	if f.hashes[key] == nil {
+		f.hashes[key] = map[string]string{}
+	}
+	f.hashes[key][field] = next
+	return true
+}
+
+func (f *Fake) Time(_ context.Context) (time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return time.Time{}, err
+	}
+	return f.now, nil
 }
 
 func (f *Fake) EnsureGroup(_ context.Context, stream, group string) error {

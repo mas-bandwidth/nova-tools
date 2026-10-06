@@ -648,6 +648,21 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
+			} else if dup, derr := l.b.Acted(l.ctx, d.Friend, msg.ID); derr != nil || dup {
+				// the store's acted receipt, never a set in this process: a
+				// redelivery after a restart is dropped too (tla/Bus2.tla Take,
+				// the memdrop witness)
+				if derr != nil {
+					err = derr
+					break
+				}
+				if d.Record != nil {
+					d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
+				}
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
 			} else if !l.inHand[e.Entry] {
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
@@ -700,6 +715,25 @@ func (l *loop) take() (entries []string, msgs []bus.Message) {
 		size += len(e.Fields["body"])
 	}
 	return entries, msgs
+}
+
+// markReceipts moves each message the turn carries to state. A store that
+// refuses is said on the record and left for overdue; the turn still ends.
+// Called from the loop after the result is posted (settle), never from
+// inside Deliver: Pause wakes when Deliver returns, and a store round trip
+// before the result is posted lets the loop miss it and wait on the next
+// pause forever.
+func (l *loop) markReceipts(t *turn, state string) {
+	if t == nil || len(t.msgs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(t.msgs))
+	for _, m := range t.msgs {
+		ids = append(ids, m.ID)
+	}
+	if err := l.b.MarkReceipts(l.ctx, l.d.Friend, state, ids...); err != nil && l.ctx.Err() == nil && l.d.Record != nil {
+		l.d.Record("receipt " + state + " not marked: " + oneLine(err.Error(), 300))
+	}
 }
 
 // startTurn runs deliver for t in its own goroutine, its context carrying the
@@ -805,6 +839,12 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		// the adapter accepted the turn (Deliver answered exit 0, no error):
+		// read, and only now, never when the daemon saw the message or the
+		// turn printed; then the turn ended at exit 0: acted (tla/Bus2.tla
+		// Accept and EndTurn, the readearly witness)
+		l.markReceipts(t, bus.ReceiptRead)
+		l.markReceipts(t, bus.ReceiptActed)
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()

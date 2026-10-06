@@ -2,7 +2,10 @@ package bus
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -15,16 +18,95 @@ const OwedPrefix = "bus2:owed:"
 func OwedOf(name string) string { return OwedPrefix + name }
 
 // Mark is one write to a hash inside a send's transaction: HSET Key Field
-// Value, or HDEL Key Field when Clear.
+// Value, or HDEL Key Field when Clear, or, when Forward, Value is a receipt
+// state that moves Field's receipt forward only (Advance, the same step as
+// Store.Forward).
 type Mark struct {
 	Key, Field, Value string
-	Clear             bool
+	Clear, Forward    bool
+}
+
+// Receipt states (docs/SPEC-BUS.md, message-receipts.w1).
+const (
+	ReceiptDelivered = "delivered"
+	ReceiptRead      = "read"
+	ReceiptActed     = "acted"
+)
+
+// ReceiptsPrefix is the hash of message receipts beside each recipient's
+// stream: one field per message id, its value state and time from the
+// store's TIME (RFC 3339).
+const ReceiptsPrefix = "bus2:receipts:"
+
+// ReceiptsOf is the recipient's hash of receipts.
+func ReceiptsOf(name string) string { return ReceiptsPrefix + name }
+
+// ReceiptRank gives the progression order of receipt states: a receipt moves
+// only forward.
+func ReceiptRank(state string) int {
+	switch state {
+	case ReceiptDelivered:
+		return 1
+	case ReceiptRead:
+		return 2
+	case ReceiptActed:
+		return 3
+	default:
+		return 0
+	}
+}
+
+// Advance is the receipt current (a hash value, "" when there is none)
+// with state written over it at now, and whether it moved: only forward,
+// and a receipt starts delivered, so read or acted never stamps a message
+// the recipient's reader was never handed (tla/Bus2.tla:
+// ReceiptNeverMovesBack, ActedImpliesDelivered). It is the rule of both
+// stores' one-step Forward; redis.go's forwardScript is the same rule in Lua.
+func Advance(current, state string, now time.Time) (string, bool) {
+	want := ReceiptRank(state)
+	have, _, _ := strings.Cut(current, " ")
+	switch {
+	case want == 0, ReceiptRank(have) >= want:
+		return current, false
+	case ReceiptRank(have) == 0 && want != ReceiptRank(ReceiptDelivered):
+		return current, false
+	}
+	return FormatReceipt(state, now), true
+}
+
+// FormatReceipt formats a receipt hash value: "<state> <RFC3339-time>".
+func FormatReceipt(state string, at time.Time) string {
+	return state + " " + at.UTC().Format(time.RFC3339)
+}
+
+// ParseReceipt parses a receipt hash value into its state and timestamp.
+func ParseReceipt(val string) (state string, at time.Time, ok bool) {
+	s, tStr, found := strings.Cut(val, " ")
+	if !found {
+		return "", time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, tStr)
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	return s, t, true
+}
+
+// Receipt holds one message's receipt state and age.
+type Receipt struct {
+	ID    string        `json:"id"`
+	State string        `json:"state"`
+	At    time.Time     `json:"at"`
+	Age   time.Duration `json:"age"`
 }
 
 // owe is the marks a send makes: the message owed a receipt by every friend
 // it names (to and cc) but the sender, and, when the sender is a friend and
 // the message answers another (re), her receipt of that one. A message to a
 // machine is owed nothing: no session of a machine says it read one.
+// Answering another message (re) also moves the sender's receipt of it to
+// acted, forward only and only when her reader was handed it (Advance), in
+// the same transaction (SPEC-BUS.md, message-receipts.w1; tla/Bus2.tla Reply).
 func owe(m Message, friends []string) []Mark {
 	var marks []Mark
 	at := m.At.UTC().Format(time.RFC3339)
@@ -33,10 +115,168 @@ func owe(m Message, friends []string) []Mark {
 			marks = append(marks, Mark{Key: OwedOf(n), Field: m.ID, Value: at})
 		}
 	}
-	if m.Re != "" && slices.Contains(friends, m.From) {
-		marks = append(marks, Mark{Key: OwedOf(m.From), Field: m.Re, Clear: true})
+	if m.Re != "" {
+		if slices.Contains(friends, m.From) {
+			marks = append(marks, Mark{Key: OwedOf(m.From), Field: m.Re, Clear: true})
+		}
+		marks = append(marks, Mark{Key: ReceiptsOf(m.From), Field: m.Re, Value: ReceiptActed, Forward: true})
 	}
 	return marks
+}
+
+// MarkReceipts moves as's receipt of each id in ids to state, in one store
+// step (Store.Forward: one Lua script on Redis, its time the store's TIME),
+// never a read followed by a separate write: a receipt at or past state is
+// left, and read or acted never starts one (Advance; tla/Bus2.tla
+// ReceiptNeverMovesBack, the readwrite witness).
+func (b *Bus) MarkReceipts(ctx context.Context, as string, state string, ids ...string) error {
+	if p := CheckName(as); p != "" {
+		return &Refusal{[]string{p}}
+	}
+	if ReceiptRank(state) == 0 {
+		return fmt.Errorf("unknown receipt state: %s", state)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := b.Store.Forward(ctx, ReceiptsOf(as), state, ids...)
+	return err
+}
+
+// Receipts returns each message's state and age for as. If id is non-empty,
+// only the receipt for that message is returned (empty slice when none).
+// Results are ordered oldest first by receipt time, then id.
+func (b *Bus) Receipts(ctx context.Context, as string, id string) ([]Receipt, error) {
+	if p := CheckName(as); p != "" {
+		return nil, &Refusal{[]string{p}}
+	}
+	key := ReceiptsOf(as)
+	hashes, err := b.Store.Marks(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	current := hashes[0]
+	now, err := b.Store.Time(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Receipt
+	if id != "" {
+		if val, ok := current[id]; ok {
+			if state, at, ok := ParseReceipt(val); ok {
+				age := now.Sub(at)
+				if age < 0 {
+					age = 0
+				}
+				out = append(out, Receipt{ID: id, State: state, At: at, Age: age})
+			}
+		}
+		return out, nil
+	}
+	for mid, val := range current {
+		if state, at, ok := ParseReceipt(val); ok {
+			age := now.Sub(at)
+			if age < 0 {
+				age = 0
+			}
+			out = append(out, Receipt{ID: mid, State: state, At: at, Age: age})
+		}
+	}
+	slices.SortFunc(out, func(a, b Receipt) int {
+		if !a.At.Equal(b.At) {
+			if a.At.Before(b.At) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
+// Acted says whether as's receipt of the message id is acted: a turn that
+// carried it ended at exit 0, or as answered it (re). The daemon's take asks
+// it of a delivery it does not remember acting on, so a redelivery after a
+// restart (the old reader died between the turn's end and its ack) is
+// dropped, never pushed in twice (SPEC-BUS.md, message-receipts.w1).
+func (b *Bus) Acted(ctx context.Context, as, id string) (bool, error) {
+	if p := CheckName(as); p != "" {
+		return false, &Refusal{[]string{p}}
+	}
+	hashes, err := b.Store.Marks(ctx, ReceiptsOf(as))
+	if err != nil {
+		return false, err
+	}
+	state, _, ok := ParseReceipt(hashes[0][id])
+	return ok && state == ReceiptActed, nil
+}
+
+// OverdueMessage is one message on a stream that is still short of delivered.
+type OverdueMessage struct {
+	Stream  string        `json:"stream"`
+	To      string        `json:"to"`
+	Message Message       `json:"message"`
+	Age     time.Duration `json:"age"`
+}
+
+// Overdue lists every message on every stream still short of delivered after
+// older (by the store's clock). Short of delivered is what the recipient's
+// group has never handed to a reader (after its last delivered entry, or the
+// whole stream when no reader ever made the group) with no receipt: a
+// message a reader took before receipts were kept, or since, is delivered,
+// so the streams' history is never an alarm.
+func (b *Bus) Overdue(ctx context.Context, older time.Duration) ([]OverdueMessage, error) {
+	names, now, err := b.Store.Roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	names = slices.Compact(names)
+
+	var overdue []OverdueMessage
+	for _, n := range names {
+		stream := StreamOf(n)
+		from := "-"
+		last, exists, err := b.Store.Group(ctx, stream, n)
+		if err != nil {
+			return nil, err
+		}
+		if exists && last != "" && last != "0-0" {
+			from = "(" + last
+		}
+		entries, err := b.Store.Range(ctx, stream, from, "+", 0)
+		if err != nil {
+			return nil, err
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		hashes, err := b.Store.Marks(ctx, ReceiptsOf(n))
+		if err != nil {
+			return nil, err
+		}
+		receipts := hashes[0]
+		for _, e := range entries {
+			m := e.Message()
+			if state, _, ok := ParseReceipt(receipts[m.ID]); ok && ReceiptRank(state) >= ReceiptRank(ReceiptDelivered) {
+				continue
+			}
+			age := max(now.Sub(m.At), 0)
+			if age >= older {
+				overdue = append(overdue, OverdueMessage{Stream: stream, To: n, Message: m, Age: age})
+			}
+		}
+	}
+	slices.SortFunc(overdue, func(a, b OverdueMessage) int {
+		if !a.Message.At.Equal(b.Message.At) {
+			if a.Message.At.Before(b.Message.At) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Message.ID, b.Message.ID)
+	})
+	return overdue, nil
 }
 
 // Receipt is the session's word that it read the messages ids sent to as:

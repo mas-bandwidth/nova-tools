@@ -182,14 +182,21 @@ type Store interface {
 	// a send knows which recipients are friends, owed a receipt.
 	Members(ctx context.Context) (friends, machines []string, now time.Time, err error)
 	// AddAll appends one entry with fields to every stream, and makes every
-	// mark (HSET, or HDEL when it clears), in one MULTI/EXEC: the entry and its
-	// marks are on all of them or on none.
+	// mark (HSET, HDEL when it clears, Forward's script when it is a receipt),
+	// in one MULTI/EXEC: the entry and its marks are on all of them or on none.
 	AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error
 	// Unmark clears fields of the hash at key (HDEL) and says how many were there.
 	Unmark(ctx context.Context, key string, fields ...string) (int64, error)
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
 	// a key that is not there is an empty map.
 	Marks(ctx context.Context, keys ...string) ([]map[string]string, error)
+	// Forward moves the receipt of each field of the hash at key to state,
+	// stamped with the server's time, in one atomic step (one Lua script on
+	// Redis), by Advance's rule: only forward, and only delivered starts one.
+	// It says how many moved.
+	Forward(ctx context.Context, key, state string, fields ...string) (int64, error)
+	// Time is the server's current time (TIME).
+	Time(ctx context.Context) (time.Time, error)
 	// EnsureGroup makes the group on the stream from its start, making the
 	// stream when it is not there (XGROUP CREATE ... 0 MKSTREAM); a group
 	// already there is fine.
@@ -372,6 +379,9 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			break
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
+			if err := b.MarkReceipts(ctx, as, ReceiptDelivered, got[0].Message().ID); err != nil {
+				return Entry{}, false, err
+			}
 			return got[0], true, release()
 		}
 		skipped = append(skipped, got[0].Entry)
@@ -385,6 +395,9 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			return Entry{}, false, err
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
+			if err := b.MarkReceipts(ctx, as, ReceiptDelivered, got[0].Message().ID); err != nil {
+				return Entry{}, false, err
+			}
 			return got[0], true, nil
 		}
 		if err := b.Store.Release(ctx, stream, as, got[0].Entry); err != nil {

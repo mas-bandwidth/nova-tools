@@ -44,9 +44,12 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 		pipe.XAdd(ctx, &redis.XAddArgs{Stream: s, ID: "*", Values: toValues(fields)})
 	}
 	for _, m := range marks {
-		if m.Clear {
+		switch {
+		case m.Clear:
 			pipe.HDel(ctx, m.Key, m.Field)
-		} else {
+		case m.Forward:
+			forwardScript.Eval(ctx, pipe, []string{m.Key}, m.Value, m.Field) // EVAL, never EVALSHA: no NOSCRIPT inside MULTI
+		default:
 			pipe.HSet(ctx, m.Key, m.Field, m.Value)
 		}
 	}
@@ -71,6 +74,62 @@ func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, 
 		out[i] = c.Val()
 	}
 	return out, nil
+}
+
+// forwardScript is Advance in one step on the server: KEYS[1] the receipts
+// hash, ARGV[1] the state, ARGV[2..] the message ids. Each id's receipt moves
+// to "<state> <TIME as RFC 3339>" only when that is forward, and read or acted
+// never starts one; the read of the old receipt and the write of the new are
+// one script, so no other writer lands between them (tla/Bus2.tla
+// ReceiptNeverMovesBack, the readwrite witness). It answers how many moved.
+// The date is the server's TIME seconds turned civil (days from the epoch to
+// year, month and day), since a script has no os.date.
+var forwardScript = redis.NewScript(`
+local rank = {delivered = 1, read = 2, acted = 3}
+local want = rank[ARGV[1]]
+if not want then return redis.error_reply("unknown receipt state " .. ARGV[1]) end
+local secs = tonumber(redis.call("TIME")[1])
+local days = math.floor(secs / 86400)
+local rem = secs - days * 86400
+local z = days + 719468
+local era = math.floor(z / 146097)
+local doe = z - era * 146097
+local yoe = math.floor((doe - math.floor(doe / 1460) + math.floor(doe / 36524) - math.floor(doe / 146096)) / 365)
+local doy = doe - (365 * yoe + math.floor(yoe / 4) - math.floor(yoe / 100))
+local mp = math.floor((5 * doy + 2) / 153)
+local day = doy - math.floor((153 * mp + 2) / 5) + 1
+local month = mp < 10 and mp + 3 or mp - 9
+local year = yoe + era * 400
+if month <= 2 then year = year + 1 end
+local stamp = string.format("%s %04d-%02d-%02dT%02d:%02d:%02dZ", ARGV[1], year, month, day,
+  math.floor(rem / 3600), math.floor((rem % 3600) / 60), rem % 60)
+local moved = 0
+for i = 2, #ARGV do
+  local cur = redis.call("HGET", KEYS[1], ARGV[i])
+  local have = 0
+  if cur then have = rank[string.match(cur, "^(%a+)")] or 0 end
+  if have < want and (have > 0 or want == 1) then
+    redis.call("HSET", KEYS[1], ARGV[i], stamp)
+    moved = moved + 1
+  end
+end
+return moved
+`)
+
+func (r Redis) Forward(ctx context.Context, key, state string, fields ...string) (int64, error) {
+	if len(fields) == 0 {
+		return 0, nil
+	}
+	args := make([]any, 0, len(fields)+1)
+	args = append(args, state)
+	for _, f := range fields {
+		args = append(args, f)
+	}
+	return forwardScript.Run(ctx, r.C, []string{key}, args...).Int64()
+}
+
+func (r Redis) Time(ctx context.Context) (time.Time, error) {
+	return r.C.Time(ctx).Result()
 }
 
 func (r Redis) EnsureGroup(ctx context.Context, stream, group string) error {

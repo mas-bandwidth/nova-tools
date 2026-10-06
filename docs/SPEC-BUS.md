@@ -99,6 +99,10 @@ takes `--json`; `log` takes `--max`.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
 - `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
   `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>`.
+- `receipts [--as <me>] [--id <id>]` prints `RECEIPTS OK count=<n>` followed by one
+  `RECEIPTS RECEIPT id=<id> state=<state> age=<duration>` line per receipt.
+- `overdue [--older <duration>]` prints `OVERDUE OK overdue=0 older=<d>` at exit 0,
+  or `OVERDUE FAILED overdue=<n> older=<d>` at exit 1 with `OVERDUE MESSAGE ...` lines.
 - `version`, `help`, `help <verb>`.
 
 Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
@@ -210,6 +214,66 @@ The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
 store with users: a sender marks the recipients' hashes, as it writes their
 streams.
 
+### message-receipts.w1: delivered, read and acted receipts, and overdue
+
+Every message has a forward-only receipt recorded in the store beside each
+recipient's stream in the hash `bus2:receipts:<recipient>` (one field per message
+id, value `<state> <RFC3339-time>` from the store's `TIME`). The receipt progresses
+through three states:
+- `delivered`: the recipient's reader took it off its stream (`b.Recv` / `b.RecvKinds`).
+- `read`: the session's turn carrying it started (the daemon marks it when the adapter
+  accepts the turn).
+- `acted`: the turn ended at exit 0, or the recipient sent a message whose `re` is its id.
+
+A receipt moves only forward (`delivered` -> `read` -> `acted`), and only `delivered`
+starts one. Every write is one store step, never a read followed by a separate write:
+`Store.Forward`, on Redis one Lua script (`forwardScript`, its stamp the server's `TIME`)
+that reads the field and writes it only when the new state is later, and refuses `read`
+or `acted` for an id with no receipt (`bus.Advance` is the rule; the fake applies it
+under its lock). The reply path is the same step inside the send's `MULTI/EXEC`: a
+message whose `re` names another moves the sender's receipt of that one to `acted`
+only when her reader was handed it, so `acted` always implies `delivered`.
+
+`read` means the session took the turn, not that the daemon saw the message: the daemon
+marks it only when the adapter accepts the turn (`Deliver` answers exit 0, no error),
+then `acted` at once. A turn still running, deferred, refused, failed, or stopped silent
+leaves the receipt at `delivered`.
+
+The tool provides two inspection verbs:
+- `nova-bus receipts --as <name> [--id <id>]` prints `RECEIPTS OK count=<n>`, followed
+  by one line `RECEIPTS RECEIPT id=<id> state=<state> age=<duration>` per message receipt.
+- `nova-bus overdue --older <d>` (default 10m) inspects every stream for messages short
+  of delivered whose age exceeds `<d>`, printing `OVERDUE OK overdue=0 older=<d>` at exit 0,
+  or `OVERDUE FAILED overdue=<n> older=<d>` at exit 1 with one `OVERDUE MESSAGE ...` line
+  per overdue message.
+
+Short of delivered is an entry the recipient's group has never handed to a reader (after
+the group's last delivered entry, `XINFO GROUPS`; the whole stream when no reader ever made
+the group) that has no receipt. The cutoff is the group, not the receipts: the streams are
+never trimmed, and a message a reader took before receipts were kept has no receipt and is
+delivered all the same, so the history on deploy is no alarm.
+
+Delivery stays at-least-once: a claimed message after `ClaimAfter` is handed in again.
+The take is idempotent, keyed on the store: the daemon (`internal/friend/daemon.go`) asks
+the store's receipt (`Bus.Acted`) of every message its reader hands it, and holds no set
+of its own, so a daemon that restarted (the usual redelivery: the old reader died between
+the turn's end and its ack) drops it all the same. A delivery of an acted id is dropped
+with one record line, `duplicate dropped id=<id>`, and acked, never pushed into a turn
+twice. A message the session answered (`re`) before the daemon took it is acted too, and
+dropped the same way.
+
+The model is `tla/Bus2.tla`: the receipt, the take, the turn and the reply. `MCBus2.cfg`
+checks `ReceiptNeverMovesBack`, `ReadOnlyWhenAccepted`, `ActedImpliesDelivered` and
+`NoMessageActedTwice` with every earlier rule, on the instance the delivery machine was
+checked on (two recipients, three messages, two consumers). One reversed witness for each
+invariant, each caught by TLC: `MCBus2BrokenReadEarly.cfg` (read marked when the daemon sees
+the delivery: `ReadOnlyWhenAccepted`), `MCBus2BrokenMemDrop.cfg` (the drop asks the
+daemon's memory, which a crash forgets: `NoMessageActedTwice`), `MCBus2BrokenReadWrite.cfg`
+(the mark a read and a separate write, a reply's `acted` landing between:
+`ReceiptNeverMovesBack`), `MCBus2BrokenReplyUndelivered.cfg` (the reply's mark a blind
+`HSET`: `ActedImpliesDelivered`), and `MCBus2BrokenActTwice.cfg` (a take that never asks:
+`NoMessageActedTwice`).
+
 ## The identity
 
 Who a verb acts as is the user the connection logged in as, never a word on
@@ -232,13 +296,15 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re) |
-| recv | `SMEMBERS`, `TIME`, `HGETALL`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>` |
+| send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EVAL` (the reply's receipt), `EXEC` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re) |
+| recv | `SMEMBERS`, `TIME`, `HGETALL`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`, `EVALSHA`/`EVAL` (the delivered receipt) | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipts:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
 | names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
 | the friend daemon's push proof | `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` | `friends`, `machines`; `bus2:push` |
+| receipts | `HGETALL`, `TIME` | `bus2:receipts:<f>` |
+| overdue | `SMEMBERS`, `XINFO GROUPS`, `XRANGE`, `HGETALL`, `TIME` | `friends`, `machines`, `bus2:to:*`, `bus2:receipts:*` |
 
 The wrinkle, said plainly: a sender writes other friends' streams. `send` fans
 the message out from the client, one `XADD` per recipient stream inside the
@@ -253,9 +319,9 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:push ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipts:* ~bus2:push ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall
+  +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall +eval +evalsha
 ```
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
