@@ -1,3 +1,9 @@
+//go:build slow
+
+// The child starts the built sandbox, so this file sits behind `slow` beside slow_test.go.
+// The unit ledger (internal/ci/slow-tests_allowlist.txt) holds a package to 2s and a test to 1s:
+// a package over 2s, or a top-level test over 1s, is a CI-SLOW line.
+
 package main
 
 import (
