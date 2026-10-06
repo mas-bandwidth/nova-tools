@@ -16,7 +16,7 @@ import (
 // and reads the cost tile.
 const readCostDriver = `
 context.render(input.data);
-process.stdout.write(JSON.stringify({ cost: doc.getElementById('cost').textContent, per: doc.getElementById('cost-per').innerHTML }));
+process.stdout.write(JSON.stringify({ cost: doc.getElementById('cost').textContent, per: doc.getElementById('cost-per').innerHTML, title: doc.getElementById('cost-per').title || "" }));
 `
 
 // The cost tile shows the reads as their own number beside the work (reads are priced like
@@ -38,8 +38,14 @@ func TestTheCostTileShowsReadsBesideWork(t *testing.T) {
 	work["old"] = map[string]any{"cost": "$1.50", "landed": "4", "merging": "0", "ready": "0", "review": "0", "waiting": "0", "working": "0"}
 	d["archived"] = map[string]any{"streams": []string{"old"}, "landed": 4, "cost": "$1.50"}
 	d["stream_costs"] = map[string]any{
-		"ci":  map[string]any{"total_cost": "$3.00", "work_cost": "$2.00", "read_cost": "$1.00"},
-		"old": map[string]any{"total_cost": "$1.50", "work_cost": "$1.00", "read_cost": "$0.50"},
+		"ci": map[string]any{"total_cost": "$3.00", "work_cost": "$2.00", "read_cost": "$1.00", "readers": map[string]any{
+			"reader-a": map[string]any{"reads": 3, "priced": 3, "usd": "0.875", "hour_priced": 1, "hour_usd": "0.125"},
+			"reader-b": map[string]any{"reads": 1, "priced": 1, "usd": "0.125"},
+			"reader-c": map[string]any{"reads": 2, "tokens": 1500},
+		}},
+		"old": map[string]any{"total_cost": "$1.50", "work_cost": "$1.00", "read_cost": "$0.50", "readers": map[string]any{
+			"reader-b": map[string]any{"reads": 1, "priced": 1, "usd": "0.5"},
+		}},
 	}
 
 	shim, _, ok := strings.Cut(scrollShim, "// the viewer:")
@@ -52,9 +58,12 @@ func TestTheCostTileShowsReadsBesideWork(t *testing.T) {
 	cmd.Stdout, cmd.Stderr = &outBuf, &errBuf
 	require.NoError(t, cmd.Run(), "node runner failed: %s", errBuf.String())
 	require.Empty(t, errBuf.String(), "app.js threw while drawing")
-	var res struct{ Cost, Per string }
+	var res struct{ Cost, Per, Title string }
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &res), outBuf.String())
 
 	assert.Contains(t, res.Cost, "$4.50", "the complete cost holds work and reads of every stream")
 	assert.Contains(t, res.Per, "$3.00 work · $1.50 reads", "the reads beside the work, the archived stream's included")
+	assert.Contains(t, res.Per, "$1.50 reads (33%)", "and their share of work and reads together")
+	assert.Equal(t, "reader-a $0.88 ($0.13 last hour)\nreader-b $0.63 ($0.00 last hour)", res.Title,
+		"the tooltip names each reader's spend over every stream, most first; a subscription reader has no dollars")
 }

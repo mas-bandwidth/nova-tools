@@ -163,3 +163,28 @@ func TestAStreamsTotalIsEveryRecordOfEveryCard(t *testing.T) {
 	assert.Equal(t, "$5.00", tc.PerLanded)
 	assert.Empty(t, tc.Unreconciled)
 }
+
+// The judgment names the read share of the gap (the owner, 2026-10-05, before funding a
+// provider for reads: track what readers spend): the reads among the day's records, their
+// share, and the gap spread as the records are; the record keeps the reads beside the total.
+func TestTheReconcileJudgmentNamesTheReadShareOfTheGap(t *testing.T) {
+	t.Parallel()
+	w := reconcileWorld(t)
+	day := w.s.Now.UTC().Format(time.DateOnly)
+	assert.InDelta(t, 4.0, InternalReadSpendOn(w.s, "openrouter", day), 1e-9, "today's one read, never a take")
+	assert.InDelta(t, 0.0, InternalReadSpendOn(w.s, "opencode", day), 1e-9)
+
+	p := w.must(CostReconcile(w.s, openrouterRead(w, 20))) // $20 against $10: a gap of $10
+	require.Len(t, p.Notes, 1)
+	assert.Contains(t, p.Notes[0].What, "reads are $4.00 of the records (40.0%, work $6.00), so spread as the records are, about $4.00 of the gap is reads")
+	assert.Contains(t, p.Notes[0].What, "a route's prices are under its provider's list")
+	rec, ok := CostReconcileOf(w.s.Fleet, "openrouter")
+	require.True(t, ok)
+	assert.InDelta(t, 4.0, rec.InternalReads, 1e-9)
+	require.Len(t, p.Units, 1)
+	assert.Contains(t, p.Units[0].Moved, "records=$10.00 reads=$4.00 gap=50.0%")
+
+	// a day with no record names no read share
+	assert.Equal(t, "the records hold nothing of the day, so no part of the gap is set against reads",
+		readShareOfGap(CostReconcileRecord{Used: 3}))
+}
