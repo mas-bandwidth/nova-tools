@@ -4054,6 +4054,19 @@ Each line has the format `MACHINERY <thing> OK|DOWN <facts> [remedy="<command>"]
 A summary line `MACHINERY OK n=<total>` or `MACHINERY DOWN n=<down> of=<total>` concludes the output.
 `--json` prints one JSON object with `at`, `lines`, `down`, `exit_code`, and `measures`.
 
+The check also reads the seat's machine's process table (`ps -axww -o pid=,args=`) for the
+coordinator's stopgaps (docs/STOPGAPS.md, `sprint.Stopgaps`; card the-stopgaps-retire) and prints,
+after the `MACHINERY` lines and before the summary, one line per stopgap found alive:
+`STOPGAP <name> still running pids=<pid,...> state=<owed|landed|retired> card=<card> verb="<verb>"`.
+An owed or landed stopgap's line is a note; a retired one (its card landed and a real run of its
+verb recorded) still running is DOWN with `remedy="kill <pid> ..."`, so the check exits 1 until it
+is removed. The summary's `n` counts these lines with the checks'. A process table that cannot be
+read prints no stopgap line. `--json` carries them as `stopgaps`. Tests:
+`TestEveryStopgapNamesItsVerbAndProof` (the table, row for row against `sprint.Stopgaps`, refusing a
+row with no card, verb or test, a landed row whose test is not in the tree, and a real run of a verb
+not landed), `TestStopgapScriptIsTheProgramOrTheInterpretersScript`,
+`TestTheSeatCheckPrintsEveryStopgapStillRunning`.
+
 ### The seat's store login
 
 (the owner, 2026-10-05: "We need to get away from these one shot shell scripts"; card
