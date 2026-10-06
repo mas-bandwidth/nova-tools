@@ -22,7 +22,10 @@ import (
 //
 // The first four are each one class of the 2026-09-22 sprint's failed cards (rowan-new
 // reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
-// does not hold, so they run only under `nova-swarm lint --base-check`:
+// does not hold, so they run under `nova-swarm lint --base-check`. nova-sprint add
+// also runs paths-at-base and donewhen-test-name at the card's BASE tip, through
+// LintBrief (lintpaths.go); deadline-p95, leg-in-fleet and no-push-steps stay here,
+// because add has no p95 table and no leg table to hand them:
 //
 //	paths-at-base  every PATHS entry resolves at the card's base-sha, or is a new
 //	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named internal/decide/entry.go,

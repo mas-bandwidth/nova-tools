@@ -1157,6 +1157,15 @@ variable named by `NOVA_BUS_REDIS_PASSWORD_ENV`, separately from the sprint
 store's login. With no bus user it uses the default user; a failed bus send
 leaves the delivered card in her inbox and records that she was not woken.
 
+`add` holds a coding brief (its header names `REPO:` and `PATHS:`) to the brief checks at
+its `BASE:` tip, read in the lander's clone (`paths-at-base`, `donewhen-test-name` from its
+`TEST:` line, `paths-cover-named`, `paths-cover-test`, `paths-cover-testdata`,
+`paths-cover-ledgers`, `paths-cover-docs`, `base-is-live`, `tier-set`, `tla-is-frontier`,
+`who-serves-tier`; docs/SPEC-SPRINT.md, the brief checks): a failing brief is
+refused, exit 2, nothing written, each finding a `LINT DRIFT brief` line with `remedy=` and,
+for a PATHS or SHARED refusal, `fix=` the corrected line. `nova-swarm lint --rules` prints
+every token's remedy.
+
 Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`, then the address `seat login` recorded), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
 verb that writes wants one), `--op <id>` (the same id again returns the recorded

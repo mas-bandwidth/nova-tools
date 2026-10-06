@@ -188,8 +188,9 @@ func TestTheWorkerViewOfAMember(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
+	repo := briefRepo(t, ta.a, []string{"cmd/nova-sprint/s1-1.go", "cmd/nova-sprint/s1-2.go"}, "sprint/s1") // add reads each brief's tree at BASE
 	for _, id := range []string{"s1-1", "s1-2"} {
-		brief := passingBrief(id + ": a card tier: flash\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nPATHS: cmd/nova-sprint/" + id + ".go")
+		brief := passingBrief(id + ": a card tier: flash\nREPO: " + repo + "\nBASE: sprint/s1\nPATHS: cmd/nova-sprint/" + id + ".go\nTEST: none a view's fixture")
 		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(brief), 0o644))
 	}
 	ta.ok("add --stream s1 --brief-dir " + dir)
