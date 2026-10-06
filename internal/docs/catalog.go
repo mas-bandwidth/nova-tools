@@ -145,6 +145,7 @@ var DefaultCatalog = []Entry{
 	E("docs/sprint", "the nova-sprint 1.0.0 glossary, which moves to nova-sprint's docs/ at the split", "go test ./internal/docs", "go test ./internal/docs -run TestRetiredWordsAppearOnlyInRecords"),
 	E("docs/ratings", "cold ratings of the tools, one file per rater and tool", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/stranger", "cold stranger runs of the tools, one file per run, every stumble with its proposed card", "go test ./internal/docs", "go test ./internal/docs"),
+	E("docs/dogfood", "dogfood passes over the tools, one file per tool and date: every verb run for real, findings graded urgent or next", "go test ./internal/docs", "go test ./internal/docs"),
 
 	// tools/
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),
