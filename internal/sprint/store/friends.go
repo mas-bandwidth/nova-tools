@@ -58,6 +58,12 @@ type friendEntry struct {
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
+	// TokenCap is her row's per-card token cap. TokenCapSet is whether friend
+	// sync wrote one: a roster from before the field is unset, and her beat
+	// answers the default. An explicit 0 is no cap; omitempty would drop that
+	// 0, so the bool is the record that it was set.
+	TokenCap    int64 `json:"token_cap,omitempty"`
+	TokenCapSet bool  `json:"token_cap_set,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -75,6 +81,11 @@ type FriendSpec struct {
 	Mode  string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
+	// TokenCap is her row's per-card token cap. TokenCapSet is false for a
+	// spec built before the field: her beat then answers the default, and an
+	// explicit 0 (no cap) is TokenCapSet with TokenCap 0.
+	TokenCap    int64
+	TokenCapSet bool
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -176,11 +187,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -635,7 +646,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

@@ -2000,6 +2000,10 @@ coordinator acts on the request (a served `friend give <friend> <card> --reason`
 (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
 ported; the invoice-effective price beside the card price is not ported.
 
+### friend-token-cap-bb.w2
+
+The per-card token cap is the friend row's `token_cap` (`nova-config friend set <f> --token_cap <n>`, migration 0035), 6000000 by default and 0 none. Friend sync writes it on her roster and her beat answers `row_token_cap=<n>` always, including 0 (a missing word is the default, not none). Every one-shot lane counts the card's tokens as it runs, from the harness's own usage record behind `CardUsage` (a test hands a fake): a claude run's stream-json assistant usage, one count per message id (input, cache creation, cache read, output, and reasoning when the line carries it), and an opencode turn's session export, the session's growth since the read before the turn, polled every `TokenPoll` (15s) on an injected clock in the test. Input, cache read, cache write, output and reasoning are summed, across every run the lane gives the card. When the sum reaches the cap the lane cancels that run's own context, which signals that run's process group and no other, and holds the card with the reason `token cap <cap> reached at <n> tokens` plus the usage so far. A report already in the outbox is left as it stands. The card's end is a finish, and the friend's next card proceeds. An export with no token shape runs uncapped and its price is unchanged. The loop's `capStep` remains the opencode sqlite watch (`TokenCapReport` in lane_parity.go); a claude lane has no sqlite totals, so this count is the one that holds it. Once the beat prints a positive `row_token_cap`, both watches can stop an opencode card; the lane's own report is the one this card's test holds.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should

@@ -232,7 +232,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"]})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -485,6 +485,13 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 			line += " row_config_dir=" + spec.ConfigDir
 			facts["row_config_dir"] = spec.ConfigDir
 		}
+		// always, including 0: a missing word is the default cap, and 0 is none
+		capN := spec.TokenCap
+		if !spec.TokenCapSet {
+			capN = config.DefaultFriendTokenCap
+		}
+		line += fmt.Sprintf(" row_token_cap=%d", capN)
+		facts["row_token_cap"] = capN
 	}
 	for _, n := range []struct {
 		key string

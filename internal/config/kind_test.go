@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode,config_dir", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -701,6 +701,27 @@ func TestLoopApplyAloneTakesTheStoresDirectory(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 	assert.ErrorContains(t, err, "run: nova-config fleet set --loops_dir <path>")
 	assert.Zero(t, c.Exists(ctx, LoopKey("member-m1")).Val(), "a refused apply writes no hash")
+}
+
+// A friend's token cap defaults to 6000000, and 0 is no cap rather than the default.
+func TestAFriendsTokenCapDefaultsToSixMillionAndZeroIsNone(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{}))
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{}}))
+	assert.Equal(t, int64(0), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "0"}}))
+	assert.Equal(t, int64(100), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "100"}}))
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "-1"}}))
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "nope"}}))
+	friend, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	row, err := friend.NewRow("amy", map[string]string{"slots": "1", "tiers": "flash"})
+	require.NoError(t, err)
+	assert.Equal(t, "6000000", row.Fields["token_cap"], "add with no token_cap stores the default")
+	row, err = friend.NewRow("amy", map[string]string{"slots": "1", "tiers": "flash", "token_cap": "0"})
+	require.NoError(t, err)
+	assert.Equal(t, "0", row.Fields["token_cap"], "an explicit 0 is stored, and is no cap")
+	_, err = friend.NewRow("amy", map[string]string{"slots": "1", "tiers": "flash", "token_cap": "-1"})
+	require.Error(t, err)
 }
 
 // A friend row's config_dir is optional, and absolute when set: CLAUDE_CONFIG_DIR

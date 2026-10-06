@@ -961,6 +961,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
 	var rowProfile atomic.Pointer[string]
 	var rowConfigDir atomic.Pointer[string] // her row's config_dir as her beat last answered; read by the lanes' runs and the wall
+	var rowTokenCap atomic.Int64            // her row's per-card token cap as her beat last answered; DefaultTokenCap until it says, 0 none
+	rowTokenCap.Store(friend.DefaultTokenCap)
 	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
 	if bin, err := w.binary(); err == nil {
 		wall.Self = []string{bin}
@@ -1068,7 +1070,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
 			oc.Allow = append(oc.Allow, alias)
 		}
-		deliver = &friend.OpenCodePriced{OpenCode: oc} // every lane run priced from her own session record
+		deliver = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }} // every lane run priced from her own session record, and capped by her row's token_cap
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
@@ -1078,6 +1080,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var rowLaneCaps atomic.Pointer[map[string]time.Duration]
 	if cl, ok := deliver.(*friend.Claude); ok {
 		cl.Friend, cl.Now = name, w.now // every run's cost and limit on the record, its reset read on her clock
+		cl.TokenCap = func() int64 { return rowTokenCap.Load() }
 		cl.ConfigDir = func() string {
 			if d := c.Str("config-dir"); d != "" {
 				return d // the override
@@ -1263,6 +1266,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 					rowLaneCaps.Store(&caps)
 				}
 				if err == nil {
+					if n, ok := friend.TokenCapOf(answer); ok {
+						rowTokenCap.Store(n)
+					}
 					r := friend.LaneRulesOf(answer)
 					rowRules.Store(&r)
 				}
