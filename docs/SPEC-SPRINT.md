@@ -3489,10 +3489,19 @@ maps are a second generated-ledger family, owned by
 `GOFLAGS=-mod=readonly`. A merge whose unmerged paths are only those maps, or
 only those maps plus `internal/docs/catalog.go` where both sides only add
 rows, resolves: the union of the rows, the tip's first, then the map family
-until a run writes nothing, committed as the generality family is. The
+until a run writes nothing, committed as the generality family is. The union
+names a directory once: a card's row for a directory the base or the tip
+already names is dropped, the tip's row kept. The
 resolution is told as a shrink-only union is: one land log line and the card's
 note. A conflicting `catalog.go` line that is not an added row is refused as
-any conflict is.
+any conflict is. A merge git makes without a conflict, where both sides changed
+the catalog or a map since their merge base (each card ran the generator at its
+own base), is regenerated too: a row the card repeats for a directory the tip's
+catalog names is dropped, the map family runs once, and what it wrote is
+amended into the merge commit, told on a land log line and the card's note as
+`map regenerated`; a run that fails or writes outside the family and the
+catalog is undone, and the tree gate judges the merge as git made it
+(`TestTheLanderRegeneratesTheMapWhenStale`, cmd/nova-sprint/land_catalog_test.go).
 
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
@@ -3625,6 +3634,16 @@ paths=<a,b,...>` (`--json`: the batch item's `cleaned`); a clone it cannot resto
 the batch with the step that failed. A clone the caller gives with `--repo-dir` is the
 caller's: it is never cleaned, and a dirty one is refused as before
 (`TestLanderRestoresItsOwnDirtyCacheClone`, cmd/nova-sprint/land_clean_clone_test.go).
+
+One land at a time works in a clone, kept or given. Land takes the clone's land lock
+(`nova-sprint-land.lock` in its git directory, `internal/filelock`) the first time it uses
+the clone and holds it until land ends; a clone another land holds is refused before any
+git changes it, `the clone <dir> is in use by another land (<holder>)`, and its cards stay
+queued for the next land (found 2026-10-06: the server's lander and a second land shared the
+kept clone, and the server's merge found the other's MERGE_HEAD and failed in git). Every
+outcome of a merge leaves the clone with no merge in progress: a merge that stops is
+aborted, a resolution that fails is reset, and a card the checks or the gate refuse is
+reset off the batch branch (`TestTheLandCloneIsCleanAfterAFailedMerge`).
 
 #### protected-bases-pb-b.w2
 
