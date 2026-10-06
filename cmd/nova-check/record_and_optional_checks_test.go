@@ -131,8 +131,8 @@ func TestIssue2311(t *testing.T) {
 // dogfoodRunWith runs the dogfood verb in process with the seams the caller
 // injects, so a test shares the process with its neighbours instead of
 // assigning a package variable.
-func dogfoodRunWith(seams dogfoodSeams, args ...string) (code int, stdout, stderr string) {
+func dogfoodRunWith(s dogfoodSeams, args ...string) (code int, stdout, stderr string) {
 	var out, errOut bytes.Buffer
-	code = cmdDogfood(seams, args, &out, &errOut)
+	code = runWith(seams{dogfood: s}, append([]string{"dogfood"}, args...), &out, &errOut)
 	return code, out.String(), errOut.String()
 }
