@@ -56,6 +56,17 @@ minutes. Her beat carries her session's last proof, and the sprint deals
 nothing to a friend whose proof is older than fifteen minutes
 (docs/SPEC-FRIEND.md, "The push proof").
 
+A dsh session that cannot take a turn defers its messages and never loses
+one, but it does not read up: a headless turn whose output carries the agent
+preset refusal or `MISSING_CREDENTIAL`, whatever its exit code (dsh has
+exited 0 with the refusal), is a failed delivery. On the first one the
+daemon marks the session broken, `status` reads her down with the reason
+(`dsh session <id>: agent preset minimal` or `dsh: missing credential`), the
+seat is told once, and every message stays pending, tried again every ten
+seconds; the first turn that succeeds clears it. Fix the session (start one
+with no agent preset, or store the provider's key for the headless profile);
+no restart is needed (docs/SPEC-FRIEND.md, "A turn the session cannot take").
+
 ## Generation-specific jobs
 
 The queue file, `inbox/QUEUE.json`, records each task's `id`, `state`, `gen`

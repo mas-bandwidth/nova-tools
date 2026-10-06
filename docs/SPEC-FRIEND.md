@@ -357,6 +357,32 @@ which is how a renewed session is taken up. The finding of 2026-10-04:
 a friend's session refused every turn with `invalid_request_error` for two hours
 and nothing said so.
 
+**A turn the session cannot take.** Some output says the session cannot take a
+turn at all, whatever the exit code: dsh's one-shot runner refusing a session
+under an agent preset (`runs under agent preset "<p>", which the one-shot runner
+does not compose`), and `MISSING_CREDENTIAL`, a provider with no key. The dsh
+adapter reads both from the output of every turn, exit 0 or not (`DSHRefusal`),
+and answers `SessionRefused` with the session and a one-line reason, `dsh
+session <id>: agent preset <p>` or `dsh: missing credential`; the output itself
+is never kept, so no credential value reaches the record. It is a failed
+delivery, never a delivered one, and it breaks the session on the first such
+turn, not after a count: the status says `session=broken` with that reason, so
+`status` reads the friend down and `check` reads `broken`, `session broken:
+<reason>`; the record says it once, `session=broken reason="<reason>"`, and the
+seat (else `--coordinator`) is told once. The turn stays in hand as a deferral
+does, tried again every `RecheckEvery`, counted toward nothing and never acked,
+so every message stays pending. Unlike a provider's refusal it needs no restart:
+the first turn that succeeds clears it (`session=ok: a turn succeeded after <n>
+refused`), acks the messages, and the session reads ok. `SessionRefused` is
+also the `Deferred` it is for its messages, so the push proof still refuses a
+preset session with its remedy. The finding of 2026-10-06: Zhi's sessions moved
+to preset `minimal`, every headless turn printed the refusal and exited 0, the
+adapter read it only on a nonzero exit, and for four hours every message to her
+counted as delivered while her row read up
+(`TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason`). Not covered: a lane
+turn in one-shot mode, and the presence file, which the session's own bus
+messages can still hold up.
+
 A harness at its usage limit or out of credits is down until its reset,
 woken after it, and its measured usage rides on its beat
 (`internal/friend/limit.go`; the finding of 2026-10-04: a friend's harness
@@ -2022,7 +2048,7 @@ children's; OpenCode is above.
 
 | harness | installed here | push route | command or frame | proven | needs from the owner |
 |---|---|---|---|---|---|
-| dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | none into an open desktop session: a session under an agent preset makes `dsh headless` exit 1 before any write, and the adapter returns Deferred (route defer); the session reads the bus itself (`nova-bus recv` or `nova-bus wait`) | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | no live push (route defer). Probed 2026-10-05 on the macOS survey machine against the real friend session `session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b` in `/Volumes/nova/ai/zhi`: `echo "test" \| dsh headless --session-id session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b -` exits 1 with preset `minimal` refusal before any write, transcript `session.v4.jsonl.zstd` hash and timestamp unchanged, `deliver.log` records 1339+ consecutive deferred attempts, desktop app exposes no local listener or IPC socket. 2026-10-04, isolated DSH home, no credentials: under preset `minimal` headless exits 1, transcript SHA-256 unchanged; with no preset the runner appended a turn (turn 2 in the same record, 9 KB to 16 KB), unknown id exit 1, another directory exit 1, the turn stopped at `MISSING_CREDENTIAL` | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
+| dsh (DeepSeek Harness) | yes: `/Applications/DeepSeek Harness.app`, v0.2.0-rc.2, CLI at `Contents/Resources/runtime/cli/bin/dsh`, nothing on PATH | none into an open desktop session: a session under an agent preset makes `dsh headless` refuse before any write (exit 1, and exit 0 measured 2026-10-06), and the adapter returns SessionRefused, the friend down with the reason, the message pending (route defer; "A turn the session cannot take"); the session reads the bus itself (`nova-bus recv` or `nova-bus wait`) | `dsh headless --session-id <id> -` in the friend's dir, text on stdin; newest `session-*` of `<key>` when none is named | no live push (route defer). Probed 2026-10-05 on the macOS survey machine against the real friend session `session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b` in `/Volumes/nova/ai/zhi`: `echo "test" \| dsh headless --session-id session-e9b0dc0e-b03d-4516-b40e-6a0287ca218b -` exits 1 with preset `minimal` refusal before any write, transcript `session.v4.jsonl.zstd` hash and timestamp unchanged, `deliver.log` records 1339+ consecutive deferred attempts, desktop app exposes no local listener or IPC socket. 2026-10-04, isolated DSH home, no credentials: under preset `minimal` headless exits 1, transcript SHA-256 unchanged; with no preset the runner appended a turn (turn 2 in the same record, 9 KB to 16 KB), unknown id exit 1, another directory exit 1, the turn stopped at `MISSING_CREDENTIAL` | store DEEPSEEK_API_KEY for the headless profile (the web Models page, or the daemon's environment); the desktop app's key is not seen by it |
 | gemini (Gemini CLI) | yes: `/opt/homebrew/bin/gemini` 0.46.0 (brew gemini-cli) | `--resume <uuid>` keeps the session id and chat file (`ChatRecordingService.initialize`, read in the bundle); `latest` is the project's newest | `gemini --skip-trust --resume <id\|latest> --prompt=<text>` in the friend's dir | mechanics only, 2026-10-04: a session file was written under `~/.gemini/tmp/<project>/chats/`, `--resume <bad uuid>` exits 42; the turn itself never ran: the account answered 429 `rateLimitExceeded`, then `IneligibleTierError: this client is no longer supported for Gemini Code Assist for individuals`; no token spent | a GEMINI_API_KEY in the daemon's environment, or a Code Assist tier that still serves the CLI (the individual tier no longer does, 8:58 AM ET) |
 | copilot (GitHub Copilot CLI) | no | programmatic mode resumes a session: `-p` with `--resume`; session state under `~/.copilot/session-state/`; an SDK talks JSON-RPC to `copilot --headless` | `copilot -p <text> --resume <id> --allow-all-tools -s` | no | `curl -fsSL https://gh.io/copilot-install \| bash` and `copilot login` |
 | cursor (cursor-agent, the app) | no (no `agent`, no Cursor.app) | the CLI resumes a chat by id; the app has no documented IPC into an open chat | `agent -p --resume <chatId> --output-format text <text>` | no | `curl https://cursor.com/install -fsS \| bash` and `agent login` (or CURSOR_API_KEY) |
@@ -2059,7 +2085,9 @@ carries no route for dsh until that wiring (cmd/nova-friend, outside this card's
 paths) lands.
 A session that has selected an agent preset is refused by the one-shot runner
 whatever the text (exit 1, "runs under agent preset ..., which the one-shot
-runner does not compose"; measured 2026-10-04 on a "minimal" session), so the
-adapter answers Deferred: the message stays pending, never given up, and the
-reason tells the friend to start a session without a preset or read the bus with
-`nova-bus recv`.
+runner does not compose"; measured 2026-10-04 on a "minimal" session, and with
+exit 0 on 2026-10-06), so the adapter answers SessionRefused whatever the exit:
+the message stays pending, never given up, the session reads broken with the
+reason until a turn succeeds, and the detail tells the friend to start a session
+without a preset or read the bus with `nova-bus recv` ("A turn the session
+cannot take").
