@@ -162,40 +162,9 @@
   when: container_runtime_delegation is changed and not ansible_check_mode
 
 # Everything below runs podman as the runner user.
-- name: the podman the runner user's PATH finds
-  become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
-  become_user: "{{ container_runtime_user }}"
-  ansible.builtin.command: podman --version
-  register: container_runtime_version
-  changed_when: false
-  # ignored: a non-zero exit is the answer (absent), read from rc by the task that follows
-  failed_when: false
-  check_mode: false
-
-# The version is recorded on the bench in one line, the way tools.yml records
-# the installed build (nova_build_file), so a reader of the bench finds it in
-# one place. It is written when it differs and never rewritten otherwise.
-- name: the directory of the record
-  become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
-  become_user: "{{ container_runtime_user }}"
-  ansible.builtin.file:
-    path: "{{ container_runtime_record_file | dirname }}"
-    state: directory
-    mode: "0755"
-  when: container_runtime_version.rc == 0
-
+# The version the bench has is recorded (record.yml).
 - name: the podman version recorded on the bench
-  become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
-  become_user: "{{ container_runtime_user }}"
-  ansible.builtin.copy:
-    dest: "{{ container_runtime_record_file }}"
-    content: "{{ container_runtime_version.stdout | trim }}\n"
-    mode: "0644"
-  when: container_runtime_version.rc == 0
-
-- name: the podman on this bench
-  ansible.builtin.debug:
-    msg: "PODMAN host={{ inventory_hostname }} {{ container_runtime_version.stdout | default('absent') | trim }} recorded={{ container_runtime_record_file }}"
+  ansible.builtin.include_tasks: record.yml
 
 - name: rootless podman answers
   become: "{{ container_runtime_user != ansible_facts['user_id'] }}"

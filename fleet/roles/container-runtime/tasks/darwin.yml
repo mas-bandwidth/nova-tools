@@ -79,28 +79,7 @@
   failed_when: container_runtime_machine_start.rc != 0 and 'already running' not in container_runtime_machine_start.stderr
   when: container_runtime_machines.rc == 0 and container_runtime_machines.stdout | trim | length > 0
 
-- name: the podman the bench has
-  ansible.builtin.command: "{{ container_runtime_brew | dirname }}/podman --version"
-  register: container_runtime_version
-  changed_when: false
-  # ignored: a non-zero exit is the answer (absent), read from rc by the task that follows
-  failed_when: false
-  check_mode: false
-
-- name: the directory of the record
-  ansible.builtin.file:
-    path: "{{ container_runtime_record_file | dirname }}"
-    state: directory
-    mode: "0755"
-  when: container_runtime_version.rc == 0
-
 - name: the podman version recorded on the bench
-  ansible.builtin.copy:
-    dest: "{{ container_runtime_record_file }}"
-    content: "{{ container_runtime_version.stdout | trim }}\n"
-    mode: "0644"
-  when: container_runtime_version.rc == 0
-
-- name: the podman on this bench
-  ansible.builtin.debug:
-    msg: "PODMAN host={{ inventory_hostname }} {{ container_runtime_version.stdout | default('absent') | trim }} recorded={{ container_runtime_record_file }}"
+  ansible.builtin.include_tasks: record.yml
+  vars:
+    container_runtime_podman_bin: "{{ container_runtime_brew | dirname }}/podman"
