@@ -156,6 +156,22 @@ example:
 // missing or unknown verb names.
 const verbs = "slowtests, functional, local, new-rule, new-verb, bench run, github receipt, version, help"
 
+// helpListsVerb reports whether tool's help already lists verb, so new-verb
+// refuses a name that would stand for two verbs. nova-ci's list is the verbs
+// constant; another tool's help is not this banner, so this reports false for
+// it (docs/STANDARD.md section 3).
+func helpListsVerb(tool, verb string) bool {
+	if tool != "nova-ci" {
+		return false
+	}
+	for _, listed := range strings.Split(verbs, ", ") {
+		if listed == verb {
+			return true
+		}
+	}
+	return false
+}
+
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in
 // internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
 var verbEffect = map[string]tool.Effect{

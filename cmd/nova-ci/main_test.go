@@ -220,6 +220,38 @@ func TestEmptyStdinIsFailedUnlessAllowEmpty(t *testing.T) {
 	assert.Contains(t, stdout, "--allow-empty")
 }
 
+// TestNewVerbRefusesAVerbHelpAlreadyLists pins that new-verb refuses a verb
+// nova-ci help already lists, naming it, on the dry run and on the real run,
+// and still plans a name the help does not list (docs/STANDARD.md section 3).
+// The tree is a scratch checkout, so a run that failed to refuse writes there
+// and not into the repository.
+func TestNewVerbRefusesAVerbHelpAlreadyLists(t *testing.T) {
+	t.Parallel()
+	tree := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example.com/m\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(tree, "cmd", "nova-ci"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "cmd", "nova-ci", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+
+	for _, verb := range []string{"slowtests", "help"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			for _, args := range [][]string{
+				{"new-verb", "--dry-run", "--root", tree, "nova-ci", verb},
+				{"new-verb", "--root", tree, "nova-ci", verb},
+			} {
+				code, stdout, stderr := runCI(t, args, "")
+				assert.Equal(t, 2, code, "%v: exit %d stdout %q stderr %q, want 2", args, code, stdout, stderr)
+				assert.NotContains(t, stdout, "would write", "%v: the refusal printed a plan", args)
+				assert.Contains(t, stderr, "nova-ci new-verb REFUSED:", "%v: stderr %q", args, stderr)
+				assert.Contains(t, stderr, `"`+verb+`" is already a verb nova-ci help lists`, "%v: stderr %q", args, stderr)
+			}
+		})
+	}
+	code, stdout, stderr := runCI(t, []string{"new-verb", "--dry-run", "--root", tree, "nova-ci", "probe"}, "")
+	assert.Equal(t, 0, code, "probe: exit %d stderr %q, want 0", code, stderr)
+	assert.Contains(t, stdout, "would write cmd/nova-ci/probe.go", "probe: stdout %q", stdout)
+}
+
 // TestSlowtestsNamesAPackageThatStartedAndNeverEnded pins that a stream cut
 // after a package start is the finding `truncated: <pkg> started and never ended`
 // and not an empty stream, on the lines and under --json. A complete stream
