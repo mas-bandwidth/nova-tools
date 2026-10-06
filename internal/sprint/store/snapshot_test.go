@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // fakeSource hands out numbered RDBs; the n-th holds n cards. It is the
@@ -155,4 +158,71 @@ func TestMemSnapshotVerifiesOnATwin(t *testing.T) {
 	assert.Equal(t, got.Counts, c)
 	_, err = MemTwin{}.Load([]byte(`{"version":99}`))
 	require.Error(t, err)
+}
+
+// The backup's dump (SPEC-SPRINT, sprint-backup-out): a key's epoch is read
+// off its name, the sprint's keys are told from another tool's, every byte of
+// a key and a payload survives a RESTORE line, and a twin's dump restores into
+// a twin that dumps the same keys again.
+func TestBackupDumpKeysEpochsAndRoundTrip(t *testing.T) {
+	t.Parallel()
+	for key, want := range map[string]int64{
+		"table:work:15:cell:m1:ready": 15, "table:work:rows": -1, "table:work": -1, "table:work:changes": -1,
+		"sprint:log@15": 15, "sprint:log": -1, "sprint:w:s1-1~15": 15, "sprint:w:s1-1": -1, "table::member:x~3": 3,
+		"sprint:coordinator": -1, "tables": -1,
+	} {
+		n, ok := KeyEpoch(key)
+		if want < 0 {
+			assert.False(t, ok, key)
+		} else {
+			assert.True(t, ok, key)
+			assert.Equal(t, uint64(want), n, key)
+		}
+	}
+	assert.True(t, InBackup("sprint:log@15", 15))
+	assert.True(t, InBackup("table:work", 15), "a shared key goes into every epoch's backup")
+	assert.False(t, InBackup("sprint:log@14", 15), "another epoch's key does not")
+	names := sprint.Names{}
+	for _, k := range []string{"sprint:w:a~1", "table:work", "table:fleet:3:rows", "view:sprint", "tables", "views"} {
+		assert.True(t, SprintKey(names, k), k)
+	}
+	for _, k := range []string{"table:demo", "table:workers", "ledger:x", "view:other"} {
+		assert.False(t, SprintKey(names, k), k)
+	}
+
+	all := make([]byte, 256)
+	for i := range all {
+		all[i] = byte(i)
+	}
+	keys := []DumpKey{{Key: "k \"q\" \\ \n", TTL: 0, Payload: all}, {Key: "t", TTL: 1500, Payload: []byte("plain")}}
+	var text string
+	for _, k := range keys {
+		line := RestoreLine(k)
+		assert.Equal(t, 1, strings.Count(line, "\n"), "one line a key")
+		text += line
+	}
+	got, err := ParseRestoreDump([]byte(text))
+	require.NoError(t, err)
+	assert.Equal(t, keys, got)
+	_, err = ParseRestoreDump([]byte("SET a b\n"))
+	assert.ErrorContains(t, err, "line 1")
+
+	m := NewMem()
+	require.NoError(t, m.SetKey(context.Background(), "note", "v"))
+	dump, err := MemDump(m, 0)
+	require.NoError(t, err)
+	r, err := MemRestore(dump)
+	require.NoError(t, err)
+	again, err := MemDump(r, 0)
+	require.NoError(t, err)
+	assert.Equal(t, dump, again, "a twin's dump restores into a twin that dumps the same keys")
+	var noMeta []DumpKey
+	for _, k := range dump {
+		if k.Key != "sprint:mem:meta" {
+			noMeta = append(noMeta, k)
+		}
+	}
+	require.Len(t, noMeta, len(dump)-1)
+	_, err = MemRestore(noMeta)
+	assert.ErrorContains(t, err, "not a twin's dump", "a dump missing the key it needs is refused")
 }
