@@ -1982,10 +1982,10 @@ func (m *Member) staggerStart() {
 	m.lastStart = now()
 }
 
-// scriptReadPrefix begins the finding of a script read that found the head the program's own
-// output; it is sprint.ScriptReadPrefix, which the sprint counts (the member does not import
-// the sprint, and the test holds the two equal).
-const scriptReadPrefix = "script read: "
+// ScriptReadPrefix begins the finding of a script read that found the head the program's own
+// output. The sprint counts reads by it (sprint.ScriptReadPrefix is this constant), so the
+// prefix the member writes and the one the sprint reads are one value.
+const ScriptReadPrefix = "script read: "
 
 // scriptChild is a read already ended: the script reader's own verdict, with no process.
 type scriptChild struct{ res Result }
@@ -2002,7 +2002,7 @@ func (m *Member) scriptOrStart(p Packet) (ch Child, note string, err error) {
 		if c, why := cardhdr.ReadClass(p.Brief); why == "" && c.IsScript() {
 			ok, why := m.cfg.ScriptVerify(p, c)
 			if ok {
-				return scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: scriptReadPrefix + oneLine(why)}}, "", nil
+				return scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: ScriptReadPrefix + oneLine(why)}}, "", nil
 			}
 			note = "script read gave no verdict (" + oneLine(why) + "); asked of a model"
 		}

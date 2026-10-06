@@ -12,7 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // scriptRepo is a temporary repository whose one start commit holds a.txt and b.txt, and
@@ -23,7 +23,7 @@ type scriptRepo struct {
 
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	env := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	env := testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	out, err := gitrun.Output(context.Background(), gitrun.Options{C: dir, Env: env, OwnRepo: true}, args...)
 	require.NoError(t, err)
 	return out
@@ -105,7 +105,7 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 		assert.Empty(t, g.r.started(), "no model child: %s", g.out.String())
 		lines := g.s.lines("report")
 		require.Len(t, lines, 1, g.out.String())
-		assert.Contains(t, lines[0], "read --as r --ok r1 --finding "+sprint.ScriptReadPrefix+`ran "upcase" at `+short(repo.start))
+		assert.Contains(t, lines[0], "read --as r --ok r1 --finding "+ScriptReadPrefix+`ran "upcase" at `+short(repo.start))
 		assert.Contains(t, lines[0], "identical")
 	})
 
@@ -122,7 +122,7 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 			assert.Contains(t, g.out.String(), "read r1: script read gave no verdict (")
 			assert.Contains(t, g.out.String(), tc.why)
 			for _, l := range g.s.lines("report") {
-				assert.NotContains(t, l, sprint.ScriptReadPrefix, "no script finding without a match")
+				assert.NotContains(t, l, ScriptReadPrefix, "no script finding without a match")
 			}
 		})
 	}
@@ -159,11 +159,6 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 		tick(t, g, p)
 		assert.Equal(t, []string{"r1"}, g.r.started())
 		assert.NotContains(t, g.out.String(), "script read")
-	})
-
-	t.Run("the member's finding prefix is the one the sprint counts", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, sprint.ScriptReadPrefix, scriptReadPrefix)
 	})
 }
 

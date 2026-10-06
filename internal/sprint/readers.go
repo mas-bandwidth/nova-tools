@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 )
 
 // A reader's state (docs/SPEC-SPRINT.md section 6, the readers table; the
@@ -235,8 +236,9 @@ func enoughReadersUp(s *Snapshot, pr *Card) bool {
 
 // ScriptReadPrefix begins the finding of an ok read a script reader gave: the reader ran
 // the card's SCRIPT program at the attempt's start commit and its diff was the head's,
-// byte for byte (docs/SPEC-SPRINT.md, the script read; member.VerifyScript).
-const ScriptReadPrefix = "script read: "
+// byte for byte (docs/SPEC-SPRINT.md, the script read; member.ScriptVerifier). It is the
+// member's own constant, so the finding a reader writes is the one counted here.
+const ScriptReadPrefix = member.ScriptReadPrefix
 
 // scriptVerified says the primary is a script card (CLASS: script, with its SCRIPT
 // program) with an ok read at its current attempt and head whose finding is a script

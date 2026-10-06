@@ -233,7 +233,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(memberConfig(*as, *width, *reader, meter, room, *root, *noWall), sp, rn, pu, stdout)
+	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
+	cfg.Sleep = time.Sleep // harness starts StartGap apart
+	m := member.New(cfg, sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -276,10 +278,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 // memberConfig is the member.Config nova-swarm runs a member or a reader with. A reader's
 // ScriptVerify reads a script card's head out of the bench mirror and runs its program in
 // the member's wall, so a script card whose head is its program's output needs no model
-// read (docs/SPEC-SPRINT.md, the script read); a worker's is nil. Sleep is time.Sleep:
-// harness starts are StartGap apart.
+// read (docs/SPEC-SPRINT.md, the script read); a worker's is nil. cmdMember sets Sleep,
+// so its pass loop's clock stays where the push table names it.
 func memberConfig(as string, width int, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
-	cfg := member.Config{As: as, Width: width, Reader: reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(reader, os.Getenv)}
+	cfg := member.Config{As: as, Width: width, Reader: reader, Meter: meter, Room: room, Background: true, Attempt: workAttempt(reader, os.Getenv)}
 	if reader {
 		cfg.ScriptVerify = scriptVerify(root, "", noWall)
 	}
