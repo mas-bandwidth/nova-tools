@@ -76,12 +76,30 @@ func FriendCard(c *Card) (name string, ok bool) {
 	return FriendOfRow(w)
 }
 
-// OnlyFriend is the explicit hard pin (docs/SPEC-SPRINT.md, WHO preference).
-func OnlyFriend(c *Card) bool { return strings.HasPrefix(c.F(FieldWho), "only.friend.") }
+// OnlyFriend is the hard pin (docs/SPEC-SPRINT.md, WHO preference): the explicit one,
+// WHO: only friend <name>, and a WHO: friend <name> card come back by a rework, a return
+// or a redo (ReworkPinned), whose next attempt is hers as its first was.
+func OnlyFriend(c *Card) bool {
+	return strings.HasPrefix(c.F(FieldWho), "only.friend.") || ReworkPinned(c)
+}
+
+// ReworkPinned says the card names a friend (WHO: friend <name>) and has come back by a
+// rework, a return or a redo (its reworks or returns counted): its next attempt waits for
+// her alone, never another friend or a machine (the owner, 2026-10-05: a rework of a
+// friend's own rating was dealt to another worker, who could not do it as her). A
+// take-back alone (friend take) counts neither, so a preference taken back from her is
+// offered on.
+func ReworkPinned(c *Card) bool {
+	if c.Int("reworks") == 0 && c.Int("returns") == 0 {
+		return false
+	}
+	_, named := FriendOfRow(c.F(FieldWho))
+	return named
+}
 
 // friendCardWhy is why the machines' deal leaves a hard-pinned card: the tick deals it
 // to that friend, never to a machine or to another friend.
-const friendCardWhy = "a friend's card (its brief says WHO: only friend): the tick deals it to a friend up with room, never to a machine"
+const friendCardWhy = "a friend's card (its brief says WHO: only friend, or a WHO: friend <name> card come back by a rework): the tick deals it to that friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
 // works at once, her friends row's), her status (FriendStatus: up, held or down), her
