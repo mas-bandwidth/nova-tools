@@ -11,15 +11,14 @@ import (
 
 // A take for a friend reads her presence on the twin store (docs/SPEC-SPRINT.md section 1,
 // a take for a friend): TakeStep reads the friends' seats when it names a friend's row, so
-// a beating friend whose row has no control card status takes her ready card, and a held
-// one is refused with the hold's words.
-func TestTwinStoreTakeForABeatingFriendReadsHerPresence(t *testing.T) {
+// a friend up on her session's evidence (a wake ping it answered) whose row has no control
+// card status takes her ready card, and a held one is refused with the hold's words.
+func TestTwinStoreTakeForAFriendUpOnHerSessionReadsHerPresence(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Class: "flash"}})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "amy")
-	require.NoError(t, err)
+	h.up("amy")
 	brief := "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy\n\nThe task."
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "s1-1", Brief: brief}, {ID: "s1-2", Brief: brief}, {ID: "s1-3", Brief: brief}}}))
 	h.startMachine()
@@ -44,8 +43,7 @@ func TestTwinStoreTakeForABeatingFriendReadsHerPresence(t *testing.T) {
 	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card(wc.ID).Col)
 
 	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", false, "coordinator", "", time.Time{}, 0))
-	_, err = h.st.FriendBeat(h.ctx, "amy")
-	require.NoError(t, err)
+	h.up("amy")
 	h.must(take)
 	assert.Equal(t, sprint.Working, h.snap().Fleet.Card(wc.ID).Col)
 	assert.Equal(t, 3, h.snap().Fleet.Count(amy, sprint.Working))

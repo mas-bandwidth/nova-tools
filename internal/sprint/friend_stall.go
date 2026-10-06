@@ -25,9 +25,9 @@ import (
 //   (5) Friend marked down with reason "stalled", released to up by the tick itself at her
 //       first activity after it. The release clears the stall props and removes the
 //       coordinator's observation of her (Plan.HealthClear), writing none: an observation
-//       written by the tick would stand for FriendObservedDownAfter alone and then hold her
-//       down for good (ObservedStatus), her own beat never bringing her up again; with it
-//       removed her status is her beat rule again (FriendStatus).
+//       written by the tick would stand for FriendPongWindow and read as evidence her
+//       session never gave (ObservedStatus); with it
+//       removed her status is her session's evidence alone (FriendStatus).
 //
 // Every rung emits a happened note (Kind: Happened), which says what the rung did: the
 // part's units are only the cards and rows it changes. Any activity or progress resets her
@@ -139,7 +139,7 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 		// ReleasedOnlyByActivity (tla/StallLadder.tla): release from stall down occurs
 		// only when fresh activity of hers is observed (never card progress alone). The
 		// release writes no observation: it removes the one rung 5 wrote, so her status
-		// falls back to her beat rule (FriendStatus).
+		// is her session's evidence alone (FriendStatus).
 		if isStallDown && !activity.IsZero() && (downTime.IsZero() || !activity.Before(downTime)) {
 			write(PropFriendStallDown(f), "")
 			write(PropFriendStallRung(f), "")

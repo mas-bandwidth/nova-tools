@@ -573,8 +573,8 @@ func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
 			// next command fails, and the status is written after the step's pause (a beat)
 			_, said := r.within(3*sprint.FriendBeatEvery, func() bool { return strings.Contains(r.lastStatus().StoreError, "WRONGPASS") }) // wall-ok: fake time in the synctest bubble
 			assert.True(t, said, "the daemon's status names the refusal at its first failed command: %q", r.lastStatus().StoreError)
-			took, down := r.within(sprint.FriendDownAfter+2*time.Second, func() bool { return r.friendStatus("bob") == sprint.Down }) // wall-ok: fake time in the synctest bubble
-			assert.True(t, down, "a daemon whose bus refuses it stops beating, and the table says down within %s: after %s it says %s", sprint.FriendDownAfter, took, r.friendStatus("bob"))
+			took, down := r.within(sprint.FriendPongWindow+2*time.Second, func() bool { return r.friendStatus("bob") == sprint.Down }) // wall-ok: fake time in the synctest bubble
+			assert.True(t, down, "a daemon whose bus refuses it stops beating, and the table says down within %s: after %s it says %s", sprint.FriendPongWindow, took, r.friendStatus("bob"))
 			alarms := r.openNotes("bob", "WRONGPASS")
 			o.check(len(alarms) == 1, "fr-delivery-receipts", "one alarm to the coordinator naming bob, the store and the user on the first failed send (%d failed): the twin holds %d: %v", r.bobBus.fails.Load(), len(alarms), alarms)
 			r.dealtElsewhere(&o, "fr-presence-model")

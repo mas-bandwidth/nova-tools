@@ -99,25 +99,24 @@ func TestObservedStatusIsUpOrDown(t *testing.T) {
 	t.Parallel()
 	up := obs(Up, h0, 2)
 	assert.Equal(t, Up, ObservedStatus(up, 2, h0), "the first proof is up at once")
-	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter-time.Second)))
-	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendObservedDownAfter)), "exactly ten seconds is down")
+	assert.Equal(t, Up, ObservedStatus(up, 2, h0.Add(FriendPongWindow-time.Second)))
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendPongWindow)), "exactly the window is down")
 	assert.Equal(t, Down, ObservedStatus(up, 3, h0), "an old seat's proof never looks up under a new seat")
-	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second)), "a proof dated after now is no proof: a negative age is not under ten seconds")
-	assert.Equal(t, Down, ObservedStatus(obs(Asleep, h0, 2), 2, h0), "asleep shows as down")
+	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second)), "a proof dated after now is no proof: a negative age is not under the window")
+	assert.Equal(t, Down, ObservedStatus(obs(DaemonPong, h0, 2), 2, h0), "asleep shows as down")
 	assert.Equal(t, Down, ObservedStatus(obs(Down, h0, 2), 2, h0))
 }
 
-// The friends' rule over everything: the coordinator's hold wins; an observed
-// friend is judged by the observation alone, her fresh beat never making an
-// observed-down friend up; a friend never observed is judged by her beat.
+// The friends' rule over everything: the coordinator's hold wins; else her
+// session's evidence alone, her fresh beat never making her up, observed or not.
 func TestFriendStatusHeldThenObservationThenBeat(t *testing.T) {
 	t.Parallel()
 	fresh := Beat{At: h0}
 	assert.Equal(t, Held, FriendStatus(FriendPresence{Held: true, Beat: fresh, Health: obs(Up, h0, 2), Generation: 2}, h0))
 	assert.Equal(t, Down, FriendStatus(FriendPresence{Beat: fresh, Health: obs(Down, h0, 2), Generation: 2}, h0), "a fresh raw beat cannot override an observed down")
-	assert.Equal(t, Down, FriendStatus(FriendPresence{Beat: fresh, Health: obs(Up, h0.Add(-time.Minute), 2), Generation: 2}, h0), "no fallback to the beat once observed")
+	assert.Equal(t, Down, FriendStatus(FriendPresence{Beat: fresh, Health: obs(Up, h0.Add(-FriendPongWindow), 2), Generation: 2}, h0), "no fallback to the beat once the pong is out of its window")
 	assert.Equal(t, Up, FriendStatus(FriendPresence{Beat: fresh, Health: obs(Up, h0, 2), Generation: 2}, h0))
-	assert.Equal(t, Up, FriendStatus(FriendPresence{Beat: fresh, Generation: 2}, h0), "never observed: her beat")
+	assert.Equal(t, Down, FriendStatus(FriendPresence{Beat: fresh, Generation: 2}, h0), "never observed: her beat is no evidence")
 	assert.Equal(t, Down, FriendStatus(FriendPresence{Generation: 2}, h0), "never observed, never beaten")
 }
 

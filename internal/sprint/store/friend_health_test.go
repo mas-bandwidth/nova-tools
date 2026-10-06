@@ -101,7 +101,7 @@ func TestFirstProofIsUpAndTenSecondsWithoutOneIsDown(t *testing.T) {
 	assert.Equal(t, sprint.FriendHealth{State: sprint.Up, Seen: h.now, Generation: 1}, rec)
 	assert.Equal(t, sprint.Up, h.friendStatus("amy"))
 
-	h.tick(sprint.FriendObservedDownAfter - time.Second)
+	h.tick(sprint.FriendPongWindow - time.Second)
 	assert.Equal(t, sprint.Up, h.friendStatus("amy"))
 	h.tick(time.Second)
 	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "exactly ten seconds: down")
@@ -157,8 +157,8 @@ func TestHealthReplayOrderBeatAndHold(t *testing.T) {
 	assert.True(t, replayed, "the same proof again")
 	assert.Equal(t, seen, rec.Seen, "the row's proof, not renewed")
 	assert.Equal(t, sprint.Up, status)
-	h.tick(5 * time.Second)
-	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "the replay earned no second ten seconds")
+	h.tick(sprint.FriendPongWindow - 5*time.Second)
+	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "the replay earned no second window")
 
 	_, _, _, err = h.health("amy", "tester", sprint.Down, seen.Add(-time.Second), 1)
 	require.Error(t, err, "an older proof is refused")
@@ -176,7 +176,7 @@ func TestHealthReplayOrderBeatAndHold(t *testing.T) {
 
 	// asleep: the daemon's word, kept on the row, shown as down
 	h.tick(time.Second)
-	_, status, _, err = h.health("amy", "tester", sprint.Asleep, h.now, 1)
+	_, status, _, err = h.health("amy", "tester", sprint.DaemonPong, h.now, 1)
 	require.NoError(t, err)
 	assert.Equal(t, sprint.Down, status)
 	rows, err := h.st.FriendRows(h.ctx, h.now)
@@ -184,7 +184,7 @@ func TestHealthReplayOrderBeatAndHold(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, sprint.Down, rows[0].Status)
 	if assert.NotNil(t, rows[0].Health) {
-		assert.Equal(t, sprint.Asleep, rows[0].Health.State, "the finer word stays on the row for the daemon")
+		assert.Equal(t, sprint.DaemonPong, rows[0].Health.State, "the finer word stays on the row for the daemon")
 	}
 
 	// held wins, whatever the observation says, and friend up lifts it

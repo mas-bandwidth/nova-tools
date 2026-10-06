@@ -78,7 +78,7 @@ type Plan struct {
 	Health *FriendHealthWrite
 	// HealthClear is the friends whose observation the step's commit removes (friend
 	// health --clear, ClearFriendHealth; the stall ladder's release, TickFriendStall), so
-	// her status falls back to her beat rule (FriendStatus).
+	// her status is her session's evidence alone (FriendStatus).
 	HealthClear []string
 	// Stop is the cause the binding stops the machine with as the step commits: the
 	// tick's deal when every provider is out of credit (FundsCause words); "" is none.
