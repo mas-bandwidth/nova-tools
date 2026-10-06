@@ -740,4 +740,3 @@ func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 	res.Item("plan", "name", e.Name, "argv", len(argv), "version", target, "command", strings.Join(argv, " "))
 	return res.Note("dry run: nothing installed, nothing written")
 }
-
