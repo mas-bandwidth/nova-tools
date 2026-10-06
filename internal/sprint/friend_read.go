@@ -848,7 +848,8 @@ func hidePrimaries(s *Snapshot, ids []string) func() {
 	}
 }
 
-// openFriendReads is the read cards on friends' fleet rows still open on the primary (ready
+// openFriendReads is the read cards on the fleet table, a friend's or a member's (read
+// cards, read_cards.go), still open on the primary (ready
 // or working): a rework or a brief edited in place retires them with the readers table's, so
 // none keeps her room or is closed against the attempt that was replaced.
 func openFriendReads(s *Snapshot, primary string) []*Card {
@@ -858,7 +859,7 @@ func openFriendReads(s *Snapshot, primary string) []*Card {
 	var out []*Card
 	for _, col := range []string{Ready, Working} {
 		for _, c := range s.Fleet.Column(col) {
-			if _, friend := FriendOfRow(c.Row); friend && c.F("kind") == "read" && c.F("primary") == primary && c.Placed() {
+			if c.F("kind") == "read" && c.F("primary") == primary && c.Placed() {
 				out = append(out, c)
 			}
 		}

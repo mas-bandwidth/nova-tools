@@ -201,22 +201,65 @@ func readSpent(cards []*Card) bool {
 	return false
 }
 
-// readCardIDFor is the id of the reader's next read card of the attempt: the plain identity
-// (ReadCardID) when it has none, else the first generation .g<n> it has not used.
-func readCardIDFor(cards []*Card, primary string, attempt int, reader string) string {
+// MaxReadGen is the most generations of one reader's read card at one attempt: the plain
+// identity and .g1 to .g<MaxReadGen>, each a read the machine took back (spentBy). A reader
+// whose read was taken back that often is not dealt it again at the attempt.
+const MaxReadGen = 2
+
+// ReadCardGenIDs is every identity one reader's read card of an attempt may have: the plain
+// one and its generations (readCardIDFor).
+func ReadCardGenIDs(primary string, attempt int, reader string) []string {
 	id := ReadCardID(primary, attempt, reader)
+	out := []string{id}
+	for n := 1; n <= MaxReadGen; n++ {
+		out = append(out, id+".g"+itoa(n))
+	}
+	return out
+}
+
+// readCardIDFor is the id of the reader's next read card of the attempt: the first of its
+// identities (ReadCardGenIDs) it has not used; "" when it has used them all.
+func readCardIDFor(cards []*Card, primary string, attempt int, reader string) string {
 	used := map[string]bool{}
 	for _, c := range cards {
 		used[c.ID] = true
 	}
-	if !used[id] {
-		return id
-	}
-	for n := 1; ; n++ {
-		if g := id + ".g" + itoa(n); !used[g] {
-			return g
+	for _, id := range ReadCardGenIDs(primary, attempt, reader) {
+		if !used[id] {
+			return id
 		}
 	}
+	return ""
+}
+
+// ReadCardExtras is the fleet table's read card ids a step that judges reads must read as
+// records, placed or kept (a store's snapshot holds only the placed cards and the records a
+// step names): every identity of a read card of each primary in review, at its attempt, of
+// every reader the fleet table has a row for (a friend, by her name; a member with its
+// reader row).
+func ReadCardExtras(s *Snapshot) []string {
+	if s == nil || s.Work == nil || s.Fleet == nil {
+		return nil
+	}
+	var out []string
+	for _, c := range s.Work.Column(Review) {
+		attempt := readAttempt(c)
+		for _, row := range s.Fleet.Rows() {
+			name, ok := FriendOfRow(row)
+			if !ok {
+				if s.Readers == nil || !s.Readers.HasRow(ReaderPrefix+row) {
+					continue // a member with no reader row is dealt no read
+				}
+				name = row
+			}
+			for _, id := range ReadCardGenIDs(c.ID, attempt, name) {
+				if s.Fleet.Placed(id) == nil {
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // mayReadCard says the unit may be dealt a read of the primary at the attempt, by the rules
@@ -224,7 +267,8 @@ func readCardIDFor(cards []*Card, primary string, attempt int, reader string) st
 // row serves it, readerServesTier) and the two of a read: it did not work the attempt, and
 // it holds no read card of the attempt and closed none (readSpent).
 func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) bool {
-	if u.name == worker || readSpent(readerCardsAt(cards, pr.ID, attempt, u.name)) {
+	mine := readerCardsAt(cards, pr.ID, attempt, u.name)
+	if u.name == worker || readSpent(mine) || readCardIDFor(mine, pr.ID, attempt, u.name) == "" {
 		return false
 	}
 	if u.friend {
