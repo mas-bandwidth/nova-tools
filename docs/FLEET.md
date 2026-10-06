@@ -15,9 +15,86 @@ run would do.
 | `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source` in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
 | `fleet/redis.yml` | the store's ACL users, rendered from the library and the key families | the render on the machine running the play; check and apply on `store_deployer` |
 | `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
+| `fleet/bootstrap.yml` | the first phase, a fresh host to one the plays above can carry: packages and harness dependencies, sops, the tailnet, the seat, the build (`tools.yml`), and on the store host PostgreSQL, the fleet's Redis supervised, and the backups | the hosts of an owner-written static inventory (below), never nova-config's |
 | `fleet/container-runtime.yml` | rootless podman, the fleet's container runtime, and its version recorded in `~/.config/nova/podman` | every bench: Linux (apt on Ubuntu and Debian, dnf on Fedora) and macOS (brew, and a podman machine) |
 
+## From a fresh host: bootstrap, then steady state
+
+A fleet is set up in two phases, each one Ansible path. **Bootstrap**
+(`fleet/bootstrap.yml`) takes fresh hosts to hosts the steady state can carry;
+it cannot read nova-config, because nova-config's stores are among what it
+makes, so its inventory is a static file the owner writes. **Steady state**
+(`tools.yml`, `redis.yml`, `loops.yml`, every run after) reads only the
+inventory `nova-config inventory` prints. Bootstrap runs once per new host and
+may be run again at any time: a second run changes nothing, and `--check
+--diff` shows what a drifted host would get back.
+
+### The setup contract
+
+What a bootstrapped host has, each part a task file of
+`fleet/roles/bootstrap/tasks/` and a tag of the play (`--tags <tag>` runs it
+alone):
+
+| part | tag | on | what is converged |
+|---|---|---|---|
+| the base and the harness dependencies | `base`, `harness` | every host | Debian or Ubuntu with systemd (any other is refused by name); `nova_bootstrap_packages` (git, tmux, Node.js and npm, sqlite3, the build tools); each `name@version` of `nova_bootstrap_harness_npm` installed globally; the login's directories; linger for its user units |
+| tool versions | `base`, `tools` | every host | sops at `nova_bootstrap_sops_version` and age at `nova_bootstrap_age_version` in `~/.local/bin`, sops checked against its release's checksums file and age against the SHA-256 `nova_bootstrap_age_sha256` pins (the distro's are older than nova-secrets takes); the nova build `nova_version` by `tools.yml` itself, its build fact written |
+| Tailscale connectivity | `tailscale` | every host | tailscale from Tailscale's apt repository, `tailscaled` enabled, `tailscale up --hostname=<inventory name>` only when the host is not already `Running`; its tailnet address recorded |
+| the seat | `seat` | every host | the host's `<nova_seat>.key` (0600) and the sealed secrets store at `nova_secrets_store` |
+| PostgreSQL | `postgres` | `fleet_store` | the distro's server enabled; the role `nova_bootstrap_pg_user` (made once, keeping its password after) and database `nova_bootstrap_pg_db`; the schema migrated (`nova-config migrate`) |
+| Redis persistence | `redis`, `services` | `fleet_store` | `nova-store-redis`, a system unit run as the login, supervising `nova-redis serve` on loopback and the tailnet at `nova_bootstrap_redis_port`, its store in `nova_bootstrap_redis_dir`: AOF every second, an RDB a minute after a write, no eviction, the ACL file beside them ([SPEC-REDIS.md](SPEC-REDIS.md)); the distro's own `redis-server` stopped and masked |
+| supervised services | `services` | `fleet_store` | the units above enabled, and restarted when their file changes; every host's loops are the steady state's (`loops.yml`), under the linger the base gives |
+| backup configuration | `backup` | `fleet_store` | `nova-store-backup-pg` (`pg_dump`, custom format) and `nova-store-backup-redis` (the RDB) daily into `nova_bootstrap_backup_dir`, earlier copies kept as `name.~N~`, removed by systemd-tmpfiles after `nova_bootstrap_backup_keep` (14 days) |
+
+Each host ends the run with `BOOTSTRAP host=<h> store=yes|no tailnet=<ip>
+sops=<v> age=<v> tailscale=<v> nova=<v>`, the versions measured on the host.
+
+### The owner's inputs
+
+Nothing below has a default: the play's first task refuses the run, before any
+host is touched, with `BOOTSTRAP REFUSED` and one line per input missing.
+Secrets are named, never valued: the two secrets are read from the
+environment of the machine running the play, so the play runs under
+`nova-secrets exec`, and every task that holds one is `no_log`.
+
+| input | where | what |
+|---|---|---|
+| the hosts | the inventory: `fleet_store` (exactly one) and `fleet_members` (a host may be in both) | each reachable by ssh as `ansible_user`, a login with sudo |
+| `nova_seat` | each host | the seat the host opens its secrets as |
+| `nova_bootstrap_seat_keys` | the inventory or `-e` | the directory, on the machine running the play, holding `<seat>.key` for each seat |
+| `nova_bootstrap_secrets_store` | the inventory or `-e` | the sealed secrets store directory, on the machine running the play; the store host's seat must hold `NOVA_PG_CONFIG_PASSWORD` and `NOVA_REDIS_PASSWORD` |
+| `nova_bootstrap_backup_dir` | the inventory or `-e` | the absolute directory on the store host the backups go to (a mounted volume when they must outlive the disk) |
+| `TS_AUTHKEY` (`nova_bootstrap_tailscale_authkey_env` names another) | the environment | a Tailscale auth key of the owner's tailnet; it reaches each host in a 0600 file removed in the same task block |
+| `NOVA_PG_CONFIG_PASSWORD` (`nova_pg_password_key`) | the environment | the configuration role's password, the same secret the seat holds |
+| `nova_version`, `nova_source`, `nova_dogfood_receipts` | `-e` | the build `tools.yml` installs, as in steady state |
+
+`fleet/inventory.bootstrap.example.ini` is the shape of the inventory.
+
+```
+nova-secrets exec --only TS_AUTHKEY,NOVA_PG_CONFIG_PASSWORD --require=TS_AUTHKEY --require=NOVA_PG_CONFIG_PASSWORD -- \
+  ansible-playbook -i ./bootstrap.ini fleet/bootstrap.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> --check --diff </dev/null 2>&1 | cat
+nova-secrets exec --only TS_AUTHKEY,NOVA_PG_CONFIG_PASSWORD --require=TS_AUTHKEY --require=NOVA_PG_CONFIG_PASSWORD -- \
+  ansible-playbook -i ./bootstrap.ini fleet/bootstrap.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> </dev/null 2>&1 | cat
+```
+
+### The hand-off to steady state
+
+The store host now has the schema and a Redis whose `default` user holds
+`NOVA_REDIS_PASSWORD`. The rows are the owner's, written with nova-config as
+in the adopter's path below, with the bootstrap's values: `fleet set --store
+<the fleet_store host> --redis_port <nova_bootstrap_redis_port> --pg_dsn
+postgres://<nova_bootstrap_pg_user>@localhost:5432/<nova_bootstrap_pg_db>`, and
+one `machine add` per host. Until `redis.yml` has made the ACL users, the
+store's admin is its `default` user, so a `group_vars/store_deployer.yml`
+beside the inventory wrapper says so: `nova_redis_admin_user: default` and
+`nova_redis_admin_password_key: NOVA_REDIS_PASSWORD`. Then the steady-state
+plays run in this order the first time: `redis.yml` (the users `tools.yml`'s
+`fn load` logs in as), `tools.yml`, `loops.yml`.
+
 ## An adopter's path
+
+This path starts from hosts that are up: on the tailnet, with their stores,
+seats and tools (bootstrapped as above, or by hand).
 
 Every command runs from a machine with ssh to every machine, in a nova-tools
 checkout, with a `nova-config` built from it on the PATH: an older one prints

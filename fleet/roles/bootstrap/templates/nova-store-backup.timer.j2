@@ -1,0 +1,11 @@
+# /etc/systemd/system/nova-store-backup-{{ backup_unit }}.timer: written by fleet/bootstrap.yml
+[Unit]
+Description=the daily nova-store-backup-{{ backup_unit }}
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

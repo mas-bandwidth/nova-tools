@@ -133,3 +133,38 @@ nova_seat_friend_drain: 180
 # nova-sprint and nova-swarm member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
 nova_seat_quiet: 60
+
+# The bootstrap phase (bootstrap.yml, docs/FLEET.md "From a fresh host"): what
+# it installs and where. The owner's inputs (the seat keys, the sealed store,
+# the backup directory, the two secrets by the names below) have no default
+# here: bootstrap.yml's first play refuses the run naming each one missing.
+# The environment variable, on the machine running the play, holding a
+# Tailscale auth key; the key itself is never written to a file of the play.
+nova_bootstrap_tailscale_authkey_env: TS_AUTHKEY
+# The configuration role and database bootstrap.yml makes on the fleet_store
+# host; the fleet row's pg_dsn is then postgres://<user>@localhost:5432/<db>.
+nova_bootstrap_pg_user: nova_config
+nova_bootstrap_pg_db: nova
+# The fleet's Redis: the port nova-store-redis serves on (the fleet row's
+# redis_port) and its directory (AOF, RDB and the ACL file). The default
+# user's password is the seat's secret NOVA_REDIS_PASSWORD (`nova-redis serve`
+# reads it by that name).
+nova_bootstrap_redis_port: 6380
+nova_bootstrap_redis_dir: "{{ nova_home }}/nova-bench/redis"
+# Packages on every host (apt), the harness's npm packages (each name@version;
+# empty installs none), sops, fetched from its release and checked against the
+# release's own checksums file, and age, whose release publishes no checksums
+# file, so its archive is held to the SHA-256 pinned here per architecture
+# (measured from the release, 2026-10-06). Neither comes from apt: the distro's
+# are older than nova-secrets takes (internal/secrets/sops.go, MinSopsVersion
+# and MinAgeKeygenVersion; Ubuntu 24.04's age is 1.1.1).
+nova_bootstrap_packages: [acl, ca-certificates, curl, git, rsync, zstd, sqlite3, build-essential, tmux, nodejs, npm]
+nova_bootstrap_harness_npm: []
+nova_bootstrap_sops_version: 3.13.3
+nova_bootstrap_age_version: 1.3.2
+nova_bootstrap_age_sha256:
+  amd64: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+  arm64: 6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4
+# The backups kept on the fleet_store host under nova_bootstrap_backup_dir:
+# taken daily, removed by systemd-tmpfiles once older than this.
+nova_bootstrap_backup_keep: 14d
