@@ -744,6 +744,19 @@ her session was there are retired with no replacement (docs/FRIENDS.md, "The
 beat loops are retired, with no replacement"). The beat proves the daemon and
 nothing more: it is recorded and shown, and it never makes her up (below).
 
+## The deal follows what her beat names running (internal/sprint/friend_deal.go)
+
+The beat's running list (`friend beat --running`, `--working`) is what the
+coordinator's deal reads to bound a batch friend: a card dealt into working on
+her row that her beat does not name running within the start window
+(`friend_start_window`, default 20 minutes) goes back to the pool with a NOTE
+line ("not started by <friend> in <window>; back to the pool"), and she is then
+dealt by the cards she has started, rising as she starts more, never past her
+width (docs/SPEC-SPRINT.md section 1, a friend is dealt what her session
+starts). A daemon or session that runs cards in child agents names each one
+running on its beat as it starts it, or the deal takes it back. A friend whose
+roles are reader-first (`reader`, not `builder`) is dealt reads before work.
+
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things

@@ -1,11 +1,13 @@
 package sprint_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/stretchr/testify/assert"
@@ -26,6 +28,8 @@ type passRig struct {
 	// answered is each friend's last wake ping answer the rig recorded (friend health):
 	// the store renews only on a newer one.
 	answered map[string]time.Time
+	// running is the cards each friend's beat names running (friend beat --running).
+	running map[string][]string
 }
 
 // passPongBefore is how long before the rig starts each friend's session last answered.
@@ -33,7 +37,7 @@ const passPongBefore = 5 * time.Minute
 
 func newPassRig(t *testing.T) *passRig {
 	t.Helper()
-	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}, answered: map[string]time.Time{}}
+	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}, answered: map[string]time.Time{}, running: map[string][]string{}}
 	rows, err := r.st.FriendRows(r.ctx, r.clock())
 	require.NoError(t, err)
 	for _, row := range rows {
@@ -61,7 +65,7 @@ func (r *passRig) tick(d time.Duration) {
 		require.NoError(r.t, err)
 	}
 	for f, pong := range r.pongs {
-		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil, pong)
+		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock(), Running: r.running[f]}, nil, pong)
 		require.NoError(r.t, err)
 		if pong.After(r.answered[f]) {
 			_, _, _, err = r.st.FriendHealth(r.ctx, f, "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: pong, Generation: sprint.FirstSeatGeneration}, "")
@@ -70,6 +74,16 @@ func (r *passRig) tick(d time.Duration) {
 		}
 	}
 	_, err := r.st.Tick(r.ctx)
+	require.NoError(r.t, err)
+}
+
+// setWorkProp writes a property of the work table (a sprint setting) on the twin.
+func (r *passRig) setWorkProp(name, value string) {
+	r.t.Helper()
+	tb := r.snap().T(sprint.Work)
+	_, err := r.st.B.Apply(r.ctx, ntable.BatchManifest{Schema: 1, Table: r.st.Names.Table(sprint.Work), Epoch: strconv.FormatUint(tb.Epoch, 10),
+		ExpectedTableRevision: strconv.FormatUint(tb.Revision, 10), OperationID: "set-" + name, Actor: "coordinator",
+		Members: []ntable.BatchMemberEntry{}, Props: map[string]string{name: value}, PropAbsent: []string{name}})
 	require.NoError(r.t, err)
 }
 
@@ -126,6 +140,9 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	require.NotNil(t, fc, "the friend's card is dealt")
 	require.Equal(t, sprint.Working, fc.Col)
 	holder, _ := sprint.FriendOfRow(fc.Row)
+	// her beat names it running: she has started it, and holds it unfinished (a card she
+	// never started goes back to the pool at the start window, friend_deal.go)
+	r.running[holder] = []string{fc.ID}
 	wc := r.takeOne("m1")
 	r.must(store.FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{wc}}, Gens: map[string]int{wc: r.snap().Fleet.Card(wc).Int("gen")}, Failed: true, Who: "m1"}))
 	require.NotNil(t, r.open(sprint.NWorkFailed, "s1-1"), "failed work is a judgment")
@@ -317,6 +334,10 @@ func TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce(t *testing.T) {
 	require.Zero(t, r.snap().Fleet.Count(sprint.FriendRow(idle), sprint.Ready)+r.snap().Fleet.Count(sprint.FriendRow(idle), sprint.Working), "her row is empty")
 	row := sprint.FriendRow(idle)
 	fresh := func() { r.pongs[holder], r.pongs[idle] = r.clock(), r.clock() }
+	// the card sits unstarted on the holder's row past the default start window, at which
+	// the deal would return it to the pool (friend_deal.go): this test is the empty row's
+	r.setWorkProp(sprint.PropFriendStartWindow, "2h")
+	require.Equal(t, 2*time.Hour, r.snap().FriendStartWindow())
 
 	assert.Nil(t, r.open(sprint.NFriendEmpty, row), "the empty row has just been seen: the ten minutes start now")
 	assert.Equal(t, 0, r.count(sprint.Judgment, sprint.NFriendEmpty, ""))

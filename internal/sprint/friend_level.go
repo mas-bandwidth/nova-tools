@@ -42,7 +42,8 @@ type FriendLevelReq struct {
 // FriendLevel evens the ready queues of the friends up, as level evens the members': a
 // friend's backlog is the cards on her row, ready and working, less her width (her lanes);
 // her room is DealAhead times her width (1 and 1 in one-shot mode, docs/SPEC-SPRINT.md
-// section 1, "A friend's card"). A card that may move goes, newest first, from a friend
+// section 1, "A friend's card"), and her started lanes' while they are below her width
+// (friendLimits). A card that may move goes, newest first, from a friend
 // with no idle lane to one with an idle lane, and otherwise from a larger backlog to one
 // smaller by more than one; its friend is the one preferredFriend picks among those below
 // their room that may take it, and the friends with no idle lane give first, the largest
@@ -68,10 +69,13 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	}
 	slices.SortFunc(seats, func(a, b FriendSeat) int { return cmp.Compare(a.Name, b.Name) })
 	held, working, width, room, queues := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}, map[string][]*Card{}
+	record := map[string]map[string]string{}
 	backlog := func(f string) int { return held[f] - width[f] }
 	lanes := func(f string) int { return width[f] - working[f] }
 	for _, f := range seats {
-		room[f.Name], width[f.Name] = friendRoom(f)
+		st := friendStartedLanes(s, f)
+		room[f.Name], width[f.Name] = friendLimits(f, st)
+		record[f.Name] = startedLanesRecord(s, f.Name, st)
 		row := FriendRow(f.Name)
 		held[f.Name], working[f.Name] = friendLoad(s, f.Name)+dealt[f.Name], s.Fleet.Count(row, Working)+dealtWorking[f.Name]
 		for _, c := range s.Fleet.Cell(row, Ready) {
@@ -136,6 +140,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		col := Ready
 		set, unset := nextGen(c, FriendRow(short), s.Now), []string{FieldFriendDeadline}
 		set[FieldFriendsLeft] = strings.Join(append(friendsLeft(c), long), ",")
+		maps.Copy(set, record[short])
 		if working[short] < width[short] {
 			working[short]++
 			col = Working

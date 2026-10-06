@@ -392,6 +392,41 @@ working, is her queue, held to the dealt bound as a member's is
 with a reversed witness; `TestAFriendTakesAndFinishesItsOwnReadyCard`,
 `TestADealTakesAFriendsReadyCardAndOneLeftReadyIsAJudgment`).
 
+**A friend is dealt what her session starts** (the night of 2026-10-05: a
+friend at width 8 in batch mode held seven heavy builds for six hours and
+started none, while she did every audit, carry and read she was handed at once;
+another at width 4 worked only by explicit assignment; card
+deal-by-started-lanes-not-width2.w1). In batch mode the deal to a friend is
+bounded by what her session starts, not by her width alone
+(`friendStartedLanes`, `friendLimits`, `friendReturnUnit` in
+`internal/sprint/friend_deal.go`). A work card that goes into working on her
+row and that her beat does not name running (`friend beat --running`, by its
+work card id, its job or its primary) or stamp with progress within the start
+window goes back to the pool in the tick's deal: withdrawn on her row at its
+next generation, `taken_back` and its NOTE line "not started by <friend> in
+<window>; back to the pool", `taken_from` her row (so no deal gives it back to
+her), its primary ready with its attempt as it was, as a take-back. The window
+is the work table's property `friend_start_window` (a Go duration), 20 minutes
+when the sprint sets none. From then her **started lanes**, the cards she
+runs (at least 1), are her effective width: she holds her started cards and as
+many unstarted again as her started lanes in working, and her started cards and
+`DealAhead` times her started lanes in all; as she starts more her started
+lanes rise (the larger of her record and what she runs), and at her width she
+is dealt as before. Her width stays the ceiling, never the target. The record
+is `started_lanes` (`<friend>:<n>`) and `started_lanes_at` on the cards the
+deal and the level place on her row and on the ones it returns: the newest is
+hers. The friends' level evens the queues on the same limits. A friend whose
+nova-config roles are reader-first (`reader` and not `builder`) is dealt reads
+before work: the deal keeps her room for the frontier reads in review that the
+read ask, after it in the tick, may ask of her (`readerFirst`,
+`readsWaitingFor`); `friend sync` carries her roles to the roster. One-shot
+mode is untouched: one card at a time is her bound already. The model is
+`tla/FriendStartedLanes.tla` (`WidthCeiling`, `NeverHeldPastWindow`,
+`NeverBackToHer`, `RoomToRise`, `DealtWithinLanes`, four reversed witnesses);
+`TestAFriendIsDealtOnlyWhatHerSessionStarts` deals four cards to a friend
+whose beat starts one, sees three go back and the next deal give her two (one
+working, one ready behind it), and her lanes rise as she starts it.
+
 **A friend's card taken back** (the owner, 2026-10-04, on cards dealt to a
 friend who would not start them, which could only be dropped and added again:
 "sounds bad, we should fix this"; `sprint.FriendTake`). `friend take <friend>

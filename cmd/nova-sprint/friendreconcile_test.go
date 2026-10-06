@@ -95,7 +95,10 @@ func TestFriendReconcileSettlesEachCardOnTheTwin(t *testing.T) {
 	assert.Equal(t, sprint.Review, card("s1-1").Primary.Col, "the collected card goes to review")
 	assert.Equal(t, sprint.Working, card("s1-2").Primary.Col, "the kept card is hers still")
 	assert.Equal(t, sprint.Ready, card("s1-3").Primary.Col, "the returned card is ready")
-	ta.beatUp("amy") // her session answers again, to be up for the deal
+	// her session answers again, to be up for the deal, and her beat names the card she
+	// keeps running (a card she never started goes back to the pool at the start window)
+	ta.ok("friend beat amy --running s1-2.w1")
+	ta.pong("amy")
 	ta.ok("tick")
 	c := card("s1-3")
 	assert.Equal(t, sprint.Working, c.Primary.Col, "the returned card is dealt again by the tick")
