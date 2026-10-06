@@ -33,24 +33,30 @@ import (
 // The drive's tick-2 shape (dirty_drive_functional_test.go): three streams of
 // a thousand ready cards, eight members of width 64, three flash routes with a
 // deadline; the fleet's history gateHistory ok attempts a member, as a long
-// sprint leaves it. Measured with a CPU-bound sibling goroutine on every P, so
-// the bound holds on a loaded runner and not only on an idle bench: the deal
-// with that history costs no more than gateRatio times the deal with none.
+// sprint leaves it. The cost is counted, not timed, so it holds on a loaded
+// runner as on an idle bench: the deal over the aged snapshot, planned
+// gatePlans times, measures each member's median run wall once for its done-ok
+// cell (sprint.MedianWallMeasures), never once a card dealt; the plans are run
+// with a CPU-bound sibling goroutine on every P, the runner's load as the gate
+// meets it. Each plan's wall is in the gate line, read beside the count and
+// never asserted on.
 const (
 	gateStreams   = 3
 	gatePerStream = 1000
 	gateMembers   = 8
 	gateWidth     = 64
 	gateHistory   = 1000 // ok attempts on the fleet table, each member's
-	gateRatio     = 2    // the deal with that history, over the deal with none
-	gateTimings   = 3    // plans timed each way; the fastest is the plan's cost
+	gatePlans     = 3    // plans of the deal each way, as the store runs it more than once a tick
+	gateRouteSecs = 900  // the flash routes' deadline in seconds
 )
 
 func TestTheTickGateHoldsUnderLoad(t *testing.T) {
+	t.Parallel()
 	ta := newTestApp(t)
 	var members, spec []string
 	for i := 1; i <= gateMembers; i++ {
-		m := "m" + strconv.Itoa(i)
+		// The measure count is the process's, a member: names no other test deals to.
+		m := "tick-gate-m" + strconv.Itoa(i)
 		members = append(members, m)
 		spec = append(spec, m+":"+strconv.Itoa(gateWidth))
 	}
@@ -68,17 +74,33 @@ func TestTheTickGateHoldsUnderLoad(t *testing.T) {
 	require.Len(t, fresh.Work.Column(sprint.Ready), gateStreams*gatePerStream, "the drive's tick 2: every card ready")
 
 	stop := loadEveryP()
-	none, units := dealCost(t, fresh)
-	some, agedUnits := dealCost(t, aged)
+	none, units := dealPlans(fresh)
+	before := medianMeasures(members)
+	some, agedUnits := dealPlans(aged)
+	after := medianMeasures(members)
 	stop()
 
 	require.Equal(t, units, agedUnits, "the history changed what the deal planned")
 	require.Positive(t, units, "the deal planned nothing")
-	line := fmt.Sprintf("TICK GATE UNDER LOAD: %d ready, %d members of width %d, %d siblings busy: the deal planned %d units in %s with no history, %s with %d ok attempts a member (%.1fx, the bound %dx)",
-		gateStreams*gatePerStream, gateMembers, gateWidth, runtime.GOMAXPROCS(0), units, none.Round(time.Millisecond), some.Round(time.Millisecond), gateHistory, float64(some)/float64(max(none, 1)), gateRatio)
+	measured := 0
+	for i := range members {
+		measured += after[i] - before[i]
+	}
+	line := fmt.Sprintf("TICK GATE UNDER LOAD: %d ready, %d members of width %d, %d siblings busy: %d plans of %d units each in %s with no history, %s with %d ok attempts a member; %d median walls measured (the bound %d, one a member's cell)",
+		gateStreams*gatePerStream, gateMembers, gateWidth, runtime.GOMAXPROCS(0), gatePlans, units, none, some, gateHistory, measured, gateMembers)
 	fmt.Fprintln(os.Stderr, line)
-	assert.LessOrEqual(t, some, gateRatio*none+20*time.Millisecond,
-		"the deal reads the fleet's history for every card it deals: %s", line)
+	for i, m := range members {
+		assert.LessOrEqual(t, after[i]-before[i], 1, "the deal measured %s's history more than once for one cell: %s", m, line)
+	}
+}
+
+// medianMeasures is how many times each member's median run wall has been measured.
+func medianMeasures(members []string) []int {
+	out := make([]int, len(members))
+	for i, m := range members {
+		out[i] = sprint.MedianWallMeasures(m)
+	}
+	return out
 }
 
 // gateSnapshot is the store's snapshot with every waiting card ready, three flash
@@ -94,7 +116,7 @@ func gateSnapshot(snap *sprint.Snapshot, members []string, history int) *sprint.
 	}
 	v.Routes = nil
 	for i, name := range []string{"flash-a", "flash-b", "flash-c"} {
-		v.Routes = append(v.Routes, sprint.Route{Name: name, Tier: "flash", Provider: "prov" + strconv.Itoa(i), Model: "m" + strconv.Itoa(i), Tokens: 100000, Deadline: 900, Enabled: true})
+		v.Routes = append(v.Routes, sprint.Route{Name: name, Tier: "flash", Provider: "prov" + strconv.Itoa(i), Model: "m" + strconv.Itoa(i), Tokens: 100000, Deadline: gateRouteSecs, Enabled: true})
 	}
 	v.Tiers = map[string][]string{"flash": {"flash-a", "flash-b", "flash-c", "flash-c"}}
 	v.Fleet = snap.Fleet.Frozen()
@@ -109,21 +131,18 @@ func gateSnapshot(snap *sprint.Snapshot, members []string, history int) *sprint.
 	return &v
 }
 
-// dealCost is the fastest of gateTimings plans of the tick's deal on the snapshot,
-// and the units it planned.
-func dealCost(t *testing.T, s *sprint.Snapshot) (time.Duration, int) {
-	t.Helper()
-	best, units := time.Duration(0), 0
-	for i := range gateTimings {
+// dealPlans runs the tick's deal on the snapshot gatePlans times, and is each
+// plan's wall (for the gate line) and the units the last one planned.
+func dealPlans(s *sprint.Snapshot) ([]time.Duration, int) {
+	var walls []time.Duration
+	units := 0
+	for range gatePlans {
 		began := time.Now()
 		p, _ := sprint.TickDeal(s, sprint.TickReq{})
-		took := time.Since(began)
-		if i == 0 || took < best {
-			best = took
-		}
+		walls = append(walls, time.Since(began).Round(time.Millisecond))
 		units = len(p.Units)
 	}
-	return best, units
+	return walls, units
 }
 
 // loadEveryP starts a CPU-bound goroutine on every P, the runner's load as the

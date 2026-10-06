@@ -57,7 +57,16 @@ func MemberMedianWall(s *Snapshot, member string) (median float64, n int) {
 
 // medianWalls is each member's median run wall as last measured, with the done-ok cell
 // it was measured over.
-var medianWalls = medianMemo{byMember: map[string]medianWall{}}
+var medianWalls = medianMemo{byMember: map[string]medianWall{}, measured: map[string]int{}}
+
+// MedianWallMeasures is how many times the member's median run wall has been measured
+// over a done-ok cell in this process: once a cell, so a deal over a snapshot measures
+// each member it deals to once however many cards it deals (TestTheTickGateHoldsUnderLoad).
+func MedianWallMeasures(member string) int {
+	medianWalls.mu.Lock()
+	defer medianWalls.mu.Unlock()
+	return medianWalls.measured[member]
+}
 
 // medianMemo is the members' median run walls, each held with the done-ok cell it was
 // measured over: the table builds a new cell when a card is put (Table.Put resets the
@@ -67,6 +76,7 @@ var medianWalls = medianMemo{byMember: map[string]medianWall{}}
 type medianMemo struct {
 	mu       sync.Mutex
 	byMember map[string]medianWall
+	measured map[string]int // the cells measured, a member
 }
 
 // medianWall is a member's median run wall over a done-ok cell, and how many samples it
@@ -87,6 +97,7 @@ func (m *medianMemo) of(member string, cell []*Card) (float64, int) {
 		return w.median, w.n
 	}
 	median, n := cellMedianWall(cell)
+	m.measured[member]++
 	m.byMember[member] = medianWall{first: &cell[0], len: len(cell), median: median, n: n}
 	return median, n
 }
