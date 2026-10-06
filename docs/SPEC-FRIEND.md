@@ -684,6 +684,69 @@ answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
 
+### daemon-delivers-the-present-on-start-b.w1: the present comes first, the backlog never does (internal/friend/present.go)
+
+The finding of 2026-10-06 (the owner: "when somebody starts up, you need to tell them to skip to
+present... this should be automatic"): a session that started (a new chat, a restart, a
+harness relaunch, a wake after hours) was handed the backlog its stream had kept (one daemon
+showed deferred=892 deliveries), read old deals, old pings and old coordinator notes as
+current, worked cards that had been taken back, and answered nonces that had expired; the
+coordinator was telling friends by hand to ignore the backlog.
+
+The present is owed on a session start and after any gap longer than the stale bound:
+
+- the daemon's start (a restart, `nova-friend install` again, a new `--session` id), once the
+  first beat has said her row's mode;
+- a new session id while it runs (`Daemon.Session`, read each step; the `run` verb does not
+  read one yet, so a harness relaunched under a running daemon is caught by the stale bound or
+  by her own request);
+- a first delivery after `StaleAfter` (30 minutes) with no turn taken: a message waiting, a
+  brief written, or a deferred turn;
+- her own request: a message from her to herself with the subject `present`
+  (`nova-bus send --as <me> --to <me> --subject present --body present`).
+
+The present is one turn, and nothing older is ever delivered. Every message waiting on her
+stream is taken off it (the hand, a deferred turn's, the rest read at once) and planned
+(`PlanPresent`): the newest message from the seat that is no deal and no ping is carried; a
+PING inside the challenge window (`Window`, three minutes, by the store's clock) is answered
+by the daemon as any ping; everything else is acked with the reason `superseded by the
+present at <time>`. The turn says, in order: the pong line while a challenge is open, the
+daemon's word about the coordinator, `nova-friend: PRESENT at <time>. You are <friend>; the
+seat is <seat>.`, her live queue (each card on her row as the server last said it, its column
+and its `inbox/<job>/BRIEF.md`; before the server has answered, `inbox/QUEUE.json`'s queued
+and working tasks), one line `Skipped: <n> deals, <n> pings, <n> notes, all superseded by the
+present at <time>.` (a deal is `card <id> dealt: ...`; a ping is a PING or a SESSION CHECK; a
+note is anything else; her own request counts as nothing), then the newest coordinator note as
+the session reads it under the seat's authority, or `No note from the coordinator is waiting.`
+The carried note is acked when the turn ends at exit 0, as any turn's message; a present turn
+that fails is owed again after `RecheckEvery`, carrying the same note.
+
+The acks are on the record (`present at <time>: skipped ... acked=<n> reason="superseded by
+the present at <time>" queue=<n> note=<id>|none`) and on the bus log: one status message to
+the seat, `friend <f>: present at <time>: skipped <n> deals, <n> pings, <n> notes`, naming
+the reason and the first 64 ids superseded. An ack that fails is said on the record, and each
+entry it covered is superseded again when the claim hands it in (`superseded id=<id>
+subject=<s>: superseded by the present at <time>`), never delivered. The match is by the
+stream entry, never by the message's `at`, which is to the second: a message sent in the same
+second after the present is delivered as it comes. Outside a present, a PING read past the
+challenge window is dropped and acked, never answered (`ping <nonce> dropped: sent <at>, past
+the 3m0s challenge window; not answered`). The receipts the session owes for the superseded
+messages (`bus2:owed:<friend>`) are not cleared: only the session gives a receipt
+(docs/SPEC-BUS.md), so the friends table's undelivered count keeps them until a session acks
+them by id.
+
+In one-shot mode there is no batch session to tell: the backlog is superseded and said the same
+way, with no turn, and the lanes hand her cards. A harness with no deliver command reads her
+stream itself and is owed no present.
+
+The model is `tla/Delivery.tla` (MCDelivery: three messages, the clock to three, a stale bound
+of two and a window of one). `GapCarriesThePresent`: a delivery after a gap carries the present
+and no superseded message; `NoSupersededDelivered`; `NoStaleNonceAnswered`. Its reversed
+witnesses, each caught by one invariant: `nopresent` (a start delivers the backlog as a batch),
+`reclaim` (a superseded message the claim hands in again is delivered), `answerstale` (a ping
+past the window is answered). The tests are `TestAStartedSessionGetsThePresentAndNeverTheBacklog`
+and the other tests of internal/friend/present_test.go.
+
 ### friend-idle-wake-r.w2: idle wake
 
 A friend holding cards whose session writes nothing gets one wake, then the coordinator one
@@ -1858,6 +1921,12 @@ whoever wrote the brief:
   on her row, ready and not working, or a read, is said once while it stands
   (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
   it again, so a verdict she writes later is finished then.
+- A report on a card that is no longer hers (taken back, dealt to another) is
+  refused at finish, never sent, with the line naming who holds it now:
+  `refused: card <c> is not on her row, no longer hers; <friend> holds it now`
+  when the beat's running list names the friend whose lane runs it, else `...;
+  no row the daemon reads says who holds it now (nova-sprint view coordinator
+  does)` (`NotHers`, internal/friend/outbox.go).
 
 The model is `internal/friend/tla/OutboxFinish.tla` (TLC on a Linux bench, two
 cards, one of them staged by another hand: 324 distinct states,

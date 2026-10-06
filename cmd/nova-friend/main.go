@@ -403,7 +403,14 @@ says it (--check <nonce> --run <run>), and the beat after the session answers na
 --run <run>): the sprint server counts only an answer to a check this run asked, once, as her session's
 evidence while her beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
 (claude) says neither. While the session is down the beat says so (--until, --reason: the push unproven,
-or no session answer, with the check's nonce). Each second, when the session is free: every waiting
+or no session answer, with the check's nonce). The present comes first, the backlog never does: on the
+daemon's start (once the first beat says her row's mode), after ` + friend.StaleAfter.String() + ` with no turn taken, and when she
+sends herself a message with the subject present, the next turn is one PRESENT turn (her live queue from her
+row or inbox/QUEUE.json, each card's column and BRIEF.md, the seat, the newest coordinator note, and one line
+Skipped: n deals, n pings, n notes); every older message is acked "superseded by the present at <time>", said
+on the record and to the seat on the bus, and a PING past the ` + friend.Window.String() + ` challenge window is dropped, never
+answered. A report on a card no longer on her row is never finished; the record names who holds it now.
+Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
@@ -1275,6 +1282,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Mailbox: mailbox,
+		Session: func() string {
+			if mailbox != nil { return mailbox.Live() }
+			return c.Str("session")
+		},
 		Queued:  queued,
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
