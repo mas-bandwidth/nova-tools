@@ -65,12 +65,14 @@ func summary(t ntable.Table, held, eta int64) string {
 }
 
 // etaMinutes is the estimate of the minutes left, rounded up: every card not
-// landed, held ones too, at rate cards an hour; 0 when there is none (fewer
-// than five landed, nothing left, or no rate).
+// landed on the table, held ones too, at rate cards an hour; 0 when there is
+// none (fewer than five landed in the epoch, an archived stream's counted, as
+// the rate counts them; nothing left; or no rate).
 func etaMinutes(t ntable.Table, rate float64) int64 {
 	landed, all := counts(t)
+	gone, _ := archivedCounts(t)
 	left := all - landed
-	if rate <= 0 || landed < 5 || left <= 0 {
+	if rate <= 0 || landed+gone < 5 || left <= 0 {
 		return 0
 	}
 	return int64(math.Ceil(float64(left) * 60 / rate))
@@ -87,7 +89,9 @@ type etaSample struct {
 }
 
 // etaKey is what the cards still to land are made of apart from the landings:
-// every primary on the table and the held ones. A landing changes neither; add,
+// every primary of the epoch (the table's and the archived streams') and the
+// held ones. An archive moves landed cards off the table and changes neither,
+// so it keeps the held estimate. A landing changes neither; add,
 // drop and release change one (a brief, a rework and a stream remove change
 // neither: none adds, takes off or frees a card), and their change reaches the
 // table at the next tick's drain.
@@ -542,6 +546,10 @@ type whereView struct {
 	// table: All+ArchivedCards and Landed+ArchivedLanded are the whole epoch's.
 	ArchivedCards  int64 `json:"archived_cards"`
 	ArchivedLanded int64 `json:"archived_landed"`
+	// Done is a sprint done (sprintDone): every card of the epoch landed. Then the headline,
+	// Landed, All and the summary's "N/N 100.0% done", is the epoch's, the archived streams'
+	// cards included, as the CLI's done line is; the dashboard's hero and cost read it.
+	Done bool `json:"done,omitempty"`
 	// Tables is table -> row -> column -> cell as printed (a string, every cell of every
 	// row, the shape the dashboard's pull reads); a work row carries besides its cells
 	// `per_landed` (dollars per landed card, as the cost column shows money).
@@ -665,12 +673,27 @@ func archivedOf(t ntable.Table) *archivedView {
 	return &a
 }
 
-// drawnRows is the table without its hidden rows (an archived stream's, stream
-// archive), so its footer folds only the rows drawn. A hidden work row holding
-// a card not landed again is drawn by the next tick.
-func drawnRows(t ntable.Table) ntable.Table {
-	t.Rows = slices.DeleteFunc(slices.Clone(t.Rows), func(r ntable.Row) bool { return r.Hidden })
+// drawnRows is the table without the archived streams' rows (stream archive),
+// so its footer folds only the rows drawn. A hidden row of a stream back on the
+// table (an add put a card not landed in it, archivedRow) is drawn at once,
+// before the next tick shows it again, so the headline's count of its cards is
+// backed by its row.
+func drawnRows(t ntable.Table, gone *archivedView) ntable.Table {
+	rows := make([]ntable.Row, 0, len(t.Rows))
+	for _, r := range t.Rows {
+		if gone.has(r.Key) {
+			continue
+		}
+		r.Hidden = false
+		rows = append(rows, r)
+	}
+	t.Rows = rows
 	return t
+}
+
+// has is whether the stream is archived; a nil view has none.
+func (a *archivedView) has(stream string) bool {
+	return a != nil && slices.Contains(a.Streams, stream)
 }
 
 // archivedLine is the line under the work table of where's frame with streams
@@ -986,7 +1009,11 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			if err != nil {
 				return "", a.readFailed("where", err, stderr), false
 			}
-			v.Rows = rowsView(s, r.archived)
+			var gone *archivedView
+			if !r.archived {
+				gone = v.Archived
+			}
+			v.Rows = rowsView(s, gone)
 			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
 		}
 		if r.c.json {
@@ -1109,7 +1136,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	// the rate is the epoch's landings, an archived stream's too: archiving lands nothing
 	rate := sprint.LandingRate(facts.Landed, v.Landed+v.ArchivedLanded, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
-	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All + v.ArchivedCards, v.Held}, etaMinutes(shapes[0], rate)))
+	if v.Done = sprintDone(shapes[0]); v.Done {
+		// a sprint done: the headline is the epoch's, as the done line counts it
+		v.Landed, v.All = v.Landed+v.ArchivedLanded, v.All+v.ArchivedCards
+	}
 	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
 	if err != nil {
 		return whereView{}, "", err
@@ -1149,7 +1180,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
-			if r.Hidden && !archived && (logical == sprint.Work || logical == sprint.Merge) {
+			if !archived && (logical == sprint.Work || logical == sprint.Merge) && v.Archived.has(r.Key) {
 				continue // an archived stream's row: where --json --archived
 			}
 			cells := map[string]any{}
@@ -1193,7 +1224,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		// every table shows, every stream row in it, empty or not, but an archived one,
 		// which its footer does not count either: the footer sums what is drawn
 		if logical == sprint.Work || logical == sprint.Merge {
-			t = drawnRows(t)
+			t = drawnRows(t, v.Archived)
 		}
 		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical})
 		if line := archivedLine(v.Archived); logical == sprint.Work && line != "" {
@@ -2278,12 +2309,13 @@ type primaryRow struct {
 }
 
 // rowsView is every placed primary of the work table, in work order (stream, then
-// score and id), with its fields but the brief.
-func rowsView(s *sprint.Snapshot, archived bool) []primaryRow {
+// score and id), with its fields but the brief, but an archived stream's that gone
+// names (nil names none: where --json --rows --archived).
+func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 	cards := s.Work.Column(sprint.States...)
 	rows := make([]primaryRow, 0, len(cards))
 	for _, c := range cards {
-		if !archived && s.Work.Hidden(c.Row) {
+		if gone.has(c.Row) {
 			continue // an archived stream's: where --json --rows --archived
 		}
 		fields := make(map[string]string, len(c.Fields))

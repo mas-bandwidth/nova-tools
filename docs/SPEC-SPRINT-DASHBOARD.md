@@ -201,6 +201,10 @@ This specification is locked. No line changes without his words, quoted here wit
   subtitle counts the streams shown; the total row, the progress bar, the hero and its cost count only
   the streams on the table, an archived one shown or not (the owner, 2026-10-06 2:43 PM ET: "I really
   don't think we have 2.8k cards post-archive..."), and the archived line carries the archived ones;
+  an archived row shown carries the tag "archived", so a reader sees why the rows do not add up to the
+  total; the cost tile and its tooltip cover the same streams, a sprint done (`done`) every stream of
+  the epoch as the hero's count does, and the unreconciled spend, the epoch's, is never in the tile but
+  on its own line, "$X unreconciled since <the epoch's first day>";
   the throughput samples `landed + archived_landed`, so an archive does not start it again. Nothing
   else moves.
 - 2026-10-04, the owner, a quoted change after the lock, asking after the merge backlog:

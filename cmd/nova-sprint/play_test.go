@@ -62,8 +62,9 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 			var w whereView
 			ta.json("where", &w)
 			// the epoch's: the tick archives each stream as its last card lands
-			require.EqualValues(t, 45, w.Landed+w.ArchivedLanded, "done with %d landed of %d", w.Landed+w.ArchivedLanded, w.All+w.ArchivedCards)
-			require.EqualValues(t, 45, w.All+w.ArchivedCards, "done with %d landed of %d", w.Landed+w.ArchivedLanded, w.All+w.ArchivedCards)
+			landed, all := epochCounts(w)
+			require.EqualValues(t, 45, landed, "done with %d landed of %d", landed, all)
+			require.EqualValues(t, 45, all, "done with %d landed of %d", landed, all)
 			return
 		}
 		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0.1 --broken 0.05 --stuck 0.1 --cross 0 --batch 10 --take 20 --reads 20", round))
@@ -77,8 +78,9 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 			var w whereView
 			ta.json("where", &w)
 			// the epoch's: the tick archives each stream as its last card lands
-			require.EqualValues(t, 45, w.Landed+w.ArchivedLanded, "landed %d of %d", w.Landed+w.ArchivedLanded, w.All+w.ArchivedCards)
-			require.EqualValues(t, 45, w.All+w.ArchivedCards, "landed %d of %d", w.Landed+w.ArchivedLanded, w.All+w.ArchivedCards)
+			landed, all := epochCounts(w)
+			require.EqualValues(t, 45, landed, "landed %d of %d", landed, all)
+			require.EqualValues(t, 45, all, "landed %d of %d", landed, all)
 			return
 		}
 		ta.coordinate()

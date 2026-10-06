@@ -21,9 +21,11 @@ const box = doc.getElementById('streams'), line = doc.getElementById('streams-ar
 const click = () => (line._listeners.click || []).forEach(f => f());
 const total = () => box._total._c[7].innerHTML + ' ' + box._total._c[8].textContent;
 context.render(input.data);
+const tags = () => doc.getElementById('streams').children
+  .filter(r => !r._classes.includes('head') && !r._classes.includes('total')).map(r => r.children[0].children[1].textContent);
 const out = { live: names(), line: line.textContent, hidden: !!line.hidden, total: total() };
 click();
-out.shown = names(); out.shownLine = line.textContent; out.shownTotal = total();
+out.shown = names(); out.shownTags = tags(); out.shownLine = line.textContent; out.shownTotal = total();
 click();
 out.again = names();
 process.stdout.write(JSON.stringify(out));
@@ -61,6 +63,7 @@ func TestTheWorkPanelHidesArchivedStreamsBehindOneLine(t *testing.T) {
 	require.Empty(t, errBuf.String(), "app.js threw while drawing")
 	var res struct {
 		Live, Shown, Again []string
+		ShownTags          []string
 		Line, ShownLine    string
 		Hidden             bool
 		Total, ShownTotal  string
@@ -75,4 +78,12 @@ func TestTheWorkPanelHidesArchivedStreamsBehindOneLine(t *testing.T) {
 	assert.Equal(t, []string{"ci"}, res.Again, "and hides them again")
 	assert.Contains(t, res.Total, "$2.15", "the total row leaves the archived stream's $1.00")
 	assert.Equal(t, res.Total, res.ShownTotal, "the total row is the same either way")
+	require.Len(t, res.ShownTags, len(res.Shown))
+	for i, n := range res.Shown {
+		if n == "old" {
+			assert.Equal(t, "archived", res.ShownTags[i], "a shown archived row says why the total leaves it out")
+		} else {
+			assert.NotContains(t, res.ShownTags[i], "archived", n)
+		}
+	}
 }

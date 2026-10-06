@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,15 @@ func (ta *testApp) workFooter() map[string]string {
 	}
 	ta.t.Fatal("the work table has no footer")
 	return nil
+}
+
+// epochCounts is where --json's landed and all cards of the epoch: the headline's, the archived
+// streams' added unless the sprint is done, when the headline is the epoch's already.
+func epochCounts(w whereView) (landed, all int64) {
+	if w.Done {
+		return w.Landed, w.All
+	}
+	return w.Landed + w.ArchivedLanded, w.All + w.ArchivedCards
 }
 
 // headlineTwoStreams is a running twin with s1 landed (two cards, $3.00, archived by the
@@ -124,5 +134,118 @@ func TestArchiveKeepsTheStreamsFigures(t *testing.T) {
 	ta.json("where --archived", &all)
 	assert.Equal(t, before.Tables["work"]["s1"], all.Tables["work"]["s1"], "--archived carries its row as it was")
 	assert.Equal(t, v.Summary, all.Summary, "--archived changes the rows carried, not the headline")
+	ta.clean()
+}
+
+// The ETA's guard of five landed cards counts the epoch's landings, an archived stream's too:
+// with three cards on the table and five landed in an archived stream, the rate is known and
+// the ETA is a number, not a dash. And an archive, which changes no card left to land, keeps
+// the held estimate: the hold's key is the epoch's cards and the held ones.
+func TestTheETAGuardAndHoldSeeTheEpochsLandings(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1:8")
+	ta.ok("add --stream s1 --count 5")
+	ta.ok("add --stream s2 --count 3 --held")
+	ta.ok("start")
+	five := []string{"", "", "", "", ""}
+	ta.landStream("s1", five, five, five)
+	ta.a.sleep(30 * time.Minute) // a rate: five landed over half an hour of running
+
+	var v whereView
+	ta.json("where", &v)
+	require.NotNil(t, v.Archived, "the tick archived s1 as its last card landed")
+	require.Equal(t, [2]int64{0, 3}, [2]int64{v.Landed, v.All})
+	assert.True(t, strings.HasPrefix(v.Summary, "0/3 0.0% held=3 -> ETA "), v.Summary)
+	assert.NotContains(t, v.Summary, "ETA -", "five landed in the epoch: the rate is known")
+
+	ta.ok("stream unarchive s1")
+	ta.ok("where")
+	key := ta.a.etaKey
+	ta.ok("stream archive s1")
+	ta.ok("where")
+	assert.Equal(t, key, ta.a.etaKey, "an archive changes no card left to land: the held estimate stays")
+	ta.clean()
+}
+
+// An add to an archived stream mid-epoch, and the moment before the next tick: every number
+// is backed by a row. On a RUNNING machine the add reaches the table at the next tick's drain,
+// so until then nothing moves (s1 archived, 0/3); on a STOPPED one the add is placed at once,
+// and s1 is back on the table at once, before any tick draws its row: where draws the row,
+// its footer counts it, --json's tables and rows carry it and archived no longer names it.
+// The tick changes none of it.
+func TestAnAddToAnArchivedStreamIsBackedByItsRow(t *testing.T) {
+	t.Parallel()
+	check := func(t *testing.T, ta *testApp, when string, back bool) {
+		t.Helper()
+		var w whereView
+		ta.json("where --rows", &w)
+		rows, under := ta.workRowsDrawn()
+		var s1 int
+		for _, r := range w.Rows {
+			if r.Stream == "s1" {
+				s1++
+			}
+		}
+		if !back {
+			require.NotNil(t, w.Archived, "%s: s1 still archived", when)
+			assert.Equal(t, [4]int64{0, 3, 2, 2}, [4]int64{w.Landed, w.All, w.ArchivedCards, w.ArchivedLanded}, when)
+			assert.NotContains(t, w.Tables["work"], "s1", when)
+			assert.Zero(t, s1, when)
+			assert.Equal(t, []string{"s2"}, rows, when)
+			assert.NotEmpty(t, under, when)
+			assert.Equal(t, "0", ta.workFooter()["landed"], when)
+			return
+		}
+		assert.Nil(t, w.Archived, "%s: s1 is archived no more", when)
+		assert.Equal(t, [4]int64{2, 6, 0, 0}, [4]int64{w.Landed, w.All, w.ArchivedCards, w.ArchivedLanded}, when)
+		assert.Contains(t, w.Tables["work"], "s1", "%s: the row backs the count", when)
+		assert.Equal(t, 3, s1, "%s: --rows carries s1's cards", when)
+		assert.Equal(t, []string{"s1", "s2"}, rows, "%s: the frame draws it", when)
+		assert.Empty(t, under, when)
+		assert.Equal(t, "2", ta.workFooter()["landed"], when)
+	}
+	t.Run("running", func(t *testing.T) {
+		t.Parallel()
+		ta := headlineTwoStreams(t)
+		check(t, ta, "archived", false)
+		ta.ok("add --stream s1 --count 1 --one")
+		check(t, ta, "added, before the tick's drain", false)
+		ta.ok("tick")
+		check(t, ta, "after the tick", true)
+		ta.clean()
+	})
+	t.Run("stopped", func(t *testing.T) {
+		t.Parallel()
+		ta := headlineTwoStreams(t)
+		ta.ok("stop --reason r --until 9999h")
+		check(t, ta, "archived", false)
+		out := ta.ok("add --stream s1 --count 1 --one")
+		assert.Contains(t, out, "2/6 33.3%", "the add's sprint line counts s1 again")
+		check(t, ta, "added, before any tick", true)
+		ta.ok("tick")
+		check(t, ta, "after the tick", true)
+		ta.clean()
+	})
+}
+
+// A sprint done says the same in every source: the CLI's done line, where --json (done, and
+// landed and all over the epoch's cards, as the done line counts them) and the summary.
+func TestASprintDoneReadsTheSameEverywhere(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1:8")
+	ta.ok("add --stream s1 --count 2")
+	ta.ok("start")
+	two := []string{"", ""}
+	ta.landStream("s1", two, two, two)
+	out := ta.ok("tick")
+	var v whereView
+	ta.json("where", &v)
+	require.NotNil(t, v.Archived, "the tick archived every stream of the sprint done")
+	assert.True(t, v.Done)
+	assert.Equal(t, [2]int64{2, 2}, [2]int64{v.Landed, v.All}, "done: the epoch's cards")
+	assert.Equal(t, "2/2 100.0% done", v.Summary)
+	assert.Contains(t, out, "2/2 100.0% done", "the CLI's done line")
 	ta.clean()
 }

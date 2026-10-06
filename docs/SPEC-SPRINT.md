@@ -753,7 +753,7 @@ frame's work and merge tables are over the streams drawn, and so are the
 dashboard's hero, its total row and progress bar, its complete cost and its
 cost per card. An archived stream's cards (`stream archive`) leave the
 headline when it is archived and come back when it holds a card not landed
-again (an add), counted at once, before the next tick draws its row (the owner,
+again (an add; below) (the owner,
 2026-10-06 2:43 PM ET, after 69 landed streams were archived and the headline
 still read 1859/2874: "I really don't think we have 2.8k cards
 post-archive..."). Nothing is lost: `where --json` carries `archived_cards` and
@@ -764,10 +764,20 @@ their cost; `stream_costs` keeps each one's spend; `--archived` carries their
 rows. The landing rate is over the epoch's landings, an archived stream's too,
 as archiving lands nothing, and the dashboard's throughput samples
 `landed + archived_landed` for the same reason, so an archive is not a fall
-that starts its samples again. A sprint done has no progress left to count,
-and the tick archives each of its streams, so its done line (`N/N 100.0%
-done`) counts the epoch's cards, the archived streams' too; `where --json`'s
-`landed` and `all` stay the table's.
+that starts its samples again. The five landed cards the ETA waits for are the
+epoch's too, and the 10 s hold of the estimate is over the epoch's cards and
+the held ones, which an archive does not change. A sprint done (every card of
+the epoch landed) has no progress left to count, and the tick archives each of
+its streams, so it is named done in one place, `where --json`'s `done`, and
+then the headline is the epoch's in every source: the done line
+(`N/N 100.0% done`), `landed` and `all` (the archived cards included, while
+`archived_cards` and `archived_landed` still say how many are archived), and
+the dashboard's hero and its cost. An add to an archived stream puts it back
+on the table at once, and its row with it: on a STOPPED machine the add is
+placed at once and where draws the row (its footer counts it, `tables` and
+`rows` carry it, `archived` no longer names it) before the next tick shows it
+again; on a RUNNING one the add reaches the table at the next tick's drain,
+and until then nothing moves. Every number is backed by a row.
 The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
 waiting on one of those through a need (`sprint.HeldBack`, counted by the
@@ -1712,13 +1722,17 @@ release's spend check calls it (`TestCostReconcileSetsEachProvidersDayBesideTheR
 (outside every tick, as the balance poll does), with the judgment's entry in `Decisions` and
 its line in the help, is owed; until it lands a read is written only when the verb runs.
 
-**The dashboard's cost** is the complete total: every take and read of every card on the
-work table in any column, landed or not (`total_cost` on each stream's `stream_costs`), plus
-what is unreconciled, on a line of its own beside the count of runs unpriced. Unreconciled is,
-over the days since the epoch began, each day's last provider figure beyond the sprint's
-records of that day, summed over the providers (`unreconciled`, the sprint's, the same on
-every stream's record). The cost per card is that recorded total over the cards landed, so
-every attempt and read behind them counts, those of cards not landed included.
+**The dashboard's cost** covers one scope, the headline's: the streams on the table, or, a
+sprint done (`where --json`'s `done`), every stream of the epoch (section 1, the summary
+line). The tile is every take and read of every card of those streams in any column, landed or
+not (`total_cost` on each stream's `stream_costs`); the line under it is the cost per card,
+the work and reads split and the runs unpriced, and its tooltip each reader's spend, all over
+the same streams. What is unreconciled is never added into the tile: it is the epoch's, so it
+has a line of its own, `$X unreconciled since <the epoch's first day>`. Unreconciled is, over
+the days since the epoch began, each day's last provider figure beyond the sprint's records of
+that day, summed over the providers (`unreconciled`, the sprint's, the same on every stream's
+record). The cost per card is that recorded total over the cards landed, so every attempt and
+read behind them counts, those of cards not landed included.
 
 **A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a

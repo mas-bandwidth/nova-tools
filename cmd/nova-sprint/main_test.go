@@ -231,7 +231,8 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	}
 	var w whereView
 	ta.json("where --archived", &w) // the tick archived s1 as its last card landed
-	require.Equal(t, [2]int64{0, 0}, [2]int64{w.Landed, w.All}, "the headline counts the table's streams: %+v", w)
+	require.True(t, w.Done, "where --json: %+v", w)
+	require.Equal(t, [2]int64{4, 4}, [2]int64{w.Landed, w.All}, "a sprint done counts the epoch's cards: %+v", w)
 	require.Equal(t, [2]int64{4, 4}, [2]int64{w.ArchivedLanded, w.ArchivedCards}, "where --json: %+v", w)
 	require.Equal(t, "4/4 100.0% done", w.Summary, "a sprint done counts the epoch's cards")
 	require.Equal(t, "landed", w.Tables["merge"]["s1"]["state"], "where --json: %+v", w)
@@ -306,7 +307,8 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	var w whereView
 	ta.json("where", &w)
 	// the tick archives s1 as its last card lands: its cards leave the headline
-	require.Equal(t, int64(2), w.Landed+w.ArchivedLanded, "landed %d, archived %d", w.Landed, w.ArchivedLanded)
+	landed, _ := epochCounts(w)
+	require.Equal(t, int64(2), landed, "landed %d, archived %d, done %v", w.Landed, w.ArchivedLanded, w.Done)
 	ta.clean()
 }
 
