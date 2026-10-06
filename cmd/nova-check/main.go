@@ -439,6 +439,7 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
 	var files repeatable
 	fs.Var(&files, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
+	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty tree; without it, zero files is a failure")
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
 		return 2
 	}
@@ -479,6 +480,9 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 		// derive by counting the output.
 		fmt.Fprintf(stderr, "LINKS FAIL files=%d links=%d broken=%d shown=%d excluded=%d\n", res.MDFiles, res.Checked, list.Total(), list.Shown(), res.Excluded)
 		return 1
+	}
+	if res.MDFiles == 0 && !*allowEmpty {
+		return refuseRan(stderr, " links", fmt.Sprintf("no markdown files were found under %s; add files, or pass --allow-empty to say that is deliberate", oneline.Field(*dir)))
 	}
 	fmt.Fprintf(stdout, "LINKS OK files=%d links=%d excluded=%d\n", res.MDFiles, res.Checked, res.Excluded)
 	return 0

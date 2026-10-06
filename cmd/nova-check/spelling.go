@@ -28,6 +28,7 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	write := fs.Bool("write", false, "apply spelling corrections to files in place")
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned (repeatable; empty by default)")
+	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty tree; without it, zero files is a failure")
 	failMax := addFailMax(fs)
 
 	if !parseFlags(fs, args, stderr) {
@@ -114,6 +115,13 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "SPELLING FIXED %s:%d:%d: %s -> %s\n",
 				oneline.Escape(f.File), f.Line, f.Column, oneline.Escape(f.Original), oneline.Escape(f.Replacement))
 		}
+		if res.FilesScanned == 0 && !*allowEmpty {
+			var root string
+			if *dir != "" {
+				root = *dir
+			}
+			return refuseRan(stderr, " spelling", fmt.Sprintf("no files were found in %s; add files, or pass --allow-empty to say that is deliberate", oneline.Field(root)))
+		}
 		fmt.Fprintf(stdout, "SPELLING OK files=%d misspellings=%d written=%d\n",
 			res.FilesScanned, len(res.Findings), res.Corrected)
 		return 0
@@ -131,6 +139,13 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	if res.FilesScanned == 0 && !*allowEmpty {
+		var root string
+		if *dir != "" {
+			root = *dir
+		}
+		return refuseRan(stderr, " spelling", fmt.Sprintf("no files were found in %s; add files, or pass --allow-empty to say that is deliberate", oneline.Field(root)))
+	}
 	fmt.Fprintf(stdout, "SPELLING OK files=%d misspellings=0 excluded=%d\n", res.FilesScanned, res.Excluded)
 	return 0
 }

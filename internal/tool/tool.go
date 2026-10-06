@@ -82,6 +82,7 @@ type Verb struct {
 	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
+	Looks     bool           // the verb reads files; when zero files are read, it fails unless --allow-empty is set
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
 }
