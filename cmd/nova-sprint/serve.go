@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -409,7 +410,8 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 }
 
 // friendBeatFlags are the flags of a friend's beat the server runs, each with the shape of
-// its value: what her machinery reports of her work (friend beat).
+// its value: what her machinery reports of her work (friend beat), and her daemon's word
+// that she is down until a time and why (--until, --reason: her harness at its limit).
 var friendBeatFlags = map[string]func(string) bool{
 	"--running": runningIDs,
 	"--working": wholeAtLeast(0),
@@ -421,6 +423,21 @@ var friendBeatFlags = map[string]func(string) bool{
 	},
 	"--active": rfc3339,
 	"--pong":   rfc3339,
+	"--until":  rfc3339,
+	"--reason": oneLineText,
+}
+
+// oneLineText is the shape of a short text on one line: not empty, no control character.
+func oneLineText(v string) bool {
+	if v == "" || len(v) > 1024 {
+		return false
+	}
+	for _, r := range v {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // rfc3339 is the shape of a time.

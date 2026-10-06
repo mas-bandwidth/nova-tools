@@ -384,6 +384,70 @@ no usage flag yet (the Claude lanes, below).
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
+### limits-mean-down-w-r.w1~15: each harness's limit and credits texts, down until the reset
+
+The decision of 2026-10-04: "out of credits = down". `internal/friend/limits.go` has one
+parser per harness (claude, codex, opencode, grok, antigravity, dsh, gemini):
+`ParseLimit(harness, out, now, rest)` reads the last 2 KiB of a **failed** turn
+(a reply that succeeded and only talks of a limit is none) for that harness's
+own wording, the 429 and 402 bodies and what it prints itself, and answers the
+kind, `limit` or `credits` (credits first: a line that says both is the
+balance), and the reset when the line names one (an epoch or `resets_in_seconds`
+in a 429 body, a stamp, a date and time in UTC, a duration like `after 3h12m5s`
+or `in 2 days 3 hours`, a clock time), else now plus `--limit-rest` (1h, `Limits.Rest`).
+The texts are `internal/friend/testdata/limits.tsv`, one line each with the kind
+and reset they parse to (`TestEachHarnessUsageLimitAndCreditsTextParsesWithItsReset`);
+a text not in a harness's words, a transient `rate_limit_error` among them,
+stays an ordinary failed turn. They are the harnesses' documented wordings, not
+captures of a live run, so a text a harness prints that is not in the file is
+one line to add. A Claude `rate_limit_event` is still read first (`ReadLimit`).
+
+On a match `Limits` holds the friend down as before (`Gate`: nothing delivered,
+every message pending and counted toward nothing; one wake turn after the reset,
+and if the text still says limited the next reset is taken from it; the seat is
+told once of the limit and once of the wake). The daemon keeps answering pings
+with the daemon pong (a ping is no turn) and writes `session=limited
+limit_kind=<k> limit_until=<RFC3339>` into status.json (`Status.LimitKind`,
+`LimitUntil`, from `Daemon.Limited`) and `session=limited kind=<k> until=<t>`
+on the record, once per reset. `TestUsageLimitMarksDownUntilReset` runs it over
+`bustest.Fake`, a fake harness and an injected clock.
+
+Model: `tla/Friend.tla` has `lim` and `limUntil`, `HitLimit` and `Wake`; no turn
+starts while limited (`NoTurnWhileLimited`, reversed witness
+`MCFriendBrokenDeliverLimited`) and limited ends (`LimitedEnds`, reversed witness
+`MCFriendBrokenNeverWake`, which holds the friend limited for ever).
+
+Owed: the beat carrying down with the reason and the until is the next
+subsection's. `install` does not pass
+`--limit-rest` into the launchd plist yet (`launchd.go`), so a daemon so installed
+uses the 1h default.
+
+### limits-mean-down-w-r5.w1~15: the beat says down with the until and the reason
+
+While limited the daemon's beat says so instead of going missing:
+`Limits.BeatOrDown` sends `nova-sprint friend beat <friend> --until <RFC3339>
+--reason 'harness limit: <text>'` (the pair `friend down --until` carries) from the
+daemon's existing beat client in `cmd/nova-friend/main.go`, and the plain beat
+again once the wake after the reset is answered. `friend beat` keeps the pair on her
+report (`sprint.FriendReport.Until`, `Reason`; `--reason` without `--until` is
+refused, and a down beat reports working 0), and `sprint.FriendStatus` reads her down
+while her last beat says so (`Beat.SaysDown`), after a hold and before an
+observation, however fresh the beat; `FriendDownWhy` says `her beat says down until
+<t>: <reason>`. A beat without `--until` has her up again by the ordinary rule.
+`TestUsageLimitMarksDownUntilReset` asserts the beats go up, down with the reset and
+the reason, then up; `TestFriendBeatDownUntilCarriesTheReasonAndTheUntil`
+(cmd/nova-sprint) the row.
+
+The sprint server's beat lane takes the down beat: `friendBeatFlags`
+(`cmd/nova-sprint/serve.go`) names `--until` (an RFC3339 time) and `--reason` (not
+empty, one line, no control character) beside `--running --working --queue --width
+--load --active --pong`, each once with its value; any other shape is refused, exit 2,
+nothing changed (`TestTheServerTakesAFriendsDownBeat`). Before this (r7.w1) the lane
+refused the down beat and her row read down only by the lapse.
+The table's status cell shows reason and until for a hold and an observation only
+(`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
+report and in why she is down.
+
 ### The harness check (internal/friend/alive.go)
 
 Presence is the session's check (above); this one says what the process

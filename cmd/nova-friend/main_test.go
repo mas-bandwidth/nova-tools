@@ -852,6 +852,17 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		mu.Unlock()
 		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 	}
+	type downBeat struct {
+		at, until time.Time
+		reason    string
+	}
+	var downBeats []downBeat
+	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) error {
+		mu.Lock()
+		downBeats = append(downBeats, downBeat{clock, until, reason})
+		mu.Unlock()
+		return nil
+	}
 	type turn struct {
 		at       time.Time
 		kind     string
@@ -909,7 +920,14 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	downAt, err := time.Parse(time.RFC3339, strings.Fields(rest)[0])
 	require.NoError(t, err)
 	assert.False(t, slices.ContainsFunc(beats, func(b time.Time) bool { return b.After(downAt) && b.Before(turns[1].at) }),
-		"no beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
+		"no up beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
+	// her beat says down instead, with the until and the reason (limits-mean-down-w-r5.w1~15)
+	require.NotEmpty(t, downBeats, "she beats down while limited")
+	for _, b := range downBeats {
+		assert.False(t, b.at.Before(turns[0].at) || b.at.After(turns[2].at), "a down beat only while limited, the wake turn's answer ending it: %s", b.at)
+		assert.False(t, b.until.Before(turns[0].at.Add(10*time.Minute)), "until the reset the text named: %s", b.until)
+		assert.Equal(t, "harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.", b.reason)
+	}
 	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
 	require.NoError(t, err)
 	var told []string

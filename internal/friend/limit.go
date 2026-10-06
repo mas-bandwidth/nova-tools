@@ -217,6 +217,11 @@ type Limits struct {
 	Nonce func() string // six random characters when nil
 	Down  func(until time.Time, reason string)
 	Up    func(nonce string)
+	// Harness is the harness whose own wording a failed turn is read in
+	// (ParseLimit), and Rest how long it is down when the text names no
+	// reset (DefaultLimitWait when zero): --limit-rest.
+	Harness string
+	Rest    time.Duration
 	// AllowOverage is the owner's word that this friend may spend paid
 	// overage; without it a harness on overage reads down.
 	AllowOverage bool
@@ -228,11 +233,13 @@ type Limits struct {
 	Pacing func() float64
 
 	mu       sync.Mutex
+	beatMu   sync.Mutex // a down beat's look and its send, against a wake ending the limit (BeatOrDown, gated.Deliver)
 	pace     Pacer
 	limited  bool
 	until    time.Time
 	reason   string
-	episodes int // limits seen, so a turn knows it hit one
+	kind     string // KindLimit or KindCredits while limited; empty when the text gave none
+	episodes int    // limits seen, so a turn knows it hit one
 	waking   string
 	answered bool
 }
@@ -244,20 +251,48 @@ func (l *Limits) Limited() (until time.Time, reason string, limited bool) {
 	return l.until, l.reason, l.limited
 }
 
+// Kind is what the limit is, KindLimit or KindCredits, while there is one.
+func (l *Limits) Kind() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.kind
+}
+
+// limitKindOf is a limit line's kind: credits when it says so, else a limit.
+func limitKindOf(line string) string {
+	if limitCredits.MatchString(line) {
+		return KindCredits
+	}
+	return KindLimit
+}
+
+var limitCredits = regexp.MustCompile(`(?i)credits?|balance|billing|payment`)
+
 // Watch is run reading every command's output for a limit and, while a wake
 // is open, for its nonce.
 func (l *Limits) Watch(run Exec) Exec {
 	return func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
 		out, exit, err := run(ctx, dir, name, args, stdin)
-		l.see(out)
+		l.see(out, exit != 0 || err != nil)
 		return out, exit, err
 	}
 }
 
-func (l *Limits) see(out string) {
+func (l *Limits) see(out string, failed bool) {
 	now := l.Now()
 	lim, found := ReadLimit(out, now)
 	uses := ReadRateLimitEvents(out, now)
+	kind := ""
+	if !strings.Contains(out, `"rate_limit_event"`) && failed {
+		// the harness's own wording of a failed turn, with its kind and a default reset
+		// when it names none; a successful turn that only talks of limits is no limit
+		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok {
+			lim, found, kind = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind
+		}
+	}
+	if found && lim.Limited && kind == "" {
+		kind = limitKindOf(lim.Reason)
+	}
 	l.mu.Lock()
 	l.pace.Observe(uses)
 	if l.waking != "" && strings.Contains(out, l.waking) {
@@ -271,7 +306,7 @@ func (l *Limits) see(out string) {
 		l.mu.Unlock()
 		return
 	}
-	l.limited, l.until, l.reason, l.waking, l.answered = true, lim.Until, lim.Reason, "", false
+	l.limited, l.until, l.reason, l.kind, l.waking, l.answered = true, lim.Until, lim.Reason, kind, "", false
 	l.episodes++
 	l.mu.Unlock()
 	if l.Down != nil {
@@ -314,12 +349,39 @@ func (l *Limits) Beat(beat func(ctx context.Context) error) func(ctx context.Con
 	}
 }
 
+// BeatOrDown is beat while the harness answers, and down while it is at its limit
+// (limits-mean-down-w-r5.w1~15): her beat says down with the until and the reason
+// (nova-sprint friend beat --until --reason), so her row reads down and why rather
+// than going silent, until a wake after the reset is answered. A nil down holds the
+// beat back as Beat does; a down the sprint server refuses is an error, and her row
+// reads down by the lapse as before.
+func (l *Limits) BeatOrDown(beat func(ctx context.Context) error, down func(ctx context.Context, until time.Time, reason string) error) func(ctx context.Context) error {
+	if down == nil {
+		return l.Beat(beat)
+	}
+	return func(ctx context.Context) error {
+		// the look and the down beat are one step against the wake's answer ending the
+		// limit, so no down beat is sent after she is up again
+		l.beatMu.Lock()
+		until, reason, limited := l.Limited()
+		if !limited {
+			l.beatMu.Unlock()
+			return beat(ctx)
+		}
+		defer l.beatMu.Unlock()
+		if err := down(ctx, until, "harness limit: "+reason); err != nil {
+			return fmt.Errorf("beating down until %s: %w", until.UTC().Format(time.RFC3339), err)
+		}
+		return nil
+	}
+}
+
 // LimitDownText is what the seat is told when friend's harness hits its
 // limit: the subject, and a body with the line that shows why and until when
 // on her row (nova-sprint friend down --reason --until).
 func LimitDownText(friend string, until time.Time, reason string) (subject, body string) {
 	subject = fmt.Sprintf("friend %s down: her harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
-	body = fmt.Sprintf("%s: %s\nHer daemon has stopped beating and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
+	body = fmt.Sprintf("%s: %s\nHer daemon beats down with that reset and reason and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
 		subject, reason, friend, shellQuote("harness limit: "+reason), until.UTC().Format(time.RFC3339))
 	return subject, body
 }
@@ -403,6 +465,7 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		episodes := l.episodes
 		l.mu.Unlock()
 		exit, err := g.d.Deliver(ctx, WakeText(nonce))
+		l.beatMu.Lock() // a down beat in flight lands before the limit ends (BeatOrDown)
 		l.mu.Lock()
 		again, answered := l.episodes != episodes, l.answered && exit == 0 && err == nil
 		if answered && !again {
@@ -410,6 +473,7 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		}
 		until, reason = l.until, l.reason
 		l.mu.Unlock()
+		l.beatMu.Unlock()
 		if again {
 			return 0, Deferred{Reason: fmt.Sprintf("the wake hit the limit again; down until %s: %s", until.Format(time.RFC3339), reason)}
 		}
