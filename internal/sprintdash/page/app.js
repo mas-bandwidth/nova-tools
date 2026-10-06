@@ -315,8 +315,11 @@ function renderStreams(d) {
     if (showArchived || !arch[k]) return;
     FLOW.forEach(function (st) { sum[st] += int(work[k][st]); });
     var ct = cents(work[k].cost); if (ct) sum.cost += ct;
-    var tc = cents(((d.stream_costs || {})[k] || {}).total_cost); if (tc) sum.totalCost += tc;
-    sum.unpriced += int(((d.stream_costs || {})[k] || {}).unpriced_runs);
+    var sc = (d.stream_costs || {})[k] || {};
+    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
+    sum.unpriced += int(sc.unpriced_runs);
   });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
