@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -140,7 +141,7 @@ func TestATickPastItsDeadlineIsAbandonedNotTheProcess(t *testing.T) {
 	assert.Equal(t, 3, l.calls, "the loop went on to the next ticks")
 	assert.Contains(t, out.String(), " TICK DEADLINE the tick begun at ")
 	assert.Contains(t, out.String(), " TICK OVERRUN the tick begun at ")
-	assert.Contains(t, out.String(), "tick_overrun=1, 1 in a row; the loop goes on\n")
+	assert.Contains(t, out.String(), "tick_overrun=1; the next deadline is at least 30s; the loop goes on\n")
 	assert.Contains(t, out.String(), "MOVED deal: s1-1 work ready -> working", "the tick after deals")
 	assert.Contains(t, errb.String(), "goroutine ", "the stacks are written")
 	assert.Equal(t, TickDeadline, asked[0])
@@ -152,45 +153,112 @@ func TestATickPastItsDeadlineIsAbandonedNotTheProcess(t *testing.T) {
 	l.ta.a.serial.Unlock()
 }
 
-// Three ticks in a row past their deadline are a wedged process, and only then
-// does run exit 4: three ticks each given up, or one tick given up that never
-// stops (each further deadline it has not stopped in counts one more). A tick
-// that ends in time between two overruns starts the count again.
-func TestThreeOverrunsInARowExitFour(t *testing.T) {
+// afterScript is a test's clock for the deadline's waits, one step a wait in the
+// order the loop asks them (the loop is one goroutine, so the order is fixed):
+// "deadline" is the tick's own deadline, fired by a tick that overruns itself
+// (overrun, deaf); "further" a further deadline that has passed at once; "stop"
+// releases the deaf tick in flight and never fires; "never" never fires.
+type afterScript struct {
+	mu    sync.Mutex
+	steps []string
+	i     int
+	fire  chan time.Time
+	rel   chan struct{}
+	asked []time.Duration
+}
+
+func newAfterScript(steps ...string) *afterScript {
+	return &afterScript{steps: steps, fire: make(chan time.Time, 1)}
+}
+
+func (s *afterScript) after(d time.Duration) <-chan time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asked = append(s.asked, d)
+	step := s.steps[s.i%len(s.steps)]
+	s.i++
+	switch step {
+	case "deadline":
+		return s.fire
+	case "further":
+		fired := make(chan time.Time, 1)
+		fired <- time.Time{}
+		return fired
+	case "stop":
+		close(s.rel)
+	}
+	return make(chan time.Time)
+}
+
+// deaf is a tick past its deadline that does not stop when it is cancelled, only
+// when the script's "stop" releases it: a wedged tick.
+func (s *afterScript) deaf(ctx context.Context) (store.TickResult, error) {
+	rel := make(chan struct{})
+	s.mu.Lock()
+	s.rel = rel
+	s.mu.Unlock()
+	s.fire <- time.Time{}
+	<-ctx.Done()
+	<-rel
+	return store.TickResult{}, ctx.Err()
+}
+
+// Only a wedged process exits 4: three given-up ticks in a row that did not stop
+// within a further deadline of being cancelled, or one that never stops (each
+// further deadline counts one more). A tick given up that stops when cancelled is
+// no wedge, however many in a row; a tick that ends in time between two wedged
+// ones starts the count again.
+func TestThreeWedgedTicksInARowExitFour(t *testing.T) {
 	t.Parallel()
-	t.Run("three ticks given up", func(t *testing.T) {
+	t.Run("ticks given up that stop when cancelled", func(t *testing.T) {
 		t.Parallel()
 		l := newDeadlineLoop(t)
-		fire := make(chan time.Time, 1)
-		l.ta.a.after = func(time.Duration) <-chan time.Time { return fire }
+		s := newAfterScript("deadline")
+		l.ta.a.after = s.after
 		l.ta.a.tickFn = func(ctx context.Context, _ *store.Store) (store.TickResult, error) {
 			l.tick()
-			return overrun(fire, ctx)
+			return overrun(s.fire, ctx)
+		}
+		var out, errb bytes.Buffer
+		assert.False(t, l.ta.a.runLoop(context.Background(), l.st, 20, 6, &out, &errb))
+		assert.Empty(t, l.exits, "no tick was wedged:\n%s", out.String())
+		assert.Equal(t, 6, l.calls)
+		assert.Equal(t, 6, strings.Count(out.String(), " TICK OVERRUN "), out.String())
+		assert.Contains(t, out.String(), "tick_overrun=6;")
+		// each overrun lifts the next deadline to 3 x its own: 10 s, 30 s, then the cap
+		assert.Contains(t, out.String(), "did not end within 10s")
+		assert.Contains(t, out.String(), "did not end within 30s")
+		assert.Equal(t, 4, strings.Count(out.String(), "did not end within 1m0s"), out.String())
+		assert.NotContains(t, out.String(), "WEDGED")
+	})
+	t.Run("three ticks deaf to the cancel for a further deadline", func(t *testing.T) {
+		t.Parallel()
+		l := newDeadlineLoop(t)
+		s := newAfterScript("deadline", "further", "stop")
+		l.ta.a.after = s.after
+		l.ta.a.tickFn = func(ctx context.Context, _ *store.Store) (store.TickResult, error) {
+			l.tick()
+			return s.deaf(ctx)
 		}
 		var out, errb bytes.Buffer
 		assert.False(t, l.ta.a.runLoop(context.Background(), l.st, 20, 10, &out, &errb))
 		assert.Equal(t, []int{exitTickDeadline}, l.exits)
-		assert.Equal(t, 3, l.calls, "no tick after the third overrun")
-		assert.Contains(t, out.String(), "tick_overrun=1, 1 in a row")
-		assert.Contains(t, out.String(), "tick_overrun=2, 2 in a row")
-		// a tick given up counts its deadline as its wall: 10 s, then 3 x 10 s, then the cap
-		assert.Contains(t, out.String(), "did not end within 10s")
-		assert.Contains(t, out.String(), "did not end within 30s")
-		assert.Contains(t, out.String(), " TICK WEDGED 3 ticks in a row ran past their deadline (1m0s)")
+		assert.Equal(t, 3, l.calls, "no tick after the third wedged one")
+		assert.Equal(t, 3, strings.Count(out.String(), "has not stopped within a further"), out.String())
+		assert.Contains(t, out.String(), "a wedged tick, 2 in a row")
+		assert.Contains(t, out.String(), " TICK WEDGED 3 given-up ticks in a row did not stop within a further deadline")
 		assert.Contains(t, out.String(), "the process is wedged and run exits 4 so its supervisor starts it again")
 	})
 	t.Run("one tick that never stops", func(t *testing.T) {
 		t.Parallel()
 		l := newDeadlineLoop(t)
-		l.ta.a.after = func(time.Duration) <-chan time.Time {
-			fired := make(chan time.Time, 1)
-			fired <- time.Time{}
-			return fired
-		}
+		s := newAfterScript("deadline", "further", "further", "further")
+		l.ta.a.after = s.after
 		never := make(chan struct{})
 		defer close(never)
-		l.ta.a.tickFn = func(context.Context, *store.Store) (store.TickResult, error) {
+		l.ta.a.tickFn = func(ctx context.Context, _ *store.Store) (store.TickResult, error) {
 			l.tick()
+			s.fire <- time.Time{}
 			<-never // deaf to its context: a plan that never ends
 			return store.TickResult{}, nil
 		}
@@ -198,27 +266,102 @@ func TestThreeOverrunsInARowExitFour(t *testing.T) {
 		assert.False(t, l.ta.a.runLoop(context.Background(), l.st, 20, 10, &out, &errb))
 		assert.Equal(t, []int{exitTickDeadline}, l.exits)
 		assert.Equal(t, 1, l.calls, "no tick begins beside the one given up")
-		assert.Equal(t, 2, strings.Count(out.String(), "given up, has not stopped within a further 10s"), out.String())
-		assert.Contains(t, out.String(), " TICK WEDGED 3 ticks in a row ran past their deadline")
+		assert.Equal(t, 3, strings.Count(out.String(), "given up, has not stopped within a further 10s"), out.String())
+		assert.Contains(t, out.String(), " TICK WEDGED 3 given-up ticks in a row")
 		assert.NotContains(t, out.String(), "TICK OVERRUN")
 	})
-	t.Run("an in-time tick between overruns", func(t *testing.T) {
+	t.Run("an in-time tick between wedged ticks", func(t *testing.T) {
 		t.Parallel()
 		l := newDeadlineLoop(t)
-		fire := make(chan time.Time, 1)
-		l.ta.a.after = func(time.Duration) <-chan time.Time { return fire }
+		s := newAfterScript("deadline", "further", "stop", "never")
+		l.ta.a.after = s.after
 		l.ta.a.tickFn = func(ctx context.Context, st *store.Store) (store.TickResult, error) {
 			if l.tick()%2 == 1 {
-				return overrun(fire, ctx)
+				return s.deaf(ctx)
 			}
 			return st.Tick(ctx)
 		}
 		var out, errb bytes.Buffer
 		assert.False(t, l.ta.a.runLoop(context.Background(), l.st, 20, 7, &out, &errb))
-		assert.Empty(t, l.exits, "four overruns, never two in a row:\n%s", out.String())
+		assert.Empty(t, l.exits, "four wedged ticks, never two in a row:\n%s", out.String())
 		assert.Equal(t, 7, l.calls)
-		assert.Equal(t, 4, strings.Count(out.String(), ", 1 in a row; the loop goes on"), out.String())
+		assert.Equal(t, 4, strings.Count(out.String(), "a wedged tick, 1 in a row"), out.String())
 	})
+}
+
+// A step change in the store's tick time pays no exit (the cold reader's case):
+// 20 ticks of 100 ms, then the store slows to 12 s a tick. The median is still
+// 100 ms, so the first slow tick has 10 s and is given up; it stops when
+// cancelled, and the deadline after it is 3 x 10 s, kept while the ticks stay
+// slower than --tick-deadline, so every slow tick after ends in time. Before the
+// fix three such overruns in 30 s were TICK WEDGED and exit 4 while the store
+// answered.
+func TestAStepChangeInTheStoresTickTimeNeverExits(t *testing.T) {
+	t.Parallel()
+	l := newDeadlineLoop(t)
+	s := newAfterScript("deadline")
+	l.ta.a.after = s.after
+	advance := func(d time.Duration) {
+		l.ta.mu.Lock()
+		l.ta.now = l.ta.now.Add(d)
+		l.ta.mu.Unlock()
+	}
+	l.ta.a.tickFn = func(ctx context.Context, st *store.Store) (store.TickResult, error) {
+		switch n := l.tick(); {
+		case n <= 20:
+			res, err := st.Tick(ctx)
+			advance(100 * time.Millisecond)
+			return res, err
+		case n == 21: // 12 s against a 10 s deadline
+			return overrun(s.fire, ctx)
+		default:
+			res, err := st.Tick(ctx)
+			advance(12 * time.Second)
+			return res, err
+		}
+	}
+	var out, errb bytes.Buffer
+	assert.False(t, l.ta.a.runLoop(context.Background(), l.st, 20, 40, &out, &errb))
+	assert.Empty(t, l.exits, "a step change in load is no wedge:\n%s", out.String())
+	assert.Equal(t, 40, l.calls)
+	assert.Equal(t, 1, strings.Count(out.String(), " TICK OVERRUN "), out.String())
+	s.mu.Lock()
+	asked := slices.Clone(s.asked)
+	s.mu.Unlock()
+	// ticks 1 to 21 ask 10 s, the wait for tick 21 to stop asks 10 s more, and
+	// every slow tick after has more than its 12 s
+	require.Len(t, asked, 41)
+	for i, d := range asked[:22] {
+		assert.Equal(t, TickDeadline, d, "wait %d", i+1)
+	}
+	for i, d := range asked[22:] {
+		assert.GreaterOrEqual(t, d, 30*time.Second, "slow tick %d", i+22)
+	}
+}
+
+// A tick given up writes no heartbeat, so the overrun's count moves the
+// heartbeat's clock as a tick would: the server is alive. A 40 s overrun, past
+// MachineSilence (15 s), raises no machine:silent in the inbox after it.
+func TestAFortySecondOverrunRaisesNoMachineSilent(t *testing.T) {
+	t.Parallel()
+	l := newDeadlineLoop(t)
+	l.ta.a.tickDeadline = 40 * time.Second
+	s := newAfterScript("deadline")
+	l.ta.a.after = s.after
+	l.ta.a.tickFn = func(ctx context.Context, _ *store.Store) (store.TickResult, error) {
+		l.tick()
+		l.ta.mu.Lock()
+		l.ta.now = l.ta.now.Add(40 * time.Second)
+		l.ta.mu.Unlock()
+		return overrun(s.fire, ctx)
+	}
+	var out, errb bytes.Buffer
+	assert.False(t, l.ta.a.runLoop(context.Background(), l.st, 20, 1, &out, &errb))
+	assert.Contains(t, out.String(), "did not end within 40s")
+	assert.Contains(t, out.String(), "tick_overrun=1;")
+	inbox := l.ta.ok("inbox")
+	assert.NotContains(t, inbox, "nothing has ticked", "a live server's overrun is no silent machine:\n%s", inbox)
+	assert.NotContains(t, inbox, "machine:silent")
 }
 
 // The deadline is not a fixed 10 s: it is three times the median wall of the
@@ -246,6 +389,10 @@ func TestTheTickDeadlineStretchesWithTheMedianWall(t *testing.T) {
 	assert.Equal(t, 10*time.Second, tickDeadlineOf(TickDeadline, w))
 	w = append(walls(time.Second, 10), walls(8*time.Second, 10)...)
 	assert.Equal(t, 24*time.Second, tickDeadlineOf(TickDeadline, w), "the upper of the two middle walls")
+	// an overrun lifts the deadline to 3 x its own, at most the cap (or the least)
+	assert.Equal(t, 30*time.Second, liftAfterOverrun(TickDeadline, TickDeadline))
+	assert.Equal(t, TickDeadlineCap, liftAfterOverrun(TickDeadline, 30*time.Second))
+	assert.Equal(t, 90*time.Second, liftAfterOverrun(90*time.Second, 90*time.Second))
 
 	// the loop: each tick takes 8 s on the loop's clock
 	l := newDeadlineLoop(t)

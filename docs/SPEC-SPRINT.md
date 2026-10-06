@@ -5059,30 +5059,44 @@ walls when they are even), never less than `run --tick-deadline` (`TickDeadline`
 never more than a minute (`TickDeadlineCap`) unless `--tick-deadline` asks for more; a tick
 given up counts its deadline as its wall. So a slow store stretches the deadline (ticks of 8 s
 have 24 s) instead of killing the server, and every `TIMES` line ends `deadline=<d>`, the
-deadline its tick had. Past it the loop prints `TICK DEADLINE the tick begun at <t> did not end
-within <d>`, writes every goroutine's stack to stderr, and cancels the tick's context: its store
-calls end and its plan is never written (a write already in flight is the fence's to finish or
-repair). The loop holds the line until the tick given up has stopped, for it shares the loop's
-store and twin; then it adds one to `tick_overrun` on the heartbeat (`store.CountTickOverrun`;
-the ticks after keep the count), prints `TICK OVERRUN ... tick_overrun=<n>, <k> in a row; the
-loop goes on`, gives the line back and begins the next tick. Each further deadline a tick given
-up has not stopped in counts one more in a row. At three in a row (`TickOverrunsToExit`) the
-process is wedged: `TICK WEDGED 3 ticks in a row ran past their deadline`, the stacks again, and
-run exits 4 so its supervisor starts it again; a tick that ends in time starts the count again.
-Run exits otherwise only on a signal (a failed tick, a store that does not answer included, is
-printed and tried again with the backoff). On 2026-10-06, under load (load 30 on 32 cores,
-store round trips of 50 to 80 ms), ticks took 7 to 8 s, a fixed 10 s deadline exited the
-process 21 times that day, and each restart left every worker's verb refused for 15 to 30 s
-and the landings, which run in the process, stopped. While a tick runs, the workers' writes
-(`take`, `finish`, `progress`, `read`, `queue`, `fleet beat`) wait for the line the tick holds
-(serve.go, `serveCtx`, `a.serial.LockCtx`), not for the store's fence; a friend's beat and a
-read run on their lanes and wait for neither. A tick whose fenced read lost the fence to other
-operations (`the sprint is busy: other operations kept the fence moving`, `store.FenceBusyError`)
-runs its parts again within the same tick, up to three times (`store.TickBusyRetries`), before
-it counts as failed on the heartbeat; the loop prints `TICK BUSY ... its parts ran again <n>
-times within it`. `TestATickPastItsDeadlineIsAbandonedNotTheProcess`,
-`TestThreeOverrunsInARowExitFour`, `TestTheTickDeadlineStretchesWithTheMedianWall`,
-`TestAFenceBusyTickRetriesBeforeFailing`.
+deadline its tick had. The median follows a step change in load only after ten slow ticks, so
+an overrun also lifts the deadline: after a tick given up at deadline d, every deadline is at
+least 3 x d (at most `TickDeadlineCap`, or `--tick-deadline` when that is more) until a tick
+ends within `--tick-deadline` again. Ticks of 100 ms that become ticks of 12 s give up one
+tick, at 10 s, and every slow tick after has 30 s. Past the deadline the loop prints `TICK
+DEADLINE the tick begun at <t> did not end within <d>`, writes every goroutine's stack to
+stderr, and cancels the tick's context: its plan is never written, and its store calls after
+the cancel are never sent (a write already in flight is the fence's to finish or repair). A
+cancel does not end a store call already in flight at once: a read sent to Redis runs until its
+reply or its `ReadTimeout` (5 s, internal/redisconn), so a tick given up can take seconds to
+stop. The loop holds the line until the tick given up has stopped, for it shares the loop's
+store and twin; then it adds one to `tick_overrun` on the heartbeat and moves the heartbeat's
+clock as a tick would (`store.CountTickOverrun`: a tick given up writes no heartbeat, and the
+server is alive, so a deadline past `MachineSilence` raises no `machine:silent` once it has
+stopped; the silence rule is unchanged, and the ticks after keep the count), prints `TICK
+OVERRUN ... tick_overrun=<n>; the next deadline is at least <d>; the loop goes on`, gives the
+line back and begins the next tick. A tick given up that stops within a further deadline is no
+wedge, however many come in a row: the store was slow and the process answers. A tick given up
+that has not stopped within a further deadline is wedged (`TICK DEADLINE ... has not stopped
+within a further <d>: a wedged tick, <k> in a row`), and each further deadline it has not
+stopped in counts one more. At three wedged in a row (`TickWedgedToExit`) the process is
+wedged: `TICK WEDGED 3 given-up ticks in a row did not stop within a further deadline`, the
+stacks again, and run exits 4 so its supervisor starts it again; a tick that ends in time, or a
+given-up tick that stops within its further deadline, starts the count again. Run exits
+otherwise only on a signal (a failed tick, a store that does not answer included, is printed
+and tried again with the backoff). On 2026-10-06, under load (load 30 on 32 cores, store round
+trips of 50 to 80 ms), ticks took 7 to 8 s, a fixed 10 s deadline exited the process 21 times
+that day, and each restart left every worker's verb refused for 15 to 30 s and the landings,
+which run in the process, stopped. While a tick runs, the workers' writes (`take`, `finish`,
+`progress`, `read`, `queue`, `fleet beat`) wait for the line the tick holds (serve.go,
+`serveCtx`, `a.serial.LockCtx`), not for the store's fence; a friend's beat and a read run on
+their lanes and wait for neither. A tick whose fenced read lost the fence to other operations
+(`the sprint is busy: other operations kept the fence moving`, `store.FenceBusyError`) runs its
+parts again within the same tick, up to three times (`store.TickBusyRetries`), before it counts
+as failed on the heartbeat; the loop prints `TICK BUSY ... its parts ran again <n> times within
+it`. `TestATickPastItsDeadlineIsAbandonedNotTheProcess`, `TestThreeWedgedTicksInARowExitFour`,
+`TestAStepChangeInTheStoresTickTimeNeverExits`, `TestAFortySecondOverrunRaisesNoMachineSilent`,
+`TestTheTickDeadlineStretchesWithTheMedianWall`, `TestAFenceBusyTickRetriesBeforeFailing`.
 
 The server runs the workers' verbs only: `take`, `finish`, `progress`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and

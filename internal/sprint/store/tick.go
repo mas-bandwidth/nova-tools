@@ -285,7 +285,10 @@ func (st *Store) putJSON(ctx context.Context, key string, v any) error {
 }
 
 // CountTickOverrun adds one to the heartbeat's count of ticks given up past
-// their deadline (Heartbeat.TickOverrun) and returns the count. The run loop
+// their deadline (Heartbeat.TickOverrun), moves its clock (At, Ticks) as a tick
+// would, and returns the count. A tick given up writes no heartbeat, and the
+// server is alive: without the move, a deadline past MachineSilence would read
+// as a silent machine (machine:silent, where's record not kept). The run loop
 // calls it once the tick it gave up has ended, so no tick writes the heartbeat
 // beside it; a tick after reads the count with the heartbeat and keeps it.
 func (st *Store) CountTickOverrun(ctx context.Context) (int64, error) {
@@ -294,6 +297,7 @@ func (st *Store) CountTickOverrun(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	hb.TickOverrun++
+	hb.At, hb.Ticks = st.now(), hb.Ticks+1
 	return hb.TickOverrun, st.putJSON(ctx, keyHeartbeat, hb)
 }
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -81,17 +82,21 @@ func TestAFenceBusyTickRetriesBeforeFailing(t *testing.T) {
 	}
 }
 
-// The heartbeat keeps the count of ticks given up past their deadline, and a
-// tick after keeps it.
+// The heartbeat keeps the count of ticks given up past their deadline, each
+// moving its clock as a tick would, and a tick after keeps the count.
 func TestTheHeartbeatCountsTickOverruns(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.startMachine()
 	for want := int64(1); want <= 2; want++ {
+		h.tick(40 * time.Second) // a tick given up past a 40 s deadline
 		n, err := h.st.CountTickOverrun(h.ctx)
 		require.NoError(t, err)
 		require.Equal(t, want, n)
+		_, hb, err := h.st.Machine(h.ctx)
+		require.NoError(t, err)
+		require.Equal(t, h.st.Now(), hb.At, "the overrun moves the heartbeat's clock: the server is alive")
 	}
 	h.machine()
 	_, hb, err := h.st.Machine(h.ctx)
