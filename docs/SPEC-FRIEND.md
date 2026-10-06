@@ -613,6 +613,50 @@ friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
 loop"; cmd/nova-sprint/friend_loop.go).
 
+## The push proof (internal/friend/pushproof_start.go)
+
+A friend nothing pushes into is deaf, and the bus waits on her unread (the
+owner, 2026-10-05: "Your inbox MUST push to you."; "It must be mandatory and
+enforced"). So the push is proved before the daemon starts, never left to a
+log line:
+
+- `nova-friend install` and `run` refuse, before anything is written, loaded
+  or delivered, a harness whose adapter has no deliver command (a `Stub`:
+  claude and every surveyed harness), exit 2, with the remedy `the adapter
+  card: give internal/friend a deliver command for <harness> (NewDeliverer),
+  or run the friend under a harness that has one: <the harnesses with one>`.
+  `--dry-run` refuses it too.
+- `run` then proves the push with the first SESSION CHECK round trip
+  (`friend.PushProof` over `Conformance`, the same check `nova-friend check`
+  runs) once the store answers and before the loop: the check goes in through
+  the adapter, and a pong with its nonce from the friend must reach the bus
+  within `ProofWithin`, the session bound, five minutes. None, and run exits 2
+  and the daemon does not start: `RUN REFUSED: no push proof: CHECK FAIL ...;
+  run: <remedy>`. An adapter that answers the check with a `Deferred`
+  carrying a `Remedy` cannot drive the session at all, and that remedy is
+  printed: dsh, a session under an agent preset, `start a session in <dir>
+  with no agent preset and name it with --session <id>`. Any other failure
+  names the session to open and `nova-friend check` to prove it. A pass is
+  one RUN line, `push proof: CHECK OK harness= took=`.
+- `install` runs the same check after loading the agent: a session the
+  adapter cannot drive is refused (exit 2, the remedy above) and the agent is
+  booted out and its plist removed, since it would refuse at every start; any
+  other failure is a NOTE, as before.
+- Every beat carries the session's last proof, `friend beat --pong <RFC3339>`:
+  the presence file's `last_heard`, the session's last answer or its own bus
+  message. The sprint reads it as the beat's `Proof` (the friend beat record's
+  `pong`): a friend whose proof is older than `FriendProofLive` (fifteen
+  minutes: the daemon asks after `SessionQuiet` and waits `SessionBound`) is
+  down however fresh her beat, so the deal, which deals only to a friend up,
+  gives her nothing; a beat with no proof is judged by the beat alone. The
+  coordinator's pass raises one `friend deaf` judgment when the proof lapses
+  (internal/sprint/coordinator_pass.go).
+
+The proof is the presence model's Ask then Answer within the bound
+(tla/FriendPresence.tla), asked once before the loop. The daemon's own
+presence still starts down with a check owed, so a session is asked twice at
+a start: the proof, then the daemon's first check.
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
@@ -851,7 +895,8 @@ store and a clock moved by the check's own waits, and every Stub, claude
 among them, failing at `deliver` with its reason; an adapter with a deliver
 command and no rig fails the test. `nova-friend check` runs it against the live
 session (docs/CLI.md), `install` runs it once after loading the agent and
-says the line in a NOTE, and a nova-config loop record runs it nightly on
+says the line in a NOTE (a session the adapter cannot drive is refused: The
+push proof), `run` runs it before its loop as the push proof, and a nova-config loop record runs it nightly on
 each friend's machine (docs/TESTING.md). Not covered: a lane's
 `OpenSession`/`DeliverTo` path, and a check delivered while the daemon's own
 turn is under way goes in beside it, not after it (the check runs in its own

@@ -16,7 +16,7 @@ import (
 func TestFriendBeatCarriesTheSessionPongAndTheTickJudgesADeafSession(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
-	pong := ta.a.now().Add(-11 * time.Minute).UTC().Format(time.RFC3339)
+	pong := ta.a.now().Add(-sprint.FriendDeafAfter - time.Minute).UTC().Format(time.RFC3339)
 	out := ta.ok("friend beat amy --pong " + pong)
 	assert.Contains(t, out, " pong="+pong)
 	ta.ok("tick")

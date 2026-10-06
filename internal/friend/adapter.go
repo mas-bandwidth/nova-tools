@@ -31,8 +31,11 @@ type Deliverer interface {
 // and nothing has failed (for example, neither Codex queue nor resume can
 // accept it). The daemon keeps the message in hand, tries again
 // after RecheckEvery, counts nothing toward MaxDeliveries and acks nothing,
-// so a chat open all day loses no message.
-type Deferred struct{ Reason string }
+// so a chat open all day loses no message. Remedy is set when no retry
+// can succeed, because the adapter cannot drive the session at all (dsh: a
+// session under an agent preset): what the friend does instead, which
+// nova-friend install and run refuse with (PushProof).
+type Deferred struct{ Reason, Remedy string }
 
 func (d Deferred) Error() string { return "deferred: " + d.Reason }
 

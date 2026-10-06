@@ -50,6 +50,13 @@ const (
 	// working machine is not taken down by one slow store call) do not apply
 	// to her.
 	FriendDownAfter = 15 * time.Second
+	// FriendProofLive is how old the session proof her beat carries may be while she is
+	// up (docs/SPEC-FRIEND.md, The push proof): her daemon asks the session after ten
+	// minutes with no word from it and waits five for the answer (nova-friend's
+	// SessionQuiet and SessionBound), so a session that answers is never proved longer
+	// ago than that. The owner, 2026-10-05: "nova-bus is useless if the friend using it
+	// is deaf and is not listening to messages sent back."
+	FriendProofLive = 15 * time.Minute
 )
 
 // Held is the status of a member the coordinator holds down.
@@ -79,6 +86,10 @@ type Beat struct {
 	// Friend is what a friend's beat reports of her work (friend beat); nil on a
 	// machine's beat.
 	Friend *FriendReport `json:"friend,omitempty"`
+	// Proof is a friend's session's last proof as her beat carried it (friend beat
+	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
+	// when her beat carried none; the friend beat record keeps it under "pong".
+	Proof time.Time `json:"pong,omitzero"`
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -169,12 +180,21 @@ func FriendBeating(b Beat, now time.Time) bool {
 	return now.Sub(b.At) < FriendDownAfter // never beaten: At is zero, long ago
 }
 
+// ProofLive says the session proof her last beat carried is within FriendProofLive of
+// now, or that it carried none (a daemon that sends no --pong is judged by its beat
+// alone). A beat whose proof has lapsed never makes her up: her daemon beats and her
+// session no longer answers, so nothing is dealt to her (the push proof).
+func ProofLive(b Beat, now time.Time) bool {
+	return b.Proof.IsZero() || now.Sub(b.Proof) <= FriendProofLive
+}
+
 // FriendStatus is the one rule of a friend's status at now: held while the
 // coordinator holds her (friend down); else, once the coordinator has observed her
 // (friend health), the observation's word under the current seat generation
 // while its proof is fresh and down otherwise (ObservedStatus: her own beat
 // never makes an observed friend up again); else up while her last beat is
-// within FriendDownAfter, else down (never beaten, or silent that long).
+// within FriendDownAfter and the session proof it carries is live (ProofLive), else
+// down (never beaten, silent that long, or her session's proof lapsed).
 // Releasing a hold (friend up) is not a beat: a friend released with no
 // recent beat is down until she beats.
 func FriendStatus(f FriendPresence, now time.Time) string {
@@ -183,7 +203,7 @@ func FriendStatus(f FriendPresence, now time.Time) string {
 		return Held
 	case f.Health.Observed():
 		return ObservedStatus(f.Health, f.Generation, now)
-	case FriendBeating(f.Beat, now):
+	case FriendBeating(f.Beat, now) && ProofLive(f.Beat, now):
 		return Up
 	}
 	return Down
