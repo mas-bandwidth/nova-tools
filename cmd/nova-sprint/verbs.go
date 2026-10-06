@@ -117,7 +117,7 @@ func init() {
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"cost reconcile", "[--dry-run] [--json]", "cost reconcile", (*app).cmdCostReconcile},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
-		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
+		{"wait", "(<note>[,<note>]... | --group <id> [--expect <n>]) (--for <duration> | --until <RFC3339>)", "wait n1,n2 --for 3h", (*app).cmdWait},
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
@@ -337,7 +337,7 @@ one answer to each judgment (every one prints its own, filled in):
   repair skipped changes      card <primary>, then rework, return or drop --group <id> --expect <n> --answers <notes>
   an operation was stuck      check, then ack <note> --reason '<what you found>'
   a repeat: stop and look     card <primary>
-  overdue: act                a decision above, or wait <note> --for 30m
+  overdue: act                a decision above, or wait <note>[,<note>]... --for 30m, or wait --group <id> --expect <n> --for 30m
   a stream not moving: look   where, then queue --stream <s>
   sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
   returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
@@ -3134,14 +3134,18 @@ func (a *app) cmdCI(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("wait")
+	var group string
+	var expect int
+	fs.StringVar(&group, "group", "", "the notes of the inbox group of this id (the id inbox prints; a group number is refused)")
+	fs.IntVar(&expect, "expect", 0, "with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes")
 	dur := fs.Duration("for", 0, "review it again after this long")
 	until := fs.String("until", "", "review it again at this time (RFC3339)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
-	if len(pos) != 1 || (*dur == 0) == (*until == "") {
-		return refuse(stderr, "wait", "wants one notification id and one of --for <duration>, --until <time>")
+	if (*dur == 0) == (*until == "") {
+		return refuse(stderr, "wait", "wants notification ids, or --group <id> [--expect <n>], and one of --for <duration>, --until <time>")
 	}
 	at := a.now().Add(*dur)
 	if *until != "" {
@@ -3153,30 +3157,105 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
-	if pos, err = unalias(context.Background(), st, pos); err != nil {
+	ctx := context.Background()
+	if sprint.IsAlias(group) {
+		full, err := unalias(ctx, st, []string{group})
+		if err != nil {
+			return refuse(stderr, "wait", "--group: "+err.Error())
+		}
+		group = full[0]
+	}
+	notes := splitCommas(pos)
+	if notes, err = unalias(ctx, st, notes); err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
-	before := a.judgedBefore(context.Background(), st, pos[:1])
-	res, held, err := st.Wait(context.Background(), pos[0], at)
+	notes, code := a.waitNotes(group, expect, notes, c, st, stdout, stderr)
+	if code != 0 {
+		return code
+	}
+	code = 0
+	for _, id := range notes {
+		if a.waitOne(st, c, id, at, stdout, stderr) != 0 {
+			code = 1
+		}
+	}
+	if c.group.ID != "" {
+		fmt.Fprintln(stdout, c.group.line())
+	}
+	return code
+}
+
+// waitNotes is the notes wait sets: the ids named, or every note of --group
+// (a stalled stream's group, which has no note, is its own id). A group whose
+// size is not --expect is refused here, and nothing is changed.
+func (a *app) waitNotes(group string, expect int, notes []string, c *common, st *store.Store, stdout, stderr io.Writer) ([]string, int) {
+	if group == "" {
+		if expect != 0 {
+			return nil, refuse(stderr, "wait", "--expect goes with --group <id>")
+		}
+		if len(notes) == 0 {
+			return nil, refuse(stderr, "wait", "wants notification ids, or --group <id> [--expect <n>], and one of --for <duration>, --until <time>")
+		}
+		return notes, 0
+	}
+	if len(notes) > 0 {
+		return nil, refuse(stderr, "wait", "takes ids or --group, not both")
+	}
+	if expect < 0 {
+		return nil, refuse(stderr, "wait", "--expect wants the group's size, a whole number from 1")
+	}
+	_, g, err := groupIDs(context.Background(), st, group)
+	if err != nil {
+		if isNumber(group) {
+			return nil, refuse(stderr, "wait", err.Error())
+		}
+		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
+		return nil, 1
+	}
+	ids := append([]string(nil), g.Notes...)
+	if len(ids) == 0 {
+		ids = []string{g.ID}
+	}
+	c.group = groupReport{ID: g.ID, ActedOn: len(ids), Expected: expect}
+	if expect > 0 && len(g.Members) != expect {
+		if c.json {
+			b, _ := json.Marshal(map[string]any{"error": "the group changed", "group": g.ID, "size": len(g.Members), "expected": expect,
+				"added": []string{}, "gone": []string{}, "members": nonNil(g.Members), "moved": []string{}})
+			fmt.Fprintln(stdout, string(b))
+			return nil, 1
+		}
+		fmt.Fprintf(stderr, "REFUSED group %s: it has %d now, not %d as printed; nothing changed; run: %s inbox --open %s and answer the group as it is now\n", oneline.Escape(g.ID), len(g.Members), expect, prog, oneline.Escape(g.ID))
+		listed(stderr, "NOW", g.Members, c.max, "inbox --open "+g.ID)
+		fmt.Fprintf(stderr, "%s FAILED moved=0 group=%s size=%d expected=%d; run: nova-sprint inbox --open %s\n", token("wait"), oneline.Escape(g.ID), len(g.Members), expect, oneline.Escape(g.ID))
+		return nil, 1
+	}
+	return ids, 0
+}
+
+// waitOne sets one note's review, or refuses it, on its own line. 0 is set.
+func (a *app) waitOne(st *store.Store, c *common, id string, at time.Time, stdout, stderr io.Writer) int {
+	ctx := context.Background()
+	before := a.judgedBefore(ctx, st, []string{id})
+	res, held, err := st.Wait(ctx, id, at)
 	if err == nil && len(res.Refused) > 0 {
 		err = fmt.Errorf("%s", res.Refused[0].Why)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "WAIT REFUSED note=%s: %s\n", oneline.Escape(id), oneline.Escape(err.Error()))
 		return 1
 	}
-	for _, say := range a.recordAnswers(context.Background(), st, "wait", before, store.Result{Moved: []string{pos[0]}}, "until "+at.UTC().Format(time.RFC3339), "", c.actor) {
+	for _, say := range a.recordAnswers(ctx, st, "wait", before, store.Result{Moved: []string{id}}, "until "+at.UTC().Format(time.RFC3339), "", c.actor) {
 		fmt.Fprintf(stdout, "NOTE %s\n", say)
 	}
-	if _, stale := sprint.StaleStream(pos[0]); stale {
-		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+	if _, stale := sprint.StaleStream(id); stale {
+		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(id), at.UTC().Format(time.RFC3339))
 		return 0
 	}
 	if held {
-		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(id), at.UTC().Format(time.RFC3339))
 		return 0
 	}
-	fmt.Fprintf(stdout, "WAIT OK note=%s review=%s\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+	fmt.Fprintf(stdout, "WAIT OK note=%s review=%s\n", oneline.Escape(id), at.UTC().Format(time.RFC3339))
 	return 0
 }
 
