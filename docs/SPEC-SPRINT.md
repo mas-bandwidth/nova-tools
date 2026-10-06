@@ -17,7 +17,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed | cost | per landed
 readers | asked | reading | width | ok | broken
 merge | queued | merged | stuck | ci | state
-friends | ready | working | width | done | ok% | status
+friends | ready | working | width | read_slots | done | ok% | status | active
 fleet | ready | working | width | done | ok% | status | load
 ```
 
@@ -194,6 +194,14 @@ the stored view `sprint` has the four tables only. Its footer is the table
 layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
 and a blank status cell, as the fleet table's; an empty friends table is its
 header, its one rule and that footer at zero, as every empty table is.
+
+**Read slots beside width** (the owner, 2026-10-05: "Read slots are different from
+worker cards."). The friends table has `read_slots` right after `width`, text summed
+in the footer as `width` is: her nova-config row's `read_slots` (2 by default; section
+6), the reads `reader-<friend>` runs at once, apart from her card width, so the two
+show side by side; `where --json` carries it on her row (`read_slots`), and the
+column is in internal/sprint/TABLES.lock
+(`TestAReadAskedOfAFriendIsDeliveredToHerLikeACard`, `TestSprintTablesAreLocked`).
 
 **Last session activity** (the finding of 2026-10-04: the table said up with 8
 working for a friend whose session sat idle from 2:40 to 4:34 PM, and another read
@@ -2544,7 +2552,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   readers out, so each wait is one judgment. `where` draws `reader-<friend>`'s
   width cell (the readers table's width beside reading, and `where --json` on
   her reader's row) as her read slots, read off `friend_read_slots`
-  (`sprint.FriendReadSlotsOf`), while her friends row keeps her card width.
+  (`sprint.FriendReadSlotsOf`), while her friends row shows her card width
+  and, beside it in `read_slots`, her read slots (section 1).
 - A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
   nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
   per pro card; readers still equal workers per machine"): a flash card needs

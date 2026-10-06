@@ -48,18 +48,23 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 
 // FriendsDef is the friends table's shape: the fleet table's columns but load.
 // ready and working count her job cards in those states; width is her width
-// as text, summed; ok and failed (hidden) count her jobs done ok and done
+// as text, summed; read_slots (ReadSlots) beside it is her read slots as text,
+// summed, the reads reader-<friend> runs at once apart from her card width (the
+// owner, 2026-10-05: "Read slots are different from worker cards."); ok and failed (hidden) count her jobs done ok and done
 // failed, and done and ok% are the table's formulas over them, the footer
 // pooling ok% over the friends; status is text with no fold, and so is active, how long ago
 // her session last wrote a file (her beat's Active; "-" when none was reported). The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,read_slots:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
 	return ntable.Table{Name: Friends, Columns: cols, Hidden: []string{DoneOK, DoneFailed}}
 }
+
+// ReadSlots is the friends table's read slots column, beside width.
+const ReadSlots = "read_slots"
 
 // Readers table columns.
 const (

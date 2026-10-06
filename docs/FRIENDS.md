@@ -160,7 +160,8 @@ Reading runs beside her cards, never in bursts (the owner, 2026-10-05: "Reads
 are in extra slots per-friend! Read slots are different from worker cards.").
 Her reader is `reader-<name>`, and its room is her nova-config row's
 `read_slots` (`nova-config friend set <name> --read-slots <n>`, 2 by default, 0
-asks her none), apart from `width`, the jobs she works. `nova-sprint friend
+asks her none), apart from `width`, the jobs she works; `nova-sprint where`
+shows the two side by side, `width` then `read_slots`, on her friends row. `nova-sprint friend
 sync` delivers each read asked of `reader-<name>` into
 `inbox/reads/<read-card>/`, as it delivers a card:
 

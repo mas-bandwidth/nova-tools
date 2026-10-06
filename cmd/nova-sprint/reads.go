@@ -1187,7 +1187,7 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
 // in the order given: her sprint cards' counts in ready, working and the
-// hidden ok and failed, her width and her status as text; done and ok% are the
+// hidden ok and failed, her width, her read slots beside it, and her status as text; done and ok% are the
 // table's own formulas over the counts (ntable.CellText), as the fleet
 // table's are.
 func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Table {
@@ -1203,7 +1203,7 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.ReadSlots: strconv.Itoa(f.ReadSlots), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
 	}
 	return t
 }
