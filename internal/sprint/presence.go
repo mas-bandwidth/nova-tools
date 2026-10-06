@@ -253,12 +253,19 @@ func ago(d time.Duration) string {
 }
 
 // LoadText is the load cell: the highest load of the last LoadWindow with
-// one decimal and a percent sign while the beat is fresh, else empty.
+// one decimal and a percent sign while the beat is fresh, else empty; and
+// beside it, while the machine's open file descriptors are over the member's
+// warn bound, "fds <count> warn" (or alarm, fd.go FilesText), so the fleet
+// table shows a machine running out of them before the alarm's judgment.
 func LoadText(b Beat, now time.Time) string {
 	if !b.Fresh(now) {
 		return ""
 	}
-	return fmt.Sprintf("%.1f%%", b.Load)
+	load := fmt.Sprintf("%.1f%%", b.Load)
+	if f := FilesText(b, now); f != "" {
+		load += " fds " + f
+	}
+	return load
 }
 
 // TickPresence applies the changes of the members' derived status (T0), every
