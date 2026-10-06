@@ -29,11 +29,11 @@ func (f *fakeConfig) run(_ context.Context, _ string, args []string, stdout, std
 	if args[0] == "route" && args[1] == "show" {
 		switch f.state[args[2]] {
 		case "disabled":
-			io.WriteString(stdout, "ROUTE name="+args[2]+" enabled=false note=-\n")
+			_, _ = io.WriteString(stdout, "ROUTE name="+args[2]+" enabled=false note=-\n")
 		case "enabled":
-			io.WriteString(stdout, "ROUTE name="+args[2]+" enabled=true note=-\n")
+			_, _ = io.WriteString(stdout, "ROUTE name="+args[2]+" enabled=true note=-\n")
 		default:
-			io.WriteString(stderr, "nova-config route show REFUSED: route "+args[2]+" not found\n")
+			_, _ = io.WriteString(stderr, "nova-config route show REFUSED: route "+args[2]+" not found\n")
 			return 1, nil
 		}
 		return 0, nil

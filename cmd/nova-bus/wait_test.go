@@ -30,7 +30,9 @@ type dropped struct{ from, subject string }
 // the cursor the wait holds.
 func drop(r *rig, from, id, subject string) {
 	m := bus.Message{ID: id, From: from, To: []string{"bob"}, Subject: subject, Body: "the body"}
-	r.store.AddAll(context.Background(), []string{bus.StreamOf("bob")}, m.Fields())
+	if err := r.store.AddAll(context.Background(), []string{bus.StreamOf("bob")}, m.Fields()); err != nil {
+		panic("drop: the fake store refused the message: " + err.Error())
+	}
 }
 
 // sleepDrop makes the store's next empty block deliver the entries: what
