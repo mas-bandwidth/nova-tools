@@ -78,6 +78,11 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 		how = "taken approved_by=" + oneline.Field(req.ApprovedBy)
 	}
 	said := fmt.Sprintf("holder=%s from=%s by=%s %s", oneline.Field(req.To), oneline.Field(holder), oneline.Field(c.actor), how)
+	if push, err := pushSaid(ctx, st, req.To, a.now()); err != nil {
+		return a.readFailed("coordinator", err, stderr)
+	} else if push != "" {
+		said += " " + push
+	}
 	if *dry {
 		fmt.Fprintf(stdout, "COORDINATOR DRY-RUN %s; nothing was changed\n", said)
 		return 0

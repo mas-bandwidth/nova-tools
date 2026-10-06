@@ -1255,6 +1255,15 @@ named for the friend of the directory's status file. `nova-friend check
 per message it peeks (it stays passive and appends nothing yet), and
 `nova-bus wait` is a separate verb.
 
+A claude session that holds the sprint's coordinator seat is reached the
+same way without a friend's daemon: nova-sprint's folder adapter writes each
+push check and judgment as a file into the folder the session watches with a
+Monitor, and the session answers the check with `nova-sprint seat pong`
+([SPEC-SPRINT.md, "The push proof"](SPEC-SPRINT.md#the-push-proof)). A friend
+on a harness with no deliver command whose session watches a folder in place
+of the bus may use the same folder through her route defer; nova-friend
+itself is unchanged.
+
 OpenCode's headless run auto-rejects any tool call that would prompt (measured
 2026-10-04, twice on one friend: `external_directory` for a path through the
 symlink in the home directory, and another refusal that ended a turn in 12

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -23,22 +25,20 @@ import (
 // 2026-10-05: "nova-sprint must require them to setup push notifications, it
 // won't work until the AI does this"). The rules are sprint.PushRecord's; here
 // are the record in the store, the gate every coordinator verb passes
-// (coordinatorOnly), seat push and seat pong, and the push loop's round trip,
-// a real delivery through nova-friend's Deliverer, never a file write.
+// (coordinatorOnly), seat push and seat pong, and the push loop's round trip:
+// a real delivery through nova-friend's Deliverer, or, for a harness with no
+// deliver command (Claude Code), one file written into the folder the session
+// watches (folderAdapter).
 
 // keySeatPush is name's push record, a key of the sprint's (store.KV).
 func keySeatPush(name string) string { return store.SeatPushKey(name) }
 
-// pushAdapterCards is the card that brings a harness its deliver command, for a
-// harness whose adapter is still the Stub: the seat cannot be taken from it
-// until the card lands.
-var pushAdapterCards = map[string]string{"claude": "fg-claude-open-chatb-r"}
-
 // The proof's test seams. pushArmedDefault is false only in this package's test
 // binary (TestMain), where a test arms the proof for the names it registers in
-// pushTests, each with the Deliverer its push loop delivers through; the
-// binary, and every name in it, is armed, and delivers through the harness's
-// own adapter.
+// pushTests, each with the Deliverer its push loop delivers through (any other
+// value arms the name and leaves it the real adapter); the binary, and every
+// name in it, is armed, and delivers through the harness's own adapter or the
+// folder adapter.
 var (
 	pushArmedDefault = true
 	pushTests        sync.Map // name -> friend.Deliverer
@@ -54,29 +54,98 @@ func pushArmed(name string) bool {
 }
 
 // pushDeliverer is the adapter the push loop delivers into rec's session
-// through: the harness's own, or a test's.
+// through: a test's, the folder adapter for a record that names it or a
+// harness with no deliver command (nova-friend's adapter is passive), else the
+// harness's own.
 func pushDeliverer(rec sprint.PushRecord) (friend.Deliverer, error) {
 	if d, ok := pushTests.Load(rec.Name); ok {
-		return d.(friend.Deliverer), nil
+		if d, ok := d.(friend.Deliverer); ok {
+			return d, nil
+		}
 	}
-	return friend.NewDeliverer(rec.Harness, rec.Target, rec.Session, friend.RealExec, nil)
+	if rec.Adapter == sprint.AdapterFolder {
+		return &folderAdapter{Dir: rec.Target}, nil
+	}
+	d, err := friend.NewDeliverer(rec.Harness, rec.Target, rec.Session, friend.RealExec, nil)
+	if err != nil {
+		return nil, err
+	}
+	if passive(d) {
+		return &folderAdapter{Dir: rec.Target}, nil
+	}
+	return d, nil
 }
 
-// stubRefusal is why the seat cannot be pushed to through d, "" when it can:
-// a harness whose adapter is the Stub has no deliver command, and the refusal
-// names the card that brings it one.
-func stubRefusal(harness string, d friend.Deliverer) string {
-	s, ok := d.(friend.Stub)
-	if !ok {
-		return ""
+// passive says d is the adapter of a harness with no deliver command: nova-friend's
+// Stub, or Claude Code's wake file, which puts no turn into a session.
+func passive(d friend.Deliverer) bool {
+	_, ok := d.(interface{ Passive() })
+	return ok
+}
+
+// folderAdapter is the seat's adapter for a harness with no deliver command
+// (sprint.AdapterFolder; docs/SPEC-SPRINT.md, "The push proof"): Deliver writes
+// the text as one file into Dir and answers 0. A push check is written as
+// PROOF-<nonce>, and the checks before it are removed, so the folder holds the
+// one the session answers; any other text as PUSH-<clock>-<n>.md, the shape the
+// push loop writes a judgment in. Each file is written under a dot name and
+// renamed, so a watch never sees half of one. A Dir that is not a directory is
+// a failure naming it, and nothing is made.
+type folderAdapter struct{ Dir string }
+
+func (f *folderAdapter) Deliver(_ context.Context, text string) (int, error) {
+	if fi, err := os.Stat(f.Dir); err != nil || !fi.IsDir() {
+		return 0, fmt.Errorf("the folder adapter writes into %s, and it is not a directory: make it, or install the seat with the folder the session watches", f.Dir)
 	}
-	why := harness + "'s adapter is the Stub, with no deliver command: the push loop cannot reach a " + harness + " session, so the seat cannot be held from one"
-	if card, ok := pushAdapterCards[harness]; ok {
-		why += " until " + card + " lands"
-	} else if s.Reason != "" {
-		why += " (" + s.Reason + ")"
+	name := "PUSH-" + time.Now().UTC().Format("20060102T150405Z") + "-" + pushNonce()[:8] + ".md"
+	nonce, check := strings.CutPrefix(text, sprint.PushCheckPrefix)
+	if check {
+		nonce, _, _ = strings.Cut(nonce, "\n")
+		name = sprint.PushProofFilePrefix + strings.TrimSpace(nonce)
 	}
-	return why + "; nothing was written"
+	tmp, err := os.CreateTemp(f.Dir, ".push-*")
+	if err != nil {
+		return 0, err
+	}
+	_, err = tmp.WriteString(text)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), filepath.Join(f.Dir, name))
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name()) // ignored: the write already failed, and that is the error said
+		return 0, err
+	}
+	if check {
+		f.dropOldProofs(name)
+	}
+	return 0, nil
+}
+
+// dropOldProofs removes every PROOF-* file in Dir but keep: only the last
+// check's answer counts (sprint.PushPong), and the folder is not left to fill.
+func (f *folderAdapter) dropOldProofs(keep string) {
+	entries, _ := os.ReadDir(f.Dir) // ignored: the check was written; an old proof left behind is answered by nothing, and the next write sweeps it
+	for _, e := range entries {
+		if e.Name() != keep && strings.HasPrefix(e.Name(), sprint.PushProofFilePrefix) && e.Type().IsRegular() {
+			_ = os.Remove(filepath.Join(f.Dir, e.Name())) // ignored: a stale proof left behind is answered by nothing
+		}
+	}
+}
+
+// sameDir says a and b are one directory.
+func sameDir(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	return err == nil && os.SameFile(fa, fb)
 }
 
 // readPush is name's push record; ok false when there is none.
@@ -141,6 +210,24 @@ func pushGate(ctx context.Context, st *store.Store, name string, now time.Time) 
 	return sprint.PushDown(name, rec, ok, now), nil
 }
 
+// pushSaid is name's push as the seat's status says it, "adapter=<a>
+// proven=<RFC3339>", proven=- while the seat has no live proof; "" when name
+// is not armed or is no one.
+func pushSaid(ctx context.Context, st *store.Store, name string, now time.Time) (string, error) {
+	if name == "" || !pushArmed(name) {
+		return "", nil
+	}
+	rec, ok, err := readPush(ctx, st, name)
+	if err != nil {
+		return "", err
+	}
+	proven := "-"
+	if sprint.PushLive(rec, ok, now) {
+		proven = rec.Proven.UTC().Format(time.RFC3339)
+	}
+	return "adapter=" + oneline.Field(rec.AdapterName()) + " proven=" + proven, nil
+}
+
 // pushNonce is a fresh nonce for a push check.
 func pushNonce() string {
 	b := make([]byte, 8)
@@ -149,15 +236,15 @@ func pushNonce() string {
 }
 
 // cmdSeatPush is seat push: name's push record. With --harness and --target it
-// records the harness and its deliver target (a harness whose adapter is the
-// Stub is refused, naming its card); with --sent it records a check delivered,
+// records the harness and its deliver target (a harness with no deliver command
+// gets the folder adapter, and its target must be a directory); with --sent it records a check delivered,
 // or with --failed one that failed (the push loop's own report); with neither
 // it prints the record and whether the seat is live.
 func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	const name = "seat push"
 	fs, c := a.verbSetup("seat")
-	harness := fs.String("harness", "", "the harness the AI holding the seat runs in: its adapter delivers each push into the session")
-	target := fs.String("target", "", "with --harness, the session's directory, where the adapter delivers")
+	harness := fs.String("harness", "", "the harness the AI holding the seat runs in: its adapter delivers each push into the session (a harness with no deliver command, claude, gets the folder adapter: each push a file in --target)")
+	target := fs.String("target", "", "with --harness, the session's directory, where the adapter delivers (for the folder adapter, the directory the session watches, which must be there)")
 	session := fs.String("session", "", "with --harness, the session's id, for a harness that names one (default: the adapter's newest in --target)")
 	sent := fs.String("sent", "", "the push loop's report: the nonce of the check it delivered")
 	failed := fs.String("failed", "", "with --sent, why the delivery of the check failed")
@@ -186,8 +273,8 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	now := a.now()
 	switch {
 	case *harness != "":
-		next := sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session}
-		if why := a.pushTargetRefusal(next); why != "" {
+		next, why := seatPushTarget(sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session})
+		if why != "" {
 			return refuse(stderr, name, why)
 		}
 		if err := writePush(ctx, st, next); err != nil {
@@ -206,17 +293,27 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	return a.sayPush(rec, ok, now, c.json, stdout)
 }
 
-// pushTargetRefusal is why rec may not be recorded, "" is may: a name, a known
-// harness, a target, and an adapter that is no Stub.
-func (a *app) pushTargetRefusal(rec sprint.PushRecord) string {
+// seatPushTarget is rec as it is recorded, with its adapter, and why it may not
+// be, "" is may: a name, a known harness and a target; a harness with no
+// deliver command (nova-friend's adapter is passive) gets the folder adapter,
+// and its target must be a directory that is there.
+func seatPushTarget(rec sprint.PushRecord) (sprint.PushRecord, string) {
+	rec.Adapter = ""
 	if why := sprint.NotPushTarget(rec); why != "" {
-		return why
+		return rec, why
 	}
 	d, err := friend.NewDeliverer(rec.Harness, rec.Target, rec.Session, friend.RealExec, nil)
 	if err != nil {
-		return err.Error()
+		return rec, err.Error()
 	}
-	return stubRefusal(rec.Harness, d)
+	if !passive(d) {
+		return rec, ""
+	}
+	rec.Adapter = sprint.AdapterFolder
+	if fi, err := os.Stat(rec.Target); err != nil || !fi.IsDir() {
+		return rec, rec.Harness + " has no deliver command, so the push loop writes each check and judgment as a file into --target, the folder the session watches, and " + rec.Target + " is not a directory; nothing was written"
+	}
+	return rec, ""
 }
 
 // sayPush prints the record: PUSH OK while the seat is live, else PUSH DOWN with
@@ -227,11 +324,15 @@ func (a *app) sayPush(rec sprint.PushRecord, ok bool, now time.Time, asJSON bool
 		b, _ := json.Marshal(map[string]any{"record": rec, "recorded": ok, "live": why == "", "why": why}) // ignored: a record of strings and times always encodes
 		fmt.Fprintln(stdout, string(b))
 	} else {
-		line := fmt.Sprintf("name=%s harness=%s target=%s", oneline.Field(rec.Name), oneline.Field(orDashStr(rec.Harness, "-")), oneline.Field(orDashStr(rec.Target, "-")))
+		line := fmt.Sprintf("name=%s harness=%s target=%s adapter=%s", oneline.Field(rec.Name), oneline.Field(orDashStr(rec.Harness, "-")), oneline.Field(orDashStr(rec.Target, "-")), oneline.Field(rec.AdapterName()))
 		if why == "" {
 			fmt.Fprintf(stdout, "PUSH OK %s proven=%s\n", line, rec.Proven.UTC().Format(time.RFC3339))
 		} else {
-			fmt.Fprintf(stdout, "PUSH DOWN %s why=%s remedy=%s\n", line, oneline.Quote(why), oneline.Quote(sprint.PushSetup(rec.Name, rec, ok)))
+			remedy := sprint.PushSetup(rec.Name, rec, ok)
+			if ok && rec.Adapter == sprint.AdapterFolder {
+				remedy += "; then, " + sprint.FolderSteps(rec)
+			}
+			fmt.Fprintf(stdout, "PUSH DOWN %s why=%s remedy=%s\n", line, oneline.Quote(why), oneline.Quote(remedy))
 		}
 	}
 	if why != "" {
@@ -364,9 +465,6 @@ func (a *app) deliverPush(ctx context.Context, rec sprint.PushRecord, text strin
 	if err != nil {
 		return err.Error()
 	}
-	if why := stubRefusal(rec.Harness, d); why != "" {
-		return why
-	}
 	dctx, cancel := context.WithTimeout(ctx, sprint.PushAnswerBound)
 	defer cancel()
 	exit, err := d.Deliver(dctx, text)
@@ -384,7 +482,9 @@ func (a *app) deliverPush(ctx context.Context, rec sprint.PushRecord, text strin
 
 // pushJudgments delivers the groups just written for holder into the holder's
 // session as one turn, through the same adapter as the proof: the files are the
-// record of what was pushed, and the session is where it is read.
+// record of what was pushed, and the session is where it is read. A folder
+// adapter whose folder is the holder's inbox has them already: the files the
+// loop wrote are the delivery, and nothing is written twice.
 func (a *app) pushJudgments(ctx context.Context, src inboxSource, holder string, texts []string, asJSON bool, stdout io.Writer) {
 	say := pushSayer(asJSON, stdout)
 	pr, ok := src.(pushProver)
@@ -394,6 +494,10 @@ func (a *app) pushJudgments(ctx context.Context, src inboxSource, holder string,
 	rec, found, err := pr.pushRecord(ctx, holder)
 	if err != nil || !found {
 		return // the proof says PUSH DOWN for it at the next look
+	}
+	if inbox, _, ok := a.seatInbox(holder); ok && rec.Adapter == sprint.AdapterFolder && sameDir(rec.Target, inbox) {
+		say("OK", holder, "", "")
+		return
 	}
 	if why := a.deliverPush(ctx, rec, "NOVA SPRINT INBOX: new for the coordinator\n"+strings.Join(texts, "\n")); why != "" {
 		say("DOWN", holder, "", "the judgments were written and not delivered: "+why)

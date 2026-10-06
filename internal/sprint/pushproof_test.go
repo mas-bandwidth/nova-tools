@@ -75,8 +75,36 @@ func TestTheSeatCheckSaysPushDownWithTheRemedy(t *testing.T) {
 	assert.False(t, ok, "an unmeasured push says no line")
 	l, ok := line(PushM{Measured: true, Holder: "rowan"})
 	require.True(t, ok)
-	assert.Equal(t, `MACHINERY push DOWN holder=rowan harness=- why="rowan has no push target recorded: the push loop cannot reach the session" remedy="nova-sprint seat install --actor rowan --harness <harness> --target <session dir>"`, l.String())
+	assert.Equal(t, `MACHINERY push DOWN holder=rowan harness=- adapter=- why="rowan has no push target recorded: the push loop cannot reach the session" remedy="nova-sprint seat install --actor rowan --harness <harness> --target <session dir>"`, l.String())
 	rec := PushRecord{Name: "rowan", Harness: "opencode", Target: "/w", Nonce: "n1", Sent: now.Add(-2 * time.Minute), Proven: now.Add(-time.Minute), PongOf: "n1"}
 	l, _ = line(PushM{Measured: true, Holder: "rowan", Record: rec, Recorded: true})
-	assert.Equal(t, "MACHINERY push OK holder=rowan harness=opencode proven=1m0s ago", l.String())
+	assert.Equal(t, "MACHINERY push OK holder=rowan harness=opencode adapter=opencode proven=1m0s ago", l.String())
+}
+
+// A seat on the folder adapter is refused with the setup and the two commands
+// the session runs, the Monitor on its folder and the answer to the last check
+// written there; the seat check names the adapter.
+func TestAFolderSeatIsRefusedWithItsTwoCommands(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 6, 13, 0, 0, 0, time.UTC)
+	rec := PushRecord{Name: "rowan", Harness: "claude", Adapter: AdapterFolder, Target: "/w/rowan's inbox"}
+	watch := `d='/w/rowan'\''s inbox'; s=$(ls -1 "$d"); while sleep 5; do n=$(ls -1 "$d"); [ -n "$n" ] && printf '%s\n' "$n" | grep -vxF "$s" | sed "s|^|$d/|"; s=$n; done`
+	assert.Equal(t, watch, FolderWatch(rec.Target))
+	assert.Equal(t, "PUSH DOWN: no push check has been delivered into rowan's claude session yet: is inbox --wait --push seat running?; a coordinator that cannot be reached is not a coordinator, and nothing was changed; run: nova-sprint seat install --actor rowan --harness claude --target /w/rowan's inbox; then, from inside the session, watch the folder with a Monitor: "+watch+" ; and answer the PROOF-<nonce> file it shows: nova-sprint seat pong <nonce> --actor rowan", PushDown("rowan", rec, true, now))
+	rec = PushSent(rec, "n1", "", now)
+	assert.Contains(t, PushDown("rowan", rec, true, now), "answer the PROOF-n1 file it shows: nova-sprint seat pong n1 --actor rowan")
+	rec, why := PushPong(rec, true, "n1", now)
+	require.Empty(t, why)
+	assert.Empty(t, PushDown("rowan", rec, true, now), "proven")
+	assert.Equal(t, "folder", rec.AdapterName())
+	assert.Equal(t, "claude", PushRecord{Harness: "claude"}.AdapterName())
+	assert.Equal(t, "-", PushRecord{}.AdapterName())
+	l := JudgeSeatCheck(SeatCheckMeasures{Push: PushM{Measured: true, Holder: "rowan", Record: rec, Recorded: true}, Errs: map[string]string{}}, now.Add(time.Minute)).Lines
+	var line string
+	for _, x := range l {
+		if x.Thing == SeatCheckPush {
+			line = x.String()
+		}
+	}
+	assert.Equal(t, "MACHINERY push OK holder=rowan harness=claude adapter=folder proven=1m0s ago", line)
 }

@@ -29,13 +29,26 @@ const (
 // as the first words of its turn.
 const PushCheckPrefix = "NOVA SPRINT PUSH CHECK "
 
-// PushRecord is one name's push record: the harness and its deliver target (a
-// directory, and a session where the harness names one), the check last
-// delivered (its nonce and when), the last delivery failure, and the last pong
-// that carried a delivered nonce.
+// AdapterFolder is the adapter of a harness with no deliver command (Claude
+// Code's, and every harness whose nova-friend adapter is passive): the push
+// loop writes each check and each pushed message as one file into the target
+// directory, and the session watches that directory with a Monitor
+// (FolderWatch) and answers the check's file with seat pong (FolderProve).
+const AdapterFolder = "folder"
+
+// PushProofFilePrefix names the file a check is written as by the folder
+// adapter: <target>/PROOF-<nonce>.
+const PushProofFilePrefix = "PROOF-"
+
+// PushRecord is one name's push record: the harness, the adapter the push loop
+// delivers through (AdapterFolder, or "" for the harness's own deliver
+// command) and its deliver target (a directory, and a session where the
+// harness names one), the check last delivered (its nonce and when), the last
+// delivery failure, and the last pong that carried a delivered nonce.
 type PushRecord struct {
 	Name    string    `json:"name"`
 	Harness string    `json:"harness"`
+	Adapter string    `json:"adapter,omitempty"`
 	Target  string    `json:"target"`
 	Session string    `json:"session,omitempty"`
 	Nonce   string    `json:"nonce,omitempty"`
@@ -44,6 +57,48 @@ type PushRecord struct {
 	Proven  time.Time `json:"proven,omitzero"`
 	PongOf  string    `json:"pong_of,omitempty"`
 }
+
+// AdapterName is the adapter the push loop delivers through: the record's
+// adapter, else the harness's own ("-" when there is neither).
+func (r PushRecord) AdapterName() string {
+	switch {
+	case r.Adapter != "":
+		return r.Adapter
+	case r.Harness != "":
+		return r.Harness
+	}
+	return "-"
+}
+
+// FolderWatch is the command a session on the folder adapter runs as a Monitor
+// (a background command whose every line of output is an event): every 5
+// seconds it lists dir and prints the path of each file that was not there
+// the time before, so each PROOF-<nonce> and each judgment the push loop
+// writes is one event. It writes nothing.
+func FolderWatch(dir string) string {
+	d := shellQuote(dir)
+	return `d=` + d + `; s=$(ls -1 "$d"); while sleep 5; do n=$(ls -1 "$d"); [ -n "$n" ] && printf '%s\n' "$n" | grep -vxF "$s" | sed "s|^|$d/|"; s=$n; done`
+}
+
+// FolderProve is the command that answers the check written as
+// PROOF-<nonce>, run from inside the session: the existing seat pong.
+func FolderProve(name, nonce string) string {
+	return "nova-sprint seat pong " + nonce + " --actor " + orDash(name)
+}
+
+// FolderSteps is the two commands a session on the folder adapter runs, on one
+// line: the Monitor on the folder, and the answer to the last check written
+// there (<nonce> while none was).
+func FolderSteps(rec PushRecord) string {
+	nonce := "<nonce>"
+	if rec.Nonce != "" && rec.Failed == "" {
+		nonce = rec.Nonce
+	}
+	return "from inside the session, watch the folder with a Monitor: " + FolderWatch(rec.Target) + " ; and answer the " + PushProofFilePrefix + nonce + " file it shows: " + FolderProve(rec.Name, nonce)
+}
+
+// shellQuote is s in single quotes for a POSIX shell.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // PushSetup is the command that records name's push target, installs the push
 // loop and starts the proof: harness is the record's, else a placeholder.
@@ -89,7 +144,11 @@ func PushDown(name string, rec PushRecord, ok bool, now time.Time) string {
 	if why == "" {
 		return ""
 	}
-	return "PUSH DOWN: " + why + "; a coordinator that cannot be reached is not a coordinator, and nothing was changed; run: " + PushSetup(name, rec, ok)
+	line := "PUSH DOWN: " + why + "; a coordinator that cannot be reached is not a coordinator, and nothing was changed; run: " + PushSetup(name, rec, ok)
+	if ok && rec.Adapter == AdapterFolder {
+		line += "; then, " + FolderSteps(rec)
+	}
+	return line
 }
 
 // PushDue says the push loop delivers a new check now: none delivered yet, the

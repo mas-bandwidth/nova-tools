@@ -121,12 +121,12 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	ta.ok("tick")
 	code, out, _ := ta.do("seat push")
 	require.Equal(t, 1, code, out)
-	assert.Contains(t, out, "PUSH DOWN name="+name+" harness=- target=-", out)
+	assert.Contains(t, out, "PUSH DOWN name="+name+" harness=- target=- adapter=-", out)
 	// seat check says PUSH DOWN with the remedy
 	ta.a.outside = mockHealthyOutside()
 	code, out, _ = ta.do("seat check")
 	require.Equal(t, 1, code, out)
-	assert.Contains(t, out, "MACHINERY push DOWN holder="+name+" harness=- why=", out)
+	assert.Contains(t, out, "MACHINERY push DOWN holder="+name+" harness=- adapter=- why=", out)
 	assert.Contains(t, out, "remedy=\"nova-sprint seat install --actor "+name, out)
 
 	// the seat is given to no name without a live proof
@@ -138,14 +138,15 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	assert.Contains(t, errs, "coordinator REFUSED: PUSH DOWN: "+other+" has no push target recorded", errs)
 	assert.Equal(t, name, ta.holder())
 
-	// a harness whose adapter is the Stub cannot hold the seat
+	// a harness with no deliver command gets the folder adapter, and a target
+	// that is no directory is refused with nothing written
 	target := t.TempDir()
-	code, _, errs = ta.do("seat install --redis 127.0.0.1:6381 --harness copilot --target " + target)
+	code, _, errs = ta.do("seat install --redis 127.0.0.1:6381 --harness copilot --target " + filepath.Join(target, "missing"))
 	require.Equal(t, 2, code, errs)
-	assert.Contains(t, errs, "copilot's adapter is the Stub", errs)
+	assert.Contains(t, errs, "copilot has no deliver command, so the push loop writes each check and judgment as a file into --target", errs)
 	_, ok, err := readPush(ctx, st, name)
 	require.NoError(t, err)
-	require.False(t, ok, "a Stub's install wrote a push record")
+	require.False(t, ok, "a refused install wrote a push record")
 	code, _, errs = ta.do("seat install --redis 127.0.0.1:6381 --target " + target)
 	require.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "--harness <name> is required", errs)
@@ -182,7 +183,7 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	ta.ok("add --stream s1 --count 2")
 	assert.Contains(t, ta.ok("seat push"), "PUSH OK name="+name+" harness=opencode")
 	_, out, _ = ta.do("seat check")
-	assert.Contains(t, out, "MACHINERY push OK holder="+name+" harness=opencode proven=", out)
+	assert.Contains(t, out, "MACHINERY push OK holder="+name+" harness=opencode adapter=opencode proven=", out)
 
 	// the judgments go into the session too; the file stays the record
 	said.Reset()
@@ -226,4 +227,135 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, ok, "teardown left %s's push record", n)
 	}
+}
+
+// pushArmedOnly arms a name for the push proof and leaves it the real adapter.
+type pushArmedOnly struct{}
+
+// A Claude Code session has no deliver command, so its seat is reached through
+// the folder adapter (docs/SPEC-SPRINT.md, "The push proof"): seat install
+// records adapter=folder and prints the two commands the session runs, the
+// Monitor on the folder and seat pong; the push loop writes the check as
+// PROOF-<nonce> into the folder; until the session answers that nonce every
+// coordinator verb is refused with the two commands, the nonce filled in; the
+// answer proves the seat, the status says adapter=folder proven=<time>, and the
+// next check replaces the file. Judgments already written into the folder are
+// not written again.
+func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) {
+	t.Parallel()
+	const name = "pushproof-folder"
+	ta, _ := pushProofSprint(t, name)
+	pushTests.Store(name, pushArmedOnly{}) // the real adapter: the folder
+	ctx := context.Background()
+	ta.ok("init --readers reader-a,reader-b --members m1,m2 --owner glenn")
+	st, err := ta.a.store(common{redis: "mem:0", actor: name})
+	require.NoError(t, err)
+	home, err := ta.a.home()
+	require.NoError(t, err)
+	folder := filepath.Join(home, name+"-working", "inbox", "sprint-judgments")
+
+	// the folder must be there: nothing is made, nothing recorded
+	code, _, errs := ta.do("seat install --redis 127.0.0.1:6381 --harness claude --target " + folder)
+	require.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "claude has no deliver command, so the push loop writes each check and judgment as a file into --target, the folder the session watches, and "+folder+" is not a directory; nothing was written", errs)
+	_, ok, err := readPush(ctx, st, name)
+	require.NoError(t, err)
+	require.False(t, ok, "a refused install wrote a push record")
+	require.NoError(t, os.MkdirAll(folder, 0o755))
+
+	// the install records adapter=folder and prints the two commands
+	out := ta.ok("seat install --redis 127.0.0.1:6381 --harness claude --target " + folder)
+	assert.Contains(t, out, "SEAT INSTALL OK unit=", out)
+	assert.Contains(t, out, "  push: claude into "+folder+" adapter=folder: each check is written there as PROOF-<nonce>", out)
+	assert.Contains(t, out, "  monitor: "+sprint.FolderWatch(folder)+"\n", out)
+	assert.Contains(t, out, "  prove: nova-sprint seat pong <nonce> --actor "+name+"\n", out)
+	rec, ok, err := readPush(ctx, st, name)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, sprint.AdapterFolder, rec.Adapter)
+
+	// no proof, no seat: the refusal carries the two commands
+	ta.refusedPushDown("add --stream s1 --count 2", "no push check has been delivered into "+name+"'s claude session yet")
+	_, _, errs = ta.do("add --stream s1 --count 2")
+	assert.Contains(t, errs, "; then, from inside the session, watch the folder with a Monitor: "+sprint.FolderWatch(folder)+" ; and answer the PROOF-<nonce> file it shows: nova-sprint seat pong <nonce> --actor "+name, errs)
+
+	// the push loop writes the check into the folder as PROOF-<nonce>
+	src := &storeSource{st: st}
+	var said bytes.Buffer
+	ta.a.prove(ctx, src, name, false, &said)
+	proofs, err := filepath.Glob(filepath.Join(folder, "PROOF-*"))
+	require.NoError(t, err)
+	require.Len(t, proofs, 1, "one check, one file")
+	nonce := strings.TrimPrefix(filepath.Base(proofs[0]), "PROOF-")
+	body, err := os.ReadFile(proofs[0])
+	require.NoError(t, err)
+	assert.Equal(t, sprint.PushCheckText(name, nonce), string(body), "the file is the check")
+	assert.Contains(t, said.String(), "PUSH CHECK name="+name+" nonce="+nonce+"\n")
+	ta.refusedPushDown("add --stream s1 --count 2", "the push check "+nonce+" went into "+name+"'s claude session and no pong carrying it came back")
+	_, _, errs = ta.do("add --stream s1 --count 2")
+	assert.Contains(t, errs, "answer the PROOF-"+nonce+" file it shows: nova-sprint seat pong "+nonce+" --actor "+name, errs)
+	code, out, _ = ta.do("seat push")
+	require.Equal(t, 1, code, out)
+	assert.Contains(t, out, "PUSH DOWN name="+name+" harness=claude target="+folder+" adapter=folder why=", out)
+	assert.Contains(t, out, "nova-sprint seat pong "+nonce+" --actor "+name, out)
+
+	// only that nonce proves it
+	code, _, errs = ta.do("seat pong 0000000000000000")
+	require.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "only the session's answer to the last check counts", errs)
+	out = ta.ok("seat pong " + nonce)
+	assert.Contains(t, out, "SEAT PONG OK name="+name+" nonce="+nonce, out)
+	proven := ta.a.now().UTC().Format(time.RFC3339)
+
+	// proven: the verbs run, and the status says adapter=folder proven=<time>
+	ta.ok("add --stream s1 --count 2")
+	assert.Contains(t, ta.ok("seat push"), "PUSH OK name="+name+" harness=claude target="+folder+" adapter=folder proven="+proven)
+	ta.a.outside = mockHealthyOutside()
+	_, out, _ = ta.do("seat check")
+	assert.Contains(t, out, "MACHINERY push OK holder="+name+" harness=claude adapter=folder proven=", out)
+	v := ta.coordView("")
+	assert.Contains(t, v.Sum, " | push adapter=folder proven="+proven, v.Sum)
+
+	// judgments the loop wrote into the folder are not written again
+	before, err := os.ReadDir(folder)
+	require.NoError(t, err)
+	said.Reset()
+	ta.a.pushJudgments(ctx, src, name, []string{"JUDGMENT one"}, false, &said)
+	after, err := os.ReadDir(folder)
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "the folder is the inbox: the files are the delivery")
+	assert.Contains(t, said.String(), "PUSH OK name="+name)
+	// into any other folder a judgment is one file, the text whole
+	elsewhere := t.TempDir()
+	exit, err := (&folderAdapter{Dir: elsewhere}).Deliver(ctx, "JUDGMENT two\n")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	pushed, err := filepath.Glob(filepath.Join(elsewhere, "PUSH-*.md"))
+	require.NoError(t, err)
+	require.Len(t, pushed, 1)
+	body, err = os.ReadFile(pushed[0])
+	require.NoError(t, err)
+	assert.Equal(t, "JUDGMENT two\n", string(body))
+
+	// re-proven on the schedule: the next check replaces the file
+	ta.step(sprint.PushProofEvery)
+	ta.a.prove(ctx, src, name, false, &said)
+	proofs, err = filepath.Glob(filepath.Join(folder, "PROOF-*"))
+	require.NoError(t, err)
+	require.Len(t, proofs, 1, "the old check is removed")
+	again := strings.TrimPrefix(filepath.Base(proofs[0]), "PROOF-")
+	require.NotEqual(t, nonce, again)
+	ta.step(sprint.PushAnswerBound + time.Second)
+	ta.refusedPushDown("add --stream s2 --count 1 --one", "last pong is 15m1s old")
+	ta.ok("seat pong " + again)
+	ta.ok("add --stream s2 --count 1 --one")
+
+	// the seat goes to a name the folder reaches, and says so
+	other := "pushproof-folder-b"
+	pushTests.Store(other, pushArmedOnly{})
+	t.Cleanup(func() { pushTests.Delete(other) })
+	now := ta.a.now()
+	require.NoError(t, writePush(ctx, st, sprint.PushRecord{Name: other, Harness: "claude", Adapter: sprint.AdapterFolder, Target: folder, Nonce: "n1", Sent: now, Proven: now, PongOf: "n1"}))
+	out = ta.ok("coordinator " + other + " --reason 'its folder is proven'")
+	assert.Contains(t, out, "COORDINATOR OK holder="+other+" from="+name+" by="+name+" given adapter=folder proven="+now.UTC().Format(time.RFC3339), out)
 }

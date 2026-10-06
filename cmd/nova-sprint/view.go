@@ -137,6 +137,7 @@ type coordinatorView struct {
 	At     time.Time   `json:"at"`
 	Epoch  uint64      `json:"epoch"`
 	Seat   string      `json:"seat,omitempty"`
+	Push   string      `json:"push,omitempty"` // the holder's push: adapter=<a> proven=<RFC3339|->
 	Cursor string      `json:"cursor"`
 	N      coordCounts `json:"n"`
 	Items  []viewItem  `json:"items"`
@@ -276,7 +277,15 @@ func (a *app) cmdViewWorker(args []string, stdout, stderr io.Writer) int {
 func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (coordinatorView, error) {
 	now := a.now()
 	v := coordinatorView{View: "coordinator", Schema: viewSchema, At: now.UTC().Truncate(time.Second), Items: []viewItem{}}
-	st, err := st.Pinned(ctx)
+	// the holder's push, read where seat push writes it: the store as given, never an epoch's
+	holder, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return v, err
+	}
+	if v.Push, err = pushSaid(ctx, st, holder, now); err != nil {
+		return v, err
+	}
+	st, err = st.Pinned(ctx)
 	if err != nil {
 		return v, err
 	}
@@ -301,6 +310,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	if v.Seat, err = st.B.Coordinator(ctx); err != nil {
 		return v, err
 	}
+
 	machine, _, merr := st.Machine(ctx) // a store that keeps no machine record: the machine's alarm is not drawn
 	within := func(stamp string) bool {
 		t, err := time.Parse(time.RFC3339, stamp)
@@ -656,9 +666,13 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	default:
 		state = "STOPPED"
 	}
-	return fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h",
+	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h",
 		cmp.Or(v.Seat, "-"), state, n.J, behind, types[itemAlarm], types[itemRequest], types[itemSentinel], types[itemFriend], types[itemMachine],
 		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules)
+	if v.Push != "" {
+		sum += " | push " + v.Push
+	}
+	return sum
 }
 
 // coordinatorText is the view in at most viewTextLines lines: the summary, then an item a

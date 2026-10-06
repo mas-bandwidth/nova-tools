@@ -66,8 +66,8 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	dir := fs.String("dir", "", "the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
 	logf := fs.String("log", "", "the file the loop's lines go to, macOS (default: ~/Library/Logs/nova-sprint-seat-push.log); on Linux they are in the journal")
 	dry := fs.Bool("dry-run", false, "print the unit and where it would go, and write and load nothing")
-	harness := fs.String("harness", "", "the harness the seat's AI runs in (required): the push loop delivers each judgment, and the push proof, into the session through its adapter")
-	target := fs.String("target", "", "the session's directory, where the harness's adapter delivers (required)")
+	harness := fs.String("harness", "", "the harness the seat's AI runs in (required): the push loop delivers each judgment, and the push proof, into the session through its adapter; a harness with no deliver command (claude) gets the folder adapter, each one a file written into --target")
+	target := fs.String("target", "", "the session's directory, where the harness's adapter delivers (required); for the folder adapter, the directory the session watches with a Monitor, which must be there")
 	session := fs.String("session", "", "the session's id, for a harness that names one (default: the adapter's newest in --target)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
@@ -75,8 +75,8 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	}
 	// the push target first: a loop that cannot reach the session is no push (pushproof.go)
 	// (a dry run with no --harness still prints the unit, and says the install wants one)
-	push := sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session}
-	if why := a.pushTargetRefusal(push); why != "" && (!*dry || push.Harness != "") {
+	push, why := seatPushTarget(sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session})
+	if why != "" && (!*dry || push.Harness != "") {
 		return refuse(stderr, name, why+"; run: "+sprint.PushSetup(c.actor, push, push.Harness != ""))
 	}
 	goos := a.seatOS()
@@ -131,12 +131,18 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args()}) // ignored: strings and bools always encode
+		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args(), "adapter": push.AdapterName()}) // ignored: strings and bools always encode
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
 	fmt.Fprintf(stdout, "SEAT INSTALL OK unit=%s written=%t loaded=true\n", oneline.Field(r.Path), r.Changed)
 	fmt.Fprintf(stdout, "  runs: %s\n", strings.Join(u.Args(), " "))
+	if push.Adapter == sprint.AdapterFolder {
+		fmt.Fprintf(stdout, "  push: %s into %s adapter=folder: each check is written there as %s<nonce> and each judgment as a file; the seat is live once the session answers the check (seat push shows it)\n", oneline.Field(push.Harness), oneline.Field(push.Target), sprint.PushProofFilePrefix)
+		fmt.Fprintf(stdout, "  monitor: %s\n", sprint.FolderWatch(push.Target))
+		fmt.Fprintf(stdout, "  prove: %s\n", sprint.FolderProve(push.Name, "<nonce>"))
+		return 0
+	}
 	fmt.Fprintf(stdout, "  push: %s into %s; the seat is live once the session answers the push check with nova-sprint seat pong (seat push shows it)\n", oneline.Field(push.Harness), oneline.Field(push.Target))
 	return 0
 }
@@ -146,7 +152,7 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 // the session.
 func (a *app) recordPushTarget(fs flagSet, c common, push sprint.PushRecord, stdout, stderr io.Writer) int {
 	const name = "seat install"
-	words := []string{"push", "--actor", push.Name, "--harness", push.Harness, "--target", push.Target}
+	words := []string{"push", "--actor", push.Name, "--harness", push.Harness, "--target", push.Target} // the server derives the adapter again
 	if push.Session != "" {
 		words = append(words, "--session", push.Session)
 	}
