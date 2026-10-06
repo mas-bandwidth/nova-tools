@@ -235,7 +235,7 @@ func TestAMistypedFlagIsAnsweredWithTheFlagsThereAre(t *testing.T) {
 	code, out, errs := h.run(t, "machine", "list", "--jsno")
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
-	assert.Equal(t, "nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis; run: nova-config machine list -h\n", errs)
+	assert.Equal(t, "nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis, --seat; run: nova-config machine list -h\n", errs)
 	code, _, errs = h.run(t, "machine", "list", "--pg")
 	assert.Equal(t, 2, code)
 	assert.Equal(t, "nova-config machine list REFUSED: --pg wants a value; run: nova-config machine list -h\n", errs)
