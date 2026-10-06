@@ -166,25 +166,89 @@ type CardInfo struct {
 
 // CardOf reads a primary and every card of it by identity.
 func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
+	v, _, err := st.cardOf(ctx, id, false)
+	return v, err
+}
+
+// CardReading is the whole view of one primary (`nova-sprint card`) from one read of the
+// tables: CardOf's answer, what holds it now and the work table's cards in their states.
+type CardReading struct {
+	CardInfo
+	// Held is what holds the primary now (Store.Held); nil when it was not asked for.
+	Held *sprint.Hold
+	// Line is the work table's cards in sprint.States, the line a card's place is told in.
+	Line []*sprint.Card
+}
+
+// CardRead is CardOf, Held and the work table's line of states from a single load of the
+// tables: the card verb read the work table whole three times, once for each, about 100
+// server-ms at 2,000 cards. held asks what holds the primary (not of an earlier epoch's
+// view); a failure to say it leaves Held nil, as a verb that prints without it. A pending
+// operation answers Held as Held does, and the load is then of the work table alone.
+func (st *Store) CardRead(ctx context.Context, id string, held bool) (CardReading, error) {
+	var r CardReading
+	st, err := st.pin(ctx)
+	if err != nil {
+		return r, err
+	}
+	var h sprint.Hold
+	all := false
+	if held {
+		if f, err := st.B.ReadFence(ctx); err == nil {
+			if f.Pending != nil {
+				h = sprint.Hold{ID: id, Place: id, Why: "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}
+				r.Held = &h
+			} else {
+				all = true
+			}
+		}
+	}
+	v, s, err := st.cardOf(ctx, id, all)
+	if err != nil || v.Primary == nil {
+		return CardReading{CardInfo: v}, err
+	}
+	r.CardInfo = v
+	r.Line = s.Work.Column(sprint.States...)
+	if all {
+		if hs, err := st.heldState(ctx, s, nil); err == nil {
+			hd := sprint.Holder(hs, s.Now, id)
+			r.Held = &hd
+		}
+	}
+	return r, nil
+}
+
+// cardOf is CardOf's reads, its tables loaded once: the work table, or every table when
+// all (what Held reads), with the records of the primary, its needs and the waiting cards'
+// needs read as well. It returns the snapshot it loaded.
+func (st *Store) cardOf(ctx context.Context, id string, all bool) (CardInfo, *sprint.Snapshot, error) {
 	var v CardInfo
 	st, err := st.pin(ctx)
 	if err != nil {
-		return v, err
+		return v, nil, err
 	}
 	rs, err := st.readSet(ctx, st.Names.Table(sprint.Work), []string{st.sid(id)})
 	if err != nil {
-		return v, err
+		return v, nil, err
 	}
 	m, ok := rs.Member(st.sid(id))
 	if !ok {
-		return v, nil
+		return v, nil, nil
 	}
 	v.Primary = card(m)
-	s, err := st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
-		return map[string][]string{sprint.Work: append([]string{id}, sprint.Split(v.Primary.F("needs"))...)}
+	tables := []string{sprint.Work}
+	if all {
+		tables = All
+	}
+	s, err := st.Load(ctx, tables, func(s *sprint.Snapshot) map[string][]string {
+		want := append([]string{id}, sprint.Split(v.Primary.F("needs"))...)
+		if all {
+			want = append(sprint.ResolveExtras(s), want...)
+		}
+		return map[string][]string{sprint.Work: want}
 	})
 	if err != nil {
-		return v, err
+		return v, nil, err
 	}
 	v.Needs, v.NeededBy = sprint.NeedsOf(s, id)
 	attempts := v.Primary.Int("attempt")
@@ -194,11 +258,11 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 			ids = append(ids, sprint.WorkCardID(id, k))
 		}
 		if v.Work, err = st.records(ctx, sprint.Fleet, ids); err != nil {
-			return v, err
+			return v, nil, err
 		}
 		shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Readers)})
 		if err != nil {
-			return v, err
+			return v, nil, err
 		}
 		ids = nil
 		for k := 1; k <= attempts; k++ {
@@ -208,20 +272,20 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 		}
 		if len(ids) > 0 {
 			if v.Reads, err = st.records(ctx, sprint.Readers, ids); err != nil {
-				return v, err
+				return v, nil, err
 			}
 		}
 	}
 	ms, err := st.records(ctx, sprint.Merge, []string{id})
 	if err != nil {
-		return v, err
+		return v, nil, err
 	}
 	if len(ms) == 1 {
 		v.Merge = ms[0]
 	}
 	open, err := st.B.OpenNotes(ctx)
 	if err != nil {
-		return v, err
+		return v, nil, err
 	}
 	open, _ = sprint.SplitOpen(open)
 	for _, o := range open {
@@ -229,7 +293,7 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 			v.Open = append(v.Open, o)
 		}
 	}
-	return v, nil
+	return v, s, nil
 }
 
 func contains(xs []string, x string) bool {
