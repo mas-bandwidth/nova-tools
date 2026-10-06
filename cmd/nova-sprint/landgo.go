@@ -19,6 +19,7 @@ package main
 // finding. A clone with no go.mod has no module and no gate.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -27,9 +28,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // landGoBudget bounds one go run in the clone: a build of the module, a vet, a test of
@@ -241,17 +244,138 @@ func treePackages(dir string) []string {
 }
 
 // treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
-// is green or the clone has no module, else the finding (gateWhy).
+// is green or the clone has no module, else the finding (gateWhy). When a fleet member
+// other than this machine is up, the go runs go to that member's Go lane through the
+// bench; otherwise they run in this process (goRun). The ledgers' update runs stay here.
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
-	for _, run := range gateRuns(tests, treePackages(dir)) {
-		if out, err := l.goRun(ctx, dir, run); err != nil {
+	runs := gateRuns(tests, treePackages(dir))
+	host := l.gateBenchHost(ctx)
+	if host == "" {
+		for _, run := range runs {
+			l.stage("gate", strings.Join(run, " "))
+			if out, err := l.goRun(ctx, dir, run); err != nil {
+				return gateWhy(run, err, out)
+			}
+		}
+		return ""
+	}
+	if err := l.takeGateLane(ctx, host); err != nil {
+		return gateWhy(runs[0], err, "")
+	}
+	defer l.giveGateLane(host)
+	var wall time.Duration
+	for _, run := range runs {
+		l.stage("gate", strings.Join(run, " "))
+		start := l.clock()
+		out, code, err := l.runOnBench(ctx, host, dir, run)
+		wall += l.clock().Sub(start)
+		if err != nil {
+			l.ranOnBench(host, wall)
 			return gateWhy(run, err, out)
 		}
+		if code != 0 {
+			l.ranOnBench(host, wall)
+			return gateWhy(run, fmt.Errorf("exit status %d", code), out)
+		}
+	}
+	l.ranOnBench(host, wall)
+	return ""
+}
+
+// gateBenchHost is an up fleet member other than this machine that bench.CheckHost
+// accepts, or "" when the gate runs here. Only the server's land loop sends the
+// gate out: a land command on its own (a hand land, the install walkthrough)
+// keeps it in this process. A unit test under the host guard with no bench seam
+// keeps it here too, so a member brought up in a test is not sshed to.
+func (l *lander) gateBenchHost(ctx context.Context) string {
+	if l == nil || l.a == nil || l.st == nil {
+		return ""
+	}
+	b := l.a.landState()
+	b.mu.Lock()
+	inLoop := b.flight != nil
+	seam := b.gateBench
+	b.mu.Unlock()
+	if !inLoop || (testguard.Refusing() && seam == nil) {
+		return ""
+	}
+	l.a.serial.Lock()
+	s, err := l.st.Load(ctx, []string{sprint.Fleet}, nil)
+	l.a.serial.Unlock()
+	if err != nil || s == nil {
+		return ""
+	}
+	self := l.a.machineName()
+	for _, m := range s.UpMembers() {
+		if self != "" && strings.EqualFold(m, self) {
+			continue
+		}
+		if bench.CheckHost(m) != nil {
+			continue
+		}
+		return m
 	}
 	return ""
+}
+
+// takeGateLane asks for machine's Go lane until it is granted. The wait is the
+// lane's own interval, not the land loop's sleep, so the beat keeps printing.
+func (l *lander) takeGateLane(ctx context.Context, machine string) error {
+	proc := "lane take go --machine " + machine + " --as " + landLaneWho
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		l.a.serial.Lock()
+		ans, err := l.st.LaneStep(ctx, sprint.LaneGo, machine, landLaneWho, false)
+		l.a.serial.Unlock()
+		if err != nil {
+			return err
+		}
+		if ans.Granted {
+			return nil
+		}
+		l.stage("lane", proc)
+		t := time.NewTimer(sprint.LaneAskEvery)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+// giveGateLane returns the Go lane. A cancelled landing still gives it back;
+// the hold expires at LaneHoldFor when the give does not land.
+func (l *lander) giveGateLane(machine string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	l.a.serial.Lock()
+	defer l.a.serial.Unlock()
+	_, _ = l.st.LaneStep(ctx, sprint.LaneGo, machine, landLaneWho, true) // ignored: the hold expires at LaneHoldFor when this give does not land
+}
+
+// runOnBench runs argv on host. A test's gateBench seam stands in for the bench;
+// otherwise bench.Run copies the tree and runs it there.
+func (l *lander) runOnBench(ctx context.Context, host, dir string, argv []string) (string, int, error) {
+	if l.a != nil {
+		if gate := l.a.landState().gate(); gate != nil {
+			return gate(ctx, host, dir, argv)
+		}
+	}
+	var buf bytes.Buffer
+	res, err := bench.Run(ctx, bench.Exec{}, bench.Options{
+		Hosts:  []string{host},
+		Dir:    dir,
+		Argv:   argv,
+		Stdout: &buf,
+		Stderr: &buf,
+	})
+	return buf.String(), res.Code, err
 }
 
 // gateCard is the tree gate on one card merged onto the batch branch at before: red, the
