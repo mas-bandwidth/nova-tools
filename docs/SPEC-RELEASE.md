@@ -565,6 +565,18 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 
 *Test: `TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment`.*
 
+## 16. `release check` is the gate, and a release ships when it says OK
+
+### release-check-frame
+
+`nova-sprint release check [--json] [--streams <glob>] [--check <name>]...` is the release gate (docs/SPEC-SPRINT.md, section 11, subsection release-check-frame). It reads and writes nothing, runs every check in the registry (`sprint.ReleaseChecks`), prints `RELEASE CHECK <name> ok|fail <evidence>` for each (on a fail the evidence names what to look at), then `RELEASE OK checks=<n>` or `RELEASE NOT READY failed=<n>`; exit 0 or 1, and 2 for usage. A release is cut when it prints `RELEASE OK`, and not before. The checks and their bars:
+
+| check | the bar |
+|---|---|
+| `no-stuck-friend` | no friend was stuck at any moment of the last 4 hours: stuck is a working card held past its deadline (her `friend_deadline`, else 2 hours, from its first take), or a card dealt to her and not taken past the dealt bound; read from the store's log, a spell that has ended counting while it overlaps the window; a fail names the friend, the card and the moment |
+
+Each later card of stream sprint-v1-release adds its row here with its check.
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
