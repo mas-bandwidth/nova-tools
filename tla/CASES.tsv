@@ -382,6 +382,7 @@ MCFriendPresenceBrokenClosedAnswers.cfg	MCFriendPresence.tla	invariant	UpHasRunn
 MCFriendPresenceBrokenDealDown.cfg	MCFriendPresence.tla	invariant	NoCardOffUp	check	friendpresence	required	-
 MCFriendPresenceBrokenLazyWithdraw.cfg	MCFriendPresence.tla	invariant	NoCardOffUp	check	friendpresence	required	-
 MCFriendPresenceBrokenBackToHeld.cfg	MCFriendPresence.tla	temporal	HeldCardDealtElsewhere	check	friendpresence	required	-
+MCFriendPresenceBrokenCtlStatus.cfg	MCFriendPresence.tla	temporal	ReadyTakenWhileUp	check	friendpresence	required	-
 MCReadsByRoom.cfg	MCReadsByRoom.tla	pass	-	ignore-terminal	readsbyroom	required	-
 MCReadsByRoomBrokenPair.cfg	MCReadsByRoom.tla	invariant	OneAtATime	ignore-terminal	readsbyroom	required	-
 MCReadsByRoomBrokenPairCost.cfg	MCReadsByRoom.tla	invariant	ReadsPerLanding	ignore-terminal	readsbyroom	required	-
