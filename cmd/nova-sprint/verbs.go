@@ -115,7 +115,7 @@ func init() {
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream archive", "<stream>...", "stream archive a b c", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(true, args, o, e) }},
 		{"stream unarchive", "<stream>...", "stream unarchive a", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(false, args, o, e) }},
-		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>] | --base <branch> [--reason <text>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
@@ -3008,7 +3008,12 @@ and nothing waits behind it (one note names it), and draws an archived stream
 again when a card not landed is in it. stream set <s> --read-tier pro
 puts the reads of the stream's cards on pro, over the sprint's read tier (set
 --read-tier); a read tier raises a card's reads and never lowers them below the
-card's own tier, and default takes the stream's off.`) + "\n"
+card's own tier, and default takes the stream's off. stream set <s> --base
+<branch> re-points the stream's not-yet-dealt cards and its cards queued to
+merge to a live base, rewriting each card's brief's BASE line and recording a
+brief revision; refused, nothing written, when origin holds no such branch or a
+card's PATHS are absent at its tip, and dealt and working cards keep their base
+and are listed.`) + "\n"
 }
 
 // cmdSet writes the sprint's settings (sprint.Set): its read tier, the tier every
@@ -3109,12 +3114,19 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	reason := fs.String("reason", "", "why the read tier is set, recorded on the stream row (the judgment 'raise the read tier of the stream?' names it)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	promotion := fs.Bool("promotion", false, "mark the streams the promotion stream: they alone take cards cut on dev or main, and land them there (--land-protected any); --promotion=false takes the mark off (--land-protected default)")
+	base := fs.String("base", "", "re-point the stream's not-yet-dealt cards and its cards queued to merge to this live base branch, rewriting each card's brief's BASE line (a brief revision); refused, nothing written, when origin holds no such branch or a card's PATHS are absent at its tip; dealt and working cards keep their base and are listed")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
 	var promotionGiven bool
 	fs.Visit(func(f *flag.Flag) { promotionGiven = promotionGiven || f.Name == "promotion" })
+	if *base != "" {
+		if len(names) == 0 || *tier != "" || *mark != "" || *release != "" || *prose != "" || *attempts != "" || *ans != "" || promotionGiven {
+			return refuse(stderr, "stream set", "--base is its own form: give one or more streams and --base alone (with --reason)")
+		}
+		return a.cmdStreamSetBase(*c, names, *base, *reason, stdout, stderr)
+	}
 	if promotionGiven {
 		// the promotion mark is the protected-branch mark for every repository
 		// (docs/SPEC-SPRINT.md section 7, protected-bases-pb-b.w2)
@@ -3131,6 +3143,75 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "stream set", err.Error())
 	}
 	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Prose: *prose, Attempts: *attempts, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
+}
+
+// cmdStreamSetBase is `stream set <stream>... --base <branch>`: the coordinator re-points a
+// stream's not-yet-dealt cards and its cards queued to merge to a live base, rewriting each
+// card's brief's BASE line and recording a brief revision (docs/SPEC-SPRINT.md,
+// stream-set-base-b.w3). It reads each card's repository in the lander's clone and refuses
+// whole, writing nothing, when origin holds no such branch or when a card's PATHS are absent
+// at the branch tip (the check add runs); dealt and working cards keep their base and are
+// listed.
+func (a *app) cmdStreamSetBase(c common, streams []string, base, reason string, stdout, stderr io.Writer) int {
+	ctx := context.Background()
+	st, err := a.store(c)
+	if err != nil {
+		return refuse(stderr, "stream set", err.Error())
+	}
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	if err != nil {
+		return a.readFailed("stream set", err, stderr)
+	}
+	l := &lander{a: a}
+	type repoBase struct {
+		dir, sha string
+		gone     bool
+	}
+	tips := map[string]repoBase{}
+	var order []string
+	for _, stn := range streams {
+		targets, _ := sprint.SetBaseTargets(s, stn)
+		for _, tc := range targets {
+			repo, _ := cardhdr.Value(tc.F("brief"), "REPO")
+			if repo == "" || tips[repo].dir != "" || slices.Contains(order, repo) {
+				continue
+			}
+			order = append(order, repo)
+		}
+	}
+	gone := false
+	for _, repo := range order {
+		dir, why := l.clone(ctx, repo)
+		if why != "" {
+			return refuse(stderr, "stream set", "the repository "+repo+" could not be read: "+why)
+		}
+		sha, g, err := sprint.BaseBranchTip(ctx, dir, "origin", base, a.gitEnv)
+		if err != nil {
+			return refuse(stderr, "stream set", "the base "+base+" of "+repo+" could not be read: "+oneline.Err(err))
+		}
+		tips[repo] = repoBase{dir: dir, sha: sha, gone: g}
+		gone = gone || g
+	}
+	missing := map[string][]string{}
+	if !gone {
+		for _, stn := range streams {
+			targets, _ := sprint.SetBaseTargets(s, stn)
+			for _, tc := range targets {
+				repo, _ := cardhdr.Value(tc.F("brief"), "REPO")
+				t := tips[repo]
+				if repo == "" || t.dir == "" {
+					continue
+				}
+				if m := sprint.SetBaseCheck(tc.F("brief"), base, t.dir, t.sha); len(m) > 0 {
+					missing[tc.ID] = m
+				}
+			}
+		}
+	}
+	req := sprint.StreamSetBaseReq{Streams: streams, Base: base, Who: c.actor, Gone: gone, Missing: missing}
+	step := store.Step{Verb: "stream set", Named: true, Args: store.ArgsOf(req), Load: []string{sprint.Work, sprint.Merge},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.StreamSetBase(s, req) }}
+	return a.runStep("stream set", c, st, step, stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:

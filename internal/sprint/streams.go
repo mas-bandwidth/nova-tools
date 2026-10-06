@@ -1,10 +1,15 @@
 package sprint
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // StreamRemove is the rule of stream remove: why each named stream may not
@@ -372,4 +377,171 @@ func PromotionRefusals(s *Snapshot, rs []AddReq) []Refusal {
 		}
 	}
 	return out
+}
+
+// StreamSetBaseReq is the coordinator's `stream set <stream>... --base <branch>`
+// (docs/SPEC-SPRINT.md, stream-set-base-b.w3): every card of the stream not yet dealt
+// (a primary waiting or ready with no attempt) and every card queued to merge keeps its
+// place and gets its brief's BASE: line re-pointed to Base, a brief revision recorded on
+// the card as brief records one. Dealt and working cards keep their base and are listed.
+// Gone and Missing are the evidence the command read before the step (Gone: origin holds
+// no branch of Base's name; Missing: per card id, the PATHS entries the check add runs
+// found absent at Base's tip): the verb is refused, writing nothing, when either says so.
+type StreamSetBaseReq struct {
+	Streams []string
+	Base    string
+	Who     string
+	Gone    bool
+	Missing map[string][]string
+}
+
+// StreamSetBase is the rule of stream set --base: it re-points the cards it may, lists the
+// cards that keep their base, and refuses whole, writing nothing, for an actor who is not
+// the coordinator, a stream that is no row of the work table, a card with no BASE: line, a
+// branch origin does not hold (Gone), or a PATHS entry absent at the branch tip (Missing).
+func StreamSetBase(s *Snapshot, r StreamSetBaseReq) Plan {
+	var p Plan
+	p.on(s)
+	if w := notCoordinator(s, r.Who, "stream set"); w != "" {
+		p.refuse("stream set", strings.Replace(w, "answers a judgment, which is", "is", 1))
+		return p
+	}
+	if r.Base == "" {
+		p.refuse("stream set", "--base wants the branch the stream's cards move to; nothing was changed")
+		return p
+	}
+	if r.Gone {
+		p.refuse(r.Base, "origin holds no branch "+r.Base+"; nothing was changed; run: git ls-remote origin refs/heads/"+r.Base+" (the branch was deleted, merged or renamed), or give a base origin holds")
+		return p
+	}
+	for _, st := range r.Streams {
+		if s.Work == nil || !s.Work.HasRow(st) {
+			p.refuse(st, "no stream "+st+" on the work table; nothing was changed")
+		}
+	}
+	if len(p.Refused) > 0 {
+		return p
+	}
+	var targets, kept []*Card
+	for _, st := range r.Streams {
+		t, k := SetBaseTargets(s, st)
+		targets = append(targets, t...)
+		kept = append(kept, k...)
+	}
+	for _, c := range targets {
+		if _, ok := RewriteBriefBase(c.F("brief"), r.Base); !ok {
+			p.refuse(c.ID, c.ID+" names no BASE: line, so there is nothing to re-point; nothing was changed; re-cut the card with BASE: "+r.Base)
+			continue
+		}
+		if miss := r.Missing[c.ID]; len(miss) > 0 {
+			p.refuse(c.ID, c.ID+": "+strings.Join(miss, "; ")+"; nothing was changed")
+		}
+	}
+	if len(p.Refused) > 0 {
+		return p
+	}
+	for _, c := range targets {
+		brief, _ := RewriteBriefBase(c.F("brief"), r.Base)
+		set := map[string]string{"brief": brief, FieldBriefAttempt: c.F("attempt")}
+		unset := []string{FieldGrade, FieldBriefOp, FieldBriefRecord}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
+			Changes: []Change{change(Work, setEntry(c, set, unset...))},
+			Moved:   c.ID + " BASE re-pointed to " + r.Base + " (" + c.Col + ")"})
+	}
+	for _, c := range kept {
+		p.Said = append(p.Said, c.ID+" keeps its base "+orDash(baseOf(c))+" ("+c.Col+")")
+	}
+	return p
+}
+
+// SetBaseTargets is the cards of the stream `stream set --base` re-points and the cards it
+// lists and leaves: a primary waiting or ready with no attempt run (not yet dealt) and a
+// primary merging whose merge card is queued are targets, in work order; every other placed
+// primary of the stream (dealt, working, in review, or landed) is kept.
+func SetBaseTargets(s *Snapshot, stream string) (targets, kept []*Card) {
+	for _, c := range s.Work.Cards() {
+		if !c.Placed() || c.Row != stream || IsSentinel(c) {
+			continue
+		}
+		switch {
+		case (c.Col == Waiting || c.Col == Ready) && c.Int("attempt") == 0:
+			targets = append(targets, c)
+		case c.Col == Merging && mergeQueued(s, stream, c.ID):
+			targets = append(targets, c)
+		default:
+			kept = append(kept, c)
+		}
+	}
+	return targets, kept
+}
+
+// mergeQueued says the card's merge card is queued in the stream.
+func mergeQueued(s *Snapshot, stream, id string) bool {
+	m := s.Merge.Placed(id)
+	return m != nil && m.Row == stream && m.Col == Queued
+}
+
+// baseOf is the BASE: value a card's brief names, "" when it names none.
+func baseOf(c *Card) string {
+	v, _ := cardhdr.Value(c.F("brief"), "BASE")
+	return v
+}
+
+// RewriteBriefBase returns brief with its first BASE: header line's value set to base, and
+// whether the brief names a BASE: line at all.
+func RewriteBriefBase(brief, base string) (string, bool) {
+	lines := strings.Split(brief, "\n")
+	for i, l := range lines {
+		if k, _, ok := cardhdr.KeyValue(l); ok && k == "BASE" {
+			lines[i] = "BASE: " + base
+			return strings.Join(lines, "\n"), true
+		}
+	}
+	return brief, false
+}
+
+// SetBaseCheck is the check add runs at a card's base (paths-at-base): the PATHS entries
+// that name nothing at base's tip, read with git in repoDir at sha, over the brief with its
+// BASE: line already re-pointed to base. It is the evidence `stream set --base` refuses on.
+func SetBaseCheck(brief, base, repoDir, sha string) []string {
+	rewritten, ok := RewriteBriefBase(brief, base)
+	if !ok {
+		return nil
+	}
+	fs, _ := swarm.LintBrief([]byte(rewritten), swarm.BriefBase{Repo: repoDir, Sha: sha})
+	var out []string
+	for _, f := range fs {
+		if f.Check == "paths-at-base" {
+			out = append(out, f.Excerpt)
+		}
+	}
+	return out
+}
+
+// BaseBranchTip is the commit at the tip of branch on remote in the clone repoDir, fetching
+// it first; gone is true when origin holds no branch of that name (the branch was deleted,
+// merged or renamed). It is the read `stream set --base` refuses on (docs/SPEC-SPRINT.md,
+// stream-set-base-b.w3).
+func BaseBranchTip(ctx context.Context, repoDir, remote, branch string, env []string) (sha string, gone bool, err error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	git := func(args ...string) (string, error) {
+		res, err := gitrun.Run(ctx, gitrun.Options{C: repoDir, Env: env, OwnRepo: true}, args...)
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(res.Stderr)))
+		}
+		return strings.TrimSpace(string(res.Stdout)), nil
+	}
+	if _, err := git("fetch", "-q", remote, "+refs/heads/"+branch+":refs/nova-set-base/"+branch); err != nil {
+		if heads, lerr := git("ls-remote", "--heads", remote, "refs/heads/"+branch); lerr == nil && strings.TrimSpace(heads) == "" {
+			return "", true, nil
+		}
+		return "", false, err
+	}
+	sha, err = git("rev-parse", "--verify", "--quiet", "refs/nova-set-base/"+branch+"^{commit}")
+	if err != nil {
+		return "", false, err
+	}
+	return sha, false, nil
 }
