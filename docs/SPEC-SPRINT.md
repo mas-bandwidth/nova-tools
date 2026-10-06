@@ -2651,6 +2651,43 @@ renamed it from the name its PATHS gives), which the review passed. A head that 
 the batch branch and ends the batch as a head in conflict does: the conflict fact
 on it names every failure, `<file>:<line>` and the rule.
 
+What each of the lander's checks does with a head today, and what it is meant to do:
+
+| check | today | meant to |
+|---|---|---|
+| files outside PATHS (E12) | refuses | refuses |
+| a rename outside PATHS (E12) | refuses | refuses |
+| a stranded sentence fragment (E4) | refuses | refuses |
+| an unmatched backquote in a Markdown or text file (E4) | refuses | repairs; refuses only when ambiguous; not read on a prose path |
+| an unmatched backquote in a Go comment (E4) | refuses | refuses |
+| a line the change ends in CRLF, trailing whitespace, a missing final newline | not checked | repairs |
+| a code fence the change leaves open | not checked | repairs; refuses when ambiguous |
+| a ledger the merge leaves stale | repairs (regenerated at the merge) | repairs |
+| the tree gate | refuses | refuses |
+
+**The document repairs** (`sprint.RepairDoc`, internal/sprint/land_repair.go). A fault a
+formatter fixes is to be fixed at the merge, as the ledgers are regenerated, not
+refused: the owner, 2026-10-05, "Can we be more robust than rejecting work with a stray
+backquote?", after two landings that evening were refused for one backquote each. The
+repair reads a Markdown or text file after the merge and only the lines the change
+writes (`sprint.DocChanged` of the merge's diff); a fault of the base's is left. It
+makes a line the change ends in CRLF LF (not in a file whose own lines are CRLF),
+trims trailing whitespace outside a code block (not a Markdown hard break, two spaces
+before more of the paragraph), adds a missing final newline, and closes at the end of
+the file a fence the change leaves open when no blank line and text follow it. A
+paragraph with an odd count of backquotes and a run on a changed line loses the one
+run whose loss leaves every other run closed in a span that reads as one: an opening
+run is not after a word and before a blank, a closing run is not after a blank and
+before a word. When no run or more than one does, there are two ways to read it, and
+the fault is refused with its line, `<file>:<line> leaves a code span unmatched and the
+repair is ambiguous: ...`. On a prose path (`sprint.DocProse`: a stream's prose globs, the
+private record's `security/**` and `ratings/**` among them) backquotes are not read.
+Each repair is named in the landing note, `the documents were repaired at the merge:
+<file>:<line> <what>; ...` (`sprint.RepairNote`). The tests are
+internal/sprint/land_repair_test.go. Not done yet: the lander does not call the repair
+(cmd/nova-sprint/land.go, `checkCard`, still refuses every E4), and `stream set --prose
+<glob>` does not exist; both are outside the PATHS of the card that wrote the repair.
+
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
 and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
