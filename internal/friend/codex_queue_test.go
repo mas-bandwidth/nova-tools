@@ -35,9 +35,12 @@ type codexApp struct {
 	now       time.Time
 	queue     []CodexQueued
 	seq       int
-	deleted   []string
-	queuedN   int   // codex queue runs
-	deleteErr error // the app refuses a withdrawal
+	ops       []string // queue, delete <id>, in order
+	queuedN   int      // codex queue runs that took the text
+	queueFail bool     // codex queue (and resume) fail
+	listErr   error    // the app-server does not answer a read
+	deleteErr error    // the app refuses a withdrawal
+	gone      []string // ids the session takes between a read and a withdrawal
 }
 
 func (f *codexApp) Call(_ context.Context, method string, params, result any) error {
@@ -46,6 +49,9 @@ func (f *codexApp) Call(_ context.Context, method string, params, result any) er
 	var reply any
 	switch method {
 	case "thread/queue/list":
+		if f.listErr != nil {
+			return f.listErr
+		}
 		var data []map[string]any
 		for _, q := range f.queue {
 			data = append(data, map[string]any{"id": q.ID, "input": []map[string]string{{"type": "text", "text": q.Text}}})
@@ -56,11 +62,10 @@ func (f *codexApp) Call(_ context.Context, method string, params, result any) er
 			return f.deleteErr
 		}
 		id := params.(map[string]string)["queuedSubmissionId"]
+		f.ops = append(f.ops, "delete "+id)
+		f.queue = slices.DeleteFunc(f.queue, func(q CodexQueued) bool { return slices.Contains(f.gone, q.ID) })
 		n := len(f.queue)
 		f.queue = slices.DeleteFunc(f.queue, func(q CodexQueued) bool { return q.ID == id })
-		if len(f.queue) < n {
-			f.deleted = append(f.deleted, id)
-		}
 		reply = map[string]bool{"deleted": len(f.queue) < n}
 	default:
 		return fmt.Errorf("unexpected %s", method)
@@ -82,10 +87,11 @@ func (f *codexApp) add(at time.Time, text string) string {
 func (f *codexApp) run(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if args[0] != "queue" {
-		return "", 1, errors.New("only the open chat's queue here")
+	if f.queueFail || args[0] != "queue" {
+		return "", 1, nil
 	}
 	f.queuedN++
+	f.ops = append(f.ops, "queue")
 	f.add(f.now, args[4])
 	return "", 0, nil
 }
@@ -101,103 +107,189 @@ func (f *codexApp) texts() []string {
 }
 
 func (f *codexApp) codex(record *strings.Builder) *Codex {
-	return &Codex{Dir: "/w/stella", Session: "thread-1", Home: "/codex", Program: "codex", Run: f.run, Out: record,
+	c := &Codex{Dir: "/w/stella", Session: "thread-1", Home: "/codex", Program: "codex", Run: f.run,
 		Held: func(string) bool { return true },
 		App:  func(context.Context) (CodexAppServer, error) { return f, nil },
 		Now:  func() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now }}
+	if record != nil {
+		c.Out = record
+	}
+	return c
 }
 
 func pongCmd(nonce string) string {
 	return "/Users/x/.local/bin/nova-friend pong --as stella --nonce " + nonce + " --state-dir /s --redis 127.0.0.1:6381"
 }
 
+func idleWake(nonce string) string {
+	return "Run this now, first, exactly as written: " + pongCmd(nonce) + "\nThen read on.\n\nnova-friend: you hold 2 cards (a, b) and your session has written nothing for 10m0s; continue the oldest, a.\n"
+}
+
+func codexDeliver(t *testing.T, c *Codex, text string) {
+	t.Helper()
+	exit, err := c.Deliver(context.Background(), text)
+	require.NoError(t, err)
+	require.Zero(t, exit)
+}
+
 // A delivery while her Codex chat is mid-turn cannot be steered: the turn runs in the Codex
 // app's own server, which takes no request from outside, and the app holds what is queued
 // until the turn ends (the owner's screenshot of 2026-10-06 2:58 PM ET: three queued pong
 // requests for nonce d6i4h2 and a fourth in the composer). So her queue holds one request
-// for a pong at a time: an older request a newer one supersedes is withdrawn, the same
-// request still unread is not queued twice, and a queued message that carries anything else
-// is never withdrawn; a withdrawal the app refuses is said, superseded.
+// for a pong of each kind: the new one is queued first, then an older request of its kind is
+// withdrawn; the same request still unread is not queued twice; a queued message that
+// carries anything else is never withdrawn; a withdrawal the app refuses, or one the session
+// took first, is said.
 func TestACodexDeliveryDuringATurnIsNotQueuedTwice(t *testing.T) {
 	t.Parallel()
 	f := &codexApp{now: t0}
 	var record strings.Builder
 	c := f.codex(&record)
 	note := "Run this now, first, exactly as written: " + pongCmd("d6i4h2") + "\nThen read on.\n\nnova-friend: 1 message(s) for you, oldest first, in one turn; take each in order.\n\n=== message 1 of 1 ===\nRECV OK id=m1 from=rowan\n\ncard notes\n"
-	f.add(t0.Add(-20*time.Minute), WakeTurnText(pongCmd("d6i4h2")))
+	wake := WakeTurnText(pongCmd("d6i4h2"))
+	f.add(t0.Add(-20*time.Minute), wake)
 	f.add(t0.Add(-15*time.Minute), note)
-	f.add(t0.Add(-10*time.Minute), "Run this now, first, exactly as written: "+pongCmd("d6i4h2")+"\nThen read on.\n\nnova-friend: you hold 2 cards (a, b) and your session has written nothing for 10m0s; continue the oldest, a.\n")
+	f.add(t0.Add(-10*time.Minute), idleWake("d6i4h2"))
+	oldCheck := SessionCheckText("p1", pongCmd("p1"), "rowan")
+	old := f.add(t0.Add(-5*time.Minute), oldCheck)
 
 	check := SessionCheckText("k2p9xz", pongCmd("k2p9xz"), "rowan")
-	exit, err := c.Deliver(context.Background(), check)
-	require.NoError(t, err)
-	assert.Zero(t, exit)
-	assert.Equal(t, []string{note, check}, f.texts(), "the older pong requests withdrawn, the card note kept, the new check queued")
+	codexDeliver(t, c, check)
+	assert.Equal(t, []string{wake, note, idleWake("d6i4h2"), check}, f.texts(), "the older session check withdrawn; the wakes, the other kind, and the card note kept")
+	assert.Equal(t, []string{"queue", "delete " + old}, f.ops, "the new one in first, then the old one out")
 	n, ok := c.Queued()
 	assert.True(t, ok)
-	assert.Equal(t, 2, n)
-	assert.Contains(t, record.String(), "codex: withdrew the queued pong request d6i4h2 ("+uuid7(t0.Add(-20*time.Minute), 1)+") from thread thread-1: superseded by nonce k2p9xz\n")
+	assert.Equal(t, 4, n)
+	assert.Contains(t, record.String(), "codex: withdrew the queued pong request p1 ("+old+") from thread thread-1: superseded by the session check k2p9xz\n")
 
 	f.now = t0.Add(10 * time.Minute)
-	exit, err = c.Deliver(context.Background(), check)
-	require.NoError(t, err)
-	assert.Zero(t, exit)
+	codexDeliver(t, c, check)
 	assert.Equal(t, 1, f.queuedN, "the same check, unread, is not queued twice")
-	assert.Contains(t, record.String(), "codex: the pong request k2p9xz is still unread in the queue of thread thread-1 since "+t0.UTC().Format(time.RFC3339)+"; not queued twice\n")
+	assert.Contains(t, record.String(), "codex: the session check k2p9xz is still unread in the queue of thread thread-1 since "+t0.UTC().Format(time.RFC3339)+"; not queued twice\n")
+
+	codexDeliver(t, c, WakeTurnText(pongCmd("q7r1aa")))
+	assert.Equal(t, []string{note, check, WakeTurnText(pongCmd("q7r1aa"))}, f.texts(), "the older wakes withdrawn; the session check stands")
 
 	f.deleteErr = errors.New("not allowed")
-	newer := WakeTurnText(pongCmd("q7r1aa"))
-	_, err = c.Deliver(context.Background(), newer)
-	require.NoError(t, err)
-	assert.Contains(t, record.String(), "codex: the queued pong request k2p9xz ("+uuid7(t0, 4)+") not withdrawn from thread thread-1: not allowed; marked superseded\n")
-	assert.Equal(t, 2, f.queuedN)
+	codexDeliver(t, c, idleWake("z9"))
+	assert.Contains(t, record.String(), "codex: the queued pong request q7r1aa ("+uuid7(f.now, 6)+") not withdrawn from thread thread-1: not allowed; marked superseded\n")
+
+	f.deleteErr = nil
+	f.gone = []string{uuid7(f.now, 6), uuid7(f.now, 7)} // she takes them while the next goes in
+	codexDeliver(t, c, WakeTurnText(pongCmd("w8")))
+	assert.Contains(t, record.String(), "codex: the queued pong request z9 ("+uuid7(f.now, 7)+") was taken before it could be withdrawn: superseded by the wake w8\n")
 }
 
-// One session check is in flight at a time in her Codex queue: asked again every ten
-// minutes while it stands unread, it is not queued again; once the session has taken it, the
-// next ask is queued; one left unread for CodexCheckRequeue is withdrawn and queued afresh.
-func TestOneSessionCheckInFlightForCodex(t *testing.T) {
+// A session check and a wake are two series of nonces (the presence's and the coordinator's
+// challenge): a request of one kind never withdraws one of the other.
+func TestAWakeNeverWithdrawsASessionCheck(t *testing.T) {
+	t.Parallel()
+	f := &codexApp{now: t0}
+	c := f.codex(nil)
+	check := SessionCheckText("p1", pongCmd("p1"), "rowan")
+	codexDeliver(t, c, check)
+	codexDeliver(t, c, WakeTurnText(pongCmd("c1")))
+	codexDeliver(t, c, idleWake("c2"))
+	assert.Equal(t, []string{check, idleWake("c2")}, f.texts(), "the wake c2 withdrew the wake c1, never the check")
+	check2 := SessionCheckText("p2", pongCmd("p2"), "rowan")
+	codexDeliver(t, c, check2)
+	assert.Equal(t, []string{idleWake("c2"), check2}, f.texts(), "the check p2 withdrew the check p1, never the wake")
+}
+
+// The new request goes in before the old one goes out: a codex queue that fails leaves the
+// old request standing, and nothing is withdrawn.
+func TestAFailedCodexQueueLeavesTheOldRequestStanding(t *testing.T) {
+	t.Parallel()
+	f := &codexApp{now: t0}
+	c := f.codex(nil)
+	check := SessionCheckText("p1", pongCmd("p1"), "rowan")
+	codexDeliver(t, c, check)
+	f.queueFail = true
+	_, err := c.Deliver(context.Background(), SessionCheckText("p2", pongCmd("p2"), "rowan"))
+	var d Deferred
+	require.ErrorAs(t, err, &d)
+	assert.Equal(t, []string{check}, f.texts())
+	assert.Equal(t, []string{"queue"}, f.ops, "no withdrawal")
+	n, ok := c.Queued()
+	assert.True(t, ok)
+	assert.Equal(t, 1, n)
+}
+
+// A queue that cannot be read leaves its length unknown, never a stale number: an app-server
+// that does not answer (said once while it stands), and no app-server socket at all; the
+// delivery is queued as it comes either way.
+func TestACodexQueueNotReadIsNotKnown(t *testing.T) {
 	t.Parallel()
 	f := &codexApp{now: t0}
 	var record strings.Builder
 	c := f.codex(&record)
+	codexDeliver(t, c, "RECV OK id=1 from=rowan\n\nhello\n")
+	_, ok := c.Queued()
+	require.True(t, ok)
+
+	f.listErr = errors.New("connection reset")
+	codexDeliver(t, c, "RECV OK id=2 from=rowan\n\nagain\n")
+	codexDeliver(t, c, "RECV OK id=3 from=rowan\n\nand again\n")
+	_, ok = c.Queued()
+	assert.False(t, ok, "a read that failed: not known")
+	assert.Equal(t, 1, strings.Count(record.String(), "codex queue of thread thread-1 not read: connection reset; queued as it comes\n"), "said once while it stands")
+	assert.Equal(t, 3, f.queuedN)
+
+	f.listErr = nil
+	codexDeliver(t, c, "RECV OK id=4 from=rowan\n\nback\n")
+	_, ok = c.Queued()
+	require.True(t, ok)
+	c.App, c.Home = nil, t.TempDir() // no app-server socket here
+	codexDeliver(t, c, "RECV OK id=5 from=rowan\n\ngone\n")
+	_, ok = c.Queued()
+	assert.False(t, ok, "no socket: not known")
+}
+
+// One session check is in flight at a time in her Codex queue: asked again every ten
+// minutes while it stands unread, it is not queued again; once the session has taken it, the
+// next ask is queued; one left unread past CodexCheckRequeue, a recheck under the hour's
+// re-ask, is withdrawn and queued afresh by the re-ask (unread at 59 minutes it stands, at 61
+// it is queued again), so the check is never held two hours.
+func TestOneSessionCheckInFlightForCodex(t *testing.T) {
+	t.Parallel()
+	f := &codexApp{now: t0}
+	c := f.codex(nil)
 	check := SessionCheckText("n1", pongCmd("n1"), "rowan")
 	for i := range 6 {
 		f.now = t0.Add(time.Duration(i) * SessionQuiet)
-		_, err := c.Deliver(context.Background(), check)
-		require.NoError(t, err)
+		codexDeliver(t, c, check)
 	}
-	assert.Equal(t, 1, f.queuedN, "asked six times over fifty minutes, queued once")
+	f.now = t0.Add(59 * time.Minute)
+	codexDeliver(t, c, check)
+	assert.Equal(t, 1, f.queuedN, "asked seven times inside 59 minutes, queued once")
 	assert.Len(t, f.texts(), 1)
+
+	f.now = t0.Add(61 * time.Minute)
+	codexDeliver(t, c, check)
+	assert.Equal(t, 2, f.queuedN, "unread at 61 minutes: the re-ask queues it afresh")
+	assert.Equal(t, []string{check}, f.texts(), "the old one withdrawn, one in flight")
 
 	f.mu.Lock()
 	f.queue = nil // her turn ended: she took it
 	f.mu.Unlock()
-	f.now = t0.Add(time.Hour)
-	_, err := c.Deliver(context.Background(), check)
-	require.NoError(t, err)
-	assert.Equal(t, 2, f.queuedN, "taken, then asked again: queued again")
-
-	f.now = t0.Add(2*time.Hour + time.Minute)
-	_, err = c.Deliver(context.Background(), check)
-	require.NoError(t, err)
-	assert.Equal(t, 3, f.queuedN)
-	assert.Len(t, f.texts(), 1, "the hour-old request withdrawn, one in flight")
-	assert.Contains(t, record.String(), "superseded by the same request queued again\n")
+	f.now = t0.Add(70 * time.Minute)
+	codexDeliver(t, c, check)
+	assert.Equal(t, 3, f.queuedN, "taken, then asked again: queued again")
+	assert.Equal(t, time.Hour-RecheckEvery, CodexCheckRequeue)
 }
 
 func TestPongRequestReadsWhatADeliveryAsksFor(t *testing.T) {
 	t.Parallel()
-	for text, want := range map[string][2]any{
-		SessionCheckText("a1", pongCmd("a1"), "rowan"): {"a1", true},
-		WakeTurnText(pongCmd("b2")):                    {"b2", true},
-		"Run this now, first, exactly as written: " + pongCmd("c3") + "\nThen read on.\n\nnova-friend: you hold 2 cards":                                   {"c3", true},
-		"Run this now, first, exactly as written: " + pongCmd("d4") + "\nThen read on.\n\nnova-friend: 2 sprint card(s) dealt to you are in your inbox:\n": {"d4", false},
-		"Run this now, first, exactly as written: " + pongCmd("e5") + "\nThen read on.\n\nRECV OK id=1 from=rowan":                                         {"e5", false},
-		"RECV OK id=1 from=rowan\n\nhello\n": {"", false},
+	for text, want := range map[string][3]any{
+		SessionCheckText("a1", pongCmd("a1"), "rowan"): {PongCheck, "a1", true},
+		WakeTurnText(pongCmd("b2")):                    {PongWake, "b2", true},
+		idleWake("c3"):                                 {PongWake, "c3", true},
+		"Run this now, first, exactly as written: " + pongCmd("d4") + "\nThen read on.\n\nnova-friend: 2 sprint card(s) dealt to you are in your inbox:\n": {PongWake, "d4", false},
+		"Run this now, first, exactly as written: " + pongCmd("e5") + "\nThen read on.\n\nRECV OK id=1 from=rowan":                                         {PongWake, "e5", false},
+		"RECV OK id=1 from=rowan\n\nhello\n": {"", "", false},
 	} {
-		nonce, only := PongRequest(text)
-		assert.Equal(t, want, [2]any{nonce, only}, text)
+		kind, nonce, only := PongRequest(text)
+		assert.Equal(t, want, [3]any{kind, nonce, only}, text)
 	}
 	at, ok := UUIDv7Time("01a1128d-e981-7e93-9b36-0c7738cca0df")
 	require.True(t, ok)

@@ -44,8 +44,8 @@ func CodexControlSocket(home string) string {
 // CodexAppServerBudget bounds one connection's dial, handshake and calls.
 const CodexAppServerBudget = 5 * time.Second
 
-// dialCodexAppServer connects to the app-server under home and initializes the session.
-func dialCodexAppServer(ctx context.Context, home string) (CodexAppServer, error) {
+// DialCodexAppServer connects to the app-server under home and initializes the session.
+func DialCodexAppServer(ctx context.Context, home string) (CodexAppServer, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", CodexControlSocket(home))
 	if err != nil {

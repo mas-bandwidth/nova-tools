@@ -772,28 +772,52 @@ answered `thread not found`, `thread/queue/list` returned her three queued
 pong requests, and `thread/queue/delete` answered `{"deleted": false}` for an
 id not on the queue.
 
-So the queue holds one request for a pong at a time (`Codex.tidy`,
-`PongRequest`). A request for a pong is a session check, a wake turn or an
-idle wake: a delivery that asks for the pong and nothing else. Before such a
-delivery is queued, the adapter reads the thread's queue
-(`thread/queue/list`) and acts on each queued request:
+So the queue holds one request for a pong of each kind at a time
+(`Codex.queueing`, `PongRequest`). A request for a pong is a delivery that asks
+for the pong and nothing else. There are two kinds, each its own series of
+nonces:
 
-- A request the new one supersedes is withdrawn (`thread/queue/delete`), one
-  line each. That is a request for an older nonce, or the same request queued
-  an hour or more ago (`CodexCheckRequeue`, judged by the queued id's UUIDv7
-  time).
-- The same request still unread inside the hour stands for the new one, which
-  is not queued twice: one line, the delivery answered 0.
-- A withdrawal the app refuses is one line, marked superseded.
+- a session check (`SESSION CHECK <nonce>`, the presence's nonce);
+- a wake (a wake turn or an idle wake, the coordinator's challenge nonce).
+
+A request of one kind never withdraws one of the other
+(`TestAWakeNeverWithdrawsASessionCheck`). Before such a delivery is queued,
+the adapter reads the thread's queue (`thread/queue/list`) and acts on each
+queued request of the same kind:
+
+- The same request still unread, queued less than `CodexCheckRequeue` ago,
+  stands for the new one, which is not queued twice: one line, and the
+  delivery answers 0.
+- Otherwise the new request is queued first. Only once it is in is every
+  request of its kind it supersedes withdrawn (`thread/queue/delete`), one
+  line each: a request for an older nonce, or the same request queued
+  `CodexCheckRequeue` ago or more (judged by the queued id's UUIDv7 time).
+  So a `codex queue` that fails leaves the old request standing
+  (`TestAFailedCodexQueueLeavesTheOldRequestStanding`).
+- A withdrawal the app refuses is one line, marked superseded. One the
+  session took first is one line saying so.
 - A queued message that carries anything else (a bus message, a card dealt)
   is never withdrawn.
 
-So one session check is in flight: asked again on the check's cadence while
-it stands unread, it goes in again only once the session has taken it, or
-after the hour. The queue's length as the last delivery read it is on the
-status (`queued`) and on the check's harness line, `route=queue queued=<n>`.
-With no app-server socket the queue is not read and delivery goes on as
-before. `TestACodexDeliveryDuringATurnIsNotQueuedTwice`,
+`CodexCheckRequeue` is the session check's re-ask age (an hour) less one
+recheck (`RecheckEvery`). The re-ask at the hour therefore always finds the
+old request past its age and queues it afresh, so the check is never held two
+hours: unread at 59 minutes the check stands, at 61 the re-ask queues it
+again. So one session check is in flight: asked again while it stands unread,
+it goes in again only once the session has taken it, or at the re-ask.
+
+The queue's length after the last delivery is on the status (`queued`) and on
+the check's harness line, `route=queue queued=<n>`. When the queue cannot be
+read, its length is not known and the line says `queued=-`, never a stale
+number. That happens with no app-server socket, or an app-server that does
+not answer (said once while it stands). The delivery is queued as it comes
+either way (`TestACodexQueueNotReadIsNotKnown`).
+
+A delivery is known as a request by its text's shape. A person who types the
+exact shape of a session check or a wake turn into her chat has it treated
+as one, and it may be withdrawn as superseded. That is accepted: the shapes
+carry the daemon's pong command line, which no one types by hand.
+`TestACodexDeliveryDuringATurnIsNotQueuedTwice`,
 `TestOneSessionCheckInFlightForCodex`,
 `TestTheCodexAppServerClientSpeaksJSONRPCOverAWebSocket`.
 
