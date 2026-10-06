@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -211,4 +212,25 @@ func TestWatchTimesOutAsNone(t *testing.T) {
 	assert.Equal(t, "5s", v.Waited)
 	assert.Empty(t, v.Wakes)
 	w.cli().Do(t, "watch", "--as", "ada", "--timeout", "-1s").Exit(2).Err("--timeout wants a duration of at least 0")
+}
+
+// TestWatchHelpExampleIsWhatTheToolPrints runs the watch verb's help example as
+// written, over the fake store and its injected clock, through the one
+// comparator: the line a reader pastes prints the line the help shows
+// (docs/SPEC-FRIEND.md, Watch).
+func TestWatchHelpExampleIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+	step := onboarding.Step{
+		Line: "$ nova-friend watch --as ada --timeout 10m",
+		Args: []string{"watch", "--as", "ada", "--timeout", "10m"},
+		Want: []string{onboarding.StderrMarker + "WATCH NONE waited=10m0s"},
+	}
+	var out, errb strings.Builder
+	w := newRig(t, "ada", "bob").world()
+	code := run(step.Args, strings.NewReader(""), &out, &errb, w)
+	got := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
+	require.Equal(t, 1, code, errb.String())
+	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{got}, nil) {
+		assert.Fail(t, "the help example differs", p.Message)
+	}
 }
