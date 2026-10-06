@@ -31,8 +31,9 @@ func TestStatusIsUpOnlyWithASessionAnswerInsideTheBound(t *testing.T) {
 	}{
 		{"every piece of evidence good is up", live, "up", "session answer 40s"},
 		{"an unknown harness does not stop an answering session", with(func(e *Evidence) { e.Harness = HarnessUnknown }), "up", "session answer 40s"},
-		{"harness not running is down, whatever else", with(func(e *Evidence) { e.Harness = HarnessNotRunning }), "down", "harness not running"},
-		{"harness not running outranks a limit", with(func(e *Evidence) { e.Harness = HarnessNotRunning; e.LimitUntil = reset }), "down", "harness not running"},
+		{"a harness not seen does not stop an answering session (dsh headless)", with(func(e *Evidence) { e.Harness = HarnessNotSeen }), "up", "session answer 40s"},
+		{"a harness not seen decides nothing beside a limit", with(func(e *Evidence) { e.Harness = HarnessNotSeen; e.LimitUntil = reset }), "down", "limit until Mon 1:00 PM"},
+		{"a harness seen running is no answer", with(func(e *Evidence) { e.LastAnswer = time.Time{} }), "down", "no session answer ever"},
 		{"at a limit is down until the reset", with(func(e *Evidence) { e.LimitUntil = reset }), "down", "limit until Mon 1:00 PM"},
 		{"a limit says its reason", with(func(e *Evidence) { e.LimitUntil = reset; e.Limit = "weekly" }), "down", "weekly limit until Mon 1:00 PM"},
 		{"a limit past its reset is no limit", with(func(e *Evidence) { e.LimitUntil = now.Add(-time.Minute) }), "up", "session answer 40s"},

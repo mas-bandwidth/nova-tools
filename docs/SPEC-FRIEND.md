@@ -38,10 +38,19 @@ below): the daemon answering is never the session.
   than that: the daemon reads nothing while a turn runs (it only peeks), so a
   live daemon mid-turn is never handed its own message twice.
 - The files, one writer each. The state files live in the state directory,
-  `~/.nova-friend/<friend>` under the home directory unless `--state-dir` names
-  another, never on the friend's volume (a background process on this platform
-  may not touch a removable volume without the person's permission; measured
-  2026-10-04, the mkdir refused with "operation not permitted"): `status.json`
+  `<dir>/.nova-friend` under the friend's working directory unless
+  `--state-dir` names another (`friend.DaemonStateDir`): inside the directory
+  her session may write, so a sandboxed session's `pong` lands where the daemon
+  reads it (the finding of 2026-10-05: zhi's `pong.json` was refused at
+  `~/.nova-friend/zhi`, outside her `--dir`). A directory that refuses it (a
+  background process on this platform may not touch a removable volume without
+  the person's permission; measured 2026-10-04, the mkdir refused with
+  "operation not permitted") puts it at `~/.nova-friend/<friend>` under the home
+  directory, said on the record (`state: ... refused`). A reader with no
+  `--state-dir` (`status`, `check`) looks under `--dir` (else the plist's) where
+  a daemon wrote its status, else under the home directory, where a daemon from
+  before the move kept it. The activity walk skips `.nova-friend`: the daemon's
+  writes are not the session's. `status.json`
   (the daemon: its state, rewritten whole every five seconds and when it
   changes; a reader calls the daemon up while the file is under thirty seconds
   old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
@@ -147,14 +156,17 @@ Presence is therefore the session's, never the daemon's:
   command has the check put on its own stream, which its session reads. The
   check is one line to run with nothing to fill in: `nova-friend pong` with
   the nonce, to the seat (else `--coordinator`), and then end the turn.
-- Only a reply carrying that nonce, written by the session, counts: a
-  `daemon-pong`, a pong the daemon wrote, another friend's pong, a stale or
-  wrong nonce all answer nothing. The bound runs from when the check went in.
+- A pong answers by its nonce alone: only the latest check's, written by the
+  session, counts; a `daemon-pong`, a pong the daemon wrote, another friend's
+  pong, a stale or wrong nonce all answer nothing. The bound runs from when the
+  check went in.
 - No answer within five minutes (`SessionBound`) and the friend is down, with
-  the reason `no session answer`; a check turn still running then is stopped.
-  While down, an ordinary message is no proof the check reached the session:
-  only the nonce answers, and a fresh check goes in ten minutes after the last.
-  The next answer, to the latest nonce, late or not, brings the friend back up.
+  the reason `no session answer`; a check turn still running then is stopped,
+  and a fresh check goes in ten minutes after the last. The next answer, to the
+  latest nonce, late or not, brings the friend back up, and so does any other
+  message the session writes on the bus (`presence: up: the session wrote on
+  the bus`): a session that speaks is alive, whatever process is or is not
+  running (the finding of 2026-10-05).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
   once: coming up proves nothing about the session.
 - While down, no beat goes to the sprint server: a friend the coordinator has
@@ -220,22 +232,30 @@ friends actually doing work?" The daemon's beat says only that its loop runs.
 A friend's status is decided by one function, `FriendStatus`, from what the
 friend did, in order, the first rule that holds deciding it:
 
-1. the harness not running is down (`harness not running`);
-2. at a limit is down until the reset (`limit until Mon 1:00 PM`, or
+1. at a limit is down until the reset (`limit until Mon 1:00 PM`, or
    `weekly limit until ...` when the limit has a name);
-3. no session answer within the bound, `AnswerBound`, two windows (six
+2. no session answer within the bound, `AnswerBound`, two windows (six
    minutes: a ping each window and a challenge open for less than one), is
-   down (`no session answer 12m`, `no session answer ever`);
-4. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n>
+   down (`no session answer 12m`, `no session answer ever`); the answer is the
+   pong file, or the session's last word on the bus as the daemon's presence
+   file holds it, whichever is newer, so a pong whose file write a sandbox
+   refused still counts;
+3. a bus that cannot deliver to her is down (`bus cannot deliver: <why> (<n>
    undelivered)`);
-5. otherwise up (`session answer 40s`).
+4. otherwise up (`session answer 40s`).
+
+The harness's process decides nothing: it is shown (`harness running`,
+`harness not seen`, `harness unknown`) and `status` prints `harness_seen=`
+from the daemon's harness check. Until 2026-10-05 a harness not running was
+rule 1; zhi, run from the `dsh` command line with no app, answered every check
+for three hours and read down.
 
 Messages waiting on her stream are work waiting, never down on their own.
 Unknown harness evidence is no evidence and decides nothing; the session
 answer is the proof the harness ran. The beat decides nothing.
 
 The evidence, each piece shown beside the status whatever decided it: the
-harness (`harness running`, `harness not running`, `harness unknown`); the
+harness (`harness running`, `harness not seen`, `harness unknown`); the
 age of the session's last answer (the pong file); the limit and its reset
 (`limit.json` in the state directory, `{"reason":..,"until":<RFC3339>}`, the
 daemon its one writer, no file no limit); the messages waiting on her stream,
@@ -358,8 +378,9 @@ usage is on the beat as `--five-hour <pct> --seven-day <pct>`
 
 ### The harness check (internal/friend/alive.go)
 
-A session that cannot answer is caught by the challenge only after a window;
-a harness that has closed is caught at once. Every adapter answers `Alive`,
+Presence is the session's check (above); this one says what the process
+table shows, for a person reading the status, and decides nothing. Every
+adapter answers `Alive`,
 from the cheapest true signal it has, the process table (`ps -axww -o
 user=,pid=,args=`, through the adapter's own runner, no shell): Codex, the
 ChatGPT app (`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`);
@@ -381,19 +402,33 @@ cannot tell. `WatchHarness(d, adapter)` takes the bare adapter, the one
 it (`SessionCheck.Gate`, `Limits.Gate`) answer no `Alive`
 (`TestTheWatchReadsTheBareAdapterNotTheGateInFrontOfIt`). `cmd/nova-friend/main.go`
 wires it just before `d.Run`: `friend.WatchHarness(d, deliver)`
-(`TestRunPutsTheHarnessWatchInFrontOfTheBeat`).
+(`TestRunKeepsTheHarnessWatchAdvisory`).
 
-`WatchHarness` puts the check in front of the daemon's beat. Every thirty
-seconds (`AliveEvery`) it asks; a harness not running makes the friend down
-at once, independent of the challenge: no beat goes to the sprint server
-(down after fifteen seconds without one, so within three quarters of a
-minute of the close), the beat's error, so the status, says `harness not
-running`, and the record says `down:` with what was read. It is up again only
-when the harness runs (or cannot be told) and the session has answered the
-daemon's current nonce, one the pong file did not hold when the harness
-closed; a harness that comes back is not yet a session that answers. Tested
-over a fake process table and a fake clock,
-`TestAClosedHarnessMakesItsFriendDownWithinAMinute`.
+`WatchHarness` puts the check beside the daemon's beat, advisory. Every
+thirty seconds (`AliveEvery`) it asks, keeps the answer on the daemon's
+status (`harness_seen`: `running`, `not-seen`, or empty when the adapter
+cannot tell), and says each change on the record once (`harness: running:`,
+`harness: not seen: ...; advisory: presence is the session's answer`,
+`harness check: cannot tell:`). It never holds the beat back and never makes
+the friend down: presence is the session's (Presence, above). A harness run
+from its command line (`dsh` headless, `codex exec`, `claude -p`) is a session
+like one in an app, and shows no app in the process table; an app that runs
+answers no check. The finding of 2026-10-05: zhi ran from the `dsh` command
+line, answered every session check with a pong for three hours, and read
+down, because the check looked for the DeepSeek Harness app and "harness not
+running" held her beat back; the coordinator started the app hidden to get
+her up. Tested on a twin store, `TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess`
+(no app, the session pongs: up, every beat out, for three hours; the app
+open, the session silent: down) and over a fake process table,
+`TestAClosedHarnessIsSaidAndNeverHoldsTheBeat`.
+
+A daemon whose own arguments differ from its installed plist's says so on
+start (`plist drift: this daemon's arguments differ from the installed plist
+...`, `friend.PlistDriftLine`, the daemon's part of each from its verb `run`
+on): `launchctl kickstart` restarts the agent with the arguments launchd
+loaded, so an edit to the plist in place was lost on 2026-10-05 and nothing
+said so. `install` (boot out, bootstrap) is the way to run new arguments.
+`TestADaemonWhosePlistChangedSaysSoOnStart`.
 
 The deliver adapter runs the harness directly, never through a shell, as its
 own session leader, its stdin `/dev/null` when there is no text for it (a
@@ -1027,8 +1062,10 @@ nowhere for the check to go until a lane opens one, and its lanes wait on the
 row, which comes with a beat; it stays down until a session exists.
 
 The harness check (internal/friend/alive.go) is wired in `cmd/nova-friend/main.go`
-before `d.Run` (`TestRunPutsTheHarnessWatchInFrontOfTheBeat`). The watch's down
-and up is not in `tla/FriendPresence.tla` yet.
+before `d.Run` (`TestRunKeepsTheHarnessWatchAdvisory`), advisory, so it holds no
+state of presence to model. `tla/FriendPresence.tla` does not yet carry the
+rule that any message the session writes brings the friend up (2026-10-05),
+and `harness_seen` is not on the sprint's friends table.
 
 The server side of the ping is `serve` (The coordinator's ping, above); the
 daemon's side still waits a window of three minutes for a ping, not ten
