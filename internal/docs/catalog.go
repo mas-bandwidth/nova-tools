@@ -117,6 +117,7 @@ var DefaultCatalog = []Entry{
 	E("internal/subproc", "the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children", "go test ./internal/subproc", "go test ./internal/subproc"),
 	E("internal/swarm", "the native card runner: staging, the wall, budgets, slot leases and card lint", "go test ./internal/swarm", "go test ./internal/swarm"),
 	E("internal/testbin", "places a built program into a test dir", "go test ./internal/testbin", "go test ./internal/testbin"),
+	E("internal/testgit", "the one git identity for tests that commit in a scratch repository, and the hosted runner's identity-less git for reproducing it", "go test ./internal/testgit", "go test ./internal/testgit"),
 	E("internal/testguard", "host seam and leak interception", "go test ./internal/testguard", "go test ./internal/testguard"),
 	E("internal/testkit", "test rigs shared by every package: a tool's entry point run in process with both streams captured, and the files a test writes and reads", "go test ./internal/testkit", "go test ./internal/testkit"),
 	E("internal/testredis", "a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary; Far puts a store at a distance", "go test ./internal/testredis", "go test ./internal/testredis"),
