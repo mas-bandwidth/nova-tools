@@ -49,9 +49,14 @@ type friendEntry struct {
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
-	// Class is her class: the tiers her nova-config row says she can do, sorted and
-	// comma joined (friend level evens the friends of one class).
+	// Class is her class: the tier of her strongest model, as her nova-config row
+	// derives it (config.FriendClass; friend level evens the friends of one class).
 	Class string `json:"class,omitempty"`
+	// Tiers are the tiers the dealer may hand her, the tiers of her models, sorted;
+	// Models are her models, strongest first, as her row lists them (none for a row
+	// that names only the tiers fallback).
+	Tiers  []string `json:"tiers,omitempty"`
+	Models []string `json:"models,omitempty"`
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
 	Mode string `json:"mode,omitempty"`
@@ -73,12 +78,15 @@ type friendEntry struct {
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
-// of nova-config), her width and her class.
+// of nova-config), her width, her class (the tier of her strongest model), the
+// tiers she may be dealt and her models, strongest first.
 type FriendSpec struct {
-	Name  string
-	Width int
-	Class string
-	Mode  string // her delivery mode, config.FriendMode of her row
+	Name   string
+	Width  int
+	Class  string
+	Tiers  []string
+	Models []string
+	Mode   string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
 	// TokenCap is her row's per-card token cap. TokenCapSet is false for a
@@ -103,7 +111,11 @@ type FriendRow struct {
 	Failed     int    `json:"failed"`
 	Status     string `json:"status"`
 	Class      string `json:"class,omitempty"`
-	Mode       string `json:"mode,omitempty"`
+	// Tiers are the tiers the dealer may hand her and Models her models, strongest
+	// first, as friend sync copied them from her nova-config row.
+	Tiers  []string `json:"tiers,omitempty"`
+	Models []string `json:"models,omitempty"`
+	Mode   string   `json:"mode,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -187,11 +199,13 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet ||
+			!slices.Equal(e.Tiers, s.Tiers) || !slices.Equal(e.Models, s.Models):
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
 		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet
+		e.Tiers, e.Models = s.Tiers, s.Models
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -394,7 +408,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Tiers: r[n].Tiers, Models: r[n].Models, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -433,7 +447,7 @@ func (st *Store) friendNames(ctx context.Context) []string {
 }
 
 // FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status,
-// Class, Mode, and Running: the cards her last beat names running).
+// Class, Tiers, Mode, and Running: the cards her last beat names running).
 func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
 	rows, whys, err := st.friendRows(ctx, now)
 	if err != nil {
@@ -441,7 +455,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Tiers: r.Tiers, Mode: r.Mode, Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
@@ -646,7 +660,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Tiers: e.Tiers, Models: e.Models, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

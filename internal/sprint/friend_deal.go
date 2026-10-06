@@ -104,10 +104,10 @@ const friendCardWhy = "a friend's card (its brief says WHO: only friend, or a WH
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
 // works at once, her friends row's), her status (FriendStatus: up, held or down), her
-// class (the tiers her nova-config row says she can do, sorted and comma joined), her
-// delivery mode (Mode: batch or one-shot, default batch), her tiers (config.friends
-// tiers: flash, frontier, pro; when given, the deal and the level read them before her
-// class: friendTiers), Dir, her working directory when the ask writes the read brief
+// class (the tier of her strongest model, as her nova-config row derives it:
+// config.FriendClass), her delivery mode (Mode: batch or one-shot, default batch), her
+// tiers (the tiers of all her models, the only tiers the deal and the level hand her:
+// friendTiers), Dir, her working directory when the ask writes the read brief
 // itself (empty: friend sync writes it), and Running, the cards her last beat names
 // running (FriendReport.Running: work card ids, job names or primaries), which the tick's
 // level never moves (friendStarted).
@@ -162,7 +162,8 @@ type FriendSeat struct {
 // taken back from), rather than stranded ready (friendDeal, withdrawnFrom).
 const FieldFriendsLeft = "friends_left"
 
-// friendTiers is the tiers the friend can do: her Tiers, else her class's.
+// friendTiers is the tiers the friend may be dealt: her Tiers, the tiers of her models;
+// a roster written before friend sync carried them has her class alone.
 func friendTiers(f FriendSeat) []string {
 	if len(f.Tiers) > 0 {
 		return f.Tiers

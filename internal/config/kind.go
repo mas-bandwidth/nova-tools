@@ -175,6 +175,7 @@ const (
 	KindLoop    = "loop"
 	KindRoute   = "route"
 	KindTier    = "tier"
+	KindModel   = "model"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -245,9 +246,26 @@ func FriendTokenCap(r Row) int64 {
 
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead), and her config_dir, when set, is an absolute path. A width that
-// failed its own validation is absent and skipped.
+// instead), her config_dir, when set, is an absolute path, and she names her
+// models, each once, or, until they are set, her tiers, never both (her tiers
+// derive from her models: FriendClass). A field that failed its own
+// validation is absent and skipped.
 func checkFriend(r Row) error {
+	models, hasM := r.Fields["models"]
+	tiers, hasT := r.Fields["tiers"]
+	switch {
+	case hasM && hasT && models == "" && tiers == "":
+		return fmt.Errorf("friend %s names no model: want --models <strongest>,...,<weakest>, the models she can run, strongest first (each a model row: nova-config model list)", r.Name)
+	case models != "" && tiers != "":
+		return fmt.Errorf("friend %s names both --models and --tiers; her tiers derive from her models, and --tiers is the fallback of a row with none: want --tiers ''", r.Name)
+	}
+	seen := map[string]bool{}
+	for _, m := range strings.Split(models, ",") {
+		if m != "" && seen[m] {
+			return fmt.Errorf("friend %s names model %s twice in --models %s; want each model once, strongest first", r.Name, m, models)
+		}
+		seen[m] = true
+	}
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
 	}
@@ -255,6 +273,68 @@ func checkFriend(r Row) error {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
 	}
 	return nil
+}
+
+// TierLadder is the tiers weakest first: a friend's models are listed down it,
+// strongest first, and a row of tiers alone (the fallback before her models are
+// set) has the highest of them as her class.
+var TierLadder = []string{"flash", "pro", "heavy", "frontier"}
+
+// tierRank is the tier's place on TierLadder, -1 for no tier.
+func tierRank(t string) int { return slices.Index(TierLadder, t) }
+
+// FriendClass is what a friend row decides of her tiers, derived and never
+// stored: her class, the tier of her strongest model (models[0]; what a
+// card with no tier is dealt to her as, what her reads count as, what the
+// dashboard shows), and her tiers, the tier of every model she lists, sorted
+// (what the dealer may hand her). modelTier is each model row's tier. A row
+// with no models (one not migrated, or set before her models were known)
+// falls back to its tiers, the highest of them its class. A model no row
+// names is refused: the store refuses such a row (checkFriendModels), so it is
+// a model removed by hand.
+func FriendClass(r Row, modelTier map[string]string) (class string, tiers []string, err error) {
+	set := map[string]bool{}
+	if models := Split(r.Fields["models"]); len(models) > 0 {
+		for i, m := range models {
+			t, ok := modelTier[m]
+			if !ok {
+				return "", nil, fmt.Errorf("friend %s names model %s, which is no model row; run: nova-config model add %s --tier <%s> --note '<what runs it>'", r.Name, m, m, strings.Join(TierLadder, "|"))
+			}
+			if i == 0 {
+				class = t
+			}
+			set[t] = true
+		}
+	} else {
+		for _, t := range Split(r.Fields["tiers"]) {
+			set[t] = true
+			if tierRank(t) > tierRank(class) {
+				class = t
+			}
+		}
+	}
+	return class, slices.Sorted(maps.Keys(set)), nil
+}
+
+// Split is a stored comma list as its words, none for "".
+func Split(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
+
+// ModelTiers reads every model row's tier, by name: what FriendClass reads.
+func ModelTiers(ctx context.Context, st Store) (map[string]string, error) {
+	rows, err := st.List(ctx, KindModel)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.Name] = r.Fields["tier"]
+	}
+	return out, nil
 }
 
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok list
@@ -423,21 +503,35 @@ var Kinds = []*Kind{
 		Check: checkFleet,
 	},
 	{
-		// A friend's row is what someone decides for her: how wide, which tiers
+		// A model is one a friend runs inside her own harness, with its tier:
+		// a friend's class and the tiers she may be dealt derive from the models
+		// her row lists (FriendClass). A fleet route names its model on its own
+		// row; a model row is never dealt from.
+		Name:  KindModel,
+		Table: "models",
+		Doc:   "a model a friend runs in her own harness, and its tier: a friend's row lists her models strongest first, and her class and the tiers she is dealt derive from them; never dealt from, as a route is",
+		Fields: []Field{
+			{Name: "tier", Type: TypeEnum, Enum: TierLadder, Required: true, Help: "the model's tier: one of " + strings.Join(TierLadder, ", ")},
+			noteField("what the model is: the provider's id it runs as (<provider>/<model>) and the harness that runs it"),
+		},
+	},
+	{
+		// A friend's row is what someone decides for her: how wide, which models
 		// and which roles. Where she runs, her harness and her logins are
 		// runtime data a friend would just know, reported by her own presence
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, and the per-card token cap her one-shot lanes hold a card at",
+		Doc:   "an AI friend: her slots, her models strongest first (her class and the tiers she is dealt derive from them), her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, and the per-card token cap her one-shot lanes hold a card at",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
-			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
+			{Name: "tiers", Type: TypeList, Enum: Tiers, Help: "the fallback of a row with no --models: which tiers she can do, comma list of " + strings.Join(Tiers, ", ") + ", the highest her class; empty (the default) once her models are set, from which her tiers derive"},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
+			{Name: "models", Type: TypeSeq, Ref: KindModel, Help: "the models she can run, strongest to weakest, each a model row (nova-config model add): her class is the tier of the first, and the dealer may hand her a card of the tier of any; a set clears --tiers, the fallback of a row with none"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -446,7 +540,7 @@ var Kinds = []*Kind{
 			}
 			return 1
 		},
-		Derive: deriveCoordinator,
+		Derive: deriveFriend,
 	},
 	{
 		Name:      KindSprint,
@@ -764,6 +858,29 @@ func memberAt(argv []string) (int, bool) {
 		return 0, false
 	}
 	return at, true
+}
+
+// deriveFriend is the friend kind's Derive: the coordinator's role
+// (deriveCoordinator), and each row's tiers as her models derive them
+// (FriendClass), so friend:<f>:desired's tiers in Redis are the tiers the
+// dealer may hand her whether her row lists models or only the fallback.
+func deriveFriend(ctx context.Context, st Store, rows []Row) ([]Row, error) {
+	rows, err := deriveCoordinator(ctx, st, rows)
+	if err != nil {
+		return nil, err
+	}
+	tiers, err := ModelTiers(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	for i, r := range rows {
+		_, ts, err := FriendClass(r, tiers)
+		if err != nil {
+			return nil, &RefusedError{Err: ErrNoRef, Detail: err.Error()}
+		}
+		rows[i].Fields["tiers"] = strings.Join(ts, ",")
+	}
+	return rows, nil
 }
 
 // deriveCoordinator is the friend kind's Derive: the sprint row's

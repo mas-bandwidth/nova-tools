@@ -668,7 +668,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	steadyTrips := trips.N() - before
 	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
-	require.Equal(t, int64(10), steadyTrips, "steady apply took %d trips, want 10: 6 for the four first kinds, 1 each for the loop and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
+	require.Equal(t, int64(11), steadyTrips, "steady apply took %d trips, want 11: 6 for the four first kinds, 1 each for the model, loop and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
 
 	// 3. Two changes: update two friends (slots on stella, slots on rowan) (25 -> 11)
 	_, _, setupErr25760 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
@@ -679,7 +679,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	twoChangesTrips := trips.N() - before
 	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
-	require.LessOrEqual(t, twoChangesTrips, int64(15), "two changes took %d trips, want <= 15: 11, the loop and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
+	require.LessOrEqual(t, twoChangesTrips, int64(16), "two changes took %d trips, want <= 16: 11, the model, loop and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
 
 	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
 	machine, _ := Lookup(KindMachine)
@@ -695,7 +695,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	machineRemovalTrips := trips.N() - before
 	t.Logf("machine removal trips = %d", machineRemovalTrips)
-	require.LessOrEqual(t, machineRemovalTrips, int64(17), "machine removal took %d trips, want <= 17: 15 and the loop and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
+	require.LessOrEqual(t, machineRemovalTrips, int64(18), "machine removal took %d trips, want <= 18: 15 and the model, loop and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
 }
 
 // TestRefusedMachineCeilingLeavesMachineHashUntouched proves that when

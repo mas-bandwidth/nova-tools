@@ -119,7 +119,15 @@ are. Its rows are nova-config's friend rows and nothing else: `friend sync`
 store's `friends` record, adding a friend the record lacks, taking off one
 nova-config no longer has with her beat, and keeping the hold of a
 friend that stays; a config that cannot be read or holds no friend row is
-refused (exit 3) and changes nothing.
+refused (exit 3) and changes nothing. With each name it copies what her row
+derives from her models, listed strongest to weakest (nova-config's
+`config.FriendClass`; docs/SPEC-CONFIG.md, "friend"): her **class**, the tier of
+her strongest model, her **tiers**, the tiers of all her models (the only tiers
+the deal and the level hand her), and her **models** in order; a row with no
+models has its tiers fallback as her tiers and the highest of them as her
+class. `view coordinator --json` carries them on her row (`class`, `tiers`,
+`models`), `where --json` on her friends row, and the dashboard shows her class
+beside her name.
 
 A friend's counts are her sprint cards' (a friend's card, below), read by
 `where` from her fleet row `friend.<name>`, never from her working directory: a
@@ -628,9 +636,8 @@ takes the unstarted ones.
 verbs we need for friends, that machines already have"; `sprint.FriendLevel`).
 `friend level` (the coordinator's) evens the friends' ready queues as `fleet
 level` evens the members' (section 5), within each class: a friend's class is
-the tiers her nova-config row says she can do (`friend sync` copies them to
-the roster, sorted and comma joined), and a card moves only between friends of
-one class. Among the friends up of a class, while the largest backlog (the
+the tier of her strongest model, as `friend sync` copies it from her
+nova-config row, and a card moves only between friends of one class. Among the friends up of a class, while the largest backlog (the
 cards on her row, ready and working, less her width) of a friend with a card
 that may move and the smallest of the friends below their room (DealAhead
 times their width) differ by more than one, the newest card that may move of
@@ -652,8 +659,8 @@ fleet reader or a friend, by the one ask (`FriendReadAsk` before the machine's
 `Ask`). The tier a friend is matched on is the tier before a frontier card is
 collapsed onto the tier a route serves (`friendReadTier`): a frontier card, or
 a heavy card whose read tier is the one above, stays frontier, and only a
-friend of frontier class is at or above it. Her class is the tiers her
-nova-config row says she can do. She is asked when she is up, one of her tiers
+friend of frontier class is at or above it. Her class is the tier of her
+strongest model (her nova-config row's `models`). She is asked when she is up, one of her tiers
 is the read tier or above it (`capLadder`), and she has room (the same free
 width a friend's card is dealt within, `TickDeal`), chosen by the same chooser
 as that deal (`preferredFriend`: an idle lane first, then the most room, then
@@ -1229,7 +1236,7 @@ not level the friends":
 
 - **Eligibility is by tier, never by class.** Every friend deal and every
   level move, whatever the card's WHO line, goes only to a friend up whose
-  tiers (her `FriendSeat.Tiers`, else her class's) hold the card's tier; a card
+  tiers (her `FriendSeat.Tiers`, the tiers of her models; else her class) hold the card's tier; a card
   with no tier is the dealer's default, flash (`cardTierOf`), and a withdrawn
   attempt at its redeal bound below its ceiling is offered at the tier it
   escalates to (`escalating`), a new attempt on that tier. A friend whose row

@@ -107,6 +107,12 @@ type viewRow struct {
 	Wd  int    `json:"wd"`            // the row's width
 	F30 int    `json:"f30"`           // finished in the last 30m
 	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
+	// A friend's class (the tier of her strongest model), the tiers she may be dealt and
+	// her models, strongest first, as friend sync copied them from her nova-config row;
+	// absent on a machine's row.
+	Class  string   `json:"class,omitempty"`
+	Tiers  []string `json:"tiers,omitempty"`
+	Models []string `json:"models,omitempty"`
 }
 
 // coordCounts are the sprint's counts, always carried: the work table's primaries by state,
@@ -441,7 +447,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(f.Beat)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep})
+		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep, Class: f.Class, Tiers: f.Tiers, Models: f.Models})
 		if r+w == 0 {
 			continue
 		}

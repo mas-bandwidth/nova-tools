@@ -423,7 +423,8 @@ function fleetLike(box, table, withLoad) {
     var okv = m.okpct != null ? m.okpct : m["ok%"];
     t.ready += int(m.ready); t.done += done; t.ok += int(m.ok);
     if (m.status in t) t[m.status]++;
-    setText(r.name, k);
+    // a friend's class, the tier of her strongest model, beside her name (docs/SPEC-SPRINT.md, the friends table)
+    if (m.class) setHTML(r.name, escHTML(k) + "<span class=\"win\"> · " + escHTML(m.class) + "</span>"); else setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
     setTrack(r.track, working, width, scale);
     // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)

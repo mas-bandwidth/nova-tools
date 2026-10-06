@@ -49,7 +49,7 @@ func friendApp(t *testing.T, friends ...string) (*testApp, *config.Mem) {
 	}
 	cfg := config.NewMem()
 	ta.a.friends = func(ctx context.Context, _ string) ([]config.Row, error) {
-		return cfg.List(ctx, config.KindFriend)
+		return friendRowsOf(ctx, cfg)
 	}
 	for _, f := range friends {
 		addFriendRow(t, cfg, f)
@@ -115,24 +115,24 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 	}
 	// dealt, not started: ready, and none working (docs/SPEC-SPRINT.md section 1, a friend's
 	// card is working once she starts it)
-	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, neither started")
+	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0", "class": "flash"}, amy(), "two cards dealt, neither started")
 	ta.startFriend("amy", 2)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0", "class": "flash"}, amy(), "two cards started, both working; the hand job is nowhere")
 
 	// amy finishes s1-1 with a LAND: done ok
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, s1-2 still working")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0", "class": "flash"}, amy(), "s1-1 done ok, s1-2 still working")
 
 	// amy reports s1-2 with no verdict word: finished failed, never ok
 	outboxReport(t, root, "amy", "s1-2.w1", "# s1-2\n\nAll green, nothing more.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1", "class": "flash"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
 
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["bob"], "bob has no card")
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["cat"], "cat has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0", "class": "flash"}, w.Tables[sprint.Friends]["bob"], "bob has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0", "class": "flash"}, w.Tables[sprint.Friends]["cat"], "cat has no card")
 }
 
 // A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit

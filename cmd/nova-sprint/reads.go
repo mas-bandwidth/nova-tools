@@ -1302,11 +1302,18 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	v.Friends = friends
 	ft := a.friendsTable(friends, now)
 	v.Tables[sprint.Friends] = map[string]map[string]any{}
+	class := map[string]string{}
+	for _, f := range friends {
+		class[f.Name] = f.Class
+	}
 	for _, r := range ft.Rows {
 		cells := map[string]any{}
 		for j, col := range ft.Columns {
 			cells[col.Name] = ntable.CellText(ft.Columns, r, j)
 		}
+		// her class, the tier of her strongest model, beside the cells: the dashboard
+		// shows it with her name
+		cells[fieldClass] = class[r.Key]
 		v.Tables[sprint.Friends][r.Key] = cells
 	}
 	// the table layer draws it as it draws the fleet: header, rule, rows, rule,

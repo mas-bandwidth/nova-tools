@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -165,7 +167,7 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 			row = r
 		}
 	}
-	assert.Equal(t, viewRow{K: "f:amy", St: sprint.Up, W: 1, Wd: row.Wd, Rep: row.Rep}, row, "her row: one card working")
+	assert.Equal(t, viewRow{K: "f:amy", St: sprint.Up, W: 1, Wd: row.Wd, Rep: row.Rep, Class: "flash", Tiers: []string{"flash"}}, row, "her row: one card working")
 
 	ta.a.sleep(viewStaleReport + time.Minute)
 	v = ta.coordView("")
@@ -343,4 +345,42 @@ func TestTheCardsDealtAreReadAfterAClear(t *testing.T) {
 	assert.Equal(t, uint64(1), v.Epoch)
 	require.Len(t, v.Cards, 2, "%+v", v)
 	assert.Equal(t, "nova-sprint take --as m1 s1-1.w1@1 --epoch 1", v.Next)
+}
+
+// TestTheCoordinatorViewCarriesTheClass: a friend's row in view coordinator --json and in
+// where --json carries her class (the tier of her strongest model), the tiers she may be
+// dealt and her models, strongest first, as friend sync copied them from nova-config; the
+// dashboard's friends table carries the class beside her name.
+func TestTheCoordinatorViewCarriesTheClass(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t, "amy")
+	ctx := context.Background()
+	for _, m := range [][2]string{{"grok-4-7-xhigh", "heavy"}, {"grok-4-7", "pro"}} {
+		_, err := cfg.Insert(ctx, config.KindModel, config.Row{Name: m[0], Fields: map[string]string{"tier": m[1], "note": ""}}, "t")
+		require.NoError(t, err)
+	}
+	_, err := cfg.Insert(ctx, config.KindFriend, config.Row{Name: "johnny", Fields: map[string]string{"slots": "1", "models": "grok-4-7-xhigh,grok-4-7"}}, "t")
+	require.NoError(t, err)
+	ta.ok("friend sync --root " + t.TempDir())
+
+	v := ta.coordView("--all")
+	rows := map[string]viewRow{}
+	for _, r := range v.Rows {
+		rows[r.K] = r
+	}
+	assert.Equal(t, "heavy", rows["f:johnny"].Class, "his class is the tier of his first model: %+v", rows["f:johnny"])
+	assert.Equal(t, []string{"heavy", "pro"}, rows["f:johnny"].Tiers)
+	assert.Equal(t, []string{"grok-4-7-xhigh", "grok-4-7"}, rows["f:johnny"].Models)
+	assert.Equal(t, "flash", rows["f:amy"].Class, "a row with only the tiers fallback: its highest tier")
+	assert.Empty(t, rows["f:amy"].Models)
+
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "heavy", w.Tables[sprint.Friends]["johnny"]["class"], "the dashboard's friends table carries the class")
+	for _, f := range w.Friends {
+		if f.Name == "johnny" {
+			assert.Equal(t, "heavy", f.Class)
+			assert.Equal(t, []string{"grok-4-7-xhigh", "grok-4-7"}, f.Models)
+		}
+	}
 }

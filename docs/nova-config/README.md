@@ -250,8 +250,14 @@ CONFIG HISTORY kind=friend name=f1 changes=2
 its ceiling together (apply refuses `CEILING` otherwise); she is charged
 to the machine her beat reports (or the fleet's coordinator machine when
 she has no beat); her slots take nothing off any machine's `width`;
-`--tiers` is a comma list of flash, frontier, pro, which she can do (the
-deal's tier filter); `--roles` is a comma list of builder, may-hold, reader;
+`--models` is the models she can run, strongest to weakest, each a `model`
+row (`nova-config model add <name> --tier <flash|pro|heavy|frontier> --note
+'<the id it runs as>'`): her class is the tier of the first and the tiers the
+dealer may hand her are the tiers of them all, derived and never stored, and
+`show` and `list` print them (`tiers=`, then ` class=<tier>` at the end of the
+line); a list not strongest first, or naming a model with no row, is refused;
+`--tiers` is the fallback of a row with no models, a comma list of flash,
+frontier, heavy, pro, the highest her class, and `--models` clears it; `--roles` is a comma list of builder, may-hold, reader;
 `--width` is the jobs she works at once, which nova-sprint friend sync writes
 to her row of the friends table: at least 1, 8 when add is not given one (the
 owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends?

@@ -47,7 +47,8 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap` |
+| model (decided per model a friend runs) | `tier`, `note` |
+| friend (decided for her) | `slots`, `tiers` (the fallback of a row with no models), `roles`, `width`, `mode`, `config_dir`, `token_cap`, `models` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -220,12 +221,26 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `slots` | int | yes | apply: her desired slots, under the ceiling of the machine she is charged to; no machine's width | `friend:<f>:desired` slots (`ns_capacity_desired`) |
-| `tiers` | list: flash, frontier, heavy, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
+| `tiers` | list: flash, frontier, heavy, pro | | the fallback of a row with no `models`: which tiers she can do, the highest her class; empty once her models are set, and a row naming both is refused (`friend set --models` clears it and says so) | `friend:<f>:desired` tiers (`ns_capacity_desired`), the tiers derived from her models when she has them |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
 | `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
+| `models` | seq of model rows, in the order given | | the models she can run, strongest to weakest (the owner, 2026-10-06: "an array of models this agent can do, strongest to weakest"). Her **class** is the tier of the first: what a card with no tier line is dealt to her as, what her reads count as, what the dashboard shows. Her **tiers**, what the dealer may hand her (the deal's tier filter, capacity.lua `filter_ok`, and nova-sprint friend sync's friends table), are the tiers of every model listed. Both are derived (`config.FriendClass`), never stored. Each name is a model row (a set naming none is refused with `nova-config model add <name> --tier <t>`), each once, listed strongest first: a model whose tier is above the one before it is refused. `friend show` and `friend list` print `tiers=` as derived and ` class=<tier>` after the row. Migration 0036 adds the column, empty on every row, which keeps its tiers fallback until its models are set | `friend:<f>:desired` models |
+
+**`model`** (`config.models`): a model a friend runs inside her own harness,
+and its tier. A friend row lists her models and derives her class and tiers
+from them; a model row is never dealt from, as a fleet route is (a route
+names its own model on its own row), and a model a friend lists is not
+removed (`model remove` names her). Its name follows the row-name pattern, so
+a provider's id with a dot or a slash is spelled with dashes and kept in the
+note (`m-4-1`, note `p/m-4.1 under its harness`).
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `tier` | enum: flash, pro, heavy, frontier | yes | friend show and list, apply's friend tiers, nova-sprint friend sync: the tier of a friend who lists it | `model:<name>` tier |
+| `note` | text, one line | | people: the id it runs as and the harness that runs it | `model:<name>` note |
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -551,8 +566,11 @@ else the fleet's coordinator machine (`fleet:coordinator`, written a moment
 before) as the default charge; neither is a refusal naming `nova-config
 fleet set --coordinator <machine>`. Her width, when it differs, is a plain
 `HSET friend:<f>:desired width <n>`, a field no function reads or writes, and
-her mode and config_dir the same way, `HSET friend:<f>:desired mode <m>` and
-`HSET friend:<f>:desired config_dir <dir>` (`""` when unset).
+her mode, config_dir and models the same way, `HSET friend:<f>:desired mode <m>`,
+`HSET friend:<f>:desired config_dir <dir>` (`""` when unset) and `HSET
+friend:<f>:desired models <a,b>`. The tiers `ns_capacity_desired` is given are
+the tiers her models derive (the kind's Derive), the stored fallback for a row
+with none.
 `ns_friend_roles(f, roles)` when the
 roles differ (the actor must hold the coordinator role in Redis, or nobody
 does yet and this row makes the first): the roles written are the row's
@@ -601,8 +619,12 @@ and `at`, written whole in one transaction with the name added to the set
 `routes`; this is the view the deal reads. It reads, writes and removes as
 a loop does (one code path, `hashKinds`), with no derived field.
 
+**model:** the hash `model:<name>` with its tier, note, `name`, `rev` and
+`at`, and the name in the set `models`, the same code path; nothing the deal
+runs reads it (a friend's tiers reach Redis on her own row).
+
 `machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `loop:<l>`,
-`loops`, `route:<r>` and `routes` are nova-config's own keys: no function in
+`loops`, `route:<r>`, `routes`, `model:<name>` and `models` are nova-config's own keys: no function in
 the library reads or writes them.
 
 ## Lines

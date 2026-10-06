@@ -113,6 +113,29 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 	if k.Name == KindTier {
 		return checkTierRoutes(ctx, st, row)
 	}
+	if k.Name == KindFriend {
+		return checkFriendModels(ctx, st, row)
+	}
+	return nil
+}
+
+// checkFriendModels refuses a friend's models that name a model with no row (the
+// remedy adds it), or that are not listed strongest first: each model's tier at
+// or below the one before it on TierLadder, so the first is her class.
+func checkFriendModels(ctx context.Context, st Store, row Row) error {
+	prev := ""
+	for _, name := range Split(row.Fields["models"]) {
+		m, found, err := st.Get(ctx, KindModel, name)
+		switch {
+		case err != nil:
+			return err
+		case !found:
+			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--models %s names no model row; add it first: nova-config model add %s --tier <%s> --note '<the id it runs as, and the harness>'", name, name, strings.Join(TierLadder, "|"))}
+		case prev != "" && tierRank(m.Fields["tier"]) > tierRank(prev):
+			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--models %s lists %s (%s) after a %s model; want her models strongest to weakest, the first her class", row.Fields["models"], name, m.Fields["tier"], prev)}
+		}
+		prev = m.Fields["tier"]
+	}
 	return nil
 }
 

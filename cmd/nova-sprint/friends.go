@@ -143,11 +143,38 @@ func (a *app) readFriends(ctx context.Context, pg string) ([]config.Row, error) 
 	var rows []config.Row
 	err := a.withConfig(ctx, pg, func(ctx context.Context, st config.Store) error {
 		var err error
-		rows, err = st.List(ctx, config.KindFriend)
+		rows, err = friendRowsOf(ctx, st)
 		return err
 	})
 	return rows, err
 }
+
+// friendRowsOf is every friend row of the config store, each carrying what her models
+// derive (config.FriendClass): her class, and her tiers, the tiers of her models, in place
+// of the fallback.
+func friendRowsOf(ctx context.Context, st config.Store) ([]config.Row, error) {
+	rows, err := st.List(ctx, config.KindFriend)
+	if err != nil {
+		return nil, err
+	}
+	tiers, err := config.ModelTiers(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	for i, r := range rows {
+		class, dealt, err := config.FriendClass(r, tiers)
+		if err != nil {
+			return nil, err
+		}
+		rows[i] = r.Clone()
+		rows[i].Fields[fieldClass] = class
+		rows[i].Fields["tiers"] = strings.Join(dealt, ",")
+	}
+	return rows, nil
+}
+
+// fieldClass is the derived field readFriends adds to a friend row: her class.
+const fieldClass = "class"
 
 // reportValue is the value of a report's first line whose key, after any markdown marks
 // (#, *, -, _, spaces), is one of keys in any case: the rest of the line after the colon;
@@ -232,7 +259,8 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true})
+		class, tiers, models := friendClass(r)
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: class, Tiers: tiers, Models: models, Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -654,12 +682,19 @@ func orEmpty(xs []string) []string {
 	return xs
 }
 
-// friendClass is a friend row's class: the tiers it says she can do, sorted and comma
-// joined; "" when it names none.
-func friendClass(r config.Row) string {
-	tiers := sprint.Split(r.Fields["tiers"])
+// friendClass is a friend row as friend sync copies it: her class (the tier of her
+// strongest model, as readFriends derived it; for a row it did not derive, the highest of
+// her tiers), the tiers she may be dealt, sorted, and her models, strongest first.
+func friendClass(r config.Row) (class string, tiers, models []string) {
+	class = r.Fields[fieldClass]
+	tiers = sprint.Split(r.Fields["tiers"])
 	slices.Sort(tiers)
-	return strings.Join(slices.Compact(tiers), ",")
+	tiers = slices.Compact(tiers)
+	if _, derived := r.Fields[fieldClass]; !derived {
+		// ignored: a row with no models names no model to look up
+		class, _, _ = config.FriendClass(config.Row{Name: r.Name, Fields: map[string]string{"tiers": r.Fields["tiers"]}}, nil)
+	}
+	return class, tiers, sprint.Split(r.Fields["models"])
 }
 
 // cmdFriendHealth is the coordinator's observation of a friend (docs/SPEC-SPRINT.md

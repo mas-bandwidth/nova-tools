@@ -54,7 +54,7 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	require.Equal(t, "machine,fleet,friend,sprint,loop,route,tier", strings.Join(names, ","), "kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row (it names a friend), loops (each names a machine), routes, tiers last (each names routes)", names)
+	require.Equal(t, "machine,fleet,model,friend,sprint,loop,route,tier", strings.Join(names, ","), "kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), models (a friend lists them), friends, the sprint row (it names a friend), loops (each names a machine), routes, tiers last (each names routes)", names)
 }
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
@@ -84,8 +84,10 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 }
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
-// that a friend would just know, is runtime redis data". Four fields:
-// slots, tiers, roles and width (2026-10-02, the jobs she works at once); no
+// that a friend would just know, is runtime redis data". Her fields:
+// slots, tiers (the fallback of a row with no models), roles, width
+// (2026-10-02, the jobs she works at once), mode, config_dir and models
+// (2026-10-06, strongest first, from which her class and tiers derive); no
 // machine, harness, logins, wake or note; and no coordinator role, which is
 // the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
@@ -93,9 +95,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,models", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,models", scopedGot97)
 	for _, f := range friend.Fields {
-		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
+		scopedWant102 := f.Name == "slots" // models, or the tiers fallback, is checkFriend's rule
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
 	}
 	for _, invented := range []string{"machine", "harness", "logins", "wake", "note", "coordinator"} {
@@ -393,7 +395,7 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	friend, _ := Lookup(KindFriend)
 	_, err := friend.NewRow("Rowan", map[string]string{"slots": "x", "roles": "king", "colour": "red"})
 	require.Error(t, err, "a row with four problems was accepted")
-	for _, want := range []string{"lower-case", "--tiers is required", "--slots \"x\"", "--roles \"king\"", "--colour is not a friend field"} {
+	for _, want := range []string{"lower-case", "names no model", "--slots \"x\"", "--roles \"king\"", "--colour is not a friend field"} {
 		assert.ErrorContains(t, err, want, "the refusal does not name %q:\n%s", want, err)
 	}
 	machine, _ := Lookup(KindMachine)

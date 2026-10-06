@@ -368,7 +368,7 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	_, err := Apply(context.Background(), NewMem(), newFake(), "lane", "rowan", false, func(Op) {})
 	assertionMsg324 := []any{"unknown kind: %v", err}
 	require.Error(t, err, assertionMsg324...)
-	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, friend, sprint, loop, route", assertionMsg324...)
+	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, model, friend, sprint, loop, route, tier", assertionMsg324...)
 }
 
 // TestApplyRefusesToMoveTheSeat: a publish never moves the coordinator seat

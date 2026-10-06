@@ -19,7 +19,7 @@ import (
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
 // for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
-// width, delivery mode, config_dir and token_cap, plain fields of friend:<f>:desired no function touches. Her
+// width, delivery mode, config_dir, token_cap and models, plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
@@ -35,7 +35,8 @@ import (
 // route:<name> with every field, rev and at, and its name in the set
 // `routes`, which the deal reads (hashKinds); a tier's row is the hash
 // tier:<name> and its name in the set `tiers`, read by the deal beside the
-// routes.
+// routes. A model's row is the hash model:<name> and its name in the set
+// `models`, read by nothing the deal runs.
 //
 // config:decl is the stamp: rev:<kind> is the Postgres revision last applied
 // and at:<kind> the server time it was written (the shape of friends:decl in
@@ -48,7 +49,13 @@ const (
 	LoopsKey    = "loops"
 	RoutesKey   = "routes"
 	TiersKey    = "tiers"
+	ModelsKey   = "models"
 )
+
+// ModelKey is a model's hash: its tier, note, name, rev and at. Nothing deals
+// from it: a friend's tiers, which the deal reads, are derived from her models
+// at apply (deriveFriend) and written to friend:<f>:desired.
+func ModelKey(name string) string { return "model:" + name }
 
 // LoopKey is a loop's hash: its fields, log, rev and at.
 func LoopKey(name string) string { return "loop:" + name }
@@ -126,7 +133,7 @@ func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, 
 		return a.readSingleton(ctx, KindFleet, FleetKey)
 	case KindSprint:
 		return a.readSingleton(ctx, KindSprint, SprintKey)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindRoute, KindTier, KindModel:
 		return a.readHashes(ctx, hashKinds[kind])
 	}
 	return nil, 0, fmt.Errorf("apply: no Redis reader for kind %q", kind)
@@ -142,7 +149,7 @@ func (a *RedisApplier) Write(ctx context.Context, kind string, row Row, prev Vie
 		return a.writeSingleton(ctx, KindFleet, FleetKey, row)
 	case KindSprint:
 		return a.writeSingleton(ctx, KindSprint, SprintKey, row)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindRoute, KindTier, KindModel:
 		return a.writeHash(ctx, hashKinds[kind], row, idem)
 	}
 	return fmt.Errorf("apply: no Redis writer for kind %q", kind)
@@ -156,7 +163,7 @@ func (a *RedisApplier) Remove(ctx context.Context, kind, name, actor, idem strin
 		return a.removeMachine(ctx, name, actor, idem)
 	case KindFleet, KindSprint:
 		return fmt.Errorf("apply: the %s row is never removed", kind)
-	case KindLoop, KindRoute, KindTier:
+	case KindLoop, KindRoute, KindTier, KindModel:
 		return a.removeHash(ctx, hashKinds[kind], name, actor, idem)
 	}
 	return fmt.Errorf("apply: no Redis remover for kind %q", kind)
@@ -231,7 +238,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "models")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -259,6 +266,8 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"config_dir": str(d, 4),
 			// her per-card token cap; a missing field reads as 0, and apply writes the row's
 			"token_cap": intText(str(d, 5)),
+			// her models strongest first, as her row lists them
+			"models": str(d, 6),
 		}
 	}
 	return views, revValue(rev), nil
@@ -438,8 +447,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
 	writeConfigDir := prev == nil || prev["config_dir"] != row.Fields["config_dir"]
 	writeTokenCap := prev == nil || prev["token_cap"] != row.Fields["token_cap"]
+	writeModels := prev == nil || prev["models"] != row.Fields["models"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeRoles {
+	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeModels && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -455,6 +465,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeTokenCap { // her per-card token cap, a plain field beside config_dir; 0 is no cap
 		pipe.HSet(ctx, "friend:"+f+":desired", "token_cap", row.Fields["token_cap"])
+	}
+	if writeModels { // her models strongest first, a plain field beside config_dir; her tiers, derived from them, went with her slots
+		pipe.HSet(ctx, "friend:"+f+":desired", "models", row.Fields["models"])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
@@ -733,6 +746,7 @@ var hashKinds = map[string]hashKind{
 	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(r Row) []any { return []any{"log", r.Fields["log"]} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
+	KindModel: {kind: KindModel, set: ModelsKey, key: ModelKey},
 }
 
 // readHashes reads the set and the stamp in one round trip, then every

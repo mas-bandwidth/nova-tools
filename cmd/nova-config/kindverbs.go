@@ -198,6 +198,13 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 	}
 	var notes []string
+	if !add && k.Name == config.KindFriend && changes["models"] != "" {
+		if _, given := changes["tiers"]; !given {
+			// her tiers derive from her models: the fallback goes with the set that names them
+			changes["tiers"] = ""
+			notes = append(notes, fmt.Sprintf("friend=%s tiers=-: her tiers derive from her models now (the tier of each), her class from the first; the --tiers fallback is cleared", config.Value(name)))
+		}
+	}
 	if add && k.Name == config.KindMachine && row.Fields["width"] == "" {
 		// width is set apart from slots and is the default when unset: say so where a newcomer meets it
 		notes = append(notes, fmt.Sprintf("machine=%s width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: %s machine set %s --width <n> (0: no member) --as %s%s", config.Value(name), toolName, name, actor, c.again()))
@@ -467,16 +474,22 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 			return refuse(stderr, verb, err.Error())
 		}
 	}
+	classes := make([]string, len(rows))
+	if k.Name == config.KindFriend {
+		if classes, err = friendClasses(ctx, st, rows); err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+	}
 	if *asJSON {
 		o := tool.Done().Fact("kind", k.Name).Fact("rows", len(rows))
 		o.Verb = verb
-		for _, row := range rows {
-			o.Item(k.Name, rowFields(k, row, liveFields(bs, row.Name)...)...)
+		for i, row := range rows {
+			o.Item(k.Name, rowFields(k, row, append(liveFields(bs, row.Name), classField(k, classes[i])...)...)...)
 		}
 		return emit(stdout, o)
 	}
-	for _, row := range rows {
-		fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name))
+	for i, row := range rows {
+		fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name)+classSuffix(k, classes[i]))
 	}
 	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
 	return 0
@@ -561,6 +574,16 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 	}
 	suffix := ""
 	extra := []any{"created", row.CreatedAt, "updated", row.UpdatedAt}
+	if k.Name == config.KindFriend {
+		rows := []config.Row{row}
+		classes, err := friendClasses(ctx, st, rows)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		row = rows[0]
+		suffix = classSuffix(k, classes[0])
+		extra = append(extra, classField(k, classes[0])...)
+	}
 	if k.Name == config.KindMachine {
 		loops, err := machineLoops(ctx, st, name)
 		if err != nil {
@@ -587,11 +610,52 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 	return 0
 }
 
+// friendClasses is each friend row's class, derived from her models
+// (config.FriendClass), and her row's tiers replaced, in place, by the tiers
+// derived from them: what the dealer may hand her, which the fallback tiers
+// are for a row with no models.
+func friendClasses(ctx context.Context, st pgStore, rows []config.Row) ([]string, error) {
+	tiers, err := config.ModelTiers(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	classes := make([]string, len(rows))
+	for i, r := range rows {
+		class, dealt, err := config.FriendClass(r, tiers)
+		if err != nil {
+			return nil, err
+		}
+		rows[i] = r.Clone()
+		rows[i].Fields["tiers"] = strings.Join(dealt, ",")
+		classes[i] = class
+	}
+	return classes, nil
+}
+
+// classSuffix is a friend line's derived class, " class=<tier>"; none for
+// another kind.
+func classSuffix(k *config.Kind, class string) string {
+	if k.Name != config.KindFriend {
+		return ""
+	}
+	return " class=" + config.Value(class)
+}
+
+// classField is classSuffix as a JSON item's field.
+func classField(k *config.Kind, class string) []any {
+	if k.Name != config.KindFriend {
+		return nil
+	}
+	return []any{"class", class}
+}
+
 // laterKind is a kind whose table, or a column of it the verbs read and
 // write, a later migration made (loops since version 6, routes since 7, tiers
 // since 8, the machine's width since 12, fleet endpoints since 14, the note of
-// a route and a machine since 15): each of its verbs refuses on a store older
-// than this binary's migrations (behindSchema), which does not have it.
+// a route and a machine since 15, models and a friend's models since 36): each
+// of its verbs refuses on a store older than this binary's migrations
+// (behindSchema), which does not have it.
 func laterKind(k *config.Kind) bool {
-	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine
+	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine ||
+		k.Name == config.KindModel || k.Name == config.KindFriend
 }
