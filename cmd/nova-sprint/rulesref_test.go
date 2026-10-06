@@ -36,8 +36,8 @@ func briefFile(t *testing.T, dir, name, text string) string {
 // The briefs of the tests below: one on this repository, one on a repository the members
 // hold no rules file for.
 const (
-	homeBrief   = "RESULT: h sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/foundation\n\nhandle the empty case"
-	schemaBrief = "RESULT: x sha=0123456789ab\nREPO: mas-bandwidth/schema\nBASE: main\n\nhandle the empty case"
+	homeBrief   = "RESULT: h sha=0123456789ab tier: flash\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/foundation\n\nhandle the empty case"
+	schemaBrief = "RESULT: x sha=0123456789ab tier: flash\nREPO: mas-bandwidth/schema\nBASE: main\n\nhandle the empty case"
 )
 
 // A brief that does not carry the held rules is admitted, stored as given, and names the
@@ -52,7 +52,7 @@ func TestAddStoresTheCardTextAloneAndNamesItsRules(t *testing.T) {
 	ours, err := swarm.ReadChildRules(ourRulesFile)
 	require.NoError(t, err)
 	dir := t.TempDir()
-	text := "handle the empty case\n\nLibraries considered: none; this card writes no code."
+	text := "handle the empty case tier: flash\n\nLibraries considered: none; this card writes no code."
 	ta.ok("add --stream s1 s1-a --one --brief-file " + briefFile(t, dir, "a.md", text+"\n"))
 	_, _, _, f, ok := ta.m.Record(sprint.Work, "s1-a")
 	require.True(t, ok)

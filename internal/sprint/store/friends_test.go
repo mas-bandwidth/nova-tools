@@ -62,7 +62,7 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	h.up("bob")
 
 	brief := func(who string) string {
-		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
+		return "c: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
 	}
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{
 		{ID: "s1-1", Brief: brief("only friend amy")},
@@ -131,7 +131,7 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	h.up("amy")
 
 	brief := func(who string) string {
-		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
+		return "c: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
 	}
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{
 		{ID: "s1-1", Brief: brief("only friend amy")},

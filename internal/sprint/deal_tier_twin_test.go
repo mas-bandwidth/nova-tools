@@ -15,8 +15,9 @@ import (
 // read "tier -" and handed back its own pinned cards for an hour, and the dealer rotated them
 // to subscription friends). On the twin store with no route, where no deal draws a tier onto
 // the work card: a machine's card and a friend's card each carry the tier they are on (the
-// tier pinned, else the brief's line 1, else flash), and a friend of one class is dealt only
-// the cards her class covers.
+// tier pinned, else the brief's line 1), a card whose tier is unset is dealt to no one
+// (a-card-without-a-tier-is-not-dealt.w1), and a friend of one class is dealt only the cards
+// her class covers.
 func TestADealtPacketAlwaysNamesItsTier(t *testing.T) {
 	t.Parallel()
 	r := newHoldRig(t, 0, 0)
@@ -63,14 +64,14 @@ func TestADealtPacketAlwaysNamesItsTier(t *testing.T) {
 	}
 	assert.Equal(t, map[string]string{
 		"s1-1": "heavy", // the brief's line 1
-		"s1-2": "flash", // no tier: the default
 		"s1-3": "pro",   // brief --tier pins it over line 1
-		"f1-1": "flash", // a friend's card with no tier: the default, on the flash friend
 		"f1-2": "pro",   // named fay (flash): passed over for a pro friend
 	}, tiers)
+	// a card whose tier is unset is dealt to no machine and no friend: it waits ready
+	assert.Equal(t, sprint.Ready, s.StateOf("s1-2"), "a machine's card with no tier is not dealt")
+	assert.Equal(t, sprint.Ready, s.StateOf("f1-1"), "a friend's card with no tier is not dealt, not even to the flash friend")
 
 	// a friend of a class is dealt only the cards her class covers
-	assert.Equal(t, sprint.FriendRow("fay"), rows["f1-1"])
 	assert.Contains(t, []string{sprint.FriendRow("amy"), sprint.FriendRow("bob")}, rows["f1-2"])
 	assert.Equal(t, sprint.Ready, s.StateOf("f1-3"), "a hard pin to fay, who does not do pro, waits for her")
 	for _, f := range []struct{ name, class string }{{"amy", "pro"}, {"bob", "pro"}, {"fay", "flash"}} {

@@ -43,7 +43,7 @@ var verbs []verb
 func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--tier <t>: the tier of a brief that names none] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
@@ -1117,6 +1117,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	replaces := fs.String("replaces", "", "the card this add admits is the twin of these `ids`, comma separated: it takes over every edge where a waiting card needs one of them (that card needs the twin instead, in the same place), each still on the table is dropped with the reason \"replaced by <the new id>\", and no blocked judgment is raised for it, in one step; a card dropped before is replaced too, and its blocked judgments are answered; one card only (it means --one), never a sentinel")
 	allowPersonal := fs.Bool("allow-personal-base", false, "admit cards whose brief's BASE: is a personal branch (<name>/* for the sprint's coordinator, its owner or a friends table row), by default refused naming the base and this flag: no sprint watches a personal branch's gate (docs/SPEC-SPRINT.md section 11, bases-view-r.w2)")
 	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
+	tier := fs.String("tier", "", addTierWords)
 	decideRecord := fs.String("decide-record", "", "the record `file` of the cards' brief decisions under JEV_API_KEY (default ~/nova-sprint/decide/brief.jsonl, the coordinator's root); each card stores it and its op, and land and drop attach the card's end there")
 	var briefOps stringList
 	fs.Var(&briefOps, "brief-op", "`id=op`: a card's brief decision op id (<id>@brief-<hex>), which add sends its server itself when it asked the decision where it was typed; refused when typed on an add no server runs; repeated, one per card")
@@ -1157,7 +1158,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *every != 0 || *last {
 			return refuse(stderr, "add", "--sentinel-every goes with --count, not a card per brief file")
 		}
-		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, *allowShared, *allowPersonal, *decideRecord, briefOps, sprint.Split(*replaces), c, stdout, stderr)
+		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *tier, *held, *allowShared, *allowPersonal, *decideRecord, briefOps, sprint.Split(*replaces), c, stdout, stderr)
 	}
 	if len(briefFiles) == 1 {
 		if *brief != "" {
@@ -1177,6 +1178,11 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	if *stream == "" || (len(ids) == 0) == (*count == 0) {
 		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id> (or --brief-dir <dir>, or --brief-file: a card per file)")
+	}
+	// a card whose tier is unset is dealt to no one: its brief names its tier, or --tier does
+	// (add.go, a-card-without-a-tier-is-not-dealt.w1)
+	if *tier != "" && (*brief == "" || *sentinel != "") {
+		return refuse(stderr, "add", "--tier is the tier of the brief this add admits, and it admits none; give --brief or --brief-file")
 	}
 	streams := sprint.Split(*stream)
 	// a single card: one id, or --count 1 on one stream (on several it is one card each)
@@ -1205,6 +1211,12 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 			return code
 		}
 		c.says = append(c.says, unfilledSays("the brief", *brief)...)
+		// the lint passed: the brief with --tier's tier (add.go)
+		b, why := addBriefTier("the brief", *brief, *tier)
+		if why != "" {
+			return refuse(stderr, "add", why)
+		}
+		*brief = b
 	}
 	cardNeeds := sprint.Split(*needs)
 	if *needs == "" {
@@ -1265,6 +1277,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
 			return code
 		}
+		if why := addNoTier("the brief", *brief); why != "" { // add.go
+			return refuse(stderr, "add", why)
+		}
 	}
 	c.addStream = *stream
 	c.addBefore = *before
@@ -1280,7 +1295,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 // the order the files were named. Every brief is read and linted first (one
 // failing brief refuses the whole call, exit 2, nothing written), and one
 // store write adds every card.
-func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared, allowPersonal bool, decideRecord string, briefOps, replaces []string, c *common, stdout, stderr io.Writer) int {
+func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after, tier string, held, allowShared, allowPersonal bool, decideRecord string, briefOps, replaces []string, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
 		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or --brief-file <file>...")
 	}
@@ -1323,6 +1338,13 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	// nothing written, every failing file named with its findings.
 	if code := lintBriefFiles("add", cards, rs, c.max, stderr); code != 0 {
 		return code
+	}
+	for i := range cards { // the lint passed: each brief with --tier's tier (add.go)
+		b, why := addBriefTier(cards[i].File, cards[i].Brief, tier)
+		if why != "" {
+			return refuse(stderr, "add", why)
+		}
+		cards[i].Brief = b
 	}
 	for i := range cards {
 		cards[i].Rules = cardRules(cards[i].Brief, rs).held // each card names the rules the member injects into it
@@ -1371,6 +1393,11 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	}
 	if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
 		return code
+	}
+	for _, cd := range cards {
+		if why := addNoTier(cd.File, cd.Brief); why != "" && !cd.Sentinel { // add.go
+			return refuse(stderr, "add", why)
+		}
 	}
 	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held, Score: at, BriefOps: asked.ops, BriefRecord: asked.record, Replaces: replaces}
 	c.says = append(c.says, fmt.Sprintf("each card's id is its brief file's name without .md (%s is %s)", files[0], cards[0].ID))

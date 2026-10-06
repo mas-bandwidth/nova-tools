@@ -23,7 +23,7 @@ import (
 // attempt's finding kept.
 func capWorld(t *testing.T) *world {
 	t.Helper()
-	w := friendWorld(t, "c: a machine's card\nREPO: mas-bandwidth/nova-tools\n\nThe task.")
+	w := friendWorld(t, "c: a machine's card tier: flash\nREPO: mas-bandwidth/nova-tools\n\nThe task.")
 	pr := w.s.Work.Placed("s1-1")
 	pr.Fields["attempt"] = "4"
 	pr.Fields["findings"] = "attempt 1: one way\nattempt 2: another\nattempt 3: a third\nattempt 4: a fourth"
