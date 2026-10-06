@@ -677,8 +677,8 @@ own session, within its window:
   `store.FriendFinished`).
 
 Else she is `down`. Nothing else is evidence: not her beat, whoever sends it
-(her daemon, or any loop that beats for her), not `daemon-pong` (`friend health
---state asleep`, shown as down), not a hold released (`friend up`), not a
+(her daemon, or any loop that beats for her), not `daemon-pong` (her daemon's own
+answer, shown as down), not a hold released (`friend up`), not a
 coordinator's down. Her row names the evidence and its age (`where --json`,
 `friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
 what is missing and the age of the last of each, with her beat's age said to be

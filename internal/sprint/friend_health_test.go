@@ -103,7 +103,7 @@ func TestObservedStatusIsUpOrDown(t *testing.T) {
 	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(FriendPongWindow)), "exactly the window is down")
 	assert.Equal(t, Down, ObservedStatus(up, 3, h0), "an old seat's proof never looks up under a new seat")
 	assert.Equal(t, Down, ObservedStatus(up, 2, h0.Add(-time.Second)), "a proof dated after now is no proof: a negative age is not under the window")
-	assert.Equal(t, Down, ObservedStatus(obs(Asleep, h0, 2), 2, h0), "asleep shows as down")
+	assert.Equal(t, Down, ObservedStatus(obs(DaemonPong, h0, 2), 2, h0), "asleep shows as down")
 	assert.Equal(t, Down, ObservedStatus(obs(Down, h0, 2), 2, h0))
 }
 
