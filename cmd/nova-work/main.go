@@ -77,6 +77,7 @@ import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
 					f.Required("org", "the organization whose repositories are read, as GitHub spells it")
 					f.String("out", "", "the tree `file` to write, created, or replaced with --replace; its directory must exist; required unless --dry-run")
 					f.Bool("replace", false, "replace an existing --out file instead of refusing")
+					f.String("fixture", "", "fixture directory with call-NN.json recordings (test use: gh login not needed)")
 					sourceFlags(f)
 					f.Check(checkImport)
 				},

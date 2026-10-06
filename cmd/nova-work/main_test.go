@@ -574,3 +574,22 @@ func TestABareCommandRefusesWithItsStage(t *testing.T) {
 	require.Empty(t, res.Stdout, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 	require.Equal(t, "WORK REFUSED: no verb given; the verbs are import, verify, version; run: nova-work help\n  NOTE "+preAlpha+"\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 }
+
+// TestImportWithFixture: --fixture runs against recorded GraphQL conversations
+// without needing gh or GitHub credentials.
+func TestImportWithFixture(t *testing.T) {
+	t.Parallel()
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	res := workMain(unreachable(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable",
+		"--page-size", "15", "--out", tree, "--fixture", recording)
+	require.Equal(t, 0, res.Code, "import exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
+	assert.Contains(t, res.Stdout, "IMPORT OK")
+	assert.Contains(t, res.Stdout, "gh="+recording)
+
+	// An empty/nonexistent fixture directory refuses cleanly.
+	bad := workMain(unreachable(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable",
+		"--page-size", "15", "--dry-run", "--fixture", "/nonexistent-fixture-dir")
+	require.Equal(t, 2, bad.Code, "import exit %d\n%s%s", bad.Code, bad.Stdout, bad.Stderr)
+	assert.Contains(t, bad.Stderr, "IMPORT REFUSED")
+	assert.Contains(t, bad.Stderr, "run: nova-work import -h")
+}

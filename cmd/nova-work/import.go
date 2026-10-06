@@ -52,10 +52,25 @@ func checkImport(c *tool.Call) {
 // WriteTree actions. A dry run reads all the same and writes nothing.
 func (g github) importTree(c *tool.Call) *tool.Out {
 	org, out, dry := c.Str("org"), c.Str("out"), c.DryRun()
-	q, ghPath, refused := g.open(c, "import")
-	if refused != nil {
-		return refused
+	var q workgh.Query
+	var ghPath string
+	if fixtureDir := c.Str("fixture"); fixtureDir != "" {
+		var err error
+		q, err = workgh.Replay(fixtureDir)
+		if err != nil {
+			o := tool.Refuse(err.Error())
+			o.Remedy = "nova-work import -h"
+			return o
+		}
+		ghPath = fixtureDir
+	} else {
+		var refused *tool.Out
+		q, ghPath, refused = g.open(c, "import")
+		if refused != nil {
+			return refused
+		}
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), c.Dur("timeout"))
 	defer cancel()
 	start := g.now()
@@ -159,7 +174,7 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 // importAgain is the import as it was asked, with --max-calls set to n: the
 // remedy of a run the budget stopped.
 func importAgain(c *tool.Call, n int) string {
-	return again(c, "import", []string{"org", "repo", "out", "replace", "dry-run", "page-size", "gh", "timeout", "max-calls"},
+	return again(c, "import", []string{"org", "repo", "out", "replace", "dry-run", "page-size", "gh", "fixture", "timeout", "max-calls"},
 		map[string]string{"max-calls": fmt.Sprint(n)})
 }
 
