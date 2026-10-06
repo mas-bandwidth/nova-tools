@@ -25,7 +25,7 @@ nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --reti
 nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
 
-Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `nova-check[ <verb>] REFUSED: <why>; run: nova-check help`; `<verb> -h` ends in the verb's `effect:` line.
+Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `<VERB> REFUSED: <why>; run: <door>`, where the door is `nova-check help`, or `nova-check <verb> -h` after a flag the verb does not take; `<verb> -h` ends in the verb's `effect:` line.
 
 ### First run
 
@@ -34,17 +34,17 @@ Most verbs only read. Three write, each only when asked and each with `--dry-run
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART RUN dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor-list
+LINKS OK dir=./self files=4 links=3 excluded=0 broken=0
+NOCODE OK dir=./self files=5 deny-list=floor-list findings=0
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-KERNEL OK bytes=771 budget=4000
+KERNEL OK file=./self/docs/SEED-CORE.md bytes=771 budget=4000 findings=0
 ```
 
-**Reading it.** Every line is `<CHECK> OK` or `<CHECK> FAILED`; FAILED lines go to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--max` FAILED lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest, then a count line that prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
+**Reading it.** The first line of a check is `<CHECK> OK`, `<CHECK> FAILED` or `<CHECK> REFUSED` and the run's facts as `key=value`; the findings of a failing run are typed lines under it, such as `LINKS BROKEN file=... line=... target=... reason=...`, and a failing run writes all of it to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--max` finding lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest; the status line before them carries the count and prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
 
-**What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that names the door (`run: nova-check help`), never the whole banner.
+**What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that names the door (`run: nova-check help`, or `run: nova-check <verb> -h` after a flag the verb does not take), never the whole banner.
 
 **`corpus` is the odd one out.** Every other check finds something present: a broken link names its target. A sentence that has been dropped names nothing, and a rewrite, a move or a restore can drop something that was given to you once, with nothing going red, because the record and the evidence about the record are the same files. So `corpus` reads a ledger you wrote in advance, the statements you intend never to lose without deciding to and where each lives, and asserts they are still there. Changing them is allowed; changing them silently is not, because the repair for a real change is to move the ledger row in the same commit.
 
@@ -173,7 +173,7 @@ refused by name, listing the kinds there are:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ```
@@ -191,10 +191,10 @@ can be pasted:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 ### Are we converging
