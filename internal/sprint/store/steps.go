@@ -190,6 +190,19 @@ func PromotedStep(r sprint.PromotedReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Promoted(s, r) }}
 }
 
+// LandedStep is the coordinator recording work found on the base landed, at a commit git
+// put there (sprint.RecordLanded); it reads the named cards' records, placed or not, so a
+// dropped one is refused by name.
+func LandedStep(r sprint.LandedReq) Step {
+	ids := make([]string, len(r.Pins))
+	for i, pin := range r.Pins {
+		ids[i] = pin.ID
+	}
+	return Step{Named: true, Args: ArgsOf(r), Verb: "landed", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
+		Extras: func(*sprint.Snapshot) map[string][]string { return map[string][]string{sprint.Work: ids} },
+		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordLanded(s, r) }}
+}
+
 // MergeWindowStep opens the merge window: landing pauses for its duration, its reason
 // shown (sprint.MergeWindowOpen; docs/SPEC-SPRINT.md section 7, the lander's pause).
 func MergeWindowStep(r sprint.MergeWindowReq) Step {

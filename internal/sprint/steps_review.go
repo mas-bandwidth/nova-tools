@@ -1727,3 +1727,66 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 	}
 	return p
 }
+
+// LandedReq is the coordinator's record of work found on the branch but not recorded
+// landed (docs/SPEC-SPRINT.md section 7, land-record-unreported-push-b.w1): a push that
+// happened and was never reported, or work landed outside the deal by a pull request. Pins
+// are the cards at the heads the caller read, InBase the caller's git facts (never a
+// model's): each head is an ancestor of Sha, and Sha is on origin/<base> at its tip.
+type LandedReq struct {
+	Pins   []LandedPin
+	Sha    string
+	Reason string
+	Who    string
+}
+
+// RecordLanded lands exactly the pinned cards as merge's record by name lands them (merge
+// --landed, section 8), all or none, each merge card's note naming the commit and the
+// reason. Only a merging card is recorded: the lifecycle has no move review -> landed and no
+// move from off the table, so a card in review is refused naming accept, and a dropped one
+// naming that it stays dropped. The cards are of one stream, the record's one batch.
+func RecordLanded(s *Snapshot, r LandedReq) Plan {
+	var p Plan
+	p.on(s)
+	if strings.TrimSpace(r.Reason) == "" {
+		p.refuse("landed", "a record of work found on the branch says how it got there: --reason <text>")
+		return p
+	}
+	stream := ""
+	for _, pin := range r.Pins {
+		c := s.Work.Card(pin.ID)
+		why := ""
+		switch {
+		case c == nil:
+			why = "no such card"
+		case !c.Placed() && c.F("outcome") == "dropped":
+			why = "dropped (" + orDash(c.F("reason")) + "); the lifecycle has no move off the table -> landed, so it stays dropped"
+		case !c.Placed():
+			why = "not on the table (" + orDash(c.F("outcome")) + ")"
+		case c.Col == Landed:
+			why = "landed already; landed is final"
+		case c.Col == Review:
+			why = "in review; the lifecycle has no move review -> landed: accept it, then record it landed"
+		case c.Col != Merging:
+			why = "it is " + c.Col + "; only a merging card is recorded landed"
+		case stream != "" && c.Row != stream:
+			why = "of stream " + c.Row + ", and the record's other cards are of stream " + stream + "; record each stream on its own"
+		}
+		if why != "" {
+			p.refuse(pin.ID, why)
+			continue
+		}
+		stream = c.Row
+	}
+	if len(p.Refused) > 0 || stream == "" {
+		if stream == "" && len(p.Refused) == 0 {
+			p.refuse("landed", "no card named")
+		}
+		return p
+	}
+	notes := map[string]string{}
+	for _, pin := range r.Pins {
+		notes[pin.ID] = "recorded landed at " + r.Sha + ": " + r.Reason
+	}
+	return MergeStep(s, MergeReq{Stream: stream, Landed: r.Pins, Resolved: notes, Note: r.Reason, Who: r.Who})
+}
