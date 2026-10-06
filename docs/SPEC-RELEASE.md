@@ -555,6 +555,16 @@ for an unkept promise, not for evidence about something else: evidence that does
 *Tests: `TestTheGateRefusesAPromisedJourneyWithoutEvidence`, `TestThePromisedJourneysAreTheChaosSuitesSubtests`,
 `TestTheJourneyGateIsInTheReleaseSpec`.*
 
+## 15. The adoption after a landing is a pipeline
+
+`(*app).cmdAdopt` is sections 8 and 13's order as one pass, meant to run unattended whenever the sprint base moves past the live
+build. Nothing in the tick calls it yet (`cmd/nova-sprint/run.go`, `internal/sprint/store/tick.go`): a tick part is also the shadow tick's planner, and the verb table that would name `nova-sprint adopt` is `cmd/nova-sprint/verbs.go`. The pass itself is: build on a bench, verify, canary and shadow, a cold read, one judgment to the coordinator, then on yes
+the switch and, through **the build's own** `nova-update release adopt`, one push per machine row with the
+version read back, and a rollback from kept copies on missed ticks. The runbook is
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
+
+*Test: `TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
