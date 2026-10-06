@@ -95,6 +95,7 @@ refused as unverifiable); `worker` refuses a relative --worker-dir, a missing an
 remedy; exit codes matched the banner's table everywhere I looked; `--json` mirrors the lines from
 one value; `version` prints the one line.
 
-READ 7/10 — the banner, every verb's -h and docs/SPEC-LOCAL.md speak with one voice and every wall I probed said what it wanted, but three lines mislead a cold reader: the advertised --dry-run cannot run, serve's effect line denies this machine, and the example quietly needs a checkout. USE 7/10 — refusals are the tool's strong suit (every problem at once, each with a paste-ready remedy, honest exit codes), yet the real flows dead-end: both --dry-run forms and the whole --stop path print refusals with no remedy, and no success line of serve or worker is reachable at all without an ollama running.
+READ 7/10 — the banner, every verb's -h and docs/SPEC-LOCAL.md speak with one voice and every wall I probed said what it wanted, but three lines mislead a cold reader: the advertised --dry-run cannot run, serve's effect line denies this machine, and the example quietly needs a checkout.
+USE 7/10 — refusals are the tool's strong suit (every problem at once, each with a paste-ready remedy, honest exit codes), yet the real flows dead-end: both --dry-run forms and the whole --stop path print refusals with no remedy, and no success line of serve or worker is reachable at all without an ollama running.
 
 urgent=3 next=5
