@@ -115,6 +115,9 @@ func (g *LaneGovernor) Paused(now time.Time) bool {
 	return g.held != "" || now.Before(g.pausedUntil)
 }
 
+// Release lifts a hold: a person brought the lanes up (the pause marker is gone).
+func (g *LaneGovernor) Release() { g.held = "" }
+
 // Held is why the lanes are held, out of funds; "" when they are not.
 func (g *LaneGovernor) Held() string { return g.held }
 

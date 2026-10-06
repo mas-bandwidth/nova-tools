@@ -1245,3 +1245,13 @@ LINT OK file=./cards/finding-internal-bus-send.md
 $ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 LINT OK file=./cards/finding-cmd-nova-bus-main.md
 ```
+
+## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
+
+`TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row
+rules, take back, generation job names, width under load, token cap, provider stop, cost line, tokens from opencode's
+database, route row, go shims, bus note); `TestLanesTakeBackACardOutsideTheRowsTiersAndRunOnlyTheRest`,
+`TestLanesAreHeldToTheLoadWidthWhileTheLoadIsHigh`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished`,
+`TestAFinishedCardPublishesItsCostOrWhyNot` and `TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt` run them through
+the lane rig on its fake clock (synctest, no socket, no wall-clock sleep); `TestResumeClearsTheLanesPauseAPersonBringsUp`
+and `TestRefuseGoRefusesWithTheWayToABench` run the two new verbs.

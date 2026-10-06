@@ -69,6 +69,7 @@ type world struct {
 	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	sqlite    friend.Exec                                                                                         // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
 	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
@@ -152,7 +153,7 @@ func sprintView(ctx context.Context, server, name string) (string, error) {
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, exec: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+	w := world{getenv: os.Getenv, exec: friend.RealExec, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -221,7 +222,14 @@ func realWorld() world {
 	return w
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld())) }
+func main() {
+	args := os.Args[1:]
+	if name, ok := friend.GoShimName(os.Args[0]); ok {
+		// run as go or gofmt through a lane's shim directory (friend.GoShims): the refuse-go verb says no
+		args = []string{"refuse-go", "--name", name}
+	}
+	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, realWorld()))
+}
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
 	if len(args) > 0 && args[0] == friend.WallVerb {
@@ -309,7 +317,7 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -357,9 +365,30 @@ lane child (the harness's session open and each card's turn) runs inside the wal
 denies nothing is refused), the network TCP 443 and 22 (docs/SPEC-SANDBOX.md). Prints
 one RUN line per delivery on stdout; stops on SIGINT or SIGTERM, a delivery under way left pending.
 --dry-run checks the flags and the harness and prints the daemon it would run (RUN DRY-RUN as= harness=
-dir= state= redis=): no store is opened and nothing is written.`,
+dir= state= redis=): no store is opened and nothing is written.
+One-shot lanes do what a friend's card runner script did (docs/SPEC-FRIEND.md, one-shot lanes at parity), each
+set on the friend row as the beat answers it (row_tiers=, row_streams=, row_token_cap=, row_load_max=, row_load_width=,
+row_pause_on=, row_refuse_go=) with the flags as the defaults the row overrides: a card filter (--lane-tiers: a dealt
+card of another tier that no lane has begun is taken back, friend take; --lane-streams: patterns a card's stream or id
+must match, else it is skipped); at most the row's width at once, held to --load-width (3) while the machine's one-minute
+load is above --load-max; a per-card token cap (--token-cap) that writes a HOLD REPORT.md naming the cap and stops the
+lane; a provider failure (out of funds, 402; with --pause-on any a rate limit too) that stops every lane, holds the friend
+down on the sprint with the provider's exact message and writes ` + friend.PauseFile + ` in the state directory, nothing resumes
+until a person runs nova-friend resume; each finished card's tokens read from opencode's own database (--db, the run's
+session and its children) and priced by the store's route row for --model, rounded up to the cent, unpriced with its
+reason when there is none, published as a Cost: line on REPORT.md and tokens:/cost: lines on RESULT.md; --refuse-go puts
+go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and one bus note to the coordinator at each finish.`,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
+					f.String("model", "", "the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)")
+					f.String("db", filepath.Join(w.home, ".local", "share", "opencode", "opencode.db"), "opencode's own database, where a card's tokens are read")
+					f.String("lane-tiers", "", "the tiers the lanes work, comma-separated; a dealt card of another tier is taken back (default: the row's row_tiers, else every tier)")
+					f.String("lane-streams", "", "patterns a card's stream or id must match, comma-separated (default: the row's row_streams, else every card)")
+					f.Int("token-cap", 0, "tokens one card may spend, all kinds, before its lane is stopped with a HOLD report; 0 none (default: the row's row_token_cap)")
+					f.Int("load-max", 0, "the machine's one-minute load above which lanes are held to --load-width; 0 none (default: the row's row_load_max)")
+					f.Int("load-width", friend.DefaultLoadWidth, "the lanes that run while the load is above --load-max")
+					f.String("pause-on", "", "funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)")
+					f.Bool("refuse-go", false, "put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)")
 					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
 					f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "the friend's config directory, writable inside the lane's wall and its HOME there (default: CLAUDE_CONFIG_DIR)")
@@ -668,6 +697,38 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 				Run: w.status,
 			},
 			{
+				Name:    "refuse-go",
+				Usage:   "refuse-go --name go|gofmt",
+				Example: "", // refuses, by design: the example block has no line that runs
+				Effect:  tool.Inspection,
+				Detail: `What a lane's go and gofmt shims run: nova-friend run --refuse-go makes a directory of symlinks named go and gofmt to
+this binary and puts it first on every lane child's PATH (GOROOT pointing nowhere), so a go command a lane runs reaches
+this verb through the name it was run by (no shell script) and is refused at exit 2, with the way to run it on a bench.`,
+				ExitTable: "2 always: refused.",
+				Flags: func(f *tool.Flags) {
+					f.Required("name", "the command that was run: go or gofmt")
+				},
+				Run: func(c *tool.Call) *tool.Out { return tool.Refuse(friend.GoRefusal(c.Str("name"))) },
+			},
+			{
+				Name:    "resume",
+				Usage:   "resume --as <me> [--state-dir <d>] [--dry-run]",
+				Example: "", // clears a pause that only a real provider failure writes
+				Effect:  tool.LocalWrite + ": removes the lanes' pause marker " + friend.PauseFile + " from the state directory",
+				DryRun:  true,
+				Detail: `A provider failure the lanes met (out of funds, 402; a rate limit too when the row says pause_on=any) stops every
+lane, holds the friend down on the sprint with the provider's exact message, and writes ` + friend.PauseFile + ` in the state directory with
+that message. Nothing resumes until a person has dealt with the provider and runs this verb: it prints RESUME OK
+cleared= with the message the marker held (RESUME OK cleared=none when there was no pause), after which a running daemon lifts
+its hold at the next second. It does not bring the friend up on the sprint: run nova-sprint friend up <me> as well.`,
+				ExitTable: "0 done, 2 could not run (the marker cannot be removed).",
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name")
+					stateDir(f)
+				},
+				Run: w.resume,
+			},
+			{
 				Name:    "serve",
 				Usage:   "serve --as <coordinator> [--redis <addr>] [--dry-run]",
 				Example: "", // a loop: the example block has no line that runs for ever
@@ -753,7 +814,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if bin, err := w.binary(); err == nil {
 		wall.Self = []string{bin}
 	} // else no Self: a lane's child is refused, never run outside the wall
-	walled := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
 			return w.exec(ctx, d, prog, args, stdin)
 		}
@@ -763,6 +824,37 @@ func (w world) run(c *tool.Call) *tool.Out {
 			wl.Profile = *p
 		}
 		return w.wall(wl, w.exec)(ctx, d, prog, args, stdin)
+	}
+	// the lane rules: the flags are the defaults and her row, as her beat answers it, wins
+	flagRules := friend.LaneRules{Tiers: commaList(c.Str("lane-tiers")), Streams: commaList(c.Str("lane-streams")), TokenCap: int64(c.Int("token-cap")),
+		LoadMax: float64(c.Int("load-max")), LoadWidth: c.Int("load-width"), PauseOn: c.Str("pause-on"), RefuseGo: c.Bool("refuse-go")}
+	var rowRules atomic.Pointer[friend.LaneRules]
+	rules := func() friend.LaneRules {
+		if r := rowRules.Load(); r != nil {
+			return flagRules.Over(*r)
+		}
+		return flagRules
+	}
+	// the lane's go and gofmt refuse: this binary by symlink first on the lane's PATH (friend.GoShims)
+	shimDir := filepath.Join(state, friend.ShimDirName)
+	var shimOnce sync.Once
+	var shimErr error
+	shimmed := friend.ShimExec(walledRaw, shimDir, w.getenv("PATH"))
+	walled := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+		if !rules().RefuseGo {
+			return walledRaw(ctx, d, prog, args, stdin)
+		}
+		shimOnce.Do(func() {
+			bin, err := w.binary()
+			if err == nil {
+				err = friend.GoShims(shimDir, bin)
+			}
+			shimErr = err
+		})
+		if shimErr != nil {
+			return "", 0, fmt.Errorf("the go refusal shims cannot be made, so no lane runs: %w", shimErr)
+		}
+		return shimmed(ctx, d, prog, args, stdin)
 	}
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
@@ -914,6 +1006,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 				if p, ok := friend.ParseProfile(answer); err == nil && ok {
 					rowProfile.Store(&p)
 				}
+				if err == nil {
+					r := friend.ParseLaneRules(answer)
+					rowRules.Store(&r)
+				}
 				return err
 			}))(ctx)
 		},
@@ -925,6 +1021,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Sprint:    w.sprintAsk(server),
+		Rules:     rules,
+		Model:     c.Str("model"),
+		Load:      w.load1(),
+		LaneHold:  func() string { return friend.ReadPause(state) },
+		LaneHoldDown: func(ctx context.Context, message string) error {
+			if err := friend.WritePause(state, message, w.now()); err != nil {
+				return err
+			}
+			if w.cards == nil {
+				return nil
+			}
+			_, err := w.cards(ctx, server, friend.DownArgv(name, c.Str("model"), message))
+			return err
+		},
 		ReadSlots: func() int { return int(rowReadSlots.Load()) },
 		ReadModel: func(tier string) string {
 			if c.Str("harness") == "claude" {
@@ -977,6 +1087,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
 	}
+	if c.Str("harness") == "opencode" {
+		db := c.Str("db")
+		if w.sqlite != nil {
+			d.Tokens = func(ctx context.Context, session string) (friend.LaneTokens, error) {
+				return friend.OpenCodeTokens(ctx, w.sqlite, db, session)
+			}
+		}
+		d.Route = w.route(server, c.Str("model"))
+	}
 	watch = friend.WatchHarness(d, deliver)
 	if w.alive != nil {
 		watch.Alive = w.alive
@@ -986,6 +1105,50 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
+}
+
+// load1 is the machine's one-minute load, read at most every 5 seconds: /proc/loadavg, else
+// sysctl vm.loadavg; 0 (no load rule can fire) when neither answers.
+func (w world) load1() func() float64 {
+	var mu sync.Mutex
+	var at time.Time
+	var last float64
+	return func() float64 {
+		mu.Lock()
+		defer mu.Unlock()
+		if now := w.now(); at.IsZero() || now.Sub(at) >= 5*time.Second {
+			at = now
+			out := ""
+			if raw, err := os.ReadFile("/proc/loadavg"); err == nil {
+				out = string(raw)
+			} else if o, exit, err := w.exec(context.Background(), "/", "sysctl", []string{"-n", "vm.loadavg"}, ""); err == nil && exit == 0 {
+				out = o
+			}
+			last, _ = friend.ParseLoad1(out)
+		}
+		return last
+	}
+}
+
+// route is the store's route row for the friend's provider/model, asked of the sprint server
+// once it answers (nova-sprint routes --json); not found with no --model or no server.
+func (w world) route(server, model string) func() friend.RoutePrice {
+	var mu sync.Mutex
+	var rp friend.RoutePrice
+	provider, id, _ := strings.Cut(model, "/")
+	return func() friend.RoutePrice {
+		mu.Lock()
+		defer mu.Unlock()
+		if rp.Found || w.cards == nil || id == "" {
+			return rp
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if out, err := w.cards(ctx, server, []string{"routes", "--json"}); err == nil {
+			rp = friend.ParseRoutePrice(out, provider, id)
+		}
+		return rp
+	}
 }
 
 // sprintAsk is the daemon's Sprint: one verb to the sprint server, what it printed; nil in a
@@ -1257,6 +1420,21 @@ func stamp(t time.Time) string {
 		return "-"
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+func (w world) resume(c *tool.Call) *tool.Out {
+	state := w.stateDir(c)
+	msg := friend.ReadPause(state)
+	if msg == "" {
+		return tool.Done().Fact("cleared", "none")
+	}
+	if c.DryRun() {
+		return tool.Done().Fact("cleared", "would").Fact("pause", msg)
+	}
+	if _, err := friend.ClearPause(state); err != nil {
+		return tool.Refuse("the pause marker cannot be removed: " + err.Error())
+	}
+	return tool.Done().Fact("cleared", "yes").Fact("pause", msg)
 }
 
 func (w world) status(c *tool.Call) *tool.Out {

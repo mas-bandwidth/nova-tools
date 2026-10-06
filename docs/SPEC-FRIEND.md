@@ -921,6 +921,42 @@ internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
 
+### opencode-lanes-parity-r2.w2 — the lanes do what the runner scripts did (internal/friend/lane_parity.go)
+
+The owner, 2026-10-05: "can you please create cards to remove any shell scripts you use while coordinating with
+real golang nova-tool or nova-sprint verbs and flags", "We need to get away from these one shot shell scripts".
+Two friends ran their cards through two copies of one zsh runner because the one-shot lanes lacked what it did.
+Each behaviour is now a small function of `lane_parity.go`, configured on the friend row as the beat answers it
+(`row_<name>=<value>`, `ParseLaneRules`), the `run` flags being the defaults the row overrides (`LaneRules.Over`);
+nothing about a friend is in the code. Every one is off while `Daemon.Rules` is nil.
+
+| behaviour | row word / flag | function | test |
+|---|---|---|---|
+| card filter: a card of a tier outside the row's tiers is taken back; a card whose stream and id match none of the patterns is skipped | `row_tiers=flash`, `row_streams=security*,fp-sec*` / `--lane-tiers`, `--lane-streams` | `LaneRules.Judge` | `TestOpencodeLanesDoWhatTheRunnerStopgapsDid/the_card_filter` |
+| a dealt card outside the tiers that no lane began, no `jobs/<job>` exists for, and has no report is taken back once (`friend take <friend> <card> --reason`) for the dealer | as above | `TakeArgv`, `loop.takeBack` | `TestLanesTakeBackACardOutsideTheRowsTiersAndRunOnlyTheRest` |
+| job names carry the generation, `<card>~<epoch>` and `.g<gen>` past the first, as friend sync names the inbox directory | | `JobName` (read back by `ParseJob`) | `.../the_job_name_carries_the_generation` |
+| at most the row's width at once, held to the load width (3) while the machine's one-minute load is above the bound; each change said once | `row_load_max=90`, `row_load_width=3` / `--load-max`, `--load-width` | `LaneRules.LaneWidthUnderLoad`, `ParseLoad1` | `.../width_under_load`, `TestLanesAreHeldToTheLoadWidthWhileTheLoadIsHigh` |
+| a per-card token cap: a HOLD `REPORT.md` naming the cap, tokens and turns, then the lane's turn is stopped | `row_token_cap=6000000` / `--token-cap` | `LaneRules.OverTokenCap`, `TokenCapReport`, `loop.capStep` | `.../the_token_cap`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished` |
+| a provider failure stops every lane, holds the friend down with the provider's exact message (`friend down --reason "provider failure (<model>): <message>"`), writes `PAUSED` in the state directory, and nothing resumes until a person runs `nova-friend resume` | out of funds always; `row_pause_on=any` / `--pause-on any` adds a rate limit | `LaneRules.ProviderStop`, `WritePause`, `ReadPause`, `ClearPause`, `DownArgv`, `loop.holdDown`, `loop.markerStep` | `.../a_provider_failure_stops_every_lane`, `TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt`, `TestResumeClearsTheLanesPauseAPersonBringsUp` |
+| a card's tokens read from opencode's own database (the lane's session and its children, less the session's totals when the card began: a lane's session serves many cards), priced by the store's route row for `--model` (`routes --json`), rounded up to the cent, `unpriced (<why>)` when there is no row or the sheet cannot price them; published as `Cost:` under `Head:` on `REPORT.md` and `tokens:`/`cost:` on `RESULT.md` | `--model`, `--db` | `OpenCodeTokens` (the `sqlite3` CLI, read only: the tree has no sqlite driver), `LaneTokens.Sub`, `ParseRoutePrice`, `CostOf`, `CostLine`, `WithCost`, `PublishCost` | `.../the_cost_line`, `.../tokens_come_from_opencode's_own_database`, `.../the_route_row_is_the_store's`, `TestAFinishedCardPublishesItsCostOrWhyNot` |
+| `go` and `gofmt` that refuse, first on every lane child's PATH, GOROOT pointing nowhere: a directory of symlinks to this binary, which run by those names answers the `refuse-go` verb (exit 2, with the way to a bench); no script | `row_refuse_go=1` / `--refuse-go` | `GoShims`, `GoShimName`, `ShimExec` (outside `Wall.Exec`, so `env` runs inside the wall), `GoRefusal` | `.../go_on_the_lane_machine_is_refused_by_a_shim_on_the_lane's_PATH`, `TestRefuseGoRefusesWithTheWayToABench` |
+| a bus note to the coordinator at each finish: `<friend> card <job>: <verdict>`, with the cost and wall | | `FinishNote`, `loop.finishNote` | `.../a_bus_note_at_each_finish`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished` |
+
+A rate limit still backs off by default (rate-limit-backs-off-not-down.w1, above): the runner held a friend down on
+a 429 as on a 402, and that finding stands unless the row says `pause_on=any`. The pause marker outlives the daemon:
+a daemon that starts and finds `PAUSED` holds its lanes at once, and one that finds it cleared lifts the hold it
+made; `nova-friend resume` removes it and does not bring the friend up on the sprint (`nova-sprint friend up`).
+
+Not done here, and what blocks the stopgaps' retirement: the sprint server does not yet answer the lane rules on the
+beat (`row_tiers=` and the rest are read, but nova-config's friend row and `nova-sprint friend beat` are outside
+this card's paths, so until they carry them the flags are the only source); `friend cards --json` does not carry a
+card's stream, so `--lane-streams` matches the id alone until it does (`HeldCard.Stream` reads `stream` when it
+comes); `friend take` and `friend down` are coordinator-class verbs, and the daemon sends them as the friend, so a
+server that refuses them leaves the lane saying so (`take <card> refused`, `holding the friend down failed`); the
+runner's raise (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured
+raise, not ported; the invoice-effective price beside the card price is not ported; the beat's `--running` and
+`--active` words are the daemon's own beat.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should

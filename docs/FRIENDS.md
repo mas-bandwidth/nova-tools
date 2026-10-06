@@ -73,6 +73,15 @@ name the job, so an older generation cannot suppress or reserve a newer one. Leg
 set-aside records containing only a card id apply to generation 1. Progress passes only the numeric
 sprint epoch, without the generation suffix.
 
+## One-shot lanes at parity with the card runner
+
+A friend whose delivery mode is `one-shot` runs her cards through nova-friend's lanes, not through a runner script:
+`run` takes the card filter, the load width, the per-card token cap, the provider pause, the go refusal and the card's
+cost from the friend row (`row_tiers=`, `row_streams=`, `row_token_cap=`, `row_load_max=`, `row_load_width=`,
+`row_pause_on=`, `row_refuse_go=`) or its flags, and says a card's cost on its `REPORT.md` (`Cost:` under `Head:`) and
+`RESULT.md`. A provider failure writes `PAUSED` in her state directory and holds her down; `nova-friend resume --as <me>`
+is the person bringing it up (docs/SPEC-FRIEND.md, opencode-lanes-parity-r2.w2).
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or

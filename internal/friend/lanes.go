@@ -14,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
@@ -217,6 +219,10 @@ type lane struct {
 	card     *Card
 	attempts int
 	t        *turn
+	base     LaneTokens // the session's tokens when the card began: the card's are the rest
+	baseOK   bool
+	polled   time.Time // when the card's tokens were last read for the cap
+	capped   bool      // stopped at the row's token cap
 }
 
 type laneResult struct {
@@ -238,6 +244,9 @@ type laneSet struct {
 	gov     LaneGovernor // the live cap under rate limits, the hold when out of funds (ratelimit.go)
 	width   int          // the row's width at the last step
 	now     time.Time    // the last step's clock
+	marked  bool         // the hold in force is the pause marker's (a person lifts it)
+	loaded1 bool         // lanes are held to the load width
+	took    map[string]bool
 }
 
 func (s *laneSet) running() bool {
@@ -340,7 +349,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 	for _, line := range s.gov.Step(now, width) {
 		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
 	}
+	rules := d.laneRules()
+	l.markerStep(now)
 	limit, paused := s.gov.Cap(width), s.gov.Paused(now)
+	limit = l.loadLimit(rules, limit, now)
 	if !s.loaded {
 		s.loaded = true
 		s.given = map[string]bool{}
@@ -375,9 +387,16 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if s.given[id] || (legacy && s.given[c.ID]) {
 			return true
 		}
+		if v, _ := l.judge(rules, id); v != LaneRun {
+			return true
+		}
 		return slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox })
 	}
+	l.takeBack(rules, now)
 	for _, ln := range s.lanes {
+		if ln.t != nil && ln.t.running {
+			l.capStep(rules, ln, now)
+		}
 		if ln.t != nil || ln.opening {
 			continue
 		}
@@ -413,7 +432,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 			if !found {
 				continue // messages wait: they ride only with a card
 			}
-			ln.card, ln.attempts = &c, 0
+			ln.card, ln.attempts, ln.capped = &c, 0, false
+			ln.base, ln.baseOK = l.tokens(ln.session)
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
 		}
@@ -507,6 +527,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
 		line += " card=done " + l.endCard(ln.n, card, end, now)
+		l.finishNote(ln, card, now.Sub(t.started), now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
 		return
@@ -528,6 +549,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
+	l.finishNote(ln, card, now.Sub(t.started), now)
 	job := filepath.Base(card.Outbox)
 	s.given[job] = true
 	s.state.GivenUp = append(s.state.GivenUp, job)
@@ -572,9 +594,19 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 	at := now.UTC().Format(time.RFC3339)
 	var rate RateLimited
 	var funds OutOfFunds
+	stop, stopped := d.laneRules().ProviderStop(err)
 	switch {
+	case stopped && errors.As(err, &rate):
+		// the row says a rate limit holds her down too (row_pause_on=any): as out of funds does
+		if s.gov.Hold(rate.Reason) {
+			d.Record(fmt.Sprintf("%s provider failure: lanes held, the friend held down, nothing resumes until a person clears %s: %s", at, PauseFile, oneLine(rate.Reason, 200)))
+			l.holdDown(stop, now)
+			l.tellKind(bus.KindBlocker, fmt.Sprintf("friend %s: provider failure: %s", d.Friend, oneLine(rate.Reason, 120)), fmt.Sprintf("The row says a rate limit holds the lanes (pause_on=any). The provider said: %s. Every lane is stopped and the friend is held down; clear the pause with nova-friend resume --as %s, then bring her up.\n", rate.Reason, d.Friend), now)
+		}
+		return true
 	case errors.As(err, &funds):
 		if s.gov.Hold(funds.Reason) {
+			l.holdDown(stop, now)
 			d.Record(fmt.Sprintf("%s out of funds: lanes held until the daemon restarts, every card kept in hand: %s", at, oneLine(funds.Reason, 200)))
 			subject, body := FundsJudgmentText(d.Friend, funds.Reason)
 			l.tellKind(bus.KindBlocker, subject, body, now)
@@ -785,4 +817,203 @@ func ParseProfile(answer string) (profile string, ok bool) {
 		}
 	}
 	return profile, ok
+}
+
+// laneRules is her row's lane rules; none when the parity is not wired.
+func (d *Daemon) laneRules() LaneRules {
+	if d.Rules == nil {
+		return LaneRules{}
+	}
+	return d.Rules()
+}
+
+// markerStep makes the pause marker the hold's truth: a marker the lanes find (a provider
+// failure held them before this daemon started) holds them, and a marker a person cleared
+// lifts the hold it made.
+func (l *loop) markerStep(now time.Time) {
+	d, s := l.d, l.lanes
+	if d.LaneHold == nil {
+		return
+	}
+	msg := d.LaneHold()
+	switch {
+	case msg != "" && s.gov.Held() == "":
+		s.gov.Hold(msg)
+		s.marked = true
+		d.Record(fmt.Sprintf("%s provider failure: lanes held, nothing resumes until a person clears %s: %s", now.UTC().Format(time.RFC3339), PauseFile, oneLine(msg, 200)))
+	case msg == "" && s.marked && s.gov.Held() != "":
+		s.gov.Release()
+		s.marked = false
+		d.Record(now.UTC().Format(time.RFC3339) + " provider failure: the pause is cleared by a person; lanes resume")
+	}
+}
+
+// holdDown records the provider's exact message as the pause marker and holds the friend
+// down on the sprint (LaneHoldDown); the marker is then the hold's truth.
+func (l *loop) holdDown(message string, now time.Time) {
+	d := l.d
+	if d.LaneHoldDown == nil {
+		return
+	}
+	l.lanes.marked = true
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+	defer cancel()
+	if err := d.LaneHoldDown(ctx, message); err != nil {
+		d.Record(fmt.Sprintf("%s provider failure: holding the friend down failed: %s", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 300)))
+	}
+}
+
+// loadLimit is the live cap held to the row's load width while the machine's load is above the
+// row's bound, each change said once.
+func (l *loop) loadLimit(r LaneRules, limit int, now time.Time) int {
+	d, s := l.d, l.lanes
+	if d.Load == nil {
+		return limit
+	}
+	n, held := r.LaneWidthUnderLoad(limit, d.Load())
+	switch {
+	case held && !s.loaded1:
+		s.loaded1 = true
+		d.Record(fmt.Sprintf("%s load above %.0f: lanes held at %d of %d", now.UTC().Format(time.RFC3339), r.LoadMax, n, limit))
+	case !held && s.loaded1:
+		s.loaded1 = false
+		d.Record(fmt.Sprintf("%s load at or below %.0f: lanes back to %d", now.UTC().Format(time.RFC3339), r.LoadMax, limit))
+	}
+	return n
+}
+
+// heldOf is the held card whose job is job.
+func (d *Daemon) heldOf(job string) (HeldCard, bool) {
+	for _, h := range d.heldCards {
+		if h.Job == job {
+			return h, true
+		}
+	}
+	return HeldCard{}, false
+}
+
+// judge is the row's card filter on a job: the tier and stream come from her held cards when
+// the server said them; a job the row does not hold is judged by its id alone.
+func (l *loop) judge(r LaneRules, job string) (LaneVerdict, string) {
+	h, ok := l.d.heldOf(job)
+	if !ok {
+		id, _, _, _ := ParseJob(job)
+		if id == "" {
+			id = job
+		}
+		r.Tiers = nil // no tier is known for a job the row does not hold
+		return r.Judge(id, "", "")
+	}
+	return r.Judge(h.Card, h.Stream, h.Tier)
+}
+
+// takeBack takes the dealt card the row's tiers do not cover back for the dealer, once, when
+// no lane has begun it and no job directory exists for it (friend take).
+func (l *loop) takeBack(r LaneRules, now time.Time) {
+	d, s := l.d, l.lanes
+	if d.Sprint == nil || len(r.Tiers) == 0 {
+		return
+	}
+	for _, h := range d.heldCards {
+		if h.Col != "working" || s.took[h.Job] || s.given[h.Job] || !validJob(h.Job) {
+			continue
+		}
+		if _, started := s.state.Started[h.Job]; started || exists(filepath.Join(d.Dir, "jobs", h.Job)) || exists(filepath.Join(d.Dir, "outbox", h.Job, "REPORT.md")) {
+			continue
+		}
+		if slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && filepath.Base(ln.card.Outbox) == h.Job }) {
+			continue
+		}
+		v, why := r.Judge(h.Card, h.Stream, h.Tier)
+		if v != LaneTake {
+			continue
+		}
+		if s.took == nil {
+			s.took = map[string]bool{}
+		}
+		s.took[h.Job] = true
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+		_, err := d.Sprint(ctx, TakeArgv(d.Friend, h.Card, why))
+		cancel()
+		at := now.UTC().Format(time.RFC3339)
+		if err != nil {
+			d.Record(fmt.Sprintf("%s take %s refused: %s", at, h.Card, oneLine(err.Error(), 300)))
+			continue
+		}
+		d.Record(fmt.Sprintf("%s take %s back: %s", at, h.Card, why))
+	}
+}
+
+// TokenPollEvery is how often a running card's tokens are read for the cap.
+const TokenPollEvery = 15 * time.Second
+
+// tokens reads a session's tokens; ok is false when they cannot be read.
+func (l *loop) tokens(session string) (LaneTokens, bool) {
+	d := l.d
+	if d.Tokens == nil || session == "" {
+		return LaneTokens{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+	defer cancel()
+	t, err := d.Tokens(ctx, session)
+	if err != nil {
+		d.Record(l.d.Now().UTC().Format(time.RFC3339) + " tokens: " + oneLine(err.Error(), 300))
+		return LaneTokens{}, false
+	}
+	return t, true
+}
+
+// capStep stops a running card that has spent the row's token cap: a HOLD REPORT.md naming the
+// cap, then the turn is stopped (its end finds the report and finishes the card).
+func (l *loop) capStep(r LaneRules, ln *lane, now time.Time) {
+	if r.TokenCap == 0 || ln.capped || ln.card == nil || !ln.baseOK || now.Sub(ln.polled) < TokenPollEvery {
+		return
+	}
+	ln.polled = now
+	cur, ok := l.tokens(ln.session)
+	if !ok {
+		return
+	}
+	spent := cur.Sub(ln.base)
+	if !r.OverTokenCap(spent.Total()) {
+		return
+	}
+	ln.capped = true
+	if !exists(ln.card.Report()) {
+		if err := os.MkdirAll(ln.card.Outbox, 0o755); err == nil {
+			// ignored: a report that cannot be written leaves the lane's end to write its own failed one
+			_ = atomicfile.WriteFile(ln.card.Report(), []byte(TokenCapReport(l.d.Friend, r.TokenCap, spent.Total(), ln.attempts+1, "")), 0o644)
+		}
+	}
+	l.d.Record(fmt.Sprintf("%s TOKEN CAP lane=%d card=%s: %d tokens of %d; lane stopped", now.UTC().Format(time.RFC3339), ln.n, ln.card.ID, spent.Total(), r.TokenCap))
+	ln.t.cancel()
+}
+
+// finishNote publishes the card's cost on its REPORT.md and RESULT.md and sends the bus note
+// to the coordinator, at each finish; off when the parity is not wired (Rules nil).
+func (l *loop) finishNote(ln *lane, card Card, wall time.Duration, now time.Time) {
+	d := l.d
+	if d.Rules == nil {
+		return
+	}
+	spent := LaneTokens{Tokens: cardcost.None()}
+	if cur, ok := l.tokens(ln.session); ok && ln.baseOK {
+		spent = cur.Sub(ln.base)
+	}
+	var rp RoutePrice
+	if d.Route != nil {
+		rp = d.Route()
+	}
+	if d.Tokens != nil {
+		if err := PublishCost(card.Outbox, spent, rp, d.Model); err != nil {
+			d.Record(fmt.Sprintf("%s cost: %s: %s", now.UTC().Format(time.RFC3339), card.ID, oneLine(err.Error(), 300)))
+		}
+	}
+	verdict := ""
+	if raw, err := os.ReadFile(card.Report()); err == nil {
+		verdict, _ = reportLine(string(raw), "Verdict")
+	}
+	cost := CostOf(spent.Tokens, rp, d.Model)
+	subject, body := FinishNote(d.Friend, filepath.Base(card.Outbox), verdict, cost, wall)
+	l.tell(subject, body, now)
 }

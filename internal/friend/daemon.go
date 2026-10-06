@@ -137,6 +137,20 @@ type Daemon struct {
 	// run ended with no REPORT.md (lane_end.go). Nil, or a finish not answered, leaves it to
 	// friend sync, which reads the REPORT.md the lane wrote.
 	Finish func(ctx context.Context, argv []string) error
+	// The lanes' parity with the runner scripts they replace (lane_parity.go); Rules nil
+	// turns every one off. Rules is her row's lane rules as her beat last answered them,
+	// Load the machine's one-minute load (nil: no load rule), Tokens a session's tokens
+	// from opencode's database (nil: no cost and no token cap), Route the store's route row
+	// for her model and Model its name, LaneHold the pause marker's line (the lanes held
+	// down by a provider failure until a person clears it) and LaneHoldDown writes it and
+	// holds her down on the sprint.
+	Rules        func() LaneRules
+	Load         func() float64
+	Tokens       func(ctx context.Context, session string) (LaneTokens, error)
+	Route        func() RoutePrice
+	Model        string
+	LaneHold     func() string
+	LaneHoldDown func(ctx context.Context, message string) error
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
