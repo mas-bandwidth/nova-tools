@@ -3204,11 +3204,29 @@ section 6). The test is internal/sprint/land_records_test.go
 
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
-and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
-document or a test file (a `.md`, a `_test.go`) the packages that test the tree
-itself pass (`go test ./internal/docs/ ./internal/ci/`, those the clone has). The
-base's tip is gated once a batch, the tree tests included, before any head is
-merged. A base that is red is first offered its cure (section 8, the base cure):
+and vets (`go build ./...`, `go vet ./...`). A merged head also runs `go test`
+for every package under a directory the merge changes and every package that
+imports one of those directly, from the module's own `go list` (`Imports`,
+`TestImports` and `XTestImports`; not `go list -deps` of the standard library).
+A file in the module root selects the root package only, when the root is a
+package, and not every nested package, so a root edit does not become a
+whole-module test. A file under a directory that is not itself a package, such
+as `testdata`, selects the nearest package that contains it. The same run
+includes the packages that test the tree itself (`./internal/docs/` and
+`./internal/ci/`, those the clone has as Go packages). The same tip then runs
+the four whole-tree functional checks in one run, `go test -tags functional
+-timeout 14m -run '^(TestUncheckedErrors|TestStaticcheckFindings|TestDeadCode|TestEveryCommandMeetsTheOnboardingStandard)$'
+./internal/ci/`, when `internal/ci` is a Go package. Those four read the tree
+(unchecked errors, staticcheck, dead code, and the onboarding standard); they
+do not open a store. The base's tip is gated once a batch, before any head is
+merged, with no batch diff: build, vet, the tree packages and the four
+functional checks. A `go list` that fails is a red gate, so a head is not landed
+on a set the gate could not name. Each go run is bounded by 15 minutes. A merged
+head is at most five of them (build, vet, `go list`, the selected `go test`,
+the functional run): 75 minutes, and less when the diff names no file or the
+clone has no `internal/ci`. A widely imported package makes that one `go test`
+large; the cap still holds, and a run that hits it is red. A red keeps the
+bisect to the card. A base that is red is first offered its cure (section 8, the base cure):
 each head of the batch, merged onto the base alone, through the same gate; the
 first whose tree passes lands first as the base fix and the batch goes on after
 it. With no such head the base refuses the batch, nothing pushed or reported and

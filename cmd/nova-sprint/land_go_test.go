@@ -8,14 +8,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // withEnv replaces a variable the environment holds and adds one it does not, the rest
-// in place; gateRuns is the build and the vet, then the tree tests the clone holds when
-// asked; treeTested is a document or a test file; gateWhy is one line of the run, how it
-// ended and its output.
+// in place; the tree gate's argv is the build and the vet, then the packages it was
+// given, then the four functional checks when asked; gateWhy is one line of the run,
+// how it ended and its output.
 func TestTreeGateWords(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, []string{"GOFLAGS=-mod=readonly", "PATH=/bin", "NOVA_CI_UPDATE=1"},
@@ -27,23 +28,13 @@ func TestTreeGateWords(t *testing.T) {
 	assert.Equal(t, "GOFLAGS=-tags=custom -mod=readonly", readonlyGoFlags([]string{"GOFLAGS=-tags=custom -mod=mod"}))
 	assert.Equal(t, "GOFLAGS=-tags=custom -count=1 -mod=readonly",
 		readonlyGoFlags([]string{"GOFLAGS=-tags=custom", "PATH=/bin", "GOFLAGS=-count=1 -mod=vendor"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(false, []string{"internal/docs"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(true, nil))
+	assert.Equal(t, "GOFLAGS=-mod=readonly", listGoFlags(nil))
+	assert.Equal(t, "GOFLAGS=-count=1 -mod=readonly", listGoFlags([]string{"GOFLAGS=-count=1 -json"}))
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, sprint.TreeGateArgv(nil, false))
 	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "test", "./internal/docs/", "./internal/ci/"}},
-		gateRuns(true, []string{"internal/docs", "internal/ci"}))
-	for p, want := range map[string]bool{
-		"docs/CLI.md":            true,
-		"a/b_test.go":            true,
-		"a/b.go":                 true,
-		"a/test.go":              true,
-		"internal/ci/testdata/x": true,
-		"testdata/cases.txt":     true,
-		"README":                 false,
-		"x.mdx":                  false,
-		"notes.txt":              false,
-	} {
-		assert.Equal(t, want, treeTested(p), p)
-	}
+		sprint.TreeGateArgv([]string{"internal/docs", "internal/ci"}, false))
+	assert.Equal(t, []string{"go", "test", "-tags", "functional", "-run", sprint.FunctionalTreeRun, "-timeout", sprint.FunctionalTreeTimeout, "./internal/ci/"},
+		sprint.TreeGateArgv([]string{"internal/docs", "internal/ci"}, true)[3])
 	assert.Equal(t, "go vet ./...: exit status 1: # example.com/m | ./bad.go:5:2: Printf format %d has arg \"s\" of wrong type string",
 		gateWhy([]string{"go", "vet", "./..."}, errors.New("exit status 1"), "# example.com/m\n./bad.go:5:2: Printf format %d has arg \"s\" of wrong type string\n\n"))
 	long := gateWhy([]string{"go", "build", "./..."}, errors.New("exit status 2"), strings.Repeat("x", 2000))
@@ -90,11 +81,11 @@ const (
 )
 
 // Every tip of the batch branch passes the tree gate: a head whose merged tree fails the
-// build, the vet, or, when it changes a document, a Go file or testdata, the tree tests,
-// is taken off the batch branch and ends the batch as a head that does not merge does, the
-// run and its output the finding; the heads before it land. A head that changes none of
-// those is not tested, only built and vetted. A base whose tip is red refuses the batch
-// before any merge, blaming no card.
+// build, the vet, or the tests of a package the merge touches, a package that imports
+// one of those, or the tree's own packages, is taken off the batch branch and ends the
+// batch as a head that does not merge does, the run and its output the finding; the
+// heads before it land. A base whose tip is red refuses the batch before any merge,
+// blaming no card.
 func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -109,11 +100,11 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 		{"a build failure", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"bad.go": buildRed},
 			"fails the tree gate: go build ./...: exit status 1: # example.com/m | ./bad.go:3:14: syntax error:", ""},
 		{"a document the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "BAD\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: go test ./internal/docs/", ""},
 		{"a Go file the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"forbidden.go": "package main\n\nfunc forbidden() {}\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
-		{"a plain file the tree tests would refuse is not tested", nil, map[string]string{"forbidden.txt": "plain\n"}, map[string]string{"notes.txt": "more plain\n"},
-			"", ""},
+			"fails the tree gate: go test ./internal/docs/", ""},
+		{"a plain file the tree packages refuse", nil, map[string]string{"notes.txt": "plain\n"}, map[string]string{"forbidden.txt": "plain\n"},
+			"fails the tree gate: go test ./internal/docs/", ""},
 		{"a red base refuses the batch", map[string]string{"bad.go": vetRed}, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "still fine\n"},
 			"", "reason=the base main fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: go vet ./...: exit status 1: bad.go:5:26: fmt.Printf format %d"},
 	} {

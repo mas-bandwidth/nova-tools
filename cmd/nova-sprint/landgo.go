@@ -9,16 +9,19 @@ package main
 // card's finding.
 //
 // The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
-// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
-// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
-// is gated once a batch before any head is merged, so a base that is red refuses the
-// batch and blames no card, unless a head of the batch cures it (cureBase): that head lands
+// merged (docs/SPEC-SPRINT.md section 7): the module builds and vets (`go build ./...`,
+// `go vet ./...`). A merged head also tests every package under a directory it changes
+// and every package that imports one of those directly, plus the tree packages
+// (treeTests, where the clone has them), plus the four whole-tree functional checks
+// when internal/ci is a Go package. The base's tip is gated once a batch before any
+// head is merged, with no batch diff, so a base that is red refuses the batch and
+// blames no card, unless a head of the batch cures it (cureBase): that head lands
 // first as the base fix. A head whose merged tree is red is taken off the batch branch
 // and ends the batch as a head that does not merge does, the gate's run and output its
 // finding. A clone with no go.mod has no module and no gate.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -36,8 +39,8 @@ import (
 // the tree's own packages, or one update run (a build and two tests of one package).
 const landGoBudget = 15 * time.Minute
 
-// treeTests are the packages that test the tree itself (its docs and its tests), run by
-// the gate when a head changes a .md or a _test.go file; one the clone lacks is not run.
+// treeTests are the packages that test the tree itself. The gate runs the ones the
+// clone holds as Go packages; a directory of data only is not a package and is not run.
 var treeTests = []string{"internal/docs", "internal/ci"}
 
 // goRun runs one go command (run) in the clone, in the lander's environment with
@@ -57,6 +60,30 @@ func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...str
 	return string(out), b.Wrap(strings.Join(run, " "), err)
 }
 
+// goList is GoListArgv in the clone. Stdout is the list; -json is dropped from
+// GOFLAGS so the template form is what the parser reads (a caller's -json would
+// replace it). A red run returns both streams.
+func (l *lander) goList(ctx context.Context, dir string) (string, error) {
+	run := sprint.GoListArgv()
+	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
+	defer b.Cancel()
+	var env []string
+	if l.a != nil {
+		env = l.a.gitEnv
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	var stdout, stderr bytes.Buffer
+	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, listGoFlags(env))
+	b.Cmd.Stdout, b.Cmd.Stderr = &stdout, &stderr
+	err := b.Wrap(strings.Join(run, " "), b.Cmd.Run())
+	if err != nil {
+		return strings.TrimSpace(stdout.String() + "\n" + stderr.String()), err
+	}
+	return stdout.String(), nil
+}
+
 // readonlyGoFlags returns GOFLAGS=... with -mod=readonly set, preserving any other
 // flags from env's GOFLAGS entries and dropping any existing -mod or -mod=... flag.
 func readonlyGoFlags(env []string) string {
@@ -71,6 +98,18 @@ func readonlyGoFlags(env []string) string {
 		}
 	}
 	terms = append(terms, "-mod=readonly")
+	return "GOFLAGS=" + strings.Join(terms, " ")
+}
+
+// listGoFlags is readonlyGoFlags without -json: go list -f is the template form,
+// and -json replaces that form.
+func listGoFlags(env []string) string {
+	var terms []string
+	for _, term := range strings.Fields(strings.TrimPrefix(readonlyGoFlags(env), "GOFLAGS=")) {
+		if term != "-json" {
+			terms = append(terms, term)
+		}
+	}
 	return "GOFLAGS=" + strings.Join(terms, " ")
 }
 
@@ -102,35 +141,23 @@ func withEnv(env []string, set ...string) []string {
 	return out
 }
 
-// treeTested says a change to p is one the tree tests read: a Go file, a document, or
-// under testdata.
-func treeTested(p string) bool {
-	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
-}
-
-// gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
-// the tree tests (have: the ones the clone holds) when tests is asked.
-func gateRuns(tests bool, have []string) [][]string {
-	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}
-	if tests && len(have) > 0 {
-		run := []string{"go", "test"}
-		for _, p := range have {
-			run = append(run, "./"+p+"/")
-		}
-		runs = append(runs, run)
+// changedFiles is a diff --name-only, one path per line, blanks dropped.
+func changedFiles(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
 	}
-	return runs
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // gateWhy is a red run as a finding, one line: the run, how it ended and its output.
 func gateWhy(run []string, err error, out string) string {
-	var lines []string
-	for _, l := range strings.Split(out, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
-		}
-	}
-	return strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500)
+	return sprint.GateFinding(run, err, out)
 }
 
 // baseGateFail is a base commit's failures of its tree gate under the base-gate rule: how
@@ -169,7 +196,7 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why str
 	case f != nil && now.Before(f.next):
 		return f.said(), false
 	}
-	why = l.treeGate(ctx, dir, true)
+	why = l.treeGate(ctx, dir, nil)
 	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
@@ -240,18 +267,41 @@ func treePackages(dir string) []string {
 	return have
 }
 
-// treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
-// is green or the clone has no module, else the finding (gateWhy).
-func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+// treeGate runs the gate on the clone's tree (docs/SPEC-SPRINT.md section 7). changed
+// is the merge's files; nil is the base tip, which has no batch diff. "" when the
+// gate is green or the clone has no module, else the finding (gateWhy). Build and
+// vet run before go list: a tree that does not compile fails as a build, not as a
+// list the gate could not read.
+func (l *lander) treeGate(ctx context.Context, dir string, changed []string) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
-	for _, run := range gateRuns(tests, treePackages(dir)) {
-		if out, err := l.goRun(ctx, dir, run); err != nil {
-			return gateWhy(run, err, out)
-		}
+	have := treePackages(dir)
+	prep := sprint.TreeGateArgv(nil, false)
+	if why := sprint.FirstGateFinding(prep, func(argv []string) (string, error) {
+		return l.goRun(ctx, dir, argv)
+	}); why != "" {
+		return why
 	}
-	return ""
+	pkgs := have
+	if len(changed) > 0 {
+		out, err := l.goList(ctx, dir)
+		if err != nil {
+			return gateWhy(sprint.GoListArgv(), err, out)
+		}
+		listed, err := sprint.ReadGoList(out, dir)
+		if err != nil {
+			return gateWhy(sprint.GoListArgv(), err, out)
+		}
+		pkgs = sprint.TreeGatePkgs(changed, listed, have)
+	}
+	runs := sprint.TreeGateArgv(pkgs, slices.Contains(have, "internal/ci"))
+	if len(runs) <= len(prep) {
+		return ""
+	}
+	return sprint.FirstGateFinding(runs[len(prep):], func(argv []string) (string, error) {
+		return l.goRun(ctx, dir, argv)
+	})
 }
 
 // gateCard is the tree gate on one card merged onto the batch branch at before: red, the
@@ -268,7 +318,7 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if err != nil {
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	why := l.treeGate(ctx, dir, changedFiles(changed))
 	if why == "" {
 		return "", ""
 	}
@@ -310,7 +360,13 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 			notes[h.ID] = note
 			return card, env
 		},
-		Gate:  func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
+		Gate: func(ctx context.Context, dir string) string {
+			changed, err := l.git(ctx, dir, "diff", "--name-only", "-M", baseSha, "HEAD")
+			if err != nil {
+				return "the files merged onto the base could not be listed: " + firstLine("", err)
+			}
+			return l.treeGate(ctx, dir, changedFiles(changed))
+		},
 		Tried: func(h sprint.CureHead) bool { return l.cureTried[tried(h)] },
 	})
 	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop
