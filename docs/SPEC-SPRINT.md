@@ -4230,6 +4230,119 @@ the judgment and the pass keep that one note (the reversed witness writes a seco
 `TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes` and
 `TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce` on the twin store with a fake clock.
 
+### Status transitions
+
+The owner, 2026-10-06 2:55 PM ET, after a friend was brought up on a stale daemon binary
+and flooded with the day before's notes: "When you bring a friend up, you must remember to
+update them and make sure everything is ready, and they skip old messages and work and snap
+to present." "Please make this process mechanical. You cannot remember to do this reliably
+on your own in my experience, so if it is mechanical, make the machine prompt you when a
+friend changes their status." The tick's presence part (`TickPresence`, internal/sprint
+judgments_status.go `StatusTransitions`) reads each row's status as the server computes it
+in that tick: a fleet member's by the presence rule (`MemberStatus`: `held`, `up`, `down`),
+a friend's by the friends' rule (`FriendStatus`: `held`, `up`, `down`; a friend whose
+daemon answers and whose session does not is `down`, and her judgment says so). A change of
+it is told to the seat as a judgment of type `status` on the row (the member, or
+`friend.<name>`), aliased `j<n>` and pushed as every judgment is: anything to `up`, `up` to
+`down`, to `held` and from `held` (unheld), and, for a friend, a new generation of her
+daemon: a start her beat names (`friend beat --started <RFC3339>`) that the transitions have
+not seen, whatever her status.
+
+**The dwell.** A change counts only once the row has stayed away from its recorded status
+for `StatusDwell`, 2 minutes of running time. A row that leaves its status and comes back
+inside the dwell raises nothing: the flap is counted on the record, and the row's open
+judgment, if it has one, says so at the end of its text, `; flapped <n> times since <time>
+(each back inside 2m0s)` (written in place, no push). The count is said on the next
+judgment of the row and starts again after it, and a count short of three that began more
+than `StatusFlapWindow`, 10 minutes of running time, ago starts again at the next flap. A row
+that keeps flapping with no judgment open would otherwise never tell the seat (a friend down
+for 1m59s at a time with a one-tick blip up): its third flap inside the window
+(`StatusFlapsRaise`) raises the row's one judgment, `<friend <f>|fleet member <m>> is
+flapping at <time>: <she|it> is <word> and keeps leaving it for less than 2m0s, so no
+transition counts; ...` with its last beat and the wake or hold verbs, ending with the
+flaps; once, until a transition counts. Its later flaps rewrite the count in place, a change
+that outlasts the dwell replaces it as any transition does, and the rule never answers a
+row's judgment while the row is flapping (pinned by
+`TestAFriendFlappingWithNoJudgmentOpenRaisesFlappingOnce`).
+
+**Replace, never append.** A row has at most one open status judgment. A further transition
+replaces its text in place (the same id and alias, its time the transition's) and tells the
+seat it changed: one happened note to the coordinator, `a status judgment changed`, `<j>
+(<id>) changed: <the new text>`, which the push loop delivers and the tick-end wakes on. A
+row whose last judgment the coordinator answered (`ack`, `wait`) has it closed and a new
+one raised. So a friend flipping every minute for an hour is one push for her coming up and
+one more for each change that outlasts the dwell (pinned exactly by
+`TestAFriendFlappingForAnHourIsTwoPushes`).
+
+The fleet table keeps one property, `status_seen`, each row's record:
+`<row>=<word>,<transition>,<daemon start>,<away since>,<flaps>,<flapping since>` (times
+RFC3339 or `-`) for each row, a blank between, in row order. It is written in the same operation as the
+judgment it goes with, so a tick cut between them leaves the operation pending and the
+repair finishes both or neither (`TestATickCutBetweenTheStatusRecordAndItsJudgmentFinishesWhole`).
+A row with no entry is seen for the first time: its status is recorded and nothing is
+raised, so a machine that starts with the fleet up raises nothing. A row at its recorded
+status raises nothing at any tick. A restart of the server reads the property back and
+replays no transition, a dwell under way included. A fleet table already at its
+properties' cap with no `status_seen` keeps no record and raises nothing.
+
+The judgment names the transition, the server's clock time (RFC3339), the transition's
+number on the row, and the exact verbs; its decisions are `ack` and `wait`. Its text:
+
+- a friend come up: `friend <f> is up (was <word>) at <time>, transition <n>, on
+  <evidence>; bring her up in four steps: ` and the four steps in order, each ending
+  `(done)` when the machine already did it or `(to do)` with the verb to run:
+  `1 update: her daemon runs <build>, the current build is <build>` (done when her
+  daemon's build, `friend beat --build`, and the server's own carry the same twelve hex of
+  a revision, or are the same release tag; an unstamped `devel` build, or none, is never the
+  same: `: an unstamped build cannot be compared`; when not done, `; run: nova-update, then
+  launchctl kickstart -k gui/$(id -u)/com.nova.friend-<f>`); `2 check: daemon <beating
+  (age)|silent since <time>|never beat>, her daemon started at <time> and has beat since;
+  no harness check reported, presence <evidence>; run: nova-friend check <f> and read its
+  CHECK DAEMON, CHECK HARNESS and presence lines` (what her daemon reported of itself, never
+  more; always to do until a beat word reports a harness check); `3 snap to present: her
+  daemon sent the present on its start at <time>` (done when `friend beat --present` is at
+  or after `--started`; else the `nova-bus send --to <f> --subject present --body
+  "PRESENT <time>: ..."` line to send it by hand); `4 into the sprint: <held|not held>,
+  evidence <evidence>, <a take at <time>|no take within 10m0s; run: nova-sprint where, and
+  nova-friend ping --as <coordinator> --to <f> --wake>` (done when she is not held and a
+  card on her row was taken within `TakeWithin`, 10 minutes). A new generation of her
+  daemon while she is up is the same four steps under `friend <f>'s daemon started again
+  at <time> (its start before: <time>), she is up, at <time>, transition <n>`.
+- a friend to `down`: `friend <f> is down (was <word>) at <time>, transition <n>: <the
+  evidence she lacks>`, when her daemon's pong is all the coordinator observed `; her
+  daemon answers and her session does not`, then her last beat and its age (or `it has
+  never beaten`), and the wake line: `wake her: nova-friend ping --as <coordinator> --to
+  <f> --wake; if her daemon is gone, on her machine: launchctl kickstart -k
+  gui/$(id -u)/com.nova.friend-<f>; or hold her: nova-sprint hold <f> --reason <text>`.
+- a friend to `held`: `friend <f> is held (was <word>) at <time>, transition <n>: the
+  coordinator's hold (<why>); her started cards finish, the rest went back to ready;
+  release: nova-sprint unhold <f>`.
+- a fleet member: `fleet member <m> is <word> (was <word>) at <time>, transition <n>: its
+  last beat <time> (<age> ago[, <k> beat windows of 15s missed]), width <w>`, then for up
+  `; the tick deals it cards from now; its width: nova-sprint fleet up <m> --width <n>`
+  once the presence part has brought it up (its control card says up), else `; the
+  presence part has not brought it up yet (more than <TickMaxMoves> members came up at
+  once): it is dealt cards once it has; ...`; for held `; the coordinator's hold (hold
+  <m>); release: nova-sprint unhold <m>`; and for down `; its unfinished cards were dealt
+  round the members up; bring it back: its beat on <m> (nova-sprint fleet beat <m>) has
+  stopped, start its member loop again; or hold it: nova-sprint hold <m> --reason <text>`.
+
+The coordinator answers it with `ack <j> --reason <text>` once the steps are run, or
+`wait <j> --for <duration>`. With the machine's own answers (`run --answer-rules`), the
+rule `status` answers one whose every step is already done, but never as it is raised: a
+status judgment is always pushed first, and the rule may close it only at a tick
+`StatusRuleAfter`, 60 seconds of running time, after its last push (its raise, or its last
+replace), with a decided note naming the steps. Its steps are done for a hold (the
+coordinator's own act) and for a fleet member the presence part has brought up; a friend
+come up is never answered by rule while the check is the coordinator's, and a down never.
+Her daemon's facts come on her beat: `friend beat <f> --build <build> --started <RFC3339>
+--present <RFC3339>`, carried on her report (`build`, `started`, `present`). Pinned by
+`TestAFriendComingUpPushesTheFourStepsToTheSeat`, `TestTwoDevelBuildsAreNeverTheSame`,
+`TestATransitionRaisesExactlyOneJudgment`, `TestAFriendFlappingForAnHourIsTwoPushes`,
+`TestAFleetMemberGoingDownNamesItsLastBeat`, `TestARestartDoesNotReplayTransitions` and
+`TestAStatusJudgmentWhoseStepsAreDoneIsAnsweredByRule` on the twin store with a fake clock,
+and `TestATickCutBetweenTheStatusRecordAndItsJudgmentFinishesWhole` on the store.
+
 ### Answered by nova-decide
 
 `answer` answers the routine judgments by the judgment decision

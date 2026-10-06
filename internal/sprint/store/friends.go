@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -30,6 +31,10 @@ import (
 // working, width, done, ok%, status that we have for machines, but no load").
 
 const keyFriends = "friends"
+
+// currentBuild is the build this process runs (buildinfo.Version): the build a friend's
+// daemon is compared with when she comes up (sprint.FriendSeat.Current).
+var currentBuild = buildinfo.Version("")
 
 func friendBeatKey(friend string) string { return "friend-beat:" + friend }
 
@@ -265,6 +270,9 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}
+	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() {
+		b.Friend = &rep // her daemon's own facts are a report (sprint.StatusTransitions reads them)
+	}
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
@@ -432,6 +440,11 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 		if r.Health != nil && r.Health.State == sprint.Up {
 			seats[i].Answered = r.Health.Seen
 		}
+		// what the status transitions read (sprint.StatusTransitions): her beat, her evidence,
+		// whether she is down on her daemon's pong alone, and the build this server runs
+		seats[i].Beat = sprint.Beat{At: r.Beat, Friend: r.Report, Proof: r.Proof, Load: r.Load}
+		seats[i].Evidence, seats[i].Current = r.Evidence, currentBuild
+		seats[i].DaemonOnly = r.Status == sprint.Down && r.Health != nil && r.Health.State == sprint.DaemonPong
 	}
 	return seats, nil
 }

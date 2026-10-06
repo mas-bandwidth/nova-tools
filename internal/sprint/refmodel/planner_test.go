@@ -112,7 +112,7 @@ func applyMoves(s *sprint.Snapshot, ms []refmodel.Move) error {
 		switch m.Kind {
 		case refmodel.KindProp:
 			props := map[string]string{}
-			for _, n := range []string{sprint.PropDealIndex, sprint.PropAskIndex} {
+			for _, n := range []string{sprint.PropDealIndex, sprint.PropAskIndex, sprint.PropStatusSeen} {
 				if v, ok := tb.Prop(n); ok {
 					props[n] = v
 				}
