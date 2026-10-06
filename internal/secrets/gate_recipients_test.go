@@ -193,6 +193,17 @@ func TestGateRefusesAMalformedMachinesRegistry(t *testing.T) {
 	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want a refusal", line)
 }
 
+func TestGateMachinesRefusesPlaceTableFormat(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "machines.tsv")
+	require.NoError(t, os.WriteFile(path, []byte("node\tnode\t/home/node\t-\n"), 0o600))
+
+	_, err := gateFleetSeats(path)
+	require.Error(t, err, "gate must refuse the place machine table")
+	require.Contains(t, err.Error(), "wants 7 tab-separated fields", "refusal = %q", err)
+}
+
 // A machine that carries no seat says `-`; that is an answer, not a seat name, and a rule
 // for a file called `-.yaml` must not be vouched for by it.
 func TestGateDoesNotTreatADashAsASeatName(t *testing.T) {
