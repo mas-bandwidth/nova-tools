@@ -1,0 +1,233 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
+)
+
+// The adopt verb is the seat's adoption (docs/SPEC-SPRINT.md, "Adopting a
+// build"): it runs the fleet's tools play (fleet/tools.yml) for the seat, as
+// a window. The new build's checks come first and change nothing (its own
+// nova-sprint live, its shadow tick on the store, its nova-friend install
+// --dry-run with every friend daemon's flags); then the old server and
+// member are stopped and seen gone, the configuration store migrated, the
+// library loaded, the tools installed on fresh inodes, every stopped or stale
+// agent started and proved, the dashboard links pointed at the installed
+// binary and each stale friend daemon reinstalled, each step checked by the
+// manifest (nova-sprint live) before the next. A refusal once the window
+// opened puts the tools and library of before back and starts the old agents
+// on them. It prints the play's ADOPT line of each step, and refuses a half
+// move: a play that stops, or ends without the line of every step, is a
+// refusal naming the step, and running it again finishes it (the play is
+// idempotent). The verb has no flag that runs a step alone.
+//
+// The adoption pipeline of adopt.go (cmdAdopt) is not this verb and is not in
+// the verb table.
+func init() {
+	verbClasses["adopt"] = classMachine
+	verbExit["adopt"] = "exit codes: 0 every step of the seat adopted the build (or, with --dry-run, said what it would change), 1 the play stopped or left a step without its line (ADOPT REFUSED step=<step>: the steps before it are done and the play runs again to finish), 2 usage"
+	verbEffect["adopt"] = "local and remote writes through ansible-playbook: the tools play builds the version if missing and runs the new build's checks on the seat (shadow tick, nova-friend install --dry-run) before anything changes; then, in a window, it stops the seat's old server and member (bootout, seen gone in ps), migrates the configuration store, loads the function library, installs the tools and bootstraps every stopped or stale nova launchd agent, points the dashboard links at the installed nova-sprint and reinstalls each stale friend daemon with nova-friend install; a refusal in the window puts the tools and library of before back and restarts the old agents (the migration is never undone); --dry-run runs the play with --check and writes nothing"
+}
+
+// adoptPlaySteps are the steps of the seat play, in order: one ADOPT line each.
+var adoptPlaySteps = []string{"store", "server", "dashboard", "friends"}
+
+var (
+	// a JSON string holding an ADOPT line, escaped quotes and all
+	adoptLine    = regexp.MustCompile(`"ADOPT (?:[^"\\]|\\.)*"`)
+	adoptStepRe  = regexp.MustCompile(`\bstep=(\S+)`)
+	adoptHostRe  = regexp.MustCompile(`\bhost=(\S+)`)
+	adoptTaskRe  = regexp.MustCompile(`(?m)^(?:TASK|RUNNING HANDLER) \[([^\]]*)\]`)
+	adoptFatalRe = regexp.MustCompile(`(?m)^(?:fatal|failed): .*$`)
+)
+
+// adoptPlayOf is a test's play runner for one app (*app to release.Ansible).
+var adoptPlayOf sync.Map
+
+// adoptReport is what the play's output says: the ADOPT lines in order, the
+// steps each host printed, and the first refusal.
+type adoptReport struct {
+	lines   []string
+	steps   map[string]map[string]bool
+	refused string
+}
+
+func readAdopt(output string) adoptReport {
+	r := adoptReport{steps: map[string]map[string]bool{}}
+	for _, q := range adoptLine.FindAllString(output, -1) {
+		var text string
+		if json.Unmarshal([]byte(q), &text) != nil {
+			text = strings.Trim(q, `"`)
+		}
+		l := strings.Join(strings.Fields(text), " ")
+		if len(r.lines) > 0 && r.lines[len(r.lines)-1] == l {
+			continue
+		}
+		r.lines = append(r.lines, l)
+		if strings.HasPrefix(l, "ADOPT REFUSED ") {
+			if r.refused == "" {
+				r.refused = strings.TrimPrefix(l, "ADOPT REFUSED ")
+			}
+			continue
+		}
+		step, host := adoptStepRe.FindStringSubmatch(l), adoptHostRe.FindStringSubmatch(l)
+		if step == nil || host == nil {
+			continue
+		}
+		if r.steps[host[1]] == nil {
+			r.steps[host[1]] = map[string]bool{}
+		}
+		r.steps[host[1]][step[1]] = true
+	}
+	return r
+}
+
+// failedTask is the play task that failed: the last TASK or RUNNING HANDLER
+// header before the first fatal line, its step the word before its colon.
+func failedTask(output string) string {
+	fatal := adoptFatalRe.FindStringIndex(output)
+	if fatal == nil {
+		return ""
+	}
+	tasks := adoptTaskRe.FindAllStringSubmatch(output[:fatal[0]], -1)
+	if len(tasks) == 0 {
+		return ""
+	}
+	return tasks[len(tasks)-1][1]
+}
+
+func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
+	const name = "adopt"
+	fs, _ := a.verbSetup(name)
+	source := fs.String("source", "", "the nova-tools checkout the build is made from; its fleet/tools.yml is the play")
+	inventory := fs.String("inventory", a.getenv("NOVA_INVENTORY"), "the inventory the play reads, the nova-inventory script (else NOVA_INVENTORY)")
+	limit := fs.String("limit", "", "the one machine to adopt on, as the inventory names it (default: the coordinator group, the seat)")
+	receipts := fs.String("receipts", "", "the dogfood receipts directory (default ~/"+release.DefaultReceiptsDir+")")
+	reason := fs.String("reason", "", "why this build is adopted now: the build's dogfood gate reports it and does not refuse")
+	ansible := fs.String("ansible", "ansible-playbook", "the ansible-playbook binary")
+	dry := fs.Bool("dry-run", false, "run the play with --check: each step says WOULD and nothing is written")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) != 1 {
+		return refuse(stderr, name, argErr("wants one <version|path> ", err, pos...))
+	}
+	// <path> is a built release directory, <out>/<version>; else the version.
+	version, out := pos[0], ""
+	if fi, err := os.Stat(version); err == nil && fi.IsDir() {
+		abs, err := filepath.Abs(version)
+		if err != nil {
+			return refuse(stderr, name, oneline.Err(err))
+		}
+		version, out = filepath.Base(abs), filepath.Dir(abs)
+	}
+	if err := release.ValidVersion(version); err != nil {
+		return refuse(stderr, name, "<version|path>: "+oneline.Err(err))
+	}
+	play := filepath.Join(*source, "fleet", "tools.yml")
+	switch {
+	case *source == "":
+		return refuse(stderr, name, "--source names the nova-tools checkout whose fleet/tools.yml is the play")
+	case *inventory == "":
+		return refuse(stderr, name, "--inventory (or NOVA_INVENTORY) names the inventory the play reads")
+	case strings.TrimSpace(*reason) == "":
+		return refuse(stderr, name, "--reason says why this build is adopted now")
+	case *limit != "" && (strings.ContainsAny(*limit, ",:!&*[") || strings.TrimSpace(*limit) != *limit):
+		return refuse(stderr, name, "--limit names one machine as the inventory does, found "+*limit)
+	}
+	if _, err := os.Stat(play); err != nil {
+		// an input that does not read, not a usage: exit 1, nothing run
+		fmt.Fprintf(stderr, "%s adopt REFUSED step=play: --source %s holds no fleet/tools.yml (%s); nothing was run; run: nova-sprint adopt -h\n", prog, *source, oneline.Err(err))
+		return 1
+	}
+	if *receipts == "" {
+		*receipts = filepath.Join(a.getenv("HOME"), release.DefaultReceiptsDir)
+	}
+	buildArgs, err := json.Marshal(map[string][]string{"nova_release_build_args": {"--incremental", "--gate", "report", release.DogfoodReasonFlag, *reason}})
+	if err != nil {
+		return refuse(stderr, name, oneline.Err(err))
+	}
+	seat := "coordinator"
+	if *limit != "" {
+		seat = *limit
+	}
+	argv := []string{"-i", *inventory, play, "-e", "nova_version=" + version, "-e", "nova_source=" + *source,
+		"-e", "nova_dogfood_receipts=" + *receipts, "-e", string(buildArgs), "--limit", seat + ",localhost,store_deployer"}
+	if out != "" {
+		argv = append(argv, "-e", "nova_release_out="+out)
+	}
+	if *dry {
+		argv = append(argv, "--check")
+	}
+	var runner release.Ansible = release.ExecAnsible{Path: *ansible}
+	if fake, ok := adoptPlayOf.Load(a); ok {
+		runner = fake.(release.Ansible)
+	}
+	output, playErr := runner.Play(context.Background(), argv)
+	r := readAdopt(output)
+	for _, l := range r.lines {
+		if !strings.HasPrefix(l, "ADOPT REFUSED ") {
+			fmt.Fprintln(stdout, oneline.Escape(l))
+		}
+	}
+	finish := "the steps before it are done and the ones after it did not run; fix the cause and run the same adopt again (the play is idempotent: it changes only what is still stale)"
+	switch {
+	case r.refused != "":
+		fmt.Fprintf(stderr, "%s adopt REFUSED %s; %s; run: nova-sprint live\n", prog, oneline.Escape(r.refused), finish)
+		return 1
+	case playErr != nil:
+		task := failedTask(output)
+		step, _, _ := strings.Cut(task, ":")
+		if !slices.Contains(adoptPlaySteps, step) {
+			step = "play"
+		}
+		for _, l := range adoptFatalRe.FindAllString(output, 5) {
+			fmt.Fprintln(stderr, oneline.Escape(truncateLine(l, 300)))
+		}
+		fmt.Fprintf(stderr, "%s adopt REFUSED step=%s task=%q: %s; %s; run: nova-sprint live\n", prog, step, task, oneline.Err(playErr), finish)
+		return 1
+	case len(r.steps) == 0:
+		fmt.Fprintf(stderr, "%s adopt REFUSED step=seat: the play printed no ADOPT line, so no machine of %s is a seat (the coordinator group); nothing of the seat was adopted; run: nova-sprint adopt --limit <the coordinator machine>\n", prog, seat)
+		return 1
+	}
+	hosts := slices.Sorted(func(yield func(string) bool) {
+		for h := range r.steps {
+			if !yield(h) {
+				return
+			}
+		}
+	})
+	for _, h := range hosts {
+		if r.steps[h]["seat"] && *dry {
+			continue // --check before the first adoption: the installed build has no manifest
+		}
+		for _, s := range adoptPlaySteps {
+			if !r.steps[h][s] {
+				fmt.Fprintf(stderr, "%s adopt REFUSED step=%s host=%s: a half move, the play ended without this step's line; %s; run: nova-sprint live\n", prog, s, h, finish)
+				return 1
+			}
+		}
+	}
+	word := "ADOPTED"
+	if *dry {
+		word = "WOULD-ADOPT"
+	}
+	fmt.Fprintf(stdout, "ADOPT %s version=%s hosts=%s steps=%s\n", word, version, strings.Join(hosts, ","), strings.Join(adoptPlaySteps, ","))
+	return 0
+}
+
+func truncateLine(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
