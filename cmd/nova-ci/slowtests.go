@@ -260,7 +260,7 @@ func readAllowlist(path string) ([]slowtests.Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: opened only for reading; the rows or the read error are what the caller gets
 
 	sc := bufio.NewScanner(f)
 	var errs []string
