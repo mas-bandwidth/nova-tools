@@ -95,10 +95,14 @@ type Beat struct {
 // reported. They are her word, shown beside the table's counts, which stay the sprint's
 // own (her row's cards) and her width the roster's; her last activity is the file system's.
 type FriendReport struct {
-	Running []string `json:"running,omitempty"`
-	Working *int     `json:"working,omitempty"`
-	Queue   *int     `json:"queue,omitempty"`
-	Width   *int     `json:"width,omitempty"`
+	JobsBytes     *int64   `json:"jobs_bytes,omitempty"`
+	FreeBytes     *int64   `json:"free_bytes,omitempty"`
+	FreeInodes    *int64   `json:"free_inodes,omitempty"`
+	CapacityError string   `json:"capacity_error,omitempty"`
+	Running       []string `json:"running,omitempty"`
+	Working       *int     `json:"working,omitempty"`
+	Queue         *int     `json:"queue,omitempty"`
+	Width         *int     `json:"width,omitempty"`
 	// Active is the newest write under her working directory and outbox as her daemon
 	// last walked them (friend beat --active), zero when it reported none: the signal that
 	// her session moves, which a daemon pong does not say (docs/SPEC-FRIEND.md, last

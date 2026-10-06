@@ -1192,6 +1192,18 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 // table's are.
 func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Table {
 	t := sprint.FriendsDef()
+	capacity := false
+	for _, f := range friends {
+		if f.Report != nil && (f.Report.CapacityError != "" || f.Report.JobsBytes != nil || f.Report.FreeBytes != nil || f.Report.FreeInodes != nil) {
+			capacity = true
+			break
+		}
+	}
+	if capacity {
+		for _, name := range []string{"jobs_bytes", "free_bytes", "free_inodes", "capacity_error"} {
+			t.Columns = append(t.Columns, ntable.Column{Name: name, Projection: ntable.Text, Fold: ntable.None})
+		}
+	}
 	at := map[string]int{}
 	for j, c := range t.Columns {
 		at[c.Name] = j
@@ -1204,6 +1216,23 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
 			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+		if capacity {
+			texts := t.Rows[len(t.Rows)-1].Texts
+			for _, name := range []string{"jobs_bytes", "free_bytes", "free_inodes", "capacity_error"} {
+				texts[name] = "-"
+			}
+			if f.Report != nil {
+				texts["capacity_error"] = f.Report.CapacityError
+				for _, n := range []struct {
+					name  string
+					value *int64
+				}{{"jobs_bytes", f.Report.JobsBytes}, {"free_bytes", f.Report.FreeBytes}, {"free_inodes", f.Report.FreeInodes}} {
+					if n.value != nil {
+						texts[n.name] = strconv.FormatInt(*n.value, 10)
+					}
+				}
+			}
+		}
 	}
 	return t
 }

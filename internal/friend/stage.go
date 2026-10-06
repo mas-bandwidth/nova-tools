@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +29,8 @@ import (
 // under mirrors/ (so a stage is a fetch and a worktree add, seconds and megabytes: on
 // 2026-10-05 a whole clone per job had her disk at 99% with 42 staged clones and 765 finished
 // job dirs), and writes jobs/<job>/JOB.md in the card-contract shape
-// (docs/SPEC-CARD-CONTRACT.md). After each inbox cleanup the finished jobs' worktrees past
-// FinishedJobsKept are pruned (Stager.Prune, pruneStep). No lane is handed the card until JOB.md is there. A
+// (docs/SPEC-CARD-CONTRACT.md). Each beat schedules guarded collection of reported and origin-confirmed
+// jobs (Stager.GC, pruneStep). No lane is handed the card until JOB.md is there. A
 // repository her account cannot reach is one judgment to the coordinator with the remedy,
 // never a lane that discovers it (docs/SPEC-FRIEND.md, staging). The machine is modelled in
 // tla/FriendStage.tla (MCFriendStage*: a lane handed only a staged card, one judgment while it
@@ -173,9 +172,13 @@ func GitHubURL(repo string) string { return "https://github.com/" + repo + ".git
 // GitHubURL); Env is git's whole environment (nil: the daemon's own, with
 // GIT_TERMINAL_PROMPT=0, so git never waits on a prompt no one answers).
 type Stager struct {
-	Dir string
-	URL func(repo string) string
-	Env []string
+	Dir       string
+	Now       func() time.Time // injected clock for lane mark expiry
+	JobsCap   int64            // SPEC-FRIEND, jobs capacity: zero uses DefaultJobsCap
+	gcCursor  int
+	admission sync.Mutex
+	URL       func(repo string) string
+	Env       []string
 
 	mu      sync.Mutex
 	repos   map[string]*sync.Mutex
@@ -231,6 +234,8 @@ func Staged(dir, job string) bool {
 // written last, so a lane never meets a checkout not ready. A branch the mirror already holds
 // (a pruned job's, staged again) is checked out as it stands, never reset to the base.
 func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
+	s.admission.Lock()
+	defer s.admission.Unlock()
 	if err := p.check(); err != nil {
 		return "", &NotStageable{Repo: p.Repo, Card: p.Card, Job: p.Job, Why: err.Error(), Remedy: "rework the card with a packet that names its repository (owner/name), its base and its branch"}
 	}
@@ -264,6 +269,13 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	}
 	sha, err := s.base(ctx, mirror, p)
 	if err != nil {
+		return "", err
+	}
+	reserveSHA := sha
+	if existing, err := s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/"+p.Branch); err == nil {
+		reserveSHA = existing
+	}
+	if err := s.reserveWorktree(ctx, mirror, reserveSHA); err != nil {
 		return "", err
 	}
 	scratch := filepath.Join(job, stageScratch)
@@ -459,82 +471,25 @@ func (s *Stager) base(ctx context.Context, mirror string, p Packet) (string, err
 		Remedy: fmt.Sprintf("push %s to %s, or rework the card onto a base it holds", named, p.Repo)}
 }
 
-// FinishedJobsKept is how many finished jobs' worktrees the daemon's cleanup keeps, the newest
-// staged; the rest are pruned (Stager.Prune), at most PrunePerPass a cleanup, so the loop that
-// runs it is held a few seconds at most.
+// FinishedJobsKept retains no published scratch; PrunePerPass bounds each collector
+// pass (SPEC-FRIEND, jobs capacity). Unpublished jobs are always retained.
 const (
-	FinishedJobsKept = 8
+	FinishedJobsKept = 0
 	PrunePerPass     = 4
 )
 
-// Prune removes the worktrees of finished jobs past kept, the oldest staged first (by its
-// JOB.md), at most PrunePerPass of them, and answers the jobs it removed; a job whose mirror a
-// stage holds is left for the next pass, never waited on. A job is finished when it is not live (held on her
-// row, run by a lane, being staged: the caller's live) and its brief is not in her inbox (the
-// inbox cleanup retired it); only a job whose checkout is a worktree of one of her mirrors is
-// ever pruned, never a clone or anything another hand staged. A pruned job is gone whole
-// (jobs/<job>), its worktree removed from the mirror; its branch stays in the mirror, so any
-// commit on it is kept, and a stage of the job again takes the branch as it stands.
+// Prune is the compatibility entry to guarded GC (SPEC-FRIEND, jobs capacity).
+// Its caller runs the collector in the background; publication proof is mandatory.
 func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]string, error) {
-	jobs := filepath.Join(s.Dir, JobsDir)
-	entries, err := os.ReadDir(jobs)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	type finished struct {
-		job, repo, mirror string
-		at                time.Time
-	}
-	var done []finished
-	for _, e := range entries {
-		job := e.Name()
-		if !e.IsDir() || !validJob(job) || live[job] || exists(filepath.Join(s.Dir, "inbox", job)) {
-			continue
-		}
-		repo, mirror, ok := s.worktreeOf(filepath.Join(jobs, job, "repo"))
-		if !ok {
-			continue
-		}
-		at := time.Time{}
-		if fi, err := os.Lstat(filepath.Join(jobs, job, JobFile)); err == nil {
-			at = fi.ModTime()
-		}
-		done = append(done, finished{job: job, repo: repo, mirror: mirror, at: at})
-	}
-	sort.Slice(done, func(i, j int) bool {
-		if !done[i].at.Equal(done[j].at) {
-			return done[i].at.Before(done[j].at)
-		}
-		return done[i].job < done[j].job
-	})
-	var pruned []string
-	var firstErr error
-	for _, f := range done[:max(len(done)-max(kept, 0), 0)] {
-		if len(pruned) == PrunePerPass {
-			break
-		}
-		lock := s.repoLock(f.repo)
-		if !lock.TryLock() {
-			continue // a stage holds the mirror: the next pass
-		}
-		err := s.pruneJob(ctx, f.mirror, f.job)
-		lock.Unlock()
-		if err != nil {
-			firstErr = cmpErr(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
-			continue
-		}
-		pruned = append(pruned, f.job)
-	}
-	return pruned, firstErr
+	result, err := s.GC(ctx, live, false, kept)
+	return result.Removed, err
 }
 
 // pruneJob removes a finished job, its mirror's lock held: its worktree from the mirror, then
 // the job's directory.
 func (s *Stager) pruneJob(ctx context.Context, mirror, job string) error {
 	dir := JobDir(s.Dir, job)
-	if _, err := s.git(ctx, 0, "-C", mirror, "worktree", "remove", "--force", "--force", filepath.Join(dir, "repo")); err != nil {
+	if _, err := s.git(ctx, 0, "-C", mirror, "worktree", "remove", filepath.Join(dir, "repo")); err != nil {
 		return err
 	}
 	if err := safepath.RemoveUnder(filepath.Join(s.Dir, JobsDir), dir); err != nil {
@@ -670,19 +625,45 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 	}
 }
 
-// pruneStep is the daemon's cleanup of finished jobs, run in the loop after each inbox
-// cleanup, so what is live cannot change under it (a prune on a goroutine of its own, handed a
-// snapshot, could remove a job dealt to her again and handed to a lane meanwhile: the reversed
-// witness "async" of tla/JobWorktrees.tla). Live is every job held on her row, run by a lane
-// (keep) or being staged; Stager.Prune never touches one, nor a job whose brief is in her
-// inbox, and removes at most PrunePerPass, never waiting on a mirror a stage holds. Each job
-// removed is said, and a failure once while it stands.
+type pruneResult struct {
+	jobs []string
+	err  error
+}
+
+// pruneStep starts one bounded background collector and only drains its result on
+// the liveness path. Staging is excluded by admission; retained reports prevent a
+// new lane from claiming a collected job (SPEC-FRIEND, jobs capacity).
 func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 	d := l.d
 	if d.Prune == nil {
 		return
 	}
+	if d.pruneDone == nil {
+		d.pruneDone = make(chan pruneResult, 1)
+	}
+	if d.pruneBusy {
+		select {
+		case result := <-d.pruneDone:
+			d.pruneBusy = false
+			for _, job := range result.jobs {
+				d.Record(fmt.Sprintf("%s prune: removed jobs/%s: report and origin confirmed", now.UTC().Format(time.RFC3339), job))
+			}
+			if result.err != nil && result.err.Error() != d.pruneSaid {
+				d.pruneSaid = result.err.Error()
+				d.Record(fmt.Sprintf("%s prune: deferred: %s", now.UTC().Format(time.RFC3339), oneLine(result.err.Error(), 400)))
+			} else if result.err == nil {
+				d.pruneSaid = ""
+			}
+		default:
+			return
+		}
+	}
 	live := map[string]bool{}
+	for _, ln := range l.lanes.lanes {
+		if ln.card != nil {
+			live[filepath.Base(ln.card.Outbox)] = true
+		}
+	}
 	for _, h := range held {
 		live[h.Job] = true
 	}
@@ -692,19 +673,13 @@ func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 	for job := range d.staging {
 		live[job] = true
 	}
-	pruned, err := d.Prune(l.ctx, live)
-	at := now.UTC().Format(time.RFC3339)
-	for _, job := range pruned {
-		d.Record(fmt.Sprintf("%s prune: removed %s/%s and its worktree: its card is finished (%d finished kept)", at, JobsDir, job, FinishedJobsKept))
-	}
-	switch {
-	case err == nil:
-		d.pruneSaid = ""
-	case l.ctx.Err() != nil:
-	case err.Error() != d.pruneSaid:
-		d.pruneSaid = err.Error()
-		d.Record(fmt.Sprintf("%s prune: not pruned: %s; tried again at the next cleanup", at, oneLine(err.Error(), 400)))
-	}
+	d.pruneBusy = true
+	d.pruneWG.Add(1)
+	go func() {
+		defer d.pruneWG.Done()
+		jobs, err := d.Prune(l.ctx, live)
+		d.pruneDone <- pruneResult{jobs, err}
+	}()
 }
 
 // stageOwed says a held card is not handed to a lane yet: the daemon stages jobs, the card is

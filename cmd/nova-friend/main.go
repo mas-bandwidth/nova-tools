@@ -63,33 +63,36 @@ const OpenRetryMax = 30 * time.Second
 // a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
-	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
-	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) error      // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
-	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
-	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
-	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
-	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
-	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage     func(dir string) *friend.Stager                                                                     // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
-	tip       func(ctx context.Context, repo, branch string) (string, error)                                      // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
-	launchctl friend.Launchctl
-	now       func() time.Time
-	sleep     func(ctx context.Context, d time.Duration)
-	signals   func(ctx context.Context) (context.Context, context.CancelFunc)
-	uid       int
-	home      string
-	binary    func() (string, error)
-	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
-	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
-	random    func() string
-	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
-	launch    []string          // host: the launch command after "--"
-	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
-	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
+	measureCapacity func(string) (friend.JobCapacity, error) // filesystem sampling; nil uses the real volume
+	getenv          func(string) string
+	open            func(ctx context.Context, addr string) (bus.Store, func(), error)
+	exec            friend.Exec
+	wall            func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat            func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	capacityBeat    func(context.Context, string, string, time.Time, time.Time, friend.JobCapacity) (string, error)
+	capacityDown    func(context.Context, string, string, time.Time, time.Time, string, friend.JobCapacity) error
+	beatDown        func(ctx context.Context, server, friend string, active, until time.Time, reason string) error // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
+	progress        func(ctx context.Context, server string, argv []string) error                                  // one progress verb to the sprint server (friend.ProgressArgv)
+	finish          func(ctx context.Context, server string, argv []string) error                                  // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	cards           func(ctx context.Context, server string, argv []string) (string, error)                        // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	friends         func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)       // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	view            func(ctx context.Context, server, friend string) (string, error)                               // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
+	stage           func(dir string) *friend.Stager                                                                // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	tip             func(ctx context.Context, repo, branch string) (string, error)                                 // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
+	launchctl       friend.Launchctl
+	now             func() time.Time
+	sleep           func(ctx context.Context, d time.Duration)
+	signals         func(ctx context.Context) (context.Context, context.CancelFunc)
+	uid             int
+	home            string
+	binary          func() (string, error)
+	copy            friend.CopyFile              // places a removable-volume binary under home; nil refuses it
+	lookPath        func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
+	random          func() string
+	alive           friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
+	launch          []string          // host: the launch command after "--"
+	settings        friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+	argv            []string          // this run's arguments after the program's name: what the plist drift is read against
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -201,6 +204,24 @@ func realWorld() world {
 			defer cancel()
 			out, err := cmd.CombinedOutput()
 			return string(out), err
+		},
+		capacityBeat: func(ctx context.Context, server, name string, active, pong time.Time, capacity friend.JobCapacity) (string, error) {
+			args := capacityArgs([]string{"friend", "beat", name}, capacity)
+			if !active.IsZero() {
+				args = append(args, "--active", active.UTC().Format(time.RFC3339))
+			}
+			if !pong.IsZero() {
+				args = append(args, "--pong", pong.UTC().Format(time.RFC3339))
+			}
+			return sprintBeat(ctx, server, args)
+		},
+		capacityDown: func(ctx context.Context, server, name string, active, until time.Time, reason string, capacity friend.JobCapacity) error {
+			args := capacityArgs([]string{"friend", "beat", name, "--until", until.UTC().Format(time.RFC3339), "--reason", reason}, capacity)
+			if !active.IsZero() {
+				args = append(args, "--active", active.UTC().Format(time.RFC3339))
+			}
+			_, err := sprintBeat(ctx, server, args)
+			return err
 		},
 		beat: func(ctx context.Context, server, name string, active, pong time.Time) (string, error) {
 			args := []string{"friend", "beat", name}
@@ -335,6 +356,7 @@ func friendTool(w world) *tool.Tool {
 		f.Required("dir", "the friend's working directory: the session's, and where the state files live")
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+		f.Int("jobs-cap", int(friend.DefaultJobsCap), "jobs scratch cap in bytes, a positive whole number (default: 20 GiB)")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
@@ -343,6 +365,9 @@ func friendTool(w world) *tool.Tool {
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
+			if c.Int("jobs-cap") <= 0 {
+				c.Problem("--jobs-cap wants a positive whole number of bytes")
+			}
 			if h := c.Str("harness"); h != "" && !friend.Known(h) {
 				c.Problem(fmt.Sprintf("--harness %q is no harness; it wants one of %s", h, strings.Join(friend.Harnesses, ", ")))
 			}
@@ -361,9 +386,10 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
+			jobGCVerb(w),
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--jobs-cap <bytes>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -441,7 +467,7 @@ dir= state= redis=): no store is opened and nothing is written.`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--jobs-cap <bytes>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -1050,7 +1076,34 @@ func (w world) run(c *tool.Call) *tool.Out {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
 		}
 	}
+	var rowCapacity atomic.Pointer[friend.JobCapacity]
 	stager := w.stager(dir)
+	if stager.s != nil {
+		stager.s.JobsCap = int64(c.Int("jobs-cap"))
+		stager.s.Now = w.now
+	}
+	prune := stager.prune()
+	if stager.s != nil {
+		prune = func(ctx context.Context, live map[string]bool) ([]string, error) {
+			result, err := stager.s.GC(ctx, live, false, 0)
+			measure := w.measureCapacity
+			if measure == nil {
+				measure = friend.MeasureJobCapacity
+			}
+			capacity, measureErr := measure(dir)
+			if measureErr != nil {
+				capacity = friend.JobCapacity{Jobs: -1, Free: -1, Error: measureErr.Error()}
+				err = errors.Join(err, measureErr)
+			}
+			rowCapacity.Store(&capacity)
+			for _, note := range result.Notes {
+				if strings.Contains(note, "deferred") {
+					err = errors.Join(err, errors.New(note))
+				}
+			}
+			return result.Removed, err
+		}
+	}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
@@ -1077,7 +1130,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 				if perCard {
 					pong = w.now() // the daemon beating is the proof: nothing else can be asked of a process per card
 				}
-				answer, err := w.beat(ctx, server, name, active, pong)
+				var answer string
+				var err error
+				if w.capacityBeat != nil {
+					capacity := friend.JobCapacity{Jobs: -1, Free: -1, Error: "capacity measurement pending"}
+					if sample := rowCapacity.Load(); sample != nil {
+						capacity = *sample
+					}
+					answer, err = w.capacityBeat(ctx, server, name, active, pong, capacity)
+				} else {
+					answer, err = w.beat(ctx, server, name, active, pong)
+				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 					dir := friend.RowConfigDir(answer)
@@ -1102,6 +1165,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 			// ahead of the look; the inner check is the last before the up beat, so a limit
 			// seen during the step is never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
+				if w.capacityDown != nil {
+					capacity := friend.JobCapacity{Jobs: -1, Free: -1, Error: "capacity measurement pending"}
+					if sample := rowCapacity.Load(); sample != nil {
+						capacity = *sample
+					}
+					return w.capacityDown(ctx, server, name, active, until, reason, capacity)
+				}
 				return w.beatDown(ctx, server, name, active, until, reason)
 			}
 			if _, _, limited := fl.Limited(); limited && !perCard {
@@ -1144,8 +1214,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		Held:      w.held(name, server),
 		Stage:     stager.stage(),
-		Prune:     stager.prune(),
-		Tip:       w.tip,
+		Prune:     prune,
+		Admit: func(ctx context.Context, c friend.Card) error {
+			if stager.s == nil {
+				return nil
+			}
+			sample := rowCapacity.Load()
+			cap := stager.s.JobsCap
+			if sample == nil || sample.Jobs < 0 {
+				return fmt.Errorf("jobs cap %d bytes refuses a new lane until capacity is measured", cap)
+			}
+			if sample.Jobs >= cap {
+				return fmt.Errorf("jobs cap %d bytes refuses a new lane: jobs=%d", cap, sample.Jobs)
+			}
+			return nil
+		},
+		Tip: w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -1257,7 +1341,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		log = filepath.Join(w.home, "Library", "Logs", "nova-friend-"+name+".log")
 	}
 	a := friend.Agent{
-		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"), JobsCap: int64(c.Int("jobs-cap")),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),

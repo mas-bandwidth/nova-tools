@@ -413,6 +413,7 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 // its value: what her machinery reports of her work (friend beat), and her daemon's word
 // that she is down until a time and why (--until, --reason: her harness at its limit).
 var friendBeatFlags = map[string]func(string) bool{
+	"--capacity-error": oneLineText, "--jobs-bytes": wholeAtLeast(0), "--free-bytes": wholeAtLeast(0), "--free-inodes": wholeAtLeast(0),
 	"--running": runningIDs,
 	"--working": wholeAtLeast(0),
 	"--queue":   wholeAtLeast(0),

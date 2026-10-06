@@ -5181,3 +5181,14 @@ The TLA+ specification `tla/StallLadder.tla` verifies five invariants:
 - `NoWakeWithoutRung`: a wake is sent only at a rung the ladder climbed, and once
   (`PlanUncommitted`, a plan the tick makes and does not commit; reversed witness
   `wakeinplan`: the planner sends the wake as it plans).
+
+### Friend capacity reports (a-friend-keeps-its-working-dir-under-a-cap3.w1)
+
+`friend beat` accepts `--jobs-bytes`, `--free-bytes` and `--free-inodes` as
+nonnegative whole numbers, and `--capacity-error` as the reason a sample is
+pending or unavailable. They are optional fields in the friend's beat report,
+retained even when no work count is supplied. Zero is a measured value;
+omitted values are unknown. The friends row and `where --json` expose
+`jobs_bytes`, `free_bytes`, `free_inodes` and `capacity_error` when any friend
+reports capacity. The daemon sends its last completed background sample; an
+unavailable sample does not suppress its presence beat.

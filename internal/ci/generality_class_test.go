@@ -92,9 +92,10 @@ var forbiddenTokens = map[string]bool{
 // ignoredCompoundWords contains standard Go library identifiers whose camelCase
 // components should not be matched as forbidden tokens.
 var ignoredCompoundWords = map[string]bool{
-	"trimspace":        true,
-	"trimleadingspace": true,
-	"isspace":          true,
+	"trimspace":          true,
+	"trimleadingspace":   true,
+	"isspace":            true,
+	"getdiskfreespaceex": true, // Windows filesystem capacity API, not a host name.
 }
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)

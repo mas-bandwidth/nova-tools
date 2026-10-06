@@ -114,6 +114,15 @@ func TestJobsAreWorktreesOfOneMirror(t *testing.T) {
 	require.True(t, ok)
 	_, err = stager.Stage(context.Background(), d)
 	require.NoError(t, err)
+	gitIn(t, env, mirror, "remote", "set-url", "origin", g.Remote)
+	for _, p := range []Packet{a, d} {
+		checkout := filepath.Join(JobDir(dir, p.Job), "repo")
+		head := gitIn(t, env, checkout, "rev-parse", "HEAD")
+		gitIn(t, env, checkout, "push", "-q", "origin", p.Branch)
+		outbox := filepath.Join(dir, "outbox", p.Job)
+		require.NoError(t, os.MkdirAll(outbox, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(outbox, "REPORT.md"), []byte("Verdict: LAND\nHead: "+head+"\n"), 0o644))
+	}
 	old := time.Now().Add(-time.Hour)
 	require.NoError(t, os.Chtimes(filepath.Join(JobDir(dir, a.Job), JobFile), old, old))
 	require.NoError(t, os.RemoveAll(filepath.Dir(brief))) // a's card left her row: the inbox cleanup retired inbox/<job>
@@ -192,10 +201,10 @@ func TestTheInboxCleanupPrunesFinishedJobs(t *testing.T) {
 			failed = append(failed, l)
 		}
 	}
-	require.Len(t, removed, 2, "each job removed is said: %v", removed)
-	assert.Contains(t, removed[0], "prune: removed jobs/old.w1~15 and its worktree: its card is finished")
+	require.Len(t, removed, 1, "each job removed is said: %v", removed)
+	assert.Contains(t, removed[0], "prune: removed jobs/old.w1~15: report and origin confirmed")
 	require.Len(t, failed, 1, "a failure is said once while it stands: %v", failed)
-	assert.Contains(t, failed[0], "prune: not pruned: jobs/stuck.w1~15: worktree locked")
+	assert.Contains(t, failed[0], "prune: deferred: jobs/stuck.w1~15: worktree locked")
 
 	r.mu.Lock()
 	fail = false

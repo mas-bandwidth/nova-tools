@@ -182,3 +182,11 @@ This specification is locked. No line changes without his words, quoted here wit
   them in the table (and reads "· hide") when clicked and hides them again on the next click. The
   subtitle counts the streams shown; the total row, the progress bar and the hero count every stream,
   archived ones included. Nothing else moves.
+
+### Friend capacity (a-friend-keeps-its-working-dir-under-a-cap3.w1)
+
+A friend row with capacity fields shows a subline beside working/width:
+`jobs <jobs_bytes> B · free <free_bytes> B · inodes <free_inodes>`, followed by
+`capacity_error` when supplied. Missing metrics show `-`; zero remains zero.
+Every value is escaped. The existing Fleet and Friends column layout stays
+aligned; capacity does not add a column to the dashboard.

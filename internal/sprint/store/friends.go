@@ -235,7 +235,7 @@ func (st *Store) FriendBeatPong(ctx context.Context, friend string, rep sprint.F
 		return sprint.Beat{}, noFriend(r, friend)
 	}
 	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
-	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
+	if rep.CapacityError != "" || rep.JobsBytes != nil || rep.FreeBytes != nil || rep.FreeInodes != nil || len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}
 	if load != nil {

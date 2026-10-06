@@ -165,11 +165,15 @@ type Daemon struct {
 	// Stage stages a held work card's job (Stager.Stage: jobs/<job>/repo and its JOB.md) and
 	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
 	// its brief alone.
+	Admit func(context.Context, Card) error // SPEC-FRIEND, jobs capacity: before claiming a new lane
 	Stage func(ctx context.Context, p Packet) (string, error)
-	// Prune removes finished jobs' worktrees past FinishedJobsKept (Stager.Prune), given the
-	// jobs that are live (held on her row, run by a lane, being staged), after each inbox
-	// cleanup, and answers the jobs it removed; nil prunes none.
-	Prune func(ctx context.Context, live map[string]bool) ([]string, error)
+	// Prune runs the guarded collector off the beat path, protecting held, running
+	// and staging jobs; nil collects none.
+	pruneDone chan pruneResult
+	pruneBusy bool
+	pruneWG   sync.WaitGroup
+	inboxHeld []HeldCard // latest successful server snapshot, conservative while unavailable
+	Prune     func(ctx context.Context, live map[string]bool) ([]string, error)
 	// Tip is origin's tip of a branch of a repository (owner/name), "" when origin has no
 	// such branch (Stager.Tip: one git ls-remote): a report's LAND finishes only at that tip,
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its
@@ -349,7 +353,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.staging == nil {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
-	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
+	defer d.stageWG.Wait() // cancelled stages preserve their results for the next Run
+	defer d.pruneWG.Wait()
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
@@ -414,6 +419,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}
+			l.pruneStep(d.inboxHeld, nil, now)
 			if err := d.Beat(ctx, d.active); err != nil {
 				d.status.BeatError = err.Error()
 			} else {
