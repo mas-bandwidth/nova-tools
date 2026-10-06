@@ -755,7 +755,8 @@ func (l *loop) proof() {
 	}
 	es, err := l.b.Log(l.ctx, from)
 	if err != nil {
-		return // ignored: the next step reads again, and the store's error is on the status from the read
+		l.d.status.StoreError = "reading the log for the session's proof: " + err.Error() // read again next step
+		return
 	}
 	for _, e := range es {
 		msg := e.Message()

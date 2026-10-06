@@ -292,11 +292,20 @@ in `internal/sprint` and `cmd/nova-sprint`.
 Each second: the clock is stepped; when the session is free, every message
 waiting is read off the stream (a ping is answered by the daemon at once and
 acked, never pushed in), and one turn is started with all of them, oldest
-first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
-the next turn): one envelope listing each message's id, from and subject, with
-the message as `nova-bus recv` prints it, the pong line first while a challenge
-is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
+first, at most 32 messages (`MaxBatch`): one envelope (`Envelope`), the pong
+line first while a challenge is open, the daemon's latest word about the
+coordinator, then each message as `[i/n] <id> from=<f> at=<RFC3339> age=<m>m
+subject=<s>` and its body. The text is capped at the adapter's text limit
+(`TextLimit`, 256 KiB unless the adapter says otherwise); the messages that do
+not fit are named by id after the last, `and <n> more (<ids>): nova-bus recv
+--as <me> --all`, stay pending, and are the next turn. A single message with
+nothing else is its `recv` text alone. The daemon's own notices about the
+coordinator (`coordinator silent`, `coordinator back`, sent by the friend to
+itself) of which a newer one is pending are dropped, never delivered, and acked
+with `superseded=<newer id>` on the record (`SupersededNotices`). A ping is the
+daemon's: answered at once, acked, never a turn. While a challenge is open, any
+bus line the session sends that the daemon did not send itself, written after
+the ping, answers it as a pong does. The adapter blocks for the whole
 turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is the
 command accepting the input, not the turn ending). Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
