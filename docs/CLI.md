@@ -1079,6 +1079,7 @@ nova-sprint check
 nova-sprint repair
 nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
@@ -1161,7 +1162,7 @@ curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
 ```
 
 The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
-`/api/view/worker?as=<name>`. `nova-sprint friend cards <friend> --json` is every card held on
+`/api/view/worker?as=<name>`. `nova-sprint view cards --col review --by tier --json` counts the primaries by column, tier, stream or holder (also `/api/view/cards?col=review&by=tier`). `nova-sprint friend cards <friend> --json` is every card held on
 a friend's row (working, then ready) with its packet and its `BRIEF.md` as friend sync writes
 it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
 her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
