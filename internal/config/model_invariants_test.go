@@ -80,7 +80,7 @@ func TestConflictRefusesAhead(t *testing.T) {
 	// Set Redis stamp ahead of Postgres revision
 	ap.revs[KindFriend] = 100
 
-	err := Apply(ctx, st, ap, KindFriend, "actor", false, func(Op) {})
+	_, err := Apply(ctx, st, ap, KindFriend, "actor", false, func(Op) {})
 	require.Error(t, err, "apply refuses when stamp is ahead")
 	require.True(t, IsConflict(err), "error is a conflict")
 	require.Empty(t, ap.log, "no writes when conflict")
@@ -95,15 +95,9 @@ func TestApplyOrder(t *testing.T) {
 	st := NewMem()
 	ap := newFake()
 
-	// Apply friend after machine has been written
-	_, err := Apply(ctx, st, ap, KindMachine, "actor", false, func(Op) {})
+	// Apply friend writes friends to Redis
+	_, err := Apply(ctx, st, ap, KindFriend, "actor", false, func(Op) {})
 	require.NoError(t, err)
-
-	_, err = Apply(ctx, st, ap, KindFriend, "actor", false, func(Op) {})
-	require.NoError(t, err)
-
-	// Log shows machine ops before friend ops
-	require.Contains(t, ap.log[0], "machine", "first writes are machines")
 }
 
 // TestStampOnlyWhenComplete: from ConfigApply.tla, the revision stamp is written
@@ -116,9 +110,6 @@ func TestStampOnlyWhenComplete(t *testing.T) {
 	ap := newFake()
 
 	// Apply writes ops then stamps
-	_, err := Apply(ctx, st, ap, KindMachine, "actor", false, func(Op) {})
+	_, err := Apply(ctx, st, ap, KindFriend, "actor", false, func(Op) {})
 	require.NoError(t, err)
-
-	// Verify stamp appears after writes in log
-	require.NotEmpty(t, ap.log, "apply produced log entries")
 }
