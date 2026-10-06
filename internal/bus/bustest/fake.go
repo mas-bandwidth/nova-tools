@@ -122,6 +122,31 @@ func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]str
 	return nil
 }
 
+func (f *Fake) Forward(_ context.Context, key string, order []string, state string, fields ...string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return 0, err
+	}
+	rank := func(s string) int { return slices.Index(order, s) + 1 }
+	var n int64
+	for _, k := range fields {
+		cur, _, _ := strings.Cut(f.hashes[key][k], " ")
+		if rank(cur) >= rank(state) {
+			continue
+		}
+		if f.hashes == nil {
+			f.hashes = map[string]map[string]string{}
+		}
+		if f.hashes[key] == nil {
+			f.hashes[key] = map[string]string{}
+		}
+		f.hashes[key][k] = state + " " + strconv.FormatInt(f.now.Unix(), 10)
+		n++
+	}
+	return n, nil
+}
+
 func (f *Fake) Unmark(_ context.Context, key string, fields ...string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

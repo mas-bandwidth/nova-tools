@@ -210,6 +210,50 @@ The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
 store with users: a sender marks the recipients' hashes, as it writes their
 streams.
 
+### message-receipts: delivered, read, acted
+
+A message to a recipient has a receipt that moves only forward: `delivered`
+(the recipient's reader took it off its stream), `read` (the session's turn
+carrying it started: the daemon marks it when the adapter accepts the turn)
+and `acted` (the turn ended at exit 0, or the recipient sent a message whose
+`re` is its id). A message with no receipt is `none`: sent, never taken. The
+receipts are the hash `bus2:receipts:<name>` beside the stream, one field per
+message id, the value the state and its time in Unix seconds, written by the
+bus package for both stores and never by hand. `Bus.Forward` moves a field to
+a state when it is behind, in one trip (one `EVAL` on Redis, the time from
+`TIME` inside it; the same rule on the fake), so a repeat or a late write of an
+earlier state moves nothing; `recv` writes `delivered` for the message it hands
+out (a redelivery after `ClaimAfter` finds it there or further on); `send`
+writes `acted` for the message it answers (`re`) in its own transaction; the
+friend daemon writes `read` when a turn starts (batch and lane alike) and
+`acted` when it ends at exit 0, a refused write said on the record and never
+failing the turn.
+
+`nova-bus receipts --as <name> [--id <id,...>]` prints each message's state and
+age (`none` for an id with no receipt). `nova-bus overdue --older <d>` (default
+10m) lists every message on every name's stream that is pending or never
+delivered and holds no receipt, older than `d` by the store's time, and exits 1
+when any is (`OVERDUE total=<n>`): the alarm the coordinator's loop and the
+seat check run. It reads each name's group, pending entries and stream plus one
+`HGETALL` of every receipts hash in a pipeline.
+
+Delivery stays at-least-once: a claim after `ClaimAfter` hands a message in
+again. The daemon's take is idempotent: it remembers the message ids it pushed
+into a turn that ended acted, and a second delivery of one is acked and dropped
+with one record line, `duplicate dropped id=<id>`, never pushed in twice. The
+memory lasts the daemon's run: a restart forgets it, and a message redelivered
+after one is pushed in again (its receipt stays `acted`, never back). A reply
+that acts on a message without a turn is a receipt but not in that memory.
+
+The model is `tla/Bus2.tla`: `rcpt` moves through the four states, `Read`,
+`Act` and `Drop` are the daemon's take, and the rules are `ReceiptsOnlyForward`
+(a receipt never moves back), `ActedImpliesDelivered` and `NoIdActedTwice`; the
+reversed witness `MCBus2BrokenRedeliver` (a take that pushes a redelivered id)
+is caught by `NoIdActedTwice`. The default case runs two messages.
+
+The ACL line gains `~bus2:receipts:*` and `+eval` (the forward script), and
+`overdue` and `receipts` read `HGETALL` on it.
+
 ## The identity
 
 Who a verb acts as is the user the connection logged in as, never a word on
@@ -253,9 +297,9 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:push ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipts:* ~bus2:push ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall
+  +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall +eval
 ```
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
@@ -286,5 +330,6 @@ its machine rows; no new kind or field was needed.
 ## Round trips
 
 send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
-four (the roster, the group, the claim, the read). ack: five (group, pending,
-the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+five (the roster, the group, the claim, the read, the delivered receipt). ack: five (group, pending,
+the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one. receipts: two (the hash, the time). overdue:
+the roster, the time, the hashes, and per name up to four.

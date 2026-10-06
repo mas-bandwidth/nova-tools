@@ -53,6 +53,38 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 	return redisconn.Exec(ctx, pipe)
 }
 
+// forwardScript is Forward's one trip: ARGV is the state, the states in order
+// (comma-joined), then the fields; the time is the server's.
+const forwardScript = `
+local rank = {}
+local i = 0
+for w in string.gmatch(ARGV[2], '[^,]+') do i = i + 1; rank[w] = i end
+local now = redis.call('TIME')[1]
+local moved = 0
+for j = 3, #ARGV do
+  local cur = redis.call('HGET', KEYS[1], ARGV[j])
+  local at = 0
+  if cur then at = rank[string.match(cur, '^(%S+)') or ''] or 0 end
+  if at < rank[ARGV[1]] then
+    redis.call('HSET', KEYS[1], ARGV[j], ARGV[1] .. ' ' .. now)
+    moved = moved + 1
+  end
+end
+return moved`
+
+func (r Redis) Forward(ctx context.Context, key string, order []string, state string, fields ...string) (int64, error) {
+	args := append([]any{state, strings.Join(order, ",")}, toAny(fields)...)
+	return r.C.Eval(ctx, forwardScript, []string{key}, args...).Int64()
+}
+
+func toAny(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
 func (r Redis) Unmark(ctx context.Context, key string, fields ...string) (int64, error) {
 	return r.C.HDel(ctx, key, fields...).Result()
 }

@@ -34,16 +34,36 @@
 \*                     AckOnlyDelivered
 \*   "ackreopens"      a second ack puts the message back on the stream as
 \*                     new (an ack that deletes and re-adds): AckedStaysAcked
+\*   "redeliver"       the daemon's take pushes a redelivered id into a turn
+\*                     again, though a turn already acted on it (no
+\*                     idempotent take): NoIdActedTwice
+\*
+\* The receipts (docs/SPEC-BUS.md, delivery receipts; internal/bus/delivery.go
+\* and internal/friend/daemon.go): rcpt[m][r], how far m has got for r, moving
+\* only forward through "none", "delivered" (recv took it off the stream),
+\* "read" (the turn carrying it started) and "acted" (the turn ended at exit
+\* 0). The daemon of r keeps turn[r], the message in its turn, and done[r],
+\* the ids a turn of it ended acted on, which a crash of the reader does not
+\* clear (a restart of the daemon does, and is not modelled: the SPEC says
+\* so); acts[m][r] counts the turns that acted on m. The actions Read, Act
+\* and Drop are the daemon's take: a held message not yet done goes into a
+\* turn; one already done is acked and dropped, never pushed in twice.
 
 EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS Recipients, Messages, Consumers, MaxCrashes, Broken
 
-VARIABLES st, holder, log, to, alive, crashes
-vars == <<st, holder, log, to, alive, crashes>>
+VARIABLES st, holder, log, to, alive, crashes, rcpt, turn, done, acts
+vars == <<st, holder, log, to, alive, crashes, rcpt, turn, done, acts>>
+rvars == <<rcpt, turn, done, acts>>
 
 States == {"none", "new", "pending", "acked"}
 NoOne == "-"
+Receipts == {"none", "delivered", "read", "acted"}
+Rank == [x \in Receipts |-> CASE x = "none" -> 0 [] x = "delivered" -> 1 [] x = "read" -> 2 [] x = "acted" -> 3]
+\* The state a receipt moves to when written: never back.
+Fwd(x, y) == IF Rank[y] > Rank[x] THEN y ELSE x
+NoMsg == "-"
 
 TypeOK ==
   /\ st \in [Messages -> [Recipients -> States]]
@@ -51,6 +71,10 @@ TypeOK ==
   /\ to \in [Messages -> SUBSET Recipients]
   /\ alive \subseteq Consumers
   /\ crashes \in 0..MaxCrashes
+  /\ rcpt \in [Messages -> [Recipients -> Receipts]]
+  /\ turn \in [Recipients -> Messages \cup {NoMsg}]
+  /\ done \in [Recipients -> SUBSET Messages]
+  /\ acts \in [Messages -> [Recipients -> Nat]]
 
 Sent == {m \in Messages : \E i \in 1..Len(log) : log[i] = m}
 Position(m) == CHOOSE i \in 1..Len(log) : log[i] = m
@@ -75,6 +99,10 @@ Init ==
   /\ to \in [Messages -> (SUBSET Recipients) \ {{}}]
   /\ alive = Consumers
   /\ crashes = 0
+  /\ rcpt = [m \in Messages |-> [r \in Recipients |-> "none"]]
+  /\ turn = [r \in Recipients |-> NoMsg]
+  /\ done = [r \in Recipients |-> {}]
+  /\ acts = [m \in Messages |-> [r \in Recipients |-> 0]]
 
 \* nova-bus2 send: one entry on every recipient's stream and the log, in
 \* one transaction. The partial witness writes some subset of the streams.
@@ -84,15 +112,17 @@ Send(m) ==
        /\ (Broken = "partial" \/ got = to[m])
        /\ st' = [st EXCEPT ![m] = [r \in Recipients |-> IF r \in got THEN "new" ELSE @[r]]]
   /\ log' = Append(log, m)
-  /\ UNCHANGED <<holder, to, alive, crashes>>
+  /\ UNCHANGED <<holder, to, alive, crashes>> /\ UNCHANGED rvars
 
 \* nova-bus2 recv for r by consumer c: the oldest claimable pending
 \* message, else the oldest new one.
 RecvPending(r, c) ==
   /\ c \in alive
   /\ Claimable(r, c) # {}
-  /\ holder' = [holder EXCEPT ![OldestClaimable(r, c)][r] = c]
-  /\ UNCHANGED <<st, log, to, alive, crashes>>
+  /\ LET m == OldestClaimable(r, c) IN
+       /\ holder' = [holder EXCEPT ![m][r] = c]
+       /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "delivered")]
+  /\ UNCHANGED <<st, log, to, alive, crashes, turn, done, acts>>
 
 RecvNew(r, c) ==
   /\ c \in alive
@@ -101,7 +131,8 @@ RecvNew(r, c) ==
   /\ LET m == Oldest(r, "new") IN
        /\ st' = [st EXCEPT ![m][r] = "pending"]
        /\ holder' = [holder EXCEPT ![m][r] = c]
-  /\ UNCHANGED <<log, to, alive, crashes>>
+       /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "delivered")]
+  /\ UNCHANGED <<log, to, alive, crashes, turn, done, acts>>
 
 Recv(r, c) == RecvPending(r, c) \/ RecvNew(r, c)
 
@@ -115,24 +146,56 @@ Ack(r, m) ==
        THEN st' = [st EXCEPT ![m][r] = "new"]
        ELSE st' = [st EXCEPT ![m][r] = "acked"]
   /\ holder' = [holder EXCEPT ![m][r] = NoOne]
-  /\ UNCHANGED <<log, to, alive, crashes>>
+  /\ UNCHANGED <<log, to, alive, crashes>> /\ UNCHANGED rvars
 
 \* A consumer dies holding what it holds: the store keeps it pending.
 Crash(c) ==
   /\ c \in alive /\ crashes < MaxCrashes
   /\ alive' = alive \ {c}
   /\ crashes' = crashes + 1
-  /\ UNCHANGED <<st, holder, log, to>>
+  /\ UNCHANGED <<st, holder, log, to>> /\ UNCHANGED rvars
 
 Restart(c) ==
   /\ c \notin alive
   /\ alive' = alive \cup {c}
-  /\ UNCHANGED <<st, holder, log, to, crashes>>
+  /\ UNCHANGED <<st, holder, log, to, crashes>> /\ UNCHANGED rvars
+
+\* The daemon of r takes a message its reader holds: one a turn has not yet
+\* acted on goes into a turn (the receipt moves to read); the witness
+\* "redeliver" pushes it in again whatever was done.
+Read(r, m) ==
+  /\ st[m][r] = "pending" /\ holder[m][r] \in alive
+  /\ turn[r] = NoMsg
+  /\ (m \notin done[r] \/ Broken = "redeliver")
+  /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "read")]
+  /\ turn' = [turn EXCEPT ![r] = m]
+  /\ UNCHANGED <<st, holder, log, to, alive, crashes, done, acts>>
+
+\* The turn ends at exit 0: the message is acted, and remembered.
+Act(r) ==
+  /\ turn[r] # NoMsg
+  /\ LET m == turn[r] IN
+       /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "acted")]
+       /\ done' = [done EXCEPT ![r] = @ \cup {m}]
+       /\ acts' = [acts EXCEPT ![m][r] = @ + 1]
+  /\ turn' = [turn EXCEPT ![r] = NoMsg]
+  /\ UNCHANGED <<st, holder, log, to, alive, crashes>>
+
+\* A held message a turn already acted on is acked and dropped, never pushed
+\* in twice (the daemon's record line: duplicate dropped id=<id>).
+Drop(r, m) ==
+  /\ st[m][r] = "pending" /\ holder[m][r] \in alive
+  /\ m \in done[r] /\ Broken # "redeliver"
+  /\ st' = [st EXCEPT ![m][r] = "acked"]
+  /\ holder' = [holder EXCEPT ![m][r] = NoOne]
+  /\ UNCHANGED <<log, to, alive, crashes>> /\ UNCHANGED rvars
 
 Next ==
   \/ \E m \in Messages : Send(m)
   \/ \E r \in Recipients, c \in Consumers : Recv(r, c)
   \/ \E r \in Recipients, m \in Messages : Ack(r, m)
+  \/ \E r \in Recipients, m \in Messages : Read(r, m) \/ Drop(r, m)
+  \/ \E r \in Recipients : Act(r)
   \/ \E c \in Consumers : Crash(c) \/ Restart(c)
 
 \* Fairness, per action: every recipient keeps reading new messages and
@@ -193,5 +256,19 @@ AckedStaysAcked ==
 EveryMessageIsAcked ==
   \A m \in Messages, r \in Recipients :
     (m \in Sent /\ r \in to[m]) ~> (st[m][r] = "acked")
+
+\* A receipt never moves back: delivered, read, acted, each only forward.
+ReceiptsOnlyForward ==
+  [][\A m \in Messages, r \in Recipients : Rank[rcpt'[m][r]] >= Rank[rcpt[m][r]]]_vars
+
+\* An acted message was delivered: it is pending or acked, never new.
+ActedImpliesDelivered ==
+  \A m \in Messages, r \in Recipients :
+    rcpt[m][r] = "acted" => st[m][r] \in {"pending", "acked"}
+
+\* No message id is acted twice by one recipient: a redelivered id after an
+\* acted turn is dropped, so no second turn carries it.
+NoIdActedTwice ==
+  \A m \in Messages, r \in Recipients : acts[m][r] <= 1
 
 =============================================================================

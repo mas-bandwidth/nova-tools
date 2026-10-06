@@ -187,6 +187,11 @@ type Store interface {
 	AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error
 	// Unmark clears fields of the hash at key (HDEL) and says how many were there.
 	Unmark(ctx context.Context, key string, fields ...string) (int64, error)
+	// Forward moves each field of the hash at key to state (HSET of the state
+	// and the server's TIME in Unix seconds) when its state is behind in
+	// order, or it has none, in one trip, and says how many moved: a field at
+	// state or past it is left alone, so a state never goes back.
+	Forward(ctx context.Context, key string, order []string, state string, fields ...string) (int64, error)
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
 	// a key that is not there is an empty map.
 	Marks(ctx context.Context, keys ...string) ([]map[string]string, error)
@@ -243,7 +248,8 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // A message to a friend is owed her session's receipt (receipt.go): the
 // transaction marks it on bus2:owed:<friend> for each friend it names but the
 // sender, and a message from a friend naming another (re) is her receipt of
-// that one, cleared in the same transaction.
+// that one, cleared in the same transaction, and marked acted on
+// bus2:receipts:<sender> there too (delivery.go).
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -257,7 +263,7 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
-	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
+	if err := b.Store.AddAll(ctx, streams, m.Fields(), append(owe(m, friends), acts(m)...)...); err != nil {
 		return Message{}, err
 	}
 	return m, nil
@@ -335,6 +341,20 @@ func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry
 // costs one round trip per message skipped, and one more to release a run of
 // them. (tla/Bus2.tla: Recv; a skipped message is back as a lost one)
 func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kinds []string) (e Entry, ok bool, err error) {
+	e, ok, err = b.recvKinds(ctx, as, block, kinds)
+	if err != nil || !ok {
+		return Entry{}, false, err
+	}
+	// the take is the message's delivered receipt (delivery.go); a redelivery
+	// finds it there or further on and moves nothing
+	if _, err := b.Forward(ctx, as, StateDelivered, e.Message().ID); err != nil {
+		return Entry{}, false, err
+	}
+	return e, true, nil
+}
+
+// recvKinds is RecvKinds without the receipt.
+func (b *Bus) recvKinds(ctx context.Context, as string, block time.Duration, kinds []string) (e Entry, ok bool, err error) {
 	if p := CheckName(as); p != "" {
 		return Entry{}, false, &Refusal{[]string{p}}
 	}

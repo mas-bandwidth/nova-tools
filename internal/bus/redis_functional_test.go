@@ -174,3 +174,49 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	_, err = gated.Send(ctx, Message{From: "ada", To: []string{"m1"}, Subject: "s", Body: "x"})
 	assert.ErrorContains(t, err, "deaf: m1")
 }
+
+// The receipts on the real commands: delivered by recv, read and acted only
+// forward through the one script, acted by a reply, and the time the server's
+// (SPEC-BUS.md, message-receipts; tla/Bus2.tla, ReceiptsOnlyForward).
+func TestRedisStoreMovesReceiptsOnlyForward(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	m1, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "one", Body: "first\n"})
+	require.NoError(t, err)
+	late, _, err := b.Overdue(ctx, time.Hour)
+	require.NoError(t, err)
+	assert.Empty(t, late)
+	late, _, err = b.Overdue(ctx, -time.Hour)
+	require.NoError(t, err)
+	require.Len(t, late, 1, "a message never taken is overdue")
+	assert.Equal(t, m1.ID, late[0].ID)
+
+	_, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	for _, step := range []struct {
+		state string
+		moved int
+	}{{StateRead, 1}, {StateDelivered, 0}, {StateRead, 0}, {StateActed, 1}, {StateRead, 0}} {
+		n, err := b.Forward(ctx, "bob", step.state, m1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, step.moved, n, step.state)
+	}
+	got, _, err := b.Stages(ctx, "bob", m1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateActed, got[0].State)
+	assert.WithinDuration(t, time.Now(), got[0].At, time.Minute, "the time is the server's")
+	late, _, err = b.Overdue(ctx, -time.Hour)
+	require.NoError(t, err)
+	assert.Empty(t, late, "a message with a receipt is never overdue")
+
+	m2, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "two", Body: "second\n"})
+	require.NoError(t, err)
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "re two", Body: "done\n", Re: m2.ID})
+	require.NoError(t, err)
+	v, err := c.HGet(ctx, ReceiptsOf("bob"), m2.ID).Result()
+	require.NoError(t, err)
+	state, _, ok := ParseStamp(v)
+	assert.True(t, ok)
+	assert.Equal(t, StateActed, state, "a reply naming a message is its acted")
+}
