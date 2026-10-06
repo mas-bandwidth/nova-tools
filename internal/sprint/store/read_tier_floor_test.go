@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,9 +14,19 @@ import (
 // read tier a floor over that and never a cap; `stream set --read-tier` raises and refuses
 // to lower below the stream's work tier. The escalation: a landed card returned by dev or
 // an audit, two readers disagreeing on one attempt, or a card alternating broken and ok
-// across attempts raise one judgment per stream, "raise the read tier of <stream> to
-// <next>?", decisions raise and keep; the raise is recorded on the stream row with its
-// reason, and it never lowers.
+// across attempts are a stream's question "raise the read tier of <stream> to <next>?",
+// which the rule answers and never asks (sprint.ReadTierRule;
+// a-judgment-checks-the-lane-before-it-rises.w1): kept unless two substantive findings
+// disagree, when the raise is recorded on the stream row with the rule's reason; it never
+// lowers.
+
+// quiet is the judgments the last tick kept from rising, as its heartbeat says them.
+func (h *harness) quieted() []sprint.Quiet {
+	h.t.Helper()
+	_, hb, err := h.st.Machine(h.ctx)
+	require.NoError(h.t, err)
+	return hb.Quiet
+}
 
 // readTiersOf is the tiers the primary's live reads were drawn on, in reader row order.
 func (h *harness) readTiersOf(id string) []string {
@@ -75,7 +84,7 @@ func TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises(t *testing.T) {
 	h.clean("the floor")
 }
 
-func TestReadersDisagreeingRaiseOneJudgmentPerStream(t *testing.T) {
+func TestReadersDisagreeingRaiseTheReadTierByRule(t *testing.T) {
 	t.Parallel()
 	h := tiersHarness(t)
 	h.addReady("s1", 2, briefOf("pro", ""))
@@ -91,39 +100,23 @@ func TestReadersDisagreeingRaiseOneJudgmentPerStream(t *testing.T) {
 		h.readOne(rc[1], "broken", "internal/z.go:3: wrong")
 	}
 	h.machine()
-	open := h.openOf(sprint.NRaiseReadTier)
-	require.Len(t, open, 1, "one judgment for the stream, two cards disagreed on")
-	n := open[0].Note
-	assert.True(t, n.StreamLevel)
-	assert.Equal(t, "s1", n.Stream)
-	assert.Equal(t, "heavy", n.Tier)
-	assert.Equal(t, "raise the read tier of s1 to heavy? two readers at pro disagree on s1-1 attempt 1 (reader-a ok, reader-b broken)", n.What)
-	assert.Equal(t, []string{"raise", "keep"}, n.Decisions)
-	for _, c := range h.commandsOf(sprint.NRaiseReadTier) {
-		switch c.Decision {
-		case "raise":
-			assert.True(t, strings.HasPrefix(c.Lines[0], "nova-sprint stream set s1 --read-tier heavy --reason 'two readers at pro disagree on s1-1 attempt 1 (reader-a ok, reader-b broken)' --answers "), c.Lines[0])
-		case "keep":
-			assert.Contains(t, c.Lines[0], "nova-sprint ack ")
-		default:
-			t.Errorf("a decision that is neither raise nor keep: %q", c.Decision)
-		}
-	}
-	h.machine()
-	assert.Len(t, h.openOf(sprint.NRaiseReadTier), 1, "written once while it holds")
-	// the raise answers it, is recorded with its reason, and at the top tier nothing is asked again
-	res := h.must(SetStep(sprint.SetReq{Streams: []string{"s1"}, ReadTier: "heavy", Reason: "readers disagreed", Answers: []string{n.ID}, Who: h.st.Actor}))
-	assert.Equal(t, "stream s1 read-tier heavy", res.Moved[0])
+	assert.Empty(t, h.openOf(sprint.NRaiseReadTier), "never asked")
+	assert.Zero(t, h.written(sprint.NRaiseReadTier))
+	// two substantive findings disagree: the rule raises it, with its reason on the stream row
+	why := "answered by rule read-tier: raised to heavy: two substantive findings disagree on s1-1 attempt 1 (reader-a ok, reader-b broken with a finding)"
 	ctl := h.snap().StreamCtl("s1")
 	assert.Equal(t, "heavy", ctl.F(sprint.FieldReadTier))
-	assert.Equal(t, "readers disagreed", ctl.F(sprint.FieldReadTierReason))
-	assert.Empty(t, h.openOf(sprint.NRaiseReadTier), "the raise closes the judgment")
+	assert.Equal(t, why, ctl.F(sprint.FieldReadTierReason))
+	assert.Equal(t, 1, h.written(sprint.NRuleAnswered), "the rule's answer is a note")
+	assert.Contains(t, h.quieted(), sprint.Quiet{Type: sprint.NRaiseReadTier, Subject: sprint.StreamSubject("s1"), Why: why}, "counted beside the judgments that rose")
 	h.machine()
 	assert.Empty(t, h.openOf(sprint.NRaiseReadTier), "heavy is the top: no further raise")
+	assert.Equal(t, 1, h.written(sprint.NRuleAnswered), "raised once")
+	assert.Empty(t, h.quieted(), "nothing left to answer")
 	h.clean("raised")
 }
 
-func TestALandedCardReturnedByDevAsksToRaiseTheReadTierAndKeepHoldsIt(t *testing.T) {
+func TestALandedCardReturnedByDevKeepsTheReadTierByRule(t *testing.T) {
 	t.Parallel()
 	h := tiersHarness(t)
 	h.addReady("s1", 1, briefOf("flash", ""))
@@ -145,22 +138,20 @@ func TestALandedCardReturnedByDevAsksToRaiseTheReadTierAndKeepHoldsIt(t *testing
 	assert.NotEmpty(t, pr.F(sprint.FieldReturnedByDev))
 	assert.Equal(t, "flash", pr.F(sprint.FieldReturnedByDevTier))
 	assert.Equal(t, "abc1234", pr.F(sprint.FieldReturnedByDevSha))
-	open := h.openOf(sprint.NRaiseReadTier)
-	require.Len(t, open, 1)
-	assert.Equal(t, "pro", open[0].Note.Tier)
-	assert.Contains(t, open[0].Note.What, "raise the read tier of s1 to pro? s1-1 landed and was returned by dev or an audit at ")
-	// keep: acknowledged, the judgment holds quiet and is not written again
-	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "keep the read tier"}))
+	// no two findings disagree: the rule keeps the read tier, and the question is never asked
+	assert.Empty(t, h.openOf(sprint.NRaiseReadTier))
+	assert.Zero(t, h.written(sprint.NRaiseReadTier), "never asked")
+	assert.Empty(t, h.snap().StreamCtl("s1").F(sprint.FieldReadTier), "kept")
+	quiet := h.quieted()
+	require.Len(t, quiet, 1)
+	assert.Equal(t, sprint.NRaiseReadTier, quiet[0].Type)
+	assert.Contains(t, quiet[0].Why, "answered by rule read-tier: kept at its tier: raise the read tier of s1 to pro? s1-1 landed and was returned by dev or an audit at ")
 	h.machine()
-	h.machine()
-	for _, o := range h.openOf(sprint.NRaiseReadTier) {
-		assert.Equal(t, sprint.Acknowledged, o.Note.Kind, "kept: the acknowledgement holds it quiet, no judgment open")
-	}
-	assert.Equal(t, 1, h.written(sprint.NRaiseReadTier), "written once")
+	assert.Zero(t, h.written(sprint.NRaiseReadTier), "never asked")
 	h.clean("returned by dev, kept")
 }
 
-func TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier(t *testing.T) {
+func TestACardAlternatingBrokenAndOkKeepsTheReadTierByRule(t *testing.T) {
 	t.Parallel()
 	h := tiersHarness(t)
 	h.addReady("s1", 1, briefOf("flash", ""))
@@ -180,8 +171,11 @@ func TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier(t *testing.T) {
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.readOne(h.askedRead("s1-1"), "broken", "internal/w.go:4: the hole is open")
 	h.machine()
-	open := h.openOf(sprint.NRaiseReadTier)
-	require.Len(t, open, 1)
-	assert.Equal(t, "raise the read tier of s1 to pro? s1-1 alternates broken and ok across attempts: a reader passed it at h1 and attempt 2 was found broken by reader-b", open[0].Note.What)
+	// ok and broken on different attempts are no two findings disagreeing on one: kept
+	assert.Empty(t, h.openOf(sprint.NRaiseReadTier))
+	assert.Zero(t, h.written(sprint.NRaiseReadTier), "never asked")
+	assert.Empty(t, h.snap().StreamCtl("s1").F(sprint.FieldReadTier), "kept")
+	assert.Contains(t, h.quieted(), sprint.Quiet{Type: sprint.NRaiseReadTier, Subject: sprint.StreamSubject("s1"),
+		Why: "answered by rule read-tier: kept at its tier: raise the read tier of s1 to pro? s1-1 alternates broken and ok across attempts: a reader passed it at h1 and attempt 2 was found broken by reader-b; no two substantive findings disagree"})
 	h.clean("alternating")
 }
