@@ -418,18 +418,16 @@ func insideAny(path string, dirs []string) bool {
 }
 
 // DeletesIn reports whether the wall lets the command delete beneath dir: unlink, rmdir
-// and rename-away. The write roots the command owns qualify: the job directory (the first
-// --write), the temp directory, and the working directory (--cwd, always inside the write
-// set: the checkout a step was given to write, whose git commit renames a new index over
-// .git/index). Every other --write, a shared cache or a config dir, may be written and
-// never deleted from, so an rm -rf of a variable path that names one of them is refused by
-// the kernel rather than trusted to the command (docs/SPEC-SANDBOX.md,
-// "deletes-only-in-the-job-dir-p.w1").
+// and rename-away. Every --write root qualifies, the data home included: what the command
+// may create there it may remove, and a database commits by unlinking its rollback journal.
+// The temp directory and the working directory are inside the write set, so they qualify
+// by lying under a --write. A path outside every --write does not (docs/SPEC-SANDBOX.md,
+// "deletes-in-every-write-root").
 func (p *Policy) DeletesIn(dir string) bool {
-	if p == nil || len(p.Writes) == 0 {
+	if p == nil || dir == "" || len(p.Writes) == 0 {
 		return false
 	}
-	return Inside(dir, p.Writes[0]) || (p.Tmp != "" && Inside(dir, p.Tmp)) || (p.Cwd != "" && Inside(dir, p.Cwd))
+	return insideAny(dir, p.Writes)
 }
 
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
