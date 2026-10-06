@@ -136,6 +136,7 @@ func init() {
 		{"seat install", "[--dir <dir>] [--log <file>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
 		{"seat", "[--repair --reason <text>]", "seat", (*app).cmdSeat},
+		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
 		{"stats", "", "stats", (*app).cmdStats},
@@ -362,6 +363,7 @@ var verbExamples = map[string][]string{
 		"add --stream s1 --brief-dir briefs",
 		"add --stream s1 --brief-file a.md --brief-file b.md",
 	},
+	"fsck seat": {},
 }
 
 // verbExample is the lines a verb's -h shows above its flags: its examples,

@@ -94,9 +94,7 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 		for _, line := range lines {
 			if strings.HasPrefix(line, "$ ") {
 				cmd := strings.TrimPrefix(line, "$ ")
-				if strings.HasSuffix(cmd, "\\") {
-					cmd = strings.TrimSuffix(cmd, "\\")
-				}
+				cmd = strings.TrimSuffix(cmd, "\\")
 				args, err := onboarding.SplitShell(cmd)
 				require.NoError(t, err, "cannot split transcript line %q: %v", line, err)
 				require.True(t, len(args) > 0 && args[0] == "nova-check", "not a nova-check command: %q", line)
@@ -107,9 +105,7 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 			if curStep != nil && strings.HasPrefix(line, "    ") && strings.HasSuffix(curStep.Line, "\\") {
 				// Continuation line of a command
 				lineClean := strings.TrimSpace(line)
-				if strings.HasSuffix(lineClean, "\\") {
-					lineClean = strings.TrimSuffix(lineClean, "\\")
-				}
+				lineClean = strings.TrimSuffix(lineClean, "\\")
 				extraArgs, err := onboarding.SplitShell(lineClean)
 				require.NoError(t, err, "cannot split continuation line %q: %v", line, err)
 				curStep.Args = append(curStep.Args, extraArgs...)

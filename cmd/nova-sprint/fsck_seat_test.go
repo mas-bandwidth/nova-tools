@@ -65,7 +65,7 @@ func TestFsckNamesTheFourSeatValues(t *testing.T) {
 
 	code, out, errs = fsck(row("", errors.New("no route")))
 	assert.Equal(t, 2, code, out)
-	assert.Contains(t, errs, "fsck FAILED: the nova-config sprint row was not read: no route", errs)
+	assert.Contains(t, errs, "fsck seat FAILED: the nova-config sprint row was not read: no route", errs)
 
 	ta.ok("seat --repair --reason 'the restart wrote its actor' --actor rowan")
 	require.NoError(t, st.SetServerActor(ctx, "rowan"))
@@ -75,5 +75,5 @@ func TestFsckNamesTheFourSeatValues(t *testing.T) {
 
 	code, _, errs = fsck(row("rowan", nil), "extra")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "fsck REFUSED: takes no words", errs)
+	assert.Contains(t, errs, "fsck seat REFUSED: takes no words", errs)
 }
