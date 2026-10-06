@@ -133,6 +133,7 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 			assert.True(t, strings.HasPrefix(brief, "RESULT: "+c.ID+" sha=0123456789ab tier: "+c.Tier+"\n"), brief)
 			assert.Contains(t, brief, "\nTEST: "+l.Test+"\n")
 			assert.Contains(t, brief, "\nKIND: fix-red\n")
+			assert.Contains(t, brief, "\nAS A READ\nThe scope of this change is its PATHS line. "+AlwaysInPathsRule+"\n", "the reader is handed the scope rule")
 		}
 	}
 }

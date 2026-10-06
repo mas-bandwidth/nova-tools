@@ -2821,7 +2821,7 @@ What each of the lander's checks does with a head:
 
 | check | does |
 |---|---|
-| files outside PATHS (E12) | refuses |
+| files outside PATHS (E12) | refuses; never a test, a testdata file, `tla/RUNS.tsv`, `tla/CASES.tsv`, the docs catalog or an `AGENTS.md` map (always inside PATHS) |
 | a rename outside PATHS (E12) | refuses |
 | a stranded sentence fragment (E4) | refuses |
 | an unmatched backquote in a Markdown or text file (E4) | repairs; refuses only when ambiguous, naming the line; not read on a prose path |
@@ -2894,6 +2894,21 @@ of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
 module that needs them changed fails the run, which is the card's finding.
 `--check` is the caller's own command on top, once a batch, as before.
 
+**Always inside PATHS.** Files a change must touch to keep the tree green are always inside
+PATHS, whatever the brief names: every `*_test.go`, every file under a `testdata/` directory,
+`tla/RUNS.tsv` and `tla/CASES.tsv`, `internal/docs/catalog.go`, and every `AGENTS.md` map; any
+other file outside PATHS is still out of scope (`cardgen.AlwaysInPathsRule`, one sentence held
+by the lander, the brief generator and the readers). The lander's E12 never refuses them
+(`sprint.LandScope`, the call `checkCard` makes: `diffcheck.Outside` less
+`sprint.OutsideByRule`, then the scope amendment below; a rename is inside by rule only when
+both its sides are, so a source file moved to a test's name is still refused); the readers'
+scope rule never twins a card wider for them (`sprint.FilesOutsidePaths`); a generated brief's
+task and its AS A READ section carry the sentence (`cardgen.Render`), and a friend's read
+carries it under AS A READ when the primary's section does not (`sprint.FriendReadBrief`).
+They are not recorded as amendments. The owner, 2026-10-06: "Can we stop this whole 'test
+outside of paths' thing. It's wasteful.", after a dozen heads were refused or read broken over
+a test, a ledger, the catalog or a map (`TestE12NeverRefusesATestOrALedger`).
+
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
 (`sprint.ScopeAmended`): the change also changes a file of its own (in `PATHS`), and the
@@ -2935,16 +2950,16 @@ owns the catalog row that directory costs and the maps `make map` writes.
 `internal/docs/catalog.go` is the card's when its change is added lines only,
 each a row naming one of those new directories; every `AGENTS.md` map
 `tools/agentsmap` writes is the card's. Any other change to `catalog.go`, or a
-map change from a card that adds no directory, stays outside PATHS (E12). The
-maps are a second generated-ledger family, owned by
-`TestCommittedMapMatchesTree`, its update run `go run ./tools/agentsmap` under
-`GOFLAGS=-mod=readonly`. A merge whose unmerged paths are only those maps, or
-only those maps plus `internal/docs/catalog.go` where both sides only add
-rows, resolves: the union of the rows, the tip's first, then the map family
-until a run writes nothing, committed as the generality family is. The
-resolution is told as a shrink-only union is: one land log line and the card's
-note. A conflicting `catalog.go` line that is not an added row is refused as
-any conflict is.
+map change from a card that adds no directory, is inside PATHS by the rule
+above (always inside PATHS), not by this one. The maps are a second
+generated-ledger family, owned by `TestCommittedMapMatchesTree`, its update
+run `go run ./tools/agentsmap` under `GOFLAGS=-mod=readonly`. A merge whose
+unmerged paths are only those maps, or only those maps plus
+`internal/docs/catalog.go` where both sides only add rows, resolves: the union
+of the rows, the tip's first, then the map family until a run writes nothing,
+committed as the generality family is. The resolution is told as a shrink-only
+union is: one land log line and the card's note. A conflicting `catalog.go`
+line that is not an added row is refused as any conflict is.
 
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
@@ -3515,7 +3530,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `bound` | a card reached its bound (its redeal bound at its ceiling, or the second identical failure) | a new attempt one tier up, as `failed`'s climb; past heavy, a friend's card. A card every member up refused at staging, or at its brief's bound, is left |
 | `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp: the server's time of its holder's last `progress` verb, which the member sends every 3 minutes while its child prints and the friend daemon while a lane's turn on the card prints; a stamp from before the card's take is another holder's and counts as none) a wait of 30 minutes, once a generation (`rule_waited`). The default is wait only: a working card whose holder has stamped no progress since its take is held 30 minutes at a time and never returned by this rule, so a member that does not stamp never loses an honest long child to it (`tla/SprintRules.tla`, `NeverStampedNeverReturned`). A card whose holder stamped and then went silent past the 10 minutes, or whose one wait is spent, is returned and dealt again once its holder has had its own whole deadline (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A friend's card is left: a friend keeps her cards |
 | `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
-| `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers), the card is twinned instead (`rule twin`, as `recut --widen`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
+| `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers and that is not always inside PATHS, a test or a ledger), the card is twinned instead (`rule twin`, as `recut --widen`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
 

@@ -161,7 +161,8 @@ func TestAFindingNamesFilesOutsidePaths(t *testing.T) {
 	}{
 		{"internal/x/a.go:12 drops the error", nil},
 		{"internal/z/q.go:3 and docs/SPEC-X.md say otherwise", nil},
-		{"internal/y/b.go:40 calls the old name; `internal/y/b_test.go` too", []string{"internal/y/b.go", "internal/y/b_test.go"}},
+		{"internal/y/b.go:40 calls the old name; `internal/y/c.go` too", []string{"internal/y/b.go", "internal/y/c.go"}},
+		{"internal/y/b.go:40 calls the old name; `internal/y/b_test.go` too", []string{"internal/y/b.go"}}, // a test is always inside PATHS
 		{"branch sprint/c.w1.g3.e15 at /abs/x/y.go and ../up/z.go, see https://example.invalid/a/b.go", nil},
 		{"the TestA step fails", nil},
 	} {

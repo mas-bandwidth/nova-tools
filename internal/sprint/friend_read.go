@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -26,8 +27,9 @@ const FriendReadDeadline = 2 * time.Hour
 
 // FriendReadBrief is the BRIEF.md of a frontier read: WHO, the attempt's
 // branch, the commit it started from and the head under review, the deadline,
-// and the primary's AS A READ section through the next heading
-// (docs/SPEC-SPRINT.md, a friend's card).
+// and the primary's AS A READ section through the next heading, then the scope
+// rule every read holds a change to (cardgen.AlwaysInPathsRule) when the section
+// does not carry it (docs/SPEC-SPRINT.md, a friend's card).
 func FriendReadBrief(name, primary, brief, branch, start, head string, attempt int, deadline time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "WHO: friend %s\n", name)
@@ -46,11 +48,15 @@ func FriendReadBrief(name, primary, brief, branch, start, head string, attempt i
 		fmt.Fprintf(&b, "deadline: %s\n", deadline.UTC().Format(time.RFC3339))
 	}
 	b.WriteString("\nAS A READ\n")
-	if body := asARead(brief); body != "" {
+	body := asARead(brief)
+	if body != "" {
 		b.WriteString(body)
 		if !strings.HasSuffix(body, "\n") {
 			b.WriteString("\n")
 		}
+	}
+	if !strings.Contains(body, cardgen.AlwaysInPathsRule) {
+		b.WriteString(cardgen.AlwaysInPathsRule + "\n")
 	}
 	return b.String()
 }

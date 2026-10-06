@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
@@ -91,7 +92,9 @@ var findingExtRE = regexp.MustCompile(`\.[A-Za-z]{1,8}$`)
 // relative path with a directory and an extension of letters, read through backticks,
 // brackets, quotes and a trailing line number; absolute paths, paths that climb with ..,
 // URLs and branch names are not files. PATHS cover a file by its name, a glob
-// (hygiene.MatchGlob) or a directory ending in /.
+// (hygiene.MatchGlob) or a directory ending in /, and every brief's PATHS cover the files
+// cardgen.AlwaysInPathsRule names (cardgen.AlwaysInPaths): a finding naming a test or a
+// ledger is reworked, never twinned wider.
 func FilesOutsidePaths(brief, finding string) []string {
 	paths := decide.CardPaths(brief)
 	if len(paths) == 0 {
@@ -100,7 +103,7 @@ func FilesOutsidePaths(brief, finding string) []string {
 	covered := func(f string) bool {
 		return slices.ContainsFunc(paths, func(g string) bool {
 			return g == f || hygiene.MatchGlob(g, f) || strings.HasSuffix(g, "/") && strings.HasPrefix(f, g)
-		})
+		}) || cardgen.AlwaysInPaths(f)
 	}
 	var out []string
 	for _, tok := range strings.FieldsFunc(finding, func(r rune) bool {

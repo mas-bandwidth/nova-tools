@@ -11,16 +11,19 @@ import (
 
 // A scope amendment of the same change is allowed by rule and recorded on the batch's
 // line (sprint.ScopeAmended; docs/SPEC-SPRINT.md section 7): a card whose head changes
-// its PATHS file and a doc under docs/ lands with scope=<card>:<doc>; code outside its
-// PATHS is still refused (E12).
+// its PATHS file and a doc under docs/ lands with scope=<card>:<doc>; a test or a ledger
+// elsewhere is inside every card's PATHS (cardgen.AlwaysInPathsRule) and lands with no
+// amendment; code outside its PATHS is still refused (E12).
 func TestLandAllowsAScopeAmendmentOfTheSameChangeAndRecordsIt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, file string
-		landed     bool
+		name, file     string
+		landed, scoped bool
 	}{
-		{"a doc of the same change", "docs/A.md", true},
-		{"code outside its PATHS", "b.go", false},
+		{"a doc of the same change", "docs/A.md", true, true},
+		{"a test in another package", "internal/x/x_test.go", true, false},
+		{"a TLA+ ledger", "tla/RUNS.tsv", true, false},
+		{"code outside its PATHS", "b.go", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -34,7 +37,11 @@ func TestLandAllowsAScopeAmendmentOfTheSameChangeAndRecordsIt(t *testing.T) {
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 			if tc.landed {
 				assert.Equal(t, 0, code, out+errs)
-				assert.Contains(t, out, "scope=a:"+tc.file)
+				if tc.scoped {
+					assert.Contains(t, out, "scope=a:"+tc.file)
+				} else {
+					assert.NotContains(t, out, "scope=")
+				}
 				assert.Equal(t, map[string]string{"a": "landed/merged"}, r.places("a"))
 			} else {
 				assert.Equal(t, 1, code, out+errs)
