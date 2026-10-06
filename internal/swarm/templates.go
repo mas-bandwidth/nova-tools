@@ -94,13 +94,13 @@ const templateFixCard = `fix-card — take one card and land the fix
    pick it up with no other context.
 `
 
-
 // GoCacheLine is the one sentence every card carries about the build cache: the
 // machine's shared, warm GOCACHE is already set (JOB.md names it), so the child keeps
 // it and never exports or chooses one of its own (docs/SPEC-CARD-CONTRACT.md section 2,
 // the staged environment). templateCard and cardgen.Render share it, so the two
 // generators cannot drift.
 const GoCacheLine = "GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it."
+
 // GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
 // the card's steps): a red gate line names its file and says whether the file is the child's own
 // (yours) or is unchanged from BASE, so the child neither fixes a file it may not touch nor
