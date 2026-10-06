@@ -201,16 +201,18 @@ matched what the verbs had done by hand.
 
     go test -count=1 -timeout 600s ./internal/docs ./internal/ci
 
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	2.503s
-    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	16.100s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	2.125s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	13.139s
 
     go test -count=1 -timeout 600s ./internal/docs -run TestDocsTreeIsConsistent
 
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.011s [no tests to run]
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.008s [no tests to run]
 
 The named test `TestDocsTreeIsConsistent` does not exist in ./internal/docs at
 this tip, so the run answers "no tests to run" and exits 0; the packages the
-card names are green with this report in the tree, on a Linux bench.
+card names are green with this report in the tree, on a Linux bench (the lines
+above are from the run on the committed tree; two earlier runs, one without this
+file in it, went green the same way at 2.290s/16.801s and 2.503s/16.100s).
 
 READ 7/10 — the banner, the verb helps and the judgment grammar answer a cold
 reader fast and truly, but at this tip the tool's own install gate and its
