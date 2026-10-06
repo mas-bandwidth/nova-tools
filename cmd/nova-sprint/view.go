@@ -849,6 +849,9 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 func workerNext(v workerView, c *sprint.Card, p sprint.Packet) string {
 	at := c.ID + "@" + strconv.Itoa(p.Gen) + " --epoch " + strconv.FormatUint(v.Epoch, 10)
 	switch {
+	case v.Kind == "friend" && p.Kind == "read":
+		// a read on her row is returned, never finished (sprint.FriendReadOutboxLine)
+		return "read " + c.ID + ": write ~/" + v.As + "-working/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND, or Verdict: HOLD and a line naming the file:line or rule and what to change"
 	case v.Kind == "friend" && c.Col == sprint.Working:
 		return "finish " + c.ID + ": push to " + p.Branch + ", then write ~/" + v.As + "-working/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
 	case v.Kind == "friend":
