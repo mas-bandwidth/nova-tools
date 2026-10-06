@@ -1354,6 +1354,18 @@ uncalibrated: nova-config's `sprint` row `decide_brief_bar` stays empty, which r
 only, until the brief record's own outcomes support a bar
 ([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 14).
 
+`add` holds every card brief (one with a `PATHS:` line) to the brief checks at its base
+before it writes: the repository `REPO:` names, in the lander's clone, at the tip of `BASE:`,
+fetched once a call, read with git and no go command. The tokens are `paths-at-base`,
+`donewhen-test-name`, `paths-cover-named`, `paths-cover-test`, `paths-cover-testdata`,
+`paths-cover-ledgers`, `paths-cover-docs`, `base-is-live`, `tier-set`, `tla-is-frontier` and
+`who-serves-tier`; each finding is a `LINT DRIFT card=<id> check=<token> line=<n>: <excerpt>
+remedy=<remedy>` line and each corrected header line a `LINT FIX card=<id> <line>` line (the
+`PATHS:`, `NEW:` or `SHARED:` line, or line 1, with every addition applied), then one refusal,
+exit 2, nothing written. A base that cannot be read refuses with `MISSING: <what>`; a brief
+naming no `REPO:` or no `BASE:` is held only to the checks that need no tree
+([SPEC-SPRINT.md](SPEC-SPRINT.md) section 11, the brief checks).
+
 ### install-canary-shadow-tick-r.w1: the shadow tick before a server swap
 
 `nova-sprint tick --shadow` plans one tick on the store and applies nothing: the store is
