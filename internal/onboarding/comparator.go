@@ -133,8 +133,8 @@ type VolatileField struct {
 // The entries are the ones docs/SPEC-TOOLWORK.md names:
 // `at=`, `took=`, `created=`, a temporary directory, a message's `id=`, a fresh
 // sha, a name a recorded fixture carries, the stamp on a `branch=` nova-secrets
-// seals on, the content sum ending a receipt's file name, and the commit a
-// finding's `at=` names in a repository the run built.
+// seals on, and the commit a finding's `at=` names in a repository the run
+// built.
 //
 // FIVE OF THE SIX ARE TOKEN-ANCHORED, and the sixth says why it is not. A norm
 // that names a field replaces only a whitespace-delimited token spelled
@@ -149,8 +149,7 @@ type VolatileField struct {
 // `tmpdir` is the exception and is sound without a field: Path replaces its
 // literal absolute directory only at the end of a token, before `/`, or before
 // the comma used around a path in prose, so it covers descendants without
-// swallowing a longer path that shares the prefix. `receipt` uses the same
-// end-of-token rule for the sum that ends a receipt's name.
+// swallowing a longer path that shares the prefix.
 var Volatile = []VolatileField{
 	{
 		Name: "at",
@@ -248,24 +247,6 @@ var Volatile = []VolatileField{
 				As:    "branch=<the seal branch this run stamped>",
 				field: "branch",
 				valid: isStampedBranch,
-			}
-		},
-	},
-	{
-		Name: "receipt",
-		What: "the content sum that ends the name of a receipt this run wrote",
-		// nova-check's dogfood receipt is named `<stamp>-<tool>-<verb>-<by>-<sum>.json`
-		// and the sum is a hash of the receipt, which holds the run's instant, so
-		// the reader's sum is not the document's. Only the eight hex digits and
-		// the `.json` after them go, and only at the end of a token (the path
-		// rule: end, `/`, a blank or `,` after it): the directory, the stamp and
-		// the slugs in front of the sum are compared as written.
-		norm: func(Field) Norm {
-			return Norm{
-				Name: "the content sum ending a receipt's name",
-				Re:   regexp.MustCompile(`-[0-9a-f]{8}\.json`),
-				As:   "-<the receipt's content sum>.json",
-				path: true,
 			}
 		},
 	},

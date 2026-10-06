@@ -165,12 +165,11 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 
 		code, stdout, stderr := dogfoodRunWith(seams, args[1:]...)
 		require.Equal(t, 0, code, "exit %d, stderr: %s", code, stderr)
-		// The receipts directory is this run's, and the receipt's name ends in a
-		// hash of the receipt: both are run-owned and named from the table.
+		// The receipts directory is this run's and is named from the table. The
+		// sum ending the receipt's name is a hash of the receipt's content, which
+		// the pinned instant makes the document's, so it is compared as written.
 		res := onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}
-		for _, p := range one(*stepDogfood, res,
-			onboarding.Field{Name: "tmpdir", Doc: "./dogfood-receipts", Run: receipts},
-			onboarding.Field{Name: "receipt"}) {
+		for _, p := range one(*stepDogfood, res, onboarding.Field{Name: "tmpdir", Doc: "./dogfood-receipts", Run: receipts}) {
 			assert.Fail(t, "check failed", p.Error())
 		}
 	})

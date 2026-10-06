@@ -150,11 +150,10 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	// reader's $ORG and $REPO where the recording's names are printed.
 	// `id` joined on 2026-10-03 with nova-bus's first run: a message's id is
 	// a ULID made from the store's time, so it belongs to the run.
-	// `receipt` and `commit` joined on 2026-10-06 with nova-check's CLI
-	// examples: a dogfood receipt's name ends in a hash of the receipt, which
-	// holds the run's instant, and a hygiene finding names a commit of the
-	// repository the reader builds at their own instant.
-	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch", "receipt", "commit"}
+	// `commit` joined on 2026-10-06 with nova-check's CLI examples: a hygiene
+	// finding names a commit of the repository the reader builds at their own
+	// instant.
+	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch", "commit"}
 	got := VolatileNames()
 	require.Equal(t, len(want), len(got), "onboarding.Volatile holds %v, want %v", got, want)
 	for i := range want {
@@ -303,27 +302,6 @@ func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
 	}
 	descendantRun := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3/cache n=0\n"}}
 	compare(t, "a descendant of the run's directory was not normalised", descendantDoc, descendantRun, []Field{field}, 0)
-}
-
-// `receipt` is not token-anchored either: the sum it covers is the tail of a
-// path. It replaces the eight hex digits and `.json` at the end of a token and
-// nothing else, so the directory, stamp and slugs in front of the sum are
-// still compared, and a sum that is not the end of the name stays on the line.
-func TestTheReceiptEntryTouchesNothingButTheSum(t *testing.T) {
-	t.Parallel()
-
-	doc := []string{
-		"$ nova-bus read --root ./r",
-		"BUS READ file=./r/20260918T090000Z-nova-check-links-ada-8e9b64a4.json",
-	}
-	field := []Field{{Name: "receipt"}}
-	run := func(line string) []Result { return []Result{{Stdout: line + "\n"}} }
-
-	compare(t, "a receipt's sum was not normalised", doc, run("BUS READ file=./r/20260918T090000Z-nova-check-links-ada-70e69505.json"), field, 0)
-	compare(t, "a sum that differs with nothing declared", doc, run("BUS READ file=./r/20260918T090000Z-nova-check-links-ada-70e69505.json"), nil, 1)
-	compare(t, "the stamp in front of the sum was swallowed", doc, run("BUS READ file=./r/20260918T100000Z-nova-check-links-ada-70e69505.json"), field, 1)
-	compare(t, "the directory in front of the sum was swallowed", doc, run("BUS READ file=./s/20260918T090000Z-nova-check-links-ada-70e69505.json"), field, 1)
-	compare(t, "a sum inside a longer name was swallowed", doc, run("BUS READ file=./r/20260918T090000Z-nova-check-links-ada-70e69505.json.bak"), field, 1)
 }
 
 // A value that is not what the entry says it is stays on the line and is
