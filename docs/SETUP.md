@@ -70,3 +70,18 @@ nova-doctor --check self --json
 Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
 nova tools on PATH and fails when they are not one release, naming the odd one. The
 contract is [SPEC-DOCTOR.md](SPEC-DOCTOR.md).
+
+To ask whether this machine is ready for one job, name the job:
+
+```
+nova-doctor --job local-notes
+nova-doctor --job friend --as bob --dir ~/bob
+nova-doctor --job coordinator --as ada --json
+```
+
+The jobs are `local-notes`, `messaging`, `friend`, `worker` and `coordinator`. Each step is
+one dependency, checked in order (Redis reachable, the login, the config, the applied Redis
+state, the binaries and functions, the supervisor, the session), by the tool that owns it.
+The first step that fails is the one to fix; every step after it says `blocked`, and the last
+line is `DOCTOR job=<job> not-ready first_missing=<step> ... next: <command>`. Run that
+command, then the doctor again.
