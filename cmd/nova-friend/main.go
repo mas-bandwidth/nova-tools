@@ -1148,6 +1148,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		Held:      w.held(name, server),
+		Seat:      w.seat(server),
 		Stage:     stager.stage(),
 		Prune:     stager.prune(),
 		Tip:       w.tip,
@@ -1219,6 +1220,19 @@ func (w world) held(name, server string) func(context.Context) (friend.Row, erro
 		now = time.Now
 	}
 	return friend.HeldVia(name, func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }, view, now)
+}
+
+// seat is the daemon's Seat: the coordinator seat holder as the sprint server's coordinator
+// view says it (coordinatorFriends); nil in a world that reads none (a test's), which leaves
+// the seat unknown, so every message is delivered quoted.
+func (w world) seat(server string) func(context.Context) (string, error) {
+	if w.friends == nil {
+		return nil
+	}
+	return func(ctx context.Context) (string, error) {
+		_, seat, err := w.friends(ctx, server)
+		return seat, err
+	}
 }
 
 // stager is the daemon's one Stager: every held work card's job staged under her working
