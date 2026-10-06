@@ -390,7 +390,25 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
 	}
-	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
+	return &bus.Bus{Store: withWaiter(bus.Hearing(st), st)}, login, closeStore, nil
+}
+
+// waiting is the hearing store with the wait's two reads of the bare store
+// beside it: Hearing's wrapper holds only Store's methods, so it would hide
+// them, and a wait reads past a cursor and takes nothing, so no push proof
+// stands in its way (SPEC-BUS.md, the verbs: wait).
+type waiting struct {
+	bus.Store
+	bus.Waiter
+}
+
+// withWaiter is hearing with st's wait reads when st has them, else hearing.
+func withWaiter(hearing, st bus.Store) bus.Store {
+	w, ok := st.(bus.Waiter)
+	if !ok {
+		return hearing
+	}
+	return waiting{Store: hearing, Waiter: w}
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
