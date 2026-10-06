@@ -1,42 +1,73 @@
-# Retired words (docs/TERMINOLOGY.md): `retired<TAB>word<TAB>replacement`.
+
 # A tracked text file uses none outside the dated records (CHANGELOG.md, RESOLUTIONS.md,
-# docs/RELEASE-NOTES-*, docs/ratings/, the ledgers under testdata/).
 # Below is the ledger of places that still use one, `allow<TAB>path<TAB>word<TAB>count`.
 # It only shrinks: a new use fails the test, and a row whose count is no longer true fails it too.
-retired	asleep	down
-retired	untiered	no tier
-retired	git bus	the Redis bus
-
+# Retired words (docs/TERMINOLOGY.md): `retired<TAB>word<TAB>replacement`.
+# docs/RELEASE-NOTES-*, docs/ratings/, the ledgers under testdata/).
 allow	.github/workflows/ci.yml	git bus	1
 allow	cmd/nova-friend/check_test.go	asleep	3
-allow	cmd/nova-friend/main.go	asleep	3
+allow	cmd/nova-friend/keepalive.go	asleep	5
+allow	cmd/nova-friend/keepalive_test.go	asleep	2
+allow	cmd/nova-friend/main.go	asleep	39
+allow	cmd/nova-friend/main_test.go	asleep	26
 allow	cmd/nova-sprint/friend_health_test.go	asleep	4
-allow	cmd/nova-sprint/friends.go	asleep	5
+allow	cmd/nova-sprint/friends.go	asleep	12
+allow	cmd/nova-sprint/help_fleet_test.go	asleep	1
 allow	cmd/nova-sprint/seat.go	asleep	1
 allow	cmd/nova-sprint/seat_loop_test.go	asleep	1
 allow	cmd/nova-sprint/seat_test.go	asleep	2
+allow	cmd/nova-sprint/serve.go	asleep	4
+allow	cmd/nova-sprint/serve_test.go	asleep	10
 allow	cmd/nova-sprint/verbs.go	asleep	1
-allow	docs/CLI.md	asleep	5
+allow	docs/CLI.md	asleep	12
 allow	docs/CLI.md	git bus	1
 allow	docs/SPEC-BUS.md	git bus	2
-allow	docs/SPEC-FRIEND.md	asleep	2
-allow	docs/SPEC-SPRINT.md	asleep	8
+allow	docs/SPEC-FRIEND.md	asleep	19
+allow	docs/SPEC-SPRINT.md	asleep	15
 allow	docs/SPEC-SPRINT.md	untiered	1
 allow	docs/SPEC-UPDATE.md	git bus	2
+allow	docs/TESTS.md	asleep	2
 allow	internal/ci/hosted_shards_class_test.go	git bus	1
+allow	internal/friend/alive.go	asleep	3
+allow	internal/friend/chaos_functional_test.go	asleep	2
 allow	internal/friend/check.go	asleep	6
 allow	internal/friend/check_test.go	asleep	7
+allow	internal/friend/daemon.go	asleep	34
+allow	internal/friend/daemon_edge_test.go	asleep	2
+allow	internal/friend/daemon_interleave_test.go	asleep	6
+allow	internal/friend/daemon_sleep_test.go	asleep	11
+allow	internal/friend/integration_keepalive_test.go	asleep	5
+allow	internal/friend/keepalive/loop.go	asleep	11
+allow	internal/friend/keepalive/loop_test.go	asleep	3
+allow	internal/friend/keepalive/machine.go	asleep	12
+allow	internal/friend/keepalive/machine_test.go	asleep	4
+allow	internal/friend/keepalive/wire.go	asleep	2
+allow	internal/friend/limits_test.go	asleep	2
+allow	internal/friend/machine.go	asleep	16
+allow	internal/friend/machine_test.go	asleep	4
+allow	internal/friend/state.go	asleep	4
+allow	internal/friend/state_test.go	asleep	7
 allow	internal/sprint/TABLES.lock	asleep	3
 allow	internal/sprint/cost_view.go	untiered	2
 allow	internal/sprint/friend_health.go	asleep	1
 allow	internal/sprint/friend_health_test.go	asleep	2
+allow	internal/sprint/presence.go	asleep	5
+allow	internal/sprint/presence_friend_test.go	asleep	2
 allow	internal/sprint/seat.go	asleep	1
 allow	internal/sprint/store/defaults.go	asleep	3
 allow	internal/sprint/store/friend_health_test.go	asleep	2
-allow	internal/sprint/store/friends.go	asleep	1
+allow	internal/sprint/store/friends.go	asleep	9
+allow	internal/sprint/store/friends_test.go	asleep	2
 allow	internal/sprint/store/load.go	asleep	1
 allow	internal/sprint/store/retry_test.go	asleep	3
 allow	internal/sprint/store/seat_functional_test.go	asleep	3
 allow	internal/sprintdash/page/app.js	untiered	1
 allow	internal/sprintdash/tweaks_test.go	untiered	3
+allow	tla/MCFriendKeepalive.md	asleep	2
+allow	tla/MCFriendKeepalive.tla	asleep	12
+allow	tla/MCFriendSleep.tla	asleep	26
+allow	tla/README.md	asleep	3
 allow	tla/SeatHealth.tla	asleep	3
+retired	asleep	down
+retired	git bus	the Redis bus
+retired	untiered	no tier

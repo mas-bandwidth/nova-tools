@@ -81,7 +81,7 @@ func (r *passRig) tick(d time.Duration) {
 		require.NoError(r.t, err)
 	}
 	for f, pong := range r.pongs {
-		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil, pong)
+		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil, pong, false)
 		require.NoError(r.t, err)
 		if pong.After(r.answered[f]) {
 			_, _, _, err = r.st.FriendHealth(r.ctx, f, "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: pong, Generation: sprint.FirstSeatGeneration}, "")

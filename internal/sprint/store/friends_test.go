@@ -203,3 +203,49 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	assert.Equal(t, 0, snap.Fleet.Count(amyRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-4.w1").Col)
 }
+
+func TestFriendBeatPersistsSleepAndOrdinaryBeatClearsIt(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}})
+	require.NoError(t, err)
+	b, err := h.st.FriendBeatAsleep(h.ctx, "amy", true)
+	require.NoError(t, err)
+	assert.True(t, b.Asleep)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Down, rows[0].Status, "a sleeping session is down")
+	assert.Equal(t, 3, rows[0].Width)
+	b, err = h.st.FriendBeat(h.ctx, "amy")
+	require.NoError(t, err)
+	assert.False(t, b.Asleep)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Down, rows[0].Status, "an ordinary beat clears sleep but is not session evidence, so she is still down (PR 5305)")
+}
+
+func TestFriendRowsOrderUpHeldDownByNameAndSleepersAreDown(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}, {Name: "bob", Width: 1}, {Name: "cat", Width: 1}, {Name: "zed", Width: 1}, {Name: "eve", Width: 1}})
+	require.NoError(t, err)
+	_, err = h.st.FriendBeat(h.ctx, "zed")
+	require.NoError(t, err)
+	for _, name := range []string{"cat", "bob"} {
+		_, err = h.st.FriendBeatAsleep(h.ctx, name, true)
+		require.NoError(t, err)
+	}
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "eve", true, "c", "", time.Time{}, 0))
+	// Beats are not evidence (PR 5305): zed is up on her session's health alone.
+	_, _, _, err = h.health("zed", "tester", sprint.Up, h.now, 1)
+	require.NoError(t, err)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	var got [][2]string
+	for _, r := range rows {
+		got = append(got, [2]string{r.Name, r.Status})
+	}
+	assert.Equal(t, [][2]string{{"zed", sprint.Up}, {"eve", sprint.Held}, {"amy", sprint.Down}, {"bob", sprint.Down}, {"cat", sprint.Down}}, got)
+}

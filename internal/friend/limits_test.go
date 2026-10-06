@@ -147,8 +147,8 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		// reason while limited (limits-mean-down-w-r5.w1~15); the rig's own beat is its step
 		var beats []string
 		step := r.d.Beat
-		r.d.Beat = func(ctx context.Context, active time.Time) error {
-			err := step(ctx, active)
+		r.d.Beat = func(ctx context.Context, active time.Time, asleep bool) error {
+			err := step(ctx, active, asleep)
 			say := func(b string) { r.mu.Lock(); beats = append(beats, b); r.mu.Unlock() }
 			if e := l.BeatOrDown(func(context.Context) error { say("up"); return nil }, func(_ context.Context, until time.Time, reason string) error {
 				say("down until=" + until.UTC().Format(time.RFC3339) + " reason=" + reason)

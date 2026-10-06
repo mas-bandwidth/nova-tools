@@ -11,8 +11,10 @@ nova-bus on 2026-10-04, when the git bus was removed.
 
 - One stream per recipient, `bus2:to:<name>`, with one consumer group on it
   named `<name>`, made on the recipient's first `recv` (`XGROUP CREATE ... 0
-  MKSTREAM`). Every reader is the one consumer `nova-bus2`: who holds an entry
-  is told by its idle time, never by a name.
+  MKSTREAM`). The interactive reader is the one consumer `nova-bus2`: who holds
+  an entry is told by its idle time, never by a name. A daemon may read as a
+  consumer of its own (nova-friend's `nova-friend-daemon`), so what it holds is
+  told apart from an interactive reader's (receive helpers, below).
 - One stream `bus2:log` holding every message once, for history and audit.
 - A message is one stream entry with the fields `id` (a ULID the sender makes
   from the store's time: `TIME`, never the client's clock; its first ten random
@@ -401,3 +403,16 @@ four (the roster, the group, the claim, the read). wait: two to arm (the
 roster, the stream's tail), then one `XREAD` per block (one parked read when
 nothing else is watched). ack: five (group, pending,
 the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+
+Receive helpers preserve the CLI's one-message `Recv` default consumer.
+`RecvBatch` takes a consumer and count (1..1000), claims stale pending entries
+first with the same `ClaimAfter`, and otherwise reads new entries. `PendingPage`
+ensures the group and reads only the named consumer's pending entries, in
+numeric stream-ID order strictly after its cursor, without reclaiming or
+acking. The empty cursor starts at the beginning. Pages may cover a queue larger
+than 1000 entries; the helper returns a next cursor from the last pending ID, even when a
+message body is missing. The caller advances with that cursor and stops only
+when it is empty, never from the returned body count. Errors return no cursor. The
+stream retains entries, and ownership is observed when XPENDING is queried;
+consumer labels are conventions, not authorization boundaries. A daemon's
+singleton-owner protocol supplies its dedicated consumer and recovery ordering.

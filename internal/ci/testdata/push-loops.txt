@@ -11,6 +11,8 @@
 
 # the friend's daemon (internal/friend, cmd/nova-friend)
 internal/friend/daemon.go loop.read friend bus read
+internal/friend/daemon.go loop.readHeld friend bus read held
+internal/friend/daemon.go loop.recover friend bus recover
 internal/friend/adapter_tmux.go Tmux.Deliver friend delivery
 cmd/nova-friend/serve.go world.serve coordinator ping
 cmd/nova-friend/wakeping.go world.wakeFriends wake ping

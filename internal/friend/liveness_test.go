@@ -67,7 +67,7 @@ func newLivenessRig(t *testing.T, listing string) *livenessRig {
 	r.sc.Deliver = r.sc.Gate(r.session)
 	r.direct = &bus.Bus{Store: r.store}
 	r.d = &Daemon{Friend: "zhi", Harness: "dsh", Dir: "/w/zhi", Now: clock, Record: record,
-		Beat: func(ctx context.Context, _ time.Time) error {
+		Beat: func(ctx context.Context, _ time.Time, _ bool) error {
 			return r.sc.Beat(func(context.Context) error { r.mu.Lock(); r.sprint++; r.mu.Unlock(); return nil })(ctx)
 		},
 	}
@@ -81,7 +81,7 @@ func (r *livenessRig) step(d time.Duration) error {
 	r.mu.Lock()
 	r.now = r.now.Add(d)
 	r.mu.Unlock()
-	return r.d.Beat(context.Background(), time.Time{})
+	return r.d.Beat(context.Background(), time.Time{}, false)
 }
 
 // answerLatest is zhi's session running the pong line of the newest check it

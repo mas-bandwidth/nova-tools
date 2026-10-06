@@ -162,3 +162,31 @@ func TestFriendEvidenceRule(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, sprint.FriendPongWindow, "the owner, 2026-10-05: within 10 minutes")
 	assert.Equal(t, 30*time.Minute, sprint.FriendFinishWindow, "the owner, 2026-10-05: within 30 minutes")
 }
+
+func TestAsleepFriendIsShownDownAndKeepsMachinePresenceSeparate(t *testing.T) {
+	t.Parallel()
+	t0 := presenceT0
+
+	// A sleeping session is shown down (the owner's "sleeping = down"), and the
+	// machine's own presence is untouched: sleep is a friend state, not a machine's.
+	b := sprint.Beat{At: t0, Asleep: true}
+	for _, c := range []struct {
+		name string
+		at   time.Duration
+		held bool
+		want string
+	}{
+		{"fresh", 0, false, sprint.Down},
+		{"before expiry", 14 * time.Second, false, sprint.Down},
+		{"expired", 15 * time.Second, false, sprint.Down},
+		{"held fresh", 0, true, sprint.Held},
+		{"held expired", 15 * time.Second, true, sprint.Held},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, sprint.FriendStatus(sprint.FriendPresence{Held: c.held, Beat: b, Generation: sprint.FirstSeatGeneration}, t0.Add(c.at)))
+		})
+	}
+	assert.Equal(t, sprint.Up, sprint.PresenceStatus(false, b, t0), "sleep is a friend state, not machine presence")
+	assert.Equal(t, sprint.Down, sprint.FriendStatus(sprint.FriendPresence{Beat: sprint.Beat{Asleep: true}, Generation: sprint.FirstSeatGeneration}, t0), "sleep without a beat is down")
+}

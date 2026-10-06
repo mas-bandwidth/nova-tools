@@ -467,7 +467,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		t := &turn{}
-		t.entries, t.msgs = l.take()
+		if !l.reserve(t) {
+			return
+		}
 		var subjects []string
 		for _, m := range t.msgs {
 			subjects = append(subjects, m.Subject)

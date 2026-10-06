@@ -207,7 +207,7 @@ type HarnessWatch struct {
 	Now   func() time.Time
 
 	d       *Daemon
-	beat    func(ctx context.Context, active time.Time) error
+	beat    func(ctx context.Context, active time.Time, asleep bool) error
 	checked time.Time
 	live    Liveness
 	said    string // the seen state the record last said: each change is said once
@@ -248,7 +248,7 @@ func seen(l Liveness) string {
 
 // Beat is the daemon's beat, with the harness check beside it: it runs the
 // check when one is due, then beats, whatever the check read.
-func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
+func (w *HarnessWatch) Beat(ctx context.Context, active time.Time, asleep bool) error {
 	now := w.Now()
 	every := w.Every
 	if every <= 0 {
@@ -263,7 +263,7 @@ func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 			w.record(now, seenLine(w.live))
 		}
 	}
-	return w.beat(ctx, active)
+	return w.beat(ctx, active, asleep)
 }
 
 // seenLine is the record's line for what the check read.

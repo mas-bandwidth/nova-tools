@@ -268,11 +268,11 @@ func newChaosRig(t *testing.T) *chaosRig {
 			case <-ctx.Done():
 			}
 		},
-		Beat: func(ctx context.Context, active time.Time) error {
+		Beat: func(ctx context.Context, active time.Time, asleep bool) error {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			// the beat carries the session's last activity, as nova-friend's does
-			_, err := r.st.FriendBeatReport(ctx, "bob", sprint.FriendReport{Active: active}, nil)
+			// the beat carries the session's last activity and whether it sleeps, as nova-friend's does
+			_, err := r.st.FriendBeatReport(ctx, "bob", sprint.FriendReport{Active: active}, nil, asleep)
 			return err
 		},
 		Record: func(string) {},

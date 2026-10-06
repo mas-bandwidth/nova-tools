@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +36,18 @@ const MaxDeliveries = 3
 // is wrong). The message stays in the daemon's hand meanwhile: it is never
 // put back on the bus, never counted toward MaxDeliveries, never acked.
 const RecheckEvery = 10 * time.Second
+
+// DaemonConsumer is the bus consumer the daemon reads as, apart from an
+// interactive receiver's (bus.Consumer): what is pending under it is the
+// daemon's own held work, recovered at start.
+const DaemonConsumer = "nova-friend-daemon"
+
+// DaemonReadBatch bounds one read of fresh entries while the daemon holds
+// work back (asleep, or waiting for a wake barrier) and one page of its own
+// pending entries at start. At the bus's 1 MiB body ceiling one read retains
+// at most 128 MiB of payloads transiently; held work keeps entry ids, not
+// another copy of the bodies.
+const DaemonReadBatch = 128
 
 // StatusErrorEvery bounds how often a status file that cannot be written
 // is said in the record: the loop goes on beating and delivering without it.
@@ -85,10 +100,18 @@ const (
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
-	Width                int
-	Store                bus.Store
-	Deliver              Deliverer
-	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	// StateDir is the daemon's state directory: with it the daemon takes the
+	// singleton lock and keeps the sleep/wake choice (SessionState) there;
+	// empty keeps no state, always awake.
+	StateDir string
+	// Keepalive is the daemon-only keepalive lane (internal/friend/keepalive),
+	// started after the singleton and the session state are validated, and
+	// stopped with the daemon; nil runs none.
+	Keepalive func(context.Context) error
+	Width     int
+	Store     bus.Store
+	Deliver   Deliverer
+	Beat      func(ctx context.Context, active time.Time, asleep bool) error // one beat to the sprint server, carrying the session's last activity (zero: none known) and whether the daemon is asleep
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
 	// tasks under Dir), both read at most once an IdleWalkEvery; IdleAfter is her
@@ -124,7 +147,8 @@ type Daemon struct {
 	// stopped (DefaultSilentStop when zero); BrokenAfter how many turns in a
 	// row the provider refuses the same way before the session is broken
 	// (DefaultBrokenAfter when zero); Coordinator who is told of a broken
-	// session when no ping has named the seat.
+	// session when no ping has named the seat, and the one bus sender whose
+	// message wakes a sleeping session (saved in the session state).
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
@@ -235,6 +259,7 @@ type turn struct {
 	stopped  bool      // the daemon stopped it: silent past SilentStop
 	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
 	tail     *outputTail
+	reserved bool      // its messages were taken from the hand under the session-state lock
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 }
@@ -333,6 +358,10 @@ type loop struct {
 	passive      bool
 	silentStop   time.Duration
 	brokenAfter  int
+	state        SessionState    // the sleep/wake choice as of this step
+	held         []string        // pending entries kept by id, not in hand: held back asleep, recovered at start; oldest first
+	observed     map[string]bool // passive harness: entries seen, for the wake they did
+	fatal        error           // an error that ends the run, set by a step that cannot return it
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
@@ -355,30 +384,68 @@ type loop struct {
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
 	dealt        []string  // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool      // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	wakeOwed     bool      // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 	saidRefusal  string    // the card runner's refusal last recorded, "" when it runs
 	tag          string    // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
 	seatHolder   string    // the seat holder as last read; empty while unknown
 	seatRead     time.Time // when it was read; zero before the first read
 }
 
-// Run is the loop until ctx ends. Each step: the clock; the friend's row
-// (Row: her delivery mode and width); every pending message read off the
-// stream when nothing waits on it (a ping is answered by the daemon at once
-// and acked, never pushed in), else one peek, so a ping arriving during a
-// long turn is still answered at once; each running turn's output watched,
-// and a turn silent past SilentStop stopped; the turns' results (exit 0 acks
-// every message a turn carried); then, in batch mode, one turn with every
-// waiting message when the session is free, else an owed wake check pushed
-// in as its own turn holding only the pong line (startWake), and in one-shot
-// mode, each free lane handed its next card with the waiting messages riding
-// along (lanes.go);
-// a beat when the store answered; the session's pong; the status. The
-// daemon's own words about the coordinator collapse to the latest and ride in
-// a turn that carries messages or a card, never alone.
-func (d *Daemon) Run(ctx context.Context) error {
-	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
-		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+// Run is the loop until ctx ends. At start: the singleton lock on the state
+// directory, the coordinator saved, the session state read, the keepalive
+// lane started, and every page of the daemon's own pending entries recovered
+// (recover). Each step: the session state (asleep or awake); the clock; the
+// friend's row (Row: her delivery mode and width); every pending message read
+// off the stream when nothing waits on it (a ping is answered by the daemon
+// at once and acked, never pushed in), else one peek, so a ping arriving
+// during a long turn is still answered at once; each running turn's output
+// watched, and a turn silent past SilentStop stopped; the turns' results
+// (exit 0 acks every message a turn carried); then, awake, in batch mode, one
+// turn with every waiting message when the session is free, else an owed wake
+// check pushed in as its own turn holding only the pong line (startWake), and
+// in one-shot mode, each free lane handed its next card with the waiting
+// messages riding along (lanes.go); a beat when the store answered, saying
+// asleep; the session's pong; the status. Asleep, the daemon starts no turn:
+// it answers pings, keeps the messages by id, and wakes when the coordinator
+// sends one (SPEC-FRIEND.md, asleep behaviour). The daemon's own words about
+// the coordinator collapse to the latest and ride in a turn that carries
+// messages or a card, never alone.
+func (d *Daemon) Run(ctx context.Context) (runErr error) {
+	if d.StateDir != "" {
+		lock, err := TakeDaemonLock(d.StateDir, d.Friend)
+		if err != nil {
+			return err
+		}
+		defer func() { runErr = errors.Join(runErr, lock.Unlock()) }()
+		if d.Coordinator != "" {
+			if _, err := UpdateSessionState(d.StateDir, func(s *SessionState) error { s.Coordinator = d.Coordinator; return nil }); err != nil {
+				return err
+			}
+		}
+	}
+	state, err := d.sessionState()
+	if err != nil {
+		return err
+	}
+	if state.Asleep && state.Coordinator == "" {
+		return errors.New("asleep friend needs a configured coordinator or local wake")
+	}
+	if d.Keepalive != nil {
+		child, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() {
+			err := d.Keepalive(child)
+			if err == nil && child.Err() == nil {
+				err = errors.New("keepalive loop stopped before daemon shutdown")
+			}
+			done <- err
+			cancel()
+		}()
+		defer func() { cancel(); runErr = errors.Join(runErr, <-done) }()
+		ctx = child
+	}
+	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter, state: state,
+		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, observed: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
@@ -395,10 +462,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
+		if err := l.recover(); err != nil || ctx.Err() != nil {
+			return err
+		}
+		if b := l.state.WakeBarrier; b != "" && !l.isHeld(b) {
+			return fmt.Errorf("wake barrier %s is missing from daemon-owned pending deliveries; reconcile missing or foreign-owned entry before restarting", b)
+		}
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
-		for _, p := range d.m.Tick(now) {
+		if l.state, err = d.sessionState(); err != nil {
+			return err
+		}
+		d.status.Asleep = l.state.Asleep
+		l.parkDeferred()
+		for _, p := range d.m.TickWhen(now, l.state.Asleep) {
 			l.say(p)
 		}
 		if l.passive && l.notice != nil {
@@ -409,6 +487,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		mode, width := l.row(now)
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
 		storeOK := l.read(now)
+		if l.fatal != nil {
+			return l.fatal
+		}
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -426,15 +507,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.readDone(r, now)
 		default:
 		}
+		if l.fatal != nil {
+			return l.fatal
+		}
 		// a change of mode waits for the other mode's turns to end
 		if mode != l.mode && l.busy == nil && !l.lanes.running() && len(l.reads.running) == 0 {
 			d.Record(fmt.Sprintf("%s mode: %s, from %s (the friend row)", now.UTC().Format(time.RFC3339), mode, l.mode))
 			l.mode = mode
 		}
 		d.status.Mode = l.mode
+		if !l.broken && !l.state.Asleep && !l.passive {
+			if err := l.fill(); err != nil {
+				return err
+			}
+		}
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
 		switch {
-		case l.broken:
+		case l.broken, l.state.Asleep:
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
 			l.readStep(now)
@@ -443,11 +532,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startBatch(now)
 		case l.busy == nil && len(l.dealt) > 0:
 			l.startDealt(now)
-		case l.busy == nil && l.wake && drained:
+		case l.busy == nil && l.wakeOwed && drained:
 			l.startWake(now)
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
+		}
+		if l.fatal != nil {
+			return l.fatal
 		}
 		if l.broken && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
@@ -458,13 +550,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}
-			if err := d.Beat(ctx, d.active); err != nil {
+			if err := d.Beat(ctx, d.active, l.state.Asleep); err != nil {
 				d.status.BeatError = err.Error()
 			} else {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		}
-		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil {
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && !l.state.Asleep && l.busy == nil {
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now
 			}
@@ -535,6 +627,174 @@ func (l *loop) idle(now time.Time) {
 		l.tellKind(bus.KindBlocker, fmt.Sprintf("friend %s: idle %s holding %d cards: %s", d.Friend, 2*after, len(d.cards), held),
 			fmt.Sprintf("Her session has written nothing for %s while holding these cards, and a wake turn %s ago changed nothing. Look at her session, or deal the cards to another friend.\n", 2*after, after), now)
 	}
+}
+
+func (d *Daemon) sessionState() (SessionState, error) {
+	if d.StateDir == "" {
+		return SessionState{Coordinator: d.Coordinator}, nil
+	}
+	return ReadSessionState(d.StateDir)
+}
+
+// entryBefore orders two stream entry ids numerically (ms, then seq).
+func entryBefore(a, b string) bool {
+	am, as, _ := strings.Cut(a, "-")
+	bm, bs, _ := strings.Cut(b, "-")
+	x, _ := strconv.ParseUint(am, 10, 64)
+	y, _ := strconv.ParseUint(bm, 10, 64)
+	if x != y {
+		return x < y
+	}
+	x, _ = strconv.ParseUint(as, 10, 64)
+	y, _ = strconv.ParseUint(bs, 10, 64)
+	return x < y
+}
+
+// recover takes in every page of the daemon's own pending entries, so work a
+// dead daemon held is dispatched before anything new, and never another
+// consumer's. An error is retried, dispatching nothing meanwhile; it answers
+// only a state error that ends the run. The empty recovery also makes the
+// group.
+func (l *loop) recover() error {
+	d := l.d
+	for cursor := ""; l.ctx.Err() == nil; {
+		entries, next, err := l.b.PendingPage(l.ctx, d.Friend, DaemonConsumer, cursor, DaemonReadBatch)
+		if l.ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			d.status.StoreError = err.Error()
+			d.flush(d.Now())
+			d.Pause(l.ctx, BeatEvery)
+			continue
+		}
+		d.status.StoreError = ""
+		for _, e := range entries {
+			if err := l.observe(e, d.Now()); err != nil {
+				return err
+			}
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	return nil
+}
+
+// isHeld says whether the entry is kept by id or in the hand.
+func (l *loop) isHeld(entry string) bool {
+	return slices.Contains(l.held, entry) || l.inHand[entry]
+}
+
+// hold keeps a pending entry by id, oldest first, unless the daemon has it.
+func (l *loop) hold(entry string) {
+	if l.isHeld(entry) {
+		return
+	}
+	l.held = append(l.held, entry)
+	sort.SliceStable(l.held, func(i, j int) bool { return entryBefore(l.held[i], l.held[j]) })
+}
+
+// observe is a pending entry the daemon did not read to deliver at once
+// (recovered at start, or read fresh while asleep): a message from the
+// configured coordinator wakes the session, and, if it is no ping, its entry
+// becomes the wake barrier (the first delivery once awake); a ping is
+// answered, acked and never held; anything else is kept by id.
+func (l *loop) observe(e bus.Entry, now time.Time) error {
+	d := l.d
+	msg := e.Message()
+	nonce, seat, since, isPing := ParsePing(msg.Body)
+	if err := l.wake(e, msg, isPing); err != nil {
+		return err
+	}
+	if isPing {
+		l.ping(e, msg, nonce, seat, since, now)
+		if _, err := l.b.AckEntry(l.ctx, d.Friend, e.Entry); err != nil {
+			d.status.StoreError = err.Error()
+			return nil
+		}
+		delete(l.answered, e.Entry)
+		return nil
+	}
+	l.hold(e.Entry)
+	return nil
+}
+
+// wake wakes the session when the entry is from the configured coordinator,
+// whatever its subject or body: awake state is committed first, under the
+// session-state lock, so a sleep that landed after the daemon last read the
+// state is seen. A message that is no ping becomes the wake barrier, the first
+// delivery; a ping is answered and acked, so it is none. From is routing
+// metadata, not authentication (SPEC-FRIEND.md, asleep behaviour).
+func (l *loop) wake(e bus.Entry, msg bus.Message, isPing bool) error {
+	d := l.d
+	if d.StateDir == "" || l.state.Coordinator == "" || msg.From != l.state.Coordinator || e.Entry == l.state.WakeBarrier {
+		return nil
+	}
+	s, err := UpdateSessionState(d.StateDir, func(s *SessionState) error {
+		if s.Asleep && s.Coordinator != "" && s.Coordinator == msg.From && e.Entry != s.WakeBarrier {
+			s.Asleep = false
+			if !isPing {
+				s.WakeBarrier = e.Entry
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	l.state = s
+	return nil
+}
+
+// parkDeferred puts a deferred batch back to held when the session fell
+// asleep, or a wake barrier it does not carry came first: the held turn is
+// not retried while the wake takes priority.
+func (l *loop) parkDeferred() {
+	t := l.busy
+	if t == nil || t.running || l.retry.IsZero() {
+		return
+	}
+	b := l.state.WakeBarrier
+	if !l.state.Asleep && (b == "" || slices.Contains(t.entries, b)) {
+		return
+	}
+	for _, e := range t.entries {
+		delete(l.inHand, e)
+		l.hold(e)
+	}
+	l.busy, l.retry, l.deferrals = nil, time.Time{}, 0
+}
+
+// fill moves held entries into the hand, barrier first, then oldest first,
+// fetching their bodies only now. An entry the stream no longer holds ends the
+// run: it was this daemon's pending work, and something removed it.
+func (l *loop) fill() error {
+	for len(l.held) > 0 && len(l.hand) < MaxBatch {
+		n := min(MaxBatch-len(l.hand), len(l.held))
+		ids := append([]string(nil), l.held[:n]...)
+		if b := l.state.WakeBarrier; b != "" && !slices.Contains(ids, b) && slices.Contains(l.held, b) {
+			ids[0] = b
+		}
+		entries, err := l.d.Store.Get(l.ctx, bus.StreamOf(l.d.Friend), ids)
+		if l.ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			l.d.status.StoreError = err.Error()
+			return nil
+		}
+		if len(entries) != len(ids) {
+			return fmt.Errorf("pending delivery %s is missing; reconcile the stream before restarting", strings.Join(ids, ","))
+		}
+		l.held = slices.DeleteFunc(l.held, func(h string) bool { return slices.Contains(ids, h) })
+		for _, e := range entries {
+			l.hand = append(l.hand, e)
+			l.inHand[e.Entry] = true
+		}
+	}
+	return nil
 }
 
 // row is the mode and width the daemon delivers by: the friend's row when
@@ -615,7 +875,7 @@ func (l *loop) head() (notice, pong string) {
 	}
 	if l.d.m.Challenge != Quiet && l.d.PongCommand != nil {
 		pong = l.d.PongCommand(l.d.m.Nonce)
-		l.wake = false // the line rides in this turn: no wake turn of its own
+		l.wakeOwed = false // the line rides in this turn: no wake turn of its own
 	}
 	return notice, pong
 }
@@ -632,7 +892,7 @@ func WakeTurnText(pongCommand string) string {
 // ping. A challenge already answered owes nothing (docs/SPEC-FRIEND.md,
 // session-pong.w1; tla/Friend.tla, WakeTurn).
 func (l *loop) startWake(now time.Time) {
-	l.wake = false
+	l.wakeOwed = false
 	if l.d.m.Challenge == Quiet || l.d.PongCommand == nil {
 		return
 	}
@@ -675,23 +935,39 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 	if l.answered[e.Entry] {
 		return // the machine saw it when the daemon first did
 	}
-	l.d.daemonPong(l.ctx, l.b, msg, nonce, now)
+	l.d.daemonPong(l.ctx, l.b, msg, nonce, now, l.state.Asleep)
 	l.answered[e.Entry] = true
-	for _, p := range l.d.m.Ping(now, seatOf(seat, msg), since, nonce) {
+	if l.state.Asleep {
+		return // a sleeping session is not challenged: the machine does not step
+	}
+	var pushes []Push
+	if l.state.Coordinator == "" {
+		pushes = l.d.m.Ping(now, seatOf(seat, msg), since, nonce)
+	} else {
+		pushes = l.d.m.ReceivePing(now, msg.From, l.state.Coordinator, seatOf(seat, msg), since, nonce)
+	}
+	for _, p := range pushes {
 		l.say(p)
 	}
 	if IsWake(msg.Body) && !l.passive {
-		l.wake = true
+		l.wakeOwed = true
 	}
 }
 
-// read is the step's one look at the stream: every pending message taken
+// read is the step's one look at the stream. Held back (asleep, a wake barrier
+// not yet seen, or entries already held by id, which come first): fresh entries
+// are read and kept by id (readHeld). Otherwise every pending message is taken
 // into the hand when the session can take them (no batch turn running, the
-// session not broken, the hand not full), else a peek that answers pings.
-// It answers whether the store answered.
+// session not broken, the hand not full), else a peek that answers pings. It
+// answers whether the store answered.
 func (l *loop) read(now time.Time) bool {
 	d, b := l.d, l.b
-	if l.busy == nil && !l.passive && !l.broken && len(l.hand) < MaxBatch {
+	switch {
+	case l.passive:
+	case l.broken:
+	case l.state.Asleep || (l.state.WakeBarrier != "" && !l.isHeld(l.state.WakeBarrier)) || (len(l.held) > 0 && l.busy == nil):
+		return l.readHeld(now) // while a turn runs awake, only a peek, as ever
+	case l.busy == nil && len(l.hand) < MaxBatch:
 		// in one-shot mode the lanes' turns run while the loop reads: it reads
 		// at once and pauses after, so a lane's result is never a block behind
 		block := BeatEvery
@@ -699,25 +975,32 @@ func (l *loop) read(now time.Time) bool {
 			block = 0
 			defer d.Pause(l.ctx, BeatEvery)
 		}
-		e, ok, err := b.Recv(l.ctx, d.Friend, block)
-		for err == nil && ok {
-			msg := e.Message()
-			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
-				// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
-				l.ping(e, msg, nonce, seat, since, now)
-				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
-					err = aerr
-					break
+		got, err := b.RecvBatch(l.ctx, d.Friend, DaemonConsumer, block, MaxBatch-len(l.hand))
+		for err == nil && len(got) > 0 {
+			for _, e := range got {
+				msg := e.Message()
+				nonce, seat, since, isPing := ParsePing(msg.Body)
+				if werr := l.wake(e, msg, isPing); werr != nil {
+					l.fatal = werr
+					return false
 				}
-				delete(l.answered, e.Entry)
-			} else if !l.inHand[e.Entry] {
-				l.hand = append(l.hand, e)
-				l.inHand[e.Entry] = true
+				if isPing {
+					// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
+					l.ping(e, msg, nonce, seat, since, now)
+					if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+						err = aerr
+						break
+					}
+					delete(l.answered, e.Entry)
+				} else if !l.inHand[e.Entry] {
+					l.hand = append(l.hand, e)
+					l.inHand[e.Entry] = true
+				}
 			}
-			if len(l.hand) >= MaxBatch {
+			if err != nil || len(l.hand) >= MaxBatch {
 				break
 			}
-			e, ok, err = b.Recv(l.ctx, d.Friend, 0) // the rest of what is pending, at once
+			got, err = b.RecvBatch(l.ctx, d.Friend, DaemonConsumer, 0, MaxBatch-len(l.hand)) // the rest of what is pending, at once
 		}
 		if err != nil && l.ctx.Err() == nil {
 			d.status.StoreError = err.Error()
@@ -741,6 +1024,24 @@ func (l *loop) read(now time.Time) bool {
 		d.status.StoreError = ""
 		for _, e := range fresh {
 			msg := e.Message()
+			if l.passive && !l.observed[e.Entry] {
+				// a passive harness takes nothing off the stream, so a message from the
+				// coordinator wakes the session here; the entry is remembered in memory only
+				l.observed[e.Entry] = true
+				if d.StateDir != "" && l.state.Coordinator != "" && msg.From == l.state.Coordinator {
+					s, uerr := UpdateSessionState(d.StateDir, func(s *SessionState) error {
+						if s.Coordinator == msg.From {
+							s.Asleep = false
+						}
+						return nil
+					})
+					if uerr != nil {
+						l.fatal = uerr
+						return false
+					}
+					l.state = s
+				}
+			}
 			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
 				// the machine sees the ping when the daemon does: a turn longer than a window is no silence
 				l.ping(e, msg, nonce, seat, since, now)
@@ -751,9 +1052,40 @@ func (l *loop) read(now time.Time) bool {
 	return ok
 }
 
+// readHeld reads fresh entries as the daemon's own consumer and keeps them by
+// id (observe): the daemon delivers nothing now, charges no failure and acks
+// nothing but a ping. It reads fresh entries only, never reclaiming held work,
+// so a coordinator's wake cannot starve behind it. It answers whether the
+// store answered.
+func (l *loop) readHeld(now time.Time) bool {
+	d := l.d
+	entries, err := d.Store.Read(l.ctx, bus.StreamOf(d.Friend), d.Friend, DaemonConsumer, BeatEvery, DaemonReadBatch)
+	switch {
+	case l.ctx.Err() != nil:
+		return false
+	case err != nil:
+		d.status.StoreError = err.Error()
+		d.Pause(l.ctx, BeatEvery)
+		return false
+	}
+	d.status.StoreError = ""
+	for _, e := range entries {
+		if err := l.observe(e, now); err != nil {
+			l.fatal = err
+			return false
+		}
+	}
+	return true
+}
+
 // take is the messages of the hand that go in the next turn: oldest first,
 // at most MaxBatch and BatchBytes, at least one when any waits.
 func (l *loop) take() (entries []string, msgs []bus.Message) {
+	if b := l.state.WakeBarrier; b != "" { // the entry that woke the session goes first
+		if i := slices.IndexFunc(l.hand, func(e bus.Entry) bool { return e.Entry == b }); i > 0 {
+			l.hand = slices.Concat(l.hand[i:i+1], l.hand[:i], l.hand[i+1:])
+		}
+	}
 	size := 0
 	for len(l.hand) > 0 && (len(msgs) == 0 || (len(msgs) < MaxBatch && size+len(l.hand[0].Fields["body"]) <= BatchBytes)) {
 		e := l.hand[0]
@@ -813,9 +1145,39 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	}
 }
 
+// reserve takes a turn's messages out of the hand if the session may take a
+// turn now, checked under the session-state lock when there is one: that
+// reservation is the start boundary, so a sleep that lands after it does not
+// cancel the turn, and one that lands before it stops the turn from starting.
+// The harness's I/O begins after the lock is released. It answers whether the
+// turn may start.
+func (l *loop) reserve(t *turn) bool {
+	start := func(s SessionState) error {
+		l.state = s
+		if s.Asleep || (s.WakeBarrier != "" && !slices.ContainsFunc(l.hand, func(e bus.Entry) bool { return e.Entry == s.WakeBarrier })) {
+			return nil // asleep, or the entry that woke the session is not in hand yet: it goes first
+		}
+		t.entries, t.msgs = l.take()
+		t.reserved = true
+		return nil
+	}
+	var err error
+	if l.d.StateDir != "" {
+		err = WithSessionState(l.d.StateDir, start)
+	} else {
+		err = start(l.state)
+	}
+	if err != nil {
+		l.fatal = err
+	}
+	return t.reserved
+}
+
 func (l *loop) startBatch(now time.Time) {
 	t := &turn{}
-	t.entries, t.msgs = l.take()
+	if !l.reserve(t) {
+		return
+	}
 	var subjects []string
 	for _, m := range t.msgs {
 		subjects = append(subjects, m.Subject)
@@ -882,6 +1244,19 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	line := ""
 	for _, e := range t.entries {
 		delete(l.inHand, e) // acked below, or pending for the claim to hand in again
+	}
+	if b := l.state.WakeBarrier; b != "" && d.StateDir != "" && slices.Contains(t.entries, b) {
+		// any completion clears the wake barrier, a failed turn too: its failure counts as any other
+		s, err := UpdateSessionState(d.StateDir, func(s *SessionState) error {
+			if s.WakeBarrier == b {
+				s.WakeBarrier = ""
+			}
+			return nil
+		})
+		if err != nil {
+			l.fatal = err // later held entries are not dispatched past a barrier that could not be cleared
+		}
+		l.state = s
 	}
 	var refused ProviderRefused
 	switch {
@@ -1050,13 +1425,17 @@ func seatOf(seat string, m bus.Message) string {
 
 // daemonPong answers a ping at once, from the daemon: transport is up,
 // kept on the status apart from the session's pong (LastDaemonPong), and it
-// ends no challenge (docs/SPEC-FRIEND.md, session-pong.w1). It is never
-// presence: the daemon stays up while her harness is closed, so the sprint
-// reads her up only on her session's pong or finish (docs/SPEC-FRIEND.md,
-// "Presence is her session's evidence"). A send that fails is the store's
-// error on the status.
-func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string, now time.Time) {
-	_, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
+// ends no challenge (docs/SPEC-FRIEND.md, session-pong.w1). A sleeping daemon
+// says so (asleep=true). It is never presence: the daemon stays up while her
+// harness is closed, so the sprint reads her up only on her session's pong or
+// finish (docs/SPEC-FRIEND.md, "Presence is her session's evidence"). A send
+// that fails is the store's error on the status.
+func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string, now time.Time, asleep bool) {
+	state := ""
+	if asleep {
+		state = " asleep=true"
+	}
+	_, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + state + "\n"})
 	if err != nil {
 		d.status.StoreError = "daemon pong: " + err.Error()
 		return

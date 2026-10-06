@@ -74,6 +74,7 @@ type LoadSample struct {
 // takes half of (WidthOfCores; fleet sync).
 type Beat struct {
 	At      time.Time      `json:"at"`
+	Asleep  bool           `json:"asleep,omitempty"` // a friend's beat said her session sleeps (friend beat --asleep); shown down
 	Load    float64        `json:"load"`
 	Cores   int            `json:"cores,omitempty"`
 	How     string         `json:"how,omitempty"`
@@ -208,6 +209,9 @@ func FriendStatus(f FriendPresence, now time.Time) string {
 func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if f.Held {
 		return Held, "held"
+	}
+	if f.Beat.Asleep {
+		return Down, "asleep"
 	}
 	if f.Beat.SaysDown() {
 		return Down, beatSaysDownWhy(f.Beat)

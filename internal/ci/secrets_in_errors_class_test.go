@@ -359,6 +359,7 @@ var secretExempt = map[string]string{
 	"internal/hostload.ParseIostat":            "built on darwin only, so a test binary on another platform cannot name it",
 	"internal/hostload.ParseProcLoadavg":       "built on linux only, so a test binary on another platform cannot name it",
 	"internal/cairn.Open":                      "writes a session record under the store directory its first string names; driving it would write into the working tree",
+	"internal/friend/keepalive.New":            "builds the keepalive machine from friend names and a seat value; it opens no secret, so its strings are identities, not credentials",
 	"internal/nsprint/testutil.NewLocalRemote": "takes a *testing.T and builds a git remote on disk; it is a test fixture, not an opener of a secret",
 }
 

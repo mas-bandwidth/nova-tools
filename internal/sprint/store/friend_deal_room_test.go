@@ -90,7 +90,7 @@ func fullAmy(t *testing.T) (*harness, string) {
 	queue := snap.Fleet.Cell(amy, sprint.Ready)
 	sprint.SortCards(queue)
 	newest := queue[len(queue)-1].ID
-	_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{newest}}, nil)
+	_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{newest}}, nil, false)
 	require.NoError(t, err)
 	return h, newest
 }

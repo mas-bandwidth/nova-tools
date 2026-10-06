@@ -80,7 +80,7 @@ func newRig(t *testing.T) *rig {
 			}
 			<-r.gate
 		},
-		Beat: func(_ context.Context, active time.Time) error {
+		Beat: func(_ context.Context, active time.Time, _ bool) error {
 			r.mu.Lock()
 			r.beats++
 			r.actives = append(r.actives, active)
@@ -201,6 +201,157 @@ func TestATurnThatExitsNonZeroLeavesTheMessagePending(t *testing.T) {
 	assert.Contains(t, r.records[0], "deliveries=1/3")
 	assert.Equal(t, 0, r.last().Delivered)
 	assert.Contains(t, r.records[0], "exit=3")
+}
+
+func TestAPingIsAnsweredAtOnceByTheDaemonAckedAndNeverATurnAndThePongEndsTheChallenge(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	var afterPing, afterPong Status
+	r.at[3] = func() { afterPing = r.last() }
+	r.at[4] = func() { // the session answers: the pong verb wrote the pong file
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.now, To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.at[6] = func() {
+		afterPong = r.last()
+		r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
+	}
+	r.run(t, 9)
+	assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "the daemon pong goes to the coordinator's stream, at once")
+	assert.Empty(t, r.delivered, "a ping is acked by the daemon and never pushed in as a turn")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	assert.Empty(t, fresh)
+	assert.Equal(t, Challenged, afterPing.Challenge)
+	assert.Equal(t, "ada", afterPing.Seat)
+	assert.Equal(t, "n1", afterPing.Nonce)
+	assert.Equal(t, Quiet, afterPong.Challenge)
+	assert.Equal(t, 1, afterPong.Pongs)
+	// a stale pong file (an older nonce) does not answer the next
+	assert.Equal(t, Challenged, r.last().Challenge, "the file still says n1")
+	assert.Equal(t, "n2", r.last().Nonce)
+}
+
+func TestDistinctEntriesWithTheSameNonceDoNotCountTheStoredPongTwice(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	first := r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	var asked time.Time
+	r.at[4] = func() {
+		asked = r.d.m.Asked
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.now, To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.at[6] = func() {
+		second := r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+		require.NotEqual(t, first.ID, second.ID)
+	}
+	r.run(t, 10)
+	assert.Equal(t, asked, r.d.m.Asked)
+	assert.Equal(t, 1, r.last().Pongs)
+	assert.Equal(t, Quiet, r.last().Challenge)
+	assert.Empty(t, r.delivered, "neither ping is a turn")
+	assert.Len(t, r.adaGot(t), 2, "each entry still gets its transport reply")
+}
+
+func TestPeekedPingThenPongThenReceiveDoesNotReopenTheChallenge(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.hold, r.releaseAt = make(chan struct{}), 8
+	r.send(t, "ada", "long", "a long task")
+	r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) }
+	var asked time.Time
+	r.at[4] = func() {
+		asked = r.d.m.Asked
+		r.mu.Lock()
+		r.pong, r.pongSet = Pong{Nonce: "n1", At: r.now, To: "ada"}, true
+		r.mu.Unlock()
+	}
+	r.run(t, 15)
+	assert.Equal(t, asked, r.d.m.Asked)
+	assert.Equal(t, 1, r.last().Pongs)
+	assert.Equal(t, Quiet, r.last().Challenge)
+	require.Len(t, r.delivered, 1, "only the long task is a turn; the peeked ping is read and acked once the turn ends")
+	assert.Len(t, r.adaGot(t), 1, "peek and receive share the entry's one reply")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	assert.Empty(t, fresh)
+}
+
+func TestReceivingTwoPeekedPingsDoesNotReplayTheOlderChallenge(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.hold, r.releaseAt = make(chan struct{}), 8
+	r.send(t, "ada", "long", "a long task")
+	r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) }
+	r.at[4] = func() { r.send(t, "ada", "PING n2", PingText("ada", t0, "n2")) }
+	var asked time.Time
+	r.at[6] = func() { asked = r.d.m.Asked }
+	r.at[11] = func() {
+		assert.Equal(t, "n2", r.d.m.Nonce, "receiving the older peeked entry must not replace the newer nonce")
+		assert.Equal(t, asked, r.d.m.Asked)
+	}
+	r.run(t, 17)
+	assert.Equal(t, "n2", r.d.m.Nonce)
+	assert.Equal(t, asked, r.d.m.Asked)
+	require.Len(t, r.delivered, 1)
+	assert.Len(t, r.adaGot(t), 2)
+}
+
+func TestNoPingForAWindowIsSaidOnceInsideATurnWithMessagesAndAPingIsSaidBackInTheNext(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	steps := int(Window / BeatEvery)
+	var silent Status
+	r.at[steps+5] = func() {
+		silent = r.last()
+		r.send(t, "ada", "work", "some work")
+	}
+	r.at[steps+8] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) }
+	r.at[steps+12] = func() { r.send(t, "ada", "more", "more work") }
+	r.run(t, steps+18)
+	require.Len(t, r.delivered, 2, "the word rides only inside a turn that carries messages: none alone")
+	assert.Contains(t, r.delivered[0], "coordinator silent since "+t0.Add(BeatEvery).Format(time.RFC3339))
+	assert.Contains(t, r.delivered[1], "coordinator back: ada has the seat")
+	assert.Equal(t, Silent, silent.Connection)
+	assert.Equal(t, Connected, r.last().Connection)
+}
+
+func TestAPingDuringALongTurnIsStillAnsweredAtOnceByTheDaemon(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		pause := r.d.Pause
+		r.d.Pause = func(ctx context.Context, d time.Duration) { pause(ctx, d); synctest.Wait() }
+		// the turn runs longer than a window; the coordinator pings twice while it does
+		window := int(Window / BeatEvery)
+		r.hold, r.releaseAt = make(chan struct{}), window+20
+		r.send(t, "ada", "long", "a long task")
+		ctx, cancel := context.WithCancel(context.Background())
+		r.cancel = cancel
+		r.at[2] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) } // the turn is under way; a ping lands
+		var midTurn Status
+		r.at[100] = func() {
+			midTurn = r.last()
+			r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
+		}
+		r.stopAfter = window + 40
+		require.NoError(t, r.d.Run(ctx))
+		assert.Equal(t, []string{"daemon-pong: daemon-pong n1", "daemon-pong: daemon-pong n2"}, r.adaGot(t), "answered from a peek while the turn ran, and once only")
+		assert.True(t, midTurn.LastPing.After(t0.Add(BeatEvery)) && midTurn.LastPing.Before(t0.Add(10*BeatEvery)), "the machine saw the ping when the daemon did, mid-turn: %s", midTurn.LastPing)
+		assert.Equal(t, Challenged, midTurn.Challenge)
+		require.Len(t, r.delivered, 1, "the long task only: the pings are no turns: %v", r.delivered)
+		assert.Equal(t, Connected, r.last().Connection, "pings peeked during a long turn keep the connection: no false silence")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending)
+		assert.Empty(t, fresh)
+	})
 }
 
 func TestAStoreThatDoesNotAnswerStopsTheBeat(t *testing.T) {

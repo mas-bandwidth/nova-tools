@@ -67,13 +67,17 @@ status is up only on evidence from her own session, a wake ping her session
 answered (friend health --state up) within `+sprint.FriendPongWindow.String()+` or a card of hers
 finished within `+sprint.FriendFinishWindow.String()+`, down otherwise with the missing evidence
 named on her row, and held while friend down holds her whatever she does.
-friend up releases the hold and is no evidence: a friend released with none
-in its window is down until her session gives some. A friend down shows
+friend beat --asleep <friend> records a contactable sleeping session: a fresh
+beat shows asleep, and an ordinary beat clears recorded sleep. This records
+presence; it does not invoke the daemon's wake command, and a sleeping friend
+without a fresh beat is down. friend up releases the hold and is no evidence:
+a friend released with none in its window is down until her session gives some.
+A friend down shows
 working 0: her cards stay on her row and count again when she is up; ready
 and done are as they were. where draws the
 friends between work and fleet in its default frame, which draws no merge
 table; the friends table is drawn after merge only under where --all, up
-first, then held, then down, each by name, with no load column.
+first, then asleep, then held, then down, each by name, with no load column.
 
 WHO: friend <name> prefers a known friend while she is up with room.
 WHO: only friend <name> waits for that friend alone. Other work, including
@@ -121,7 +125,7 @@ func friendVerbWords(name string) string {
 	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
 	switch name {
 	case "friend beat":
-		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. Her nova-friend daemon runs it every " + every + " while it runs, and nothing else beats for her: no loop beside the daemon. The beat is recorded, and its age shown on her row, and it never makes her up, whoever sends it: she is up only on evidence from her own session, a wake ping her session answered (friend health --state up) under " + pong + " old or a card of hers finished under " + finish + " old, and down otherwise, her row naming the evidence missing. --until <RFC3339> and --reason <text> are her daemon's word that she is down until then and why (her harness at its usage limit or out of credits): while her last beat says so she is down, whatever her session's evidence, with the pair shown in why she is down and on her report; a beat can say down, never up, and a beat without --until withdraws the word. " + sync + "\n"
+		return "friend beat records that this friend is present, --asleep before the friend name that her session sleeps while her daemon answers (a sleeping session is shown down, the table's words being up, held and down; an ordinary beat clears sleep), and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. Her nova-friend daemon runs it every " + every + " while it runs, and nothing else beats for her: no loop beside the daemon. The beat is recorded, and its age shown on her row, and it never makes her up, whoever sends it: she is up only on evidence from her own session, a wake ping her session answered (friend health --state up) under " + pong + " old or a card of hers finished under " + finish + " old, and down otherwise, her row naming the evidence missing. --pong <RFC3339> is her session's last pong as her daemon has it: the coordinator's pass judges her session deaf when it is older than " + sprint.FriendDeafAfter.String() + ". --until <RFC3339> and --reason <text> are her daemon's word that she is down until then and why (her harness at its usage limit or out of credits): while her last beat says so she is down, whatever her session's evidence, with the pair shown in why she is down and on her report; a beat can say down, never up, and a beat without --until withdraws the word. " + sync + "\n"
 	case "friend down":
 		return "friend down holds the named friend, as fleet down holds a machine: held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes; the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. --reason <text> and --until <RFC3339> say why and when you expect her back, shown in her status cell. friend up releases the hold. friend down is hold <friend> in the old words, kept for one release: run nova-sprint hold <friend> --reason <text> (her cards finish; --return withdraws them), and unhold <friend>. " + sync + "\n"
 	case "friend up":
@@ -363,6 +367,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	pong := fs.String("pong", "", "her session's last pong, as her daemon has it (status last_pong), RFC3339: the coordinator's pass judges her session deaf when it is older than "+sprint.FriendDeafAfter.String())
 	until := fs.String("until", "", "her daemon's word that she is down until then, RFC3339: her harness at its usage limit or out of credits")
 	reason := fs.String("reason", "", "why she is down until --until, as her daemon read it")
+	asleep := fs.Bool("asleep", false, "record a contactable sleeping session; an ordinary beat clears sleep")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -424,7 +429,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, err := st.FriendBeatPong(ctx, friend, rep, given, ponged)
+	b, err := st.FriendBeatPong(ctx, friend, rep, given, ponged, *asleep)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1

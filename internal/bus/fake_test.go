@@ -48,6 +48,7 @@ type fakeRecord struct {
 type fakeGroup struct {
 	last    string               // last delivered entry id, "0-0" at the start
 	pending map[string]time.Time // entry id -> when it was last delivered
+	owner   map[string]string
 }
 
 // NewFake is an empty store at the instant start whose roster is names.
@@ -232,7 +233,7 @@ func (f *Fake) EnsureGroup(_ context.Context, stream, group string) error {
 		return err
 	}
 	if _, ok := f.groups[stream+"/"+group]; !ok {
-		f.groups[stream+"/"+group] = &fakeGroup{last: "0-0", pending: map[string]time.Time{}}
+		f.groups[stream+"/"+group] = &fakeGroup{last: "0-0", pending: map[string]time.Time{}, owner: map[string]string{}}
 		if _, ok := f.streams[stream]; !ok {
 			f.streams[stream] = nil
 		}
@@ -248,7 +249,7 @@ func (f *Fake) group(stream, group string) (*fakeGroup, error) {
 	return g, nil
 }
 
-func (f *Fake) Claim(_ context.Context, stream, group, _ string, minIdle time.Duration, count int) ([]Entry, error) {
+func (f *Fake) Claim(_ context.Context, stream, group, consumer string, minIdle time.Duration, count int) ([]Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.trip(); err != nil {
@@ -262,13 +263,14 @@ func (f *Fake) Claim(_ context.Context, stream, group, _ string, minIdle time.Du
 	for _, e := range f.streams[stream] { // stream order is id order
 		if at, pending := g.pending[e.Entry]; pending && f.now.Sub(at) >= minIdle && len(out) < count {
 			g.pending[e.Entry] = f.now
+			g.owner[e.Entry] = consumer
 			out = append(out, e)
 		}
 	}
 	return out, nil
 }
 
-func (f *Fake) Read(_ context.Context, stream, group, _ string, _ time.Duration, count int) ([]Entry, error) {
+func (f *Fake) Read(_ context.Context, stream, group, consumer string, _ time.Duration, count int) ([]Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.trip(); err != nil {
@@ -282,6 +284,7 @@ func (f *Fake) Read(_ context.Context, stream, group, _ string, _ time.Duration,
 	for _, e := range f.streams[stream] {
 		if after(e.Entry, g.last) && len(out) < count {
 			g.pending[e.Entry] = f.now
+			g.owner[e.Entry] = consumer
 			g.last = e.Entry
 			out = append(out, e)
 		}
@@ -321,6 +324,7 @@ func (f *Fake) Ack(_ context.Context, stream, group string, entries ...string) (
 	for _, e := range entries {
 		if _, pending := g.pending[e]; pending {
 			delete(g.pending, e)
+			delete(g.owner, e)
 			n++
 		}
 	}
@@ -417,4 +421,28 @@ func inRange(id, from, to string) bool {
 		return false
 	}
 	return true
+}
+
+// PendingPage follows XPENDING's numeric ID order and consumer filter.
+func (f *Fake) PendingPage(_ context.Context, stream, group, consumer, cursor string, count int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return nil, err
+	}
+	g, err := f.group(stream, group)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for id := range g.pending {
+		if g.owner[id] == consumer && (cursor == "" || after(id, cursor)) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return after(ids[j], ids[i]) })
+	if len(ids) > count {
+		ids = ids[:count]
+	}
+	return ids, nil
 }
