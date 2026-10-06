@@ -63,6 +63,9 @@ func (a *app) cmdStatsTidy(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if !c.json {
+		for _, l := range res.Said {
+			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
+		}
 		for _, r := range res.Record.Rows {
 			fmt.Fprintf(stdout, "ROW %s ok=%d failed=%d off=%d kept=%d\n", r.Row, r.OK, r.Failed, len(r.Moved), len(r.Kept))
 		}
@@ -76,7 +79,7 @@ func (a *app) cmdStatsTidy(args []string, stdout, stderr io.Writer) int {
 	}
 	since := res.Record.At.Format(time.RFC3339)
 	facts := map[string]any{"since": since, "kinds": kinds, "archive": res.Archive, "moved": res.Moved, "kept": res.Kept,
-		"rows": res.Record.Rows, "streams": res.Record.Streams, "routes": len(res.Record.Routes), "dry_run": res.DryRun}
+		"rows": res.Record.Rows, "streams": res.Record.Streams, "routes": len(res.Record.Routes), "dry_run": res.DryRun, "said": res.Said}
 	word := "STATS-TIDY OK"
 	if res.DryRun {
 		word = "STATS-TIDY DRY-RUN would move"

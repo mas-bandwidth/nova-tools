@@ -4746,19 +4746,32 @@ starts them afresh without touching the work (`store.TidyStats`, `sprint.TidyDon
 internal/sprint/stats_tidy.go):
 
 - `--friends` and `--fleet` take the history off the done cells of the friends' rows and
-  of the machines' rows: every finished work card but one the work still reads, which
-  stays (`sprint.TidyKeeps`): the work card of a primary on the work table not landed (its
-  review, its reads, its merge and its next attempt's base read every attempt of it), and
-  a card finished within the friend-finish window (the idle rule, the overload window and
-  a provider's return read the newest finishes). A card taken off keeps its record, read
-  by id as `stats`, `card` and `log` read it; its log line says `off the table (stats
-  tidy: its record kept)`. `done` and `ok%` then count the cards finished since, and the
-  routes' counters with them. A member's or a friend's median run wall (the deal's
-  deadline, `sprint.MemberMedianWall`, `sprint.FriendMedianWall`) is measured over the
-  done-ok cell, so it is measured again over the cards kept and those finished since; with
-  none, a card dealt to the row has its own deadline, the route's.
-- `--routes` archives the route counters (`sprint.RouteStats` at the tidy), and `stats
-  --routes` counts from the tidy when given no `--since`.
+  of the machines' rows. A finished card stays when a rule reads it (`sprint.TidyKept`,
+  each with why): the work card of a primary on the work table not landed (its review,
+  its reads, its merge and its next attempt's base read every attempt of it); a card
+  finished within `sprint.TidyKeepWindow` of running time, the largest of the
+  friend-finish window (the idle rule), `OverloadWindow` (15 minutes) and the coordinator
+  view's 30 minutes, measured as the idle rule measures it, the time the machine was
+  STOPPED left out, so a tidy after a stop never raises a false idle; each row's newest
+  `RouteRestWindow` (10) finished cards, and the cards holding each route's newest 10
+  ended takes, whatever their age (the rest rule's sample, `routeEnds`); and each
+  provider's newest ok finish, whatever its age, since a provider's return (the redeal
+  bound lifted, `providerBack`) reads whether any ok card of the provider finished after
+  the failure, and the newest is the one that answers it. Every other finished card leaves
+  its cell; its record stays, read by id as `stats`, `card` and `log` read it, and its
+  log line says `off the table (stats tidy: its record kept)`. `done` and `ok%` then count
+  the cards kept and those finished since.
+- A tidy never changes a deadline: the deal's deadline is DeadlineK times the row's median
+  run wall over its done-ok cell (`sprint.MemberMedianWall`, `sprint.FriendMedianWall`),
+  so a tidy that moves a row's cards writes the row's median and sample count as it found
+  them to the fleet table's property `carried_median_<row>` (`sprint.PropCarriedMedian`,
+  `<seconds> <samples>`), in the same step. The deadline rules use the carried median
+  while the row's live sample is smaller than the carried count, and the live one once it
+  is at least as large (`TestATidyKeepsTheDeadlineItsMedianGave`: a machine with a
+  20-minute median on a 30-minute route keeps its 60-minute deadline).
+- The route counters (`sprint.RouteStats` at the tidy) are archived by `--routes`, and by
+  `--fleet` and `--friends` too, since they count the fleet table's cards those take off;
+  `stats --routes` counts from the last tidy of the routes when given no `--since`.
 - `--streams` takes each stream's landed cost and landed count as its base
   (`sprint.StreamBases`): the work table's `cost` cell is the control card's cost less
   the base's (`sprint.StreamCostSince`, `-` when nothing priced landed since; the control
@@ -4766,21 +4779,30 @@ internal/sprint/stats_tidy.go):
   (`sprint.PerLandedSince`, counted by the next tick's where record).
 - `--all` is the four. `stats` counts from the last tidy of any kind.
 
-What moved is written to a dated archive record, `stats:archive:<RFC3339>` (the tidy's
-time to the second, UTC; `store.StatsArchive`): the reason, who, the kinds, each row's
-`ok` and `failed` counts before and the cards it took off and kept, the route counters and
-the streams' bases. The stats record (`stats`, one for the sprint, as the machine's
-records are; `store.StatsRecord`) names the last tidy: when, why, by whom, each kind's
-time, the streams' bases and every archive's name, which teardown deletes. A record of an
-earlier epoch counts nothing: a clear starts the epoch afresh anyway. Cards on any other
-cell, the work, merge and readers tables, holds and judgments are untouched. A second
-tidy within a minute of the last (`sprint.TidyAgainAfter`) is refused, exit 1, nothing
-written; `--dry-run` writes nothing and prints what would move. Each row it touches is a
-`ROW <row> ok=<n> failed=<n> off=<n> kept=<n>` line, each stream a `STREAM <s> cost=<$>
-landed=<n>` line, then `STATS-TIDY OK since=<RFC3339> kinds=<k,...> moved=<n> kept=<n>
-archive=<key>` (`STATS-TIDY DRY-RUN would move ...` with `--dry-run`; `--json` carries
-the rows and streams). `TestStatsTidyZeroesCountersAndKeepsTheWork`,
-`TestASecondStatsTidyWithinAMinuteIsRefused`.
+The archive record, `stats:archive:<RFC3339Nano>-<nonce>` (the tidy's time to the
+nanosecond, UTC, and eight hex digits, so two tidies never share a key;
+`store.StatsArchive`), is written before anything moves, `state` `planned`: the reason,
+who, the kinds, each row's `ok` and `failed` counts before and the cards it is to take off
+and keep (each with its `cell`, ok or failed, and a kept one with why), the route counters
+and the streams' bases. The move is one step, planned again on what it reads at its
+commit, so a card another writer moved in between is not taken off; then the archive is
+written again, `done`, with what did move. A move that fails leaves the archive `failed`
+with its `error` and the plan, nothing recorded as tidied, and the error names the
+archive. The stats record (`stats`, one for the sprint, as the machine's records are;
+`store.StatsRecord`) names the last tidy: when, to the nanosecond, why, by whom, each
+kind's time, the streams' bases and every archive's key, which teardown deletes. A record
+of an earlier epoch counts nothing: a clear starts the epoch afresh anyway. A stats record
+that does not read is no tidy recorded: the tick, the mirror sync, `where` and `stats` go
+on, and the tick says it once (permissive in what is read). Cards on any other cell, the
+work, merge and readers tables, holds and judgments are untouched. A second tidy within a
+minute of the last (`sprint.TidyAgainAfter`), by the recorded time to the nanosecond, is
+refused, exit 1, nothing written; `--dry-run` writes nothing and prints what would move.
+Each row it touches is a `ROW <row> ok=<n> failed=<n> off=<n> kept=<n>` line, each stream
+a `STREAM <s> cost=<$> landed=<n>` line, then `STATS-TIDY OK since=<RFC3339> kinds=<k,...>
+moved=<n> kept=<n> archive=<key>` (`STATS-TIDY DRY-RUN would move ...` with `--dry-run`;
+`--json` carries the rows and streams). `TestStatsTidyZeroesCountersAndKeepsTheWork`,
+`TestASecondStatsTidyWithinAMinuteIsRefused`, `TestATidyWhoseCardMovedKeepsItsArchive`,
+`TestATidyKeepsTheRecentAndTheRulesSamplesAndTakesTheRest`.
 
 Not yet: `where` (its text frame, `where --json` and the dashboard it feeds) and the
 coordinator view's sum line say nothing of the tidy: `since <time>` beside `ok%` and the

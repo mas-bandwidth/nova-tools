@@ -96,12 +96,7 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision {
 		return nil
 	}
-	var stats StatsRecord
-	if oks[1] && vals[1] != "" {
-		if err := json.Unmarshal([]byte(vals[1]), &stats); err != nil {
-			return fmt.Errorf("the stats record is unreadable: %w", err)
-		}
-	}
+	stats := st.statsRecordOf(vals[1], oks[1]) // permissive: an unreadable one is no tidy
 	tw := st.twin()
 	if !tw.mu.TryLock() {
 		return nil
