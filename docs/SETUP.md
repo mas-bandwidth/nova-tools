@@ -70,3 +70,23 @@ nova-doctor --check self --json
 Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
 nova tools on PATH and fails when they are not one release, naming the odd one. The
 contract is [SPEC-DOCTOR.md](SPEC-DOCTOR.md).
+
+### dep-go-sdk-b.w2: the Go toolchain
+
+The Go SDK is a dependency of a bench, and never of the coordinator's machine. A bench
+builds and tests this repository (`go build ./...`, `go test`), which needs the Go version
+`go.mod`'s `toolchain` line names, a writable `GOCACHE`, and `GOFLAGS=-mod=readonly`. The
+coordinator's machine builds and tests nothing, so no `go` runs there: the bench rule.
+
+`nova-up --local` sets up the coordinator's machine and installs no Go on it. Its
+`binaries` step checks the programs the tools run and names the install command for a
+missing one; the Go toolchain is not among them, because the coordinator installs the
+released tools instead of building them. On a bench, a person installs the toolchain
+`go.mod` names (the archive from <https://go.dev/dl/> or the distribution package at that
+version) and exports `GOFLAGS=-mod=readonly` with a private `GOCACHE`, as every card does.
+
+The `gosdk` check reads the role from the machine's seat. On the coordinator's machine,
+`go` on PATH is a warn naming the bench rule, with the released install as its fix; with
+no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
+`go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
+does not carry `-mod=readonly`. Each fix line names the step above.
