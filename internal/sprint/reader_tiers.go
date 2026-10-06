@@ -95,18 +95,6 @@ func (s *Snapshot) readersCarryTiers() bool {
 	return false
 }
 
-// upReadersOf is the readers up who read the primary's read tier, in row order.
-func (s *Snapshot) upReadersOf(pr *Card) []string {
-	tier := s.readTierOf(pr)
-	var out []string
-	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.readerReadsTier(rd, tier) {
-			out = append(out, rd)
-		}
-	}
-	return out
-}
-
 // returnedInTier is the primary's returned reads whose reader reads its tier.
 // A returned read on a reader outside the tier is not a slot the ask can fill
 // in place (Ask takes that card back, or leaves it when the ask is refused).

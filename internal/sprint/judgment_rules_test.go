@@ -90,8 +90,11 @@ func brokenOnce(t *testing.T, w *world, finding string) {
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "broken", Finding: finding, Sel: Sel{IDs: []string{rc.ID}}}))
 }
 
-// friendDealt is a world with s1-1 a friend's card dealt to amy, working on her row, past
-// its bound; her seat as the tick reads it, running what is given.
+// friendDealt is a world with s1-1 a friend's card dealt to amy, past its bound; her seat as
+// the tick reads it, running what is given. A friend's dealt card is ready on her row until
+// she starts it, and working once she has (docs/SPEC-SPRINT.md, "Working on her row means
+// started"): running it, her start receipt takes it into working (startLanes); not running
+// it, it waits ready, dealt and never taken.
 func friendDealt(t *testing.T, running ...string) (*world, FriendSeat) {
 	t.Helper()
 	w := friendWorld(t, friendBrief("friend"))
@@ -100,7 +103,12 @@ func friendDealt(t *testing.T, running ...string) (*world, FriendSeat) {
 	dealWith(w, amy)
 	wc := w.s.Fleet.Card("s1-1.w1")
 	require.Equal(t, FriendRow("amy"), wc.Row)
-	require.Equal(t, Working, wc.Col)
+	require.Equal(t, Ready, wc.Col, "dealt to her: ready until she starts it")
+	if len(running) > 0 {
+		startLanes(w, amy)
+		wc = w.s.Fleet.Card("s1-1.w1")
+		require.Equal(t, Working, wc.Col, "started: working on her row")
+	}
 	w.tick(DeadlineUnfinished * 4)
 	deadlines(w, on(amy, bob))
 	require.Len(t, openOf(w, NWorkLate, "s1-1"), 1, "past its bound on her row: a late judgment")
@@ -298,7 +306,8 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		f.s.RulesOff = []string{RuleFriendTake}
 		amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}
 		rules(f, on(amy, bob))
-		assert.Equal(t, Working, f.s.Fleet.Card("s1-1.w1").Col)
+		assert.Equal(t, Ready, f.s.Fleet.Card("s1-1.w1").Col, "not taken back: still ready on her row")
+		assert.Equal(t, FriendRow("amy"), f.s.Fleet.Card("s1-1.w1").Row)
 		assert.Len(t, openOf(f, NWorkLate, "s1-1"), 1)
 
 		b := setup(t, 1)

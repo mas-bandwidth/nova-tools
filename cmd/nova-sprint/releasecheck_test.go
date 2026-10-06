@@ -39,8 +39,11 @@ func TestReleaseCheckNamesAFriendStuckInTheLastFourHours(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	// the deal holds her card ready on her row; her start receipt takes it into working
+	// (docs/SPEC-SPRINT.md, "Working on her row means started")
+	ta.startFriend("amy", 1)
 	before := ta.applies()
-	ta.a.sleep(3 * time.Hour) // her card, taken at the deal, is past its two hours since the second
+	ta.a.sleep(3 * time.Hour) // her card, started at the deal, is past its two hours since the second
 	code, out, errs := ta.do("release check")
 	require.Equal(t, 1, code, "%s %s", out, errs)
 	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend fail friend amy stuck from ")
@@ -59,6 +62,21 @@ func TestReleaseCheckNamesAFriendStuckInTheLastFourHours(t *testing.T) {
 	// a stream the glob does not name has no friend stuck in it
 	code, out, errs = ta.do("release check --streams other*")
 	assert.Equal(t, 0, code, "%s %s", out, errs)
+}
+
+func TestReleaseCheckNamesAFriendWhoNeverStartedADealtCard(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick") // dealt ready on her row; she never starts it
+	ta.a.sleep(sprint.DealtMaxDefault - time.Minute)
+	code, out, errs := ta.do("release check")
+	require.Equal(t, 0, code, "inside the dealt bound: %s %s", out, errs)
+	ta.a.sleep(2 * time.Minute)
+	code, out, errs = ta.do("release check")
+	require.Equal(t, 1, code, "%s %s", out, errs)
+	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend fail friend amy stuck from ")
+	assert.Contains(t, out, "s1-1.w1 "+sprint.WordNeverTaken)
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(out), "RELEASE NOT READY failed=1"), out)
 }
 
 func TestReleaseCheckFailsWhenSprintClearedInsideWindow(t *testing.T) {
