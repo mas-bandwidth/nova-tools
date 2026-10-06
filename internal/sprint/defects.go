@@ -32,7 +32,7 @@ func FindDefects(s *Snapshot, since time.Time, defectClass string) []DefectRecor
 		class := c.F(FieldDefectClass)
 		report := c.F("report")
 		if blame == "" && (c.F("ok") == "no" || c.Col == DoneFailed || c.Col == Withdrawn) {
-			blame, class, _, _ = ClassifyAttempt(report, true, "")
+			blame, class, _, _ = ClassifyAttempt(report, true)
 		}
 		if blame != BlameCoordinator && blame != BlameProvider {
 			continue

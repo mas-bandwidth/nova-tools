@@ -2,7 +2,6 @@ package sprint
 
 import (
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -115,39 +114,27 @@ func ExtractFindingFirstLine(report string) string {
 }
 
 // ClassifyAttempt classifies a report's finding into blame, class, finding first line, and fix card.
-func ClassifyAttempt(report string, failed bool, explicitBlame string) (blame, class, finding, fix string) {
+func ClassifyAttempt(report string, failed bool) (blame, class, finding, fix string) {
 	finding = ExtractFindingFirstLine(report)
 	fix = ExtractFix(report)
-
-	if explicitBlame != "" && slices.Contains([]string{BlameCoordinator, BlameWorker, BlameProvider, BlameNone}, explicitBlame) {
-		blame = explicitBlame
-		if blame == BlameNone {
-			return BlameNone, "", "", fix
-		}
-	}
 
 	if !failed {
 		return BlameNone, "", "", fix
 	}
 
 	lower := strings.ToLower(report)
+	trimmed := strings.TrimSpace(report)
 
-	// Check launch-refused:
-	if strings.HasPrefix(strings.TrimSpace(report), cardhdr.EndLaunch) ||
-		IsStagingRefusal(report) ||
-		strings.Contains(lower, "launch refused") ||
-		strings.Contains(lower, "staging refused") {
+	// The member puts a typed end at the start of a refusal. Do not infer an
+	// infrastructure failure from those words appearing in a worker's finding.
+	if strings.HasPrefix(trimmed, cardhdr.EndLaunch) || IsStagingRefusal(trimmed) {
 		return BlameCoordinator, DefectLaunchRefused, finding, fix
 	}
 
-	// Check provider failure / route failure / no result:
-	if IsProviderFailure(report) ||
-		IsNoResult(report) ||
-		strings.Contains(lower, "provider failure") ||
-		strings.Contains(lower, "no result") ||
-		strings.Contains(lower, "402") ||
-		strings.Contains(lower, "429") ||
-		strings.Contains(lower, "rested") {
+	// Provider blame likewise comes only from the member's typed end. A worker
+	// report may legitimately mention HTTP status codes or provider failures it
+	// diagnosed; that text alone cannot move blame away from the worker.
+	if IsProviderFailure(trimmed) || IsNoResult(trimmed) {
 		return BlameProvider, DefectProvider, finding, fix
 	}
 
@@ -206,10 +193,7 @@ func ClassifyAttempt(report string, failed bool, explicitBlame string) (blame, c
 		return BlameCoordinator, DefectStore, finding, fix
 	}
 
-	if blame == "" {
-		blame = BlameWorker
-	}
-	return blame, DefectWork, finding, fix
+	return BlameWorker, DefectWork, finding, fix
 }
 
 // WorkerStats calculates WorkerCounters for a collection of cards.
@@ -221,7 +205,7 @@ func WorkerStats(cards []*Card) WorkerCounters {
 		class := card.F(FieldDefectClass)
 		report := card.F("report")
 		if blame == "" && (card.F("ok") == "no" || card.Col == DoneFailed) {
-			blame, class, _, _ = ClassifyAttempt(report, true, "")
+			blame, class, _, _ = ClassifyAttempt(report, true)
 		}
 
 		switch {

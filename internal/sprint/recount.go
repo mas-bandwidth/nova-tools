@@ -58,7 +58,7 @@ func RecountPlan(s *Snapshot) (Plan, []RowRecount) {
 
 		needsClassify := blame == "" && (c.F("ok") == "no" || c.Col == DoneFailed || c.Col == Withdrawn)
 		if needsClassify {
-			blame, class, finding, fix = ClassifyAttempt(report, c.F("ok") == "no" || c.Col == DoneFailed, "")
+			blame, class, finding, fix = ClassifyAttempt(report, c.F("ok") == "no" || c.Col == DoneFailed)
 		}
 
 		targetRow := c.Row
