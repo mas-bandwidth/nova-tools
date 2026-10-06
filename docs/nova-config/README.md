@@ -403,7 +403,7 @@ measured reason>'`; so is `route add --enabled false` with none, and
 `--note ''` on a route that is disabled. `--enabled true` needs no note, and
 the note of a route that is on may stay or be cleared. A route disabled before
 migration 0015 has an empty note; the day's are seeded by
-`tools/notes-2026-10-02.sh <machine>` (nova-tools#5101), which skips any route that is not
+`go run ./tools/notes20261002 <machine>` (nova-tools#5101), which skips any route that is not
 disabled and enables nothing.
 
 ### Refusals
