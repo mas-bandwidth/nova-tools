@@ -90,3 +90,34 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-ssh-b.w3: ssh between the coordinator and the benches
+
+The coordinator and the members reach the benches by ssh: a land clones a repository on a
+bench, a card's sandbox worktree is made there, and the bench rule runs builds and tests on
+a bench rather than on the coordinator's machine. Every fleet machine is on the tailnet and
+is reached as `ssh <name>` (docs/FLEET.md). The coordinator's machine needs an ssh client, a
+private key whose public half is authorized on each bench, and each bench's host key in
+`~/.ssh/known_hosts`. Every call is non-interactive (`BatchMode`), so a missing key is a
+refusal and never a password prompt.
+
+`nova-up --local` sets up one machine and reaches no other, so it neither makes nor copies
+these keys: it touches nothing outside its root. A person provides the dependency once,
+from the coordinator's machine, with each bench's own login:
+
+```sh
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519                 # once, if there is no key
+ssh-copy-id <bench>                                        # authorize the public half on the bench
+ssh-keyscan <bench> >> ~/.ssh/known_hosts                  # record the bench's host key once
+ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true      # the check's own probe
+```
+
+The public half is authorized by the bench's login (its `authorized_keys`); the private half
+never leaves the coordinator's machine, and the tool copies no key.
+
+The `ssh` check in `nova-doctor` reads the benches the inventory names
+(`nova-config inventory --list`), skips this machine, and runs
+`ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` for each. It is `ok` when every bench
+answers; otherwise it fails, naming the bench and the reason ssh gave — an unknown host key,
+no key, or a timeout — with the documented step above as its fix line. It is a fleet check:
+`nova-doctor --local` skips it and says so.
