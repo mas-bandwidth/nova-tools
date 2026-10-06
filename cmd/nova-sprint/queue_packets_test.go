@@ -250,3 +250,25 @@ func TestAServerRefusesAQueueFlagItDoesNotKnowInTheWordsAMemberReads(t *testing.
 	assert.Equal(t, 2, res.Code)
 	assert.Contains(t, res.Stderr, "unknown flag --nosuch", "an old server says `unknown flag --packets`")
 }
+
+// TestEveryPacketAVerbHandsNamesItsTier: the packets take and queue hand a member name the
+// tier the card is on, on a store with no route where no deal draws one onto the work card
+// (dealt-packet-carries-the-tier.w1; sprint.DealtTier): its brief's line 1 here, pro.
+func TestEveryPacketAVerbHandsNamesItsTier(t *testing.T) {
+	t.Parallel()
+	r, _ := workedRig(t, 2, 2)
+	q := r.queueWith("--as", "m", "--json")
+	require.Len(t, q.packeted(), 4)
+	for _, c := range q.Cards {
+		var p struct{ Tier string }
+		require.NoError(t, json.Unmarshal(c.Packet, &p))
+		assert.Equal(t, "pro", p.Tier, "the queue's packet of %s", c.ID)
+	}
+	res := r.one("take", "--as", "m", "--limit", "2", "--epoch", "0", "--json")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	var out struct{ Packets []struct{ Card, Tier string } }
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out), res.Stdout)
+	for _, p := range out.Packets {
+		assert.Equal(t, "pro", p.Tier, "the take's packet of %s", p.Card)
+	}
+}
