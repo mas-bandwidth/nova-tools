@@ -255,6 +255,8 @@ type queueCard struct {
 	WaitsFor []string `json:"waits_for,omitempty"`
 	// Packet is what the member or reader is handed with the card.
 	Packet *sprint.Packet `json:"packet,omitempty"`
+	// kind is the card's kind: a read on a friend's fleet row is returned, not finished.
+	kind string
 }
 
 func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
@@ -305,7 +307,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
 				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score,
-				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun")})
+				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun"), kind: x.F("kind")})
 		}
 	}
 	if *col == sprint.Waiting {
@@ -407,7 +409,13 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	var lines []string
 	for _, x := range cards {
 		l := fmt.Sprintf("%s %s:%s:%s", x.ID, x.Table, x.Row, x.Col)
-		if x.Gen > 0 {
+		if x.Table == sprint.Fleet && x.kind == "read" {
+			// a read on a friend's row: her outbox or the read verb returns it, never finish
+			if x.Gen > 0 {
+				l += " gen=" + strconv.Itoa(x.Gen)
+			}
+			l += " read: --ok|--broken " + x.ID + " --epoch " + strconv.FormatUint(epoch, 10)
+		} else if x.Gen > 0 {
 			next := "take"
 			if x.Col == sprint.Working {
 				next = "finish"

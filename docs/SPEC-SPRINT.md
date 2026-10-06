@@ -626,7 +626,22 @@ or a rule in `outbox/<read>/REPORT.md` retires that read on her fleet row
 the way a reader's verdict does (`FriendReadClose`: LAND is ok, and a HOLD
 raises `a reader found it broken`). The read card is `<primary>.r<attempt>.<friend>`,
 placed on her fleet row `friend.<name>` in working while she has a lane,
-ready behind her working cards otherwise. The readers table gains no friend
+ready behind her working cards otherwise, at generation 1 (a read asked
+before the ask wrote one is at generation 0, and is read and returned the same
+way). Its job directory is the card id at every epoch and generation
+(`inbox/<read>/`, `outbox/<read>/`, and the `job` of her `QUEUE.json`), and
+`friend reconcile` leaves a read with its report to friend sync. Her packet
+says how it is returned: the outbox report, or
+`nova-sprint read --as friend.<name> (--ok | --broken) <read> --epoch <n> [--finding ...]`,
+which writes the same close as her report (`friendReadVerb`): the verdict
+stored, the read retired off her row, a broken verdict's judgment raised; a
+read on her row has no `--begin` and no `--return`. `queue --as friend.<name>`
+names a read with that verb, never `finish`, and `finish` of a read is refused
+with the outbox form as its remedy (`TestFriendSyncClosesAFriendRowReadFromItsOutboxReport`,
+`TestAFriendRowReadsPacketNamesTheOutboxReturn`, `TestFinishRefusesAReadWithTheOutboxRemedy`).
+Her retired read still stands for the tick: the tick reads it with the
+primaries in review (`tickExtras`), and accept guards it at its revision alone,
+a place being a placed card's. The readers table gains no friend
 row. Her ready and working on the friends table count the read with her work
 cards: the readers table and the friends table are two views of the one pool.
 A friend is asked an attempt once: a read taken back from her with no

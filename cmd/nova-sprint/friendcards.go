@@ -52,7 +52,13 @@ const (
 // friendJobOf is the job a friend's sprint card is delivered as: its stored id, and from its
 // second generation (a card taken back and dealt again, sprint.FriendTake) .g<gen> after it, so
 // a card dealt again to the same friend is a new job whose brief names its own branch.
+// A read on her row is delivered as the card id at every epoch and generation, the path
+// the ask writes (sprint.FriendReadAsk) and friend sync closes it from (friendReadOf), so
+// her QUEUE.json and friend reconcile name the directory her report is in.
 func friendJobOf(p sprint.Packet) string {
+	if p.Kind == "read" {
+		return p.Card
+	}
 	job := sprint.StoredID(p.Card, p.Epoch)
 	if p.Gen > 1 {
 		job += ".g" + strconv.Itoa(p.Gen)
