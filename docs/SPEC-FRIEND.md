@@ -965,6 +965,31 @@ in a live daemon no lane is paced yet; `nova-friend` setting
 `Limits.Pacing` from the row (the gate paces the batch turn at the default
 until it does); and no TLA+ module models the pacer.
 
+### opencode-lanes-parity-r2.w3 — the opencode lanes do what the runner stopgaps did (internal/friend/opencode_parity.go)
+
+Freddy and Alex ran cards through two zsh copies of one runner (the owner, 2026-10-05:
+"We need to get away from these one shot shell scripts"). Each behaviour of those scripts
+is a small function with a table in `TestOpencodeLanesDoWhatTheRunnerStopgapsDid`, set on the
+friend row (the beat's answer carries them as `row_tiers=`, `row_streams=`, `row_token_cap=`,
+`row_load_bound=`, `row_load_width=`; `ParseLaneRules`), never in code:
+
+| Behaviour | Function |
+|---|---|
+| card filter: tiers she works, stream or id globs (`security*`) | `LaneRules.Decide` |
+| a dealt card outside the filter, not started and with no `jobs/<job>`, is taken back | `TakeBack`, `TakeArgv` (`friend take <friend> <card> --reason`) |
+| job name `<card>~<epoch>`, `.g<gen>` from the second generation | `JobName` |
+| at most the row's width, held to `row_load_width` while the 1-minute load is above `row_load_bound` | `LaneWidth` |
+| per-card token cap: a HOLD report naming the cap, the lane stopped | `OverCap`, `CapHoldReport` |
+| provider failure (402, 429, out of funds, rate limit): every lane stops, the friend is held down with the exact message, nothing resumes until a person removes `PAUSED` and runs `friend up` | `ProviderFailure`, `ProviderPause` |
+| tokens from opencode's database (the run's session and children, `sqlite3 -readonly`), priced by the route row, rounded up to the cent, unpriced with its reason when no row; a `Cost:` line under `Head:` on REPORT.md and `tokens:`/`cost:` on RESULT.md | `TokensSQL`, `ParseTokens`, `CostOf`, `CostLine`, `WithCost`, `ResultLines` |
+| `go` and `gofmt` refusal shims first on the lane's PATH, GOROOT pointing nowhere | `WriteShims`, `LaneEnv` |
+| a bus note to the coordinator at each finish | `FinishNote` |
+
+Not done here: the row fields are read from the beat's answer, but `nova-sprint friend beat`
+and `nova-config friend set` (outside this card's paths) do not yet write them, and the
+opencode adapter is not yet a `CardRunner` that calls these functions around `opencode run
+--title`. Until both land the stopgaps stay.
+
 ### lane-end-finishes-the-card.w1 — a lane's end is a finish
 
 The owner, 2026-10-05: "Now let's look at friends. Are they actually doing

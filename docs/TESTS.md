@@ -1245,3 +1245,10 @@ LINT OK file=./cards/finding-internal-bus-send.md
 $ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 LINT OK file=./cards/finding-cmd-nova-bus-main.md
 ```
+
+## internal/friend: opencode lane parity
+
+`TestOpencodeLanesDoWhatTheRunnerStopgapsDid` holds one table per behaviour of the two
+runner.zsh stopgaps: the row's settings, the card filter, the take back, the job name with
+its generation, the width under load, the token cap HOLD, the provider pause, the cost line,
+the tokens query, the go shims and the finish note. No test opens a socket or sleeps.

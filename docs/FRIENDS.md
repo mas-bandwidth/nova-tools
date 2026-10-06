@@ -292,3 +292,12 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    --wake --to-friends --every <d>` (installed with `ping-install`), which
    pings every friend the friends table holds up and tells the coordinator
    which sessions were deaf (docs/SPEC-FRIEND.md, "The wake ping loop").
+
+## opencode lanes: what the runner scripts did, as row settings
+
+An opencode friend's one-shot lanes are configured on her row, not in a script: the tiers
+and stream or id globs she works (a card outside them, not started, goes back to the dealer),
+the per-card token cap, the load bound and the width held to above it. A provider failure
+holds her down with the exact message until a person brings her up. Each finished card's
+REPORT.md carries a `Cost:` line from opencode's own database and the store's route row
+(docs/SPEC-FRIEND.md, opencode-lanes-parity-r2.w3).
