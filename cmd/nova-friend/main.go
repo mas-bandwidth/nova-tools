@@ -546,6 +546,31 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 				Run: w.uninstall,
 			},
 			{
+				Name:    "rebind",
+				Usage:   "rebind --as <me> --session <id> [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Example: "", // the example block runs nothing that reads an installed agent; TestRebindRetiresTheOldTargetAndOwesAFreshProof runs it
+				Effect:  tool.LocalWrite + ": rewrites the agent's --session, records the target, writes the push proof down and reloads the agent",
+				DryRun:  true,
+				Detail: `The supported way to change the session the daemon delivers into (installing again with a new
+--session is the other). The friend names the session herself: rebind never picks one and never unarchives
+one. It reads the installed agent (com.nova.friend-<me>; none is refused, install is the remedy), reads the
+new session's lifecycle through the harness's adapter (a session that is archived, deleted or moved is
+refused, as the daemon would find it: docs/SPEC-FRIEND.md, "A gone session target"), then writes the
+friend's push proof down on the bus ("rebound": nova-bus refuses her as deaf until a fresh session check is
+answered), records the new target and retires the old one in <state>/target.json (run and install refuse a
+retired id, so a service reinstalled from an old command line cannot resurrect it), rewrites --session in
+the plist, and boots the agent out and in again: the daemon starts on a fresh push proof, a SESSION CHECK
+round trip through the new session, before any delivery is scheduled. --redis defaults to the plist's.
+--dry-run reads and checks everything and writes nothing.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the friend the agent was installed for")
+					f.Required("session", "the session to deliver into from now on, named by the friend")
+					stateDir(f)
+					f.String("redis", w.getenv(RedisEnv), "the bus store's Redis address, host:port (default: "+RedisEnv+", else the plist's)")
+				},
+				Run: w.rebind,
+			},
+			{
 				Name:    "check",
 				Usage:   "check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]",
 				Example: "", // the banner's example block runs nothing that reads a fleet's state; -h carries the example
@@ -559,9 +584,10 @@ CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stal
 CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
-CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
-then one summary line: CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>.
-The verdict is a function of those facts, the first rule that holds: broken when the session is marked
+CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue|target-invalid> shown=<state/working|-> why=<one line>
+then one summary line: CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n> target_invalid=<n>.
+The verdict is a function of those facts, the first rule that holds: target-invalid when the daemon found
+the session it names gone (archived, deleted or moved; the why names the rebind line); broken when the session is marked
 broken or every delivery in the window failed (at least one, and all of them); deaf when a delivery in
 the window succeeded and neither a session pong nor a real message came back in the window; silent when
 no delivery was due in the window and nothing came back; down by presence; else ok. --shown is what a
@@ -792,7 +818,7 @@ or WAIT-PONG NONE at exit 1.`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
+last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|target-invalid|-> mode=<batch|one-shot|-> presence=<up|down>
 (once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
@@ -1003,8 +1029,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if friend.RunsCards(c.Str("harness")) {
 		deliver = friend.NewClaude(name, dir, fl.Watch(walled), c.Stdout) // a card a process: the adapter with a lane
 	}
-	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike
+	// a session she rebound away from never comes back with an old command line (friend.Target), a dry run alike
 	dry := c.DryRun()
+	if bound, _, err := friend.ReadTarget(state); err != nil {
+		return tool.Refuse("the bound target: " + err.Error())
+	} else if why := bound.Refuses(c.Str("session")); why != "" {
+		return tool.Refuse(why + "; the daemon did not start")
+	}
+	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike
 	// a harness that runs each card as a process of its own (friend.CardRunner) has no session to
 	// push into: no push proof and no session check stand for it (docs/SPEC-FRIEND.md, one-shot lanes)
 	_, perCard := deliver.(friend.CardRunner)
@@ -1120,7 +1152,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// friend.ProofWithin and the daemon does not start (docs/SPEC-FRIEND.md, The push proof)
 	var proof friend.CheckResult
 	remedy := ""
-	if !perCard {
+	// a named session that is gone owes no proof and gets no check: the daemon starts
+	// target-invalid, tells once and delivers nothing until she rebinds (friend.Gone)
+	var invalid *friend.TargetInvalid
+	if gone := (friend.TargetInvalid{}); !perCard && errors.As(friend.Gone(ctx, deliver), &gone) {
+		invalid = &gone
+	}
+	if !perCard && invalid == nil {
 		proof, remedy, _ = friend.PushProof(ctx, w.conformance(c, name, c.Str("harness"), state, c.Str("coordinator"), friend.ProofWithin, deliver, st))
 	}
 	if proof.Stage != "" {
@@ -1134,9 +1172,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		o.Remedy = remedy
 		return o
 	}
-	if perCard {
+	switch {
+	case perCard:
 		record(w.now().UTC().Format(time.RFC3339) + " push proof: none owed: " + c.Str("harness") + " runs each card as a process of its own, no session to push into")
-	} else {
+	case invalid != nil:
+		record(w.now().UTC().Format(time.RFC3339) + " push proof: not asked: " + invalid.Error() + "; " + friend.RebindLine(name))
+	default:
 		record(w.now().UTC().Format(time.RFC3339) + " push proof: " + proof.Line())
 	}
 	// the seat the last ping named, from the daemon's status: whom the session check's answer goes to
@@ -1185,7 +1226,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			until, _, limited := fl.Limited()
 			return fl.Kind(), until, limited
 		},
-		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
+		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"), Invalid: invalid,
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
@@ -1514,6 +1555,19 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if a.Harness == "grok" {
 		a.Session = h.WakePath() // the wake file install made is the one the agent names
 	}
+	// where the agent will keep its files, as its run will choose them
+	state := c.Str("state-dir")
+	if state == "" {
+		state, _ = friend.DaemonStateDir(w.home, a.Dir, a.Friend, func(d string) error { return dirThere(filepath.Dir(d)) })
+	}
+	// a session she rebound away from is never installed again from an old command line (friend.Target)
+	bound, _, err := friend.ReadTarget(state)
+	if err != nil {
+		return tool.Refuse("the bound target: " + err.Error() + "; nothing was written or loaded")
+	}
+	if why := bound.Refuses(a.Session); why != "" {
+		return tool.Refuse(why + "; nothing was written or loaded")
+	}
 	src := a.Binary
 	placed, copy, err := friend.PlanBinary(src, a.Home)
 	if err != nil {
@@ -1561,11 +1615,18 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return noteClaudeWait(noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
 	}
-	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
-	state := c.Str("state-dir") // where the agent just started keeps its files, as its run will choose them
-	if state == "" {
-		state, _ = friend.DaemonStateDir(w.home, a.Dir, a.Friend, func(d string) error { return dirThere(filepath.Dir(d)) })
+	// a named session is the bound target, the one it replaces retired (install again is a rebind)
+	if a.Session != "" && a.Session != bound.Session {
+		if err := os.MkdirAll(state, 0o755); err == nil {
+			err = friend.WriteTarget(state, bound.Bind(a.Friend, a.Harness, a.Session, w.now()))
+		}
+		if err != nil {
+			o.Note("target: not recorded: " + err.Error())
+		} else {
+			o.Note("target: " + a.Session + " recorded in " + filepath.Join(state, friend.TargetFile))
+		}
 	}
+	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
 	res, remedy, cannot, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, state, "", c.Dur("within"))
 	if cannot {
 		// a session the adapter cannot drive: the agent would refuse at every start, so it goes again
@@ -1711,6 +1772,93 @@ func noteClaudeWait(o *tool.Out, harness, friendName, wake string) *tool.Out {
 	return o
 }
 
+// rebind names the daemon's session again (docs/SPEC-FRIEND.md, "A gone
+// session target"): the new target checked live, the push proof down, the
+// target recorded and the old one retired, the plist rewritten and reloaded.
+func (w world) rebind(c *tool.Call) *tool.Out {
+	name, session, dry := c.Str("as"), c.Str("session"), c.DryRun()
+	plistPath := friend.Agent{Friend: name, Home: w.home}.PlistPath()
+	plist := w.readPlist(plistPath)
+	if plist == "" {
+		o := tool.Refuse("no agent installed for " + name + " at " + plistPath + "; nothing was written")
+		o.Remedy = "nova-friend install --as " + name + " --harness <h> --dir <d> --session " + session
+		return o
+	}
+	rebound, old, err := friend.RebindPlist(plist, session)
+	if err != nil {
+		return tool.Refuse(plistPath + ": " + err.Error() + "; nothing was written")
+	}
+	args := friend.PlistArgs(plist)
+	harness, dir := friend.FlagOf(args, "harness"), friend.FlagOf(args, "dir")
+	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if err := friend.Gone(context.Background(), deliver); err != nil {
+		return tool.Refuse("the new target is gone: " + err.Error() + "; nothing was written")
+	}
+	state := c.Str("state-dir")
+	if state == "" {
+		if state = friend.FlagOf(args, "state-dir"); state == "" {
+			state = friend.FindStateDir(w.home, dir, name)
+		}
+	}
+	bound, _, err := friend.ReadTarget(state)
+	if err != nil {
+		return tool.Refuse("the bound target: " + err.Error())
+	}
+	if bound.Session == "" {
+		bound.Session = old // no target recorded yet (an agent installed before target.json): the plist's is the one retired
+	}
+	next := bound.Bind(name, harness, session, w.now())
+	o := tool.Done().Fact("friend", name).Fact("harness", harness).Fact("session", session).Fact("was", dash(old)).
+		Fact("retired", dash(strings.Join(next.Retired, ","))).Fact("state", state).Fact("plist", plistPath)
+	if dry {
+		return o.Item("plan", "command", tool.Text("push proof down: rebound from "+dash(old)+" to "+session)).
+			Item("plan", "command", tool.Text("write "+filepath.Join(state, friend.TargetFile))).
+			Item("plan", "command", tool.Text("write "+plistPath)).
+			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, "com.nova.friend-"+name))).
+			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, plistPath))).
+			Note("nothing was written")
+	}
+	addr := c.Str("redis")
+	if addr == "" {
+		addr = friend.FlagOf(args, "redis")
+	}
+	if addr == "" {
+		return tool.Refuse("--redis: the bus store's address, where the push proof is written down; neither --redis, " + RedisEnv + " nor the plist names one")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
+	defer cancel()
+	st, closeStore, err := w.open(ctx, addr)
+	if err != nil {
+		return tool.Refuse(err.Error() + "; nothing was written")
+	}
+	defer closeStore()
+	reason := "rebound from " + dash(old) + " to " + session + ": a fresh session check through the new session is owed"
+	if _, err := (&bus.Bus{Store: st}).ProvePush(ctx, bus.PushProof{Name: name, Harness: harness, Up: false, Reason: reason}); err != nil {
+		return tool.Refuse("the push proof: " + err.Error() + "; nothing was written")
+	}
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if err := friend.WriteTarget(state, next); err != nil {
+		return tool.Refuse("the bound target: " + err.Error())
+	}
+	if err := os.WriteFile(plistPath, []byte(rebound), 0o644); err != nil {
+		return tool.Refuse(err.Error())
+	}
+	ran, err := friend.Load(context.Background(), "com.nova.friend-"+name, plistPath, w.uid, w.launchctl, func() { w.sleep(context.Background(), time.Second) })
+	for _, r := range ran {
+		o.Item("ran", "command", tool.Text(r))
+	}
+	if err != nil {
+		return tool.Fail(err.Error()).Fact("plist", plistPath)
+	}
+	return o.Note("push proof: down (" + reason + ")").
+		Note("the daemon starts on a fresh push proof through " + session + " before anything is delivered; check it: nova-friend status --as " + name + " --dir " + dir)
+}
+
 func (w world) uninstall(c *tool.Call) *tool.Out {
 	a := friend.Agent{Friend: c.Str("as"), Home: w.home}
 	if c.DryRun() {
@@ -1809,6 +1957,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
 	}
+	if s.Session == friend.SessionTargetInvalid {
+		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason))
+		o.Note("the session target is invalid: " + s.SessionID + " is " + s.SessionReason + "; the daemon delivers nothing into it and retries nothing, every message stays pending; name the session again: " + friend.RebindLine(c.Str("as")))
+	}
 	pr, prFound, prErr := friend.ReadPresence(state)
 	switch {
 	case !prFound || prErr != nil: // a daemon from before presence: no word
@@ -1889,6 +2041,8 @@ func (w world) evidence(c *tool.Call, s friend.Status, p friend.Pong, now time.T
 		e.BusBlocked = "daemon down " + friend.Ago(now.Sub(s.At))
 	case s.Session == friend.SessionBroken:
 		e.BusBlocked = "session broken"
+	case s.Session == friend.SessionTargetInvalid:
+		e.BusBlocked = "session target-invalid: " + s.SessionID
 	case s.StoreError != "":
 		e.BusBlocked = "the store: " + s.StoreError
 	}
