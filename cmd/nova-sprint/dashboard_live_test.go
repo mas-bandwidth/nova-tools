@@ -80,9 +80,9 @@ func TestTheDashboardServesTheLiveServersDataOncePerSecond(t *testing.T) {
 		second()
 	}
 	assert.Equal(t, 5, reads(), "one read a second, whoever is looking")
-	assert.Equal(t, []string{"where", "--actor", "boss", "--json", "--cards", "--rows"}, sent[0])
+	assert.Equal(t, []string{"where", "--actor", "boss", "--json", "--cards", "--rows", "--landed-series"}, sent[0])
 	data, stale := api()
-	assert.JSONEq(t, r.boss("nova-sprint where --json --cards"), data, "the page's data is the live server's own")
+	assert.JSONEq(t, r.boss("nova-sprint where --json --cards --landed-series"), data, "the page's data is the live server's own")
 	assert.False(t, stale)
 	for range 3 {
 		api()
@@ -93,7 +93,7 @@ func TestTheDashboardServesTheLiveServersDataOncePerSecond(t *testing.T) {
 	r.boss("nova-sprint add --stream s2 --count 2")
 	second()
 	data, _ = api()
-	assert.JSONEq(t, r.boss("nova-sprint where --json --cards"), data)
+	assert.JSONEq(t, r.boss("nova-sprint where --json --cards --landed-series"), data)
 	assert.Contains(t, data, `"all":5`)
 	good := data
 
@@ -125,7 +125,7 @@ func TestTheDashboardServesTheLiveServersDataOncePerSecond(t *testing.T) {
 	second()
 	assert.Equal(t, 1, strings.Count(log.String(), "FRESH again"), log.String())
 	data, stale = api()
-	assert.JSONEq(t, r.boss("nova-sprint where --json --cards"), data)
+	assert.JSONEq(t, r.boss("nova-sprint where --json --cards --landed-series"), data)
 	assert.False(t, stale)
 	code, _ = get("/healthz")
 	assert.Equal(t, http.StatusOK, code)

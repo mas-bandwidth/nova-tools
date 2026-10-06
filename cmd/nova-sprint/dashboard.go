@@ -155,7 +155,7 @@ func dashboardUpstream(pull string) (string, error) {
 // The rows give each critical card its stream, so the critical path follows the page's
 // release (sprintdash.placed); the server drops them.
 func (a *app) whereJSON(addr string, given bool) ([]byte, error) {
-	argv := []string{"where", "--json", "--cards", "--rows"}
+	argv := []string{"where", "--json", "--cards", "--rows", "--landed-series"}
 	if given {
 		argv = append(argv, "--redis", addr)
 	}

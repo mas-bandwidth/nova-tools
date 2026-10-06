@@ -526,6 +526,10 @@ type whereView struct {
 	// Rows is where --json --rows's: every primary's row of the work table, in work
 	// order, its fields but the brief; absent without --rows.
 	Rows []primaryRow `json:"rows,omitempty"`
+	// LandedSeries is where --json --landed-series's: the cards landed per 10 minutes over
+	// the last 24 hours, friends and fleet by the worker of the landed attempt
+	// (sprint.LandedSeriesOf, docs/SPEC-SPRINT.md); absent without the flag.
+	LandedSeries *sprint.LandedSeries `json:"landed_series,omitempty"`
 	// Ready, Width, Buffer and Low are the ready buffer a program reads off
 	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
 	// work table's streams, the total width of the fleet members that are up,
@@ -633,6 +637,7 @@ type whereRun struct {
 	all     bool
 	cards   bool
 	rows    bool
+	series  bool
 	release releaseFlag
 	every   time.Duration
 	stale   time.Duration
@@ -682,6 +687,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
+	series := fs.Bool("landed-series", false, "with --json: also `landed_series`, the cards landed per 10 minutes over the last 24 hours, split friends and fleet by the worker of the landed attempt, each landing once (a sentinel's release is not work), read from the epoch's log, so the dashboard's Landings panel runs no loop of its own")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	var rel releaseFlag
@@ -716,7 +722,10 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *rows && !c.json {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if *series && !c.json {
+		return refuse(stderr, "where", "--landed-series is a field of the JSON view: give --json with it")
+	}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, series: *series, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -783,6 +792,14 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", a.readFailed("where", err, stderr), false
 			}
 			v.Rows = rowsView(s)
+		}
+		if r.c.json && r.series {
+			lines, err := st.Log(ctx)
+			if err != nil {
+				return "", a.readFailed("where", err, stderr), false
+			}
+			ls := sprint.LandedSeriesOf(lines, a.now())
+			v.LandedSeries = &ls
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)

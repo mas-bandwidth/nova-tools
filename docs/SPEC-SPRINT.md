@@ -939,6 +939,24 @@ time goes, from the medians of `all`. A card whose path skips a stamping step
 go through the steps above) has no sample for the stages that need it.
 (`TestStageTimesGiveMedianAndP90PerStage`).
 
+### The landed series
+
+`where --json --landed-series` carries `landed_series`: the cards landed per 10 minutes over
+the last 24 hours, split friends and fleet by the worker of the landed attempt, so the
+dashboard's Landings panel reads one verb and runs no loop of its own (the owner, 2026-10-05:
+"We need to get away from these one shot shell scripts."). `sprint.LandedSeriesOf` reads it
+off the epoch's log. A landing is a move of the work table to `<stream>:landed` from any place
+but `waiting` (a sentinel's release is not work), counted once per card at its first time. Its
+worker is the member of the last `<member>:ok` move of the card's work attempt
+(`<card>.w<n>`); `friend.<name>` is a friend, any other member a fleet machine, and the lander
+is never the worker. The object holds `bucket_seconds` (600), `buckets` (144), `start` (the
+first bucket's start; the last bucket is the one now is in), `friends` and `fleet` (144 counts
+each, oldest first), `totals` and `last_hour` (`friends`, `fleet`, `unknown`: a card whose work
+attempt the log does not hold, counted in neither series) and `workers` (landings by worker, a
+friend by name). The log is the current epoch's: a clear starts the series over. The flag
+needs `--json`; the dashboard's own read sends it
+(`TestTheLandedSeriesCountsEachCardOnceByItsWorker`, `TestWhereCarriesTheLandedSeriesOnlyWhenAsked`).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
@@ -3560,7 +3578,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards; a set move the card is in is printed as the card's own line with the set's size, `(in a set of n)`, never the first card's words with the rest listed; `--json` keeps the set line whole), --stream, --member, --since, --at-epoch, --json (section 17); a line's words are printed under it, a brief by its size and the card that shows it (`card <id>`), never whole (`--json` carries it) |
 | check, repair | section 9 and section 10 |
 | seat check | the machinery under the sprint: server, store, loop, beats, readers, dashboard, installed versions, merge queue, the seat's push proof; prints one line per check and an exit code (0 if all OK, 1 if any check is DOWN); `machinery` is an alias (The seat check, below) |
-| where | the view, once or `--watch` (redrawn in place, section 1): work, friends and fleet; `--json --cards` also carries `merging`, every merging primary with its stream, head and attempt, the queue with heads in one call; `--json --rows` carries every primary's row of the work table in one call (`rows`: id, stream, state, score and its fields but the brief, in work order; `card <id> --brief` prints the brief), so a child reads every card at once and never loops `card` calls (the comfort list of 2026-10-03, item 8; `--cards`, the dashboard's, stays bounded by the fleet's width); `--all` draws the readers and merge tables too (hidden from the default frame; the owner, 2026-10-02: "please hide the reader and merge tables"); `--release [<name>]` prints count of cards left per release from stream rows (`RELEASE <name> cards=<n>`, `cards=0` when no streams match); its title line names the seat's holder (`SPRINT TABLE  coordinator friend-b`, with `(taken 5:21 PM)` after a take until the next handover is given); `--json` carries every table and the pending operation, the stalled streams, `streams` (each stream row with its `release`), `releases` (cards left per release), the people, the coordinator and `seat`, its last change |
+| where | the view, once or `--watch` (redrawn in place, section 1): work, friends and fleet; `--json --cards` also carries `merging`, every merging primary with its stream, head and attempt, the queue with heads in one call; `--json --landed-series` carries `landed_series`, the landed-per-10-minute series of the last 24 hours by friends and fleet; `--json --rows` carries every primary's row of the work table in one call (`rows`: id, stream, state, score and its fields but the brief, in work order; `card <id> --brief` prints the brief), so a child reads every card at once and never loops `card` calls (the comfort list of 2026-10-03, item 8; `--cards`, the dashboard's, stays bounded by the fleet's width); `--all` draws the readers and merge tables too (hidden from the default frame; the owner, 2026-10-02: "please hide the reader and merge tables"); `--release [<name>]` prints count of cards left per release from stream rows (`RELEASE <name> cards=<n>`, `cards=0` when no streams match); its title line names the seat's holder (`SPRINT TABLE  coordinator friend-b`, with `(taken 5:21 PM)` after a take until the next handover is given); `--json` carries every table and the pending operation, the stalled streams, `streams` (each stream row with its `release`), `releases` (cards left per release), the people, the coordinator and `seat`, its last change |
 | coordinator | moves the seat: `coordinator <name> --reason <text>`, given by its holder or the owner; `--take --approved-by <owner>`, taken by `<name>` itself; prints the handover after (below) |
 | handover | what the next seat needs, from the store, in one screen (below); `--json` |
 | seat install, seat uninstall | the seat's push loop as a service of this machine ("Handing over the seat"): `seat install` writes it and loads it, `seat uninstall` unloads it and removes its file; `--dir`, `--dry-run`, `--json`; run where they are typed, never by the server |

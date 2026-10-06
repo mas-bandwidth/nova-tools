@@ -22,10 +22,10 @@ func TestDashboardReadsTheSprintAsWhereJSONDoes(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1,m2")
 	ta.ok("add --stream s1 --count 3")
-	want := ta.ok("where --json --cards")
+	want := ta.ok("where --json --cards --landed-series")
 	got, err := ta.a.whereJSON("", false)
 	require.NoError(t, err)
-	assert.JSONEq(t, ta.ok("where --json --cards --rows"), string(got), "the rows place the critical cards (sprintdash.placed)")
+	assert.JSONEq(t, ta.ok("where --json --cards --rows --landed-series"), string(got), "the rows place the critical cards (sprintdash.placed)")
 
 	srv := &sprintdash.Server{Read: func() ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}
 	w := httptest.NewRecorder()
