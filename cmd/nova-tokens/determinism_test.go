@@ -34,7 +34,12 @@ func fakeGit(t *testing.T) (logPath string) {
 		err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755)
 		require.NoError(t, err, err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	setgetenv(func(key string) string {
+		if key == "PATH" {
+			return bin + string(os.PathListSeparator) + getenv("PATH")
+		}
+		return getenv(key)
+	})
 	return logPath
 }
 

@@ -225,10 +225,10 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 // With asToolEnv set it is nova-tokens itself, on the process's real stdout and stderr, so
 // a test can see what a library writes to os.Stderr behind run's injected streams (#3463).
 func TestMain(m *testing.M) {
-	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
+	if mode := getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
-	if os.Getenv(asToolEnv) != "" {
+	if getenv(asToolEnv) != "" {
 		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
 	}
 	os.Exit(m.Run())
