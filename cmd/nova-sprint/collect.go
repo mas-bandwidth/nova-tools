@@ -189,14 +189,15 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 				r.Head = x.Head
 				r.Failed = x.Failed
 			} else {
-				fr, err := friendFinish(ctx, x.Friend, p, report, a.tip)
+				fr, err := friendFinish(ctx, x.Friend, p, report, filepath.Join(*root, x.From+"-working", "inbox", x.Job, "BRIEF.md"), a.tip)
 				if err != nil {
 					refused++
 					say(fmt.Sprintf("COLLECT %s REFUSED %s; the card is not finished, and the next collect reads the report again", x.Card, oneline.Escape(err.Error())))
 					continue
 				}
-				if fr.Failed {
-					// the report's first 600 characters, as the daemon's outbox pass carries them
+				if fr.Failed && x.Failed {
+					// the report's first 600 characters, as the daemon's outbox pass carries them;
+					// a LAND held for its fix (friendFinish) keeps the words that say why
 					fr.Report = x.Report
 					if globs, ok := member.PathsProposed(report); ok && len(globs) > 0 {
 						fr.Report += "; " + member.ProposedKey + " " + strings.Join(globs, ",")

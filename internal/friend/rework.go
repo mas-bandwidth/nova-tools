@@ -234,9 +234,29 @@ func UnaddressedText(fix string, missing []string) string {
 	return fmt.Sprintf("held by the daemon: the report says LAND and does not address THE ONE THING LEFT (%s); the key words it does not name: %s.", oneLine(fix, 300), strings.Join(missing, ", "))
 }
 
+// LandHeld is the rule a LAND on a reworked card is read by, the daemon's outbox pass and
+// friend sync (cmd/nova-sprint) alike: the fix of the brief at briefPath (the lane's inbox
+// BRIEF.md, the brief she read), else of server, the brief the server renders; a report that
+// does not address it is held, and held is the words that say why (UnaddressedText). A brief
+// that asks no fix holds nothing.
+func LandHeld(report, briefPath, server string) (held string, ok bool) {
+	fix := jobFix(briefPath, server)
+	if fix == "" {
+		return "", false
+	}
+	missing, addressed := FixAddressed(report, fix)
+	if addressed {
+		return "", false
+	}
+	return UnaddressedText(fix, missing), true
+}
+
 // jobFix is the fix a job's brief asks: the BRIEF.md in her inbox, the brief the lane read,
 // else the server's brief.
 func jobFix(path, server string) string {
+	if path == "" {
+		return BriefFix(server)
+	}
 	if raw, err := os.ReadFile(path); err == nil {
 		if fix := BriefFix(string(raw)); fix != "" {
 			return fix

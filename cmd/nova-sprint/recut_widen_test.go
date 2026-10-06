@@ -102,7 +102,7 @@ func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 		const sha = "0123456789abcdef0123456789abcdef01234567"
 		p := sprint.Packet{Card: "c.w1", Primary: "c", Attempt: 1, Branch: "sprint/c", Brief: "x\nREPO: mas-bandwidth/nova-tools\n"}
 		tip := func(context.Context, string, string) (string, error) { return sha, nil }
-		fr, err := friendFinish(context.Background(), "f", p, "Verdict: HOLD\nHead: "+sha+"\n\nPATHS too narrow.\n\nPATHS-PROPOSED: b.go\n", tip)
+		fr, err := friendFinish(context.Background(), "f", p, "Verdict: HOLD\nHead: "+sha+"\n\nPATHS too narrow.\n\nPATHS-PROPOSED: b.go\n", "", tip)
 		require.NoError(t, err)
 		assert.True(t, fr.Failed)
 		assert.Equal(t, sha, fr.Head)

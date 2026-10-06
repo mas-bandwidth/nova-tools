@@ -63,7 +63,9 @@ func friendJobOf(p sprint.Packet) string {
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
 // epoch and attempt, the branch to push and the report to write), the working-directory
 // line of docs/FRIENDS.md, a later attempt's start and why it exists (as a child's JOB.md
-// says them), then the brief as a child is handed it (the rules it names injected).
+// says them), then the brief as a child is handed it (the rules it names injected); a rework's
+// with its fix first (friend.ReworkedBrief, the form the daemon writes: THE ONE THING LEFT and
+// the reader's finding as the first lines after STATUS, the card's STOP the fix alone).
 func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
@@ -88,7 +90,7 @@ func friendBrief(name string, p sprint.Packet) string {
 		}
 	}
 	b.WriteString("\n" + strings.TrimRight(brief, "\n") + "\n")
-	return b.String()
+	return friend.ReworkedBrief(b.String())
 }
 
 // friendStart is where a friend's later attempt starts, the rule a member's rework is staged
@@ -182,7 +184,10 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 
 // friendFinish is the finish a friend's report gives her card: LAND with a full sha Head
 // that is origin's tip of the card's branch (tip, read once) is work ok at that tip, as a
-// member's ok finish; HOLD, FAIL (or FAILED, BROKEN) is work that came back failed, its
+// member's ok finish, unless the report does not address the fix of a reworked card's brief
+// (friend.LandHeld: the brief at briefPath, her inbox BRIEF.md, else friendBrief), which is a
+// HOLD as the daemon's outbox pass finishes it (failed, the head kept, the report saying why;
+// the model is internal/friend/tla/OutboxFinish.tla, SyncFinish); HOLD, FAIL (or FAILED, BROKEN) is work that came back failed, its
 // report the first paragraph, as a member's failed finish raises "work came back failed";
 // a LAND with no full sha Head, or any other verdict, is failed too, saying what the
 // report lacks. The report begins with the friend's name, so it is never read as a
@@ -190,7 +195,7 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 // that is not origin's tip (naming both shas), a branch origin does not hold, a card with
 // no REPO: line, or a tip that could not be read; the card is not finished, and the next
 // sync reads the report again.
-func friendFinish(ctx context.Context, name string, p sprint.Packet, report string, tip tipFn) (sprint.FinishReq, error) {
+func friendFinish(ctx context.Context, name string, p sprint.Packet, report, briefPath string, tip tipFn) (sprint.FinishReq, error) {
 	verdict, head, para := friendReportOf(report)
 	para = oneline.Cap(para, maxFriendReport)
 	row := sprint.FriendRow(name)
@@ -212,6 +217,10 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 			return r, fmt.Errorf("Head %s is not origin's tip of %s, %s", head, p.Branch, at)
 		}
 		r.Head, r.Report = at, "friend "+name+" LAND: "+para
+		// a LAND that does not address its brief's first line is a HOLD (friend.LandHeld)
+		if held, ok := friend.LandHeld(report, briefPath, friendBrief(name, p)); ok {
+			r.Failed, r.Report = true, "friend "+name+" "+VerdictHold+": "+held+" "+para
+		}
 	case verdict == VerdictLand:
 		r.Failed, r.Report = true, "friend "+name+" LAND with no Head: <full sha>; "+para
 	case verdict == VerdictHold || verdict == VerdictFail || verdict == "FAILED" || verdict == "BROKEN":
@@ -398,7 +407,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			}
 			continue
 		}
-		done, err := a.friendCollect(ctx, st, name, p, report, "", at, say)
+		done, err := a.friendCollect(ctx, st, name, p, report, brief, "", at, say)
 		if err != nil {
 			return delivered, finished, err
 		}
@@ -775,9 +784,10 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 // working for the next sync to read the report again; done says the card was finished. op,
 // when not empty, is the caller's --op: the finish runs under op.collect.<its args> (one
 // operation id per card, as land.go gives each merge its own), so a retry of the verb with
-// the same --op returns the recorded result.
-func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p sprint.Packet, report, op string, at time.Time, say func(string)) (done bool, err error) {
-	r, err := friendFinish(ctx, name, p, report, a.tip)
+// the same --op returns the recorded result. briefPath is her inbox/<job>/BRIEF.md, the brief
+// whose fix a LAND is read against (friendFinish).
+func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p sprint.Packet, report, briefPath, op string, at time.Time, say func(string)) (done bool, err error) {
+	r, err := friendFinish(ctx, name, p, report, briefPath, a.tip)
 	if err != nil {
 		say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 		return false, nil

@@ -144,7 +144,7 @@ func TestAHoldReportRaisesTheWorkCameBackFailedJudgment(t *testing.T) {
 		t.Fatal("a LAND with no full sha asked for a tip")
 		return "", nil
 	}
-	r, err := friendFinish(context.Background(), "amy", sprint.Packet{Card: "c.w1", Gen: 1}, "Verdict: LAND\nHead: abc\n\nDone.\n", noTip)
+	r, err := friendFinish(context.Background(), "amy", sprint.Packet{Card: "c.w1", Gen: 1}, "Verdict: LAND\nHead: abc\n\nDone.\n", "", noTip)
 	require.NoError(t, err)
 	assert.Equal(t, "friend amy LAND with no Head: <full sha>; Done.", r.Report)
 }
@@ -164,7 +164,7 @@ func TestAReportWithNoVerdictIsFailedNeverOk(t *testing.T) {
 			t.Fatalf("a report with no LAND asked for a tip: %q", report)
 			return "", nil
 		}
-		r, err := friendFinish(context.Background(), "amy", sprint.Packet{Card: "c.w1", Gen: 1}, report, noTip)
+		r, err := friendFinish(context.Background(), "amy", sprint.Packet{Card: "c.w1", Gen: 1}, report, "", noTip)
 		require.NoError(t, err)
 		assert.True(t, r.Failed, "%q: no LAND/HOLD/FAIL verdict is failed, never ok", report)
 		assert.Contains(t, r.Report, "is not LAND, HOLD or FAIL", "%q", report)
@@ -221,7 +221,7 @@ func TestAnUpperCaseHeadStillMatchesTheTip(t *testing.T) {
 	r, err := friendFinish(context.Background(), "amy",
 		sprint.Packet{Card: "c.w1", Gen: 1, Branch: "sprint/c.w1.g1.e0",
 			Brief: "c.w1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy"},
-		"Verdict: LAND\nHead: "+upper+"\n\nDone.\n",
+		"Verdict: LAND\nHead: "+upper+"\n\nDone.\n", "",
 		tipIs(t, landHead))
 	require.NoError(t, err)
 	assert.False(t, r.Failed, "an upper-case Head is a full sha: the LAND branch reads the tip")
@@ -373,7 +373,8 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	text := friendBrief("amy", p)
 	assert.Contains(t, text, "This attempt starts from the current tip of sprint/s1 on origin, never from an older base: fetch it and start your branch there. "+
 		"Carry the work of attempt 2 onto it yourself: its head, "+landHead+", is the last pushed by any attempt before this one (`git diff origin/sprint/s1..."+landHead+"` shows that work); where it does not apply cleanly, redo it. "+
-		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\nThe coordinator asks: assert the bound\n")
+		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
+	assert.Equal(t, "THE ONE THING LEFT: assert the bound", strings.Split(text, "\n")[1], "a rework's fix is the first line after STATUS")
 	assert.NotContains(t, text, "start from it.", "never the old head")
 
 	p.BaseHead, p.BaseAttempt = "", 0

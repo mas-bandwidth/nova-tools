@@ -241,11 +241,8 @@ func (l *loop) outboxStep(now time.Time) {
 		written := verdict
 		if verdict == "LAND" {
 			// a LAND that does not address its brief's first line is a HOLD (rework.go)
-			if fix := jobFix(card.Brief, h.Brief); fix != "" {
-				if missing, ok := FixAddressed(report, fix); !ok {
-					held := UnaddressedText(fix, missing)
-					verdict, report, written = "HOLD", held+"\n\n"+report, "LAND, "+held
-				}
+			if held, ok := LandHeld(report, card.Brief, h.Brief); ok {
+				verdict, report, written = "HOLD", held+"\n\n"+report, "LAND, "+held
 			}
 		}
 		branch := h.Branch
