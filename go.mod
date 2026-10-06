@@ -16,6 +16,7 @@ require (
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/gopher-lua v1.1.1
+	go.uber.org/goleak v1.3.0
 	golang.org/x/mod v0.41.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
