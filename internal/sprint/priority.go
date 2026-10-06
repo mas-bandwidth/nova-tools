@@ -219,8 +219,11 @@ func WhyNotDealt(s *Snapshot, id string, seats []FriendSeat) ([]WhyLine, string)
 		}
 		add("group", "level %d (stream %s): the groups ahead of it are dealt first: %s", level, c.Row, strings.Join(parts, ", "))
 	}
-	order := dealOrder(s, ready)
-	add("order", "%d ready ahead of it in the deal's order (by level, then stream turns, then its stream's own order)", max(0, slices.Index(order, c)))
+	if i := slices.Index(dealOrder(s, ready), c); i >= 0 {
+		add("order", "%d ready ahead of it in the deal's order (by level, then stream turns, then its stream's own order)", i)
+	} else {
+		add("order", "not in the deal's order: its stream is held")
+	}
 	if StreamHeld(s, c.Row) {
 		add("hold", "its stream %s is held (%s): dealt nowhere until nova-sprint unhold %s", c.Row, orDash(s.StreamCtl(c.Row).F(FieldHeldReason)), c.Row)
 	} else {
@@ -229,9 +232,9 @@ func WhyNotDealt(s *Snapshot, id string, seats []FriendSeat) ([]WhyLine, string)
 	name, named := FriendCard(c)
 	switch {
 	case OnlyFriend(c):
-		add("who", "WHO: only friend %s: it waits for her, never a machine or another friend", name)
+		add("who", "WHO: only friend %s: it waits for that friend, never a machine or another friend", name)
 	case named && name != "":
-		add("who", "WHO: friend %s: offered to her first, then any friend, then the machines", name)
+		add("who", "WHO: friend %s: offered to that friend first, then any friend, then the machines", name)
 	case named:
 		add("who", "WHO: friend: offered to any friend first, then the machines")
 	default:
@@ -253,9 +256,9 @@ func WhyNotDealt(s *Snapshot, id string, seats []FriendSeat) ([]WhyLine, string)
 		case f.Status != Up:
 			why = f.Status
 		case !friendTakes(f, tier):
-			why = "not her tier"
+			why = "tier not taken"
 		case slices.Contains(left, f.Name):
-			why = "it has left her"
+			why = "it has left this friend"
 		case free <= 0:
 			why = "full"
 		}

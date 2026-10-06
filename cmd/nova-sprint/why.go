@@ -64,7 +64,7 @@ why <card> prints, for a ready primary, exactly what keeps it from dealing
 this tick, one line each: group (its level and the groups of a higher level
 with a ready card, dealt first), order (how many ready cards the deal takes
 before it), hold (its stream's hold), who (its WHO line), tier (its tier and
-route), friends (each friend, eligible or why not, and her room), machines
+route), friends (each friend, eligible or why not, and its room), machines
 (the members up and their room) and bound (a redeal or staging bound). A card
 not ready gets one line that says what it is.
 `)

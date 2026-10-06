@@ -2356,7 +2356,7 @@ and it is the coordinator's decision, receipted.
   what keeps it from dealing this tick, one line each: `group` (its level and
   the groups of a higher level with a ready card), `order` (the ready cards
   dealt before it), `hold`, `who`, `tier`, `friends` (each friend, eligible or
-  why not, and her room), `machines` (the members up and their room) and
+  why not, and its room), `machines` (the members up and their room) and
   `bound`. The model is `tla/Deal.tla`: `LevelFirst`, a card of a higher
   level is never passed over for a lower one while a worker eligible for it
   has room (`TestAHigherLevelGroupIsDealtBeforeALowerOneWithoutReorderingAStream`).

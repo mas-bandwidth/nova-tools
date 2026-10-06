@@ -153,7 +153,7 @@ func TestWhyNamesWhatKeepsAReadyCardFromDealing(t *testing.T) {
 	assert.Contains(t, by["hold"], "not held")
 	assert.Contains(t, by["who"], "no WHO line")
 	assert.Contains(t, by["tier"], "flash")
-	assert.Contains(t, by["friends"], "stella not her tier, room 2 of 2")
+	assert.Contains(t, by["friends"], "stella tier not taken, room 2 of 2")
 	assert.Contains(t, by["friends"], "amy down")
 	assert.Contains(t, by["machines"], "2 up, room 4 free of 4")
 	assert.Equal(t, "none", by["bound"])
