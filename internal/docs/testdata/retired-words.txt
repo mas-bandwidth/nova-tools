@@ -10,12 +10,10 @@ retired	git bus	the Redis bus
 allow	.github/workflows/ci.yml	git bus	1
 allow	cmd/nova-friend/check_test.go	asleep	3
 allow	cmd/nova-friend/main.go	asleep	3
-allow	docs/CLI.md	asleep	5
+allow	docs/CLI.md	asleep	4
 allow	docs/CLI.md	git bus	1
 allow	docs/SPEC-BUS.md	git bus	2
 allow	docs/SPEC-FRIEND.md	asleep	2
-allow	docs/SPEC-SPRINT.md	asleep	8
-allow	docs/SPEC-SPRINT.md	untiered	1
 allow	docs/SPEC-UPDATE.md	git bus	2
 allow	internal/ci/hosted_shards_class_test.go	git bus	1
 allow	internal/friend/check.go	asleep	6

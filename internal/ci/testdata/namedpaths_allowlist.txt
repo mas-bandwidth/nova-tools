@@ -82,3 +82,23 @@ internal/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and 
 internal/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
+internal/friend/chaos_functional_test.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/serve.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/store/friends.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/presence.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/friend_loop.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprint/coordinator_pass.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-sprint/friendcards_verb.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+docs/SPEC-SPRINT-DASHBOARD.md in the nova-sprint repository since 2026-10-04 (ideas#850)
+docs/SPEC-WORK-V1.md in the nova-sprint repository since 2026-10-04 (ideas#850)
+docs/SPEC-WORKLANG.md in the nova-sprint repository since 2026-10-04 (ideas#850)
+docs/SPRINT-COORDINATOR-SEAT.md in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprintdash/page in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/ci/sprint_tables_lock_class_test.go in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/sprintdash in the nova-sprint repository since 2026-10-04 (ideas#850)
+cmd/nova-work in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/provbalance in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/workfile in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/workgh in the nova-sprint repository since 2026-10-04 (ideas#850)
+internal/worklang in the nova-sprint repository since 2026-10-04 (ideas#850)
+tools/sprintsize in the nova-sprint repository since 2026-10-04 (ideas#850)
