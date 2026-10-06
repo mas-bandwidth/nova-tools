@@ -231,3 +231,27 @@ func mustRead(t *testing.T, path string) []byte {
 	require.NoError(t, err)
 	return b
 }
+
+// TestFewerThanTwoReadersUpStaysOneJudgmentWhileAFriendReadWaits pins the log
+// of 2026-10-05: a frontier read waiting for a friend raised fewer than two
+// readers up, the machine ask closed it on the next tick, and the friend ask
+// raised it again, a new judgment every two ticks (3,949 lines in two hours).
+// The judgment is one, raised once and open while the read waits.
+func TestFewerThanTwoReadersUpStaysOneJudgmentWhileAFriendReadWaits(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b")
+	putReview(w, "s1-1", "s1-1: work (s1) tier: frontier\n", 1, 1, "primary-head")
+	seats := []FriendSeat{frontierSeat("amy", 2, Down, "")}
+	for range 6 {
+		askReaders(t, w, seats)
+		w.tick(2 * time.Second)
+	}
+	require.Len(t, w.notesOf(NFewReaders), 1, "raised once, never again each tick")
+	open := 0
+	for _, o := range w.s.Open {
+		if o.Note.Type == NFewReaders {
+			open++
+		}
+	}
+	require.Equal(t, 1, open, "the judgment stays open while the read waits")
+}

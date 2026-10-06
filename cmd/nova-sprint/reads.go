@@ -996,6 +996,16 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		if logical == sprint.Readers {
 			// each reader's width beside reading, derived from its fleet row
 			t = readersWidths(t, shapes[slices.Index(sprint.ViewOrder, sprint.Fleet)])
+			// each reader served or unserved from its beat (reader.go): one read of the beats
+			var keys []string
+			for _, r := range t.Rows {
+				keys = append(keys, r.Key)
+			}
+			beats, err := st.ReaderBeats(ctx, keys)
+			if err != nil {
+				return whereView{}, "", err
+			}
+			t = readersServed(t, beats, now)
 		}
 		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
@@ -1244,6 +1254,9 @@ func readersAll(t ntable.Table) ntable.Table {
 		width = strconv.Itoa(total)
 	}
 	texts := map[string]string{sprint.FieldWidth: width}
+	if slices.Contains(columnNames(t.Columns), servedColumn) {
+		texts[servedColumn] = servedSummary(t)
+	}
 	if slices.Contains(columnNames(t.Columns), sprint.ReaderTiers) {
 		word := readerTiersSummary(t)
 		if word == "" {
