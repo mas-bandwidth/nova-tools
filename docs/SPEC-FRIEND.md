@@ -795,14 +795,19 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
 
 - The packet is `PacketOf`: the server's `repo`, `base`, `branch` and `attempt` in the
   `friend cards` answer when it sends them, else the brief's own lines (`REPO:`, `BASE:`, and
-  the STATUS line's branch and attempt). A read, and a work card whose brief names no `REPO`,
+  the STATUS line's branch and attempt). The brief's `REPO` and `BASE` are read through the
+  tree's one header reader (`cardhdr.Value`, `cardhdr.ParseBase`), never by hand: a pinned
+  `BASE: <ref>@<sha40>`, the form card trees write, is the ref and its pin, and anything after
+  the `@` that is no full sha is refused. A read, and a work card whose brief names no `REPO`,
   stage nothing here. A packet git could misread (a repository that is no `owner/name`, a base
   or branch that is no ref name, a job that is no single path element) is refused before any
   git runs.
 - One bare mirror per repository, `mirrors/<owner>/<name>.git`, cloned the first time with her
   account's git credentials (the daemon's environment, `GIT_TERMINAL_PROMPT=0`), fetched before
   a stage unless fetched within `MirrorFreshFor` (10 s), so a stage is a fetch and a local
-  clone: seconds. The base is a branch, else a tag, else a full sha, in the mirror.
+  clone: seconds. The base is its pin when it has one (a pin the mirror does not hold is the
+  card's judgment, never a checkout of the ref's tip), else a branch, else a tag, else a full
+  sha, in the mirror.
 - The checkout is cloned from the mirror beside the job (`jobs/<job>/.repo.staging`), its
   origin set to the repository itself (never the mirror, so the child's push goes out), checked
   out at the base on the card's branch, and moved in whole as `jobs/<job>/repo`; `JOB.md` is

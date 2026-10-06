@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -51,11 +52,12 @@ const (
 )
 
 // Packet is what a held work card says about its checkout: the repository (owner/name), the
-// base it starts at (a branch, a tag or a full sha), the branch its work is pushed to, and its
+// base it starts at (a branch, a tag or a full sha) and its pin (BaseSha, the commit a
+// `BASE: <ref>@<sha40>` names; "" when unpinned), the branch its work is pushed to, and its
 // attempt.
 type Packet struct {
-	Card, Job, Repo, Base, Branch string
-	Attempt                       int
+	Card, Job, Repo, Base, BaseSha, Branch string
+	Attempt                                int
 }
 
 var (
@@ -81,13 +83,16 @@ func PacketOf(h HeldCard) (Packet, bool) {
 	if m := statusAttemptRE.FindStringSubmatch(status); p.Attempt == 0 && m != nil {
 		p.Attempt, _ = strconv.Atoi(m[1]) // ignored: the pattern is digits
 	}
-	for _, line := range strings.Split(h.Brief, "\n") {
-		if v, ok := strings.CutPrefix(line, "REPO:"); ok && p.Repo == "" {
-			p.Repo = strings.TrimSpace(v)
-		}
-		if v, ok := strings.CutPrefix(line, "BASE:"); ok && p.Base == "" {
-			p.Base = strings.TrimSpace(v)
-		}
+	if v, ok := cardhdr.Value(h.Brief, "REPO"); ok && p.Repo == "" {
+		p.Repo = v
+	}
+	if v, ok := cardhdr.Value(h.Brief, "BASE"); ok && p.Base == "" {
+		p.Base = v
+	}
+	// a pinned base (<ref>@<sha40>, as card trees write it) is its ref and its pin; one that
+	// does not read stays as written, for check to refuse
+	if ref, sha, ok := cardhdr.ParseBase(p.Base); ok && p.BaseSha == "" {
+		p.Base, p.BaseSha = ref, sha
 	}
 	return p, p.Repo != ""
 }
@@ -101,6 +106,8 @@ func (p Packet) check() error {
 		return fmt.Errorf("its REPO %q is no owner/name", p.Repo)
 	case !validRef(p.Base):
 		return fmt.Errorf("its BASE %q is no branch, tag or sha", p.Base)
+	case p.BaseSha != "" && !shaRE.MatchString(p.BaseSha):
+		return fmt.Errorf("its BASE pin %q is no full sha", p.BaseSha)
 	case !validRef(p.Branch):
 		return fmt.Errorf("its branch %q is no branch name", p.Branch)
 	}
@@ -322,20 +329,28 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 	return mirror, nil
 }
 
-// base is the commit p's base names in the mirror: a branch, else a tag, else a full sha. A
-// base the repository does not hold is the card's judgment.
+// base is the commit p's base names in the mirror: its pin when it has one, else a branch,
+// else a tag, else a full sha. A base the repository does not hold is the card's judgment; a
+// pin it does not hold is never read as its ref.
 func (s *Stager) base(ctx context.Context, mirror string, p Packet) (string, error) {
 	refs := []string{"refs/heads/" + p.Base, "refs/tags/" + p.Base}
 	if shaRE.MatchString(p.Base) {
 		refs = append(refs, p.Base)
+	}
+	if p.BaseSha != "" {
+		refs = []string{p.BaseSha}
 	}
 	for _, ref := range refs {
 		if sha, err := s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}"); err == nil && shaRE.MatchString(sha) {
 			return sha, nil
 		}
 	}
-	return "", &NotStageable{Repo: p.Repo, Card: p.Card, Why: fmt.Sprintf("its base %s is no branch, tag or commit of %s", p.Base, s.url(p.Repo)),
-		Remedy: fmt.Sprintf("push %s to %s, or rework the card onto a base it holds", p.Base, p.Repo)}
+	named := p.Base
+	if p.BaseSha != "" {
+		named = p.Base + "@" + p.BaseSha
+	}
+	return "", &NotStageable{Repo: p.Repo, Card: p.Card, Why: fmt.Sprintf("its base %s is no branch, tag or commit of %s", named, s.url(p.Repo)),
+		Remedy: fmt.Sprintf("push %s to %s, or rework the card onto a base it holds", named, p.Repo)}
 }
 
 // JobText is a staged job's JOB.md: the card-contract shape (docs/SPEC-CARD-CONTRACT.md), the

@@ -240,3 +240,47 @@ func TestPacketOfAndItsRefusals(t *testing.T) {
 		assert.Equal(t, "x", ns.Card)
 	}
 }
+
+// A card tree pins its base as `BASE: <ref>@<sha40>`: PacketOf reads it through the tree's one
+// header reader (cardhdr), the ref as the base and the sha as its pin, and the job is staged at
+// the pinned commit even after the ref has moved on; a pin the repository does not hold is
+// the card's judgment, never a checkout of the ref's tip.
+func TestAPinnedBaseIsStagedAtItsSha(t *testing.T) {
+	t.Parallel()
+	g := testkit.Git(t, 1)
+	g.Commit(g.Clones[0], map[string]string{"README.md": "the tools\n"})
+	env := stageEnv(t)
+	gitIn(t, env, g.Clones[0], "push", "-q", g.Remote, "HEAD:refs/heads/sprint/mechanical")
+	pinned := gitIn(t, env, g.Remote, "rev-parse", "sprint/mechanical")
+	g.Commit(g.Clones[0], map[string]string{"later.md": "landed after the pin\n"})
+	gitIn(t, env, g.Clones[0], "push", "-q", g.Remote, "HEAD:refs/heads/sprint/mechanical")
+	require.NotEqual(t, pinned, gitIn(t, env, g.Remote, "rev-parse", "sprint/mechanical"), "the ref moved on")
+
+	p, ok := PacketOf(stagedCard("pin.w1", "working", "mas-bandwidth/nova-tools", "sprint/mechanical@"+pinned))
+	require.True(t, ok)
+	assert.Equal(t, Packet{Card: "pin.w1", Job: "pin.w1~15", Repo: "mas-bandwidth/nova-tools", Base: "sprint/mechanical", BaseSha: pinned,
+		Branch: "sprint/pin.w1.g1.e15", Attempt: 1}, p)
+
+	dir := t.TempDir()
+	stager := &Stager{Dir: dir, Env: env, URL: func(string) string { return g.Remote }}
+	sha, err := stager.Stage(context.Background(), p)
+	require.NoError(t, err)
+	assert.Equal(t, pinned, sha)
+	checkout := filepath.Join(dir, "jobs", p.Job, "repo")
+	assert.Equal(t, pinned, gitIn(t, env, checkout, "rev-parse", "HEAD"), "staged at the pin, not the ref's tip")
+	assert.Equal(t, p.Branch, gitIn(t, env, checkout, "rev-parse", "--abbrev-ref", "HEAD"))
+	assert.NoFileExists(t, filepath.Join(checkout, "later.md"))
+
+	// a pin the repository does not hold, and a pin that is no full sha
+	gone := p
+	gone.Job, gone.BaseSha = "gone.w1~15", strings.Repeat("e", 40)
+	_, err = stager.Stage(context.Background(), gone)
+	var ns *NotStageable
+	require.ErrorAs(t, err, &ns)
+	assert.Contains(t, ns.Why, gone.BaseSha)
+	assert.NoFileExists(t, filepath.Join(dir, "jobs", gone.Job, "JOB.md"))
+	short, ok := PacketOf(stagedCard("short.w1", "working", "mas-bandwidth/nova-tools", "sprint/mechanical@abc123"))
+	require.True(t, ok)
+	_, err = stager.Stage(context.Background(), short)
+	require.ErrorAs(t, err, &ns, "a short pin is refused, never read as the ref")
+}
