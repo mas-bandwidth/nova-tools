@@ -180,6 +180,9 @@ type Daemon struct {
 	// it names another friend running, and a lane whose card left her row names its friend
 	// on the job's lane mark (one_lane.go). Nil says none; the lane marks still hold.
 	Running func() map[string]string
+	// Version is this daemon's build stamp and Binary its path, written into
+	// every status (Status.DaemonVersion, Status.Binary).
+	Version, Binary string
 
 	m           *Machine
 	status      Status
@@ -350,7 +353,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width, DaemonVersion: d.Version, Binary: d.Binary}
 	if !l.passive {
 		d.status.Session = SessionOK
 	}

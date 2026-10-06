@@ -745,6 +745,30 @@ her session was there are retired with no replacement (docs/FRIENDS.md, "The
 beat loops are retired, with no replacement"). The beat proves the daemon and
 nothing more: it is recorded and shown, and it never makes her up (below).
 
+### daemon-supervised-r-b.w1 — the installed agent is pinned and says which binary it runs (internal/friend/launchd.go)
+
+Every friend daemon runs under launchd by `nova-friend install`, and `install`
+refuses a plist that would not keep it alive (`CheckPlist`): RunAtLoad true,
+KeepAlive true, ThrottleInterval 5, and the program and the binary before its
+verb `run` by absolute path, every problem named at once, nothing written and
+no launchctl run. The daemon writes its build stamp (the tool's Stamp,
+`buildinfo.Version`) and the path of its binary into `status.json`
+(`daemon_version`, `binary`). `nova-friend status` prints `last_beat_age=`,
+`daemon_version=` and `binary=` after `last_beat=`. `nova-friend status --all`
+lists every friend daemon agent installed for this login
+(`~/Library/LaunchAgents/com.nova.friend-<name>.plist` whose program runs the
+daemon; the wake ping's agent is not a daemon), one `AGENT` line each:
+`name= daemon=<up|down|none> daemon_version= last_beat= last_beat_age=`, up
+while its status file is under DaemonStale old, none when it has no status
+file. Check: `TestInstalledAgentKeepsAliveAndStatusSaysVersion`
+(internal/friend), `TestStatusSaysTheDaemonVersionAndStatusAllListsEveryAgent`
+(cmd/nova-friend). Not done here, a HOLD: the beat carrying the version
+(`friend beat --daemon-version`) and the seat check's drift and dead-daemon
+ALARM lines need fields in `internal/sprint/presence.go` (FriendReport or
+Beat), the beat record in `internal/sprint/store/friends.go`, and the seat
+check's friends measure in `cmd/nova-sprint/machinery.go` and
+`internal/sprint/seat_check.go`, none of them in this card's paths.
+
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things
