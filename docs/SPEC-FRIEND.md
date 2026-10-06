@@ -692,9 +692,9 @@ second), both ways:
   In batch mode the tick's deal takes her ready cards into her free lanes first, so
   a ready card she is told of is one behind her lanes, taken by her next finish;
   a card ready in front of a free lane for ten minutes is the coordinator's
-  judgment. The daemon's own `progress` still names her bare (`--as <friend>`,
-  internal/friend/lanes.go `ProgressArgv`), which the server refuses for a card on
-  `friend.<name>`; it is owed the row's name.
+  judgment. The daemon's own `progress` names her row (`--as friend.<friend>`,
+  internal/friend/lanes.go `ProgressArgv`, as `FinishArgv` does): sent bare, the
+  server refused it for a card on `friend.<name>` (held by friend.<name>, not <name>).
 - A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
   (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
   first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md
