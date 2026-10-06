@@ -11,23 +11,23 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
-// A card whose read tier, before readTierOf collapses frontier onto the tier a
-// route serves, is frontier is asked of a friend of frontier class
-// (docs/SPEC-SPRINT.md, a friend's card). The read card is placed on her fleet
-// row. The readers table gains no friend row, and no machine route is drawn.
+// A read at any tier is asked of a friend whose class is at or above that tier
+// when she has room, by the same ask that deals work, before a paid reader is
+// drawn (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above
+// the read tier). The read card is placed on her fleet row. The readers table
+// gains no friend row. A paid reader is asked only when no such friend has room.
 
-// FriendReadDeadline is how long the friend has, on the sprint's clock, the
-// same two hours a friend's work card is judged by. It is not a wall clock.
-const FriendReadDeadline = 2 * time.Hour
+// FriendReadDeadline is how long the friend has, on the sprint's clock, to
+// return the read: thirty minutes. It is not a wall clock.
+const FriendReadDeadline = 30 * time.Minute
 
-// FriendReadBrief is the BRIEF.md of a frontier read: WHO, the attempt's
+// FriendReadBrief is the BRIEF.md of a friend's read: WHO, the attempt's
 // branch, the commit it started from and the head under review, the deadline,
 // and the primary's AS A READ section through the next heading
-// (docs/SPEC-SPRINT.md, a friend's card).
+// (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the read tier).
 func FriendReadBrief(name, primary, brief, branch, start, head string, attempt int, deadline time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "WHO: friend %s\n", name)
@@ -151,18 +151,117 @@ func friendReadTier(s *Snapshot, pr *Card) string {
 	return t
 }
 
-func friendReadCard(s *Snapshot, pr *Card) bool {
-	return pr != nil && friendReadTier(s, pr) == cardhdr.RouteFrontier
+// friendAtOrAbove says the friend may be asked a read of tier: one of her tiers
+// (friendTiers) is tier or above it on capLadder (docs/SPEC-SPRINT.md, a read
+// asked of any unit with room at or above the read tier). A frontier friend
+// takes a flash, pro, heavy or frontier read; a flash friend takes a flash read.
+func friendAtOrAbove(f FriendSeat, tier string) bool {
+	want := slices.Index(capLadder, tier)
+	if want < 0 {
+		return false
+	}
+	for _, t := range friendTiers(f) {
+		if i := slices.Index(capLadder, t); i >= want {
+			return true
+		}
+	}
+	return false
 }
 
-// attemptReadAsked says a friend read of this attempt stands: placed, or
-// retired with her verdict (FriendReadClose), so the ask does not ask it
-// again. A read taken back from her with no verdict is not a read: the ask
-// asks the attempt of another friend (friendReadAsk).
-func attemptReadAsked(s *Snapshot, pr *Card, attempt int) bool {
+// readHeadMatches says the read's head is the primary's head or the attempt's
+// work head. A friend's read is asked with the work card's head (attemptEnds);
+// a machine read is asked with the primary's. Finish writes both the same.
+func readHeadMatches(s *Snapshot, pr, rc *Card) bool {
+	h := rc.F("head")
+	if h == "" || pr == nil {
+		return false
+	}
+	if h == pr.F("head") {
+		return true
+	}
+	attempt := pr.Int("attempt")
+	if attempt == 0 {
+		attempt = 1
+	}
+	_, _, work := attemptEnds(s, pr.ID, attempt)
+	return work != "" && h == work
+}
+
+// friendReadAgrees says a friend's read card is hers: the reader its id names
+// and its reader field are her, and its row is her fleet row. A retired read
+// has been taken off that row (its row is empty) and the id still names her.
+func friendReadAgrees(c *Card) bool {
+	_, _, idReader, ok := ParseReadCard(c.ID)
+	if !ok || c.F("reader") != idReader {
+		return false
+	}
+	if c.Row == "" {
+		return true
+	}
+	name, rowOK := FriendOfRow(c.Row)
+	return rowOK && name == idReader
+}
+
+// friendReadLive is the friend's reads of the attempt that stand
+// (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the
+// read tier). A placed read stands as itself. A retired read whose verdict is
+// ok stands as OK when its head matches (readHeadMatches), and one whose
+// verdict is broken stands as broken, each a copy so the fleet card is left
+// as it is. A read taken back with no verdict does not stand: the attempt may
+// be asked of another friend. The ok and broken copies are not placed on a table.
+func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
+	if s == nil || s.Fleet == nil || pr == nil {
+		return nil, nil, nil
+	}
+	attempt := pr.Int("attempt")
+	if attempt == 0 {
+		attempt = 1
+	}
 	prefix := pr.ID + ".r" + itoa(attempt) + "."
 	for _, c := range s.Fleet.Cards() {
-		if c.F("kind") == "read" && strings.HasPrefix(c.ID, prefix) && (c.Placed() || c.F("verdict") != "") {
+		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) {
+			continue
+		}
+		if c.Placed() {
+			if _, isFriend := FriendOfRow(c.Row); !isFriend {
+				continue
+			}
+			placed = append(placed, c)
+			continue
+		}
+		if !friendReadAgrees(c) {
+			continue
+		}
+		switch c.F("verdict") {
+		case "ok":
+			if !readHeadMatches(s, pr, c) {
+				continue
+			}
+			syn := *c
+			syn.Col = OK
+			okCards = append(okCards, &syn)
+		case "broken":
+			syn := *c
+			syn.Col = Broken
+			broken = append(broken, &syn)
+		}
+	}
+	return placed, okCards, broken
+}
+
+// machineReaderHasRoom says a paid reader of the primary's collapsed read tier
+// (readTierOf) is up, has no read card of the attempt, and has free room.
+func machineReaderHasRoom(s *Snapshot, pr *Card) bool {
+	if s == nil || s.Readers == nil || pr == nil {
+		return false
+	}
+	attempt := pr.Int("attempt")
+	if attempt == 0 {
+		attempt = 1
+	}
+	room := s.readerRooms(s.Readers.Rows())
+	for _, rd := range s.freeReaders(pr, attempt) {
+		if room[rd].free > 0 {
 			return true
 		}
 	}
@@ -188,6 +287,32 @@ func attemptEnds(s *Snapshot, primary string, attempt int) (branch, start, head 
 	return branch, BaseOf(earlier).Head, head
 }
 
+// attemptWorker is the friend who worked on this attempt of the primary, if any.
+// A friend does not read her own work.
+func attemptWorker(s *Snapshot, primary string, attempt int) string {
+	if s == nil {
+		return ""
+	}
+	if s.Fleet != nil {
+		if wc := s.Fleet.Card(WorkCardID(primary, attempt)); wc != nil {
+			if name, ok := FriendOfRow(wc.Row); ok {
+				return name
+			}
+			if name, ok := FriendOfRow(wc.F("member")); ok {
+				return name
+			}
+		}
+	}
+	if s.Work != nil {
+		if pr := s.Work.Card(primary); pr != nil && pr.Int("attempt") == attempt {
+			if name, ok := FriendOfRow(pr.F("member")); ok {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
 func seatDir(seats []FriendSeat, name, fallback string) string {
 	for _, f := range seats {
 		if f.Name == name && f.Dir != "" {
@@ -197,85 +322,75 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 	return fallback
 }
 
-// FriendReadAsk asks each frontier read in review of a friend of frontier
-// class, the same chooser as friendDeal (up, below her free width, most room,
-// first by name), and decrements that free width as friendDeal does. dir is a
-// working directory used when the seat names none; empty writes no brief (friend
-// sync writes it). A friend whose read of the attempt was taken back is not
-// asked it again; another friend is. With no friend of frontier class up who
-// may read it, it asks no one and raises the one judgment a read with no
-// reader up already raises (NFewReaders); with one up at her room the read
-// waits for her room, as a machine read waits for a reader's (friendReadAsk).
+// FriendReadAsk asks each read in review of a friend with room at or above its
+// read tier, the same chooser as friendDeal (preferredFriend: an idle lane,
+// then the most room, then by name), and decrements that free width as
+// friendDeal does (docs/SPEC-SPRINT.md, a read asked of any unit with room at
+// or above the read tier). dir is a working directory used when the seat names
+// none; empty writes no brief (friend sync writes it). A friend whose read of
+// the attempt was taken back is not asked it again; another friend is. A paid
+// reader is left the read when no such friend has room. When every such friend
+// is at her room and no paid reader has room, the read waits for a reader.
 func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
-	p, _, _, err := friendReadAsk(s, seats, dir)
+	p, _, err := friendReadAsk(s, seats, dir)
 	return p, err
 }
 
-// friendReadAsk is FriendReadAsk with the frontier primaries it left waiting
-// for a friend's room (a friend of frontier class is up who may read the
-// attempt, and every such friend is at her room), which the tick's ask records
-// as waiting for a reader and counts due (friendAskPart), and few: a primary
-// has no friend up who may read it, the readers' judgment's condition.
-func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits []*Card, few bool, err error) {
+// friendReadAsk is FriendReadAsk with the primaries it left waiting: a friend
+// at or above the read tier is up who may read the attempt, every such friend
+// is at her room, and no paid reader has room. The tick's ask records those as
+// waiting for a reader and counts them due (friendAskPart).
+func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits []*Card, err error) {
 	if s == nil || s.Work == nil || s.Fleet == nil {
-		return p, nil, false, nil
+		return p, nil, nil
 	}
 	free, lanes := map[string]int{}, map[string]int{}
 	var up []FriendSeat
 	for _, f := range seats {
-		if f.Status != Up || !slices.Contains(f.Tiers, cardhdr.RouteFrontier) {
+		if f.Status != Up {
 			continue
 		}
-		room, width := DealAhead*f.Width, f.Width
-		if f.Mode == config.FriendModeOneShot {
-			room, width = 1, 1
-		}
+		room, width := friendRoom(f)
 		free[f.Name] = room - friendLoad(s, f.Name)
 		lanes[f.Name] = width - s.Fleet.Count(FriendRow(f.Name), Working)
 		up = append(up, f)
 	}
-	slices.SortFunc(up, func(a, b FriendSeat) int { return strings.Compare(a.Name, b.Name) })
 	declared := map[string]bool{}
 	for _, pr := range s.Work.Column(Review) {
-		if !friendReadCard(s, pr) || IsSentinel(pr) || pr.F("result") == "failed" {
+		if IsSentinel(pr) || pr.F("result") == "failed" || ReadsWanted(s, pr) == 0 {
 			continue
 		}
 		attempt := pr.Int("attempt")
 		if attempt == 0 {
 			attempt = 1
 		}
-		if attemptReadAsked(s, pr, attempt) {
-			continue
-		}
+		tier := friendReadTier(s, pr)
+		worker := attemptWorker(s, pr.ID, attempt)
 		// a friend is asked an attempt once: her read card at it, taken back,
-		// keeps its id
-		name, eligible := "", false
+		// keeps its id, so she is not one who may read it again. A friend who
+		// worked on this attempt does not read her own work.
+		var withRoom []string
+		eligible := false
 		for _, f := range up {
-			if s.Fleet.Card(ReadCardID(pr.ID, attempt, f.Name)) != nil {
+			if f.Name == worker || !friendAtOrAbove(f, tier) || s.Fleet.Card(ReadCardID(pr.ID, attempt, f.Name)) != nil {
 				continue
 			}
 			eligible = true
-			if free[f.Name] > 0 && (name == "" || free[f.Name] > free[name]) {
-				name = f.Name
+			if free[f.Name] > 0 {
+				withRoom = append(withRoom, f.Name)
 			}
 		}
+		name := preferredFriend(withRoom, lanes, free)
 		switch {
-		case !eligible:
-			few = true
-			continue
-		case name == "":
+		case name != "":
+			if err := askOneFriend(&p, s, pr, seats, name, dir, attempt, free, lanes, declared); err != nil {
+				return Plan{}, nil, err
+			}
+		case eligible && !machineReaderHasRoom(s, pr):
 			waits = append(waits, pr)
-			continue
-		}
-		if err := askOneFriend(&p, s, pr, seats, name, dir, attempt, free, lanes, declared); err != nil {
-			return Plan{}, nil, false, err
 		}
 	}
-	if few {
-		// the existing sprint-level judgment, once, not one rewritten note per primary
-		notify(&p, s, []cond{{typ: NFewReaders, streamLevel: true, what: fewReaders(s)}}, []string{NFewReaders}, TickReq{})
-	}
-	return Lawful(p), waits, few, nil
+	return Lawful(p), waits, nil
 }
 
 func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir string, attempt int, free, lanes map[string]int, declared map[string]bool) error {
@@ -340,7 +455,7 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 	id := ReadCardID(primary, attempt, name)
 	rc := s.Fleet.Card(id)
 	if rc == nil || !rc.Placed() {
-		p.refuse(primary, "no frontier read asked of "+name)
+		p.refuse(primary, "no read asked of "+name)
 		return p
 	}
 	verdict, finding, why := ParseFriendReadReport(report)
@@ -356,7 +471,12 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 		n.Who, n.Attempt, n.What = name, attempt, finding
 		notes = append(notes, n)
 	}
-	if j, ok := reviewJudgment(s, pr, reviewStep{writes: notes, who: name}); ok {
+	// the card is still placed when the judgment is read; the verdict is the column it stands as
+	stood := OK
+	if verdict == "broken" {
+		stood = Broken
+	}
+	if j, ok := reviewJudgment(s, pr, reviewStep{moved: map[string]string{id: stood}, writes: notes, who: name}); ok {
 		notes = append(notes, j)
 	}
 	p.Units = append(p.Units, Unit{Key: primary, Stream: pr.Row, Changes: []Change{
@@ -367,8 +487,8 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 
 // The tick's ask part lives in steps_tick.go, which this change does not edit.
 // The part the machine runs is the function TickTables holds, so the friend
-// ask is installed there: a frontier read is asked before a machine route is
-// drawn, and the machine ask does not see that primary.
+// ask is installed there: a read a friend has room for is asked before a
+// machine route is drawn, and the machine ask does not see that primary.
 func init() {
 	wrapped := friendAskPart(TickAsk)
 	for i := range TickTables {
@@ -393,32 +513,38 @@ func init() {
 }
 
 // friendAskPart is the tick's ask: the friend ask, then the machine ask with
-// the frontier reads hidden from it, in one plan. A card in review is asked in
-// the tick when a reader it may be asked of has room; one that waits for room
-// is recorded waiting for a reader (waitingForReader) and counted due, so the
-// no-stall rule holds it and the next tick asks it. The seats are the tick's;
-// a part that asks what the ask does with none (the no-stall rule's) plans on
-// the snapshot's, and writes no brief.
+// the reads a friend just took, and the reads waiting because every friend at
+// or above the tier is at her room and no paid reader has room, hidden from
+// it, in one plan (docs/SPEC-SPRINT.md, a read asked of any unit with room at
+// or above the read tier). A card in review is asked in the tick when a unit
+// it may be asked of has room; one that waits for room is recorded waiting for
+// a reader (waitingForReader) and counted due, so the no-stall rule holds it
+// and the next tick asks it. The seats are the tick's; a part that asks what
+// the ask does with none (the no-stall rule's) plans on the snapshot's, and
+// writes no brief.
 func friendAskPart(machine TickPartFn) TickPartFn {
 	return func(s *Snapshot, r TickReq) (Plan, int) {
 		seats := r.Friends
 		if seats == nil {
 			seats = withoutDirs(s.Friends)
 		}
-		fp, waits, few, err := friendReadAsk(s, seats, "")
-		restore := hideFriendReadPrimaries(s)
+		fp, waits, err := friendReadAsk(s, seats, "")
+		var hide []string
+		if s != nil && s.Work != nil {
+			for _, u := range fp.Units {
+				if s.Work.Placed(u.Key) != nil {
+					hide = append(hide, u.Key)
+				}
+			}
+		}
+		for _, c := range waits {
+			hide = append(hide, c.ID)
+		}
+		restore := hidePrimaries(s, hide)
 		mp, due := machine(s, r)
 		restore()
 		if err != nil {
 			mp.refuse("ask", err.Error())
-		}
-		if few {
-			// the friends' condition holds: the machine's ask, whose readers are
-			// up, does not close the one judgment (or write it twice)
-			mp.Closes = slices.DeleteFunc(mp.Closes, func(o Open) bool { return o.Note.Type == NFewReaders })
-			if slices.ContainsFunc(mp.Notes, func(n Note) bool { return n.Type == NFewReaders }) {
-				fp.Notes = slices.DeleteFunc(fp.Notes, func(n Note) bool { return n.Type == NFewReaders })
-			}
 		}
 		mp.Rows = append(fp.Rows, mp.Rows...)
 		mp.Units = append(fp.Units, mp.Units...)
@@ -450,8 +576,9 @@ func withoutDirs(seats []FriendSeat) []FriendSeat {
 // it wants a read, as many readers of its tier are up as it needs) and neither
 // asked it nor refused it: the ask refused is the coordinator's judgment (cannot
 // ask), and fewer readers up than it needs is the readers' (NFewReaders). The
-// frontier reads waiting for a friend's room are friends (friendReadAsk). The
-// mark is a work-table field the pump applies, as the ask's asked field is.
+// reads waiting because every friend at or above the tier is at her room, and
+// no paid reader has room, are friends (friendReadAsk). The mark is a
+// work-table field the pump applies, as the ask's asked field is.
 func waitingForReader(p *Plan, s *Snapshot, friends []*Card) {
 	asked := map[string]int{} // the unit of each primary the plan asks
 	for i, u := range p.Units {
@@ -469,10 +596,13 @@ func waitingForReader(p *Plan, s *Snapshot, friends []*Card) {
 	}
 	waits := map[string]string{}
 	for _, c := range friends {
-		waits[c.ID] = "every friend of frontier class up who may read it is at her room"
+		waits[c.ID] = "every friend at or above its read tier who may read it is at her room, and no paid reader has room"
 	}
 	for _, c := range s.Work.Column(Review) {
-		if _, ok := asked[c.ID]; ok || judged[c.ID] || friendReadCard(s, c) || c.F("result") == "failed" ||
+		if _, ok := waits[c.ID]; ok {
+			continue
+		}
+		if _, ok := asked[c.ID]; ok || judged[c.ID] || c.F("result") == "failed" ||
 			ReadsWanted(s, c) == 0 || !enoughReadersUp(s, c) || len(closesFor(s.Open, []string{NCannotAsk}, c.ID)) > 0 {
 			continue
 		}
@@ -529,11 +659,15 @@ func unsetOn(changes []Change, c *Card, field string) []Change {
 	return append(changes, change(Work, setEntry(c, nil, field)))
 }
 
-// hideFriendReadPrimaries takes frontier reads out of review for the machine
-// ask and puts them back. The plan is built against the restored places.
-func hideFriendReadPrimaries(s *Snapshot) func() {
-	if s == nil || s.Work == nil {
+// hidePrimaries takes the named primaries out of review for the machine ask
+// and puts them back. The plan is built against the restored places.
+func hidePrimaries(s *Snapshot, ids []string) func() {
+	if s == nil || s.Work == nil || len(ids) == 0 {
 		return func() {}
+	}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
 	}
 	type saved struct {
 		c   *Card
@@ -541,7 +675,7 @@ func hideFriendReadPrimaries(s *Snapshot) func() {
 	}
 	var held []saved
 	for _, c := range s.Work.Column(Review) {
-		if friendReadCard(s, c) {
+		if want[c.ID] {
 			held = append(held, saved{c, c.Col})
 			c.Col = ""
 		}

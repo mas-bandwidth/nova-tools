@@ -13,8 +13,10 @@ import (
 
 // TestAFrontierCardsReadIsAskedAsAFriendCard pins the tick: a frontier card
 // in review, and a heavy card whose read tier is frontier, is asked of a
-// frontier friend. The ask writes her inbox brief and places no readers-table
-// card. The world clock is t0; the deadline is two hours on it.
+// frontier friend. A friend at or above the read tier with room is asked
+// before a paid reader. The ask writes her inbox brief and places no
+// readers-table card while she has room. The world clock is t0; the deadline
+// is thirty minutes on it.
 func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 	t.Parallel()
 	const (
@@ -55,7 +57,7 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		require.Contains(t, text, "head: "+workHead+"\n")
 		require.NotContains(t, text, "start: "+workHead)
 		deadline := t0.Add(FriendReadDeadline).UTC().Format(time.RFC3339)
-		require.Equal(t, "2030-01-02T05:04:05Z", deadline)
+		require.Equal(t, "2030-01-02T03:34:05Z", deadline)
 		require.Contains(t, text, "deadline: "+deadline+"\n")
 		require.Contains(t, text, "AS A READ\nthe body line\n\na blank stays above this\n")
 		require.NotContains(t, text, "RULES")
@@ -70,9 +72,13 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, t.TempDir())})
 		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-1", 1, "amy")))
 		require.NotNil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")))
-		require.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")))
-		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b"))) // the second read waits for the first (section 6)
-		require.Equal(t, Asked, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")).Col)
+		// pro is below frontier: she takes that read too, and no paid reader is asked while she has room
+		require.NotNil(t, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")))
+		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-a")))
+		require.Nil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-b")))
+		for _, c := range w.s.Readers.Cards() {
+			require.False(t, c.Placed())
+		}
 	})
 
 	t.Run("heavy read tier frontier", func(t *testing.T) {
@@ -101,11 +107,10 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")).Col)
 		require.Equal(t, Ready, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")).Col)
 		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-3", 1, "amy")))
-		// she is up at her room: the third waits for it, noted, with no judgment
+		// she is at her room and a paid reader has room: the third is asked of a reader
+		require.NotNil(t, placedReaderRead(w, "s1-3"))
 		require.Empty(t, w.notesOf(NFewReaders))
-		ns := w.notesOf(NWaitingForReader)
-		require.Len(t, ns, 1)
-		require.Equal(t, []string{"s1-3"}, ns[0].Primaries)
+		require.Empty(t, w.notesOf(NWaitingForReader))
 	})
 
 	t.Run("one-shot mode", func(t *testing.T) {
@@ -120,6 +125,8 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")).Col)
 		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")), "one-shot friend holds no ready read cards")
 		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-3", 1, "amy")))
+		require.NotNil(t, placedReaderRead(w, "s1-2"), "the rest go to a paid reader")
+		require.NotNil(t, placedReaderRead(w, "s1-3"))
 	})
 
 	t.Run("most free", func(t *testing.T) {
@@ -139,15 +146,20 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		putReview(w, "s1-1", "s1-1: work (s1) tier: frontier\n", 1, 1, primHead)
 		putReview(w, "s1-2", "s1-2: work (s1) tier: frontier\n", 1, 2, primHead)
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Down, dir)})
-		ns := w.notesOf(NFewReaders)
-		require.Len(t, ns, 1)
-		require.Equal(t, fewReaders(w.s), ns[0].What)
-		require.NotContains(t, ns[0].What, "no friend")
+		require.Empty(t, w.notesOf(NFewReaders), "readers are up: a down friend is not fewer readers")
 		require.NoFileExists(t, filepath.Join(dir, "inbox"))
 		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")))
-		for _, c := range w.s.Readers.Cards() {
-			require.False(t, c.Placed())
-		}
+		require.NotNil(t, placedReaderRead(w, "s1-1"))
+		require.NotNil(t, placedReaderRead(w, "s1-2"))
+	})
+
+	t.Run("below the tier", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, "reader-a", "reader-b")
+		putReview(w, "s1-1", "s1-1: work (s1) tier: pro\n", 1, 1, primHead)
+		askReaders(t, w, []FriendSeat{{Name: "amy", Width: 2, Status: Up, Tiers: []string{cardhdr.RouteFlash}, Dir: t.TempDir()}})
+		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")), "a flash friend is below a pro read")
+		require.NotNil(t, placedReaderRead(w, "s1-1"))
 	})
 
 	t.Run("land", func(t *testing.T) {
@@ -202,6 +214,15 @@ func putAttemptWork(w *world, primary string, attempt int, branch, head, ok stri
 		fields["ok"] = ok
 	}
 	w.s.Fleet.Put(&Card{ID: WorkCardID(primary, attempt), Rev: 1, Fields: fields})
+}
+
+func placedReaderRead(w *world, primary string) *Card {
+	for _, c := range w.s.Readers.Cards() {
+		if c.Placed() && c.F("kind") == "read" && c.F("primary") == primary {
+			return c
+		}
+	}
+	return nil
 }
 
 func frontierSeat(name string, width int, status, dir string) FriendSeat {

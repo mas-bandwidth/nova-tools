@@ -556,34 +556,41 @@ marks it `taken` (a queued record of a card now dealt to another row). The tick
 does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 `TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow`).
 
-A card whose read tier, before a frontier card is collapsed onto the tier a
-route serves (`readTierOf`), is frontier — a frontier card, or a heavy card
-whose read tier is the one above — is asked of a friend of frontier class,
-not drawn on a reader machine (`FriendReadAsk`, `FriendReadClose`). The friend
-is up, below her room (the same free width a friend's card is dealt within,
-`TickDeal`), and her tiers include frontier: the one with the most free
-width, the first by name among equals. Each ask takes one of that free width.
-The ask writes `inbox/<read-card>/BRIEF.md` in her working directory when it
-knows it: the primary's AS A READ section through the next heading, the
-attempt's branch (the work card's), its start commit and its head named
-separately, `WHO: friend <name>`, and a deadline of two hours on the sprint's
-clock. A generated brief's AS A READ section (`cardgen.AsARead`) says a `By:`
+A read at any tier is asked of any unit with room at or above that tier, a
+fleet reader or a friend, by the one ask (`FriendReadAsk` before the machine's
+`Ask`). The tier a friend is matched on is the tier before a frontier card is
+collapsed onto the tier a route serves (`friendReadTier`): a frontier card, or
+a heavy card whose read tier is the one above, stays frontier, and only a
+friend of frontier class is at or above it. Her class is the tiers her
+nova-config row says she can do. She is asked when she is up, one of her tiers
+is the read tier or above it (`capLadder`), and she has room (the same free
+width a friend's card is dealt within, `TickDeal`), chosen by the same chooser
+as that deal (`preferredFriend`: an idle lane first, then the most room, then
+by name). Each ask takes one of that free width. Paid fleet readers are asked
+only when no such friend has room: the machine's ask then draws the read on a
+route of the collapsed tier (`readTierOf`), a reader whose tiers cell names
+that tier exactly. When every such friend is at her room and no paid reader
+has room, the read waits as a machine read waits for a reader's: due, noted
+`waiting for a reader`, no judgment. With no such friend up, the machine's ask
+stands, including the one judgment a read with fewer readers up than it needs
+already raises (`fewer than two readers up`). The ask writes
+`inbox/<read-card>/BRIEF.md` in her working directory when it knows it: the
+primary's AS A READ section through the next heading, the attempt's branch
+(the work card's), its start commit and its head named separately,
+`WHO: friend <name>`, and a deadline of thirty minutes on the sprint's clock.
+A generated brief's AS A READ section (`cardgen.AsARead`) says a `By:`
 trailer is judged only for being present and true, the friend who pushed, so a
 reader never fails a head because the WHO line preferred another friend. `friend sync` writes that brief when the ask has not, and a
 `Verdict: LAND` or a `Verdict: HOLD` with a finding that names a file, a line
 or a rule in `outbox/<read>/REPORT.md` retires that read on her fleet row
-(the same finding rule as a reader's broken read; a HOLD raises
-`a reader found it broken`). The read card is `<primary>.r<attempt>.<friend>`,
+the way a reader's verdict does (`FriendReadClose`: LAND is ok, and a HOLD
+raises `a reader found it broken`). The read card is `<primary>.r<attempt>.<friend>`,
 placed on her fleet row `friend.<name>` in working while she has a lane,
 ready behind her working cards otherwise. The readers table gains no friend
-row. A friend is asked an attempt once: a read taken back from her with no
-verdict is not a read, and the attempt is asked of another friend. With no
-such friend up who may read the attempt the read is not asked and the ask
-raises the one judgment a read with no reader up already raises
-(`fewer than two readers up`), not one note per primary; the machine's ask,
-whose readers are up, neither closes it nor writes it twice while that holds.
-With such a friend up at her room the read waits for her room as a machine
-read waits for a reader's: due, noted `waiting for a reader`, no judgment.
+row. Her ready and working on the friends table count the read with her work
+cards: the readers table and the friends table are two views of the one pool.
+A friend is asked an attempt once: a read taken back from her with no
+verdict is not a read, and the attempt is asked of another friend.
 
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries

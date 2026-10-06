@@ -95,6 +95,9 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		working.add(c.ID, c.ID)
 	}
 	for _, c := range s.Fleet.Column(Ready, Working) {
+		if c.F("kind") == "read" {
+			continue
+		}
 		dealt.add(c.F("primary"), c.ID)
 		if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") != c.ID {
 			out = append(out, Violation{2, fmt.Sprintf("%s is dealt, and its primary %s names %s as its work card", c.ID, pr.ID, orDash(pr.F("work")))})
@@ -111,6 +114,14 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	}
 	// 3. Read cards in asked or reading belong to primaries in review.
 	for _, c := range s.Readers.Column(Asked, Reading) {
+		if st := s.StateOf(c.F("primary")); quiet && st != Review {
+			out = append(out, Violation{3, fmt.Sprintf("%s is %s and its primary %s is %s", c.ID, c.Col, c.F("primary"), orDash(st))})
+		}
+	}
+	for _, c := range s.Fleet.Column(Ready, Working) {
+		if c.F("kind") != "read" {
+			continue
+		}
 		if st := s.StateOf(c.F("primary")); quiet && st != Review {
 			out = append(out, Violation{3, fmt.Sprintf("%s is %s and its primary %s is %s", c.ID, c.Col, c.F("primary"), orDash(st))})
 		}
@@ -160,10 +171,8 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 			continue // never read
 		}
 		readers := map[string]bool{}
-		for _, rc := range s.Readers.Of(c.ID) {
-			if rc.Col == OK && rc.F("head") == c.F("head") && ReadCardAgrees(rc) {
-				readers[rc.F("reader")] = true
-			}
+		for _, rc := range okReaders(s, c) {
+			readers[rc.F("reader")] = true
 		}
 		if len(readers) < ReadsNeeded(c) {
 			out = append(out, Violation{6, fmt.Sprintf("%s is %s with ok reads at head %s from %d reader(s)", c.ID, c.Col, orDash(c.F("head")), len(readers))})

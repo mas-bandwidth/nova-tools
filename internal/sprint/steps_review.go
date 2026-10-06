@@ -186,6 +186,20 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
+		// a friend's ok read of the attempt stands with the machine's, so the
+		// next read is one, not the whole pair again (friendReadLive;
+		// docs/SPEC-SPRINT.md, a read asked of any unit with room at or above
+		// the read tier). It is not taken back: it is not on the readers table.
+		if _, oks, _ := friendReadLive(s, c); len(oks) > 0 {
+			for _, rc := range oks {
+				rd := rc.F("reader")
+				if rd == "" || contains(all, rd) {
+					continue
+				}
+				all = append(all, rd)
+				kept = append(kept, rc)
+			}
+		}
 		free := s.freeReaders(c, attempt)
 		// the reads that stand, kept, say how many are asked now (readsWantedOf): the
 		// first alone, then the rest once it came back ok; a read handed back, or taken
@@ -713,6 +727,24 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 			break
 		}
 	}
+	// a friend's read stands the same way (friendReadLive). The step's moved
+	// column wins, so a close sees LAND or HOLD before the card leaves her row.
+	fp, fok, fbr := friendReadLive(s, pr)
+	for _, c := range append(append(append([]*Card{}, fp...), fok...), fbr...) {
+		col := c.Col
+		if movedCol, ok := st.moved[c.ID]; ok {
+			col = movedCol
+		}
+		reads++
+		switch {
+		case col == Asked || col == Reading || col == Working || col == Ready:
+			outstanding = true
+		case col == Broken:
+			broken = true
+		case col == OK && friendReadAgrees(c) && readHeadMatches(s, pr, c):
+			oks[c.F("reader")] = true
+		}
+	}
 	open := map[string]bool{} // the judgment types open on it after the step
 	offers := false           // one of them offers accept
 	before := closesFor(s.Open, nil, pr.ID)
@@ -787,6 +819,23 @@ func okReaders(s *Snapshot, pr *Card) []*Card {
 		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && !seen[r] && len(out) < need {
 			seen[r] = true
 			out = append(out, c)
+		}
+	}
+	// a friend's LAND stands as an ok read (docs/SPEC-SPRINT.md, a read asked of
+	// any unit with room at or above the read tier). The card returned is the
+	// fleet record, so accept guards it where it is.
+	if s.Fleet != nil && len(out) < need {
+		_, oks, _ := friendReadLive(s, pr)
+		for _, syn := range oks {
+			real := s.Fleet.Card(syn.ID)
+			if real == nil {
+				continue
+			}
+			r := real.F("reader")
+			if friendReadAgrees(real) && readHeadMatches(s, pr, real) && !seen[r] && len(out) < need {
+				seen[r] = true
+				out = append(out, real)
+			}
 		}
 	}
 	return out
@@ -865,7 +914,12 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		oks := okReaders(s, c)
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, o := range oks {
-			u.Changes = append(u.Changes, change(Readers, guardEntry(o)))
+			// a friend's ok read is on her fleet row, not the readers table
+			table := Readers
+			if s.Fleet != nil && s.Fleet.Card(o.ID) != nil && (s.Readers == nil || s.Readers.Card(o.ID) == nil) {
+				table = Fleet
+			}
+			u.Changes = append(u.Changes, change(table, guardEntry(o)))
 		}
 		retired := 0
 		for _, rc := range s.Readers.Of(c.ID) {
