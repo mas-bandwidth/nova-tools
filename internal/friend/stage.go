@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,14 +25,19 @@ import (
 // rocketnet audit held with "no worktree, no remote" and the schema cards with "JOB.md
 // missing: card not staged", and the coordinator staged clones and JOB.md files by hand all
 // night). Writing a brief without staging its job is half a delivery: for each held work
-// card whose brief is in her inbox, the daemon clones REPO at BASE on the card's branch into
-// jobs/<job>/repo, from a bare mirror of the repository it keeps under mirrors/ (so a stage
-// is a fetch and a local clone, seconds), and writes jobs/<job>/JOB.md in the card-contract
-// shape (docs/SPEC-CARD-CONTRACT.md). No lane is handed the card until JOB.md is there. A
+// card whose brief is in her inbox, the daemon adds a git worktree of REPO at BASE on the
+// card's branch at jobs/<job>/repo, of the one full bare mirror of the repository it keeps
+// under mirrors/ (so a stage is a fetch and a worktree add, seconds and megabytes: on
+// 2026-10-05 a whole clone per job had her disk at 99% with 42 staged clones and 765 finished
+// job dirs), and writes jobs/<job>/JOB.md in the card-contract shape
+// (docs/SPEC-CARD-CONTRACT.md). After each inbox cleanup the finished jobs' worktrees past
+// FinishedJobsKept are pruned (Stager.Prune, pruneStep). No lane is handed the card until JOB.md is there. A
 // repository her account cannot reach is one judgment to the coordinator with the remedy,
 // never a lane that discovers it (docs/SPEC-FRIEND.md, staging). The machine is modelled in
 // tla/FriendStage.tla (MCFriendStage*: a lane handed only a staged card, one judgment while it
-// stands, a failed job staged again).
+// stands, a failed job staged again), and the worktrees and their pruning in
+// internal/friend/tla/JobWorktrees.tla (MCJobWorktrees*: a live job never pruned, a branch's
+// work never lost, the finished worktrees within the cap after a prune).
 
 // The directories under her working directory that staging writes.
 const (
@@ -43,8 +49,9 @@ const (
 // StageRetryEvery is how long a job whose stage failed waits before it is staged again; a
 // judgment stands, said once, until a stage of its repository or card succeeds.
 // MirrorFreshFor is how long a fetched mirror serves stages without fetching again, so a
-// burst of cards on one repository is one fetch. MirrorCloneBudget bounds the first clone of
-// a repository's mirror, the one slow step (every later stage fetches only what is new).
+// burst of cards on one repository is one fetch. MirrorCloneBudget bounds a mirror's fetch:
+// the first, of the whole repository, is the one slow step (every later one fetches only what
+// is new).
 const (
 	StageRetryEvery   = time.Minute
 	MirrorFreshFor    = 10 * time.Second
@@ -124,10 +131,14 @@ func validRef(r string) bool {
 // one judgment to the coordinator, its Remedy what clears it.
 type NotStageable struct {
 	Repo, Card, Why, Remedy string
+	Job                     string // the job it was staging, when there was one
 }
 
 func (n *NotStageable) Error() string {
 	if n.Card == "" {
+		if n.Job != "" {
+			return fmt.Sprintf("her account cannot reach %s (staging %s/%s): %s", n.Repo, JobsDir, n.Job, n.Why)
+		}
 		return fmt.Sprintf("her account cannot reach %s: %s", n.Repo, n.Why)
 	}
 	return fmt.Sprintf("card %s cannot be staged from %s: %s", n.Card, n.Repo, n.Why)
@@ -189,8 +200,8 @@ func (s *Stager) git(ctx context.Context, budget time.Duration, args ...string) 
 	return gitrun.Output(ctx, gitrun.Options{Env: s.env(), OwnRepo: true, Timeout: budget}, args...)
 }
 
-// repoLock is the lock of one repository's mirror: its fetch and the clones taken from it
-// run one at a time.
+// repoLock is the lock of one repository's mirror: its fetch, the worktrees added to it and
+// the ones pruned from it run one at a time.
 func (s *Stager) repoLock(repo string) *sync.Mutex {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,14 +223,16 @@ func Staged(dir, job string) bool {
 	return err == nil
 }
 
-// Stage stages p's job: the mirror of its repository fetched (cloned the first time), a
-// clone of it at the base on the card's branch at jobs/<job>/repo with origin the repository
-// itself, and jobs/<job>/JOB.md. It answers the commit the checkout is at. A job already
-// staged is left as it is; a checkout is never half there (it is cloned beside and moved in
-// whole), and JOB.md is written last, so a lane never meets a checkout not ready.
+// Stage stages p's job: the mirror of its repository fetched (cloned the first time), a git
+// worktree of it at the base on the card's branch at jobs/<job>/repo, whose origin is the
+// repository itself (the mirror's origin), and jobs/<job>/JOB.md. It answers the commit the
+// checkout is at. A job already staged is left as it is; a checkout is never half there (the
+// worktree is added beside, under jobs/<job>/.staging, and moved in whole), and JOB.md is
+// written last, so a lane never meets a checkout not ready. A branch the mirror already holds
+// (a pruned job's, staged again) is checked out as it stands, never reset to the base.
 func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err := p.check(); err != nil {
-		return "", &NotStageable{Repo: p.Repo, Card: p.Card, Why: err.Error(), Remedy: "rework the card with a packet that names its repository (owner/name), its base and its branch"}
+		return "", &NotStageable{Repo: p.Repo, Card: p.Card, Job: p.Job, Why: err.Error(), Remedy: "rework the card with a packet that names its repository (owner/name), its base and its branch"}
 	}
 	job := JobDir(s.Dir, p.Job)
 	checkout := filepath.Join(job, "repo")
@@ -242,6 +255,10 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	mirror, err := s.mirror(ctx, p.Repo)
+	var ns *NotStageable
+	if errors.As(err, &ns) {
+		ns.Job = p.Job
+	}
 	if err != nil {
 		return "", err
 	}
@@ -249,33 +266,62 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tmp := filepath.Join(job, ".repo.staging")
-	if err := os.MkdirAll(job, 0o755); err != nil {
+	scratch := filepath.Join(job, stageScratch)
+	tmp := filepath.Join(scratch, p.Job) // the worktree's name in the mirror is the job's
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		return "", err
 	}
-	if err := safepath.RemoveUnder(job, tmp); err != nil { // a stage that ended part way: its own scratch, never the checkout
+	s.dropScratch(ctx, mirror, job, scratch) // a stage that ended part way: its own scratch, never the checkout
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		return "", err
 	}
-	steps := [][]string{
-		{"clone", "--quiet", "--no-checkout", "--", mirror, tmp},
-		{"-C", tmp, "remote", "set-url", "origin", s.url(p.Repo)},
-		{"-C", tmp, "checkout", "--quiet", "-b", p.Branch, sha},
+	_, err = s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/"+p.Branch)
+	created := err != nil
+	add := []string{"-C", mirror, "worktree", "add", "--quiet", tmp, p.Branch}
+	if created {
+		add = []string{"-C", mirror, "worktree", "add", "--quiet", "-b", p.Branch, tmp, sha}
 	}
-	for _, argv := range steps {
+	for _, argv := range [][]string{add, {"-C", mirror, "worktree", "move", tmp, checkout}} {
 		if _, err := s.git(ctx, 0, argv...); err != nil {
-			_ = safepath.RemoveUnder(job, tmp) // ignored: the next stage removes it first
+			s.dropScratch(ctx, mirror, job, scratch)
+			if created {
+				_, _ = s.git(ctx, 0, "-C", mirror, "branch", "--quiet", "-D", p.Branch) // ignored: at the base, nothing on it; the next stage creates it again or takes it as it stands
+			}
 			return "", err
 		}
 	}
-	if err := os.Rename(tmp, checkout); err != nil {
+	_ = safepath.RemoveUnder(job, scratch) // ignored: an empty directory the next stage removes first
+	head, err := s.git(ctx, 0, "-C", checkout, "rev-parse", "HEAD")
+	if err != nil {
 		return "", err
 	}
-	return sha, s.writeJob(p, sha)
+	return head, s.writeJob(p, head)
 }
 
-// mirror is the repository's bare mirror, fetched unless it was within MirrorFreshFor; the
-// first stage of a repository clones it. A clone or fetch that fails is her account not
-// reaching the repository.
+// stageScratch is where a job's worktree is added before it is moved in, under its job dir.
+const stageScratch = ".staging"
+
+// dropScratch removes a job's scratch: the worktree a stage added there, from the mirror and
+// from the disk. Each step is best effort; what is left is removed by the next stage first.
+func (s *Stager) dropScratch(ctx context.Context, mirror, job, scratch string) {
+	if entries, err := os.ReadDir(scratch); err == nil {
+		for _, e := range entries {
+			_, _ = s.git(ctx, 0, "-C", mirror, "worktree", "remove", "--force", filepath.Join(scratch, e.Name())) // ignored: removed from the disk below and pruned
+		}
+	}
+	_ = safepath.RemoveUnder(job, scratch)                  // ignored: the next stage removes it first
+	_, _ = s.git(ctx, 0, "-C", mirror, "worktree", "prune") // ignored: a stale entry is pruned by the next stage
+}
+
+// mirrorFetch is a mirror's refspecs: origin's branches as its remote-tracking refs, so the
+// mirror's own branches are the jobs' alone and a fetch never moves one a worktree holds.
+var mirrorFetch = []string{"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"}
+
+// mirror is the repository's full bare mirror, fetched unless it was within MirrorFreshFor;
+// the first stage of a repository makes it (git init --bare, then a full fetch: never
+// shallow, never blob-less, which broke clones with 'pack has unresolved deltas'). A mirror of
+// the layout before worktrees (origin's branches as its own) is converted in place. A fetch
+// that fails is her account not reaching the repository.
 func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 	owner, name, _ := strings.Cut(repo, "/")
 	mirror := filepath.Join(s.Dir, MirrorsDir, owner, name+".git")
@@ -292,17 +338,23 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 		if err := safepath.RemoveUnder(filepath.Dir(mirror), tmp); err != nil {
 			return "", err
 		}
-		if _, err := s.git(ctx, MirrorCloneBudget, "clone", "--quiet", "--bare", "--", url, tmp); err != nil {
-			_ = safepath.RemoveUnder(filepath.Dir(mirror), tmp) // ignored: the next stage removes it first
-			return "", unreachable(err)
+		steps := [][]string{{"init", "--quiet", "--bare", "--", tmp}, {"-C", tmp, "remote", "add", "origin", url}}
+		for i, spec := range mirrorFetch {
+			op := "--add"
+			if i == 0 {
+				op = "--replace-all"
+			}
+			steps = append(steps, []string{"-C", tmp, "config", op, "remote.origin.fetch", spec})
 		}
-		for _, spec := range [][]string{
-			{"-C", tmp, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/heads/*"},
-			{"-C", tmp, "config", "--add", "remote.origin.fetch", "+refs/tags/*:refs/tags/*"},
-		} {
-			if _, err := s.git(ctx, 0, spec...); err != nil {
+		for _, argv := range steps {
+			if _, err := s.git(ctx, 0, argv...); err != nil {
+				_ = safepath.RemoveUnder(filepath.Dir(mirror), tmp) // ignored: the next stage removes it first
 				return "", err
 			}
+		}
+		if _, err := s.git(ctx, MirrorCloneBudget, "-C", tmp, "fetch", "--quiet", "origin"); err != nil {
+			_ = safepath.RemoveUnder(filepath.Dir(mirror), tmp) // ignored: the next stage removes it first
+			return "", unreachable(err)
 		}
 		if err := os.Rename(tmp, mirror); err != nil {
 			return "", err
@@ -320,7 +372,10 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 	if fresh {
 		return mirror, nil
 	}
-	if _, err := s.git(ctx, 0, "-C", mirror, "fetch", "--quiet", "--prune", "origin"); err != nil {
+	if err := s.mirrorLayout(ctx, mirror, url); err != nil {
+		return "", err
+	}
+	if _, err := s.git(ctx, MirrorCloneBudget, "-C", mirror, "fetch", "--quiet", "--prune", "origin"); err != nil {
 		return "", unreachable(err)
 	}
 	s.mu.Lock()
@@ -329,11 +384,62 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 	return mirror, nil
 }
 
+// mirrorLayout makes a mirror's origin url and refspecs the stager's. A mirror that held
+// origin's branches as its own (the layout before worktrees, when every job was a clone) has
+// those branches deleted, but never one a worktree has checked out; the fetch after brings
+// them back as remote-tracking refs.
+func (s *Stager) mirrorLayout(ctx context.Context, mirror, url string) error {
+	if got, _ := s.git(ctx, 0, "-C", mirror, "config", "--get", "remote.origin.url"); got != url { // ignored: no url is a url to set
+		if _, err := s.git(ctx, 0, "-C", mirror, "config", "remote.origin.url", url); err != nil {
+			return err
+		}
+	}
+	specs, _ := s.git(ctx, 0, "-C", mirror, "config", "--get-all", "remote.origin.fetch") // ignored: no refspec is a layout to set
+	if specs == strings.Join(mirrorFetch, "\n") {
+		return nil
+	}
+	held := map[string]bool{}
+	list, err := s.git(ctx, 0, "-C", mirror, "worktree", "list", "--porcelain")
+	if err != nil {
+		return err
+	}
+	for _, l := range strings.Split(list, "\n") {
+		if ref, ok := strings.CutPrefix(l, "branch "); ok {
+			held[ref] = true
+		}
+	}
+	heads, err := s.git(ctx, 0, "-C", mirror, "for-each-ref", "--format=%(refname)", "refs/heads/")
+	if err != nil {
+		return err
+	}
+	var del strings.Builder
+	for _, ref := range strings.Split(heads, "\n") {
+		if ref != "" && !held[ref] {
+			fmt.Fprintf(&del, "delete %s\n", ref)
+		}
+	}
+	if del.Len() > 0 {
+		if _, err := gitrun.Output(ctx, gitrun.Options{Env: s.env(), OwnRepo: true, Stdin: strings.NewReader(del.String())}, "-C", mirror, "update-ref", "--stdin"); err != nil {
+			return err
+		}
+	}
+	for i, spec := range mirrorFetch {
+		op := "--add"
+		if i == 0 {
+			op = "--replace-all"
+		}
+		if _, err := s.git(ctx, 0, "-C", mirror, "config", op, "remote.origin.fetch", spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // base is the commit p's base names in the mirror: its pin when it has one, else a branch,
 // else a tag, else a full sha. A base the repository does not hold is the card's judgment; a
 // pin it does not hold is never read as its ref.
 func (s *Stager) base(ctx context.Context, mirror string, p Packet) (string, error) {
-	refs := []string{"refs/heads/" + p.Base, "refs/tags/" + p.Base}
+	refs := []string{"refs/remotes/origin/" + p.Base, "refs/tags/" + p.Base}
 	if shaRE.MatchString(p.Base) {
 		refs = append(refs, p.Base)
 	}
@@ -353,6 +459,124 @@ func (s *Stager) base(ctx context.Context, mirror string, p Packet) (string, err
 		Remedy: fmt.Sprintf("push %s to %s, or rework the card onto a base it holds", named, p.Repo)}
 }
 
+// FinishedJobsKept is how many finished jobs' worktrees the daemon's cleanup keeps, the newest
+// staged; the rest are pruned (Stager.Prune), at most PrunePerPass a cleanup, so the loop that
+// runs it is held a few seconds at most.
+const (
+	FinishedJobsKept = 8
+	PrunePerPass     = 4
+)
+
+// Prune removes the worktrees of finished jobs past kept, the oldest staged first (by its
+// JOB.md), at most PrunePerPass of them, and answers the jobs it removed; a job whose mirror a
+// stage holds is left for the next pass, never waited on. A job is finished when it is not live (held on her
+// row, run by a lane, being staged: the caller's live) and its brief is not in her inbox (the
+// inbox cleanup retired it); only a job whose checkout is a worktree of one of her mirrors is
+// ever pruned, never a clone or anything another hand staged. A pruned job is gone whole
+// (jobs/<job>), its worktree removed from the mirror; its branch stays in the mirror, so any
+// commit on it is kept, and a stage of the job again takes the branch as it stands.
+func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]string, error) {
+	jobs := filepath.Join(s.Dir, JobsDir)
+	entries, err := os.ReadDir(jobs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	type finished struct {
+		job, repo, mirror string
+		at                time.Time
+	}
+	var done []finished
+	for _, e := range entries {
+		job := e.Name()
+		if !e.IsDir() || !validJob(job) || live[job] || exists(filepath.Join(s.Dir, "inbox", job)) {
+			continue
+		}
+		repo, mirror, ok := s.worktreeOf(filepath.Join(jobs, job, "repo"))
+		if !ok {
+			continue
+		}
+		at := time.Time{}
+		if fi, err := os.Lstat(filepath.Join(jobs, job, JobFile)); err == nil {
+			at = fi.ModTime()
+		}
+		done = append(done, finished{job: job, repo: repo, mirror: mirror, at: at})
+	}
+	sort.Slice(done, func(i, j int) bool {
+		if !done[i].at.Equal(done[j].at) {
+			return done[i].at.Before(done[j].at)
+		}
+		return done[i].job < done[j].job
+	})
+	var pruned []string
+	var firstErr error
+	for _, f := range done[:max(len(done)-max(kept, 0), 0)] {
+		if len(pruned) == PrunePerPass {
+			break
+		}
+		lock := s.repoLock(f.repo)
+		if !lock.TryLock() {
+			continue // a stage holds the mirror: the next pass
+		}
+		err := s.pruneJob(ctx, f.mirror, f.job)
+		lock.Unlock()
+		if err != nil {
+			firstErr = cmpErr(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
+			continue
+		}
+		pruned = append(pruned, f.job)
+	}
+	return pruned, firstErr
+}
+
+// pruneJob removes a finished job, its mirror's lock held: its worktree from the mirror, then
+// the job's directory.
+func (s *Stager) pruneJob(ctx context.Context, mirror, job string) error {
+	dir := JobDir(s.Dir, job)
+	if _, err := s.git(ctx, 0, "-C", mirror, "worktree", "remove", "--force", "--force", filepath.Join(dir, "repo")); err != nil {
+		return err
+	}
+	if err := safepath.RemoveUnder(filepath.Join(s.Dir, JobsDir), dir); err != nil {
+		return err
+	}
+	_, err := s.git(ctx, 0, "-C", mirror, "worktree", "prune")
+	return err
+}
+
+// worktreeOf is the repository (owner/name) and the mirror whose worktree checkout is: its
+// .git a file naming a worktree under one of her mirrors; false for anything else.
+func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
+	raw, err := os.ReadFile(filepath.Join(checkout, ".git"))
+	if err != nil {
+		return "", "", false
+	}
+	gitdir, found := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir: ")
+	if !found || !filepath.IsAbs(gitdir) {
+		return "", "", false
+	}
+	mirrors, err := filepath.EvalSymlinks(filepath.Join(s.Dir, MirrorsDir))
+	if err != nil {
+		return "", "", false
+	}
+	if real, err := filepath.EvalSymlinks(gitdir); err == nil {
+		gitdir = real
+	}
+	rel, err := filepath.Rel(mirrors, gitdir)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) != 4 || parts[3] == "" || parts[2] != "worktrees" || !strings.HasSuffix(parts[1], ".git") {
+		return "", "", false
+	}
+	repo = parts[0] + "/" + strings.TrimSuffix(parts[1], ".git")
+	if !repoRE.MatchString(repo) || strings.Contains(repo, "..") {
+		return "", "", false
+	}
+	return repo, filepath.Join(mirrors, parts[0], parts[1]), true
+}
+
 // JobText is a staged job's JOB.md: the card-contract shape (docs/SPEC-CARD-CONTRACT.md), the
 // checkout, the branch, the outbox report and the finish.
 func JobText(dir string, p Packet, sha string) string {
@@ -360,7 +584,7 @@ func JobText(dir string, p Packet, sha string) string {
 	checkout := filepath.Join(JobDir(dir, p.Job), "repo")
 	outbox := filepath.Join(dir, "outbox", p.Job)
 	return fmt.Sprintf("# JOB: work %s, attempt %d\n\n"+
-		"The staged checkout: %s (a clone of %s at %s, %s, on branch %s).\n"+
+		"The staged checkout: %s (a git worktree of %s at %s, %s, on branch %s).\n"+
 		"Work there; commit as the brief says; push the branch (git push -u origin %s).\n"+
 		"Finish: write %s with 'Verdict: LAND|HOLD|FAIL' and 'Head: <sha>' on the first two lines, then the report; RESULT.md beside it with the same head. The coordinator syncs the outbox.\n"+
 		"If the push is refused, leave the report with Verdict: HOLD naming 'no push' and the coordinator pushes from this checkout.\n",
@@ -443,6 +667,43 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 			d.stageDone = append(d.stageDone, stageResult{p: p, sha: sha, err: err, stopped: err != nil && l.ctx.Err() != nil})
 			d.stageMu.Unlock()
 		}()
+	}
+}
+
+// pruneStep is the daemon's cleanup of finished jobs, run in the loop after each inbox
+// cleanup, so what is live cannot change under it (a prune on a goroutine of its own, handed a
+// snapshot, could remove a job dealt to her again and handed to a lane meanwhile: the reversed
+// witness "async" of tla/JobWorktrees.tla). Live is every job held on her row, run by a lane
+// (keep) or being staged; Stager.Prune never touches one, nor a job whose brief is in her
+// inbox, and removes at most PrunePerPass, never waiting on a mirror a stage holds. Each job
+// removed is said, and a failure once while it stands.
+func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
+	d := l.d
+	if d.Prune == nil {
+		return
+	}
+	live := map[string]bool{}
+	for _, h := range held {
+		live[h.Job] = true
+	}
+	for job := range keep {
+		live[job] = true
+	}
+	for job := range d.staging {
+		live[job] = true
+	}
+	pruned, err := d.Prune(l.ctx, live)
+	at := now.UTC().Format(time.RFC3339)
+	for _, job := range pruned {
+		d.Record(fmt.Sprintf("%s prune: removed %s/%s and its worktree: its card is finished (%d finished kept)", at, JobsDir, job, FinishedJobsKept))
+	}
+	switch {
+	case err == nil:
+		d.pruneSaid = ""
+	case l.ctx.Err() != nil:
+	case err.Error() != d.pruneSaid:
+		d.pruneSaid = err.Error()
+		d.Record(fmt.Sprintf("%s prune: not pruned: %s; tried again at the next cleanup", at, oneLine(err.Error(), 400)))
 	}
 }
 

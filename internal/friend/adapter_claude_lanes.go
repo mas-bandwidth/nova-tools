@@ -30,8 +30,8 @@ type CardRunner interface {
 // RunsCards says harness runs each card as a process of its own (a
 // CardRunner) when its row is one-shot: it has no session to push into, so
 // install and run owe it neither the deliver-command refusal nor the push
-// proof. NewDeliverer still answers its batch adapter, the Stub; NewClaude is
-// the one that runs cards.
+// proof. NewDeliverer answers its batch adapter, the wake file (ClaudeWake);
+// NewClaude is the one that runs cards.
 func RunsCards(harness string) bool { return harness == "claude" }
 
 // NewClaude is the claude harness's card runner over run, in the friend's

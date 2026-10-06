@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -140,6 +141,22 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 			return "100 1 grok\n200 100 tail -n 0 -F " + wake + "\n", 0, nil
 		})}
 	},
+	"claude": func(t *testing.T, s *fakeSession, dir string) Deliverer {
+		// the session's wait on the wake file: each new line wakes the session for a turn
+		s.poll = func() {
+			raw, err := os.ReadFile(ClaudeWakePath(dir, "bob"))
+			if errors.Is(err, os.ErrNotExist) {
+				return
+			}
+			require.NoError(t, err)
+			for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+				if line != "" {
+					s.act(line)
+				}
+			}
+		}
+		return &ClaudeWake{Dir: dir, Name: "bob", Now: func() time.Time { return t0 }}
+	},
 	"tmux": func(t *testing.T, s *fakeSession, dir string) Deliverer {
 		// the pane shows its prompt until a line is typed and entered; the typed line is a turn of the session
 		var typed string
@@ -233,7 +250,7 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 	for harness := range harnessRigs {
 		require.True(t, Known(harness), "a rig for %s, which is no harness", harness)
 	}
-	assert.Len(t, harnessRigs, 7, "the seven adapters with a deliver command each run the check")
+	assert.Len(t, harnessRigs, 8, "the eight adapters with a deliver command each run the check")
 	for _, harness := range Harnesses {
 		t.Run(harness, func(t *testing.T) {
 			t.Parallel()

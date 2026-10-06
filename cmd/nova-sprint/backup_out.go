@@ -215,7 +215,7 @@ func (b *backupOut) run(ctx context.Context) (backupResult, error) {
 	}
 
 	// 6. the scan for every nova-secrets value, counts only
-	names, matched, err := b.scan.run(ctx, func(w io.Writer) error {
+	names, matched, err := b.scan.sealedNames(ctx, func(w io.Writer) error {
 		if _, err := w.Write(text.Bytes()); err != nil {
 			return err
 		}
@@ -333,7 +333,7 @@ func backupReadme(epoch uint64, base string, parts []string, textSum, xzSum stri
 // decrypted) and runs the scan as a child of nova-secrets exec with those
 // names: the values reach the scan only in its environment, and it prints
 // the counts alone. The stream is written to its standard input.
-func (s backupScanner) run(ctx context.Context, stream func(io.Writer) error) (names, matched int, err error) {
+func (s backupScanner) sealedNames(ctx context.Context, stream func(io.Writer) error) (names, matched int, err error) {
 	if s.bin == "" || s.store == "" || s.as == "" || s.key == "" || s.sops == "" {
 		return 0, 0, errors.New("the scan wants the nova-secrets seat: --secrets-store, --secrets-as, --secrets-key and --sops, or a login recorded by nova-sprint seat login")
 	}

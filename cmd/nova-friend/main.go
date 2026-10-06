@@ -74,7 +74,7 @@ type world struct {
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
 	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage     func(dir string) func(ctx context.Context, p friend.Packet) (string, error)                         // stages a held card's job under her working directory (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	stage     func(dir string) *friend.Stager                                                                     // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	tip       func(ctx context.Context, repo, branch string) (string, error)                                      // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
 	launchctl friend.Launchctl
 	now       func() time.Time
@@ -225,9 +225,7 @@ func realWorld() world {
 		cards:    sprintAsk,
 		view:     sprintView,
 		friends:  coordinatorFriends,
-		stage: func(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
-			return (&friend.Stager{Dir: dir}).Stage
-		},
+		stage:    func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
 		tip:      (&friend.Stager{}).Tip,
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
@@ -471,7 +469,9 @@ cannot be made is refused and the agent is not loaded. --secrets NAME[,NAME] wra
 exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
 opening exactly those names to the harness and refusing to start without every one; nova-secrets
 and sops are found on PATH at install and written by absolute path. --dry-run prints the plan and
-writes nothing. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
+writes nothing. For harness claude, a NOTE prints the one line the open session runs as a background task, ` + friend.ClaudeWaitLine("<me>", "<file>.wake") + `
+(the session's own blocking read, re-run with the cursor it printed each time it returns; the daemon is passive for claude, answers
+the coordinator's ping, and appends one line per message to that wake file). For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
 (--session names the wake file in place of <file>.wake): one command in the session, not a flag, an
 environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
 (the message stays pending and is tried again), never failed and never dropped. Once the agent is
@@ -760,13 +760,14 @@ or WAIT-PONG NONE at exit 1.`,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
 (once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
-status=<up|down> why= evidence=, and for harness grok route=<push|defer>,
+status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
-` + friend.GrokMonitorLine("") + `, when none does. JSON carries route as a string (push or defer) and that NOTE in notes; other
-harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md); the harness's process is
+` + friend.GrokMonitorLine("") + `, when none does. For harness claude route=passive (the daemon takes nothing off the stream; the
+session's own wait reads it), with a NOTE of the line install prints. JSON carries route as a string (push, defer or passive) and
+that NOTE in notes; other harnesses omit route. status is the friend's, decided from evidence in order (docs/SPEC-FRIEND.md); the harness's process is
 shown and never decides (harness_seen=running|not-seen|-, the daemon's check of the process table: a session run from its command
 line has no app to see); at a limit (the state directory's
 ` + friend.LimitFile + `) is down until the reset; no session answer (the pong file, or the daemon's last word from the session on the bus) under ` + friend.AnswerBound.String() + ` is down; a bus that cannot
@@ -1049,6 +1050,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
 		}
 	}
+	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
@@ -1141,7 +1143,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		Held:      w.held(name, server),
-		Stage:     w.stager(dir),
+		Stage:     stager.stage(),
+		Prune:     stager.prune(),
 		Tip:       w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
@@ -1213,13 +1216,34 @@ func (w world) held(name, server string) func(context.Context) (friend.Row, erro
 	return friend.HeldVia(name, func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }, view, now)
 }
 
-// stager is the daemon's Stage: every held work card's job staged under her working directory
-// (jobs/<job>/repo and its JOB.md); nil in a world that stages none or asks no held cards.
-func (w world) stager(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
+// stager is the daemon's one Stager: every held work card's job staged under her working
+// directory (jobs/<job>/repo, a worktree of the repository's mirror, and its JOB.md), and the
+// finished jobs past friend.FinishedJobsKept pruned, both under the mirror's one lock; nil in a
+// world that stages none or asks no held cards.
+func (w world) stager(dir string) daemonStager {
 	if w.stage == nil || w.cards == nil || dir == "" {
+		return daemonStager{}
+	}
+	return daemonStager{w.stage(dir)}
+}
+
+// daemonStager is a Stager as the daemon's Stage and Prune, nil for none.
+type daemonStager struct{ s *friend.Stager }
+
+func (d daemonStager) stage() func(ctx context.Context, p friend.Packet) (string, error) {
+	if d.s == nil {
 		return nil
 	}
-	return w.stage(dir)
+	return d.s.Stage
+}
+
+func (d daemonStager) prune() func(ctx context.Context, live map[string]bool) ([]string, error) {
+	if d.s == nil {
+		return nil
+	}
+	return func(ctx context.Context, live map[string]bool) ([]string, error) {
+		return d.s.Prune(ctx, live, friend.FinishedJobsKept)
+	}
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
@@ -1299,7 +1323,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + a.Said())
-		return noteGrokMonitor(o, a.Harness, a.Session)
+		return noteClaudeWait(noteGrokMonitor(o, a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
 	}
 	wrote, err := h.Write()
 	if err != nil {
@@ -1322,7 +1346,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 		o.Item("ran", "command", tool.Text(r))
 	}
 	if err != nil {
-		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
+		return noteClaudeWait(noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
 	}
 	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
 	state := c.Str("state-dir") // where the agent just started keeps its files, as its run will choose them
@@ -1346,7 +1370,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 	} else {
 		o.Note("check: " + res.Line())
 	}
-	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+	return noteClaudeWait(noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
 }
 
 // undriven is the refusal of a harness whose adapter has no deliver command
@@ -1406,6 +1430,12 @@ func (w world) pongCommand(name, nonce, state, redis string) string {
 // could not run (no harness, no store), and remedy, with undriven, when the
 // adapter cannot drive the session at all.
 func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, to string, within time.Duration) (res friend.CheckResult, remedy string, undriven bool, refusal string) {
+	if harness == "claude" { // the claude adapter's target is the state directory, where the wake file is
+		dir = state
+		if session == "" {
+			session = name
+		}
+	}
 	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
@@ -1441,6 +1471,28 @@ func (w world) conformance(c *tool.Call, name, harness, state, to string, within
 // noteGrokMonitor appends the one line a grok session runs, when harness is grok.
 func noteGrokMonitor(o *tool.Out, harness, session string) *tool.Out {
 	if line := friend.GrokInstallLine(harness, session); line != "" {
+		o.Note(line)
+	}
+	return o
+}
+
+// claudeWake is the wake file the claude session's wait names: in the state
+// directory the daemon will keep (--state-dir, else <dir>/.nova-friend, else
+// the home directory's), named and never made here.
+func (w world) claudeWake(c *tool.Call, name string) string {
+	state := c.Str("state-dir")
+	if state == "" && c.Str("dir") != "" {
+		state = friend.StateDirIn(c.Str("dir"))
+	}
+	if state == "" {
+		state = friend.DefaultStateDir(w.home, name)
+	}
+	return friend.ClaudeWakePath(state, name)
+}
+
+// noteClaudeWait appends the one line a claude session runs, when harness is claude.
+func noteClaudeWait(o *tool.Out, harness, friendName, wake string) *tool.Out {
+	if line := friend.ClaudeInstallLine(harness, friendName, wake); line != "" {
 		o.Note(line)
 	}
 	return o
@@ -1573,6 +1625,9 @@ func (w world) status(c *tool.Call) *tool.Out {
 				o.Note("grok route: " + rerr.Error())
 			}
 		}
+	}
+	if s.Harness == "claude" {
+		o.Fact("route", "passive").Note(friend.ClaudeWaitLine(c.Str("as"), friend.ClaudeWakePath(state, c.Str("as"))))
 	}
 	return o
 }

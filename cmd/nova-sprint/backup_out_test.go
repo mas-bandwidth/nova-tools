@@ -180,3 +180,28 @@ func TestBackupWritesADumpThatRestoresAndHoldsNoSecret(t *testing.T) {
 	left, _ := os.ReadDir(filepath.Dir(out))
 	assert.Empty(t, left, "a failed backup leaves no work directory")
 }
+
+// TestBackupOutPrintsItsResultLine pins the verb law on the backup verb's
+// exit-0 path: it prints its one result line through fmt.Fprint* on stdout
+// before returning 0 — BACKUP OK, the out directory, the parts, the bytes and
+// the restore-check verdict (law #2573, tools/analyzers/cmd/vetlaw).
+func TestBackupOutPrintsItsResultLine(t *testing.T) {
+	t.Parallel()
+	for _, bin := range []string{"xz", "split"} {
+		_, err := exec.LookPath(bin)
+		require.NoError(t, err, "the backup runs the system's %s", bin)
+	}
+	planted := "nsv_PlantedFake_" + strings.Repeat("q7Rk", 6)
+	secrets := fakeSecrets(t, planted)
+	keys := t.TempDir()
+	flags := " --nova-secrets " + secrets + " --secrets-store " + keys + " --secrets-as bud --secrets-key " + filepath.Join(keys, "bud.key") + " --sops /bin/true --part-bytes 600"
+	file := backupTwinFile(t, "")
+	out := filepath.Join(t.TempDir(), "backup")
+	code, stdout, stderr := twinProcess(t, file, "nova-sprint backup --out "+out+flags)
+	require.Equal(t, 0, code, "backup: exit %d\n%s%s", code, stdout, stderr)
+	require.Contains(t, stdout, "BACKUP OK out="+out+" ", "the OK line names the out directory")
+	require.Contains(t, stdout, "restored=twin", "the restore-check verdict")
+	require.Contains(t, stdout, "parts=", "the parts")
+	require.Contains(t, stdout, "bytes=", "the bytes")
+	require.Contains(t, stdout, "secrets=1 matched=0", "the scan's verdict")
+}

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -211,7 +213,7 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	case "antigravity":
 		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "claude":
-		return Stub{Harness: harness}, nil
+		return &ClaudeWake{Dir: dir, Name: session, Out: out}, nil
 	case "dsh":
 		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "gemini":
@@ -323,6 +325,90 @@ func (s Stub) Deliver(context.Context, string) (int, error) {
 // Passive marks a Deliverer that cannot deliver: the daemon reads nothing
 // for it.
 func (Stub) Passive() {}
+
+// ClaudeWaitLine is the one line a claude session runs as a background task
+// (docs/SPEC-FRIEND.md, the Claude paragraph): the session's own blocking
+// read of the bus, re-armed with the cursor it printed each time it returns.
+// Claude Code has no command that puts a turn into a running session from
+// outside; a background task's exit re-invokes the session. It is a command
+// run once inside the session, not a flag, an environment variable or a
+// wrapper at app start. wake is the file the daemon appends one line to per
+// message, so a wait that missed nothing still returns.
+func ClaudeWaitLine(friend, wake string) string {
+	return "run as a background task, and re-run it with the cursor it printed each time it returns: nova-bus wait --as " + friend + " --after <cursor> --wake-file " + wake
+}
+
+// ClaudeWakePath is the wake file of a claude friend: <state>/<friend>.wake,
+// in the daemon's state directory, named on the line the session runs.
+func ClaudeWakePath(stateDir, friend string) string {
+	return filepath.Join(stateDir, friend+".wake")
+}
+
+// ClaudeInstallLine is the NOTE install prints for harness claude; every
+// other harness gets none.
+func ClaudeInstallLine(harness, friend, wake string) string {
+	if harness != "claude" {
+		return ""
+	}
+	return ClaudeWaitLine(friend, wake)
+}
+
+// ClaudeWake is the claude adapter: Claude Code has no command that puts a
+// turn into a running session from outside, so Deliver puts nothing in. It
+// appends one line per push to the wake file in Dir, the friend's state
+// directory (ClaudeWakePath(Dir, Name)): the clock, then the pushed text on
+// one line, which carries the nonce or message id and the path of what was
+// pushed. The session's own wait (ClaudeWaitLine), running as a background
+// task, returns when the file grows, and its exit re-invokes the session.
+// The file is made when absent, synced, and never truncated; a missing Dir
+// is a refusal naming it, and nothing is made. Name is the session's name
+// for the file, else the friend of Dir's status file. It is Passive: the
+// daemon takes nothing off the stream for claude.
+type ClaudeWake struct {
+	Dir, Name string
+	Now       func() time.Time // time.Now when nil
+	Out       io.Writer        // the daemon's record, when set
+}
+
+func (c *ClaudeWake) Deliver(_ context.Context, text string) (int, error) {
+	if fi, err := os.Stat(c.Dir); err != nil || !fi.IsDir() {
+		return 0, fmt.Errorf("no state directory %s: the claude wake file is kept there; start the friend's daemon there first, or name the directory it keeps", c.Dir)
+	}
+	name := c.Name
+	if name == "" {
+		s, _, _ := ReadStatus(c.Dir) // ignored: an unreadable status names no friend, refused below
+		name = s.Friend
+	}
+	if name == "" {
+		return 0, fmt.Errorf("no friend named for the claude wake file in %s: name the session, or start the friend's daemon there", c.Dir)
+	}
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	wake := ClaudeWakePath(c.Dir, name)
+	f, err := os.OpenFile(wake, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	_, err = f.WriteString(now().UTC().Format(time.RFC3339Nano) + " " + WakeLine(text) + "\n")
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if c.Out != nil {
+		fmt.Fprintln(c.Out, "one line appended to "+wake+"; the session's wait returns and the turn runs after this")
+	}
+	return 0, nil
+}
+
+// Passive marks the claude adapter: the session's own wait reads the stream.
+func (*ClaudeWake) Passive() {}
 
 // Known says whether harness is one of Harnesses.
 func Known(harness string) bool { return slices.Contains(Harnesses, harness) }
