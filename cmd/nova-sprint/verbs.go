@@ -3312,7 +3312,7 @@ func (a *app) waitOne(st *store.Store, c *common, id string, at time.Time, stdou
 		err = fmt.Errorf("%s", res.Refused[0].Why)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "WAIT REFUSED note=%s: %s\n", oneline.Escape(id), oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "WAIT REFUSED note=%s: %s; run: nova-sprint help wait\n", oneline.Escape(id), oneline.Escape(err.Error()))
 		return 1
 	}
 	for _, say := range a.recordAnswers(ctx, st, "wait", before, store.Result{Moved: []string{id}}, "until "+at.UTC().Format(time.RFC3339), "", c.actor) {
