@@ -1088,6 +1088,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if line := facts.StoreLine(); line != "" {
 		b.WriteString("\n" + line + "\n")
 	}
+	if line := promotionLine(clocks); line != "" {
+		b.WriteString("\n" + line + "\n")
+	}
 	a.goalsView(ctx, st, &v)
 	if v.Providers, err = providersView(ctx, st, shapes, now); err != nil {
 		return whereView{}, "", err
@@ -1107,6 +1110,27 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	v.Releases = sprint.WhereReleasesCountCardsLeft(clocks, streamLeft)
 	return v, b.String(), nil
+}
+
+// promotionLine names the streams that land on dev or main, from the stream clocks (the
+// control cards' one readset, store.StreamClocks; no card is read): `promotion: s1`, a
+// stream marked for some repositories only with them, `s2 (owner/name)`; empty when no
+// stream is marked (docs/SPEC-SPRINT.md section 7, protected-bases-pb-b.w2).
+func promotionLine(clocks []sprint.StreamClock) string {
+	var marked []string
+	for _, c := range clocks {
+		switch c.Promotion {
+		case "":
+		case sprint.LandProtectedAny:
+			marked = append(marked, c.Stream)
+		default:
+			marked = append(marked, c.Stream+" ("+c.Promotion+")")
+		}
+	}
+	if len(marked) == 0 {
+		return ""
+	}
+	return "promotion: " + strings.Join(marked, ", ")
 }
 
 // perLandedColumnName is the work table's column of dollars per landed card, drawn

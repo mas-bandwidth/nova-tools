@@ -402,6 +402,8 @@ func TestLandTwoStreamsAsTheirOwnBatches(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
 		return path
 	}
+	r.promotionStream("s1") // its cards are cut on main, which the promotion stream alone takes
+	r.promotionStream("s2")
 	r.ok("add --stream s1 --brief-file " + brief("a", "main") + " --brief-file " + brief("b", "main"))
 	r.ok("add --stream s2 --brief-file " + brief("c", "main") + " --brief-file " + brief("d", "alt"))
 	heads := map[string]string{}
@@ -481,6 +483,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 	briefs := t.TempDir()
 	path := filepath.Join(briefs, "a.md")
 	require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+	r.promotionStream("s1") // the card is cut on main, which the promotion stream alone takes
 	r.ok("add --stream s1 a --one --brief-file " + path)
 	r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 	before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
@@ -627,6 +630,7 @@ func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 			briefs := t.TempDir()
 			path := filepath.Join(briefs, "a.md")
 			require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+			r.promotionStream("s1") // the card is cut on main, which the promotion stream alone takes
 			r.ok("add --stream s1 a --one --brief-file " + path)
 			r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 			before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
@@ -737,7 +741,7 @@ func TestLandRefusesAProtectedBaseUntilTheStreamIsMarked(t *testing.T) {
 		assert.Equal(t, 1, code, land)
 		assert.Contains(t, out+errs, "LAND REFUSED stream=s1 cards=1 base=main tip=- ids=s1-1 ", land)
 		assert.Contains(t, out+errs, why, land)
-		assert.Contains(t, out+errs, "; run: nova-sprint stream set s1 --land-protected any\n", land)
+		assert.Contains(t, out+errs, "; run: nova-sprint stream set s1 --land-protected any; or mark it the promotion stream, for every repository: nova-sprint stream set s1 --promotion\n", land)
 	}
 	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"), "nothing was pushed")
 	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"), "nothing was recorded")

@@ -49,6 +49,7 @@ func TestLanderRestoresItsOwnDirtyCacheClone(t *testing.T) {
 		briefs := t.TempDir()
 		path := filepath.Join(briefs, "a.md")
 		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+		r.promotionStream("s1") // the card is cut on main, which the promotion stream alone takes
 		r.ok("add --stream s1 a --one --brief-file " + path)
 		r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 
