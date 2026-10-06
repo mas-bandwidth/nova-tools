@@ -767,6 +767,12 @@ type AcceptReq struct {
 	Sel
 	Answers []string
 	Who     string
+	// Heavy records the coordinator's own heavy read (heavyRead): one ok read
+	// toward the read rule, resting on the file at Evidence, whose sha256 is
+	// EvidenceSHA, for Reason.
+	Heavy                 bool
+	Evidence, EvidenceSHA string
+	Reason                string
 }
 
 // okReaders is the primary's ok read cards from different readers at its
@@ -806,7 +812,9 @@ func ReadCardAgrees(c *Card) bool {
 // Accept moves review -> merging and places the primary in merge queued with
 // its score. It is refused without ok reads from as many different readers at
 // the primary's head as it needs (ReadsNeeded: one for a flash card, two for a
-// pro card), whoever the readers. The primary's read cards still asked
+// pro card), whoever the readers; with Heavy, the coordinator's heavy read
+// counts as one of them, recorded on the primary and never as a reader's
+// (heavyRead; docs/SPEC-SPRINT.md section 6, accept-heavy-verdict-b.w1). The primary's read cards still asked
 // or reading are retired in the same step, marked retired by accept, so no
 // read is outstanding on a primary that is not in review. Named ids are all or nothing under one
 // pre-state; a selection (a stream, the primaries with the ok reads they need, an inbox
@@ -818,16 +826,25 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 	// and the merge queues fill together; the index moves past the stream of
 	// the last accepted
 	srr := streamRound(s, PropAcceptStreamIndex)
+	heavyReads := 0
+	if r.Heavy {
+		heavyReads = 1
+	}
 	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
 			return why
 		}
-		if oks := okReaders(s, c); len(oks) < ReadsNeeded(c) {
+		if r.Heavy {
+			if why := heavyWhy(r); why != "" {
+				return why
+			}
+		}
+		if oks := okReaders(s, c); len(oks)+heavyReads < ReadsNeeded(c) {
 			var names []string
 			for _, o := range oks {
 				names = append(names, o.F("reader"))
 			}
-			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeeded(c)), orDash(c.F("head")), len(oks), orDash(strings.Join(names, ",")))
+			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeeded(c)), orDash(c.F("head")), len(oks)+heavyReads, orDash(strings.Join(names, ",")))
 		}
 		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
 			return "its merge record is " + placeWord(m)
@@ -871,10 +888,22 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			names = append(names, o.F("reader"))
 		}
 		readers := strings.Join(names, ",")
-		accept := map[string]string{"readers": readers, "accepted": stamp(s.Now)}
-		maps.Copy(accept, readStamps(oks))
-		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, accept)))
-		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s)", c.ID, strings.ReplaceAll(readers, ",", ", "))
+		set := map[string]string{"readers": readers, "accepted": stamp(s.Now)}
+		maps.Copy(set, readStamps(oks))
+		heavyText := ""
+		if r.Heavy {
+			fields, overruled := heavyRead(s, c, r)
+			maps.Copy(set, fields)
+			for _, o := range overruled {
+				u.Changes = append(u.Changes, change(Readers, guardEntry(o)))
+			}
+			heavyText = fmt.Sprintf("; heavy read ok from %s, evidence %s sha256 %s", fields[FieldHeavyReader], r.Evidence, r.EvidenceSHA)
+			if len(overruled) > 0 {
+				heavyText += "; overrules " + strings.ReplaceAll(fields[FieldHeavyOverrules], ",", ", ")
+			}
+		}
+		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, set)))
+		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s%s)", c.ID, strings.ReplaceAll(orDash(readers), ",", ", "), heavyText)
 		if retired > 0 {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
 		}
