@@ -1314,7 +1314,7 @@ pin all three by executing them.
    `<out>/fold.lock` (the same flock the earlier binaries took; tla/FileLock.tla),
    elsewhere an exclusive create of a sibling file; a bounded jittered wait,
    exit 2 naming the holder's pid. Tests: demanded test 8's lock half.
-3. **`internal/tokens/message.go`**: the one message shape every source
+3. **The message record**: the one message shape every source
    produces, with each of the five types either a count or absent, the
    source's `reports` set and the day basis, and the fold function over a
    stream of them: dedup by id, day from stamp, attribution, each type
