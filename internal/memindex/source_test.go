@@ -100,3 +100,31 @@ func (o openingFS) Open(name string) (fs.File, error) {
 	}
 	return o.FS.Open(name)
 }
+
+// TestBuildRefusesAFileOverTheByteCap pins the per-file read cap: Build read
+// each .md whole, so one planted 40 MB file drove peak RSS past 2 GB on every
+// indexing verb. A file one byte over MaxFileBytes is refused with an error
+// naming the file and the cap; a file of exactly MaxFileBytes still builds
+// (security#76 finding 3).
+func TestBuildRefusesAFileOverTheByteCap(t *testing.T) {
+	t.Parallel()
+	// Paragraphs of MinTerms-clearing words, padded to an exact size.
+	page := func(n int) []byte {
+		b := []byte(strings.Repeat("alpha beta gamma delta epsilon\n\n", n/32+1))
+		return b[:n]
+	}
+	t.Run("one byte over the cap is refused, naming the file and the cap", func(t *testing.T) {
+		t.Parallel()
+		c, err := Build(fstest.MapFS{"a.md": {Data: page(MaxFileBytes + 1)}}, nil)
+		require.Error(t, err, "before the cap the whole file was read: no error")
+		assert.ErrorContains(t, err, "a.md")
+		assert.ErrorContains(t, err, "8388608")
+		assert.Nil(t, c, "a refused build returns no corpus")
+	})
+	t.Run("exactly the cap builds", func(t *testing.T) {
+		t.Parallel()
+		c, err := Build(fstest.MapFS{"a.md": {Data: page(MaxFileBytes)}}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, int64(MaxFileBytes), c.Bytes)
+	})
+}
