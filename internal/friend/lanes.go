@@ -424,11 +424,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			}
 			ln.card, ln.attempts = &c, 0
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
-			if how, tokens, err := HandBrief(d.Dir, c, d.Contract); err != nil {
-				d.Record(fmt.Sprintf("%s lane %d: card %s: its brief: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, err.Error()))
-			} else {
-				d.Record(fmt.Sprintf("%s lane %d: card %s handed: brief_tokens=%d contract=%s", now.UTC().Format(time.RFC3339), ln.n, c.ID, tokens, how))
-			}
+			d.hand(c, fmt.Sprintf("lane %d", ln.n), now)
 			l.saveLanes(now)
 		}
 		if perCard { // the brief alone: no message, pong or notice rides with it

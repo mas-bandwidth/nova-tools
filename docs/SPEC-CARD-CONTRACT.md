@@ -549,6 +549,9 @@ names it in one line.
   brief in place of its `Contract:` line before the lane is handed it, from the text it holds
   (`friend.HandBrief`); the header lines stay first, so line 1 still says what it said. With
   no text in hand either, the daemon records `contract=unread` and hands the brief as it is.
+  A lane is handed its brief when it takes the card; a batch session, which reads its briefs
+  straight from the inbox, has each brief dealt to it handed the same way before the turn
+  that names them (`TestABatchSessionIsHandedTheContractAsALaneIs`).
 - The lint reads a brief by reference as the lane reads it: the contract in place of the
   line (`card.Lint` with `Options.Contract`); a reference with no text to read is the finding
   `contract-unread`, and a version the repository does not hold, `contract-version`.

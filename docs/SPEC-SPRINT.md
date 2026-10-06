@@ -1104,7 +1104,8 @@ lives once in the contract file, versioned: a brief by reference is its header l
 `Contract: docs/SPEC-CARD-CONTRACT.md <version>` (`card.Brief`), linted with the contract in place
 of the line (`card.Lint`). The lane reads the contract once from its staged checkout; the friend
 daemon puts the text in the brief only when the checkout does not hold that version
-(`friend.HandBrief`), and records each card it hands with the brief's token count
+(`friend.HandBrief`, for a lane's card and a batch session's dealt briefs alike), and records
+each card it hands with the brief's token count
 (`brief_tokens=<n> contract=checkout|prepended|unread|none`).
 
 **Work card** (consumer). What a child with a worktree is handed: the brief and

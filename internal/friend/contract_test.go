@@ -1,10 +1,12 @@
 package friend
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,4 +60,35 @@ func TestTheDaemonPrependsTheContractOnlyWhenTheCheckoutCannotBeRead(t *testing.
 	how, _, after = hand(t, "Do the thing.\n", false, held)
 	assert.Equal(t, ContractNone, how)
 	assert.Equal(t, "Do the thing.\n", after)
+}
+
+// A batch session reads the briefs dealt to it straight from the inbox, so the daemon hands
+// each dealt brief as a lane's is handed (startDealt): the contract in place of the line
+// when the checkout cannot be read, and one record line per card with its token count.
+func TestABatchSessionIsHandedTheContractAsALaneIs(t *testing.T) {
+	t.Parallel()
+	const text = "RULES.\nReport what was not done."
+	dir := t.TempDir()
+	ref := "RESULT: c sha=0123456789ab tier: pro\nREPO: o/r\nBASE: dev\nTEST: ./x TestY\n" + card.ContractLine() + "\n"
+	brief := filepath.Join(dir, "inbox", "c~1", "BRIEF.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(brief), 0o755))
+	require.NoError(t, os.WriteFile(brief, []byte(ref), 0o644))
+	var records []string
+	d := &Daemon{Dir: dir, Record: func(line string) { records = append(records, line) },
+		Contract: func(version string) (string, bool) { return text, version == card.ContractVersion }}
+
+	c, ok := dealtCard(dir, "inbox/c~1/BRIEF.md (card c, todo on her row)")
+	require.True(t, ok)
+	assert.Equal(t, Card{ID: "c", Brief: brief, Outbox: filepath.Join(dir, "outbox", "c~1")}, c)
+	d.hand(c, "batch", time.Unix(0, 0))
+	after, err := os.ReadFile(brief)
+	require.NoError(t, err)
+	assert.Equal(t, card.WithContract(ref, text), string(after))
+	require.Len(t, records, 1)
+	assert.Equal(t, fmt.Sprintf("1970-01-01T00:00:00Z batch: card c handed: brief_tokens=%d contract=%s", card.Tokens(string(after)), ContractPrepended), records[0])
+
+	for _, line := range []string{"", "inbox/c~1/README.md (card c, todo)", "inbox/../BRIEF.md (card c, todo)", "inbox/c~1/BRIEF.md", "inbox/c~1/BRIEF.md (card , todo)"} {
+		_, ok := dealtCard(dir, line)
+		assert.False(t, ok, "%q names no dealt card", line)
+	}
 }

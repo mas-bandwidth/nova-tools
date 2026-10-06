@@ -1,8 +1,12 @@
 package friend
 
 import (
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/card"
@@ -49,4 +53,28 @@ func HandBrief(dir string, c Card, contract func(version string) (string, bool))
 		return "", 0, err
 	}
 	return ContractPrepended, card.Tokens(handed), nil
+}
+
+// hand is HandBrief on the card a lane or the batch session (by) is handed, said on the
+// daemon's record with the brief's token count and how its contract reached the session.
+func (d *Daemon) hand(c Card, by string, now time.Time) {
+	at := now.UTC().Format(time.RFC3339)
+	how, tokens, err := HandBrief(d.Dir, c, d.Contract)
+	if err != nil {
+		d.Record(fmt.Sprintf("%s %s: card %s: its brief: %s", at, by, c.ID, err.Error()))
+		return
+	}
+	d.Record(fmt.Sprintf("%s %s: card %s handed: brief_tokens=%d contract=%s", at, by, c.ID, tokens, how))
+}
+
+// dealtCard is the card a dealt line names, `inbox/<job>/BRIEF.md (card <id>, ...)` (the
+// inbox's wrote line, startDealt), its brief and outbox under dir.
+func dealtCard(dir, line string) (Card, bool) {
+	p, rest, _ := strings.Cut(line, " ")
+	job := path.Base(path.Dir(p))
+	id, _, _ := strings.Cut(strings.TrimPrefix(rest, "(card "), ",")
+	if !validJob(job) || path.Base(p) != "BRIEF.md" || !strings.HasPrefix(rest, "(card ") || strings.TrimSpace(id) == "" {
+		return Card{}, false
+	}
+	return Card{ID: id, Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}, true
 }
