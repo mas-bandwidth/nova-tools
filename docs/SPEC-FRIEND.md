@@ -268,14 +268,15 @@ to another friend, assuming disruptions are finite, every recovery comes
 (the app reopens, the session answers again, the limit resets, the hold is
 released) and the checks keep going in.
 
-The proof (the cold reader's hold of 2026-10-06): the server counts an answer
-only to a check her daemon's run asked (`asked`), once, while her daemon beats
-(`beats`); a daemon that starts again has its push unproven and delivers
-nothing until its session answers (`pushProven`, `delivered`). The rules
-`UpOnAnAskedAnswer` (a row is up only on an answered check it asked while her
-beats go on) and `DeliveredOnlyProven`, each with reversed witnesses
-(`forged`, `replay`, `deadproof`, `unproven`). Owed: TLC on a Linux bench; the
-group `friendpresence` is stale in `tla/RUNS.tsv` until it runs there.
+Owed (the cold reader's hold of 2026-10-06): the proof in the model. The server
+counts an answer only to a check her daemon's run asked, once, while her daemon
+beats, and a daemon that starts again delivers nothing until its session
+answers; the extension that models it (`asked`, `beats`, `pushProven`,
+`delivered`; `UpOnAnAskedAnswer`, `DeliveredOnlyProven`, with reversed
+witnesses `forged`, `replay`, `deadproof`, `unproven`) is on a side branch
+the pull request that landed this names, not here: its design case exceeds
+TLC's 110 s budget at the current instance on a record machine, so its records
+cannot be written until the instance is cut down.
 
 "A friend shown up has a running harness", read at every state, cannot hold:
 the table cannot see the app close, only the answers stop, so for up to the
