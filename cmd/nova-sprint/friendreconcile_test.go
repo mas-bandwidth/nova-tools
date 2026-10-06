@@ -41,6 +41,7 @@ func reconcileApp(t *testing.T, n int) (*testApp, string) {
 	ta.ok("add --stream s1 --brief-dir " + dir)
 	ta.ok("start")
 	ta.ok("tick")
+	ta.startFriend("amy", n) // she starts each: friend reconcile settles the cards working on her row
 	ta.ok("friend sync --root " + root)
 	return ta, root
 }
@@ -100,6 +101,7 @@ func TestFriendReconcileSettlesEachCardOnTheTwin(t *testing.T) {
 	c := card("s1-3")
 	assert.Equal(t, sprint.Working, c.Primary.Col, "the returned card is dealt again by the tick")
 	assert.Equal(t, "s1-3.w2", c.Primary.F("work"), "at its next attempt")
+	ta.startFriend("amy", 2) // she starts the cards dealt again
 	ta.clean()
 
 	// the cards dealt again, s1-3.w2 and s1-4.w2, were dealt after her account was written:

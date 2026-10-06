@@ -155,6 +155,7 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	v := ta.coordView("--all")
 	_, ok := item(v, "f:amy")
 	assert.False(t, ok, "she beat a moment ago: %+v", v.Items)
@@ -248,6 +249,7 @@ func TestTheWorkerViewOfAFriend(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	ta.startFriend("amy", 1) // dealt ready; working once she starts it
 	var v workerView
 	ta.json("view worker --as amy", &v)
 	assert.Equal(t, "friend", v.Kind)

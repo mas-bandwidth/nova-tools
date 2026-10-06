@@ -389,7 +389,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 			seats[i].Why += ": " + r.Reason
 		}
 		if r.Report != nil {
-			seats[i].Running = r.Report.Running
+			seats[i].Running, seats[i].Active = r.Report.Running, r.Report.Active
 		}
 	}
 	return seats, nil
@@ -431,6 +431,15 @@ func (st *Store) FriendBeatOf(ctx context.Context, friend string) (sprint.Beat, 
 	// ignored: an unreadable record is no beat, which the next beat replaces (FriendRows)
 	_ = json.Unmarshal([]byte(raw), &b)
 	return b, nil
+}
+
+// FriendStartStep is friend sync's start receipt for one friend's cards (sprint.FriendStart;
+// docs/SPEC-SPRINT.md section 1, a friend's card is working once she starts it): each card
+// she has begun moves to working on her row, its deadline from now, or is stamped started
+// where it is working. It runs as friend sync, the coordinator's verb.
+func FriendStartStep(r sprint.FriendStartReq) Step {
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "friend sync", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendStart(s, r) }}
 }
 
 // HealthStep is the coordinator's observation of a friend written

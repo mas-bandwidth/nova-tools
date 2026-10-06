@@ -109,20 +109,24 @@ func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
 	ta.ok("friend up amy --width 1")
 	ta.ok("friend up bob --width 1")
 	ta.ok("friend down bob")
-	ta.ok("tick") // amy alone: s1-1 working, s1-2 ready
+	ta.ok("tick") // amy alone: s1-1 and s1-2 ready, and she starts s1-1
+	ta.startFriend("amy", 1)
 	ta.ok("friend sync --root " + root)
 	require.Equal(t, "queued", queueStates(t, root, "amy")["s1-2.w1"])
 	ta.ok("friend up bob")
+	// friend sync set her width back to the config's 8; at 1 her lane is her started card's,
+	// and s1-2.w1 waits behind it (an unstarted card in a free lane of hers is hers to start)
+	ta.ok("friend up amy --width 1")
 	ta.beatUp("bob")
 
 	assert.Contains(t, ta.dry("friend level --dry-run"), "FRIEND-LEVEL DRY-RUN up=amy,bob; nothing was changed")
 	out := ta.ok("friend level")
-	assert.Contains(t, out, "s1-2.w1 friend.amy:ready -> friend.bob:working gen=2; moved=1 to bob(1) from amy(1)")
+	assert.Contains(t, out, "s1-2.w1 friend.amy:ready -> friend.bob:ready gen=2; moved=1 to bob(1) from amy(1)")
 	assert.Contains(t, out, "FRIEND-LEVEL OK moved=1")
 	out = ta.ok("friend sync --root " + root)
 	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=bob card=s1-2.w1 job=s1-2.w1.g2")
 	assert.Equal(t, "taken", queueStates(t, root, "amy")["s1-2.w1"], "not hers to start any more")
-	assert.Equal(t, "working", queueStates(t, root, "bob")["s1-2.w1"])
+	assert.Equal(t, "queued", queueStates(t, root, "bob")["s1-2.w1"], "ready on his row until he starts it")
 	assert.Contains(t, ta.ok("friend level"), "FRIEND-LEVEL OK moved=0")
 	ta.clean()
 }
@@ -151,7 +155,8 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	ta.ok("start")
 
 	ta.ok("friend down bob")
-	ta.ok("tick") // amy (batch, width 2) fills her room of 4: 2 working, 2 ready
+	ta.ok("tick") // amy (batch, width 2) fills her room of 4, all ready, and starts 2
+	ta.startFriend("amy", 2)
 	ta.ok("friend sync --root " + root)
 
 	ta.ok("friend up bob")
@@ -165,8 +170,8 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	f := whereFriends(ta)
 	assert.Equal(t, 2, f["amy"].Working)
 	assert.Equal(t, 1, f["amy"].Ready)
-	assert.Equal(t, 1, f["bob"].Working)
-	assert.Equal(t, 0, f["bob"].Ready)
+	assert.Equal(t, 0, f["bob"].Working, "ready on his row until he starts it")
+	assert.Equal(t, 1, f["bob"].Ready)
 	ta.clean()
 }
 
@@ -176,7 +181,8 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 func TestStatsTimesAFriendsRunFromHerReport(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
-	ta.ok("tick") // dealt and taken at t0
+	ta.ok("tick") // dealt at t0, and she starts it then
+	ta.startFriend("amy", 1)
 	ta.ok("friend sync --root " + root)
 	taken := ta.a.now()
 	ta.a.sleep(10 * time.Minute)
@@ -204,7 +210,8 @@ func TestAFriendsNextCardsDeadlineFollowsHerRunWall(t *testing.T) {
 	t.Parallel()
 	ta, root := takeApp(t, 3, map[string]string{"sprint/s1-1.w1.g1.e0": landHead}, "amy")
 	ta.ok("friend up amy --width 1")
-	ta.ok("tick") // s1-1 working, s1-2 ready behind it, s1-3 waits (friend sync sets her width back to 8)
+	ta.ok("tick") // s1-1 and s1-2 ready, s1-3 waits (friend sync sets her width back to 8); she starts s1-1
+	ta.startFriend("amy", 1)
 	ta.ok("friend sync --root " + root)
 	taken := ta.a.now()
 	ta.a.sleep(70 * time.Minute)
@@ -213,7 +220,8 @@ func TestAFriendsNextCardsDeadlineFollowsHerRunWall(t *testing.T) {
 	require.NoError(t, os.Chtimes(report, taken.Add(time.Hour), taken.Add(time.Hour)))
 	ta.ok("friend sync --root " + root)
 	ta.beatUp("amy")
-	ta.ok("tick") // s1-3 dealt to her and taken, s1-1's hour behind her
+	ta.ok("tick")            // s1-3 dealt to her, s1-1's hour behind her
+	ta.startFriend("amy", 2) // she starts s1-2 and s1-3 after her ok attempt
 
 	var w whereView
 	ta.json("where --cards", &w)
@@ -222,6 +230,6 @@ func TestAFriendsNextCardsDeadlineFollowsHerRunWall(t *testing.T) {
 		assert.Equal(t, sprint.Working, c.State, c.ID)
 		limit[c.ID] = c.Deadline.Sub(c.Since)
 	}
-	assert.Equal(t, map[string]time.Duration{"s1-2.w1": 2 * time.Hour, "s1-3.w1": 3 * time.Hour}, limit, "s1-2 taken before her ok attempt: the fleet's two hours; s1-3 after it: three times her one hour")
+	assert.Equal(t, map[string]time.Duration{"s1-2.w1": 3 * time.Hour, "s1-3.w1": 3 * time.Hour}, limit, "each started after her ok attempt: three times her one hour, from her start")
 	ta.clean()
 }
