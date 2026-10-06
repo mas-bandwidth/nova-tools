@@ -275,6 +275,10 @@ type lander struct {
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
+	// recLog and recNote are the lines and the note of the records a merge
+	// resolved (landappend.go), taken by mergeHead when the merge lands
+	recLog  []string
+	recNote string
 	// gate is the gate decision's backend, clock, bars and record for a red batch gate
 	// (landgate.go), nil when none is made; gateNote says why none is, once.
 	gate          *landGate
@@ -1109,7 +1113,38 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // (ledgerunion.go, unionLedgers), and the agents maps plus a catalog that both
 // sides only add rows to as the union of those rows then the map family
 // (landledger.go, stageCatalogUnion). note is what the card's timeline says of it.
+// mergeHead merges the recorded head of c into the checkout at dir (a plain git
+// merge, which takes merge=union for the files .gitattributes marks), deduplicating
+// append-only records after the merge and resolving keyed tables, the tables lock,
+// and shrink-only ledgers.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
+	before, _ := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	l.recLog, l.recNote = nil, ""
+	card, env, note = l.mergeHeadLedgers(ctx, dir, stream, c)
+	if card != "" || env != "" {
+		return card, env, note
+	}
+	if head, _ := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}"); before == "" || head == before {
+		return "", "", note
+	}
+	lines, dcard, derr := l.dedupeMerge(ctx, dir, before, c)
+	if derr != "" {
+		return "", derr, ""
+	}
+	if dcard != "" {
+		l.git(ctx, dir, "reset", "--hard", before)
+		return dcard, "", ""
+	}
+	l.ledgerLog = append(l.ledgerLog, append(l.recLog, lines...)...)
+	if l.recNote != "" {
+		note = strings.TrimPrefix(l.recNote+"; "+note, "; ")
+		note = strings.TrimSuffix(note, "; ")
+	}
+	return "", "", note
+}
+
+// mergeHeadLedgers is mergeHead before the append-only records are deduplicated.
+func (l *lander) mergeHeadLedgers(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
 		return why, "", ""
 	}
@@ -1148,6 +1183,33 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 	if conflict && inMerge == nil {
 		paths, ours := unmergedPaths(unmerged)
 		l.conflictPaths, l.conflictKind = paths, "file"
+		// the append-only records, keyed tables and the tables lock first (landappend.go):
+		// resolved and staged; what is left goes on as before, and a merge left with
+		// nothing is committed
+		var rlines []string
+		var rnote, rwhy, renv string
+		paths, rlines, rnote, rwhy, renv = l.resolveRecords(ctx, dir, paths)
+		switch {
+		case renv != "":
+			env = renv
+			paths = nil
+		case rwhy != "":
+			why = "; " + rwhy
+			paths = nil
+		case len(rlines) > 0 && len(paths) == 0:
+			msg := []string{"land " + c.id + " (sprint stream " + stream + ")", "The records and the tables lock conflicted and were resolved: " + strings.Join(rlines, "; ") + "."}
+			if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
+				env = "the resolved merge of " + c.id + " could not be committed: " + firstLine("", err)
+				break
+			}
+			l.recLog, l.recNote = rlines, rnote
+			return "", "", ""
+		case len(rlines) > 0:
+			l.recLog, l.recNote = rlines, rnote
+		}
+		if len(paths) == 0 {
+			goto abort
+		}
 		if allLedgers(paths, l.ledgers()) {
 			l.conflictKind = "ledger"
 		}
@@ -1200,6 +1262,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 			}
 		}
 	}
+abort:
 	if inMerge == nil {
 		if _, aerr := l.git(ctx, dir, "merge", "--abort"); aerr != nil {
 			return "", "git merge --abort failed after the merge of " + c.id + " stopped: " + firstLine("", aerr), ""
