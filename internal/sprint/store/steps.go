@@ -187,8 +187,15 @@ func SetStep(r sprint.SetReq) Step {
 
 // PromotedStep records a promotion of the sprint branch into dev (sprint.Promoted).
 func PromotedStep(r sprint.PromotedReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "promoted", Load: tables(sprint.Work),
+	return Step{Args: ArgsOf(r), Verb: "promoted", Load: tables(sprint.Work, sprint.Merge),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Promoted(s, r) }}
+}
+
+// InstalledStep records an install receipt (sprint.Installed; docs/SPEC-SPRINT.md section 7,
+// delivery milestones): the cards verified in dev at the commit named, on the target.
+func InstalledStep(r sprint.InstalledReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "installed", Load: tables(sprint.Work, sprint.Merge),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Installed(s, r) }}
 }
 
 // MergeWindowStep opens the merge window: landing pauses for its duration, its reason

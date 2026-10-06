@@ -16,6 +16,7 @@ import (
 // no strategy flag, and a merge-group run has failed.
 type promoteScript struct {
 	live, tip, baseSHA, logText, groupLog string
+	merged                                string // the merge commit pr view names, a merged pull request; "" open
 	gitCalls, ghCalls                     [][]string
 	gated                                 string
 	cfg                                   map[string]string
@@ -83,6 +84,8 @@ func (s *promoteScript) gh(_ context.Context, _ string, args ...string) (string,
 	switch {
 	case args[0] == "pr" && args[1] == "create":
 		return "https://example.invalid/nova-tools/pull/42", nil
+	case args[0] == "pr" && args[1] == "view" && s.merged != "":
+		return `{"id":"PR_node_1","state":"MERGED","mergeCommit":{"oid":"` + s.merged + `"}}`, nil
 	case args[0] == "pr" && args[1] == "view":
 		return `{"id":"PR_node_1","state":"OPEN"}`, nil
 	case strings.Contains(joined, "enqueuePullRequest"):
@@ -184,9 +187,41 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 	require.Equal(t, []string{"fix-and-recut", "skip"}, out.Judgment.Decisions)
 	require.Contains(t, out.Judgment.Tail, "FAIL: TestTree")
 	require.Empty(t, out.Promoted, "a failed merge-group run does not record promoted --sha")
+	// the failure is a delivery record the coordinator keeps (docs/SPEC-SPRINT.md section 7,
+	// delivery milestones): it names the live branch, the tip, the cards and the pull request
+	require.Contains(t, out.Record, "promoted --failed 'a check of the pull request promo/2026-10-04-1 failed' --branch "+live+" --tip "+tip+" --target dev --cards s1-1,s1-2 --evidence 'pr=")
 
 	// the same branch does not raise a second judgment
 	again, code := p.step(context.Background(), io.Discard, io.Discard)
 	require.Equal(t, 1, code)
 	require.Nil(t, again.Judgment, "the judgment was already raised")
+}
+
+// A promotion that merged prints the whole delivery record (docs/SPEC-SPRINT.md section 7,
+// delivery milestones): the merged result as the merge names it (a squash commit, not the
+// tip), the live branch and the tip promoted, the target, the cards the range carried and the
+// pull request, so promoted verifies in dev exactly those cards.
+func TestPromoteRecordsTheMergedResultAndTheCardsItCarried(t *testing.T) {
+	t.Parallel()
+	const (
+		live   = "sprint/live"
+		tip    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		base   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		squash = "cccccccccccccccccccccccccccccccccccccccc"
+	)
+	s := &promoteScript{live: live, tip: tip, baseSHA: base, merged: squash,
+		logText: "land s1-2 (sprint stream s1)\nland s1-1 (sprint stream s1)\n"}
+	p := &promoter{
+		dir: t.TempDir(), live: live, base: "dev",
+		now:    time.Date(2026, 10, 4, 16, 0, 0, 0, time.UTC),
+		gitRun: s.git, ghRun: s.gh,
+		gate: func(context.Context, string, string) (string, error) { return "", nil },
+	}
+	var b strings.Builder
+	out, code := p.step(context.Background(), &b, io.Discard)
+	require.Equal(t, 0, code)
+	require.Equal(t, squash, out.Promoted, "the merged result, not the tip")
+	want := "promoted --sha " + squash + " --branch " + live + " --tip " + tip + " --target dev --cards s1-1,s1-2 --evidence 'pr=42 head=promo/2026-10-04-1'"
+	require.Equal(t, want, out.Record)
+	require.Contains(t, b.String(), want+"\n")
 }

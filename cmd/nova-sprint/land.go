@@ -838,7 +838,15 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	}
 	b.Cards, b.IDs = len(ids), ids
 	start := time.Now()
-	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	// the staged milestone (docs/SPEC-SPRINT.md section 7, delivery milestones): the batch is on
+	// the base it was pushed to, a sprint or a stream branch, and nothing past that; promoted
+	// alone records it in dev
+	evidence := "land: no --check ran; the reads accepted each card, pushed to " + b.Base
+	if l.check != "" {
+		evidence = "land: the check " + l.check + " green at " + b.Tip + ", pushed to " + b.Base
+	}
+	staged := &sprint.Milestone{Repo: b.Repo, Ref: b.Base, Commit: b.Tip, Evidence: evidence}
+	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Staged: staged, Who: l.c.actor}, pins)
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}

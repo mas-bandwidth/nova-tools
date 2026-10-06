@@ -117,7 +117,8 @@ func init() {
 		{"stream unarchive", "<stream>...", "stream unarchive a", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(false, args, o, e) }},
 		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>]", "set --read-tier pro", (*app).cmdSet},
-		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
+		{"promoted", "(--sha <merge sha> | --failed <why>) [--branch <sprint branch>] [--tip <sha>] [--target <ref>] [--repo <owner/name>] [--evidence <text>] [--cards <id,...>] [--returned <id,...>] [--answers <note>] [--dry-run]", "promoted --sha 0123abc --branch sprint/main --tip 89abcde", (*app).cmdPromoted},
+		{"installed", "<target> --sha <dev commit> --receipt <text> [--dry-run]", "installed target-a --sha 0123abc --receipt 'nova-tools 1.2.3, sha256 ok'", (*app).cmdInstalled},
 		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"cost reconcile", "[--dry-run] [--json]", "cost reconcile", (*app).cmdCostReconcile},
@@ -2656,8 +2657,14 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())
 	}
+	// the record by name is a staging on the base ref it checked (docs/SPEC-SPRINT.md section 7,
+	// delivery milestones); the tip pushed is the lander's to name
+	var staged *sprint.Milestone
+	if len(pins) > 0 {
+		staged = &sprint.Milestone{Ref: strings.TrimPrefix(*baseRef, "origin/"), Evidence: "merge --landed: each head an ancestor of " + *baseRef}
+	}
 	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Landed: pins, Conflict: *conflict, Cross: *cross,
-		Red: *red, Suspects: suspects, Rejected: *rejected, BaseRed: *baseRed, ConflictKind: *conflictKind, ConflictPaths: conflictPaths, Note: *note, Who: c.actor}), stdout, stderr)
+		Red: *red, Suspects: suspects, Rejected: *rejected, BaseRed: *baseRed, ConflictKind: *conflictKind, ConflictPaths: conflictPaths, Note: *note, Staged: staged, Who: c.actor}), stdout, stderr)
 }
 
 // landedPins reads the --landed pairs and runs, once per card, the one git merge-base
@@ -3047,12 +3054,20 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("set", *c, st, step, stdout, stderr)
 }
 
-// cmdPromoted is the coordinator's word that the sprint branch was promoted into dev
-// (sprint.Promoted): the store counts landings from here, and the judgment "dev is behind"
-// closes.
+// cmdPromoted is the coordinator's word that a branch was promoted into dev, or that the
+// promotion failed (sprint.Promoted; docs/SPEC-SPRINT.md section 7, delivery milestones): a
+// merge verifies in dev the cards it carried, the store counts landings from here, and the
+// judgment "dev is behind" closes; a failure is recorded and stands until a promotion merges.
 func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("promoted")
-	sha := fs.String("sha", "", "the merge commit's sha on dev, 7 to 40 hex digits (required)")
+	sha := fs.String("sha", "", "the merged result on the target, as the merge names it (the merge commit, or the squash or rebase commit), 7 to 40 hex digits; required unless --failed")
+	failed := fs.String("failed", "", "the promotion did not merge: why (the failing check, the queue's refusal); recorded, no card is verified, and it stands until a promotion merges")
+	branch := fs.String("branch", "", "the branch promoted, the sprint branch: with --tip, the cards staged on it at or before the landing that staged the tip are verified in dev")
+	tip := fs.String("tip", "", "the commit of --branch that was promoted (the frozen tip): it bounds the cards --branch verifies; without it --branch verifies none")
+	target := fs.String("target", "", "the ref the promotion merged into (default dev)")
+	repo := fs.String("repo", "", "the repository, owner/name")
+	evidence := fs.String("evidence", "", "the gate's or the review's evidence: the pull request, the merge-queue entry, the run")
+	cards := fs.String("cards", "", "the landed cards the promoted range carried, comma separated (nova-sprint promote prints them); without it, the cards --tip carried on --branch")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	dry := fs.Bool("dry-run", false, "check the sha and say what would be recorded; record nothing")
 	returned := fs.String("returned", "", "landed cards dev or an audit returned with this promotion, comma separated: each is marked on the card and the tick asks to raise its stream's read tier")
@@ -3060,14 +3075,18 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
 	}
-	if len(pos) > 0 || *sha == "" {
-		return refuse(stderr, "promoted", "wants --sha <merge sha> and no positional words")
+	if len(pos) > 0 || (*sha == "") == (*failed == "") {
+		return refuse(stderr, "promoted", "wants --sha <merge sha> or --failed <why>, one of them, and no positional words")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "promoted", err.Error())
 	}
 	if *dry {
+		if *failed != "" {
+			fmt.Fprintf(stdout, "PROMOTED DRY-RUN failed=%s; nothing was changed\n", oneline.Field(*failed))
+			return 0
+		}
 		sha, why := sprint.PromotedSha(*sha)
 		if why != "" {
 			return refuse(stderr, "promoted", why)
@@ -3075,7 +3094,35 @@ func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "PROMOTED DRY-RUN sha=%s; nothing was changed\n", sha)
 		return 0
 	}
-	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Answers: answers(*ans), Returned: sprint.Split(*returned), Who: c.actor}), stdout, stderr)
+	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Failed: *failed, Branch: *branch, Tip: *tip, Target: *target,
+		Repo: *repo, Evidence: *evidence, Cards: sprint.Split(*cards), Answers: answers(*ans), Returned: sprint.Split(*returned), Who: c.actor}), stdout, stderr)
+}
+
+// cmdInstalled is the coordinator's install receipt (sprint.Installed; docs/SPEC-SPRINT.md
+// section 7, delivery milestones): the target took the dev commit a promotion recorded, and
+// every card verified in dev at or before it is installed there.
+func (a *app) cmdInstalled(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("installed")
+	sha := fs.String("sha", "", "the dev commit the target installed: a merge sha a promotion recorded (required)")
+	receipt := fs.String("receipt", "", "what the target reported: the version, its checksum, the install log's last line (required)")
+	dry := fs.Bool("dry-run", false, "check the words and say what would be recorded; record nothing")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) != 1 {
+		return refuse(stderr, "installed", argErr("wants one word, the target, ", err, pos...))
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "installed", err.Error())
+	}
+	if *dry {
+		sha, why := sprint.PromotedSha(*sha)
+		if why != "" {
+			return refuse(stderr, "installed", why)
+		}
+		fmt.Fprintf(stdout, "INSTALLED DRY-RUN target=%s sha=%s; nothing was changed\n", oneline.Field(pos[0]), sha)
+		return 0
+	}
+	return a.runStep("installed", *c, st, store.InstalledStep(sprint.InstalledReq{Target: pos[0], Commit: *sha, Receipt: *receipt, Who: c.actor}), stdout, stderr)
 }
 
 // cmdFunded is the coordinator's word that a provider was paid: its rest of its funds ends

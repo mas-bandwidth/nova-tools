@@ -50,6 +50,11 @@ type MergeReq struct {
 	Base        string `json:",omitempty"`
 	Note        string
 	Who         string
+	// Staged is the delivery record of a landing (delivery.go, docs/SPEC-SPRINT.md section 7,
+	// delivery milestones): the repository, the ref the batch was pushed to, the commit pushed
+	// and the gate's evidence, written on each card it lands and on the stream's record. Nil
+	// is not known to the caller: the ref is then the card's base.
+	Staged *Milestone `json:",omitempty"`
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
@@ -424,6 +429,15 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		if total, ok := cardcost.Sum(sum...); ok && len(sum) > 0 && total != ctl.F(FieldCost) {
 			ctlSet[FieldCost] = total
 		}
+		// the staged milestone, on each card it lands and on the stream's record (delivery.go)
+		staged := map[string]map[string]string{}
+		for _, c := range landing {
+			staged[c.ID] = stagedSet(s.Work.Placed(c.ID), r.Staged)
+		}
+		lastStaged := staged[landing[len(landing)-1].ID]
+		for k, v := range streamRecord(s, r.Stream, staged, map[string]string{FieldStagedRef: lastStaged[FieldStagedRef], FieldStagedCommit: lastStaged[FieldStagedCommit]}) {
+			ctlSet[k] = v
+		}
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
@@ -437,6 +451,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, merged)))
 			set := map[string]string{"ci": "green", "landed": now}
+			for k, v := range staged[c.ID] {
+				set[k] = v
+			}
 			if v := costs[c.ID]; v != "" {
 				set[FieldCost] = v
 			}

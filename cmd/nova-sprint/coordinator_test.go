@@ -112,6 +112,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"stream set":        "stream set s1 --read-tier pro",
 		"set":               "set --read-tier pro",
 		"promoted":          "promoted --sha 0123abc",
+		"installed":         "installed target-a --sha 0123abc --receipt ok",
 		"funded":            "funded openrouter --reason paid",
 		"cost reconcile":    "cost reconcile",
 		"stats tidy":        "stats tidy --all --reason r",
