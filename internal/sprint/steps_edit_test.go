@@ -138,10 +138,13 @@ func TestBriefRefusesAWorkingOrMergingCard(t *testing.T) {
 		assert.Empty(t, p.Refused, col)
 		require.Len(t, p.Units, 1, col)
 		assert.Contains(t, p.Units[0].Moved, "a-1 brief edited in place by coordinator at attempt 1: - old one | + new", col)
-		// the same brief again would reset the bound with nothing changed: refused
-		p = Brief(w.s, briefOne("a-1", "old one"))
-		require.Len(t, p.Refused, 1, col)
-		assert.Contains(t, p.Refused[0].Why, "the bound counts attempts under one brief", col)
+		// the same brief again, or one only re-spaced or reordered, would reset the bound
+		// with nothing changed: refused
+		for _, same := range []string{"old one", "  old one\n\n", "\told one  "} {
+			p = Brief(w.s, briefOne("a-1", same))
+			require.Len(t, p.Refused, 1, col)
+			assert.Contains(t, p.Refused[0].Why, "the bound counts attempts under one brief", col)
+		}
 	}
 }
 

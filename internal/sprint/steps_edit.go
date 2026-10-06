@@ -100,8 +100,9 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 		if why != "" && c != nil && !IsSentinel(c) {
 			why += "; " + briefStarted(c)
 		}
-		if why == "" && c.Int("attempt") > 0 && b.Brief == c.F("brief") {
-			// the bound counts attempts under one brief: the same brief again would reset it
+		if why == "" && c.Int("attempt") > 0 && sameLines(c.F("brief"), b.Brief) {
+			// the bound counts attempts under one brief: the same brief again, or one only
+			// re-spaced or reordered, would reset it with nothing changed
 			why = fmt.Sprintf("the new brief is the one %s ran attempt %d under: the bound counts attempts under one brief, so an edit changes it; nothing was changed", b.ID, c.Int("attempt"))
 		}
 		if why != "" {
@@ -201,6 +202,11 @@ func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, uns
 				retire(Readers, rc)
 			}
 		}
+		// a friend's read on her fleet row too: left, it keeps her room and closes against
+		// the attempt the edit replaced (FriendReadClose)
+		for _, rc := range openFriendReads(s, c.ID) {
+			retire(Fleet, rc)
+		}
 		found := reworkGiven(s, c)["finding"]
 		if found == "" {
 			found = ownFix(s, c)
@@ -226,7 +232,8 @@ func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, uns
 
 // briefChange is what changed from one brief to the next, line by line: each line of the
 // old one the new one lacks ("- "), then each line the new one adds ("+ "), blank lines and
-// the lines' indent left out, each line cut short, the whole cut to a record's line.
+// the lines' indent left out, each line cut short, the whole cut to a record's line; an edit
+// with no changed line is refused before it (sameLines).
 func briefChange(old, brief string) string {
 	var out []string
 	for _, l := range linesNotIn(old, brief) {
@@ -235,10 +242,13 @@ func briefChange(old, brief string) string {
 	for _, l := range linesNotIn(brief, old) {
 		out = append(out, "+ "+cutText(l, 160))
 	}
-	if len(out) == 0 {
-		return "its lines reordered or re-spaced"
-	}
 	return cutText(strings.Join(out, " | "), 1024)
+}
+
+// sameLines says two briefs hold the same lines, trimmed, blank lines left out, in any
+// order: no line changed.
+func sameLines(old, brief string) bool {
+	return len(linesNotIn(old, brief)) == 0 && len(linesNotIn(brief, old)) == 0
 }
 
 // linesNotIn is the lines of a, trimmed, that b does not hold, each counted as often as b

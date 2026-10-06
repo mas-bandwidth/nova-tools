@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -8,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -135,4 +138,73 @@ func TestInboxPrintsTheBriefDecisionTheVerbRuns(t *testing.T) {
 	file := writeNeedsBrief(t, t.TempDir(), "s1-1", "the corrected work", "")
 	assert.Contains(t, ta.ok(strings.Replace(line, "'<the corrected brief>'", file, 1)), "s1-1 brief edited in place by coordinator at attempt 1")
 	assert.Equal(t, sprint.Ready, ta.primary("s1-1").Col)
+}
+
+// readersOf is the readers table's read cards on the primary still placed.
+func (ta *testApp) readersOf(id string) []*sprint.Card {
+	ta.t.Helper()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	s, err := st.Load(context.Background(), []string{sprint.Readers}, nil)
+	require.NoError(ta.t, err)
+	return s.Readers.Of(id)
+}
+
+// A card in review whose attempt pushed a head and whose read is open takes a brief in
+// place: the readers table's read is retired with the edit, and the next attempt is staged
+// from that pushed head (BaseOf, the rework's carry), the same id.
+func TestBriefRetiresItsReadsAndCarriesThePushedHead(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 s1-1 --one --brief-file " + writeNeedsBrief(t, t.TempDir(), "s1-1", "the old work", ""))
+	ta.deal(1)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1 --head " + landHead + " --report done")
+	ta.ok("ask s1-1")
+	require.NotEmpty(t, ta.readersOf("s1-1"), "a read is open at the edit")
+
+	out := ta.ok("brief s1-1 --brief-file " + writeNeedsBrief(t, t.TempDir(), "s1-1", "the new work", ""))
+	assert.Contains(t, out, "s1-1 brief edited in place by coordinator at attempt 1")
+	assert.Empty(t, ta.readersOf("s1-1"), "the open read is retired with the edit")
+	assert.Equal(t, sprint.Ready, ta.primary("s1-1").Col)
+
+	ta.deal(1)
+	var take struct {
+		Packets []member.Packet `json:"packets"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(ta.ok("take --as m1 s1-1.w2@1 --json")), &take))
+	require.Len(t, take.Packets, 1)
+	assert.Equal(t, landHead, take.Packets[0].BaseHead, "staged from the last pushed head")
+	assert.Equal(t, 1, take.Packets[0].BaseFrom)
+	assert.Contains(t, take.Packets[0].Brief, "the new work")
+	ta.clean()
+}
+
+// A friend's read open on her fleet row is retired with the card's attempt, by a brief
+// edited in place and by a rework alike: left, it keeps her room and closes against the
+// attempt that was replaced, raising a read-broken judgment on it.
+func TestAFriendsOpenReadIsRetiredByBriefAndByRework(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ verb, line string }{
+		{"brief", "brief s1-1 --brief-file "},
+		{"rework", "rework s1-1 --fix 'handle the empty case'"},
+	} {
+		ta, _, id := friendReadTwin(t, false)
+		require.True(t, ta.fleetCard(id).Placed(), "%s: amy's read is open", c.verb)
+		line := c.line
+		if c.verb == "brief" {
+			line += writeBrief(t, "s1-1: the flash card corrected (s1) tier: flash\nREPO: mas-bandwidth/nova-tools\n\nAS A READ\nread the flash card")
+		}
+		ta.ok(line)
+		ta.ok("tick") // the machine runs: the change drains at the pump
+		rc := ta.fleetCard(id)
+		assert.False(t, rc.Placed(), "%s: amy's read is retired", c.verb)
+		assert.Equal(t, c.verb, rc.F("retired_by"), c.verb)
+		code, _, errs := ta.do("read --as " + sprint.FriendRow("amy") + " --broken " + id + " --finding 'stale'")
+		assert.NotEqual(t, 0, code, "%s: no verdict closes against the replaced attempt: %s", c.verb, errs)
+		for _, g := range ta.inboxGroups() {
+			assert.False(t, g.Type == sprint.NReadBroken && g.Kind == sprint.Judgment, "%s: no read-broken judgment on the old attempt", c.verb)
+		}
+	}
 }
