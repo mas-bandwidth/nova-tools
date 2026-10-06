@@ -17,3 +17,12 @@
 # `# ceiling:` line and rows an update removes, which a union merge would
 # resurrect or duplicate.
 internal/ci/testdata/deleted-tests.txt merge=union
+
+# The TLA+ case and run tables are append-only records: a change only adds rows, and the
+# order of the rows means nothing. A union merge keeps both sides' rows, and the lander
+# drops a row that came twice after the merge (cmd/nova-sprint/landappend.go); a side
+# that removes a row is no append and conflicts as before. The ledgers that may only
+# shrink merge by the lander's intersection, and the generated files are regenerated at
+# the merge, never merged: docs/STANDARD.md, the file classes.
+tla/CASES.tsv merge=union
+tla/RUNS.tsv merge=union
