@@ -67,7 +67,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	var p Plan
 	var seats []FriendSeat
 	for _, f := range r.Seats {
-		if f.Status == Up {
+		if friendDealable(s, f) {
 			seats = append(seats, f)
 		}
 	}

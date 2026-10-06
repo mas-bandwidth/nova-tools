@@ -274,3 +274,65 @@ func TestFriendStallLadderFinishIsActivity(t *testing.T) {
 	assert.Nil(t, pRel.Health)
 	assert.Equal(t, []string{"amy"}, pRel.HealthClear)
 }
+
+// A friend whose only evidence is a fresh finish (the store's record: the card has left her
+// row) or a fresh session proof, while her daemon's walk reads a stale write, is never
+// stalled: the ladder reads the newest of her evidence, never one stale field. With no
+// evidence past the bound, her unstarted card is taken back (2026-10-06: stella reported
+// hourly and sent bus notes every few minutes while her walk read 3d, and two of her working
+// cards were taken back as stalled).
+func TestAFriendWithAReportInTheWindowIsNeverStalled(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"))
+	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}}
+	dealStarted(w, seats...)
+	t0 := w.s.Now
+	stale := t0.Add(-72 * time.Hour)
+	beat := func(at time.Time, proof time.Time) map[string]Beat {
+		return map[string]Beat{"amy": {At: at, Friend: &FriendReport{Active: stale}, Proof: proof}}
+	}
+	withFinish := func(at time.Time) []FriendSeat {
+		s := seats[0]
+		s.Active, s.Finished = stale, at
+		return []FriendSeat{s}
+	}
+
+	// a fresh finish and a stale walk, past every rung of the ladder: never stalled
+	for _, m := range []int{21, 26, 31, 36, 41, 60} {
+		w.s.Now = t0.Add(time.Duration(m) * time.Minute)
+		p := w.part(TickFriendStall, TickReq{Beats: beat(w.s.Now, time.Time{}), Friends: withFinish(w.s.Now.Add(-5 * time.Minute))})
+		rung, _ := w.s.Fleet.Prop(PropFriendStallRung("amy"))
+		assert.Empty(t, rung, "a finish 5m ago holds her at rung 0 (minute %d)", m)
+		assert.Nil(t, p.Health)
+	}
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col, "her card stays with her")
+	at, what := FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: beat(w.s.Now, time.Time{}), Friends: withFinish(w.s.Now.Add(-5 * time.Minute))}, "amy"))
+	assert.Equal(t, w.s.Now.Add(-5*time.Minute), at)
+	assert.Equal(t, "finish", what)
+
+	// a fresh session proof (a bus message of hers) with the walk stale: never stalled
+	for _, m := range []int{90, 120} {
+		w.s.Now = t0.Add(time.Duration(m) * time.Minute)
+		w.part(TickFriendStall, TickReq{Beats: beat(w.s.Now, w.s.Now.Add(-2*time.Minute)), Friends: withFinish(stale)})
+		rung, _ := w.s.Fleet.Prop(PropFriendStallRung("amy"))
+		assert.Empty(t, rung, "a bus message 2m ago holds her at rung 0 (minute %d)", m)
+	}
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col)
+
+	// a report written on her card counts as hers, and its card is started: never taken back
+	last := w.s.Now
+	w.s.Fleet.Card("s1-1.w1").Fields[FieldReported] = stamp(last)
+	w.s.Now = last.Add(10 * time.Minute)
+	w.part(TickFriendStall, TickReq{Beats: beat(w.s.Now, time.Time{}), Friends: withFinish(stale)})
+	rung, _ := w.s.Fleet.Prop(PropFriendStallRung("amy"))
+	assert.Empty(t, rung, "a report 10m ago holds her at rung 0")
+
+	// no evidence past the bound: the ladder climbs to rung 4 and takes back the card she
+	// has not started; the card with her report on it stays
+	w.s.Now = last.Add(36 * time.Minute)
+	w.part(TickFriendStall, TickReq{Beats: beat(w.s.Now, time.Time{}), Friends: withFinish(stale)})
+	rung, _ = w.s.Fleet.Prop(PropFriendStallRung("amy"))
+	assert.Equal(t, "4", rung)
+	assert.Equal(t, Withdrawn, w.s.Fleet.Card("s1-2.w1").Col, "no evidence past the bound: her unstarted card is taken back")
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "a card with a report of hers on it is started and stays")
+}

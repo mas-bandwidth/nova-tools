@@ -442,11 +442,14 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			why = "has never reported"
 		case since > viewStaleReport:
 			why = "has not reported for " + rep
-		case f.Status == sprint.Up && !f.Active.IsZero() && now.Sub(f.Active) > s.FriendIdleAfter():
-			// her daemon answers (she beats) and her session writes nothing: the finding of
-			// 2026-10-04, a friend idle for two hours while the table said up with 8 working
+		case f.Status == sprint.Up && !f.Active.IsZero() && now.Sub(friendLastWork(s, f)) > s.FriendIdleAfter():
+			// her daemon answers (she beats) and nothing of hers moves: the finding of
+			// 2026-10-04, a friend idle for two hours while the table said up with 8 working.
+			// It reads the newest evidence of her work (sprint.FriendWorked, and her cards'
+			// moves), never her daemon's walk alone: on 2026-10-06 that walk read 3d while
+			// she reported hourly
 			kind = "friend idle"
-			why = "has a daemon that answers and a session that has written nothing for " + ageWord(now.Sub(f.Active))
+			why = "has a daemon that answers and no evidence of work for " + ageWord(now.Sub(friendLastWork(s, f))) + " (no session write, session proof or answer, finish, report or card move)"
 		}
 		if why == "" {
 			continue
@@ -1123,4 +1126,22 @@ func viewJSON(w io.Writer, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(v) // ignored: a view of strings, numbers and times always encodes, and stdout is the caller's
+}
+
+// friendLastWork is the newest evidence of the friend's work (sprint.FriendWorked over her
+// row and what her beat and the store's records say) or of a card of hers moving
+// (sprint.FriendCardMoved): what the idle item measures.
+func friendLastWork(s *sprint.Snapshot, f store.FriendRow) time.Time {
+	w := sprint.FriendWork{Active: f.Active, Proof: f.Proof, Finished: f.Finished}
+	if f.Health != nil && f.Health.State == sprint.Up {
+		w.Answered = f.Health.Seen
+	}
+	if f.Report != nil && len(f.Report.Running) > 0 {
+		w.Running = f.Beat
+	}
+	at, _ := sprint.FriendWorked(s, f.Name, w)
+	if moved := sprint.FriendCardMoved(s, f.Name); moved.After(at) {
+		at = moved
+	}
+	return at
 }

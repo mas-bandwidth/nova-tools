@@ -16,7 +16,8 @@ import (
 // (FieldProgress) is newer than friend_stall_after (default 20m). Her activity is any of: her
 // session activity (FriendReport.Active); a beat whose running list is not empty (friend beat
 // --running: a one-shot lane, or cards worked in child agents, move no session), at the beat's
-// time; and a finish of a card on her row (its "finished" stamp).
+// time; her session's proof (a check answered, or a bus message of hers) and its answer to the
+// coordinator's wake ping; and a finish or a report of hers: the newest of them (FriendWorked).
 // While stalled, the ladder climbs one rung per friend_stall_step (default 5m):
 //   (1) Wake turn 1: bus message to her pushed into daemon as a turn.
 //   (2) Wake turn 2: second wake bus message.
@@ -88,43 +89,10 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 		row := FriendRow(f)
 		mine := append(append([]*Card(nil), s.Fleet.Cell(row, Ready)...), s.Fleet.Cell(row, Working)...)
 
-		// 1. Activity signal: her session's, her beat naming running cards (at the beat's
-		// time), and the newest finish on her row
-		var activity time.Time
-		if r.Beats != nil {
-			b, ok := r.Beats[f]
-			if !ok || b.Friend == nil {
-				b, ok = r.Beats[row]
-			}
-			if ok && b.Friend != nil {
-				activity = b.Friend.Active
-				if len(b.Friend.Running) > 0 && b.At.After(activity) {
-					activity = b.At
-				}
-			}
-		}
-		for _, c := range append(append([]*Card(nil), s.Fleet.Cell(row, DoneOK)...), s.Fleet.Cell(row, DoneFailed)...) {
-			if t := stampAt(c, "finished"); t.After(activity) {
-				activity = t
-			}
-		}
-		if ctl := s.MemberCtl(row); ctl != nil {
-			if actStr := ctl.F("active"); actStr != "" {
-				if t, err := time.Parse(time.RFC3339, actStr); err == nil && t.After(activity) {
-					activity = t
-				}
-			}
-		}
-		if s.Fleet.Texts != nil {
-			if texts, ok := s.Fleet.Texts[row]; ok {
-				if actStr, ok := texts[Active]; ok && actStr != "" {
-					if t, err := time.Parse(time.RFC3339, actStr); err == nil && t.After(activity) {
-						activity = t
-					}
-				}
-			}
-		}
-
+		// 1. Activity signal: the newest evidence of hers (FriendWorked): her session's
+		// writes, her beat naming running cards, her session's proof (a check answered or a
+		// bus message of hers), and her finishes and reports, never one field alone
+		activity, _ := FriendWorked(s, f, friendWorkOf(r, f))
 		// Check if she is marked stall down
 		downStamp, _ := s.Fleet.Prop(PropFriendStallDown(f))
 		isStallDown := downStamp != ""
@@ -284,8 +252,11 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 						}
 					}
 					for _, c := range mine {
-						if c.F(FieldProgress) != "" {
+						switch {
+						case c.F(FieldProgress) != "":
 							started[c.ID] = "progress was stamped on it"
+						case c.F(FieldReported) != "":
+							started[c.ID] = "a report of hers was written on it"
 						}
 					}
 					takePlan := FriendTake(s, FriendTakeReq{
@@ -338,4 +309,124 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 	}
 
 	return p, 0
+}
+
+// FriendWork is the evidence of a friend's work the tables do not hold: what her daemon's
+// beat carries and the store's record of her last finish. Each is zero when there is none.
+type FriendWork struct {
+	// Active is the newest write under her working directory and outbox as her daemon's
+	// last walk found it (FriendReport.Active). The walk is bounded in files and time, so
+	// it can answer with an old file while her outbox holds new ones: never the only field.
+	Active time.Time
+	// Running is her beat's time while it names cards running (friend beat --running).
+	Running time.Time
+	// Proof is her session's last proof: a SESSION CHECK it answered, or a bus message of
+	// its own (Beat.Proof, FriendSession.Pong).
+	Proof time.Time
+	// Finished is when a card of hers last finished, working to done (the store's
+	// friend-finish record, FriendSeat.Finished), whatever row the card is on now.
+	Finished time.Time
+	// Answered is when her session last answered the coordinator's wake ping (her
+	// FriendHealth observation, up), FriendSeat.Answered.
+	Answered time.Time
+}
+
+// friendWorkOf is what the tick was given of the friend's work beside the tables: her
+// beat (by her name, else by her row), her session's proof, and her seat's.
+func friendWorkOf(r TickReq, f string) FriendWork {
+	var w FriendWork
+	later := func(at *time.Time, t time.Time) {
+		if t.After(*at) {
+			*at = t
+		}
+	}
+	b, ok := r.Beats[f]
+	if !ok || b.Friend == nil {
+		if br, okr := r.Beats[FriendRow(f)]; okr {
+			b, ok = br, okr
+		}
+	}
+	if ok {
+		if b.Friend != nil {
+			later(&w.Active, b.Friend.Active)
+			if len(b.Friend.Running) > 0 {
+				later(&w.Running, b.At)
+			}
+		}
+		later(&w.Proof, b.Proof)
+	}
+	later(&w.Proof, r.Sessions[f].Pong)
+	for _, seat := range r.Friends {
+		if seat.Name == f {
+			later(&w.Active, seat.Active)
+			later(&w.Proof, seat.Proof)
+			later(&w.Finished, seat.Finished)
+			later(&w.Answered, seat.Answered)
+		}
+	}
+	return w
+}
+
+// FriendWorked is the newest evidence that friend f is at work, and what it is (docs/SPEC-SPRINT.md
+// section friend-stall-ladder-r.w1): her session's writes, her beat naming running cards,
+// her session's proof (a check answered, or a bus message of hers), her session's answer to
+// the coordinator's wake ping, a finish of hers (the
+// store's record, or a card done on her row), a report of hers (FieldReported on a card of
+// her row), and the coordinator's view of her row ("active"). Card progress and takes are
+// the cards', not hers (FriendCardMoved): they hold the stall ladder and never release her.
+// Zero and "" when there is none. On 2026-10-06 one field, her daemon's walk of her
+// working directory, read three days old while her outbox had reports that hour and her bus
+// notes came every few minutes, and the ladder took two working cards back from her.
+func FriendWorked(s *Snapshot, f string, w FriendWork) (time.Time, string) {
+	var at time.Time
+	what := ""
+	see := func(t time.Time, word string) {
+		if t.After(at) {
+			at, what = t, word
+		}
+	}
+	see(w.Active, "session write")
+	see(w.Running, "beat naming running cards")
+	see(w.Proof, "session proof")
+	see(w.Finished, "finish")
+	see(w.Answered, "session answer")
+	if s == nil || s.Fleet == nil {
+		return at, what
+	}
+	row := FriendRow(f)
+	for _, c := range append(append([]*Card(nil), s.Fleet.Cell(row, DoneOK)...), s.Fleet.Cell(row, DoneFailed)...) {
+		see(stampAt(c, "finished"), "finish")
+	}
+	for _, col := range []string{Ready, Working, DoneOK, DoneFailed} {
+		for _, c := range s.Fleet.Cell(row, col) {
+			see(stampAt(c, FieldReported), "report")
+		}
+	}
+	if ctl := s.MemberCtl(row); ctl != nil {
+		see(stampAt(ctl, "active"), "session write")
+	}
+	if texts, ok := s.Fleet.Texts[row]; ok {
+		if t, err := time.Parse(time.RFC3339, texts[Active]); err == nil {
+			see(t, "session write")
+		}
+	}
+	return at, what
+}
+
+// FriendCardMoved is the newest move of a card of hers that she or her daemon made: a
+// progress stamp, or a take, on a card ready or working on her row; zero when none.
+func FriendCardMoved(s *Snapshot, f string) time.Time {
+	var at time.Time
+	if s == nil || s.Fleet == nil {
+		return at
+	}
+	row := FriendRow(f)
+	for _, c := range append(append([]*Card(nil), s.Fleet.Cell(row, Ready)...), s.Fleet.Cell(row, Working)...) {
+		for _, k := range []string{FieldProgress, "taken"} {
+			if t := stampAt(c, k); t.After(at) {
+				at = t
+			}
+		}
+	}
+	return at
 }

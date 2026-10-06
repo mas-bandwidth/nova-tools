@@ -6,8 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // beatActive is friend beat with the session's last activity ago before the app's clock.
@@ -37,32 +35,44 @@ func TestFriendBeatCarriesTheLastSessionActivityOntoHerRowAndTheTable(t *testing
 	assert.Contains(t, errs, "--active wants an RFC3339 time")
 }
 
-// Her daemon answers and her session writes nothing: with cards dealt to her, past the
-// setting (20m by default) it is an alarm; fresh activity, a longer setting or no cards
-// is none.
+// Her daemon answers and nothing of hers moves (no session write, session proof or answer,
+// finish, report or card move): with cards dealt to her, past the setting (20m by default)
+// it is an alarm; fresh evidence of any kind, a longer setting or no cards is none. A stale
+// walk of her directory alone is never the alarm (2026-10-06: it read 3d while she
+// reported hourly).
 func TestAFriendHoldingCardsWhoseSessionWritesNothingIsAnAlarm(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
 	ta.startFriend("amy", 1)
+	ta.later(25 * time.Minute) // her start is a card move of hers: evidence of work until it ages
+	ta.beatUp("amy")           // her session answers the wake ping now: she is up
 	ta.ok(beatActive(ta, "amy", 5*time.Minute))
 	_, ok := item(ta.coordView(""), "f:amy")
 	assert.False(t, ok, "she wrote five minutes ago")
 
-	ta.ok(beatActive(ta, "amy", sprint.FriendIdleDefault+time.Minute))
+	ta.ok(beatActive(ta, "amy", 3*24*time.Hour))
+	_, ok = item(ta.coordView(""), "f:amy")
+	assert.False(t, ok, "her walk reads 3d, and her session answered a moment ago: no alarm")
+
+	// past a shorter setting with no evidence since her answer, it is the alarm
+	ta.ok("set --friend-idle 5m")
+	ta.later(6 * time.Minute)
+	ta.ok(beatActive(ta, "amy", 3*24*time.Hour))
+	ta.ok("tick")
 	f, ok := item(ta.coordView(""), "f:amy")
-	require.True(t, ok, "21m of silence while a card is dealt to her")
+	require.True(t, ok, "6m with no evidence while a card is dealt to her")
 	assert.Equal(t, itemFriend, f.T)
 	assert.Equal(t, "friend idle", f.W)
-	assert.Contains(t, f.S, "a daemon that answers and a session that has written nothing for 21m")
+	assert.Contains(t, f.S, "a daemon that answers and no evidence of work for 6m")
 	assert.Contains(t, f.S, "holds 0 ready, 1 working")
 
-	// a longer setting takes it off, default puts it back
+	// a longer setting takes it off, the shorter puts it back
 	ta.ok("set --friend-idle 1h")
 	ta.ok("tick")
 	it, ok := item(ta.coordView(""), "f:amy")
-	assert.False(t, ok, "21m is inside an hour: %+v", it)
-	ta.ok("set --friend-idle default")
+	assert.False(t, ok, "6m is inside an hour: %+v", it)
+	ta.ok("set --friend-idle 5m")
 	ta.ok("tick")
 	_, ok = item(ta.coordView(""), "f:amy")
 	assert.True(t, ok)

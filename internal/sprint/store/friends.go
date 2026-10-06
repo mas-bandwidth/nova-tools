@@ -105,6 +105,9 @@ type FriendRow struct {
 	// finished, zero for never.
 	Evidence string    `json:"evidence,omitempty"`
 	Finished time.Time `json:"finished,omitzero"`
+	// Proof is her session's last proof as her beat carries it (sprint.Beat.Proof: a
+	// SESSION CHECK it answered, or a bus message of its own), zero when none.
+	Proof time.Time `json:"proof,omitzero"`
 	// Reason and Until say why she is held or down and when she is expected
 	// back, when the hold or the observation said (friend down, friend health).
 	Reason string    `json:"reason,omitempty"`
@@ -337,7 +340,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -384,12 +387,15 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Why: whys[r.Name]}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
 		if r.Report != nil {
 			seats[i].Running, seats[i].Active = r.Report.Running, r.Report.Active
+		}
+		if r.Health != nil && r.Health.State == sprint.Up {
+			seats[i].Answered = r.Health.Seen
 		}
 	}
 	return seats, nil
