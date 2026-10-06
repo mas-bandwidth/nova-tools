@@ -417,6 +417,8 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 **What the flags want.** `--channels` is a retrieval method, `bm25` or `trigram`, never a directory. `--k` is the number of hits, your reading budget; there is no default. `--root` is your corpus, written out every run, and repeatable: two roots are indexed together in one ranking, each hit naming its root. A run short two flags prints two sentences and stops once.
 
+**The reads are bounded.** Every verb that builds the index, and `verify`, refuses rather than read past three caps: one markdown file over 8,388,608 bytes (8 MiB, `MaxFileBytes`), a corpus whose files total over 67,108,864 bytes (64 MiB, `MaxCorpusBytes`), and a vocabulary over 1,000,000 distinct terms (`MaxVocabulary`). The refusal names the file and the cap; `--exclude` is the remedy. Before the caps, one planted 40 MB file drove a `stats` build past 2 GB of memory.
+
 **`verify` and `eval` are bounded**, per kind: at most `--fail-max` findings per kind, one `MORE` line per kind that elided anything, then the count line. On a 5,000-entry corpus `verify` used to print 10,000 lines and no total. `eval` lists misses only; a passing row is a number, not a line.
 
 **`boot` loads a pin, not a directory.** The pin file names the few memories a session loads — one slash path per line relative to `--root`, `#` comments and blank lines ignored, order = boot order — and boot reads exactly those files, reporting `BOOT OK files=<n> bytes=<n>`. It never walks the directory: search answers the rest from the index. A boot that cannot name a memory (missing file, empty file, non-canonical path) is a refusal, because a self that loaded less than it thinks is the failure this verb exists to remove.

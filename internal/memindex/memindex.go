@@ -43,6 +43,7 @@ package memindex
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"regexp"
@@ -62,6 +63,44 @@ const SchemaVersion = "nova-memory/2"
 // two tokens is a heading fragment or a separator, and indexing them makes
 // every rare-word query drown in stubs.
 const MinTerms = 3
+
+// The read bounds. Nothing bounded the corpus read: one planted 40 MB file
+// drove a stats build to 2.06 GB peak RSS (4.8M distinct tokens) and a
+// trigram search to 3.17 GB, on every indexing verb. The corpus this was
+// written for is ~11.5MB over 548 files, so each cap leaves it wide headroom
+// and refuses only what no memory corpus holds (security#76 finding 3).
+const (
+	// MaxFileBytes caps one markdown file, read through readCapped.
+	MaxFileBytes = 8 << 20
+	// MaxCorpusBytes caps the running byte total of one Build.
+	MaxCorpusBytes = 64 << 20
+	// MaxVocabulary caps the distinct terms of one Build (len of Corpus.DF).
+	MaxVocabulary = 1_000_000
+)
+
+// readCapped reads name whole, refusing it, by name and cap, when it holds
+// more than MaxFileBytes. Stat refuses a large file before any read; the
+// LimitReader of MaxFileBytes+1 bounds the read even when Stat's size lies
+// (a file growing under the walk), so no read allocates past the cap
+// (security#76 finding 3).
+func readCapped(fsys fs.FS, name string) ([]byte, error) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err == nil && info.Size() > MaxFileBytes {
+		return nil, fmt.Errorf("%s is %d bytes, over the %d-byte file cap; exclude it with --exclude", name, info.Size(), MaxFileBytes)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", name, err)
+	}
+	if len(raw) > MaxFileBytes {
+		return nil, fmt.Errorf("%s is over the %d-byte file cap; exclude it with --exclude", name, MaxFileBytes)
+	}
+	return raw, nil
+}
 
 // Chunk is one indexed paragraph. Text stays normalized for retrieval;
 // Original and Line locate and quote the source without changing paragraph IDs.
@@ -315,11 +354,14 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 	c := &Corpus{DF: map[string]int{}, Post: map[string][]int32{}, ByClass: map[string]int{}, Files: files}
 	var totalTerms int
 	for _, f := range files {
-		raw, err := fs.ReadFile(fsys, f)
+		raw, err := readCapped(fsys, f)
 		if err != nil {
-			return nil, fmt.Errorf("reading %s: %w", f, err)
+			return nil, err
 		}
 		c.Bytes += int64(len(raw)) // the bytes on disk, before any normalization
+		if c.Bytes > MaxCorpusBytes {
+			return nil, fmt.Errorf("corpus passes the %d-byte corpus cap at %s; narrow it with --exclude", MaxCorpusBytes, f)
+		}
 		// Line endings are normalized ONCE, here, before anything looks at the
 		// text. The blank-line split is on the literal "\n\n", so a CRLF file's
 		// blank lines ("\r\n\r\n") never split it: every such file indexed as
@@ -357,6 +399,9 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 			for t := range tf {
 				c.DF[t]++
 				c.Post[t] = append(c.Post[t], id)
+			}
+			if len(c.DF) > MaxVocabulary {
+				return nil, fmt.Errorf("corpus passes the %d-term vocabulary cap at %s; narrow it with --exclude", MaxVocabulary, f)
 			}
 			totalTerms += len(terms)
 			para++
