@@ -19,6 +19,20 @@
   when: not (ansible_check_mode and bootstrap_redis_pkg is changed)
   become: true
 
+# The address the unit binds besides loopback is read here, not carried from
+# the tailscale part, so `--tags redis` renders the unit a whole run does. A
+# host with tailscale installed and no address is refused rather than bound
+# to loopback alone: that would cut the fleet off its store.
+- name: the host's tailnet address
+  ansible.builtin.import_tasks: tailnet.yml
+
+- name: a store host with tailscale has its tailnet address
+  ansible.builtin.assert:
+    that: nova_bootstrap_tailnet_ip != '' or not bootstrap_ts_bin.stat.exists
+    fail_msg: "BOOTSTRAP REFUSED host={{ inventory_hostname }}: tailscale is installed and the host has no tailnet IPv4 address, so the store's Redis would bind loopback alone; run tailscale status on it, or the play with --tags tailscale"
+    quiet: true
+  when: not ansible_check_mode
+
 - name: the store directory
   ansible.builtin.file: { path: "{{ nova_bootstrap_redis_dir }}", state: directory, mode: "0700" }
 

@@ -64,7 +64,8 @@
 
 - name: every host on the tailnet
   hosts: fleet_store:fleet_members
-  gather_facts: false
+  gather_facts: true
+  gather_subset: [min]
   tags: [tailscale]
   tasks:
     - name: tailscale
@@ -72,7 +73,8 @@
 
 - name: the seat on every host
   hosts: fleet_store:fleet_members
-  gather_facts: false
+  gather_facts: true
+  gather_subset: [min]
   tags: [seat]
   tasks:
     - name: the seat's key and the sealed store
@@ -89,18 +91,25 @@
   hosts: fleet_store
   gather_facts: true
   gather_subset: [min]
-  tags: [postgres, redis, services, backup]
+  # Each part carries its own tags, so `--tags backup` runs the backups alone.
   tasks:
+    - name: the store's seat holds every secret the stores need
+      ansible.builtin.include_role: { name: bootstrap, tasks_from: storeseat.yml, apply: { tags: [postgres, redis, services, backup] } }
+      tags: [postgres, redis, services, backup]
     - name: postgresql, the configuration role and database, the schema migrated
       ansible.builtin.include_role: { name: bootstrap, tasks_from: postgres.yml, apply: { tags: [postgres] } }
+      tags: [postgres]
     - name: the fleet's redis, supervised
       ansible.builtin.include_role: { name: bootstrap, tasks_from: redis.yml, apply: { tags: [redis, services] } }
+      tags: [redis, services]
     - name: the backup timers
       ansible.builtin.include_role: { name: bootstrap, tasks_from: backup.yml, apply: { tags: [backup] } }
+      tags: [backup]
 
 - name: the receipt of every host
   hosts: fleet_store:fleet_members
-  gather_facts: false
+  gather_facts: true
+  gather_subset: [min]
   tags: [always]
   tasks:
     - name: the receipt

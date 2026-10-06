@@ -78,16 +78,7 @@
       become: true
 
 - name: the host's tailnet address
-  ansible.builtin.command: { argv: [tailscale, ip, "-4"] }
-  register: bootstrap_ts_ip
-  changed_when: false
-  check_mode: false
-  # ignored: under --check a host not yet up has none; the receipt says tailnet=none
-  failed_when: false
-
-- name: the tailnet address, as a fact
-  ansible.builtin.set_fact:
-    nova_bootstrap_tailnet_ip: "{{ (bootstrap_ts_ip.stdout_lines | default([]) | first | default('')) if bootstrap_ts_ip.rc | default(1) == 0 else '' }}"
+  ansible.builtin.import_tasks: tailnet.yml
 
 - name: a host that is up has a tailnet address
   ansible.builtin.assert:

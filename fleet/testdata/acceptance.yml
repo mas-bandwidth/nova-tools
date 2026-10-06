@@ -1,0 +1,259 @@
+# acceptance.yml: the acceptance of the two phases on a disposable host, the
+# steps after bootstrap.yml (docs/FLEET.md, "From a fresh host"). It runs on
+# the bootstrap inventory's fleet_store host, which is a member too, and is
+# driven by TestFleetPlaysConvergeAFreshHostIdempotently in this order:
+#
+#   --tags rows     the hand-off: the owner's nova-config rows for the host
+#                   (machine, fleet, two test friends and their daemons' loop
+#                   records) applied; the friends' Redis users (the owner's,
+#                   docs/SPEC-BUS.md "The ACL per friend"); the friends'
+#                   sessions hosted in tmux
+#   (the test then runs redis.yml, tools.yml and loops.yml with the inventory
+#   nova-config prints: the steady state, which starts the friend daemons)
+#   --tags deliver  a test message from one friend to the other, delivered
+#                   into the recipient's session by its daemon and receipted
+#                   from inside it (nova-bus ack --id), the owed mark cleared
+#   --tags work     a bounded worker job: nova-swarm native on the fake
+#                   harness (-e acceptance_harness=<its path on the machine
+#                   running the play>), one card that finishes and one that
+#                   outlives its deadline and is stopped at it
+#
+# A friend's session is a scripted stand-in for an AI session: it waits at a
+# "> " prompt, runs the pong line each turn asks for and receipts every
+# message the turn delivers. The friends' passwords are secrets of the host's
+# seat (acceptance_friends); nothing here holds a value. A second run of
+# --tags rows changes nothing.
+- name: the acceptance on the store host
+  hosts: fleet_store
+  gather_facts: true
+  gather_subset: [min]
+  # the fleet's defaults: this play is not beside them, in fleet/
+  vars_files: [../group_vars/all.yml]
+  vars:
+    acceptance_dir: "{{ nova_home }}/nova-acceptance"
+    acceptance_store: "{{ inventory_hostname }}:{{ nova_bootstrap_redis_port }}"
+    acceptance_pg_dsn: "postgres://{{ nova_bootstrap_pg_user }}@localhost:5432/{{ nova_bootstrap_pg_db }}"
+    # each friend, and the secret of the host's seat holding its Redis user's password
+    # a row's name in nova-config's <kind> list --json
+    acceptance_row_name: '"fields":\{"name":"([^"]+)"'
+    acceptance_friends: { ada: NOVA_BUS_ADA_PASSWORD, bob: NOVA_BUS_BOB_PASSWORD }
+    acceptance_seat: ["{{ nova_bin_dir }}/nova-secrets", exec, --store, "{{ nova_secrets_store }}", --as, "{{ nova_seat }}",
+                      --key, "{{ nova_secrets_key_dir }}/{{ nova_seat }}.key", --sops, "{{ nova_bin_dir }}/sops"]
+    acceptance_config: "{{ acceptance_seat + ['--only', nova_pg_password_key ~ ',NOVA_REDIS_PASSWORD', '--require=' ~ nova_pg_password_key, '--require=NOVA_REDIS_PASSWORD', '--',
+                          '/usr/bin/env', 'NOVA_PG_DSN=' ~ acceptance_pg_dsn, 'NOVA_PG_PASSWORD_ENV=' ~ nova_pg_password_key,
+                          'NOVA_SPRINT_REDIS=' ~ acceptance_store, 'NOVA_SPRINT_REDIS_USER=default', 'NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_PASSWORD',
+                          nova_bin_dir ~ '/nova-config'] }}"
+    acceptance_as_ada: "{{ acceptance_seat + ['--only', acceptance_friends.ada, '--require=' ~ acceptance_friends.ada, '--', '/usr/bin/env',
+                          'NOVA_BUS_REDIS=' ~ acceptance_store, 'NOVA_SPRINT_REDIS_USER=ada', 'NOVA_SPRINT_REDIS_PASSWORD_ENV=' ~ acceptance_friends.ada,
+                          nova_bin_dir ~ '/nova-bus'] }}"
+  tasks:
+    # --- rows: the hand-off ---------------------------------------------------
+    - name: the rows the store holds
+      ansible.builtin.command: { argv: "{{ acceptance_config + item + ['--json'] }}" }
+      loop: [[machine, list], [friend, list], [loop, list], [fleet, show]]
+      loop_control: { label: "{{ item | join(' ') }}" }
+      register: acceptance_rows
+      changed_when: false
+      tags: [rows]
+
+    - name: the machine row, the fleet row and the friends' rows
+      ansible.builtin.command: { argv: "{{ acceptance_config + item.argv + ['--as', 'acceptance'] }}" }
+      loop:
+        - { have: "{{ inventory_hostname in (acceptance_rows.results[0].stdout | regex_findall(acceptance_row_name)) }}",
+            argv: [machine, add, "{{ inventory_hostname }}", --user, "{{ ansible_user_id }}", --seat, "{{ nova_seat }}", --slots, "2", --width, "1"] }
+        - { have: "{{ (acceptance_rows.results[3].stdout | regex_findall('\"store\":\"([^\"]*)\"')) == [inventory_hostname] }}",
+            argv: [fleet, set, --store, "{{ inventory_hostname }}", --coordinator, "{{ inventory_hostname }}", --redis_port, "{{ nova_bootstrap_redis_port }}", --pg_dsn, "{{ acceptance_pg_dsn }}"] }
+        - { have: "{{ 'ada' in (acceptance_rows.results[1].stdout | regex_findall(acceptance_row_name)) }}", argv: [friend, add, ada, --slots, "1", --tiers, flash] }
+        - { have: "{{ 'bob' in (acceptance_rows.results[1].stdout | regex_findall(acceptance_row_name)) }}", argv: [friend, add, bob, --slots, "1", --tiers, flash] }
+      loop_control: { label: "{{ item.argv[:3] | join(' ') }}" }
+      when: not item.have
+      # Each written only when it is not so already: a set writes a new revision
+      # even when nothing differs.
+      changed_when: true
+      tags: [rows]
+
+    - name: each friend's daemon, a loop record (the other friend is its coordinator)
+      ansible.builtin.command:
+        argv: "{{ acceptance_config + ['loop', 'add', 'friend-' ~ item.key, '--machine', inventory_hostname, '--seat', nova_seat, '--keys', item.value, '--keepalive', 'true',
+                 '--argv', (['/usr/bin/env', 'NOVA_BUS_REDIS=' ~ acceptance_store, 'NOVA_SPRINT_REDIS_USER=' ~ item.key,
+                            'NOVA_SPRINT_REDIS_PASSWORD_ENV=' ~ item.value, 'nova-friend', 'run', '--as', item.key, '--harness', 'tmux',
+                            '--dir', acceptance_dir ~ '/' ~ item.key, '--coordinator', (acceptance_friends.keys() | reject('eq', item.key) | first)] | to_json),
+                 '--as', 'acceptance'] }}"
+      # Added once: a set writes a new revision even when nothing differs.
+      when: ('friend-' ~ item.key) not in (acceptance_rows.results[2].stdout | regex_findall(acceptance_row_name))
+      loop: "{{ acceptance_friends | dict2items }}"
+      loop_control: { label: "friend-{{ item.key }}" }
+      changed_when: true
+      tags: [rows]
+
+    - name: the rows applied to the store
+      ansible.builtin.command: { argv: "{{ acceptance_config + ['apply', '--as', 'acceptance'] }}" }
+      register: acceptance_apply
+      changed_when: acceptance_apply.stdout is search('APPLY (ADD|SET|REMOVE) ')
+      tags: [rows]
+
+    - name: the acceptance's directories
+      ansible.builtin.file: { path: "{{ acceptance_dir }}/{{ item }}", state: directory, mode: "0755" }
+      loop: "{{ acceptance_friends.keys() | list + ['bin'] }}"
+      tags: [rows]
+
+    - name: the owner's Redis helper and the scripted session
+      ansible.builtin.copy:
+        dest: "{{ acceptance_dir }}/bin/{{ item.name }}"
+        mode: "0755"
+        content: "{{ item.content }}"
+      loop:
+        - name: owner-redis
+          content: |
+            #!/bin/bash
+            # The owner's hand at the store, as the default user (NOVA_REDIS_PASSWORD):
+            #   owner-redis <host> <port> user <friend> <VARIABLE>  a friend's user, made once
+            #     (docs/SPEC-BUS.md, "The ACL per friend"; the password in <VARIABLE>)
+            #   owner-redis <host> <port> owed <friend>             how many messages she owes
+            set -eu
+            export REDISCLI_AUTH="$NOVA_REDIS_PASSWORD"
+            r() { redis-cli --no-auth-warning -h "$1" -p "$2" "${@:3}"; }
+            h=$1 p=$2 verb=$3 f=$4
+            case $verb in
+            user)
+              if [ -n "$(r "$h" "$p" ACL GETUSER "$f")" ]; then echo "USER HAS $f"; exit 0; fi
+              v=$5
+              r "$h" "$p" ACL SETUSER "$f" on ">${!v}" '~bus2:to:*' '~bus2:log' '~bus2:owed:*' '~bus2:push' '~friends' '~machines' resetchannels \
+                +hello +ping +smembers +time +multi +exec +xadd '+xgroup|create' +xreadgroup +xautoclaim +xack +xpending '+xinfo|groups' +xrange +hset +hdel +hgetall >/dev/null
+              r "$h" "$p" ACL SAVE >/dev/null
+              echo "USER MADE $f" ;;
+            owed) echo "OWED $f $(r "$h" "$p" HLEN "bus2:owed:$f")" ;;
+            esac
+        - name: session
+          content: |
+            #!/bin/bash
+            # A scripted stand-in for a friend's AI session: each turn the daemon types is
+            # one line, newlines shown as " ⏎ ". It runs the pong line the turn asks for and
+            # receipts every message the turn delivers, from inside the session.
+            while :; do
+              printf '> '
+              IFS= read -r turn || exit 0
+              printf '%s\n' "$turn" >> turns.log
+              text=$(printf '%s' "$turn" | sed 's/ ⏎ /\n/g')
+              printf '%s\n' "$text" | grep -o 'nova-friend pong .*' | while IFS= read -r cmd; do eval "$cmd" >> session.log 2>&1; done
+              printf '%s\n' "$text" | grep -o '^RECV OK id=[0-9A-Z]*' | sed 's/.*id=//' | while read -r id; do nova-bus ack --id "$id" >> session.log 2>&1; done
+            done
+      loop_control: { label: "{{ item.name }}" }
+      tags: [rows]
+
+    - name: each friend's Redis user, made by the owner
+      ansible.builtin.command:
+        argv: "{{ acceptance_seat + ['--only', 'NOVA_REDIS_PASSWORD,' ~ item.value, '--require=NOVA_REDIS_PASSWORD', '--require=' ~ item.value, '--',
+                 acceptance_dir ~ '/bin/owner-redis', inventory_hostname, nova_bootstrap_redis_port | string, 'user', item.key, item.value] }}"
+      loop: "{{ acceptance_friends | dict2items }}"
+      loop_control: { label: "{{ item.key }}" }
+      register: acceptance_user
+      changed_when: "'USER MADE' in acceptance_user.stdout"
+      tags: [rows]
+
+    - name: the tmux sessions there are
+      ansible.builtin.command: { argv: [tmux, ls, -F, "#{session_name}"] }
+      register: acceptance_tmux
+      changed_when: false
+      # ignored: no tmux server yet is no session yet
+      failed_when: false
+      tags: [rows]
+
+    - name: each friend's session, hosted in tmux (nova-friend host)
+      ansible.builtin.command:
+        argv: "{{ [nova_bin_dir ~ '/nova-friend', 'host', '--as', item.key, '--harness', 'scripted', '--prompt', '^> ?$',
+                  '--dir', acceptance_dir ~ '/' ~ item.key, '--'] + acceptance_seat + ['--only', item.value, '--require=' ~ item.value, '--',
+                  '/usr/bin/env', 'PATH=' ~ nova_bin_dir ~ ':/usr/bin:/bin', 'NOVA_BUS_REDIS=' ~ acceptance_store,
+                  'NOVA_SPRINT_REDIS_USER=' ~ item.key, 'NOVA_SPRINT_REDIS_PASSWORD_ENV=' ~ item.value, acceptance_dir ~ '/bin/session'] }}"
+      loop: "{{ acceptance_friends | dict2items }}"
+      loop_control: { label: "friend-{{ item.key }}" }
+      when: ('friend-' ~ item.key) not in acceptance_tmux.stdout_lines
+      changed_when: true
+      tags: [rows]
+
+    # --- deliver: a test message, delivered and receipted ---------------------
+    - name: both friends' pushes proven (their daemons, started by loops.yml, asked their sessions)
+      ansible.builtin.command: { argv: "{{ acceptance_as_ada + ['names'] }}" }
+      register: acceptance_names
+      until: acceptance_names.stdout is search('name=ada push=proven') and acceptance_names.stdout is search('name=bob push=proven')
+      retries: 60
+      delay: 5
+      changed_when: false
+      tags: [deliver]
+
+    - name: ada sends bob a test message
+      ansible.builtin.command: { argv: "{{ acceptance_as_ada + ['send', '--to', 'bob', '--subject', 'acceptance', '--body', 'a test message on a bootstrapped fleet'] }}" }
+      register: acceptance_send
+      changed_when: true
+      tags: [deliver]
+
+    - name: the message's id
+      ansible.builtin.set_fact:
+        acceptance_id: "{{ acceptance_send.stdout | regex_search('SEND OK id=(\\S+)', '\\1') | first }}"
+      tags: [deliver]
+
+    - name: bob's session receipted it (its own nova-bus ack, in its session log)
+      ansible.builtin.command: { argv: [grep, -c, "ACK ID id={{ acceptance_id }} acked=true", "{{ acceptance_dir }}/bob/session.log"] }
+      register: acceptance_receipt
+      until: acceptance_receipt.rc == 0
+      retries: 30
+      delay: 2
+      changed_when: false
+      tags: [deliver]
+
+    - name: nothing is owed to bob
+      ansible.builtin.command:
+        argv: "{{ acceptance_seat + ['--only', 'NOVA_REDIS_PASSWORD', '--require=NOVA_REDIS_PASSWORD', '--',
+                 acceptance_dir ~ '/bin/owner-redis', inventory_hostname, nova_bootstrap_redis_port | string, 'owed', 'bob'] }}"
+      register: acceptance_owed
+      failed_when: acceptance_owed.stdout_lines | last != 'OWED bob 0'
+      changed_when: false
+      tags: [deliver]
+
+    - name: the receipt
+      ansible.builtin.debug: { msg: "DELIVERED id={{ acceptance_id }} from=ada to=bob receipted=yes owed=0" }
+      tags: [deliver]
+
+    # --- work: a bounded worker job --------------------------------------------
+    - name: the fake harness (a stand-in for a provider, cmd/nova-swarm/testdata/fakeharness)
+      ansible.builtin.copy: { src: "{{ acceptance_harness }}", dest: "{{ acceptance_dir }}/bin/fakeharness", mode: "0755" }
+      tags: [work]
+
+    - name: the cards, one that finishes and one that outlives its deadline
+      ansible.builtin.copy:
+        dest: "{{ acceptance_dir }}/{{ item.name }}.md"
+        mode: "0644"
+        content: "# acceptance: {{ item.name }}\n\n{{ item.directive }}\n"
+      loop:
+        - { name: finishes, directive: "FAKE-TURNS 1" }
+        - { name: outlives, directive: "FAKE-SLEEP 300s" }
+      loop_control: { label: "{{ item.name }}" }
+      tags: [work]
+
+    - name: each job, bounded by its deadline
+      ansible.builtin.command:
+        argv: ["{{ nova_bin_dir }}/nova-swarm", native, --tokens, unmetered, --harness, "{{ acceptance_dir }}/bin/fakeharness", --model, fake/fake-model,
+               --card, "{{ acceptance_dir }}/{{ item }}.md", --slot, "{{ acceptance_dir }}/pool/slot-{{ item }}", --root, "{{ acceptance_dir }}/pool",
+               --deadline, 20s, --usage-interval, 2s, --slots-store, "{{ acceptance_dir }}/slots", --owner, "{{ inventory_hostname }}",
+               --identity, "acceptance,Acceptance,acceptance@example.invalid"]
+      loop: [finishes, outlives]
+      register: acceptance_job
+      changed_when: true
+      # ignored: the second job's INCOMPLETE is the bound working; the assert below reads both
+      failed_when: false
+      tags: [work]
+
+    - name: the first finished and the second was stopped at its bound
+      ansible.builtin.assert:
+        that:
+          - acceptance_job.results[0].stdout is search('NATIVE OK ')
+          - acceptance_job.results[1].stdout is search('NATIVE INCOMPLETE ')
+          - (acceptance_job.results[1].stdout | regex_search('wall=([0-9.]+)s', '\\1') | first | float) < 60
+        fail_msg: "{{ acceptance_job.results | map(attribute='stdout_lines') | map('last') | list }}"
+        quiet: true
+      tags: [work]
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: "WORKED {{ acceptance_job.results | map(attribute='stdout') | map('regex_search', 'NATIVE \\S+ label=\\S+') | join(' ') }}"
+      tags: [work]

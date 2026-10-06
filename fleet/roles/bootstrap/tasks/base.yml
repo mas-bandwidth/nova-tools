@@ -14,8 +14,9 @@
       this host is {{ ansible_system }} {{ ansible_distribution | default('') }} with {{ ansible_service_mgr | default('') }}
     quiet: true
 
+# Asked of the interpreter the modules run under, never a python3 on PATH.
 - name: python3-apt on the host (apt's --check needs it; a run installs it itself)
-  ansible.builtin.command: { argv: [python3, -c, "import apt"] }
+  ansible.builtin.command: { argv: ["{{ ansible_python.executable }}", -c, "import apt"] }
   register: bootstrap_python_apt
   changed_when: false
   check_mode: false
@@ -82,6 +83,15 @@
   ansible.builtin.command: { argv: [loginctl, enable-linger, "{{ ansible_user_id }}"] }
   when: not bootstrap_linger.stat.exists
   changed_when: true
+  become: true
+
+# The manager the loops' user units run under (loops.yml, nova_systemd_scope
+# user). Linger starts it at boot; one that failed to start (linger enabled
+# before libpam-systemd was installed) is started here. Under --check on a
+# fresh host there is no linger yet to start it with.
+- name: the login's user manager, running
+  ansible.builtin.systemd_service: { name: "user@{{ ansible_user_uid }}.service", state: started }
+  when: not (ansible_check_mode and not bootstrap_linger.stat.exists)
   become: true
 
 - name: the download directory, made by an earlier run (--check on a fresh host downloads nothing)

@@ -1,0 +1,22 @@
+# The host's tailnet IPv4 address, read and never changed, as the fact
+# nova_bootstrap_tailnet_ip: by tailscale.yml after `up`, and by every part
+# that uses the address (the store's Redis binds it, the receipt names it), so
+# a run limited by --tags or --skip-tags reads the same address a whole run
+# does and never renders the unit without it. Empty when tailscale is not
+# installed or the host is not up.
+- name: tailscale, if it is installed
+  ansible.builtin.stat: { path: /usr/bin/tailscale, get_checksum: false }
+  register: bootstrap_ts_bin
+
+- name: the host's tailnet address
+  ansible.builtin.command: { argv: [tailscale, ip, "-4"] }
+  register: bootstrap_ts_ip
+  changed_when: false
+  check_mode: false
+  # ignored: a host not yet up (and every host under --check on a fresh one) has none
+  failed_when: false
+  when: bootstrap_ts_bin.stat.exists
+
+- name: the tailnet address, as a fact
+  ansible.builtin.set_fact:
+    nova_bootstrap_tailnet_ip: "{{ (bootstrap_ts_ip.stdout_lines | default([]) | first | default('')) if bootstrap_ts_ip.rc | default(1) == 0 else '' }}"
