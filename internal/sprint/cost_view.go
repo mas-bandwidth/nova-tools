@@ -31,8 +31,8 @@ type TierCosts struct {
 	// CostByTier is the stream's spend by the tier each attempt and read ran on, dollars
 	// and cents rounded up, over every card of the stream, every dollar of TotalCost in one
 	// tier: a record with no tier takes its route's (runTier), and a card's records past
-	// the list's bound (in its total, not its list) take the card's; "untiered" only when
-	// none of these names one.
+	// the list's bound (in its total, not its list) take the card's; no tier (NoTier) only
+	// when none of these names one.
 	CostByTier map[string]string `json:"cost_by_tier,omitempty"`
 	// TotalCost is the stream's complete recorded spend: every take and read of every card
 	// of it in any column, landed or not, at each record's charged figure (the harness's
@@ -211,7 +211,7 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 
 // runTier is the tier a record's run is counted under: the tier it recorded, else its
 // route's (the route row's tier, else the route name's prefix: pro-*, flash-*, heavy-*,
-// frontier-*), else its card attempt's (attemptTier); "untiered" only when none of these names one.
+// frontier-*), else its card attempt's (attemptTier); no tier only when none of these names one.
 func runTier(routes map[string]Route, c *Card, con Consumer) string {
 	if con.Tier != "" {
 		return con.Tier
@@ -234,12 +234,16 @@ func runTier(routes map[string]Route, c *Card, con Consumer) string {
 
 // attemptTier is the tier the card's attempt is on as the card records it: the tier its
 // last deal drew (FieldTierNow), else the tier pinned on it (FieldTier), else the tier its
-// brief names; "untiered" when none does (never cardTier's default ceiling, which would
+// brief names; NoTier when none does (never cardTier's default ceiling, which would
 // name a tier nothing recorded).
 func attemptTier(c *Card) string {
 	m, _ := cardhdr.ReadModel(c.F("brief"))
-	return cmp.Or(c.F(FieldTierNow), c.F(FieldTier), m.Tier, "untiered")
+	return cmp.Or(c.F(FieldTierNow), c.F(FieldTier), m.Tier, NoTier)
 }
+
+// NoTier is the cost_by_tier heading of the spend no tier accounts for: the run recorded
+// none, its route names none and its card attempt names none.
+const NoTier = "untiered"
 
 // addTier adds usd to the tier's sum.
 func addTier(byTier map[string]*big.Rat, tier string, usd *big.Rat) {

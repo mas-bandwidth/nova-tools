@@ -12,7 +12,7 @@ import (
 )
 
 // A run with no recorded tier is counted under its route's tier: the route row's, else the
-// route name's prefix, else the card attempt's; "untiered" only when none of these names
+// route name's prefix, else the card attempt's; no tier only when none of these names
 // one; and the stream's tiers sum to its total, the records past the list's bound included
 // (the owner, 2026-10-05: "The totals are inaccurate anyway").
 func TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone(t *testing.T) {
@@ -37,7 +37,7 @@ func TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone(t *testing.T) {
 		"heavy":    "$2.00",  // the route row's
 		"pro":      "$4.00",  // the route name's prefix
 		"flash":    "$8.00",  // no route: the card attempt's
-		"untiered": "$16.00", // none of them
+		NoTier:     "$16.00", // none of them
 	}, tc.CostByTier)
 	assert.Equal(t, "$31.00", tc.TotalCost)
 
