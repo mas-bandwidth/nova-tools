@@ -1089,6 +1089,7 @@ nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--
 nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
+nova-sprint sentinel set <id> --needs <a,b>
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
@@ -1190,6 +1191,16 @@ on something dropped" judgment, in one step. Where the drop and the add were mad
 `relink lint-pkg-cairn-t lint-pkg-cairn-tb` re-points the edges and answers the blocked
 judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
 card replaced by its twin".
+
+### A sentinel whose cards were deferred
+
+When the cards a sentinel waits on move to a later release, `sentinel set v1 --needs
+s1-3` re-points it to the cards that remain, in one step: it keeps its id, its place in
+its stream and its log, and the log gains one line with the needs before and after. A
+need that is no card on the table is refused, naming every one, and nothing changes;
+`--needs ""` is refused, since a sentinel with nothing to wait on is released
+(`release v1 --reason '<why>'`), not emptied. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md) section 16.
 
 ### Role views: what a model reads instead of the dashboard
 
