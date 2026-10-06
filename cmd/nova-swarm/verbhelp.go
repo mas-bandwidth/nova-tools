@@ -48,7 +48,10 @@ var verbExit = map[string]string{
   the other, or one cannot be read (the DOCTOR line says which)`,
 	"disk-guard": `exit codes: 0 DISK-GUARD OK, everything it looked at done (a KEPT line is a refusal
   it means); 1 DISK-GUARD INCOMPLETE, something could not be read or removed (each on its NOTE
-  line); 2 could not run: a bad flag`,
+  line); 3 DISK-GUARD STOP, free disk under --stop-floor (stop the loops); 2 could not
+  run: a bad flag`,
+	"mirror": `exit codes: 0 every repository refreshed (MIRROR OK each); 1 a repository failed (MIRROR FAILED
+  names it and the cause; the others are still refreshed); 2 could not run: a missing flag or a bad name`,
 	"slots release": `exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS
   KEPT; --force frees it), a missing flag or a store that cannot be read`,
 }
@@ -59,6 +62,7 @@ var verbExit = map[string]string{
 // The banner keeps what member, lint and disk-guard are, and names the verb's -h for the rest.
 var verbDetail = map[string]string{
 	"version":    "prints this build's identity: the version, the commit it was built from and the time it was stamped.",
+	"mirror":     "keeps the bench's bare mirrors fresh: each --repos name is cloned from <base>/<name>.git into <dir>/<name>.git when absent, then every head and every pull-request head is fetched into it, so a card's git clone --reference finds the repository. It never prunes objects (the disk guard sweeps a mirror's temporary packs) and one repository's failure never stops the others; --every keeps refreshing until stopped.",
 	"profile":    "reads the timeline.tsv of every job the glob names and prints one PROFILE line per job and one mean summary, so a slow card shows where its time went.",
 	"slots init": "creates the slot store for an owner: the machine's capacity and the owner's share of it, which slots take then leases from.",
 	"slots list": "prints the store's slots: each owner's capacity and share, and every lease held, with its label and when it expires.",
