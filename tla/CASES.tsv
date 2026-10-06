@@ -321,6 +321,11 @@ MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2
 MCBus2BrokenSteal.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
 MCBus2BrokenAckUndelivered.cfg	MCBus2.tla	action	AckOnlyDelivered	ignore-terminal	bus2	required	-
 MCBus2BrokenAckReopens.cfg	MCBus2.tla	action	AckedStaysAcked	ignore-terminal	bus2	required	-
+MCBusSendOnce.cfg	MCBusSendOnce.tla	pass	-	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenCheckApart.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenNewID.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenDropEarly.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
+MCBusSendOnceBrokenNoFingerprint.cfg	MCBusSendOnce.tla	invariant	AnswerIsTheOriginal	ignore-terminal	bussendonce	required	-
 MCFriend.cfg	MCFriend.tla	pass	-	ignore-terminal	friend	required	-
 MCFriendBrokenUpWithoutPong.cfg	MCFriend.tla	invariant	UpOnlyAfterPong	ignore-terminal	friend	required	-
 MCFriendBrokenNeverDeaf.cfg	MCFriend.tla	invariant	DeafAfterWindow	ignore-terminal	friend	required	-

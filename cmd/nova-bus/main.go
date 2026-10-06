@@ -166,7 +166,7 @@ first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopba
 		Verbs: []tool.Verb{
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
@@ -179,7 +179,13 @@ are, and the line says login=none. The sender and every recipient must be heard:
 daemon proved its inbox push (a SESSION CHECK carried in by its harness's deliver adapter and answered
 by the session) under ten minutes ago; any other is refused with deaf: <name> has no proven push since
 <age> and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
-the message as send does (every problem named) and prints the line with no id, writing nothing.`,
+the message as send does (every problem named) and prints the line with no id, writing nothing.
+--token <t> makes the send safe to retry: the same token and the same arguments within --token-life
+(default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
+whose answer was lost after the store took it is retried without a second message; the same token with
+other arguments, or past its life, is refused naming the message that went. The store drops a token at
+--token-cleanup (default 168h, never before its life ends). Without --token every send is a new message.
+Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
 					f.Required("to", "the recipients, comma-separated names")
@@ -189,10 +195,16 @@ the message as send does (every problem named) and prints the line with no id, w
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
 					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
+					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
+					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
+					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 					f.Check(func(c *tool.Call) {
 						if c.Given("body") == c.Given("stdin") {
 							c.Problem("the body comes from exactly one of --body <text> or --stdin")
+						}
+						if c.Dur("token-life") <= 0 || c.Dur("token-cleanup") <= 0 {
+							c.Problem("--token-life and --token-cleanup want a duration above zero")
 						}
 					})
 				},
@@ -405,8 +417,9 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
-		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body,
+		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
 	}
+	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
 	send := b.Send
 	if c.DryRun() {
 		// the message as it would be sent, with no id: nothing is written, and the

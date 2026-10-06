@@ -32,11 +32,22 @@ type Fake struct {
 	Friends []string
 	// Fail, when set, is the error every command answers: a store that is down.
 	Fail error
+	// Lose, when set, is the answer of the next write of a message (AddAll
+	// with streams, or AddOnce that writes): it commits, then its response is
+	// lost. It is cleared by the write it answers.
+	Lose    error
+	records map[string]fakeRecord // a token's record, by key
 	// Trips counts the commands sent.
 	Trips int
 }
 
 var _ bus.Store = (*Fake)(nil)
+
+// fakeRecord is a string key with its expiry, as SET ... PX keeps one.
+type fakeRecord struct {
+	value string
+	until time.Time
+}
 
 type fakeGroup struct {
 	last    string               // last delivered entry id, "0-0" at the start
@@ -101,6 +112,61 @@ func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]str
 	if err := f.trip(); err != nil {
 		return err
 	}
+	f.add(streams, fields, marks)
+	return f.lost(streams)
+}
+
+// lost is the answer of a write that committed: Lose once, when it is set
+// and the write was a message's.
+func (f *Fake) lost(streams []string) error {
+	if f.Lose == nil || len(streams) == 0 {
+		return nil
+	}
+	err := f.Lose
+	f.Lose = nil
+	return err
+}
+
+// record is the live record at key: one past its expiry is gone, as Redis
+// expires the key.
+func (f *Fake) record(key string) (string, bool) {
+	r, ok := f.records[key]
+	if ok && !f.now.Before(r.until) {
+		delete(f.records, key)
+		return "", false
+	}
+	return r.value, ok
+}
+
+func (f *Fake) AddOnce(_ context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...bus.Mark) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return "", false, err
+	}
+	if prior, ok := f.record(key); ok {
+		return prior, true, nil
+	}
+	if f.records == nil {
+		f.records = map[string]fakeRecord{}
+	}
+	f.records[key] = fakeRecord{value: record, until: f.now.Add(keep)}
+	f.add(streams, fields, marks)
+	return "", false, f.lost(streams)
+}
+
+func (f *Fake) Sent(_ context.Context, key string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return "", false, err
+	}
+	v, ok := f.record(key)
+	return v, ok, nil
+}
+
+// add is one entry on every stream and every mark, f.mu held.
+func (f *Fake) add(streams []string, fields map[string]string, marks []bus.Mark) {
 	f.seq++
 	id := strconv.FormatInt(f.now.UnixMilli(), 10) + "-" + strconv.FormatInt(f.seq, 10)
 	for _, s := range streams {
@@ -119,7 +185,6 @@ func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]str
 		}
 		f.hashes[m.Key][m.Field] = m.Value
 	}
-	return nil
 }
 
 func (f *Fake) Unmark(_ context.Context, key string, fields ...string) (int64, error) {
