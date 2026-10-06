@@ -4302,7 +4302,8 @@ command that loads it.
 | ask | deals primaries in review the reads each wants now, one at a time (the first read alone, the second of a pro card once the first came back ok; a broken first read is reworked with no second read; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
-| stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, or for a friend's card, which reports no usage, `taken` to `reported` (her REPORT.md's time, which `friend sync` keeps on the card, no later than the finish; `TestStatsTimesAFriendsRunFromHerReport`), report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json`. `--routes --since <time>` prints the route table from the log over that window instead (`sprint.RouteTable`): takes, ok, failed, no-result, provider failures, landed, first-take rate, wrong at review, dollars per take, dollars per landing, median wall, imputed; a finish before the window is left out, and the provider takes on that finish with it; a deal, a take, an accept and a read before the window stay, as the route, the wall and the review of a finish inside it; a provider take whose error begins `no result:` is a no-result and every other provider take is a provider failure; `actual_usd` counts when the usage writes it; an accept is the verb `accept` or `tick accept` |
+| stats | the epoch's pass in seconds since the last `stats tidy` (the whole epoch before the first; a sample counts when it ended at or after the tidy, `sprint.StatsSince`, and the text frame's first line says `since <RFC3339> (stats tidy)`, the OK line `since=`), each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, or for a friend's card, which reports no usage, `taken` to `reported` (her REPORT.md's time, which `friend sync` keeps on the card, no later than the finish; `TestStatsTimesAFriendsRunFromHerReport`), report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json`. `--routes [--since <time>]` prints the route table from the log over that window instead, the window from the last tidy of the routes when `--since` is not given (refused, exit 2, with neither) (`sprint.RouteTable`): takes, ok, failed, no-result, provider failures, landed, first-take rate, wrong at review, dollars per take, dollars per landing, median wall, imputed; a finish before the window is left out, and the provider takes on that finish with it; a deal, a take, an accept and a read before the window stay, as the route, the wall and the review of a finish inside it; a provider take whose error begins `no result:` is a no-result and every other provider take is a provider failure; `actual_usd` counts when the usage writes it; an accept is the verb `accept` or `tick accept` |
+| stats tidy | starts the statistics afresh and keeps the work (the owner, 2026-10-06: "can you please clear the sets of done consumer cards for all friends and fleet", "I would like a semi-fresh start to stats now"; named tidy the same day, "reset sounds too aggressive"): `stats tidy (--friends \| --fleet \| --routes \| --streams \| --all)... --reason <text> [--dry-run]`, the coordinator's; see Statistics, below |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced by the read card's route (section 2, What a card cost); a verdict on a routed read with no `--usage` at all is refused, the remedy named; one whose usage reports no token is kept and recorded `unpriced=no-tokens` (section 2, Reads are priced like work) |
 | accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible |
 | rework | delegates the next attempt at once with a fix (the member stages it at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, docs/SPEC-CARD-CONTRACT.md, where a rework starts), and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), and on the primary `finding_reader`, the reader whose finding it sends back, who checks the fix (section 6), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work; `--tier`: at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card; the refusal is one line naming that attempt, the class and the tiers above (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; a rework of several cards (`--group`) writes on each card its own finding, the finding of the read that put it in the group, never the group's first, and a `--fix` given once is every card's fix as written, beside its own finding (on 2026-10-05 a grouped `a reader found it broken` answered with the first card's finding as the `--fix` of all three told every next attempt to fix another card's defect; `TestAGroupReworkGivesEachCardItsOwnFinding`); `--tier <flash|pro|heavy|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier; one id while the inbox holds a judgment group of several naming it is refused unless `--one`: `the inbox holds a group of <n> for this card; answer the group; run: nova-sprint rework --group <id> --expect <n>; or say --one` (`TestReworkAndDropRefuseOneCardOfAGroupWithoutOne`; the group is read from the open notes alone, `store.OpenGroups`, never the whole inbox: `TestOpenGroupsAreTheInboxsJudgmentGroupsFromTheOpenNotesAlone`) |
@@ -4733,6 +4734,61 @@ refuses the whole call. The code is `swarm.LintBrief` (internal/swarm/lintpaths.
 `TestAddLintRefusesABriefWhosePathsMissTheFilesItNames` (internal/swarm, a twin of a base, one
 brief per token that fails it and one that passes, and the corrections applied passing) and
 `TestAddRunsTheBriefChecksAtTheBase` (cmd/nova-sprint, add against a twin repository).
+
+### Statistics
+
+The counters the tables show grow for the whole epoch: a fleet row's or a friend's row's
+`done` and `ok%` are the table's formulas over its hidden `ok` and `failed` cells, every
+work card it ever finished; the routes' attempts, ok and failed are counted over the fleet
+table's cards (`sprint.RouteStats`); a stream's `cost` and `per landed` are over every card
+it landed. `clear --confirm sprint` empties them by emptying the sprint. `stats tidy`
+starts them afresh without touching the work (`store.TidyStats`, `sprint.TidyDone`,
+internal/sprint/stats_tidy.go):
+
+- `--friends` and `--fleet` take the history off the done cells of the friends' rows and
+  of the machines' rows: every finished work card but one the work still reads, which
+  stays (`sprint.TidyKeeps`): the work card of a primary on the work table not landed (its
+  review, its reads, its merge and its next attempt's base read every attempt of it), and
+  a card finished within the friend-finish window (the idle rule, the overload window and
+  a provider's return read the newest finishes). A card taken off keeps its record, read
+  by id as `stats`, `card` and `log` read it; its log line says `off the table (stats
+  tidy: its record kept)`. `done` and `ok%` then count the cards finished since, and the
+  routes' counters with them. A member's or a friend's median run wall (the deal's
+  deadline, `sprint.MemberMedianWall`, `sprint.FriendMedianWall`) is measured over the
+  done-ok cell, so it is measured again over the cards kept and those finished since; with
+  none, a card dealt to the row has its own deadline, the route's.
+- `--routes` archives the route counters (`sprint.RouteStats` at the tidy), and `stats
+  --routes` counts from the tidy when given no `--since`.
+- `--streams` takes each stream's landed cost and landed count as its base
+  (`sprint.StreamBases`): the work table's `cost` cell is the control card's cost less
+  the base's (`sprint.StreamCostSince`, `-` when nothing priced landed since; the control
+  card keeps the epoch's figure) and `per landed` is that over the cards landed since
+  (`sprint.PerLandedSince`, counted by the next tick's where record).
+- `--all` is the four. `stats` counts from the last tidy of any kind.
+
+What moved is written to a dated archive record, `stats:archive:<RFC3339>` (the tidy's
+time to the second, UTC; `store.StatsArchive`): the reason, who, the kinds, each row's
+`ok` and `failed` counts before and the cards it took off and kept, the route counters and
+the streams' bases. The stats record (`stats`, one for the sprint, as the machine's
+records are; `store.StatsRecord`) names the last tidy: when, why, by whom, each kind's
+time, the streams' bases and every archive's name, which teardown deletes. A record of an
+earlier epoch counts nothing: a clear starts the epoch afresh anyway. Cards on any other
+cell, the work, merge and readers tables, holds and judgments are untouched. A second
+tidy within a minute of the last (`sprint.TidyAgainAfter`) is refused, exit 1, nothing
+written; `--dry-run` writes nothing and prints what would move. Each row it touches is a
+`ROW <row> ok=<n> failed=<n> off=<n> kept=<n>` line, each stream a `STREAM <s> cost=<$>
+landed=<n>` line, then `STATS-TIDY OK since=<RFC3339> kinds=<k,...> moved=<n> kept=<n>
+archive=<key>` (`STATS-TIDY DRY-RUN would move ...` with `--dry-run`; `--json` carries
+the rows and streams). `TestStatsTidyZeroesCountersAndKeepsTheWork`,
+`TestASecondStatsTidyWithinAMinuteIsRefused`.
+
+Not yet: `where` (its text frame, `where --json` and the dashboard it feeds) and the
+coordinator view's sum line say nothing of the tidy: `since <time>` beside `ok%` and the
+stream costs, and `stats_since=` on the sum, are owed in cmd/nova-sprint/reads.go
+(`whereOf`), view.go and dashboard.go; the counts they show are the tidied ones already.
+`cost reconcile` recounts the whole day, not the window since the tidy. A stream's
+`total_cost`, `cost_by_tier`, `work_cost` and `read_cost` in `where --json` stay the
+epoch's.
 
 ### release-check-frame
 

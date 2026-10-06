@@ -150,6 +150,7 @@ func init() {
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
+		{"stats tidy", "(--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]", "stats tidy --all --reason 'a fresh start' --dry-run", (*app).cmdStatsTidy},
 		{"stats", "", "stats", (*app).cmdStats},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
