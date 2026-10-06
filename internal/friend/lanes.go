@@ -580,6 +580,11 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 			l.tellKind(bus.KindBlocker, subject, body, now)
 		}
 		return true
+	case errors.As(err, &rate) && rate.Until.After(now):
+		if line := s.gov.WaitUntil(now, rate.Until, rate.Reason); line != "" {
+			d.Record(at + " " + line)
+		}
+		return true
 	case errors.As(err, &rate):
 		line, judge := s.gov.RateLimit(now, started, s.width, rate.Reason)
 		if line != "" {

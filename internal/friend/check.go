@@ -421,7 +421,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 
 	// Harness facts
 	route := "push"
-	if harness == "claude" || slices.Contains(RefusedHarnesses, harness) {
+	if slices.Contains(RefusedHarnesses, harness) {
 		route = "passive"
 	} else if harness == "dsh" {
 		route = "defer"

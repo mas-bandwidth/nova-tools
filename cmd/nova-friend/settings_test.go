@@ -60,8 +60,9 @@ func TestInstallNamesTheGrokWakeFileAndTheClaudeConfigDirInTheAgent(t *testing.T
 	_, err := r.fs.ReadFile(wake)
 	require.ErrorIs(t, err, os.ErrNotExist, "a dry run writes nothing")
 
-	// claude has no deliver command: install refuses it before anything is written (the push proof)
-	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--config-dir", "/w/bob-claude").Exit(2).
-		Err("INSTALL REFUSED: no deliver command for claude")
-	assert.NoFileExists(t, plist)
+	// claude is a headless lane harness (fr-go-runners-r.w1): install writes its config directory
+	// into the agent, and the check's prompt goes in on stdin
+	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--config-dir", "/w/bob-claude").Exit(0).
+		Out("INSTALL OK label=com.nova.friend-bob", "INSTALL WROTE harness=claude file=/w/bob-claude name=CLAUDE_CONFIG_DIR")
+	assert.FileExists(t, plist)
 }

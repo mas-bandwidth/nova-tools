@@ -56,13 +56,13 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 
 func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 	t.Parallel()
-	for _, h := range []string{"claude"} {
+	for _, h := range []string{"copilot"} {
 		t.Run(h, func(t *testing.T) {
 			t.Parallel()
 			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)
 			require.NoError(t, err)
 			_, err = d.Deliver(context.Background(), "x")
-			assert.EqualError(t, err, "no deliver command for "+h+" yet; run the session's blocking read: nova-bus recv --as <friend>")
+			assert.ErrorContains(t, err, "no deliver command for "+h)
 		})
 	}
 	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)

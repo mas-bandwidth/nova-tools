@@ -97,6 +97,13 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 			return "done\n", 0, nil
 		})}
 	},
+	"claude": func(t *testing.T, s *fakeSession, dir string) Deliverer {
+		return &Claude{Dir: dir, Session: "cl_1", Run: s.exec(func(name string, args []string, stdin string) (string, int, error) {
+			require.Equal(t, []string{"-p", "--output-format", "stream-json", "--verbose", "--resume", "cl_1"}, args[:6])
+			s.act(stdin)
+			return `{"type":"result","is_error":false,"session_id":"cl_1","total_cost_usd":0.01}` + "\n", 0, nil
+		})}
+	},
 	"codex": func(t *testing.T, s *fakeSession, dir string) Deliverer {
 		return &Codex{Dir: dir, Session: "thr_1", Home: t.TempDir(), Held: func(string) bool { return false },
 			Run: s.exec(func(name string, args []string, _ string) (string, int, error) {
@@ -208,7 +215,7 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 	for harness := range harnessRigs {
 		require.True(t, Known(harness), "a rig for %s, which is no harness", harness)
 	}
-	assert.Len(t, harnessRigs, 6, "the six adapters with a deliver command each run the check")
+	assert.Len(t, harnessRigs, 7, "the seven adapters with a deliver command each run the check")
 	for _, harness := range Harnesses {
 		t.Run(harness, func(t *testing.T) {
 			t.Parallel()

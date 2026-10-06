@@ -179,6 +179,9 @@ func (g *Gemini) Alive(context.Context) Liveness {
 	return runnerAlive(exec.LookPath, program)
 }
 
+// Alive: the runner, claude, which every turn and every lane starts afresh.
+func (c *Claude) Alive(context.Context) Liveness { return runnerAlive(exec.LookPath, c.program()) }
+
 // Alive: a stub delivers nothing and watches nothing.
 func (s Stub) Alive(context.Context) Liveness {
 	return cannotTell(s.Harness + " has no adapter that reads its process; the session check alone")

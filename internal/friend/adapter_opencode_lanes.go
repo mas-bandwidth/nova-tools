@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -215,5 +216,53 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 		}
 	}
 	exit, err = refused(id, out, exit, err)
+	o.price(ctx, id)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+}
+
+// price reads the session's own record (`opencode export <id>`: its messages,
+// each with the cost opencode priced it at) into Spend, so a turn's cost is
+// the record's, never a guess. A record that cannot be read prices nothing
+// and says so in the daemon's record; the turn is not failed for it.
+func (o *OpenCode) price(ctx context.Context, id string) {
+	if o.Spend == nil {
+		return
+	}
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"export", id}, "")
+	if err == nil && exit == 0 {
+		var total float64
+		if total, err = SessionCost(out); err == nil {
+			o.Spend.AddSession(id, total, time.Now())
+			return
+		}
+	} else if err == nil {
+		err = fmt.Errorf("exited %d", exit)
+	}
+	if o.Out != nil {
+		fmt.Fprintf(o.Out, "opencode: session %s is not priced: opencode export: %v\n", id, err)
+	}
+}
+
+// SessionCost is the sum of the cost of every message in an opencode session
+// export (its JSON: messages, each an info object with a cost).
+func SessionCost(export string) (float64, error) {
+	var rec struct {
+		Messages []struct {
+			Info struct {
+				Cost float64 `json:"cost"`
+			} `json:"info"`
+		} `json:"messages"`
+	}
+	start := strings.Index(export, "{") // the export may print a line before its JSON
+	if start < 0 {
+		return 0, errors.New("no JSON in the export")
+	}
+	if err := json.Unmarshal([]byte(export[start:]), &rec); err != nil {
+		return 0, fmt.Errorf("not the session's JSON: %v", err)
+	}
+	var total float64
+	for _, m := range rec.Messages {
+		total += m.Info.Cost
+	}
+	return total, nil
 }

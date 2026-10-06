@@ -731,6 +731,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
 	}
+	if cl, ok := deliver.(*friend.Claude); ok {
+		cl.Now = w.now
+	}
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
@@ -743,6 +746,24 @@ func (w world) run(c *tool.Call) *tool.Out {
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
+	}
+	// what her harness's runs cost and the limits they read, said on every beat it changed
+	// (spend.json in the state directory, one record line): docs/SPEC-FRIEND.md, claude one-shot lanes
+	var spentLine string
+	reportSpend := func() {
+		sp := friend.SpendOf(deliver)
+		if sp == nil {
+			return
+		}
+		snap := sp.Snapshot()
+		if snap.Runs == 0 || snap.Line() == spentLine {
+			return
+		}
+		spentLine = snap.Line()
+		record(w.now().UTC().Format(time.RFC3339) + " " + spentLine)
+		if err := friend.WriteSpend(state, snap); err != nil {
+			record(w.now().UTC().Format(time.RFC3339) + " spend: the spend file: " + err.Error())
+		}
 	}
 	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
@@ -852,6 +873,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 				if at := proved.Load(); at != nil {
 					pong = *at
 				}
+				reportSpend()
 				answer, err := w.beat(ctx, server, name, active, pong)
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd

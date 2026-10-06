@@ -91,7 +91,7 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 			if !strings.Contains(line, `"rate_limit_event"`) || json.Unmarshal([]byte(line), &ev) != nil || ev.Type != "rate_limit_event" {
 				continue
 			}
-			lim, found = claudeLimit(ev, now), true
+			lim, found = MergeLimit(lim, claudeLimit(ev, now), found), true
 		}
 		if found {
 			return lim, true

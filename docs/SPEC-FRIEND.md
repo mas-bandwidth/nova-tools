@@ -622,7 +622,7 @@ log line:
 
 - `nova-friend install` and `run` refuse, before anything is written, loaded
   or delivered, a harness whose adapter has no deliver command (a `Stub`:
-  claude and every surveyed harness), exit 2, with the remedy `the adapter
+  every surveyed harness; claude has one since fr-go-runners-r.w1), exit 2, with the remedy `the adapter
   card: give internal/friend a deliver command for <harness> (NewDeliverer),
   or run the friend under a harness that has one: <the harnesses with one>`.
   `--dry-run` refuses it too.
@@ -914,12 +914,68 @@ The model is `internal/friend/tla/LaneEnd.tla` (TLC on a Linux bench, two cards:
 reversed witness `MCLaneEndBrokenNoWrite.cfg`, a lane that writes nothing at a
 run's end as before this card, breaks `NoOrphan` in 6 states.
 
-Not done here: the claude one-shot runner that marks a job started outside
-nova-friend (the runner that ran the six overnight runs) is not in this
-repository, and `take back`'s refusal of a card with a push is in
+Not done here: the claude one-shot runner that marked a job started outside
+nova-friend (the runner that ran the six overnight runs) was a shell script and
+is retired by fr-go-runners-r.w1 below; `take back`'s refusal of a card with a push is in
 internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
+
+### fr-go-runners-r.w1 — claude and opencode lanes, no shell script
+
+On 2026-10-04 four Claude Code accounts and one OpenCode API friend ran sprint
+cards through hand-written zsh runners (`runner.zsh`, `reader.zsh`) that
+wrote PAUSED files on a limit, guessed reset times, and lived outside the
+tools (the owner: "Golang nova-tools and nova-sprint verbs only"). Those
+scripts are retired: a bud is `nova-friend run --harness claude --config-dir
+<dir> --width <n>` in one-shot mode, and a friend's `nova-friend status` and
+the daemon's record are what a reader reads.
+
+- **The claude lane (`internal/friend/adapter_claude.go`, a `LaneHarness`).**
+  A lane's session is opened by `claude -p` with the seed and is the
+  `session_id` of its stream's `system` init; each card is `claude -p --resume
+  <id>`. Every run is the trimmed call, `--output-format stream-json --verbose
+  --strict-mcp-config --disable-slash-commands --no-chrome --tools Bash Read
+  Write Edit Grep Glob`, which cut the per-call context from about 50k tokens
+  to 12.7k (measured 2026-10-04). The text goes in on stdin: `--tools` is
+  variadic and would swallow a prompt in the argument list. The batch
+  `Deliver` is a run of its own (into `--session` when one is named), which is
+  what the push proof and the session check are answered by. Every child runs
+  inside the lane's wall as any lane child does.
+- **Priced.** The run's `result` event carries `total_cost_usd`; `Spend` sums
+  it, per run, across the lanes (a run that printed none adds none). For
+  opencode the cost is read from the session's own record after each turn
+  (`opencode export <id>`: the sum of its messages' `info.cost`; `AddSession`
+  counts only what the total grew by, so a turn is priced once). A record that
+  cannot be read prices nothing and says so in the record; it fails no turn.
+- **Its limit read.** Claude Code prints a `rate_limit_event` per window;
+  `ParseClaudeRun` keeps each window's utilization and `resetsAt`
+  (`MergeLimit`; `ReadLimit`, which the limit gate uses, merges the same way,
+  so the weekly window is not lost to a later five-hour event). A `rejected`
+  window is `RateLimited` with `Until` its reset, the latest of the windows
+  that rejected.
+- **Stops taking until resetsAt.** A `RateLimited` with an `Until` does not
+  narrow the lanes or back off by doubling: `LaneGovernor.WaitUntil` pauses
+  every new turn and open until the reset, the cap untouched (a spent window
+  is no sign the row is too wide), and the card stays in the lane's hand,
+  counted toward nothing. The limit gate (`Limits.Watch`) sees the same
+  stream, so the friend reads down on her row until a wake after the reset is
+  answered, as for any harness at its limit. A rate limit with no reset named
+  (opencode's 429) backs off as before.
+- **Reports on its beat.** When the spend changed since the last beat, the
+  daemon writes one record line (`spend runs=<n> cost_usd=<x> five_hour=<u>
+  seven_day=<u> five_hour_resets=<t> seven_day_resets=<t> [limited_until=<t>]`)
+  and `spend.json` in the state directory (`ReadSpend`), the one writer being
+  the daemon. A bud's reader reads the file or the record line; there is no
+  PAUSED file.
+
+Tests: `TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit` (a fake
+`claude` that prints stream-json), `TestAnOpenCodeLaneTurnIsPricedFromTheSessionsOwnRecord`.
+
+Not done here: the opencode record's shape (`opencode export`) was written
+from its documented JSON, never read from a live opencode on the bench, and
+the sprint server's beat verb carries no cost field, so cost and limits ride
+the daemon's record and `spend.json`, not the beat's wire. Both are owed.
 
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
 
@@ -969,11 +1025,11 @@ nonzero exit from the adapter; a `Stub` says its surveyed reason), `act` (the
 pong file never held the nonce: the session did not run the line) or `reply`
 (the pong file holds it and no pong reached the bus). The unit tier
 (`TestEveryAdapterPassesDeliveryConformance`) runs the same function for every
-name in `Harnesses`: the six with a deliver command (opencode, codex, gemini,
-dsh, grok, antigravity) over a fake `Exec` (and a temporary home or an
+name in `Harnesses`: the seven with a deliver command (opencode, codex, claude,
+gemini, dsh, grok, antigravity) over a fake `Exec` (and a temporary home or an
 in-memory mailbox where the harness reads files) with bus's Fake for the
-store and a clock moved by the check's own waits, and every Stub, claude
-among them, failing at `deliver` with its reason; an adapter with a deliver
+store and a clock moved by the check's own waits, and every Stub
+failing at `deliver` with its reason; an adapter with a deliver
 command and no rig fails the test. `nova-friend check` runs it against the live
 session (docs/CLI.md), `install` runs it once after loading the agent and
 says the line in a NOTE (a session the adapter cannot drive is refused: The

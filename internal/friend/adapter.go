@@ -14,7 +14,7 @@ import (
 )
 
 // Harnesses are the harness names run and install take, in the order the
-// help lists them; OpenCode, Codex, Antigravity, DSH, Gemini and Grok have a
+// help lists them; OpenCode, Codex, Claude, Antigravity, DSH, Gemini and Grok have a
 // deliver command, the rest refuse honestly (Stub), the surveyed ones with
 // their reason.
 var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok"}, RefusedHarnesses...)
@@ -173,7 +173,7 @@ const KillDelay = 5 * time.Second
 func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Deliverer, error) {
 	switch harness {
 	case "opencode":
-		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out}, nil
+		return &OpenCode{Dir: dir, Session: session, Run: run, Out: out, Spend: &Spend{}}, nil
 	case "codex":
 		return &Codex{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "grok":
@@ -181,7 +181,7 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	case "antigravity":
 		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "claude":
-		return Stub{Harness: harness}, nil
+		return &Claude{Dir: dir, Session: session, Run: run, Out: out, Spend: &Spend{}}, nil
 	case "dsh":
 		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "gemini":
@@ -207,6 +207,9 @@ type OpenCode struct {
 	// the project config before a turn (AllowDirs), so a headless run never
 	// auto-rejects a tool call there. Nil: the config is left alone.
 	Allow []string
+	// Spend, when set, is where a lane turn's cost goes, read from the
+	// session's own record after the turn (price).
+	Spend *Spend
 }
 
 func (o *OpenCode) program() string {

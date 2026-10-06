@@ -29,7 +29,13 @@ const (
 // 429, "rate limit reached", "too many requests", "input token limit
 // exceeded"): the turn's card stays in hand, counted toward nothing, and the
 // lanes back off (LaneGovernor.RateLimit).
-type RateLimited struct{ Session, Reason string }
+type RateLimited struct {
+	Session, Reason string
+	// Until is when the limit ends, when the provider said (a harness's
+	// window and its resetsAt): the lanes wait until then (LaneGovernor.WaitUntil)
+	// instead of backing off and narrowing. Zero: a rate limit that passes.
+	Until time.Time
+}
 
 func (r RateLimited) Error() string {
 	return "the provider rate-limited the turn in session " + r.Session + ": " + r.Reason
@@ -146,6 +152,18 @@ func (g *LaneGovernor) RateLimit(now, started time.Time, width int, reason strin
 		judge, g.lowered = true, nil
 	}
 	return fmt.Sprintf("rate limit: lanes paused %s until %s, cap %d -> %d of %d: %s", pause, g.pausedUntil.UTC().Format(time.RFC3339), from, to, width, oneLine(reason, 200)), judge
+}
+
+// WaitUntil is a limit that ends at until, as a harness's window does (its
+// resetsAt): no new turn or open starts before it, and the cap is left alone,
+// a window being spent is no sign the row is too wide. It answers the line
+// that says so, empty when the lanes already wait that long.
+func (g *LaneGovernor) WaitUntil(now, until time.Time, reason string) string {
+	if !until.After(now) || !until.After(g.pausedUntil) {
+		return ""
+	}
+	g.pausedUntil, g.resumed, g.cleanSince, g.measured = until, false, until, false
+	return fmt.Sprintf("rate limit: lanes wait until %s, the limit's reset: %s", until.UTC().Format(time.RFC3339), oneLine(reason, 200))
 }
 
 // Clean is a lane turn that ended at now without a rate limit: the

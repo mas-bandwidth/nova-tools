@@ -99,11 +99,14 @@ func (r *rig) world() world {
 // opencode is bob's opencode session behind the Exec seam: its newest
 // session is the directory's, and a turn carrying a session check is
 // answered with the check's nonce unless the session is deaf.
-func (r *rig) opencode(_ context.Context, dir, _ string, args []string, _ string) (string, int, error) {
+func (r *rig) opencode(_ context.Context, dir, _ string, args []string, stdin string) (string, int, error) {
 	if args[0] == "session" {
 		return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
 	}
 	text := args[len(args)-1]
+	if stdin != "" {
+		text = stdin // claude's prompt goes in on stdin
+	}
 	if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok && !r.deaf {
 		r.answer(nonce)
 	}
@@ -839,8 +842,8 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	r.deaf = true
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
 		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
-	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
-		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude: nothing the bus holds`, "CHECK NOTE remedy: the adapter card: give internal/friend a deliver command for claude")
+	cli.Do(t, "check", "--as", "bob", "--harness", "copilot", "--dir", "/w/bob", "--state-dir", state).Exit(1).
+		Err(`CHECK FAIL harness=copilot stage=deliver why="no deliver command for copilot`, "CHECK NOTE remedy: the adapter card: give internal/friend a deliver command for copilot")
 	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
 		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor (not installed here`)
 

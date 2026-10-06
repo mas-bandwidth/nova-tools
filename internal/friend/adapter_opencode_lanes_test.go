@@ -103,3 +103,41 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 	var refused ProviderRefused
 	assert.ErrorAs(t, err, &refused, "a provider refusing the seed is said as such")
 }
+
+// An opencode lane's turn is priced from the session's own record
+// (`opencode export <id>`), once however often it is read.
+func TestAnOpenCodeLaneTurnIsPricedFromTheSessionsOwnRecord(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	total := `{"info":{"id":"s1"},"messages":[{"info":{"role":"user"}},{"info":{"role":"assistant","cost":0.125}},{"info":{"role":"assistant","cost":0.25}}]}`
+	run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		if args[0] == "export" {
+			assert.Equal(t, []string{"export", "s1"}, args)
+			return "Exporting session: s1\n" + total, 0, nil
+		}
+		return "done\n", 0, nil
+	}
+	spend := &Spend{}
+	o := &OpenCode{Dir: dir, Run: run, Spend: spend}
+	_, err := o.DeliverTo(context.Background(), "s1", "card c1")
+	require.NoError(t, err)
+	_, err = o.DeliverTo(context.Background(), "s1", "card c2")
+	require.NoError(t, err)
+	assert.InDelta(t, 0.375, spend.Snapshot().CostUSD, 1e-9, "the record's total, not counted twice")
+	total = `{"messages":[{"info":{"cost":0.375}},{"info":{"cost":0.5}}]}`
+	_, err = o.DeliverTo(context.Background(), "s1", "card c3")
+	require.NoError(t, err)
+	assert.InDelta(t, 0.875, spend.Snapshot().CostUSD, 1e-9, "a later turn adds what the record grew by")
+
+	var said strings.Builder
+	broken := &OpenCode{Dir: dir, Spend: &Spend{}, Out: &said, Run: func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		if args[0] == "export" {
+			return "not json", 0, nil
+		}
+		return "done\n", 0, nil
+	}}
+	lt, err := broken.DeliverTo(context.Background(), "s1", "card")
+	require.NoError(t, err, "a record that cannot be read fails no turn")
+	assert.Zero(t, lt.Exit)
+	assert.Contains(t, said.String(), "is not priced")
+}
