@@ -455,3 +455,28 @@ func (d *Daemon) stageOwed(h HeldCard) bool {
 	_, ok := PacketOf(h)
 	return ok && !Staged(d.Dir, h.Job)
 }
+
+// TipBudget bounds the one ls-remote of Tip.
+const TipBudget = 10 * time.Second
+
+// Tip is origin's tip of branch in repo (owner/name): one git ls-remote of the one ref,
+// bounded by TipBudget; "" when origin has no such branch.
+func (s *Stager) Tip(ctx context.Context, repo, branch string) (string, error) {
+	if !repoRE.MatchString(repo) || strings.Contains(repo, "..") {
+		return "", fmt.Errorf("REPO %q is no owner/name", repo)
+	}
+	if !validRef(branch) {
+		return "", fmt.Errorf("branch %q is no branch name", branch)
+	}
+	ref := "refs/heads/" + branch
+	out, err := s.git(ctx, TipBudget, "ls-remote", "--", s.url(repo), ref)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[1] == ref {
+			return strings.ToLower(f[0]), nil
+		}
+	}
+	return "", nil
+}

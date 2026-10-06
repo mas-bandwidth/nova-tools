@@ -582,6 +582,38 @@ return was refused; `--json` carries the counts, the strays and every line. It w
 nothing in her directory, and the server does not run it (it reads the directories of
 the machine it runs on).
 
+**Collect** (the coordinator's stopgap `finish-loop.py`, 92 finishes on the night of
+2026-10-05: every 30 s it finished each report of a working card, searching every
+friend's outbox, and failed each lane that ended with no report; collect-is-a-verb-and-
+the-daemons-duty.w1). `collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>]
+[--dry-run]` (the coordinator's; never run by the server) reads the work cards working
+on the named friends' rows (default every friend row of nova-config) and every friend's
+`<root>/<friend>-working/outbox/<job>/REPORT.md` (read as friend sync reads one: a
+regular file, at most 64 KiB) for their jobs; a report written ahead may sit in another
+friend's tree, and her own tree is read first (`sprint.Collect`). For each card: `LAND`
+with a full sha `Head:` finishes it as her row at that head, only when the head is
+origin's tip of the card's branch (one `git ls-remote`, as friend sync); a head that is
+not, or a branch origin does not hold, is refused on a line naming the branch and both
+shas, the card left working for the next collect. `HOLD`, `FAIL`, any other verdict and a
+`LAND` with no full sha head finish it `--failed`, the report `friend <name> <verdict>: `
+and the report's first 600 characters on one line (a `HOLD`'s head kept when it is
+origin's tip; a `PATHS-PROPOSED` line carried). A report with no `Verdict:` line, or one
+that cannot be read, is left and said. With `--dead-lanes`, a card with no report anywhere
+whose friend's runner log (`runner.log` in her working directory, else beside the
+directory it links to, never `<root>`'s own; its last 4 MiB) holds, as the job's last
+event, `END <job> ... report=no` with no `LIMIT` after its `START` (`sprint.RunnerEnded`:
+a run stopped at its usage limit is run again) is finished `--failed`, `friend <name> lane
+ended with no report: <the END line>`, so the card is dealt again. A finish taken moves
+the card off working, so a report finished once is never finished twice (a card dealt
+again is another job, `.g<gen>`). One line per card, `COLLECT <card> LAND <head>`,
+`COLLECT <card> FAILED <reason>`, `COLLECT <card> REFUSED <why>` or `COLLECT <card> LEFT
+<why>`, then `COLLECT OK friends= working= landed= failed= refused= left=`, exit 0; a
+friend not on the roster, exit 1; a config that cannot be read, exit 3. `--dry-run`
+finishes nothing and reads no tip. The nova-friend daemon keeps the same rule for her own
+tree on every sync (docs/SPEC-FRIEND.md, the daemon reads every outbox job, and its dead
+lanes), so the verb is the coordinator's hand and the daemon's duty. The model is
+`internal/friend/tla/Collect.tla`.
+
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
 reading and merging is something you can handle now. it seems to work, so please
@@ -3761,6 +3793,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's state is then its beat's and a friend's her session's evidence (a wake ping her session answered, or a card of hers finished, within its window); a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1); `--every <d>` loops as the seat each pass, and `friend sync install --every <d>` / `friend sync uninstall` put that loop in place as this machine's service ("Handing over the seat") |
+| collect | every friend's outbox report of a card working on a friend's row finished as her row, a LAND only at origin's tip, and with `--dead-lanes` a lane her runner ENDed with no report finished failed (section 1, collect): `collect [<friend>...] [--dead-lanes] [--root <dir>] [--dry-run]`; never run by the server |
 | friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
