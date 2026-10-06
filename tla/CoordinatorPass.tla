@@ -34,6 +34,16 @@
 \* The condition holds once Every of running time has run since the overdue line
 \* (behindConds): the line at the deadline, then the pass Every on, then every Every.
 \*
+\* With Kind = "empty" (an up friend has an empty row while cards wait, emptyConds) the
+\* condition is holds read through a clock: the judgment is told only once holds has been
+\* seen by every tick for Delay of running time (EmptyRowAfter).
+\*   watchAt    the running clock of the acknowledgement NFriendRowEmpty, the empty row's
+\*              clock: written by the first tick that sees holds, closed by the first tick
+\*              that does not; -1 while none. The pass reads the one an earlier tick wrote.
+\*   runStart   (ghost) the running clock from which every tick has seen holds; -1 while
+\*              the last tick did not. Time down, held, busy or with nothing waiting does
+\*              not count.
+\*
 \* The design, Broken = "none":
 \*   Tick  the clock steps; when the condition holds, a judgment is written if none is
 \*         open or acknowledged, else the open one is raised again in place (again counts
@@ -49,14 +59,21 @@
 \*   "doublepush" (Kind = "behind") the pass counts a late judgment from its deadline, not
 \*                from its overdue line: the line and the pass push in one tick:
 \*                OnePushATick.
+\*   "nowait"     (Kind = "empty") the pass tells an empty row the first tick it sees it,
+\*                without its clock: ToldOnlyAfterDelay.
+\*   "noreset"    (Kind = "empty") the clock is kept when the row stops being empty, so
+\*                time down or busy counts toward the next episode: ToldOnlyAfterDelay.
+\*   "nowatch"    (Kind = "empty") the clock is never written, so an empty row is never
+\*                told (2026-10-05: a friend sat at zero for an hour, nothing told the
+\*                coordinator): EmptyToldWhenDue.
 EXTENDS Integers
 
-CONSTANTS Every, MaxClock, Broken, Kind
+CONSTANTS Every, MaxClock, Broken, Kind, Delay
 
 VARIABLES holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes
+          late, markAt, lastPush, tickPushes, watchAt, runStart
 vars == <<holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes>>
+          late, markAt, lastPush, tickPushes, watchAt, runStart>>
 
 TypeOK ==
   /\ holds \in BOOLEAN
@@ -72,33 +89,41 @@ TypeOK ==
   /\ markAt \in (0..MaxClock) \cup {-1}
   /\ lastPush \in (0..MaxClock) \cup {-1}
   /\ tickPushes \in 0..2
+  /\ watchAt \in (0..MaxClock) \cup {-1}
+  /\ runStart \in (0..MaxClock) \cup {-1}
 
 Init ==
   /\ holds = FALSE /\ seen = FALSE /\ open = FALSE /\ acked = FALSE
   /\ first = -1 /\ again = 0 /\ clk = 0 /\ written = 0 /\ pushes = 0
   /\ late = FALSE /\ markAt = -1 /\ lastPush = -1 /\ tickPushes = 0
+  /\ watchAt = -1 /\ runStart = -1
 
 \* The world: the friend's session answers or not, her cards finish or not, the
-\* coordinator answers the late judgments or not.
+\* coordinator answers the late judgments or not, her row empties or fills, she goes up
+\* or down, cards she could do come and go.
 Flip ==
   /\ IF Kind = "behind"
        THEN late' = ~late /\ UNCHANGED holds
        ELSE holds' = ~holds /\ UNCHANGED late
-  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes>>
+  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes,
+                 watchAt, runStart>>
 
 \* The coordinator acknowledges the open judgment.
 Ack ==
   /\ open /\ ~acked
   /\ open' = FALSE /\ acked' = TRUE
-  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes>>
+  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes,
+                 watchAt, runStart>>
 
 \* The condition the tick's pass reads. Behind: the late judgment's overdue line,
 \* written by an earlier tick (the pass reads the holds before this tick's), is Every
-\* old.
+\* old. Empty: the row's clock, written by an earlier tick, is Delay old.
 Cond ==
-  IF Kind = "behind"
-    THEN late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
-    ELSE holds
+  CASE Kind = "behind" ->
+         late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
+    [] Kind = "empty" ->
+         holds /\ IF Broken = "nowait" THEN TRUE ELSE watchAt # -1 /\ clk + 1 - watchAt >= Delay
+    [] OTHER -> holds
 
 \* This tick's overdue line about the late judgment: the first tick that finds it late.
 Line == Kind = "behind" /\ late /\ markAt = -1
@@ -118,6 +143,10 @@ Tick ==
   /\ UNCHANGED <<holds, late>>
   /\ markAt' = IF Kind = "behind" /\ late THEN (IF markAt = -1 THEN clk + 1 ELSE markAt) ELSE -1
   /\ tickPushes' = (IF Line THEN 1 ELSE 0) + (IF PassPush THEN 1 ELSE 0)
+  /\ watchAt' = IF Kind # "empty" \/ Broken = "nowatch" THEN -1
+                ELSE IF holds THEN (IF watchAt = -1 THEN clk + 1 ELSE watchAt)
+                ELSE IF Broken = "noreset" THEN watchAt ELSE -1
+  /\ runStart' = IF Kind = "empty" /\ holds THEN (IF runStart = -1 THEN clk + 1 ELSE runStart) ELSE -1
   /\ lastPush' = IF ~(Kind = "behind" /\ late) THEN -1
                  ELSE IF tickPushes' > 0 THEN clk + 1 ELSE lastPush
   /\ IF Cond
@@ -166,5 +195,14 @@ OnePushATick == tickPushes <= 1
 \* without a push once its overdue line is written: the line, then the pass every Every.
 LateRemindedEveryWindow ==
   (Kind = "behind" /\ late /\ markAt # -1 /\ ~acked) => clk - lastPush <= Every
+
+\* Empty: an empty row is told only once every tick has seen it for Delay: never the first
+\* tick, and time down, held or busy does not count.
+ToldOnlyAfterDelay == (Kind = "empty" /\ open) => first - runStart >= Delay
+
+\* Empty: once every tick has seen the row empty for Delay, its judgment is open or
+\* acknowledged: an idle up friend while work waits is always told.
+EmptyToldWhenDue ==
+  (Kind = "empty" /\ runStart # -1 /\ clk - runStart >= Delay) => (open \/ acked)
 
 =============================================================================

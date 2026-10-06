@@ -37,7 +37,8 @@ import (
 // was written; a tick that finds more than one due (the machine was not ticking) raises
 // it once. An acknowledgement, or a wait until its review time, quiets it as it quiets
 // any judgment. The pass runs in the tick's overdue part (TickOverdue). The model is
-// tla/CoordinatorPass.tla.
+// tla/CoordinatorPass.tla; its Kind = "empty" is emptyConds' clock (ToldOnlyAfterDelay,
+// EmptyToldWhenDue).
 
 // The pass's judgment types and its push.
 const (
