@@ -3934,7 +3934,8 @@ the store's tick on every part, its probe included; a-judgment-checks-the-lane-b
   else `DeadlineUnfinished`). A lateness of that card (`a work card is past its deadline`),
   her stall (`stalled` on her name), and "finishes none" on her row (`a friend holds working
   cards and finishes none`) raise nothing while one of her cards is on a live lane. Its row
-  says `running 32m of 90m`. Past its cap, or once no beat names it, the judgment rises as
+  says `running 32m of 90m`: the quiet carries her name and that run (`Quiet.Friend`,
+  `Quiet.Run`), and her row in `view coordinator` carries the last tick's as `run`. Past its cap, or once no beat names it, the judgment rises as
   before.
 - **Readers busy.** `the readers are behind` rises only when a reader with room did not
   begin (`ReaderLoad.Room`); reads waiting on readers reading their whole width are quiet
@@ -3942,6 +3943,11 @@ the store's tick on every part, its probe included; a-judgment-checks-the-lane-b
 - **A tier question.** `raise the read tier of the stream?` is answered by the rule
   (`sprint.ReadTierRule`, section 6): kept unless two substantive findings disagree, and
   never asked.
+
+The lane and the count are modelled in `tla/LaneCheck.tla`: no judgment rises over a live
+lane (`NoRiseOverLiveLane`), the count is once per span of ticks that keep it quiet
+(`CountedOncePerSpan`), and past the cap or with no beat it rises (`NoMissedRise`), each
+with a reversed witness. Readers busy and the tier rule are not in the module.
 
 Only a judgment being raised is checked. One already open stays the coordinator's, and the
 deadlines and the pass close it when their own condition ends. Each judgment the check
@@ -4576,7 +4582,7 @@ command that acts on it:
 A silent run loop, failing ticks and a stalled stream are the inbox's judgments already and
 come as `j` items. With `--all`, `rows` carries every machine's and friend's row: `k`
 (`m:<machine>`, `f:<friend>`), `st`, `r` and `w` (ready and working on the row), `wd` (its
-width), `f30` (finished in the last 30 minutes) and `rep` (since its last beat, or `never`).
+width), `f30` (finished in the last 30 minutes), `rep` (since its last beat, or `never`) and, on a friend's row whose live lane kept a judgment quiet on the last tick, `run` (`running 32m of 90m`).
 The text form prints `VIEW coordinator <sum>`, then an item a line (`<T> <b> <age> <k>: <s> ->
 <next>`), at most 20 lines with a `+<n> more` line when there are more, then `cursor=`.
 

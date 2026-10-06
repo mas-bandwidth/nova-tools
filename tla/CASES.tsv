@@ -427,3 +427,7 @@ MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	fr
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
+MCLaneCheck.cfg	MCLaneCheck.tla	pass	-	ignore-terminal	lanecheck	required	-
+MCLaneCheckBrokenNoCheck.cfg	MCLaneCheck.tla	invariant	NoRiseOverLiveLane	ignore-terminal	lanecheck	required	-
+MCLaneCheckBrokenEveryTick.cfg	MCLaneCheck.tla	invariant	CountedOncePerSpan	ignore-terminal	lanecheck	required	-
+MCLaneCheckBrokenNoCap.cfg	MCLaneCheck.tla	invariant	NoMissedRise	ignore-terminal	lanecheck	required	-

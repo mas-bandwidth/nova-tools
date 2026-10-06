@@ -82,6 +82,8 @@ func TestNoStallRisesOverALiveLane(t *testing.T) {
 	assert.Equal(t, sprint.NFriendIdle, quiet[0].Type)
 	assert.Equal(t, fc.Row, quiet[0].Subject)
 	assert.Equal(t, "friend "+holder+": "+fc.ID+" running 31m of 120m (her beat names it running)", quiet[0].Why)
+	assert.Equal(t, holder, quiet[0].Friend)
+	assert.Equal(t, "running 31m of 120m", quiet[0].Run, "her row's words")
 	sup := r.suppressed()
 	assert.Equal(t, sprint.Suppressed{Epoch: r.snap().Epoch, N: 1, Lane: 1}, sup, "counted once, however many ticks kept it quiet")
 

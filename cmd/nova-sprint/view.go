@@ -107,6 +107,7 @@ type viewRow struct {
 	Wd  int    `json:"wd"`            // the row's width
 	F30 int    `json:"f30"`           // finished in the last 30m
 	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
+	Run string `json:"run,omitempty"` // a friend's live lane that kept a judgment quiet: "running 32m of 90m"
 }
 
 // coordCounts are the sprint's counts, always carried: the work table's primaries by state,
@@ -364,9 +365,15 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	for _, k := range sprint.RuleAnsweredWithin(append(s.Work.Cards(), s.Fleet.Cards()...), now, time.Hour) {
 		n.Rules += k
 	}
+	runs := map[string]string{} // friend: her live lane as the last tick's lane check read it
 	if sup := hb.Suppressed; merr == nil && sup.Epoch == v.Epoch {
 		// a count of an earlier epoch is not this one's: the first tick after a clear starts it again
 		n.Suppressed, n.By = sup.N, suppressedWhy{Lane: sup.Lane, Readers: sup.Readers, Tier: sup.Tier}
+		for _, q := range hb.Quiet {
+			if q.Friend != "" && runs[q.Friend] == "" {
+				runs[q.Friend] = q.Run
+			}
+		}
 	}
 	finished := func(row string) int {
 		f := 0
@@ -455,7 +462,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(f.Beat)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep})
+		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep, Run: runs[f.Name]})
 		if r+w == 0 {
 			continue
 		}

@@ -186,7 +186,7 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 // (a-judgment-checks-the-lane-before-it-rises.w2): a friend whose beat names her card running
 // inside its cap raises no finishes none, and the view counts it once, suppressed 1, its cause
 // a live lane beside it, in the JSON and in the text's summary, however many ticks keep it
-// quiet; when her beat stops naming the card her stall rises and the count stays.
+// quiet; when her beat stops naming the card her finishes none rises and the count stays.
 func TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
@@ -212,16 +212,24 @@ func TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed(t *testing.T
 	var raw map[string]json.RawMessage
 	ta.json("view coordinator", &raw)
 	assert.Contains(t, string(raw["n"]), `"suppressed":1,"by":{"lane":1,"readers":0,"tier":0}`)
+	var row viewRow
+	for _, r := range ta.coordView("--all").Rows {
+		if r.K == "f:amy" {
+			row = r
+		}
+	}
+	assert.Regexp(t, `^running [0-9]+m of [0-9]+m$`, row.Run, "her row says her run: %+v", row)
 
-	// her beat stops naming it: her stall rises (the tick check answers it), and what was
-	// kept quiet stays counted
+	// her beat stops naming it: her finishes none rises (her running beat a minute ago is
+	// still activity to the stall ladder, so it is not a stall), and what was kept quiet
+	// stays counted
 	ta.a.sleep(time.Minute)
 	ta.ok("friend beat amy")
 	ta.pong("amy")
 	ta.ok("tick")
-	stalled := groupsOf(ta, sprint.NStalled)
-	require.Len(t, stalled, 1, "no live lane: her stall rises, and nothing keeps it quiet: %+v", ta.inboxGroups())
-	assert.Equal(t, []string{"amy"}, stalled[0].Primaries)
+	idle := groupsOf(ta, sprint.NFriendIdle)
+	require.Len(t, idle, 1, "no live lane: her finishes none rises, and nothing keeps it quiet: %+v", ta.inboxGroups())
+	assert.Equal(t, []string{"friend.amy"}, idle[0].Primaries)
 	assert.Equal(t, 1, ta.coordView("").N.Suppressed)
 }
 

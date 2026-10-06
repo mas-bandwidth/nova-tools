@@ -98,6 +98,7 @@ func friendTaken(s *Snapshot, c *Card, name string) (set map[string]string, unse
 // friend's deadline else DeadlineUnfinished) raises nothing, and is a Quiet instead, its
 // row "running 32m of 90m". A read tier question is answered by the rule (ReadTierRule)
 // and never asked. The tick counts the quiets on its heartbeat (store.Heartbeat.Quiet).
+// The model is tla/LaneCheck.tla (NoRiseOverLiveLane, CountedOncePerSpan, NoMissedRise).
 
 // FriendLaneLive is how old a friend's beat may be while the cards it names running are
 // her live lanes: her daemon beats every FriendBeatEvery, so a beat this old is a daemon
@@ -175,11 +176,14 @@ func friendLive(s *Snapshot, r TickReq, friend string) (LaneRun, bool) {
 	return LaneRun{}, false
 }
 
-// Quiet is a judgment the tick kept from rising: its type, its subject and why.
+// Quiet is a judgment the tick kept from rising: its type, its subject and why; kept for a
+// live lane, the friend and her run as her row says it (LaneRun.Row).
 type Quiet struct {
 	Type    string `json:"type"`
 	Subject string `json:"subject"`
 	Why     string `json:"why"`
+	Friend  string `json:"friend,omitempty"`
+	Run     string `json:"run,omitempty"`
 }
 
 // Suppressed is the count of the judgments the lane check kept from rising in one epoch of
@@ -272,7 +276,7 @@ func LaneChecked(s *Snapshot, r TickReq, part string, p Plan) (Plan, []Quiet) {
 			}
 			if live {
 				quiet = append(quiet, Quiet{Type: n.Type, Subject: subject,
-					Why: fmt.Sprintf("friend %s: %s %s (%s)", l.Friend, l.Card, l.Row(), l.Why)})
+					Why: fmt.Sprintf("friend %s: %s %s (%s)", l.Friend, l.Card, l.Row(), l.Why), Friend: l.Friend, Run: l.Row()})
 				continue
 			}
 			out = append(out, n)
