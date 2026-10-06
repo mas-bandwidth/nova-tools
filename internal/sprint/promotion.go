@@ -209,3 +209,14 @@ func Promoted(s *Snapshot, r PromotedReq) Plan {
 	answered(&p, s, r.Answers, r.Who)
 	return p
 }
+
+// PromotedOnce records the promotion once for sha: if the store holds sha already,
+// it says so and changes nothing (no unit, no props).
+func PromotedOnce(s *Snapshot, r PromotedReq) Plan {
+	if _, sha, ok := Promotion(s); ok && sha == r.Sha {
+		var p Plan
+		p.Units = []Unit{{Key: "promoted", Moved: "recorded already"}}
+		return p
+	}
+	return Promoted(s, r)
+}
