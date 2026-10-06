@@ -39,7 +39,7 @@ var fileFlags = []string{"rules", "brief-file", "brief-dir", "file", "decide-rec
 // waits are the flags that make a verb wait for the sprint to move (where --watch,
 // inbox --wait, lane take --wait: its asks are each sent as a plain take). The server moves the sprint on the one line of control a verb it runs
 // holds, so such a verb is never run by the server: it runs where it is typed.
-var waits = map[string]string{"where": "watch", "inbox": "wait", "lane take": "wait"}
+var waits = map[string]string{"where": "watch", "inbox": "wait", "lane take": "wait", "resource claim": "wait"}
 
 // verbArgs is an argument list as its verb's own flags read it.
 type verbArgs struct {

@@ -3681,6 +3681,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | watch --wake | sprint and bus to the coordinator | timer poll | a look every 20 s (--every) | card watch-wake-retires-into-the-push-loop |
 | answer pass | sprint to the coordinator seat's rule answers | timer poll | --every | card answer-runs-on-the-tick-end |
 | lane take wait | sprint to the AI asking for a lane | timer poll | the take asked every LaneAskEvery (5 s) | card lane-grant-is-a-bus-message |
+| resource claim wait | sprint to the member waiting in a resource's line (resource claim --wait) | timer poll | the claim asked every ResourceWatchEvery (5 s), each ask keeping the place | the place and the grant are the table's and the tick's, so a claimant that does not --wait is granted all the same; the optional look is the lane take wait's, and card lane-grant-is-a-bus-message carries both |
 | friend sync | the friends table to this machine's friend daemons | timer poll | --every (the unit's) | card friend-sync-on-row-change |
 | coordinator ping | the coordinator to every friend's stream, pongs back on its own | beat | PingEvery (1 s); the rows read again every RowsEvery (1 min) | the ping is the transport's liveness probe: its unanswered absence is the signal |
 | wake ping | the coordinator into each friend's session | beat | a pass every --every (10 min) | the probe that the session, not the daemon, hears: a deaf session is found by it |
@@ -4338,6 +4339,12 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | lane take | `lane take go --machine <m> --as <worker> [--wait <duration>]`: a worker's take of one of the machine's Go lanes (section 18); exit 0 granted, exit 1 queued with its place and the next command; --wait asks again every 5 s until granted or the wait is over; through the sprint's server it is `lane take <kind> --machine <m> --as <worker>` and nothing more |
 | lane give | `lane give go --machine <m> --as <worker>`: the worker's lane, or its place in the queue, given back; the head of the queue is granted |
 | lane list | every machine's holders and queue of each lane kind, the timeouts applied; where --json --cards carries the same rows as `lanes` |
+| resource add | `resource add <name> --kind bench\|branch\|port\|account --capacity <n>`: the coordinator's, a row of the resources table at that capacity (section 19); on a row that is there, `--capacity` sets it, a wider one granting the line; `--dry-run` writes nothing |
+| resource claim | `resource claim <name> --as <member> --for <duration> [--wait <duration>]`: a member's lease of the length asked: exit 0 granted (until=) while the resource has room and nobody waits ahead, exit 1 queued with its place, which it keeps without asking again; `--wait` asks again every 5 s until granted or the wait is over, each ask keeping the place; a holder's claim renews its lease |
+| resource renew | `resource renew <name> --as <member> --for <duration>`: the holder's lease runs that long again from now; a member that holds nothing is refused, a renewal never joins the line |
+| resource release | `resource release <name> --as <member>`: the lease, or the place in the line, given back; the head of the line is granted into the room |
+| resource remove | `resource remove <name>`: the coordinator's, the row off the table; refused while it is held or waited for |
+| resource list | every resource with its holders, their expiries and its line in order; `--json` carries the rows as `resources` |
 | reader add | declares readers |
 | reader away | `hold <reader>... --return` in the old words, for one release: holds readers whatever they beat (state `held`): no read is asked of them, a read asked and not begun is asked of another at the next tick, and a read begun is taken back where a reader up is free to read it |
 | reader up | `unhold <reader>...` in the old words, for one release: releases the hold; the reader's state is then its beat's |
@@ -5384,6 +5391,71 @@ gives one at a time beside the store, so no two steps of the record interleave.
   `where --json --cards` carries the same rows as `lanes`, which the dashboard's
   copy of the sprint holds (it reads the sprint that way); the page does not draw
   them.
+
+## 19. Resources
+
+On 2026-10-05 a friend held eight working cards and started none for over half an
+hour: another friend had claimed the shared bench the night before by a bus message
+and had not released it, then went down out of credit, so the release never came.
+The owner, ~9:25 AM ET: "Dining philosophers." and "If we have any sort of resources
+being managed in future, they should be managed by the coordinator here, as formal
+verbs." A shared resource (a bench machine or directory, a branch, a port, a provider
+account) is a row of the resources table, managed by the coordinator's verbs alone
+(`internal/sprint/resource.go`, `internal/sprint/store/resource.go`,
+`cmd/nova-sprint/resource.go`); no friend holds a resource by agreement with another
+friend, and a friend's brief never tells her to wait for another friend: she claims
+through the verb. The model is `tla/Resources.tla`, checked on TLC
+(`tla/MCResources*.cfg`, `tla/RUNS.tsv`); the invariants below are its, and
+`internal/sprint/resource_test.go` holds each on the code.
+
+- **The table.** One record under the deployment's prefix, `resources`, outside the
+  view's tables and the fence as the lanes and the friends' roster are: a row per
+  resource with its kind, its capacity (how many hold it at once), its holders and
+  its line. `resource add <name> --kind <kind> --capacity <n>` makes a row; on a row
+  that is there it sets the capacity (the kind does not change); `resource remove`
+  takes a row off, refused while anyone holds or waits. The view's tables do not
+  change (`internal/sprint/TABLES.lock`): `resource list` is the table's reader.
+- **A hold is a lease.** `resource claim <name> --as <member> --for <duration>` asks
+  for a lease of that length (at most 24h). It is granted while the resource has
+  room and nobody waits ahead (exit 0, `until=`); otherwise the member joins the back
+  of the line and is told its place (exit 1). A holder's claim renews its lease;
+  `resource renew` does the same and is refused for a member that holds nothing (a
+  renewal never joins the line). `resource release` gives the lease, or the place in
+  the line, back. The server runs these one at a time beside the store, so no two
+  steps of the record interleave.
+- **The grant is the coordinator's.** A waiter keeps its place without asking again
+  (it never polls another member): the head of the line is granted into the room a
+  release, an expiry or a holder going down makes, each a lease of the length the
+  waiter asked for, from the moment of the grant. The line is fair: a grant never
+  overtakes an earlier waiter (`NoOvertaking`), and nobody waits while a place is
+  free (`NoRoomWasted`). `resource claim --wait <d>` asks again every 5 s until the
+  grant or the wait is over, each ask keeping the place.
+- **The tick releases.** Every tick, before the tables, the resources' pass
+  (`ResourcesTick`) releases a lease past its expiry, and at once a lease whose holder
+  is down: a friend not up (held, down by her beat or her observation, out of credit,
+  no session evidence, section 1), a fleet member not up (held, or lapsed beats), a
+  reader not up; a waiter down leaves the line. A name no table knows is not down
+  (nothing can observe it), and its lease runs to its expiry. Each release the tick
+  makes is a happened note (`a resource lease was released by the tick`) naming who
+  was released and who was granted. Never more holders than the capacity
+  (`CapacityKept`, on every path); a member down holds nothing (`DownHoldsNothing`).
+- **The capacity changes only to what the holders fit.** `resource add <name>
+  --capacity <n>` on a row is the model's `SetCapacity`: a wider capacity grants the
+  line into the room; one below the current holders is refused, naming them
+  (`resource <name> has 2 holders (bob, m1), more than a capacity of 1; release
+  first`), dry run or not, and the row is as it was. No lease is taken back, so the
+  holders never outnumber the capacity; once enough release, the narrower capacity is
+  taken. The model's `shrink-under` witness (the capacity set below the holders and
+  accepted) is refuted by `CapacityKept`.
+- **One judgment.** A resource with waiters and no room for 30 minutes
+  (`ResourceStarveBound`, counted from the moment the line formed) raises one judgment
+  to the coordinator, `a resource has waiters and no room`, open on `resource:<name>`
+  and raised once while it stands: the holders with their expiries and the line, with
+  the decisions `resource release <name> --as <holder>`, `resource add <name>
+  --capacity <n>` and `ack`. The tick closes it once the line has room.
+- **Liveness.** Every waiter is served while holders keep releasing or expiring
+  (`EveryWaiterIsServed`, under weak fairness of the tick and a bound on renewals);
+  a holder that renews for ever is the judgment's to end.
 
 
 ## friend-stall-ladder-r.w1

@@ -30,6 +30,7 @@ cmd/nova-sprint/watchwake.go app.cmdWatch watch --wake
 cmd/nova-sprint/answer.go app.cmdAnswer answer pass
 cmd/nova-sprint/friend_loop.go app.friendSyncLoop friend sync
 cmd/nova-sprint/lane.go app.laneWait lane take wait
+cmd/nova-sprint/resource.go app.resourceWait resource claim wait
 
 # the sprint server's own loops (nova-sprint run --listen)
 cmd/nova-sprint/run.go app.runLoop sprint server tick

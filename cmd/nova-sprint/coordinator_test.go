@@ -124,6 +124,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"goal drop":         "goal drop friend-a",
 		"play":              "play --ticks 1",
 		"init":              "init",
+		"resource add":      "resource add bench-a --kind bench --capacity 1",
+		"resource remove":   "resource remove bench-a",
 		"merge-window open": "merge-window open --for 1m --reason r",
 		// the friends' directories are read only after the store refuses the intruder
 		"friend reconcile": "friend reconcile friend-a",
