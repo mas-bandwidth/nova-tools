@@ -1076,6 +1076,22 @@ check: her presence is her cards finished (a finish within `FriendFinishWindow`)
 never her daemon's beat, and a card whose outbox lacks its result is the failure
 that shows.
 
+A claude friend's open session, where she keeps one (the desktop app or a
+terminal), is reached through its own blocking read; the lanes above are
+cards, this is the bus. Claude Code has no command that puts a turn into a
+running session from outside; a background task whose exit re-invokes the
+session is what it has. The session runs `nova-bus wait --as <me> --after
+<cursor> --wake-file <file>` as a background task and re-runs it with the
+cursor it printed each time it returns. `nova-friend install --harness
+claude` prints that line as a NOTE; it is run once inside the session, never
+a flag, an environment variable or a wrapper at app start. The daemon is
+passive for claude: it takes nothing off the stream, answers the
+coordinator's ping with a daemon-pong, and status reports route=passive with
+the same line as a NOTE. The wake file is `<state>/<me>.wake` in the daemon's
+state directory; the daemon is to append one line to it per message, so a
+wait that missed nothing still returns (owed: the daemon does not write it
+yet, and `nova-bus wait` is a separate verb).
+
 OpenCode's headless run auto-rejects any tool call that would prompt (measured
 2026-10-04, twice on one friend: `external_directory` for a path through the
 symlink in the home directory, and another refusal that ended a turn in 12
