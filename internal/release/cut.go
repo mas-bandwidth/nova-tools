@@ -140,6 +140,12 @@ func lessVersion(a, b []int) bool {
 // shape of what a release says about itself is asserted by a test rather than
 // by reading a file somebody wrote by hand afterwards.
 func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time.Time, prs []PR) string {
+	return sectionWith(version, sha, previous, sumsDigest, dogfoodWaiver, "", when, prs)
+}
+
+// sectionWith is Section with what the journey gate found, which is already in
+// the section's words (JourneyRecord.section).
+func sectionWith(version, sha, previous, sumsDigest, dogfoodWaiver, journeys string, when time.Time, prs []PR) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s — %s\n\n", version, when.UTC().Format("2006-01-02"))
 	since := "this repository's first commit"
@@ -165,6 +171,9 @@ func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time
 	if dogfoodWaiver != "" {
 		fmt.Fprintf(&b, "%s%s\n\n", DogfoodWaiverPrefix, dogfoodWaiver)
 	}
+	// AND WHAT THE PROMISED JOURNEYS WERE PROVEN AT, or which of them were
+	// not, under the waiver's reason.
+	b.WriteString(journeys)
 	for _, pr := range prs {
 		fmt.Fprintf(&b, "- #%d %s\n", pr.Number, pr.Title)
 		if len(pr.Members) > 0 {
@@ -490,6 +499,16 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err := green(runs); err != nil {
 		return refusal(errs, "CUT", err)
 	}
+	// THE PROMISED RECOVERY JOURNEYS, once the revision is known: evidence is
+	// proof about one revision, and this is the one the tag will name.
+	// Before --dry-run branches, because what a cut would do is this refusal.
+	journeys, err := journeyCheck(o, deps, filepath.Dir(o.changelog), sha, out, errs)
+	if err != nil {
+		if errors.Is(err, errJourney) {
+			return 2
+		}
+		return refusal(errs, "CUT", err)
+	}
 	progress(errs, "reading the tags")
 	tags, err := forge.Tags(ctx, o.repo)
 	if err != nil {
@@ -535,10 +554,10 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
 		}
 	}
-	section := Section(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), deps.Now(), prs)
+	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section(), deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s dry-run=yes\n",
-			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate)
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s dry-run=yes\n",
+			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State)
 		fmt.Fprint(errs, section)
 		return 0
 	}
@@ -553,7 +572,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s dry-run=no\n",
-		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate)
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s dry-run=no\n",
+		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State)
 	return 0
 }

@@ -463,7 +463,10 @@ func (o *owed) check(ok bool, card, format string, args ...any) {
 // lands, each "OWED <card>: ..." line listed, because a red-by-design test in
 // the merge-queue tier blocks every promotion. A met part's assertion that
 // failed in the case still fails it: a test that failed and then skipped is
-// reported failed.
+// reported failed. A skip here is not a pass anywhere it counts: `release
+// cut` reads each case of this suite on its own, as a promised recovery
+// journey, and an OWED skip is incomplete there until its card lands
+// (internal/release/journeygate.go, docs/SPEC-RELEASE.md rule 14).
 func (o *owed) settle(t *testing.T) {
 	t.Helper()
 	if len(o.parts) == 0 {

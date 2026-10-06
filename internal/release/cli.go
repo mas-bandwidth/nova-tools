@@ -19,7 +19,7 @@ import (
 // same command is the same release on either host. The one exception is
 // --receipts, and internal/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
@@ -64,7 +64,11 @@ type Deps struct {
 	// nil Dogfood is ReadDogfood, which reads the command reference and the
 	// receipts off disk and reaches nothing else.
 	Dogfood Dogfood
-	Now     func() time.Time
+	// Journeys is the recovery journeys `cut` holds the release to
+	// (journeygate.go). A nil Journeys is the checkout's own promise:
+	// PromisedJourneys, for each package the checkout ships.
+	Journeys []Journey
+	Now      func() time.Time
 	// Self answers what the nova-update RUNNING THIS is stamped with. It is a
 	// seam rather than a constant because this package is a library and the
 	// stamp lives in main; a nil Self means `adopt` cannot compare its own
@@ -94,6 +98,10 @@ type options struct {
 	// out of the ordinary.
 	cli, receipts string
 	noDogfood     bool
+	// journeys is cut's --journeys evidence file, and noJourneys the way
+	// past the journey gate; it shares --reason with the dogfood waiver.
+	journeys   string
+	noJourneys bool
 	// gate is build's --gate: "refuse" (the default, and the only way cut
 	// runs it) or "report", which prints the open edges and builds.
 	gate        string
@@ -209,6 +217,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		fmt.Fprintln(out, ExitCodes+" `nova-update release <verb> -h` lists a verb's flags.")
 		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, DogfoodNote)
+		fmt.Fprintln(out, JourneyNote)
 		fmt.Fprintln(out, IncrementalNote)
 		fmt.Fprintln(out, AdoptNote)
 		fmt.Fprintln(out, PullNote)
@@ -237,6 +246,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
 		addDogfoodFlags(f, &o, "docs/CLI.md beside --changelog")
+		f.StringVar(&o.journeys, "journeys", "", "the recovery-journey evidence: an evidence header line, then `go test -json` of each promised journey, at the revision being tagged")
+		f.BoolVar(&o.noJourneys, "no-journey-gate", false, "cut without proof of the promised recovery journeys; "+DogfoodReasonFlag+" <why> is then required, and every incomplete journey goes into the changelog")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
 		f.StringVar(&o.out, "out", "", "the artifact root the release is written under, as <out>/<version>/<goos-goarch>/")
@@ -323,6 +334,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			case "cut":
 				fmt.Fprintln(out, CutNote)
 				fmt.Fprintln(out, DogfoodNote)
+				fmt.Fprintln(out, JourneyNote)
 			case "build":
 				fmt.Fprintln(out, DogfoodNote)
 				fmt.Fprintln(out, IncrementalNote)

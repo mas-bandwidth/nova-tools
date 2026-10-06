@@ -501,6 +501,60 @@ A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receip
 `TestCycleRefusesBeforeAnyPlay`, `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks`,
 `TestATransitiveChangeRebuildsTheTool`, `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer`.*
 
+## 14. A promised recovery journey is proven at the release revision, or the cut refuses
+
+A review of the release lane (item 5): the chaos suite (`internal/friend/chaos_functional_test.go`) turns every part
+the landed code cannot meet yet into a named skip (`OWED <card>: ...`), so a red-by-design test does
+not block the merge queue, and `go test` reports a parent whose subtests all skipped as a pass. A
+green run was read as proof that a friend whose harness closed, whose session went silent, who hit a
+usage limit or whose bus credential was revoked is detected, his cards are dealt elsewhere and he
+recovers. It proved none of that.
+
+**The promise is the checkout's.** A checkout that ships `internal/friend` promises the journeys in
+`release.PromisedJourneys`, one per chaos subtest; `TestThePromisedJourneysAreTheChaosSuitesSubtests`
+holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
+the receipt says `journeys=none-promised`.
+
+**The evidence is bound to the revision.** `cut --journeys <file>` names a file whose first line is
+
+```
+{"evidence":"release-journeys","revision":"<sha being tagged>","functions":"<v>","schema":"<v>","installed":[{"machine":"<m>","build":"<v>","revision":"<sha>"}]}
+```
+
+and whose other lines are the `go test -json` of the journeys. Evidence for another revision, an
+installed build of another revision, no installed build, no function version or no schema version
+refuses, and so does a line that is not JSON: a broken record is not an absent one. The gate runs
+once the head is known and before `--dry-run` branches.
+
+**Each journey is read on its own, and only a pass proves it.** One line per promised journey:
+
+```
+RELEASE CUT JOURNEY state=<proven|owed|skipped|failed|not-run|platform-unavailable> name=<test> detail=<what the run said>
+```
+
+`owed`, `skipped`, `failed` and `not-run` are incomplete. A skip whose output says
+`PLATFORM UNAVAILABLE <platform>: <why>` (`release.PlatformUnavailable`) is `platform-unavailable`,
+and not incomplete, only for a platform the journey names as optional; the same skip on any other
+journey is `skipped`, an unmet promise. No evidence refuses, naming every journey `not-run`:
+
+```
+RELEASE CUT REFUSED reason=journey-evidence promised=<n> remedy="<JourneyRemedy>"
+RELEASE CUT REFUSED reason=journey-gate incomplete=<n> remedy="<JourneyRemedy>"
+```
+
+A cut that passes prints `RELEASE CUT JOURNEYS proven=<n> promised=<n> revision=<sha> functions=<v>
+schema=<v> installed=<n>`, the receipt carries `journeys=ok`, and the CHANGELOG section carries
+`Recovery journeys proven at <sha>: <n> (functions <v>, schema <v>, installed <machine> <build>, ...).`
+
+**The way past is `--no-journey-gate --reason <why>`.** The reason is required (and shared with
+`--no-dogfood-gate`), `RELEASE CUT JOURNEYS WAIVED incomplete=<n> reason=<why>` is printed, the receipt
+carries `journeys=waived`, and the CHANGELOG section carries
+`Recovery journeys incomplete, gate waived: <why>` followed by one `- <test>: <state> (<detail>)` line per incomplete journey. A waiver is
+for an unkept promise, not for evidence about something else: evidence that does not bind still refuses.
+
+*Tests: `TestTheGateRefusesAPromisedJourneyWithoutEvidence`, `TestThePromisedJourneysAreTheChaosSuitesSubtests`,
+`TestTheJourneyGateIsInTheReleaseSpec`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -575,6 +629,8 @@ One numbered line per test; where one test holds several behaviours, they share 
 60. `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks` (functional) — the tools play seeds a new version's directory from the installed build's on the machine, sends only the differing files, and the install skips the identical binary.
 61. `TestATransitiveChangeRebuildsTheTool` (functional) — the real `go list` on a chain A -> B -> C (a tool, a package it imports, a package that one imports) puts C in A's set (`.Deps` is recursive), and a change under C, an embedded-style file included, rebuilds A and reuses a tool beside it.
 62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
+63. `TestTheGateRefusesAPromisedJourneyWithoutEvidence` — a cut whose checkout promises recovery journeys refuses without `--journeys`, on evidence for another revision or installed build, without a function or schema version, on a broken line, and on any owed, skipped, failed or not-run journey (a green parent proves nothing); an optional platform's `PLATFORM UNAVAILABLE` skip is named and passes; a proven cut binds the revision, versions and installed builds into the section; `--no-journey-gate --reason` enumerates every incomplete journey there.
+64. `TestThePromisedJourneysAreTheChaosSuitesSubtests` — every promised journey names a subtest the chaos suite runs.
 
 Demanded, and proven by no test yet (8):
 

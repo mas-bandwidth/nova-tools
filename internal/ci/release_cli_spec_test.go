@@ -99,3 +99,25 @@ func TestTheFourthDogfoodsLessonsAreInTheReleaseSpec(t *testing.T) {
 		assert.Containsf(t, spec, want, "docs/SPEC-RELEASE.md does not carry %q", want)
 	}
 }
+
+// Rule 14. The journey gate's refusal is one a person meets in front of a
+// tag, so it is in the spec, in the words the gate prints.
+func TestTheJourneyGateIsInTheReleaseSpec(t *testing.T) {
+	t.Parallel()
+
+	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
+	for _, want := range []string{
+		"## 14. ",
+		"RELEASE CUT REFUSED reason=journey-evidence",
+		"RELEASE CUT REFUSED reason=journey-gate",
+		"RELEASE CUT JOURNEY state=",
+		release.JourneyWaiveFlag,
+		release.PlatformUnavailable,
+		release.JourneysProvenPrefix,
+		release.JourneysIncompletePrefix,
+		`"evidence":"` + release.EvidenceKind + `"`,
+		"journeys=none-promised",
+	} {
+		assert.Containsf(t, spec, want, "docs/SPEC-RELEASE.md does not carry %q", want)
+	}
+}
