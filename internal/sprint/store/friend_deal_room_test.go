@@ -62,7 +62,7 @@ func TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick(t *testing.T) {
 func friendCards(stream string, n int) []sprint.CardAdd {
 	var cards []sprint.CardAdd
 	for i := range n {
-		cards = append(cards, sprint.CardAdd{ID: stream + "-" + strconv.Itoa(i+1), Brief: "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend\n\nThe task."})
+		cards = append(cards, sprint.CardAdd{ID: stream + "-" + strconv.Itoa(i+1), Brief: "c: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: friend\n\nThe task."})
 	}
 	return cards
 }

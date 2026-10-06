@@ -7,8 +7,9 @@ import "github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 // in the packet, a flash friend's runner read "tier -" and handed back its own pinned
 // cards): the tier the card's route was drawn from (FieldTier on the work or read card),
 // else the tier its primary is on (cardTier: FieldTierNow, or the tier pinned, or its
-// brief's line 1), else the stream's default, flash. It is the tier every friend deal
-// gates on (friendTakes), so a friend's packet names a tier her class covers.
+// brief's line 1), else the stream's default, flash: a card with no brief, since a card
+// whose brief names no tier is dealt to no one (TierUnset). It is the tier every friend
+// deal gates on (friendTakes), so a friend's packet names a tier her class covers.
 func DealtTier(c, primary *Card) string {
 	if t := c.F(FieldTier); t != "" {
 		return t

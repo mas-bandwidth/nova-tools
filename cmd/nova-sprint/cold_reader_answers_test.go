@@ -48,7 +48,7 @@ func TestAMisspelledFlagNamesTheNearestAndTheVerbsFlags(t *testing.T) {
 	ta := newTestApp(t)
 	code, _, errs := ta.do("add --strem s1 --count 1 --one")
 	assert.Equal(t, 2, code)
-	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-personal-base, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs and 10 more; did you mean --stream?; run: nova-sprint help add\n", errs)
+	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-personal-base, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs and 11 more; did you mean --stream?; run: nova-sprint help add\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help add\n")
 	assert.NotContains(t, errs, "provided but not defined")
 	code, _, errs = ta.do("fleet up m1 --wdth 3")
@@ -225,11 +225,16 @@ func TestTheColdRunsMistakesAreAnsweredInOneTurn(t *testing.T) {
 	require.NoError(t, err)
 	raw := filepath.Join(t.TempDir(), "raw.md")
 	require.NoError(t, os.WriteFile(raw, []byte(card), 0o600))
-	out := ta.ok("add --stream s1 r1 --one --brief-file " + raw)
+	// the template names no tier: add refuses it in one turn, naming --tier (add.go)
+	code, _, errs = ta.do("add --stream s1 r1 --one --brief-file " + raw)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "the brief names no tier")
+	assert.Contains(t, errs, "or give --tier <")
+	out := ta.ok("add --stream s1 r1 --one --tier flash --brief-file " + raw)
 	assert.Contains(t, out, "\nNOTE the brief holds 10 of the card template's lines unfilled (line 1: RESULT: <label> sha=<sha12>; line 2: REPO: <owner>/<name>; line 3: BASE: <branch>; and 7 more);")
 	filled := strings.NewReplacer("RESULT: <label> sha=<sha12>", "RESULT: r2 sha=000000000000", "REPO: <owner>/<name>", "REPO: acme/widgets", "BASE: <branch>", "BASE: main").Replace(card)
 	require.NoError(t, os.WriteFile(raw, []byte(filled), 0o600))
-	assert.Contains(t, ta.ok("add --stream s1 r2 --one --brief-file "+raw), "NOTE the brief holds 7 of the card template's lines unfilled (line 6: Deadline: finish within <n> minutes.;")
+	assert.Contains(t, ta.ok("add --stream s1 r2 --one --tier flash --brief-file "+raw), "NOTE the brief holds 7 of the card template's lines unfilled (line 6: Deadline: finish within <n> minutes.;")
 }
 
 // The help's first screen says where the rest is, and the finish it shows is

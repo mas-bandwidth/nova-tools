@@ -253,8 +253,8 @@ func friendLoad(s *Snapshot, name string) int {
 // people busy by having 2X width queued up in ready per-friend"). A card whose WHO line
 // names a friend goes to her first while she is up, below her room, not one it has left,
 // and her tiers hold its tier; else (or with no WHO line, or WHO: friend) it goes to a
-// friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card with
-// no tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
+// friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card whose
+// tier is unset is dealt to no friend: TierUnset), below her room, and never one it has
 // left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
 // then the most room, then by name (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
@@ -318,8 +318,8 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 	members := s.UpMembers()
 	declared := map[string]bool{}
 	for _, c := range cards {
-		if c.Col != Ready || IsSentinel(c) {
-			continue
+		if c.Col != Ready || IsSentinel(c) || TierUnset(c) {
+			continue // a card whose tier is unset is dealt to no one (TierUnset; TickDeal judges it)
 		}
 		// a card taken back from a friend (friend take) is placed again, never on her (FriendTake)
 		wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt")))
