@@ -197,6 +197,10 @@ func pendingWhy(f Fence) string {
 }
 
 // Held is what holds one primary now: the no-stall rule's answer for it.
+// It loads every table (Load of All). The card verb does not call it once the
+// tick has counted holds (where.go, CardHold): that read takes the one card's
+// hold and does not load every table. Held remains the cold answer, before
+// any tick has counted, and the answer for a card the count does not name.
 func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 	st, err := st.pin(ctx)
 	if err != nil {

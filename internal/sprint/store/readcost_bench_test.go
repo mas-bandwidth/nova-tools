@@ -126,3 +126,93 @@ func benchBrief() string {
 	}
 	return proBrief + "\n" + strings.Repeat("the brief's prose, one line of it, as a real brief carries it\n", kb*1024/62)
 }
+
+// BenchmarkCardRead is one card read, the store reads of `card <id> --json`
+// (card-read-speedb.w1): its records with its needs from the card facts
+// (CardRead), its lines of the log from the card log index (CardLog), and its
+// hold from the tick's count (CardHold, not Held: Held loads every table),
+// each alone and together, with the store round trips each makes (trips/op).
+// The twin is the size of the 2026-10-04 11:36 PM store: 1,980 cards in ten
+// streams, and a log of 240,119 lines of about 1,350 bytes, one card (s1-2)
+// with 9,756 of them as that store's busiest card had, the rest spread over
+// the cards (the median card had 4, the 99th percentile 104). The log is
+// indexed as the ticks index it, and the facts counted, before the reads.
+// It needs a live store (liveStoreB). This attempt does not run it: a live
+// store is not pointed at, and no server is started. Run with
+//
+//	go test -tags functional -run XXX -bench CardRead -benchtime 20x ./internal/sprint/store/
+func BenchmarkCardRead(b *testing.B) {
+	st, c := benchSprint(b, 10, 198)
+	ctx := context.Background()
+	must := func(err error) { require.NoError(b, err) }
+	pinned, err := st.pin(ctx)
+	must(err)
+	have, err := pinned.Log(ctx)
+	must(err)
+	words := strings.Repeat("the report's words, as a finish carries them whole; ", 24)
+	const lines, hot = 240119, 9756
+	var pad []sprint.Line
+	batches := 0
+	flush := func() {
+		if len(pad) == 0 {
+			return
+		}
+		batches++
+		f, err := pinned.B.ReadFence(ctx)
+		must(err)
+		op := OpRecord{ID: fmt.Sprintf("pad-%d", batches), Verb: "pad", At: time.Now(), Log: pad}
+		ok, err := pinned.B.Acquire(ctx, f.Gen, op)
+		must(err)
+		require.True(b, ok)
+		must(pinned.B.Release(ctx, op, true))
+		pad = nil
+	}
+	for i := len(have); i < lines; i++ {
+		id := "s1-2"
+		if i >= hot {
+			id = fmt.Sprintf("s%d-%d", i%10+1, i/10%198+1)
+		}
+		pad = append(pad, sprint.Line{Kind: sprint.LineMove, At: time.Now(), Op: "pad", Card: id + ".w1", Primary: id,
+			Table: sprint.Fleet, From: "m1:working", To: "m1:working", Text: map[string]string{"report": words}})
+		if len(pad) == 5000 {
+			flush()
+		}
+	}
+	flush()
+	for {
+		before, err := pinned.B.(logIndex).logIndexed(ctx)
+		must(err)
+		must(pinned.keepWhere(ctx, Machine{}))
+		after, err := pinned.B.(logIndex).logIndexed(ctx)
+		must(err)
+		if after == before {
+			break
+		}
+	}
+	r := pinned.B.(*Redis)
+	r.CountTrips()
+	for _, id := range []string{"s1-1", "s1-2"} {
+		read := func(name string, op func()) {
+			b.Run(id+"/"+name, func(b *testing.B) {
+				trips := r.Trips()
+				for b.Loop() {
+					op()
+				}
+				b.ReportMetric(float64(r.Trips()-trips)/float64(b.N), "trips/op")
+			})
+		}
+		read("rows", func() { _, err := st.CardRead(ctx, id); must(err) })
+		read("log", func() { _, err := st.CardLog(ctx, id); must(err) })
+		read("hold", func() { _, _, err := st.CardHold(ctx, id); must(err) })
+		read("rows+log+hold", func() {
+			_, err := st.CardRead(ctx, id)
+			must(err)
+			_, err = st.CardLog(ctx, id)
+			must(err)
+			_, _, err = st.CardHold(ctx, id)
+			must(err)
+		})
+		read("wholelog", func() { _, err := st.Log(ctx); must(err) })
+	}
+	_ = c
+}

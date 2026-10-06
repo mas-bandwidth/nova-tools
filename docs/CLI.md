@@ -1193,6 +1193,10 @@ nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
 
+### card-read-speedb.w1
+
+`nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]` reads that card: its lines of the log from the card log index the tick keeps (and the tail the tick has not indexed yet), its own records, its needs from the card facts the tick counts, and its hold from that same count. It does not read the whole log, and the hold does not load every table. Before a tick has counted, the hold is the whole-sprint answer. `nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]` prints every card (or one stream's), one JSON object a line: `id`, `stream`, `column`, `score`, `needs`, `brief_len` and the other fields. The brief's text is `card <id> --brief`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) under card-read-speedb.w1.
+
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
 variable named by `NOVA_BUS_REDIS_PASSWORD_ENV`, separately from the sprint

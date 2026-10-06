@@ -356,7 +356,7 @@ func TestTheWhereCountsTripsArePinned(t *testing.T) {
 		idle := part(res)
 		after, _, err := h.m.GetKey(h.ctx, keyWhere)
 		require.NoError(t, err)
-		assert.EqualValues(t, 2, idle.Trips, "an idle tick: the shape and the record")
+		assert.EqualValues(t, 3, idle.Trips, "an idle tick: the shape and the record, and the card log index's cursor (the log after it is read too, an exchange the stand-in does not count)")
 		assert.Equal(t, raw, after, "an idle tick writes nothing")
 		return
 	}
@@ -367,4 +367,10 @@ func TestTheWhereCountsTripsArePinned(t *testing.T) {
 // (no table read whole), and the record written.
 // whereMovedTrips counts the seat record read with the coordinator (store/seat.go,
 // the seat's generation every step reads): one trip more since 2026-10-04.
-const whereMovedTrips = 9
+// And four more since card-read-speedb.w1 (load.go, where.go): the card log
+// index's cursor read and its new lines' entries written, the card facts
+// written with the record (the log's new lines are read too, an exchange the
+// stand-in does not count), and the readers' states, one record read, so the
+// hold is the no-stall rule's. The holds ride in the card facts. The routes
+// the rule also reads are not an exchange on the stand-in.
+const whereMovedTrips = 13

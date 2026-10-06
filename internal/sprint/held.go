@@ -120,6 +120,22 @@ func CheckHeld(h HeldState, now time.Time) []Violation {
 // Holder is what holds the primary id now.
 func Holder(h HeldState, now time.Time, id string) Hold { return newHeld(h, now).hold(id) }
 
+// Holds is Holder for each id from one reading of the rule. The tick plan runs
+// once, then each card is answered. The tick counts a card's hold this way
+// (one pass over the sprint it already read); a card read takes its own and
+// does not plan the tick again.
+func Holds(h HeldState, now time.Time, ids []string) map[string]Hold {
+	if len(ids) == 0 {
+		return nil
+	}
+	c := newHeld(h, now)
+	out := make(map[string]Hold, len(ids))
+	for _, id := range ids {
+		out[id] = c.hold(id)
+	}
+	return out
+}
+
 // Unheld is every stall, in a fixed order: the primaries (by id), then the
 // judgments past due, the stopped streams, and the pending operation. While an
 // operation is pending the tables are a partial state of it, and only the
