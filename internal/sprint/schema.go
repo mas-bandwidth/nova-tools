@@ -48,17 +48,18 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 
 // FriendsDef is the friends table's shape: the fleet table's columns but load.
 // ready and working count her job cards in those states; width is her width
-// as text, summed; ok and failed (hidden) count her jobs done ok and done
-// failed, and done and ok% are the table's formulas over them, the footer
+// as text, summed; ok, failed, brief and machinery (hidden) count her jobs done
+// ok and done failed by the cause of the failure (cause.go: failed is the work's
+// own fault), and done and ok% are the table's formulas over them, the footer
 // pooling ok% over the friends; status is text with no fold, and so is active, how long ago
 // her session last wrote a file (her beat's Active; "-" when none was reported). The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed+brief+machinery),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed,brief,machinery")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
-	return ntable.Table{Name: Friends, Columns: cols, Hidden: []string{DoneOK, DoneFailed}}
+	return ntable.Table{Name: Friends, Columns: cols, Hidden: []string{DoneOK, DoneFailed, DoneBrief, DoneMachinery}}
 }
 
 // Readers table columns.
@@ -92,11 +93,15 @@ const (
 // Fleet table columns (ready and working are named as in the work table).
 // withdrawn (hidden) holds a work card withdrawn because no member was up, so
 // that the tick deals the same card again rather than cutting another: the table
-// layer never places a removed member again. ok and failed (hidden) hold the
-// member's finished work cards, finished ok and finished failed. done and ok%
-// are the table's own formulas over them, computed at render and never
-// written: done is sum(ok+failed), ok% (the column okpct) is
-// pct(ok/ok+failed), and the footer pools ok% over the members. ctl (hidden)
+// layer never places a removed member again. ok, failed, brief and machinery
+// (hidden) hold the member's finished work cards: finished ok, and finished
+// failed by the cause of the failure (cause.go), failed the work's own fault,
+// brief a brief the worker could not satisfy as written, machinery the sprint's
+// machinery failing the attempt. done and ok% are the table's own formulas over
+// them, computed at render and never written: done is
+// sum(ok+failed+brief+machinery), ok% (the column okpct) is pct(ok/ok+failed),
+// the work-fault rate (a brief or machinery fault never moves it), and the
+// footer pools ok% over the members. ctl (hidden)
 // holds the member's control card: its status and its width (width.go), which
 // the width column shows beside working.
 const (
@@ -104,10 +109,14 @@ const (
 	OkPct      = "okpct"
 	DoneOK     = "ok"
 	DoneFailed = "failed"
-	Status     = "status"
-	Active     = "active" // friends.active: how long ago her session last wrote a file
-	Load       = "load"
-	Withdrawn  = "withdrawn"
+	// DoneBrief and DoneMachinery hold the failed work cards whose cause was
+	// not the work (cause.go): beside ok and failed, never in ok%.
+	DoneBrief     = "brief"
+	DoneMachinery = "machinery"
+	Status        = "status"
+	Active        = "active" // friends.active: how long ago her session last wrote a file
+	Load          = "load"
+	Withdrawn     = "withdrawn"
 )
 
 // Stream states (the merge table's state column).
@@ -248,8 +257,8 @@ func (n Names) Definitions() []ntable.Table {
 		mk(Work, "waiting,ready,working,review,merging,landed,cost:text:sum"),
 		mk(Readers, "asked,reading,ok,broken,tiers:text"),
 		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Since, Returned, Ctl),
-		mk(Fleet, "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none",
-			Withdrawn, DoneOK, DoneFailed, Ctl),
+		mk(Fleet, "ready,working,width:text:sum,done:sum(ok+failed+brief+machinery),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none,brief,machinery",
+			Withdrawn, DoneOK, DoneFailed, Ctl, DoneBrief, DoneMachinery),
 	}
 }
 

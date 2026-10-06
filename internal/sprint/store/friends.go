@@ -75,9 +75,13 @@ type FriendRow struct {
 	Width   int    `json:"width"`
 	OK      int    `json:"ok"`
 	Failed  int    `json:"failed"`
-	Status  string `json:"status"`
-	Class   string `json:"class,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	// Brief and Machinery are her failed cards whose cause was not her work
+	// (sprint.FailureCause): beside ok and failed, never in her ok%.
+	Brief     int    `json:"brief"`
+	Machinery int    `json:"machinery"`
+	Status    string `json:"status"`
+	Class     string `json:"class,omitempty"`
+	Mode      string `json:"mode,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`

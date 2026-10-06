@@ -1013,6 +1013,11 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
+	// a fleet table from before the causes of a failed attempt gets their columns
+	if err := st.EnsureDoneCauses(ctx); err != nil {
+		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
 	if err := st.Init(ctx); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1

@@ -1190,6 +1190,9 @@ type FinishReq struct {
 	Failed bool
 	Head   string
 	Report string
+	// Cause is a failed finish's cause when its finisher names one (CauseWork, CauseBrief
+	// or CauseMachinery); empty, the finish reads it from the report (FailureCause).
+	Cause string `json:",omitempty"`
 	// Branch and Base are the branch the work is on and the one it started
 	// from, as the worker reports them.
 	Branch, Base string
@@ -1354,12 +1357,18 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
 		}
 		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
-		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
-			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
 		// the brief's bound as this finish leaves the card (brief_bound.go): the same failure
 		// escalates below the ceiling only under the attempt cap
 		bb, atBound := AtBriefBound(withField(pr, FieldCostTotal, set[FieldCostTotal]), r.Report, s.AttemptsCap(pr.Row))
+		if r.Failed && !passed {
+			// the failure's cause, recorded as it fails (cause.go): the column it counts in
+			// beside ok, and ok% moves on the work's own faults alone
+			cause := FailureCause(r.Cause, r.Report, atBound)
+			cardSet[FieldCause], into = cause, CauseColumn(cause)
+		}
+		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
+			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		if next := s.NextTier(pr); identical && next != "" && !atBound {
 			// the second identical failure below its ceiling (rules 1 and 2, nova-tools#5174:
 			// "Flash first on every card; pro only on escalation"): no judgment; the primary

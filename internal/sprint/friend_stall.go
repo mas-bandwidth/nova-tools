@@ -103,7 +103,7 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 				}
 			}
 		}
-		for _, c := range append(append([]*Card(nil), s.Fleet.Cell(row, DoneOK)...), s.Fleet.Cell(row, DoneFailed)...) {
+		for _, c := range s.Fleet.Cells(row, DoneCols...) {
 			if t := stampAt(c, "finished"); t.After(activity) {
 				activity = t
 			}

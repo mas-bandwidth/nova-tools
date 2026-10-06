@@ -99,7 +99,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 		{"a provider failure is never made failed work", both, providerLine, decide.ClassNothingToDo, 0.99, sprint.Withdrawn, "", false},
 		{"a provider failure is never made no result", both, providerLine, decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
 		{"a staging refusal is the member's", both, cardhdr.EndStaging + ": no bench mirror", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
-		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.DoneFailed, "", false},
+		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.DoneMachinery, "", false}, // no worktree: the machinery's fault (cause.go)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

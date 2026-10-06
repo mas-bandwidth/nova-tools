@@ -155,6 +155,29 @@ func readyPrimaries(t ntable.Table) int64 {
 // upWidth is the total width of the fleet members whose status is up
 // (docs/SPEC-SPRINT.md section 1, the fleet table's width column): the sum of
 // each up member's width, the default where its row names none.
+// causeCounts is the fleet table's failed work cards by cause, counted off its rows' failed,
+// brief and machinery cells (a friend's row too); nil while none has failed.
+func causeCounts(t ntable.Table) map[string]int {
+	out := map[string]int{}
+	for _, cause := range sprint.Causes {
+		j := t.Column(sprint.CauseColumn(cause))
+		if j < 0 {
+			continue
+		}
+		for _, r := range t.Rows {
+			if j < len(r.Cells) && !r.Cells[j].Unread {
+				out[cause] += int(r.Cells[j].Count)
+			}
+		}
+	}
+	for _, n := range out {
+		if n > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
 func upWidth(t ntable.Table) int {
 	var n int
 	for _, r := range t.Rows {
@@ -472,6 +495,10 @@ type whereView struct {
 	All     int64     `json:"all"`
 	Held    int64     `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
 	Summary string    `json:"summary"`
+	// Causes is the failed attempts of the epoch by cause (work, brief, machinery), every
+	// row of the fleet table, a friend's too: the line under the summary
+	// (sprint.CauseLine); absent while none has failed.
+	Causes map[string]int `json:"causes,omitempty"`
 	// Tables is table -> row -> column -> cell as printed (a string, every cell of every
 	// row, the shape the dashboard's pull reads); a work row carries besides its cells
 	// `per_landed` (dollars per landed card, as the cost column shows money).
@@ -900,6 +927,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	}
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
+	// the failed attempts by cause, one line under the summary, once one has failed
+	if v.Causes = causeCounts(shapes[slices.Index(sprint.ViewOrder, sprint.Fleet)]); v.Causes != nil {
+		b.WriteString(sprint.CauseLine(v.Causes) + "\n")
+	}
 	// the five heaviest cards, the ones the most wait on, under the summary: the tick's where
 	// record carries them (weight.go; store.WhereRecord)
 	if v.Critical = facts.Critical; len(v.Critical) > 0 {
@@ -972,6 +1003,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		friends[i].Working = c.Working
 		friends[i].OK = c.OK
 		friends[i].Failed = c.Failed
+		friends[i].Brief, friends[i].Machinery = c.Brief, c.Machinery
 		if f.Status == sprint.Down {
 			friends[i].Working = 0 // down, she works nothing
 		}
@@ -1057,7 +1089,8 @@ func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts) ntable
 }
 
 // splitFriendRows is the fleet table without the friends' rows (sprint.FriendRow), and
-// each friend's sprint cards counted off her row: ready, working, and done ok and failed.
+// each friend's sprint cards counted off her row: ready, working, and done ok and failed by
+// cause (failed the work's own, brief, machinery).
 func splitFriendRows(t ntable.Table) (ntable.Table, map[string]store.FriendRow) {
 	at := map[string]int{}
 	for j, c := range t.Columns {
@@ -1079,7 +1112,7 @@ func splitFriendRows(t ntable.Table) (ntable.Table, map[string]store.FriendRow) 
 			continue
 		}
 		out[name] = store.FriendRow{Name: name, Ready: count(r, string(sprint.Ready)), Working: count(r, string(sprint.Working)),
-			OK: count(r, sprint.DoneOK), Failed: count(r, sprint.DoneFailed)}
+			OK: count(r, sprint.DoneOK), Failed: count(r, sprint.DoneFailed), Brief: count(r, sprint.DoneBrief), Machinery: count(r, sprint.DoneMachinery)}
 	}
 	return machines, out
 }
@@ -1115,6 +1148,8 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[string(sprint.Working)]].Count = int64(f.Working)
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
+		cells[at[sprint.DoneBrief]].Count = int64(f.Brief)
+		cells[at[sprint.DoneMachinery]].Count = int64(f.Machinery)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
 			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
 	}

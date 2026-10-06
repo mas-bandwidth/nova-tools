@@ -1,6 +1,7 @@
 package refmodel
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -85,7 +86,7 @@ func Abstract(o Observed) State {
 			continue
 		}
 		c := s.Fleet.Card(WC(id, p.Attempt))
-		if c != nil && c.Placed() && (c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed) {
+		if c != nil && c.Placed() && slices.Contains(sprint.DoneCols, c.Col) {
 			p.Attempt++
 			a.Primaries[id] = p
 		}
@@ -99,7 +100,7 @@ func Abstract(o Observed) State {
 			Redeals: c.Int("redeals"), TakeEnded: c.F(sprint.FieldTakeEnded) != "", Refusers: sprint.StagingRefusers(c)}
 		if c.Placed() {
 			w.Place, w.Member = c.Col, c.Row
-			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed {
+			if slices.Contains(sprint.DoneCols, c.Col) {
 				w.Place = sprint.Done // the member's ok and failed cells are the done column's parts
 			}
 		}

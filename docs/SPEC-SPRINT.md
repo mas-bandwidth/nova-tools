@@ -99,9 +99,39 @@ is her width, the jobs she works at once: her nova-config friend row's `width`
 owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends?
 Start at 8 for each?"), which friend sync writes to her row each pass (a row
 whose width is below 1 is refused, exit 1, nothing written), summed in the
-footer; `ok` and `failed` count her cards done; `done` is `sum(ok+failed)` and
-`ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the fleet
-table's own formulas.
+footer; `ok` counts her cards done ok and `failed`, `brief` and `machinery` her
+cards done failed by the cause of the failure (below); `done` is
+`sum(ok+failed+brief+machinery)` and `ok%` is `pct(ok/ok+failed)`, pooled over the
+friends in the footer, the fleet table's own formulas.
+
+**The cause of a failed attempt** (the owner, 2026-10-05, reading 72 to 76 percent ok
+on the friends table: "75% seems really low."; that night's HOLDs were 41 for files
+outside the brief's PATHS, 20 for no remote or worktree to push from, 6 for names a
+doc guardrail refused and several lanes that died without a report, and nearly every
+one came back as a twin that landed). Every failed attempt is recorded with its cause
+at the moment it fails, on its work card (`cause`) and by the column of its member's
+row it is finished into (internal/sprint/cause.go, `FailureCause`):
+
+- `brief`: a brief the worker could not satisfy as written: a PATHS or STOP it could
+  not hold (the report names files outside PATHS, carries a `PATHS-PROPOSED:` line, or
+  the lander's E12), a name a guardrail refused, a brief defect said outright, or the
+  brief's bound (`AtBriefBound`: the same failure twice, or the attempt cap).
+- `machinery`: no worktree, remote or push, a lane, child or daemon that died or left
+  no report, a packet with no tier, a daemon that did not deliver.
+- `work` (the column `failed`): the worker's own fault, a wrong fix, a false claim, a
+  missing test; every failure that names neither of the others. A reader's broken read
+  of an attempt that finished ok makes it the work's fault when its primary is reworked:
+  the work card moves from `ok` to `failed`, `cause=work`.
+
+A finish may name its cause (`FinishReq.Cause`); else the report's words decide, brief
+before machinery. `ok%` is the work-fault rate, ok over ok plus the work's faults: a
+brief or machinery fault moves `done` and never `ok%`. The dashboard draws the brief and
+machinery faults as small numbers in the same cell (`b2 m1`), the pull view's text after
+the percent (`ok 100.0% (brief 2 machinery 1)`), and `where` prints the epoch's totals as
+one line under the summary, once one attempt has failed: `failed attempts: work 3 · brief
+41 · machinery 20` (`where --json`: `causes`). A fleet table created before the causes
+gains the two hidden columns, and `done` its new sum, at `init` and at `run`
+(`store.EnsureDoneCauses`).
 
 A friend says she is there with `friend beat <friend>` (answered `FRIEND-BEAT OK
 <friend> at=<t> ... row_mode=<batch|one-shot> row_width=<n>`, her nova-config row
@@ -783,11 +813,13 @@ where each stream's control card holds the stream's state, cause, ci and
 show it. The fleet table has a hidden `ctl` column where each member's control
 card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
-layer never places a removed member again), and hidden `ok` and `failed`
-columns that hold a member's finished work cards, finished ok and finished
-failed. `done` and `ok%` are the table's own formulas over those two cells,
-computed at render and never written: `done:sum(ok+failed)` and
-`okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
+layer never places a removed member again), and hidden `ok`, `failed`, `brief`
+and `machinery` columns that hold a member's finished work cards, finished ok
+and finished failed by the cause of the failure (`failed` the work's own;
+section 1, "The cause of a failed attempt"). `done` and `ok%` are the table's
+own formulas over those cells, computed at render and never written:
+`done:sum(ok+failed+brief+machinery)` and `okpct:pct(ok/ok+failed):pooled:ok%`
+(the column `okpct`, labelled `ok%`, the work-fault rate). A
 member with no finished card shows `0` and `0.0%`; the footer pools ok% over
 the members (every ok over every finished card, never a mean of the members'
 percentages). The text cells (ci, state, since, status, load) are display

@@ -68,15 +68,29 @@ type SprintLine struct {
 	Machine string `json:"machine"`
 }
 
-// PullRow is a row of the friends table or the fleet table as where prints its cells.
+// PullRow is a row of the friends table or the fleet table as where prints its cells. OKPct
+// is the work-fault rate; Brief and Machinery are the failed attempts that were not the
+// work's own fault, beside it (docs/SPEC-SPRINT.md section 1, "The cause of a failed
+// attempt"), absent from a table that has no such column.
 type PullRow struct {
-	Status  string `json:"status"`
-	Ready   string `json:"ready"`
-	Working string `json:"working"`
-	Width   string `json:"width"`
-	Done    string `json:"done"`
-	OKPct   string `json:"okpct"`
-	Load    string `json:"load,omitempty"`
+	Status    string `json:"status"`
+	Ready     string `json:"ready"`
+	Working   string `json:"working"`
+	Width     string `json:"width"`
+	Done      string `json:"done"`
+	OKPct     string `json:"okpct"`
+	Brief     string `json:"brief,omitempty"`
+	Machinery string `json:"machinery,omitempty"`
+	Load      string `json:"load,omitempty"`
+}
+
+// causes is the row's brief and machinery faults after its ok%, when either is more than
+// none: " (brief 2 machinery 1)".
+func (r PullRow) causes() string {
+	if (r.Brief == "" || r.Brief == "0") && (r.Machinery == "" || r.Machinery == "0") {
+		return ""
+	}
+	return fmt.Sprintf(" (brief %s machinery %s)", dash(r.Brief), dash(r.Machinery))
 }
 
 // PullView is one friend's or one machine's view: the sprint line, the row, the cards
@@ -115,7 +129,7 @@ func pullView(c *sprintCopy, kind, name string) (PullView, bool) {
 	v := PullView{At: c.At, Kind: kind, Name: name, Cards: []PullCard{}, Judgments: []PullJudgment{},
 		Sprint: SprintLine{Landed: c.Landed, All: c.All, Held: c.Held, ETA: etaOf(c.Summary), Machine: strings.TrimPrefix(c.Machine, "machine: ")},
 		Row: PullRow{Status: cells["status"], Ready: cells["ready"], Working: cells["working"], Width: cells["width"],
-			Done: cells["done"], OKPct: cells["okpct"], Load: cells["load"]}}
+			Done: cells["done"], OKPct: cells["okpct"], Brief: cells["brief"], Machinery: cells["machinery"], Load: cells["load"]}}
 	mine := map[string]bool{}
 	for _, card := range c.Cards {
 		if card.Member == member {
@@ -186,7 +200,7 @@ func (t TeamView) Text() string {
 	b.WriteString(sprintText(t.Sprint, t.At))
 	for _, f := range t.Friends {
 		r := f.Row
-		fmt.Fprintf(&b, "friend %s %s working %s/%s ready %s done %s ok %s\n", f.Name, dash(r.Status), dash(r.Working), dash(r.Width), dash(r.Ready), dash(r.Done), dash(r.OKPct))
+		fmt.Fprintf(&b, "friend %s %s working %s/%s ready %s done %s ok %s%s\n", f.Name, dash(r.Status), dash(r.Working), dash(r.Width), dash(r.Ready), dash(r.Done), dash(r.OKPct), r.causes())
 		for _, c := range f.Cards {
 			fmt.Fprintf(&b, "  %s %s %s %s\n", c.ID, dash(c.Stream), c.State, since(t.At, c.Since))
 		}
@@ -213,7 +227,7 @@ func (v PullView) Text() string {
 	var b strings.Builder
 	b.WriteString(sprintText(v.Sprint, v.At))
 	r := v.Row
-	fmt.Fprintf(&b, "%s %s %s ready %s working %s/%s done %s ok %s", v.Kind, v.Name, dash(r.Status), dash(r.Ready), dash(r.Working), dash(r.Width), dash(r.Done), dash(r.OKPct))
+	fmt.Fprintf(&b, "%s %s %s ready %s working %s/%s done %s ok %s%s", v.Kind, v.Name, dash(r.Status), dash(r.Ready), dash(r.Working), dash(r.Width), dash(r.Done), dash(r.OKPct), r.causes())
 	if v.Kind == KindMachine {
 		fmt.Fprintf(&b, " load %s", dash(r.Load))
 	}

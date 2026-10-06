@@ -147,8 +147,12 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 			s += " on " + b
 		}
 		return s
+	case toCol == DoneFailed && fromCol == DoneOK:
+		return fmt.Sprintf("attempt %s, finished ok on %s, counted failed: a reader found it broken", a, fromRow)
 	case toCol == DoneFailed:
 		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)
+	case toCol == DoneBrief, toCol == DoneMachinery:
+		return fmt.Sprintf("%s finished attempt %s: FAILED (%s)", fromRow, a, causeOfColumn(toCol))
 	case toCol == string(Ready) && fromCol == Withdrawn:
 		return fmt.Sprintf("attempt %s redealt to %s (generation %d%s)", a, toRow, l.Gen, redealOf(l))
 	case toCol == string(Ready) && fromRow != toRow && strings.Contains(l.Verb, "level"):

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -78,7 +79,7 @@ func tell(run []sprint.Line) []storyLine {
 	for _, l := range run {
 		if l.Note == nil {
 			moved = true
-			if l.Table == sprint.Fleet && (strings.HasSuffix(l.To, ":"+sprint.DoneOK) || strings.HasSuffix(l.To, ":"+sprint.DoneFailed)) {
+			if l.Table == sprint.Fleet && slices.ContainsFunc(sprint.DoneCols, func(col string) bool { return strings.HasSuffix(l.To, ":"+col) }) {
 				finished = true
 			}
 		}
@@ -369,7 +370,7 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 func outcome(l sprint.Line) string {
 	a := attemptOf(l)
 	switch {
-	case l.Note == nil && l.Table == sprint.Fleet && strings.HasSuffix(l.To, ":"+sprint.DoneFailed):
+	case l.Note == nil && l.Table == sprint.Fleet && slices.ContainsFunc(sprint.FaultCols, func(col string) bool { return strings.HasSuffix(l.To, ":"+col) }):
 		return "attempt " + a + " failed"
 	case l.Note == nil && l.Table == sprint.Readers && strings.HasSuffix(l.To, ":"+sprint.Broken):
 		reader, _, _ := strings.Cut(l.To, ":")

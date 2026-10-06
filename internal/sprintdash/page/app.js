@@ -211,7 +211,17 @@ function frac(a, b, digits) {
 function digitsOf(n) { return String(Math.max(0, n)).length; }
 function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
 function setPill(p, text, tone, title) { setText(p._t, text); setClass(p, "pill " + tone); setTitle(p, title || text); }
-function setOk(o, p, done) { setText(o, p === null ? "-" : p.toFixed(1) + "%"); setClass(o, "num" + (done ? "" : " zero")); }
+// the ok% cell: the work-fault rate (ok over ok plus the work's own faults), with the brief's
+// and the machinery's faults as their own small numbers beside it (docs/SPEC-SPRINT.md
+// section 1, "The cause of a failed attempt"); a fault that was not the work's never moves ok%
+function setOk(o, p, done, brief, machinery) {
+  var h = p === null ? "-" : p.toFixed(1) + "%";
+  if (brief) h += "<small class=\"cause\" title=\"brief faults\">b" + brief + "</small>";
+  if (machinery) h += "<small class=\"cause\" title=\"machinery faults\">m" + machinery + "</small>";
+  setHTML(o, h);
+  setTitle(o, "ok% counts the work's own faults; brief " + (brief || 0) + ", machinery " + (machinery || 0) + " not counted");
+  setClass(o, "num" + (done ? "" : " zero"));
+}
 var STATUS_TONE = { up: "good", held: "warning", down: "critical" };
 
 // ---------- sections ----------
@@ -361,7 +371,7 @@ function fleetLike(box, table, withLoad) {
     if (withLoad) box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
-  var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0 };
+  var t = { ready: 0, done: 0, ok: 0, failed: 0, brief: 0, machinery: 0, up: 0, held: 0, down: 0 };
   var scale = Math.max(1, names.reduce(function (a, n) { return Math.max(a, int(table[n].width)); }, 0));
   // the track column is exactly the widest track, so the figure sits right after it
   var tw = (scale * (TRACK_CELL + TRACK_GAP) - TRACK_GAP).toFixed(3) + "rem";
@@ -379,19 +389,21 @@ function fleetLike(box, table, withLoad) {
     var m = table[k], working = int(m.working), width = int(m.width), done = int(m.done);
     var okv = m.okpct != null ? m.okpct : m["ok%"];
     t.ready += int(m.ready); t.done += done; t.ok += int(m.ok);
+    t.failed += int(m.failed); t.brief += int(m.brief); t.machinery += int(m.machinery);
     if (m.status in t) t[m.status]++;
     setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
     setTrack(r.track, working, width, scale);
     setHTML(r.wf, frac(working, width, digits));
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
-    setOk(r.ok, pct(okv), done);
+    setOk(r.ok, pct(okv), done, int(m.brief), int(m.machinery));
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
   }, box._total);
   var c = box._total._c;
   setNum(c[2], t.ready);
   setNum(c[5], t.done);
-  setOk(c[6], t.done ? t.ok / t.done * 100 : null, t.done);
+  // the footer pools ok% as the table does: ok over ok plus the work's own faults
+  setOk(c[6], t.ok + t.failed ? t.ok / (t.ok + t.failed) * 100 : null, t.done, t.brief, t.machinery);
   return { t: t, n: names.length };
 }
 

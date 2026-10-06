@@ -309,6 +309,11 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}
+	// a fleet table from before the causes of a failed attempt gets their columns before
+	// the first finish is placed by its cause (store.EnsureDoneCauses)
+	if err := st.EnsureDoneCauses(context.Background()); err != nil {
+		return refuse(stderr, "run", err.Error())
+	}
 	if profile != "" {
 		stop, err := startProfile(profile)
 		if err != nil {

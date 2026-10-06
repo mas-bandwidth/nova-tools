@@ -1144,6 +1144,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, append(unset, "result")...))),
 				Moved: c.ID + " review -> ready (rework; " + later + ")"}
 		}
+		if wc := brokenOK(s, c, broken); wc != nil {
+			// a reader found the attempt's work broken: its ok finish is the work's own fault
+			// (a wrong fix, a false claim, a missing test), counted as it is sent back (cause.go)
+			u.Changes = append(u.Changes, change(Fleet, moveEntry(wc, wc.Row, DoneFailed, map[string]string{FieldCause: CauseWork})))
+		}
 		if tier != "" {
 			u.Moved += "; tier " + tier
 		}
@@ -1174,6 +1179,21 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	roundWrites(&p, rr, moves)
 	ri.write(&p) // a rework's attempt is a card dealt: its tier's route index moves (route.go)
 	return p
+}
+
+// brokenOK is the work card of primary c's attempt that finished ok when broken of its reads
+// at that attempt found it broken: the card a rework moves from its member's ok to failed,
+// the work's own fault. nil with no broken read, or when the attempt's card did not finish
+// ok (a failed finish was counted by its cause as it failed).
+func brokenOK(s *Snapshot, c *Card, broken int) *Card {
+	if broken == 0 {
+		return nil
+	}
+	wc := s.Fleet.Placed(c.F("work"))
+	if wc == nil || wc.Col != DoneOK || wc.Int("attempt") != c.Int("attempt") {
+		return nil
+	}
+	return wc
 }
 
 // reworkAvoid is the member a rework's next attempt avoids: the member of the

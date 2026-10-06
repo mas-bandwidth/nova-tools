@@ -253,6 +253,16 @@ func (t *Table) Column(cols ...string) []*Card {
 	return out
 }
 
+// Cells is the cards placed at row in any of cols, column by column, each in score
+// order (then id).
+func (t *Table) Cells(row string, cols ...string) []*Card {
+	var out []*Card
+	for _, col := range cols {
+		out = append(out, t.Cell(row, col)...)
+	}
+	return out
+}
+
 // Count is the number of cards at row and column.
 func (t *Table) Count(row, col string) int {
 	k := [2]string{row, col}

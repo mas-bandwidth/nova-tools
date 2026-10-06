@@ -112,22 +112,26 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 		ta.json("where", &w)
 		return w.Tables[sprint.Friends]["amy"]
 	}
-	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, both working; the hand job is nowhere")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0", "brief": "0", "machinery": "0"}, amy(), "two cards dealt, both working; the hand job is nowhere")
 
 	// amy finishes s1-1 with a LAND: done ok
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, s1-2 still working")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0", "brief": "0", "machinery": "0"}, amy(), "s1-1 done ok, s1-2 still working")
 
 	// amy reports s1-2 with no verdict word: finished failed, never ok
 	outboxReport(t, root, "amy", "s1-2.w1", "# s1-2\n\nAll green, nothing more.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1", "brief": "0", "machinery": "0"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
 
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["bob"], "bob has no card")
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["cat"], "cat has no card")
+	// a report with no verdict word is the friend's own: the work's fault, one line under the
+	// summary (sprint.CauseLine)
+	assert.Equal(t, map[string]int{sprint.CauseWork: 1, sprint.CauseBrief: 0, sprint.CauseMachinery: 0}, w.Causes)
+	assert.Contains(t, ta.ok("where"), "\nfailed attempts: work 1 · brief 0 · machinery 0\n")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0", "brief": "0", "machinery": "0"}, w.Tables[sprint.Friends]["bob"], "bob has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0", "brief": "0", "machinery": "0"}, w.Tables[sprint.Friends]["cat"], "cat has no card")
 }
 
 // A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit

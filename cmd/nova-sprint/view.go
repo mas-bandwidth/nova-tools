@@ -336,7 +336,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	n.Held = sprint.HeldBack(s)
 	finished := func(row string) int {
 		f := 0
-		for _, c := range append(s.Fleet.Cell(row, sprint.DoneOK), s.Fleet.Cell(row, sprint.DoneFailed)...) {
+		for _, c := range s.Fleet.Cells(row, sprint.DoneCols...) {
 			if within(c.F("finished")) {
 				f++
 			}
