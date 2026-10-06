@@ -32,6 +32,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-check", "checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling", "go test ./cmd/nova-check", "go test ./cmd/nova-check"),
 	E("cmd/nova-card", "writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help, for nova-sprint add --brief-dir", "go test ./cmd/nova-card", "go test ./cmd/nova-card"),
 	E("cmd/nova-ci", "CI slowtests budget and check CLI, and ci-ok's run receipt", "go test ./cmd/nova-ci", "go test ./cmd/nova-ci"),
+	E("cmd/nova-local", "run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts", "go test ./cmd/nova-local", "go test ./cmd/nova-local"),
 	E("cmd/nova-fuse", "the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read", "go test ./cmd/nova-fuse", "go test ./cmd/nova-fuse"),
 	E("cmd/nova-memory", "memory indexing and search CLI", "go test ./cmd/nova-memory", "go test ./cmd/nova-memory"),
 	E("cmd/nova-redis", "Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
