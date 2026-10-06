@@ -5,43 +5,12 @@ package main
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
-
-// reapLeftoverSupervise ends every supervisor and harness group this bench still has on
-// disk, then waits. t.Cleanup on newBench calls it so a subtest that forked a supervise
-// and returned without noting the pid cannot leave a process that ignores TERM (#1598).
-func reapLeftoverSupervise(b *bench) {
-	seen := map[int]bool{}
-	reap := func(pid int) {
-		if pid <= 1 || seen[pid] {
-			return
-		}
-		seen[pid] = true
-		reapLeftoverPID(pid)
-	}
-	if b.dir != "" {
-		_ = filepath.WalkDir(b.dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || d.Name() != "supervisor.pid" {
-				return err
-			}
-			raw, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return nil
-			}
-			pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
-			if convErr == nil {
-				reap(pid)
-			}
-			return nil
-		})
-	}
-}
 
 func reapLeftoverPID(pid int) {
 	if pid <= 1 {

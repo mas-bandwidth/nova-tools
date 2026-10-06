@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,35 +26,6 @@ func nativeHarness(t *testing.T) string {
 	t.Helper()
 	require.NoError(t, buildShared(), "building the binaries these tests run")
 	return builtHarness
-}
-
-// nativeSandbox returns the fake sandbox of the seam tests: a stand-in for nova-sandbox that
-// records its argv and, under NOVA_FAKE_SANDBOX=hosts, reports hosts=enforceable so the
-// repo allow rule reaches the argv. Its compile is shared by every test that asks.
-func nativeSandbox(t *testing.T) string {
-	t.Helper()
-	require.NoError(t, buildShared(), "building the binaries these tests run")
-	return builtFakeSandbox
-}
-
-// nativeSandboxOnPath puts the fake sandbox on PATH under its own name (`nova-sandbox`), so
-// the native run resolves the wall itself rather than being handed a --sandbox path. It
-// returns the directory that now names the wall on PATH; the stand-in itself is built once
-// and linked there, never compiled per test.
-func nativeSandboxOnPath(t *testing.T) string {
-	t.Helper()
-	require.NoError(t, buildShared(), "building the binaries these tests run")
-	dir := builtPathBin
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return dir
-}
-
-// sandboxArgv reads the argv the wall recorded into the job directory, if any.
-func sandboxArgv(t *testing.T, jobDir string) string {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(jobDir, "sandbox-argv"))
-	require.NoError(t, err, "the wall recorded no argv under %s", jobDir)
-	return string(raw)
 }
 
 // TestNativeArgvSkipsAToolchainRootThatIsNotThere: rule 5 of the wall REFUSES a --read
@@ -118,20 +88,6 @@ func hasFlagPair(argv []string, flag, val string) bool {
 	for i, a := range argv {
 		if a == flag && i+1 < len(argv) && argv[i+1] == val {
 			return true
-		}
-	}
-	return false
-}
-
-// hasFlagPairResolved is hasFlagPair with the value compared by symlink-resolved path: on
-// macOS t.TempDir() lands under /var -> /private/var, so the wall argv carries the resolved
-// spelling while the test holds the unresolved one.
-func hasFlagPairResolved(argv []string, flag, want string) bool {
-	for i, a := range argv {
-		if a == flag && i+1 < len(argv) {
-			if got, err := filepath.EvalSymlinks(argv[i+1]); err == nil && got == want {
-				return true
-			}
 		}
 	}
 	return false
@@ -207,21 +163,6 @@ func TestNativeRunAuthCopyIs0600(t *testing.T) {
 	}
 }
 
-// assertConfigRecord reads what the fake harness recorded about the config at its own XDG
-// data home path: the mode it found, and one thing that must be in the bytes it read.
-func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "lbl", "config-record"))
-	require.NoError(t, err, "the harness recorded no config-record")
-	rec := string(raw)
-	if wantMode == "absent" {
-		assert.Equal(t, "absent\n", rec, "the harness saw a config where none should be: %q", rec)
-		return
-	}
-	assert.True(t, strings.HasPrefix(rec, "mode="+wantMode+"\n"), "the harness saw %q, want mode %s", rec, wantMode)
-	assert.True(t, wantBody == "" || strings.Contains(rec, wantBody), "the harness saw no %s in the config it read:\n%s", wantBody, rec)
-}
-
 // TestWallNamedDecodesTheProducersEscapedCwd is the unit half of issue #572: the wall writes
 // `cwd=` through oneline.Field (cmd/nova-sandbox/main.go), so the job directory reaches this
 // side with its spaces escaped (`worker 2` -> `worker\x202`). wallNamed must decode that
@@ -246,41 +187,6 @@ func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
 // it refuses rather than running unwalled -- while the recipients are never expressed, and
 // a bus send is denied by the wall by construction (no nova-bus on PATH, no bus checkout in
 // the write set).
-
-func assertRepoRefusal(t *testing.T, out string) {
-	t.Helper()
-	require.Contains(t, out, "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", out)
-	require.Contains(t, out, "lbl wall cannot express repo rule", "the refusal names the label and the reason, got:\n%s", out)
-	got := strings.Count(strings.TrimSpace(out), "\n") + 1
-	require.Equal(t, 1, got, "exactly one REFUSED line, got %d:\n%s", got, out)
-}
-
-// nativeLoggedEnv reads the env lines of a native-argv.log into a name -> values map.
-func nativeLoggedEnv(t *testing.T, log string) map[string][]string {
-	t.Helper()
-	m := map[string][]string{}
-	for _, line := range strings.Split(log, "\n") {
-		if !strings.HasPrefix(line, "env: ") {
-			continue
-		}
-		kv := strings.TrimPrefix(line, "env: ")
-		name, val, _ := strings.Cut(kv, "=")
-		m[name] = append(m[name], val)
-	}
-	return m
-}
-
-// resolvedPath is a path made absolute and symlink-resolved, which is the form admission
-// records. A test that builds its expectation from t.TempDir() must resolve it too: on
-// darwin the temp directory is handed out under /var, a symlink to /private/var, so the
-// unresolved spelling and the recorded one are two names for one directory and a string
-// compare between them fails on every macOS bench (issue #578).
-func resolvedPath(t *testing.T, path string) string {
-	t.Helper()
-	real, err := filepath.EvalSymlinks(path)
-	require.NoError(t, err, "resolving %s", path)
-	return real
-}
 
 // ISSUE #915 (windows leg): the legacy --auth native path refuses an auth source looser than
 // 0600 and a copy that does not end 0600 (copyAuth). NTFS carries no unix permission bits --
@@ -336,32 +242,6 @@ func TestAuthModeRulesAskThePlatform(t *testing.T) {
 			require.Equal(t, tc.want, got, "authModeNotOwnerOnly(goos=%s, mode=%04o) = %v, want %v (#915)", tc.goos, tc.mode, got, tc.want)
 		})
 	}
-}
-
-// nativeWorkerDescription writes a worker description the native run can be pointed at: the
-// model it pins, and the key named either by the legacy key_file (for --auth) or by the
-// `secret` variable a nova-secrets exec would deliver.
-func nativeWorkerDescription(t *testing.T, model, keyShape string) string {
-	t.Helper()
-	home := t.TempDir()
-	desc := map[string]any{
-		"name": "fake-1", "provider": "fake", "model": model,
-		"env_var": "FAKE_KEY", "usage": "opencode",
-		"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
-		"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
-	}
-	if keyShape == "secret" {
-		desc["secret"] = "FAKE_KEY"
-	} else {
-		key := filepath.Join(t.TempDir(), "key")
-		require.NoError(t, os.WriteFile(key, []byte("FAKE_KEY="+fakeKey+"\n"), 0o600))
-		desc["key_file"] = key
-	}
-	raw, err := json.MarshalIndent(desc, "", "  ")
-	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), "worker.json")
-	require.NoError(t, os.WriteFile(path, raw, 0o644))
-	return path
 }
 
 // codex-review's hold on #2806: the card owns the data home while it runs, so it can chmod

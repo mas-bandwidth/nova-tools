@@ -287,9 +287,6 @@ func nativeEndLeftovers(pgid int, started string) string {
 	return strconv.Itoa(pgid) + ":reaped"
 }
 
-// nativeRunPhases is the sequence of named phases nativeRun executes in order.
-var nativeRunPhases = []string{"prepare", "wall", "start", "watch", "collect", "report"}
-
 type nativePrepared struct {
 	cfg          nativeRunConfig
 	startTime    time.Time

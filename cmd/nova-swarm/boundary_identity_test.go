@@ -73,11 +73,3 @@ func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing
 	gotPos := strings.TrimSpace(string(outPos))
 	require.Equal(t, "Pool Identity <pool@example.com>", gotPos, "positive control expected pool identity %q, got %q", "Pool Identity <pool@example.com>", gotPos)
 }
-
-func restoreEnv(key, val string) {
-	if val != "" {
-		os.Setenv(key, val)
-	} else {
-		os.Unsetenv(key)
-	}
-}
