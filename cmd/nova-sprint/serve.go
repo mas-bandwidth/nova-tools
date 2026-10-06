@@ -497,6 +497,20 @@ func (a *app) serveView(w http.ResponseWriter, r *http.Request) {
 		} else if on {
 			argv = append(argv, "--all")
 		}
+	case "cards":
+		if q.Get("since") != "" {
+			http.Error(w, "the cards view takes no since", http.StatusBadRequest)
+			return
+		}
+		for _, k := range []string{"col", "stream", "holder", "by"} {
+			if v := q.Get(k); v != "" {
+				if !sprint.ValidID(v) {
+					http.Error(w, k+" is a name (letters, digits, _ and -)", http.StatusBadRequest)
+					return
+				}
+				argv = append(argv, "--"+k, v)
+			}
+		}
 	case "worker":
 		as := q.Get("as")
 		if !sprint.ValidID(as) {
@@ -505,7 +519,7 @@ func (a *app) serveView(w http.ResponseWriter, r *http.Request) {
 		}
 		argv = append(argv, "--as", as)
 	default:
-		http.Error(w, "the views are "+viewPath+"coordinator and "+viewPath+"worker?as=<name>", http.StatusNotFound)
+		http.Error(w, "the views are "+viewPath+"coordinator, "+viewPath+"cards and "+viewPath+"worker?as=<name>", http.StatusNotFound)
 		return
 	}
 	if since := q.Get("since"); since != "" {
