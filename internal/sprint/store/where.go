@@ -79,10 +79,17 @@ func readWhere(raw string, ok bool) (WhereRecord, bool) {
 // shape and the record, two exchanges); else the sprint from the twin, brought
 // up to date, and the record written. A twin held by another step of this
 // process, or a clear under the read, leaves it to the next tick.
+//
+// First, every tick, the card log index takes the log's new lines
+// (keepLogIndex, load.go): the cursor read and the lines after it, two
+// exchanges, and their entries written in one more when there are any.
 func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	kv, err := st.kv()
 	if err != nil {
 		return nil // a store that keeps no records: where counts the cards
+	}
+	if err := st.keepLogIndex(ctx); err != nil {
+		return fmt.Errorf("the card log index: %w", err)
 	}
 	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Work)})
 	if err != nil {
@@ -111,7 +118,166 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if err != nil {
 		return err
 	}
-	return kv.SetKey(ctx, keyWhere, string(b))
+	if err := kv.SetKey(ctx, keyWhere, string(b)); err != nil {
+		return err
+	}
+	facts, err := json.Marshal(cardFactsOf(snap))
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, keyCardFacts, string(facts))
+}
+
+// The card facts (card-read-speed.w2, docs/SPEC-SPRINT.md section 11, the card
+// verb): what a card read needs of the whole work table, each placed primary's
+// needs with their states and the primaries that need it (sprint.NeedsOf),
+// counted by the tick with the where record from the same snapshot, at the
+// same revision, so `card <id>` reads its own records and not every card's (on
+// 2026-10-04 it read the 2,000 cards' records, briefs and all, for its needs).
+// A record of another epoch or another revision of the work table is not read:
+// the card read then counts its needs from the table, as before.
+
+// keyCardFacts is the card facts' key, under the deployment's prefix.
+const keyCardFacts = "cardfacts" // STRING, the card facts (JSON)
+
+// the record is the sprint's, as the where record is: teardown removes it
+func init() { machineKeys = append(machineKeys, keyCardFacts) }
+
+// CardFacts is the card facts: the epoch and the work table's revision they
+// were counted at, and, by primary, its needs and what needs it (only the
+// primaries that have any).
+type CardFacts struct {
+	Epoch    uint64                        `json:"epoch"`
+	Rev      uint64                        `json:"rev"`
+	Needs    map[string][]sprint.NeedState `json:"needs,omitempty"`
+	NeededBy map[string][]string           `json:"needed_by,omitempty"`
+}
+
+// cardFactsOf is sprint.NeedsOf of every primary on the table in one pass: the
+// needs of each (its named needs and its place in line's waits, with their
+// states), and the primaries that need each, in the table's order, a
+// sentinel's waiting cards behind it after them.
+func cardFactsOf(s *sprint.Snapshot) CardFacts {
+	f := CardFacts{Epoch: s.Epoch, Rev: s.Work.Revision, Needs: map[string][]sprint.NeedState{}, NeededBy: map[string][]string{}}
+	placed := s.Work.Column(sprint.States...)
+	for _, o := range placed {
+		for _, n := range sprint.Split(o.F("needs")) {
+			if !slices.Contains(f.NeededBy[n], o.ID) {
+				f.NeededBy[n] = append(f.NeededBy[n], o.ID)
+			}
+		}
+	}
+	for _, c := range placed {
+		if sprint.IsSentinel(c) {
+			for _, b := range sprint.Behind(s, c) {
+				if !slices.Contains(f.NeededBy[c.ID], b.ID) {
+					f.NeededBy[c.ID] = append(f.NeededBy[c.ID], b.ID)
+				}
+			}
+		}
+		named := sprint.Split(c.F("needs"))
+		for _, n := range sprint.PositionWaits(s, c, nil) {
+			if !slices.Contains(named, n) {
+				named = append(named, n)
+			}
+		}
+		waived := sprint.Split(c.F("waived"))
+		for _, n := range named {
+			st := "not on the table"
+			if nc := s.Work.Card(n); nc.Placed() {
+				st = nc.Col
+			} else if nc != nil {
+				st = "off the table (" + dash(nc.F("outcome")) + ")"
+			}
+			ns := sprint.NeedState{ID: n, State: st, Waived: slices.Contains(waived, n)}
+			if ns.Waived {
+				ns.WaivedBy, ns.WaivedAt = c.F("waived_by"), c.F("waived_at")
+			}
+			f.Needs[c.ID] = append(f.Needs[c.ID], ns)
+		}
+	}
+	return f
+}
+
+// CardRead is CardOf, its needs from the card facts when they are of this epoch
+// and the work table's revision now: the primary's own records (its work, read
+// and merge cards), the readers table's rows, the open judgments and the facts
+// record, never every card's. Without such a record, or for a primary off the
+// table, it is CardOf.
+func (st *Store) CardRead(ctx context.Context, id string) (CardInfo, error) {
+	var v CardInfo
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return v, err
+	}
+	st = pinned
+	kv, err := st.kv()
+	if err != nil {
+		return st.CardOf(ctx, id)
+	}
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Readers)})
+	if err != nil {
+		return v, err
+	}
+	raw, ok, err := kv.GetKey(ctx, keyCardFacts)
+	if err != nil {
+		return v, err
+	}
+	var f CardFacts
+	if !ok || json.Unmarshal([]byte(raw), &f) != nil || f.Epoch != st.epoch || f.Rev != shapes[0].Revision {
+		return st.CardOf(ctx, id)
+	}
+	rs, err := st.readSet(ctx, st.Names.Table(sprint.Work), []string{st.sid(id)})
+	if err != nil {
+		return v, err
+	}
+	m, ok := rs.Member(st.sid(id))
+	if !ok {
+		return v, nil
+	}
+	if !m.Placed {
+		return st.CardOf(ctx, id)
+	}
+	v.Primary = card(m)
+	v.Needs, v.NeededBy = f.Needs[id], f.NeededBy[id]
+	if attempts := v.Primary.Int("attempt"); attempts > 0 {
+		var ids []string
+		for k := 1; k <= attempts; k++ {
+			ids = append(ids, sprint.WorkCardID(id, k))
+		}
+		if v.Work, err = st.records(ctx, sprint.Fleet, ids); err != nil {
+			return v, err
+		}
+		ids = nil
+		for k := 1; k <= attempts; k++ {
+			for _, r := range shapes[1].Rows {
+				ids = append(ids, sprint.ReadCardID(id, k, r.Key))
+			}
+		}
+		if len(ids) > 0 {
+			if v.Reads, err = st.records(ctx, sprint.Readers, ids); err != nil {
+				return v, err
+			}
+		}
+	}
+	ms, err := st.records(ctx, sprint.Merge, []string{id})
+	if err != nil {
+		return v, err
+	}
+	if len(ms) == 1 {
+		v.Merge = ms[0]
+	}
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
+		return v, err
+	}
+	open, _ = sprint.SplitOpen(open)
+	for _, o := range open {
+		if o.Subject() == id || contains(o.Note.Primaries, id) {
+			v.Open = append(v.Open, o)
+		}
+	}
+	return v, nil
 }
 
 // The store round trip (store-latency-row-r.w2, docs/SPEC-SPRINT.md section
