@@ -1333,7 +1333,7 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	}
 	after, err := os.Stat(db)
 	require.NoError(t, err, err)
-	assert.True(t, after.ModTime() == before.ModTime() && after.Size() == before.Size(), "the live database changed")
+	assert.True(t, after.ModTime().Equal(before.ModTime()) && after.Size() == before.Size(), "the live database changed")
 	// --scratch is required with --opencode and refused without it.
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--opencode", "bench="+db), 2)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
