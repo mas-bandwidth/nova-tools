@@ -2559,11 +2559,27 @@ id (`--op`) returns the original result, with no second counter or notification.
   tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
   reader loop needs no `--model`, and a reader started with `--model`,
   `--tokens` and `--deadline` runs its reads on those. A store with no route
-  asks with none, and the reader runs its own; a read whose tier no enabled
-  route serves is asked with none too, and the deal's tick raises that
-  tier's judgment, `no route serves the tier`, at once for every primary in
-  review whose reads wait or were asked with no route (`route.go`,
-  readRouteMissing), closed when a route serves the tier.
+  asks with none, and the reader runs its own. **A read needs a reader, not a
+  route** (the card pr-wire-server-restart, 2026-10-05, a heavy card stalled in
+  review under `no enabled route serves tier heavy` while the fleet's table held
+  flash and pro routes only and the friends who read heavy were up; the owner
+  chose this over a heavy fleet route, which would let the fleet be dealt heavy
+  cards it cannot run): a friend's or a bud's reader, `reader-<name>` for a
+  friend whose seat the tick reads or whose friend row the fleet table has
+  (beaten by her daemon, `internal/friend` ReaderOf), brings its own model and
+  serves every tier its tiers cell names, route or none; any other reader is the
+  fleet's, runs the route its read draws, so it serves a tier only while an
+  enabled route of the tier is in the tier's array, and is asked no read of a
+  tier it cannot draw (`sprint.readerServesTier`,
+  `internal/sprint/read_route.go`). Its read of a tier no route serves is asked
+  with no route, and its verdict records on the read card the `model` and
+  `harness` its usage line names (`model=<provider/model> ... harness=<h>`), so
+  the read says what it ran on. The deal's tick raises the tier's judgment,
+  `no route serves the tier`, at once for every primary in review whose reads
+  wait or were asked with no route only when no enabled route serves the tier
+  AND no reader up that brings its own model reads it (`route.go`,
+  readRouteMissing), closed when either serves it
+  (`TestAHeavyCardIsReadByAFriendReaderWithNoHeavyRoute`).
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
   attempt only (the primary's `asked` field still names the readers the
