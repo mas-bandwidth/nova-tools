@@ -181,8 +181,9 @@ type Consumer struct {
 	Gen     int            `json:"gen,omitempty"`  // a work card's generation when it ended
 	Who     string         `json:"who"`            // the member or the reader
 	Route   string         `json:"route,omitempty"`
-	Model   string         `json:"model,omitempty"` // provider/model
-	Tier    string         `json:"tier,omitempty"`  // the tier its route was drawn from (flash first, pro on escalation)
+	Model   string         `json:"model,omitempty"`    // provider/model
+	Tier    string         `json:"tier,omitempty"`     // the tier its route was drawn from (flash first, pro on escalation)
+	TierWhy string         `json:"tier_why,omitempty"` // a read's: why its tier was chosen (readTierChoice)
 	End     string         `json:"end"`
 	At      string         `json:"at"`  // when it ended
 	Key     string         `json:"key"` // the card and its run: one record per key, set once
@@ -192,7 +193,11 @@ type Consumer struct {
 // line is the record as the primary keeps it: the consumer's words, then its usage.
 func (c Consumer) line() string {
 	w := []string{"kind=" + c.Kind, "card=" + c.Card, "attempt=" + itoa(c.Attempt), "take=" + itoa(c.Take), "gen=" + itoa(c.Gen),
-		"who=" + orDash(c.Who), "on_route=" + orDash(c.Route), "on_model=" + orDash(c.Model), "on_tier=" + orDash(c.Tier), "end=" + orDash(strings.ReplaceAll(c.End, " ", "-")), "at=" + orDash(c.At)}
+		"who=" + orDash(c.Who), "on_route=" + orDash(c.Route), "on_model=" + orDash(c.Model), "on_tier=" + orDash(c.Tier)}
+	if c.TierWhy != "" {
+		w = append(w, "tier_why="+c.TierWhy) // a read's: why its tier (readTierChoice)
+	}
+	w = append(w, "end="+orDash(strings.ReplaceAll(c.End, " ", "-")), "at="+orDash(c.At))
 	return strings.Join(w, " ") + " " + c.Usage.String()
 }
 
@@ -227,6 +232,8 @@ func parseConsumer(key, line string) Consumer {
 			c.Model = undash(v)
 		case "on_tier":
 			c.Tier = undash(v)
+		case "tier_why":
+			c.TierWhy = undash(v)
 		case "end":
 			c.End = strings.ReplaceAll(undash(v), "-", " ")
 		case "at":
@@ -295,7 +302,7 @@ func readConsumer(s *Snapshot, c *Card, run int, end, rec string) Consumer {
 		model = cmp.Or(u.Model, c.F(FieldModel)) // a routed read ran its route's model
 	}
 	return Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: u.Route, Model: model,
-		Tier: c.F(FieldTier), End: end, At: stamp(s.Now), Key: key, Usage: u}
+		Tier: c.F(FieldTier), TierWhy: c.F(FieldTierWhy), End: end, At: stamp(s.Now), Key: key, Usage: u}
 }
 
 // CardCostView is a producer card's cost: each consumer that ended, the totals, and

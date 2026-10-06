@@ -455,8 +455,9 @@ does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 `TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow`).
 
 A card whose read tier, before a frontier card is collapsed onto the tier a
-route serves (`readTierOf`), is frontier — a frontier card, or a heavy card
-whose read tier is the one above — is asked of a friend of frontier class,
+route serves (`readTierOf`), is frontier — a frontier code card, a tla/ change
+(section 6, the read tier by kind), or a heavy card whose read tier is the one
+above — is asked of a friend of frontier class,
 not drawn on a reader machine (`FriendReadAsk`, `FriendReadClose`). The friend
 is up, below her room (the same free width a friend's card is dealt within,
 `TickDeal`), and her tiers include frontier: the one with the most free
@@ -2466,8 +2467,27 @@ id (`--op`) returns the original result, with no second counter or notification.
   `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
-  (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn
-  from: the tier of the card it reads, the tier the deal draws that card's
+  (`route`, `model`, `tokens`, `usd`, `deadline`), `tier`, the tier it is drawn
+  from, and `tier_why`, why. **The read tier by kind** (readers.go, `ChangeKind`
+  and `readTierChoice`; the card the-read-tier-follows-the-card-kind: prose cards were read at heavy and
+  frontier, 5 to 15 minutes each, when a pro reader finds the same): the tier
+  follows what the change touches, read off the brief's PATHS, which bound what
+  its head may touch (the lander refuses a head that changes a file outside them,
+  E12). A change whose every PATHS entry names Markdown or text files (`.md`,
+  `.txt`) is prose, read at nova-config's sprint row `read_tier_prose` (pro by
+  default); one with an entry under `tla/` is tla, read at `read_tier_tla`
+  (frontier by default: a friend's read, below); any other (an entry naming code,
+  a directory, a glob with no extension, or no PATHS) is code, read at
+  `read_tier_code` (`card` by default, the card's own tier, below). Each takes
+  `card`, flash, pro, heavy or frontier. A brief pins its own with a line
+  `READ-TIER: <flash|pro|heavy|frontier>` (a word not a tier pins nothing). A
+  stream's or the sprint's read tier (below) still raises the tier chosen and
+  never lowers it. `tier_why` is one word: `<kind>:<field>=<word>`
+  (`prose:read_tier_prose=pro`), `pin:READ-TIER=<t>`, with
+  `,raised:read_tier=<t>` when a setting raised it; the read's cost record on the
+  primary carries it as `tier_why=` beside `on_tier=`
+  (`TestAProseOnlyChangeIsReadAtPro`, `TestTheReadTierFollowsTheCardKind`). A
+  code change's tier, `card`, is the tier of the card it reads, the tier the deal draws that card's
   work from (flash first, the tier it escalated to after; a card that pins a
   model is read on line 1's tier, flash when it names none; a heavy card, heavy; a frontier card, a
   tier no route serves, is asked of a frontier friend, not drawn on a route (section 1, a friend's
@@ -2479,9 +2499,11 @@ id (`--op`) returns the original result, with no second counter or notification.
   <tier>`, the work table's `read_tier` property) when that is stronger, and
   never lowered (nova-tools#5096 item 27: a pro card's reads run on a tier at
   least as strong as the writer's). **The floor is per attempt** (the owner,
-  2026-10-04): a flash-first card whose third attempt runs on pro gets pro
+  2026-10-04): a flash-first code card whose third attempt runs on pro gets pro
   reads whatever its stream's read tier, which is a floor over the attempt's
-  tier and never a cap, and the default read tier is the attempt's own; a
+  tier and never a cap, and the default read tier of a code change is the
+  attempt's own (a prose change's is `read_tier_prose`, a tla change's
+  `read_tier_tla`, above); a
   stream's read tier is never set below its work tier, the strongest tier its
   open cards' briefs name (`sprint.StreamWorkTier`): `stream set <s>
   --read-tier <t>` raises it and refuses to lower it with one line, `<s>'s

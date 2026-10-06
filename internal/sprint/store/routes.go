@@ -104,6 +104,9 @@ type Bars struct {
 	// RulesOff is the sprint row's rules the machine does not answer by (answer_rules_off: a
 	// comma list of config.AnswerRules); "" turns none off.
 	RulesOff string
+	// ReadProse, ReadCode and ReadTLA are the read tier of each kind of change
+	// (read_tier_prose, read_tier_code, read_tier_tla); "" is the kind's default.
+	ReadProse, ReadCode, ReadTLA string
 }
 
 // fields is each bar by its sprint row field (config.SprintKey(field) holds it).
@@ -119,6 +122,9 @@ func (b *Bars) fields() map[string]*string {
 		config.FieldDecideGatePreexisting:    &b.GatePreexisting,
 		config.FieldDecideJudgment:           &b.Judgment,
 		config.FieldAnswerRulesOff:           &b.RulesOff,
+		config.FieldReadTierProse:            &b.ReadProse,
+		config.FieldReadTierCode:             &b.ReadCode,
+		config.FieldReadTierTLA:              &b.ReadTLA,
 	}
 }
 
@@ -130,6 +136,7 @@ func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.DecideScoreBar = rs.Bars.Score
 	s.DecideGateFlaky, s.DecideGatePreexisting = rs.Bars.GateFlaky, rs.Bars.GatePreexisting
 	s.RulesOff = sprint.Split(rs.Bars.RulesOff)
+	s.ReadTierByKind = sprint.ReadTierByKind{Prose: rs.Bars.ReadProse, Code: rs.Bars.ReadCode, TLA: rs.Bars.ReadTLA}
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'

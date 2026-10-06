@@ -348,25 +348,21 @@ func (s *Snapshot) NextTier(c *Card) string {
 	return tierLadder[i+1]
 }
 
-// readTierOf is the tier a primary's reads are drawn from: the tier of the work
-// being read, as the deal draws it (cardTier; the owner, 2026-10-01: "i think
-// readers being conservatively the same tier as the work being done seems
-// fine?"), raised to the read tier set for its stream or the sprint when that is
-// stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
-// a model and names no tier is read on flash. A heavy card is read on heavy. A frontier
-// card, a tier no route serves, is read on heavy, the strongest tier a route serves: a
-// read on pro would be weaker than the writer, which item 27 refuses. The value returned
-// is that collapse: a route drawn for the card is named from it. The tick's ask does not
-// draw that route for a card whose read tier before the collapse is frontier
-// (friend_read.go): that ask is a friend's, one of frontier class (docs/SPEC-SPRINT.md, reads).
+// readTierOf is the tier a primary's reads are drawn from: the tier chosen by what the
+// change touches (readers.go, readTierChoice: prose at pro, code at the tier of the work
+// being read as the deal draws it, cardTier, a tla/ change at frontier, each nova-config's
+// sprint row's, or the brief's READ-TIER pin), raised to the read tier set for its stream
+// or the sprint when that is stronger (settings.go; nova-tools#5096 item 27), never
+// lowered by it. A code card that pins a model and names no tier is read on flash. A heavy
+// code card is read on heavy. A frontier read, a tier no route serves, is drawn on heavy,
+// the strongest tier a route serves. The value returned is that collapse: a route drawn
+// for the card is named from it. The tick's ask does not draw that route for a card whose
+// read tier before the collapse is frontier (friend_read.go): that ask is a friend's, one
+// of frontier class (docs/SPEC-SPRINT.md, reads).
 func (s *Snapshot) readTierOf(pr *Card) string {
-	m, _ := cardhdr.ReadModel(pr.F("brief"))
-	t := cardTier(pr, m)
+	t, _ := s.readTierChoice(pr)
 	if t == cardhdr.RouteFrontier {
 		t = cardhdr.RouteHeavy
-	}
-	if set := s.readTierSetting(pr.Row); set != "" {
-		t = stronger(t, set)
 	}
 	return t
 }
@@ -383,8 +379,9 @@ func (s *Snapshot) readTierOf(pr *Card) string {
 // own --model.
 func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[string]string {
 	tier, key := s.readTierOf(pr), pr.ID
+	_, why := s.readTierChoice(pr)
 	if len(s.Routes) == 0 || ri[tier] == nil {
-		return map[string]string{FieldTier: tier}
+		return map[string]string{FieldTier: tier, FieldTierWhy: why}
 	}
 	served := map[string]Route{}
 	for _, r := range s.Routes {
@@ -401,13 +398,13 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 	at := ri[tier].r.count
 	r, steps, ok := preferFirst(arr, served, avoid, other, at)
 	if !ok {
-		return map[string]string{FieldTier: tier}
+		return map[string]string{FieldTier: tier, FieldTierWhy: why}
 	}
 	ri[tier].r.count += steps
 	was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
 	ri[tier].moves[key] = strconv.FormatUint(was+steps, 10)
 	return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
-		FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
+		FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldTierWhy: why}
 }
 
 // readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
