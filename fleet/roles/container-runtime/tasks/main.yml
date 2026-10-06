@@ -168,6 +168,7 @@
   ansible.builtin.command: podman --version
   register: container_runtime_version
   changed_when: false
+  # ignored: a non-zero exit is the answer (absent), read from rc by the task that follows
   failed_when: false
   check_mode: false
 
