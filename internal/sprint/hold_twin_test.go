@@ -343,6 +343,9 @@ func TestHoldAndUnholdServeMembersReadersFriendsAndStreams(t *testing.T) {
 	s = r.snap()
 	wc := s.Fleet.Card(s.Work.Card(pr).F("work"))
 	r.must(store.FinishStep(sprint.FinishReq{As: "m2", Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: "m2"}))
+	// Amy and bob are pro, so each is asked a flash read while she has room
+	// (docs/SPEC-SPRINT.md). Hold them so this read stays on a reader.
+	r.hold(sprint.HoldReq{Names: []string{"amy", "bob"}, Reason: "the flash read stays with a reader"})
 	r.tick()
 	reads := r.snap().Readers.Of(pr)
 	require.Len(t, reads, 1, "a flash card is read once")

@@ -717,6 +717,9 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 	}
 	cards := make([]dealtCard, 0, len(d.Cards))
 	for _, c := range d.Cards {
+		if c.F("kind") == "read" {
+			continue
+		}
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
 			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier)}
 		own := "dealt"
