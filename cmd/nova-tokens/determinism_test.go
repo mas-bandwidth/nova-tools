@@ -148,8 +148,7 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 			assert.True(t, len(f) == 7 && f[6] == "day_basis=America/Los_Angeles", "a zoned report line is %q; it wants seven fields ending day_basis=<zone>", line)
 		}
 	}
-	subject := lineWith(r.stderr, "REPORT OK")
-	subject = subject[strings.Index(subject, "subject=")+len("subject="):]
+	subject := subjectOf(t, r)
 
 	// The note folds to the same rows the export folds to directly.
 	viaBus := mkdir(t, filepath.Join(dir, "out-bus"))

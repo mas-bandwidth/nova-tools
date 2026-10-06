@@ -439,6 +439,28 @@ func TestReportSaysFailedWhenASourceIsUnreadable(t *testing.T) {
 	wantNotContains(t, r.stderr, "REPORT OK")
 }
 
+// TestReportSubjectIsOneQuotedValue pins the closing line's grammar on the report's
+// subject: the subject holds blanks and repeats at= and build= inside itself, so an
+// unquoted value made those inner pairs read as keys of the line. The subject is one
+// quoted value (oneline.Quote), and the at= and build= inside it are not keys of the
+// line.
+func TestReportSubjectIsOneQuotedValue(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repos := reposFile(t, dir)
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
+
+	r := invoke(t, "report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
+	wantExit(t, r, 0)
+	line := lineWith(r.stderr, "REPORT OK")
+	require.NotEmpty(t, line, "no REPORT OK line:\n%s", r.stderr)
+	assert.Equal(t,
+		`REPORT OK who=ada day=2026-09-11 rows=1 at=2026-09-11T23:55:02Z build=devel subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel"`,
+		line)
+}
+
 // TestAHalfReadSuccessorDoesNotReplaceItsPredecessor pins rule 6: "the successor is
 // validated whole -- header, Date:, every body line -- before it replaces anything." A
 // note with one unparsed body line was not dead, entered the superseded map, and its

@@ -338,7 +338,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The closing line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE
 	// section): what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED
 	// lines above it, the TOKENS NOTE, and exit 1. Under --dry-run --note was not
-	// written, and the line says so.
+	// written, and the line says so. The subject is one quoted value (oneline.Quote):
+	// it holds blanks and repeats at= and build= inside itself, and unquoted those
+	// inner pairs read as keys of the line.
 	subject := tokens.Subject(*day, stamp(now), buildVersion(), sorted)
 	s.fact("at", stamp(now))
 	s.fact("build", buildVersion())
@@ -353,12 +355,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if unreadable > 0 || unparsed > 0 {
 		fmt.Fprintf(s.err(), "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
 			oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-			oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
+			oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Quote(subject))
 		return s.done(1, *max)
 	}
 	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
+		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Quote(subject))
 	return s.done(0, *max)
 }
 
