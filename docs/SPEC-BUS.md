@@ -60,6 +60,8 @@ pending that a dead reader held; only a delivered message is acked; once acked,
 acked; and, with crashes bounded, every sent message is acked by every recipient
 it names.
 
+A reader waits on its stream with `BLOCK`, never on a clock: a message is pushed to whoever blocks on its stream (`recv --forever`, the friend's daemon). Every loop that reads the bus, and every other loop of the tree that waits on a clock, is a row of docs/SPEC-SPRINT.md, section 8, "Push, not poll", with its mechanism and, for a timer poll, the card that makes it a blocking read; `TestEveryTimerLoopIsNamedInThePushTable` fails on a timer loop with no row.
+
 ## The verbs
 
 `nova-bus help` opens with the loop a harness runs, three lines. Every verb
