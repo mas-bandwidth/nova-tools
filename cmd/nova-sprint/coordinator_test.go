@@ -110,6 +110,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"stream archive":    "stream archive s1",
 		"stream unarchive":  "stream unarchive s1",
 		"stream set":        "stream set s1 --read-tier pro",
+		"card base":         "card base s1-1 main",
 		"set":               "set --read-tier pro",
 		"promoted":          "promoted --sha 0123abc",
 		"funded":            "funded openrouter --reason paid",

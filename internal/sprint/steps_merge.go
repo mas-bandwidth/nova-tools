@@ -48,8 +48,13 @@ type MergeReq struct {
 	// naming the base, the gate and the first refusal. No card moves.
 	BaseRefused string `json:",omitempty"`
 	Base        string `json:",omitempty"`
-	Note        string
-	Who         string
+	// DeadBase is the base the batch's cards (Cards) name, which the lander's fetch found
+	// not on origin (docs/SPEC-SPRINT.md section 7, a dead base): each card is marked
+	// (FieldDeadBase) and one judgment NDeadBase is raised for it; the stream is not
+	// stopped and no card moves.
+	DeadBase string `json:",omitempty"`
+	Note     string
+	Who      string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
@@ -145,6 +150,156 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 	return p
 }
 
+// A DEAD BASE (docs/SPEC-SPRINT.md section 7, a dead base). On 2026-10-04 a merging card
+// named BASE a friend's branch, deleted from origin, and the lander tried it 203
+// times, every 6 s, its stream held behind it for half an hour. A base the lander's fetch
+// finds not on origin is one fact: the card is marked with the base (FieldDeadBase) and one
+// judgment NDeadBase is raised for it, its stream is not stopped, and the land pass skips
+// the card (DeadBaseHeld) until the judgment is answered or the base is re-pointed
+// (CardBase), then tries it once.
+
+// NDeadBase is the judgment of a merging card whose BASE is not on origin.
+const NDeadBase = "a merging card names a base not on origin"
+
+// FieldDeadBase is the base a merging card names that the lander found not on origin, on
+// the primary; FieldBaseSet is the last re-point of its BASE (CardBase): old -> new, when,
+// by whom.
+const (
+	FieldDeadBase = "dead_base"
+	FieldBaseSet  = "base_set"
+)
+
+func init() {
+	// the re-point is the judgment's words (DeadBaseWhy); ack answers it, and the next land
+	// pass tries the card once more
+	Decisions[NDeadBase] = []string{"look at the card", "return", "drop", "ack"}
+}
+
+// DeadBaseWhy is the one sentence of a dead base, the lander's refusal and the judgment's.
+func DeadBaseWhy(id, base string) string {
+	return "card " + id + " names BASE " + base + ", which is not on origin"
+}
+
+// deadBaseOpen is the open judgments of a dead base on the card.
+func deadBaseOpen(s *Snapshot, id string) []Open {
+	var out []Open
+	for _, o := range s.Open {
+		if o.Note.Type == NDeadBase && o.Subject() == id {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// DeadBaseHeld says the land pass skips the card: it is marked dead on the base it names
+// now, and that judgment is open. A re-pointed base or an answered judgment arms it again.
+func DeadBaseHeld(s *Snapshot, c *Card, base string) bool {
+	return c != nil && base != "" && c.F(FieldDeadBase) == base && len(deadBaseOpen(s, c.ID)) > 0
+}
+
+// deadBaseStep marks each card of the batch dead on its base and raises one judgment for
+// it. A card held already (a replay, or a second lander) writes nothing: one fact, once.
+func deadBaseStep(p Plan, s *Snapshot, r MergeReq) Plan {
+	if len(r.Cards) == 0 {
+		p.refuse(r.Stream, "a dead base names its cards; nothing was changed")
+		return p
+	}
+	for _, id := range r.Cards {
+		pr, m := s.Work.Placed(id), s.Merge.Placed(id)
+		switch {
+		case pr == nil || pr.Row != r.Stream || pr.Col != Merging || m == nil || m.Row != r.Stream || m.Col != Queued:
+			p.refuse(id, "not merging in stream "+r.Stream+" (it is "+placeWord(orEmpty(pr, id))+")")
+			continue
+		case DeadBaseHeld(s, pr, r.DeadBase):
+			continue
+		}
+		why := DeadBaseWhy(id, r.DeadBase)
+		j := judgment(NDeadBase, r.Stream, s.Now, 0, id)
+		j.Who, j.Card = r.Who, id
+		j.What = cutText(why+"; re-point it: nova-sprint card base "+id+" <a branch on origin>; or ack this and the lander tries it once more", MaxCardTextBytes)
+		p.Units = append(p.Units, Unit{Key: id, Stream: r.Stream, Changes: []Change{change(Work, setEntry(pr, map[string]string{FieldDeadBase: r.DeadBase}))},
+			Notes: []Note{j}, Moved: why + "; held from landing"})
+	}
+	return p
+}
+
+// CardBaseReq re-points a merging card's BASE (nova-sprint card base). OnOrigin is the
+// caller's fact, one git ls-remote, that the branch is on the card's origin.
+type CardBaseReq struct {
+	ID, Base string
+	OnOrigin bool
+	Who      string
+}
+
+// CardBase re-points a merging card's BASE: its brief's BASE: line names the new branch,
+// its dead-base mark is cleared and its dead-base judgment answered, and one log line names
+// the base before and after. The work, its head, its attempt and its reads are kept, and the
+// card stays where it is in the merge queue: the next land pass tries it once against the
+// new base. A branch not on origin is refused, nothing changed (docs/SPEC-SPRINT.md section
+// 7, a dead base).
+func CardBase(s *Snapshot, r CardBaseReq) Plan {
+	var p Plan
+	p.on(s)
+	if why := notCoordinator(s, r.Who, "card base"); why != "" {
+		p.refuse(r.ID, strings.Replace(why, "answers a judgment, which is", "is", 1))
+		return p
+	}
+	c := s.Work.Placed(r.ID)
+	var why string
+	switch {
+	case c == nil:
+		why = r.ID + " is no card on the table"
+	case c.Col != Merging:
+		why = r.ID + " is " + c.Col + ": card base re-points a merging card; a card before merging takes a new brief (nova-sprint brief)"
+	case r.Base == "" || strings.HasPrefix(r.Base, "-") || strings.ContainsAny(r.Base, " \t\r\n@:"):
+		why = "'" + r.Base + "' is not a branch name"
+	case !r.OnOrigin:
+		why = r.Base + " is not a branch on origin"
+	}
+	if why != "" {
+		p.refuse(r.ID, why+"; nothing was changed")
+		return p
+	}
+	brief, old, ok := repointBase(c.F("brief"), r.Base)
+	switch {
+	case !ok:
+		why = r.ID + "'s brief names no BASE: line; land gives it one (--base)"
+	case old == r.Base:
+		why = r.ID + " names BASE " + r.Base + " already"
+	}
+	if why != "" {
+		p.refuse(r.ID, why+"; nothing was changed")
+		return p
+	}
+	moved := fmt.Sprintf("%s BASE %s -> %s", c.ID, old, r.Base)
+	set := map[string]string{"brief": brief, FieldBaseSet: fmt.Sprintf("%s -> %s %s by %s", old, r.Base, stamp(s.Now), orDash(r.Who))}
+	u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, FieldDeadBase))}, Moved: moved}
+	if open := deadBaseOpen(s, c.ID); len(open) > 0 {
+		u.Closes = open
+		u.Notes = append(u.Notes, decided(open[0], "card base: "+moved, r.Who, s.Now, c.ID))
+	}
+	p.Units = append(p.Units, u)
+	return p
+}
+
+// repointBase is the brief with its first BASE: line naming base (a pin, @<sha>, of the old
+// base dropped with it), and the base it named; false when it names none.
+func repointBase(brief, base string) (string, string, bool) {
+	lines := strings.SplitAfter(brief, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "BASE:") {
+			continue
+		}
+		old, _, _ := strings.Cut(strings.TrimSpace(strings.TrimPrefix(trimmed, "BASE:")), "@")
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		end := line[len(strings.TrimRight(line, "\r\n")):]
+		lines[i] = indent + "BASE: " + base + end
+		return strings.Join(lines, ""), strings.TrimSpace(old), true
+	}
+	return brief, "", false
+}
+
 // streamDone says every primary of the stream on the table has landed, given
 // the ones about to land, and at least one has.
 func streamDone(s *Snapshot, stream string, landing int) bool {
@@ -208,6 +363,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	case StreamLanded:
 		p.refuse(r.Stream, "landed")
 		return p
+	}
+	if r.DeadBase != "" {
+		return deadBaseStep(p, s, r)
 	}
 	if r.BaseRed != "" || r.BaseRefused != "" {
 		return baseGateStep(p, s, ctl, r)

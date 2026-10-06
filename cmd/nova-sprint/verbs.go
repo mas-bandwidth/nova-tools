@@ -23,6 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -121,6 +122,7 @@ func init() {
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
+		{"card base", "<id> <branch> [--repo-dir <clone>]", "card base s1-4 main", (*app).cmdCardBase},
 		{"card", "<id> [--brief | --fields] [--at-epoch <n>]", "card s1-4", (*app).cmdCard},
 		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
 		{"held", "[--stream <s>]", "held", (*app).cmdHeld},
@@ -330,6 +332,7 @@ one answer to each judgment (every one prints its own, filled in):
   needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
   merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
   the base fails its gate     resume --stream <s> --did '<the base is green again>' --answers <note>  (land gated it three times: at 0, 2 and 7 minutes)
+  a base not on origin        card base <id> <a branch on origin> (answers it; the next land tries the card once), or ack <note> to have land try it once more
   ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
   blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
@@ -3403,4 +3406,60 @@ func (a *app) afterAnswering(verb string, before []sprint.Open, reason, fix, act
 		}
 		return append(said, a.recordAnswers(ctx, st, verb, before, res, reason, fix, actor)...)
 	}
+}
+
+func init() {
+	verbClasses["card base"] = classCoordinator
+}
+
+// card base <id> <branch>: a merging card's BASE re-pointed in one step, its work, its
+// reads and its place in the merge queue kept, one log line naming the base before and
+// after (sprint.CardBase; docs/SPEC-SPRINT.md section 7, a dead base). The branch is asked
+// of the card's origin first (its REPO: line, else --repo-dir's origin), and one not there
+// is refused. The next land pass tries the card once against the new base. The
+// coordinator's alone.
+func (a *app) cmdCardBase(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("card base")
+	repoDir := fs.String("repo-dir", "", "a clone whose origin is asked for the branch, for a card whose brief names no REPO: line")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "card base", err.Error())
+	}
+	if len(pos) == 0 {
+		return a.cmdCard(append([]string{"base"}, args...), stdout, stderr) // a card whose id is base
+	}
+	if len(pos) != 2 {
+		return refuse(stderr, "card base", argErr("wants <id> <branch>: a merging card and the branch on origin its BASE names now ", nil, pos...))
+	}
+	id, branch := pos[0], pos[1]
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "card base", err.Error())
+	}
+	// the card is read first: a card that is not merging is refused by the step, before any git
+	ctx := context.Background()
+	s, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return a.readFailed("card base", err, stderr)
+	}
+	onOrigin := false
+	if pr := s.Work.Placed(id); pr != nil && pr.Col == sprint.Merging && branch != "" && !strings.HasPrefix(branch, "-") {
+		remote, dir := swarm.ReadCardBase([]byte(pr.F("brief"))).Repo, ""
+		if remote == "" {
+			remote, dir = "origin", *repoDir
+		}
+		if remote == "origin" && dir == "" {
+			return refuse(stderr, "card base", id+" names no REPO: line and no --repo-dir was given; nothing was changed; run: nova-sprint card base "+id+" "+branch+" --repo-dir <clone>")
+		}
+		res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: dir != ""}, "ls-remote", "--heads", "--", remote, "refs/heads/"+branch)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s card base: origin %s could not be asked for %s: %s; nothing was changed\n", prog, oneline.Escape(remote), oneline.Escape(branch), oneline.Escape(strings.TrimSpace(string(res.Stderr))+" "+err.Error()))
+			return 1
+		}
+		onOrigin = strings.TrimSpace(string(res.Stdout)) != ""
+	}
+	return a.runStep("card base", *c, st, store.Step{Args: store.ArgsOf(sprint.CardBaseReq{ID: id, Base: branch, OnOrigin: onOrigin, Who: c.actor}), Verb: "card base", Load: []string{sprint.Work},
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.CardBase(s, sprint.CardBaseReq{ID: id, Base: branch, OnOrigin: onOrigin, Who: c.actor})
+		}}, stdout, stderr)
 }
