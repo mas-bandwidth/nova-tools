@@ -240,7 +240,12 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// a stream's landed cost, from its control card, for the work table's cost column
+	// a stream's landed cost, from its control card, for the work table's cost column:
+	// since the last tidy of the streams, less its base (stats tidy, sprint.StreamCostSince)
+	bases, err := st.streamBases(ctx)
+	if err != nil {
+		return err
+	}
 	costs := map[string]string{}
 	for _, shape := range shapes {
 		if shape.Name != st.Names.Table(sprint.Merge) {
@@ -261,6 +266,9 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		for _, row := range shape.Rows {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
 			costs[row.Key] = ctl.Fields[sprint.FieldCost]
+			if b, ok := bases[row.Key]; ok {
+				costs[row.Key] = sprint.StreamCostSince(costs[row.Key], b)
+			}
 			want := map[string]string{
 				sprint.CI:       dash(ctl.Fields["ci"]),
 				sprint.StateCol: dash(sprint.StreamStateText(ctl.Fields)),

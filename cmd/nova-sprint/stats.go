@@ -12,18 +12,20 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// cmdStats is the epoch's numbers (sprint.Stats): the stages, each member's work,
-// each reader's reads and each route's takes, in seconds, from one read of the
-// work, fleet and readers tables (the primaries' work and read cards, retired ones
-// too, read with them in read sets, never a card at a time).
+// cmdStats is the epoch's numbers since the last stats tidy (sprint.StatsSince; the whole
+// epoch before the first): the stages, each member's work, each reader's reads and each
+// route's takes, in seconds, from one read of the work, fleet and readers tables (the
+// primaries' work and read cards, retired ones too, read with them in read sets, never a
+// card at a time). --routes is the route table from the log over --since, by default
+// from the last tidy of the routes.
 func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stats")
 	routes := fs.Bool("routes", false, "the route table from the log over --since, instead of the live tables")
-	since := fs.String("since", "", "with --routes, the window start: a duration back from now (10m) or an RFC 3339 time")
+	since := fs.String("since", "", "with --routes, the window start: a duration back from now (10m) or an RFC 3339 time; the last stats tidy of the routes when not given")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, "stats", argErr("takes no words ", err, pos...))
 	}
-	if *routes != (*since != "") {
+	if !*routes && *since != "" {
 		return refuse(stderr, "stats", "--routes and --since are one window: the route table from the log")
 	}
 	st, err := a.store(*c)
@@ -32,7 +34,14 @@ func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	}
 	if *routes {
 		var from time.Time
-		if d, err := time.ParseDuration(*since); err == nil {
+		if *since == "" {
+			if from, err = st.StatsSince(context.Background(), sprint.TidyRoutes); err != nil {
+				return a.readFailed("stats", err, stderr)
+			}
+			if from.IsZero() {
+				return refuse(stderr, "stats", "--routes wants --since: no stats tidy of the routes gives the window")
+			}
+		} else if d, err := time.ParseDuration(*since); err == nil {
 			from = a.now().Add(-d)
 		} else if t, err := time.Parse(time.RFC3339, *since); err == nil {
 			from = t
@@ -50,14 +59,23 @@ func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("stats", err, stderr)
 	}
-	ps := sprint.Stats(s)
+	from, err := st.StatsSince(context.Background(), "")
+	if err != nil {
+		return a.readFailed("stats", err, stderr)
+	}
+	ps := sprint.StatsSince(s, from)
 	if c.json {
 		b, _ := json.Marshal(ps)
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
+	sinceWord := ""
+	if !from.IsZero() {
+		fmt.Fprintf(stdout, "since %s (stats tidy)\n", from.UTC().Format(time.RFC3339))
+		sinceWord = " since=" + from.UTC().Format(time.RFC3339)
+	}
 	fmt.Fprint(stdout, statsText(ps))
-	fmt.Fprintf(stdout, "STATS OK epoch=%d primaries=%d members=%d readers=%d routes=%d\n", ps.Epoch, ps.Primaries, len(ps.Work), len(ps.Reads), len(ps.Routes))
+	fmt.Fprintf(stdout, "STATS OK epoch=%d primaries=%d members=%d readers=%d routes=%d%s\n", ps.Epoch, ps.Primaries, len(ps.Work), len(ps.Reads), len(ps.Routes), sinceWord)
 	return 0
 }
 

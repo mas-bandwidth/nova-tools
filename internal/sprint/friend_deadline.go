@@ -29,7 +29,8 @@ const (
 
 // FriendMedianWall is the friend's median run wall in seconds over her last
 // FriendDeadlineSamples ok attempts (RunWall of the ok work cards on her row, newest
-// finished first), and how many samples it is over; 0 and 0 with none.
+// finished first), and how many samples it is over; 0 and 0 with none. A stats tidy
+// carries it through (PropCarriedMedian), as MemberMedianWall's.
 func FriendMedianWall(s *Snapshot, name string) (median float64, n int) {
 	if s.Fleet == nil {
 		return 0, 0
@@ -46,7 +47,8 @@ func FriendMedianWall(s *Snapshot, name string) (median float64, n int) {
 		}
 	}
 	m := measure(walls)
-	return m.Median, m.N
+	// a stats tidy carries her median through it (PropCarriedMedian)
+	return withCarried(s, FriendRow(name), m.Median, m.N)
 }
 
 // FieldFriendDeadline is a friend's work card's working deadline in seconds, set when it is

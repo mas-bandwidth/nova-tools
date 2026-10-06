@@ -147,6 +147,10 @@ from the owner edits one line here and nothing else moves.
 - Landed as "n / total" with the slash on one vertical line (left number right-aligned to it, total left of it), the
   gap before Landed (after merging) equal to every other column gutter in the row, never tighter. No per-stream bar. Total row: numbers only.
 - Flash: the count columns and Landed flash when their value differs from the previous second; Cost never.
+- Cost counts from the last `nova-sprint stats tidy --streams` (docs/SPEC-SPRINT.md section 11, Statistics; the owner,
+  2026-10-06: "I would like a semi-fresh start to stats now"): the cell the page reads is the tidied one, and the page
+  computes nothing of its own. Not yet: "since <time>" beside it; `where --json` carries no stats_since yet
+  (cmd/nova-sprint/reads.go, owed).
 
 ## Fleet (title "Fleet"; subtitle "<u> up · <h> held · <d> down")
 - Columns: machine | status | ready | working | done | ok% | load (headers exactly so, all lowercase).
@@ -158,6 +162,8 @@ from the owner edits one line here and nothing else moves.
   wide (double the first attempt, ~64 px); every column gutter ~56 px.
 - Cells: no steady pulse; a cell flashes once when it lights or unlights. No numeric column in Fleet ever flashes.
 - OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready and Done and OK% numbers, no cells.
+- Done and OK% (and the Friends table's) count from the last `nova-sprint stats tidy --fleet` (`--friends`): the tidy takes
+  the history off the done cells the page's counts are read from. Not yet: "since <time>" beside OK%, as for Cost.
 
 ## Friends (title "Friends"): same shape as Fleet without load (ready, working, done, ok%, status; headers lowercase); honest empty
   state until the JSON carries tables.friends.

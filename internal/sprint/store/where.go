@@ -88,13 +88,15 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if err != nil {
 		return err
 	}
-	raw, ok, err := kv.GetKey(ctx, keyWhere)
+	// the where record and the stats record (stats tidy's streams' bases) in one exchange
+	vals, oks, err := getKeys(ctx, kv, []string{keyWhere, keyStats})
 	if err != nil {
 		return err
 	}
-	if r, ok := readWhere(raw, ok); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision {
+	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision {
 		return nil
 	}
+	stats := st.statsRecordOf(vals[1], oks[1]) // permissive: an unreadable one is no tidy
 	tw := st.twin()
 	if !tw.mu.TryLock() {
 		return nil
@@ -107,7 +109,25 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if err != nil {
 		return err
 	}
-	b, err := json.Marshal(whereOf(snap, m, st.now()))
+	r := whereOf(snap, m, st.now())
+	// per landed since the last tidy of the streams (stats tidy, sprint.PerLandedSince)
+	var bases map[string]sprint.StreamBase
+	if stats.Epoch == st.epoch {
+		bases = stats.Streams
+	}
+	for stream, b := range bases {
+		tc, ok := r.Streams[stream]
+		if !ok {
+			continue
+		}
+		cost := ""
+		if ctl := snap.StreamCtl(stream); ctl != nil {
+			cost = ctl.F(sprint.FieldCost)
+		}
+		tc.PerLanded = sprint.PerLandedSince(cost, snap.Work.Count(stream, sprint.Landed), b)
+		r.Streams[stream] = tc
+	}
+	b, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
