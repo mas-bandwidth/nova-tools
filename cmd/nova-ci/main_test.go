@@ -379,6 +379,34 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	assert.Contains(t, stderr, "--allowlist", "a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
 }
 
+// TestSlowtestsAllowlistReportsAllBadRowsInOneRefusal pins that slowtests reports
+// every bad row of the allowlist file in one refusal with its line number, and that
+// help slowtests states the allowlist row shape and the bound.
+func TestSlowtestsAllowlistReportsAllBadRowsInOneRefusal(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	allow := filepath.Join(dir, "allow.txt")
+	content := "internal/ci\tTestA\t999\t1s@run1\n" +
+		"bad row without tabs\n"
+	require.NoError(t, os.WriteFile(allow, []byte(content), 0o644))
+
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--allowlist", allow}, "")
+	assert.Equal(t, 2, code, "bad allowlist: exit %d stderr %q, want a refusal", code, stderr)
+	assert.Empty(t, stdout, "stdout = %q, want empty", stdout)
+	assert.Contains(t, stderr, "nova-ci slowtests REFUSED: ")
+	assert.Contains(t, stderr, "line 1")
+	assert.Contains(t, stderr, "line 2")
+	assert.Contains(t, stderr, "run: nova-ci slowtests -h")
+	assert.Equal(t, 1, strings.Count(stderr, "\n"), "want exactly one refusal line, got %q", stderr)
+
+	// help slowtests must state the row shape and the bound.
+	code, helpOut, _ := runCI(t, []string{"help", "slowtests"}, "")
+	require.Equal(t, 0, code)
+	assert.Contains(t, helpOut, "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>")
+	assert.Contains(t, helpOut, "bound")
+}
+
 // PROBES 1, 5 and 6 of the #4413 ruling at the verb, with the load and CPUs
 // given by hand. The same go test -json -- a 1.4 s test with a row measured at
 // 0.4 s (budget 1.2 s, three times it), and cmd/nova-bus at 58.8 s with no row
