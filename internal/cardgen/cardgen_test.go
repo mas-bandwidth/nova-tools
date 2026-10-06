@@ -318,6 +318,42 @@ func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
 	assert.Less(t, len(tmpl), cardlimits.BriefAdvisoryBytes)
 }
 
+// Every card the generators write, and the card template, carries the one GOCACHE
+// sentence and no instruction to create or choose a cache of its own: GOCACHE is the
+// machine's shared, warm build cache JOB.md names, already set, and the child keeps it
+// (docs/SPEC-CARD-CONTRACT.md section 2, the staged environment). cardgen.Render and the
+// card template share swarm.GoCacheLine, so the two generators cannot drift.
+func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
+	t.Parallel()
+	stale := []string{"private GOCACHE", "GOCACHE=", "Export GOCACHE", "own GOCACHE", "choose a GOCACHE", "GOCACHE path"}
+	cards := map[string]string{}
+
+	rows, _ := ParseLedger(Ledgers["serial-tests"], serialFixture)
+	require.NotEmpty(t, rows)
+	for _, c := range PlanLedger(Ledgers["serial-tests"], rows, "", "", 0).Cards {
+		cards[c.ID] = Render(header, c)
+	}
+
+	fs, _ := ParseFindings("file\tfinding\tremedy\ttest\ninternal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n")
+	require.NotEmpty(t, fs)
+	for _, c := range PlanFindings(fs, "", "", 0).Cards {
+		cards[c.ID] = Render(header, c)
+	}
+	cards["help-nova-x"] = Render(header, PlanHelp("nova-x", "x\n", "", "", ""))
+
+	tmpl, err := swarm.Template("card")
+	require.NoError(t, err)
+	cards["card-template"] = tmpl
+
+	for name, card := range cards {
+		assert.Contains(t, card, swarm.GoCacheLine, name)
+		assert.Equal(t, 1, strings.Count(card, swarm.GoCacheLine), "%s: the one sentence, once", name)
+		for _, s := range stale {
+			assert.NotContains(t, card, s, "%s: no stale GOCACHE instruction", name)
+		}
+	}
+}
+
 // A card whose PATHS reach tla/ runs the model in its own gate: STEP 4 names make tlc for
 // the groups of the cases it touched and the merge into tla/RUNS.tsv, the PATHS line
 // carries tla/RUNS.tsv so the record can be committed, and the brief still passes the
