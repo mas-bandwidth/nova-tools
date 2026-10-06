@@ -7,90 +7,149 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+type receiptAnswer struct {
+	found bool
+	next  int64
+	err   error
+}
+
+func receiptCodex(c *Codex, answers ...receiptAnswer) *int {
+	c.Resolve = func(_, _, session string) (string, string, error) { return session, "/rollout", nil }
+	calls := 0
+	c.Receipt = func(string, string, string, int64) (bool, int64, error) {
+		r := answers[calls]
+		calls++
+		return r.found, r.next, r.err
+	}
+	return &calls
+}
+
 func TestCodexDeliversIntoTheOpenChatOrDefers(t *testing.T) {
 	t.Parallel()
-	type answer struct {
-		exit int
-		err  error
-	}
+	fe := &fakeExec{out: "queued\n"}
+	var record strings.Builder
+	c := &Codex{Dir: "/project", Session: "thread-1", Run: fe.run, Held: func(string) bool { return true }, Out: &record}
+	calls := receiptCodex(c, receiptAnswer{next: 40}, receiptAnswer{next: 40}, receiptAnswer{found: true, next: 90})
+	pauses := 0
+	c.Pause = func(context.Context, time.Duration) { pauses++ }
+	text := "literal `text` [and] $shell"
+	exit, err := c.Deliver(context.Background(), text)
+	require.NoError(t, err)
+	assert.Zero(t, exit)
+	assert.Equal(t, 3, *calls)
+	assert.Equal(t, 1, pauses)
+	assert.Equal(t, [][]string{{"/project", "codex", "queue", "--thread", "thread-1", "--message", text}}, fe.calls)
+	assert.Contains(t, record.String(), "received by open chat")
+}
+
+func TestCodexAcceptedOrAmbiguousQueueNeverFallsBackToResume(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
-		name     string
-		held     bool
-		answers  []answer
-		methods  []string
-		deferred bool
+		name    string
+		runErr  error
+		readErr error
 	}{
-		{"open queues", true, []answer{{0, nil}}, []string{"queue"}, false},
-		{"closed resumes", false, []answer{{0, nil}}, []string{"exec"}, false},
-		{"queue refusal resumes", true, []answer{{1, nil}, {0, nil}}, []string{"queue", "exec"}, false},
-		{"resume refusal queues", false, []answer{{1, nil}, {0, nil}}, []string{"exec", "queue"}, false},
-		{"queue exec error resumes", true, []answer{{0, errors.New("queue unavailable")}, {0, nil}}, []string{"queue", "exec"}, false},
-		{"resume exec error queues", false, []answer{{0, errors.New("resume unavailable")}, {0, nil}}, []string{"exec", "queue"}, false},
-		{"both fail open", true, []answer{{1, nil}, {0, errors.New("active writer")}}, []string{"queue", "exec"}, true},
-		{"both fail closed", false, []answer{{1, nil}, {2, nil}}, []string{"exec", "queue"}, true},
+		{name: "canceled waiting"},
+		{name: "command result unknown", runErr: errors.New("connection lost")},
+		{name: "receipt read fails", readErr: errors.New("rollout unreadable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fe := &fakeExec{out: "actionable receipt\n" + strings.Repeat("x", OutputKept*2)}
-			run := func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+			ctx, cancel := context.WithCancel(context.Background())
+			fe := &fakeExec{}
+			c := &Codex{Dir: "/project", Session: "thread-1", Held: func(string) bool { return true }}
+			c.Run = func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
 				out, _, _ := fe.run(ctx, dir, name, args, stdin)
-				require.LessOrEqual(t, len(fe.calls), len(tc.answers))
-				r := tc.answers[len(fe.calls)-1]
-				return out, r.exit, r.err
+				return out, 0, tc.runErr
 			}
-			var record strings.Builder
-			var probed string
-			c := &Codex{Dir: "/project", Session: "thread-1", Home: "/codex", Program: "/bin/codex", Run: run, Out: &record, Held: func(lock string) bool { probed = lock; return tc.held }}
-			text := "literal `text` [and] $shell"
-			exit, err := c.Deliver(context.Background(), text)
-			assert.Zero(t, exit)
-			if tc.deferred {
-				var d Deferred
-				require.ErrorAs(t, err, &d)
-				assert.Contains(t, d.Reason, "queue")
-				assert.Contains(t, d.Reason, "exec")
-				assert.Contains(t, d.Reason, "actionable receipt")
-				assert.NotContains(t, d.Reason, strings.Repeat("x", OutputKept+1))
-				assert.Empty(t, record.String())
+			if tc.readErr != nil {
+				receiptCodex(c, receiptAnswer{next: 10}, receiptAnswer{next: 10, err: tc.readErr})
 			} else {
-				require.NoError(t, err)
-				assert.Contains(t, record.String(), "receipt")
-				if tc.methods[len(tc.methods)-1] == "queue" {
-					assert.Contains(t, record.String(), "queued for open chat")
-				} else {
-					assert.Contains(t, record.String(), ResumeLabel)
-				}
+				receiptCodex(c, receiptAnswer{next: 10}, receiptAnswer{next: 10})
 			}
-			assert.Equal(t, filepath.Join("/codex", "thread-writer-locks", "thread-1.lock"), probed)
-			require.Len(t, fe.calls, len(tc.methods))
-			for i, method := range tc.methods {
-				want := []string{"/project", "/bin/codex"}
-				if method == "queue" {
-					want = append(want, "queue", "--thread", "thread-1", "--message", text)
-				} else {
-					want = append(want, "exec", "resume", "--skip-git-repo-check", "thread-1", text)
-				}
-				assert.Equal(t, want, fe.calls[i])
-			}
+			c.Pause = func(context.Context, time.Duration) { cancel() }
+			exit, err := c.Deliver(ctx, "message")
+			assert.Zero(t, exit)
+			var deferred Deferred
+			require.ErrorAs(t, err, &deferred)
+			assert.Contains(t, deferred.Reason, "no alternate route")
+			require.Len(t, fe.calls, 1)
+			assert.Equal(t, "queue", fe.calls[0][2])
 		})
 	}
 }
 
-func TestCodexWithoutAThreadUsesTheNewestOfTheDirectory(t *testing.T) {
+func TestCodexQueueRefusalTriesResumeAndPreservesProviderRefusal(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []bool{false, true} {
+		fe := &fakeExec{}
+		calls := 0
+		c := &Codex{Dir: "/project", Session: "thread-1", Held: func(string) bool { return true }}
+		c.Run = func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+			_, _, _ = fe.run(ctx, dir, name, args, stdin)
+			calls++
+			if calls == 1 {
+				return "queue refused", 1, nil
+			}
+			if provider {
+				return `{"type":"error","error":{"type":"invalid_request_error","message":"bad input"}}`, 1, nil
+			}
+			return "answered", 0, nil
+		}
+		receiptCodex(c, receiptAnswer{next: 10})
+		exit, err := c.Deliver(context.Background(), "message")
+		if provider {
+			var refused ProviderRefused
+			require.ErrorAs(t, err, &refused)
+			assert.Equal(t, 1, exit)
+		} else {
+			require.NoError(t, err)
+			assert.Zero(t, exit)
+		}
+		require.Len(t, fe.calls, 2)
+		assert.Equal(t, "queue", fe.calls[0][2])
+		assert.Equal(t, "exec", fe.calls[1][2])
+	}
+}
+
+func TestCodexClosedProviderRefusalIsReturnedOnlyAfterQueueAlsoRefuses(t *testing.T) {
 	t.Parallel()
 	fe := &fakeExec{}
-	home := codexSessions(t)
-	dir := filepath.Join(home, "project")
-	c := &Codex{Dir: dir, Home: home, Run: fe.run, Held: func(string) bool { return true }}
-	exit, err := c.Deliver(context.Background(), "hello")
+	calls := 0
+	c := &Codex{Dir: "/project", Session: "thread-1", Held: func(string) bool { return false }}
+	c.Run = func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+		_, _, _ = fe.run(ctx, dir, name, args, stdin)
+		calls++
+		if calls == 1 {
+			return `{"type":"error","error":{"type":"invalid_request_error","message":"bad input"}}`, 1, nil
+		}
+		return "queue refused", 1, nil
+	}
+	receiptCodex(c, receiptAnswer{next: 10})
+	exit, err := c.Deliver(context.Background(), "message")
+	var refused ProviderRefused
+	require.ErrorAs(t, err, &refused)
+	assert.Equal(t, 1, exit)
+	require.Len(t, fe.calls, 2)
+	assert.Equal(t, "exec", fe.calls[0][2])
+	assert.Equal(t, "queue", fe.calls[1][2])
+}
+
+func TestCodexOldIdenticalProseNeverConfirmsANewQueue(t *testing.T) {
+	t.Parallel()
+	fe := &fakeExec{}
+	c := &Codex{Dir: "/project", Session: "thread-1", Run: fe.run, Held: func(string) bool { return true }}
+	receiptCodex(c, receiptAnswer{found: true, next: 10}, receiptAnswer{found: true, next: 20})
+	exit, err := c.Deliver(context.Background(), "ordinary repeated prose")
 	require.NoError(t, err)
 	assert.Zero(t, exit)
-	assert.Equal(t, [][]string{{dir, "codex", "queue", "--thread", "old", "--message", "hello"}}, fe.calls)
+	assert.Len(t, fe.calls, 1, "a pre-boundary match never acknowledges this submission")
 }
 
 func TestCodexHomeIsCodexHomeThenTheUsersDotCodex(t *testing.T) {
