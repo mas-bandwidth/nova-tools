@@ -22,6 +22,8 @@ func init() {
 // placed, counted in the folds and the summary. Refused, exit 1 and nothing
 // written, for a stream that is no row, for one holding a card not landed
 // (sprint.StreamArchive), or, unarchived, for one not archived, all or none.
+// Archived, every open note of the streams retires, a NOTE line a stream
+// (store.RetireStreams).
 func (a *app) cmdStreamArchive(archive bool, args []string, stdout, stderr io.Writer) int {
 	verb, word := "stream archive", "STREAM-ARCHIVE"
 	do := (*store.Store).ArchiveStreams
@@ -54,6 +56,22 @@ func (a *app) cmdStreamArchive(archive bool, args []string, stdout, stderr io.Wr
 		fmt.Fprintf(stderr, "%s %s: %s; run: nova-sprint help stream\n", prog, verb, oneline.Escape(strings.Join(whys, "; ")))
 		return 1
 	}
-	sayOK(stdout, c.json, verb, word+" OK streams="+strings.Join(names, ","), map[string]any{"streams": names})
+	var said []string
+	if archive {
+		// the streams' open notes retire with them, as stream remove's do
+		if said, err = st.RetireStreams(context.Background(), verb, names, "archived"); err != nil {
+			said = append(said, "the open notes of the streams were not retired: "+err.Error()+"; run it again to retire them")
+		}
+	}
+	facts := map[string]any{"streams": names}
+	if len(said) > 0 {
+		facts["says"] = said
+	}
+	sayOK(stdout, c.json, verb, word+" OK streams="+strings.Join(names, ","), facts)
+	if !c.json {
+		for _, l := range said {
+			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
+		}
+	}
 	return 0
 }

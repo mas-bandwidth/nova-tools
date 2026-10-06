@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -204,4 +205,119 @@ func allOrNone(streams []string, done string, why func(string) string) []Refusal
 		}
 	}
 	return out
+}
+
+// NStreamRetired is the word that the open notes of streams taken off the
+// tables were retired (RetireStreams): information, one note a stream,
+// naming the notes it retired.
+const NStreamRetired = "open notes of a removed stream retired"
+
+// StreamOff says the stream is off the work and merge tables: a name with no
+// colon (a stream's, never a subject's: no primary or stream id has one) that
+// is a row of neither table. A stream removed (stream remove) is off; an
+// archived one is not, its rows kept hidden. A snapshot that did not read both
+// tables says no stream is off.
+func StreamOff(s *Snapshot, st string) bool {
+	if st == "" || strings.Contains(st, ":") || s.Work == nil || s.Merge == nil {
+		return false
+	}
+	return !s.Work.HasRow(st) && !s.Merge.HasRow(st)
+}
+
+// namesStream says the open note is about the stream: its stream, or its
+// subject the stream as a whole.
+func namesStream(o Open, st string) bool {
+	return o.Note.Stream == st || o.Subject() == StreamSubject(st)
+}
+
+// StreamsOff is the streams off the tables that an open judgment or
+// acknowledgement names (StreamOff), each once, in order.
+func StreamsOff(s *Snapshot) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, o := range append(append([]Open(nil), s.Open...), s.Acked...) {
+		st, whole := strings.CutPrefix(o.Subject(), StreamSubject(""))
+		for _, st := range []string{o.Note.Stream, map[bool]string{true: st}[whole]} {
+			if !seen[st] && StreamOff(s, st) {
+				seen[st] = true
+				out = append(out, st)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RetireStreams is the plan that retires every open note naming one of the
+// streams taken off the tables, how in words ("removed", "archived"): each open
+// judgment, acknowledgement and overdue hold on the stream as a whole or with
+// the stream as its stream is closed, decided "retired: stream <s> <how>". A
+// judgment of a stream no longer drawn has no next step that runs: resume,
+// merge and land refuse a stream the tables lack. One happened note a stream
+// names what it retired, and the plan says it on a NOTE line (Said). A stream
+// with nothing open on it writes nothing. A stream still a row and stopped (an
+// archived one) keeps the judgment open on it as a whole: a stopped stream has
+// one (check rule 9), and resume closes it.
+func RetireStreams(s *Snapshot, streams []string, how, who string) Plan {
+	var p Plan
+	all := append(append([]Open(nil), s.Open...), s.Acked...)
+	closed := map[string]bool{}
+	for _, st := range streams {
+		stopped := s.Merge != nil && s.StreamCtl(st).F("state") == StreamStopped
+		var ids []string
+		answered := map[string]bool{}
+		for _, o := range all {
+			if closed[o.Key] || !namesStream(o, st) || stopped && o.Note.Kind == Judgment && o.Subject() == StreamSubject(st) {
+				continue
+			}
+			closed[o.Key] = true
+			p.Closes = append(p.Closes, o)
+			if answered[o.Note.ID] {
+				continue
+			}
+			answered[o.Note.ID] = true
+			ids = append(ids, o.Note.ID)
+			p.Notes = append(p.Notes, Note{Kind: Decided, Type: o.Note.Type, Stream: o.Note.Stream, Answers: o.Note.ID,
+				What: "retired: stream " + st + " " + how, Who: who, At: s.Now})
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		sort.Strings(ids)
+		what := fmt.Sprintf("stream %s %s: %d open %s retired (%s)", st, how, len(ids), map[bool]string{true: "note", false: "notes"}[len(ids) == 1], strings.Join(ids, " "))
+		n := happened(NStreamRetired, st, s.Now)
+		n.Who, n.What = who, what
+		p.Notes = append(p.Notes, n)
+		p.Said = append(p.Said, what)
+	}
+	return p
+}
+
+// TickRetire is the tick's retire part: the open notes of every stream off
+// the tables (StreamsOff), a stream removed while one was open, retired as
+// RetireStreams retires them, by the machine.
+func TickRetire(s *Snapshot, r TickReq) (Plan, int) {
+	return RetireStreams(s, StreamsOff(s), "is off the tables", r.who()), 0
+}
+
+// WithoutStreamsOff is the plan with no judgment raised on a stream off the
+// tables (StreamOff): the tick never raises one, since none of its next steps
+// would run. Every other note stays.
+func WithoutStreamsOff(s *Snapshot, p Plan) Plan {
+	keep := func(notes []Note) []Note {
+		var out []Note
+		for _, n := range notes {
+			if n.Kind == Judgment && StreamOff(s, n.Stream) {
+				continue
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	p.Notes = keep(p.Notes)
+	p.Units = append([]Unit(nil), p.Units...)
+	for i := range p.Units {
+		p.Units[i].Notes = keep(p.Units[i].Notes)
+	}
+	return p
 }
