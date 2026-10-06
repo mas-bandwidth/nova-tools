@@ -87,6 +87,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "skips origin/HEAD, the clone's symbolic ref, in a for-each-ref listing; not a RESULT parser"},
 	{file: "cmd/nova-sprint/selftest.go", fn: "selftestFlow", record: "git-refspec", since: "b45240fab",
 		reason: "the git push refspecs HEAD:main and HEAD:sprint/<card> of the selftest's throwaway clone, not a RESULT parser"},
+	{file: "internal/docs/ratings_form.go", fn: "ratingFormParts", record: "heading", since: "861ec8bc45",
+		reason: "the words of the rating form the docs/ratings README must state (TestRatingFileIsInForm), checked as plain substrings; not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
