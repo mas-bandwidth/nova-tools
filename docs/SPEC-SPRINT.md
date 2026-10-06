@@ -847,6 +847,32 @@ would have been taken is refused too, "not taken: --all-or-nothing, and <n> of
 the cards named <was|were> refused"
 (`TestFriendTakeTakesTheTakeableAndNamesTheRest`).
 
+### take-by-id-reads-the-friends-presence.w1
+
+**A take for a friend reads her presence, never a control card** (the night of
+2026-10-05: `take --as friend.amy <card>@<gen>` and `take --as
+friend.bob ...` were refused "member friend.amy is -" while `where`
+showed both friends up; `sprint.takeSeat`, `sprint.FriendDownWhy`). A friend's
+fleet row has no control card status: only a machine's has one, written by the
+tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
+(`take --as friend.<f>`, her own or her daemon's through the server) is
+admitted by `FriendStatus`, the friends table's word: up by her beat within
+`FriendDownAfter` with a live session proof, or by the coordinator's
+observation. `TakeStep` reads the friends' seats when it names a friend's row.
+Her take is held to her width (1 in one-shot mode), as a machine's is to its
+own. It is refused only when she is not up, and the refusal names why: "friend
+<f> is held: held by the coordinator (friend down)[: <reason>]", "friend <f>
+is down: observed <word> by the coordinator (friend health)" (or an
+observation under an older seat generation, or one too old), "friend <f> is
+down: silent: no beat for <age>, past 15s", "friend <f> is down: she has never
+beaten", or her session's proof lapsed; a friend not on the roster is "no
+friend <f> on the roster". A machine's take keeps its control card's rule
+("member <m> is <status>"). The model is `tla/FriendPresence.tla` (`Take`,
+`TakeOnlyWhenUp`, `ReadyTakenWhileUp`, and the reversed witness `ctlstatus`,
+the control card read, which leaves a card ready on a friend up for ever)
+(`TestATakeForABeatingFriendIsAdmittedWithoutAControlStatus`,
+`TestTwinStoreTakeForABeatingFriendReadsHerPresence`).
+
 ### friend-deal-idle-lanes-first.w1
 
 **The friends' deal and level fill idle lanes first, by tier, every tick**
@@ -3518,7 +3544,7 @@ command that loads it.
 | start, stop | set the machine RUNNING or STOPPED (section 14); `stop --reason <text> --until <time or duration>`, both wanted (`sprint.StopArgs`), names who stopped it, why, and when the tick starts it again |
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
-| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up); a card on a route that rests is never taken: refused by id, naming the rest, and passed over by count (the tick withdraws it) |
+| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up); a card on a route that rests is never taken: refused by id, naming the rest, and passed over by count (the tick withdraws it); a take for a friend's row (`--as friend.<f>`) is admitted by her presence (`FriendStatus`) and her width, never a control card, and refused naming why she is not up (section 1, take-by-id-reads-the-friends-presence.w1) |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost); `--decision <json>` (the take's attempt decision, one card a finish, its op naming that take's card and attempt, else refused) is kept on the card, recorded by the server's decide lane, and routes a failed finish when its class is no-result or nothing-to-do at or above that class's bar on the card (section 2, the attempt decision) |
 | progress | a holder stamps progress on the work cards it works: `progress --as <worker> <card>[@<gen>]... --epoch <n>` sets the card's `progress` field to the server's time and nothing else; refused for a card that is not working, one another row holds (only the holder stamps), and one named at a generation that is not its live one. The member sends it every 3 minutes for each card whose child printed since its last stamp, and the friend daemon for each card whose lane turn did; a child that prints nothing stamps nothing, and the late rule (section 8) reads that silence |
 | ask | deals primaries in review the reads each wants now, one at a time (the first read alone, the second of a pro card once the first came back ok; a broken first read is reworked with no second read; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |

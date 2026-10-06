@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
@@ -1115,21 +1116,46 @@ func Take(s *Snapshot, r TakeReq) Plan {
 	return p
 }
 
+// takeSeat is the width a take for as is held to, or why it takes nothing. A machine
+// takes while its control card says up, to its width. A friend's row has no control card
+// status (only a machine's has; docs/SPEC-SPRINT.md section 1, a take for a friend): she
+// takes while FriendStatus says up, as the snapshot's friend seats carry it (her beat, or
+// the coordinator's observation), to her width (1 in one-shot mode), and is refused when
+// she is held, observed down, or silent past FriendDownAfter, the refusal naming which.
+// The model is tla/FriendPresence.tla (Take, TakeOnlyWhenUp, ReadyTakenWhileUp; the
+// witness "ctlstatus" is the control card read that refused every friend up).
+func takeSeat(s *Snapshot, as string) (width int, why string) {
+	if f, ok := FriendOfRow(as); ok {
+		i := slices.IndexFunc(s.Friends, func(x FriendSeat) bool { return x.Name == f })
+		if i < 0 {
+			return 0, "no friend " + f + " on the roster"
+		}
+		seat := s.Friends[i]
+		if seat.Status != Up {
+			return 0, "friend " + f + " is " + orDash(seat.Status) + ": " + cmp.Or(seat.Why, "not up")
+		}
+		_, width = friendRoom(seat)
+		return width, ""
+	}
+	if !s.Fleet.HasRow(as) {
+		return 0, "no fleet member " + as
+	}
+	if st := s.MemberCtl(as).F("status"); st != Up {
+		return 0, "member " + as + " is " + orDash(st)
+	}
+	return s.Width(as), ""
+}
+
 func takeOne(s *Snapshot, r TakeReq) Plan {
 	var p Plan
 	sel := r.Sel
 	if !named(sel) && sel.Limit == 0 {
 		sel.Limit = 1
 	}
-	if !s.Fleet.HasRow(r.As) {
+	width, why := takeSeat(s, r.As)
+	if why != "" {
 		for _, id := range sel.IDs {
-			p.refuse(id, "no fleet member "+r.As)
-		}
-		return p
-	}
-	if st := s.MemberCtl(r.As).F("status"); st != Up {
-		for _, id := range sel.IDs {
-			p.refuse(id, "member "+r.As+" is "+orDash(st))
+			p.refuse(id, why)
 		}
 		return p
 	}
@@ -1137,7 +1163,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
 	// sprint's one writer, whatever the member asks. A take by
 	// count is cut to the room; a take by id past it is refused.
-	room := max(s.Width(r.As)-len(s.Fleet.Cell(r.As, Working)), 0)
+	room := max(width-len(s.Fleet.Cell(r.As, Working)), 0)
 	if !byID {
 		if room == 0 {
 			return p
@@ -1166,7 +1192,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		}
 		if byID {
 			if room == 0 {
-				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), s.Width(r.As))
+				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), width)
 			}
 			room--
 		}
