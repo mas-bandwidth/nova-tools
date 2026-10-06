@@ -67,7 +67,7 @@ func friendJobOf(p sprint.Packet) string {
 func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
-	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
+	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with line 1 exactly Verdict: LAND|HOLD|FAIL and line 2 exactly Head: <full sha> (blank for HOLD and FAIL)\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a twin recut --widen made starts from the held attempt's head (member.Carried)
@@ -138,6 +138,41 @@ func friendReportOf(report string) (verdict, head, para string) {
 		}
 	}
 	return verdict, head, strings.Join(lines, " ")
+}
+
+// friendReportPinNote names where a report's Verdict: and Head: lines are when they
+// are not the first two lines, so the card says the shape was not pinned; "" when they
+// are pinned (or a Head: is absent, as a HOLD's may be). Reading stays lenient either
+// way (friendReportOf), and the note is laid on the card beside the report.
+func friendReportPinNote(report string) string {
+	v, h := 0, 0
+	for i, l := range strings.Split(report, "\n") {
+		key, _, _ := strings.Cut(strings.TrimLeft(l, "#*-_ \t"), ":")
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "verdict":
+			if v == 0 {
+				v = i + 1
+			}
+		case "head":
+			if h == 0 {
+				h = i + 1
+			}
+		}
+	}
+	if v == 0 {
+		return ""
+	}
+	var where []string
+	if v != 1 {
+		where = append(where, fmt.Sprintf("Verdict: is on line %d", v))
+	}
+	if h != 0 && h != 2 {
+		where = append(where, fmt.Sprintf("Head: is on line %d", h))
+	}
+	if len(where) == 0 {
+		return ""
+	}
+	return "friend report's " + strings.Join(where, " and ") + "; write Verdict: on line 1 and Head: on line 2"
 }
 
 func firstWord(s string) string {
@@ -225,6 +260,11 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 		}
 	default:
 		r.Failed, r.Report = true, "friend "+name+" verdict "+cmp.Or(verdict, "none")+" is not LAND, HOLD or FAIL; "+para
+	}
+	// a report whose pinned lines are not the first two still lands, and the card
+	// says where they were so the shape is learned
+	if note := friendReportPinNote(report); note != "" {
+		r.Report += "; " + note
 	}
 	// the report's PATHS-PROPOSED line, wherever it stands, rides on the card for recut --widen
 	// (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1")

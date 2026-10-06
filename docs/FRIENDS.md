@@ -129,10 +129,12 @@ asks:`), a blank line, and the card's brief. What a friend does with it:
 
    `LAND` is work ready for its reads and its landing; `HOLD` is work stopped
    for the coordinator's decision, `FAIL` work that could not be done; for
-   either, `Head:` may be left out, and the first paragraph says why. The
-   first `Verdict:` and `Head:` lines are read (markdown marks around them
-   are fine); the first paragraph that is neither of them nor a heading goes
-   onto the card, cut to 1 KiB.
+   either, `Head:` may be left out (line 2 blank), and the first paragraph says
+   why. The first line is exactly `Verdict: LAND|HOLD|FAIL` and the second
+   exactly `Head: <full sha>`; a report with them later is still read (markdown
+   marks around them are fine), and the card gains a NOTE naming the line
+   numbers. The first paragraph that is neither of them nor a heading goes onto
+   the card, cut to 1 KiB.
 
 The sync finishes the card on its next run after the report (the period of the
 loop that runs it: 15 s in the friend sync loop, below): `LAND` goes to review at
