@@ -74,7 +74,7 @@ type world struct {
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
 	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage     func(dir string) func(ctx context.Context, p friend.Packet) (string, error)                         // stages a held card's job under her working directory (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	stage     func(dir string) *friend.Stager                                                                     // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	tip       func(ctx context.Context, repo, branch string) (string, error)                                      // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
 	launchctl friend.Launchctl
 	now       func() time.Time
@@ -225,9 +225,7 @@ func realWorld() world {
 		cards:    sprintAsk,
 		view:     sprintView,
 		friends:  coordinatorFriends,
-		stage: func(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
-			return (&friend.Stager{Dir: dir}).Stage
-		},
+		stage:    func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
 		tip:      (&friend.Stager{}).Tip,
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
@@ -1047,6 +1045,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
 		}
 	}
+	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
@@ -1130,7 +1129,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		Held:      w.held(name, server),
-		Stage:     w.stager(dir),
+		Stage:     stager.stage(),
+		Prune:     stager.prune(),
 		Tip:       w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
@@ -1202,13 +1202,34 @@ func (w world) held(name, server string) func(context.Context) (friend.Row, erro
 	return friend.HeldVia(name, func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }, view, now)
 }
 
-// stager is the daemon's Stage: every held work card's job staged under her working directory
-// (jobs/<job>/repo and its JOB.md); nil in a world that stages none or asks no held cards.
-func (w world) stager(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
+// stager is the daemon's one Stager: every held work card's job staged under her working
+// directory (jobs/<job>/repo, a worktree of the repository's mirror, and its JOB.md), and the
+// finished jobs past friend.FinishedJobsKept pruned, both under the mirror's one lock; nil in a
+// world that stages none or asks no held cards.
+func (w world) stager(dir string) daemonStager {
 	if w.stage == nil || w.cards == nil || dir == "" {
+		return daemonStager{}
+	}
+	return daemonStager{w.stage(dir)}
+}
+
+// daemonStager is a Stager as the daemon's Stage and Prune, nil for none.
+type daemonStager struct{ s *friend.Stager }
+
+func (d daemonStager) stage() func(ctx context.Context, p friend.Packet) (string, error) {
+	if d.s == nil {
 		return nil
 	}
-	return w.stage(dir)
+	return d.s.Stage
+}
+
+func (d daemonStager) prune() func(ctx context.Context, live map[string]bool) ([]string, error) {
+	if d.s == nil {
+		return nil
+	}
+	return func(ctx context.Context, live map[string]bool) ([]string, error) {
+		return d.s.Prune(ctx, live, friend.FinishedJobsKept)
+	}
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {

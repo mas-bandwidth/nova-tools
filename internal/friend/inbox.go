@@ -358,6 +358,7 @@ func (l *loop) inboxStep(now time.Time) {
 	if d.Stage != nil {
 		l.stageStep(row.Cards, now)
 	}
+	l.pruneStep(row.Cards, keep, now)
 	ids := make([]string, 0, len(row.Cards))
 	for _, h := range row.Cards {
 		ids = append(ids, h.Card)

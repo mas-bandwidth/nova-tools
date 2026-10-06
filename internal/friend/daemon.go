@@ -162,6 +162,10 @@ type Daemon struct {
 	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
 	// its brief alone.
 	Stage func(ctx context.Context, p Packet) (string, error)
+	// Prune removes finished jobs' worktrees past FinishedJobsKept (Stager.Prune), given the
+	// jobs that are live (held on her row, run by a lane, being staged), after each inbox
+	// cleanup, and answers the jobs it removed; nil prunes none.
+	Prune func(ctx context.Context, live map[string]bool) ([]string, error)
 	// Tip is origin's tip of a branch of a repository (owner/name), "" when origin has no
 	// such branch (Stager.Tip: one git ls-remote): a report's LAND finishes only at that tip,
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its
@@ -190,6 +194,7 @@ type Daemon struct {
 	stageMu     sync.Mutex
 	stageDone   []stageResult // the stages that ended, for the loop
 	stageWG     sync.WaitGroup
+	pruneSaid   string // the prune failure last said, said once while it stands
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
