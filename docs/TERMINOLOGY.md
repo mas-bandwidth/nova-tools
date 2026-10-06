@@ -4,6 +4,22 @@ Welcome — this guide is a plain-language map of the words you will meet in the
 specs, each linked to the page that defines it so you can jump straight to the
 source.
 
+The glossaries hold every term, one line each, with the section that defines it
+and the words it replaced: [GLOSSARY.md](GLOSSARY.md) for nova-tools 1.2.0 and
+[sprint/GLOSSARY.md](sprint/GLOSSARY.md) for nova-sprint 1.0.0. This page is the
+rules of naming:
+
+- A word the owner retires goes into `internal/docs/testdata/retired-words.txt`
+  with what replaced it, and the glossary entry for the replacement says what it
+  replaced.
+- `TestRetiredWordsAppearOnlyInRecords` fails when a tracked file uses a retired
+  word outside the dated records (the changelog, the resolutions, the release
+  notes, the ratings, the ledgers under `testdata/`). Files that still use one
+  are rows in that file's ledger, which only shrinks.
+- A term is defined once, in the spec section its glossary entry names.
+
+The terms below are the ones a first reader meets.
+
 - **adoption** — choosing to take a tool into your workflow; nothing in this repo
   asks you to adopt everything at once. `nova-update adoption` prints each
   friend's own choice, and a tool with no row is absent, never adopted.
