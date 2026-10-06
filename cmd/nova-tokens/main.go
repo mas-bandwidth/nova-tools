@@ -1264,6 +1264,14 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	avgList.More()
 	fmt.Fprintf(stderr, "TOKENS AVG-ALL day=%s tokens=%d usd=%s usd_per_mtok=%s\n",
 		oneline.Field(*day), allTokens, oneline.Field(tokens.Usd(allUsd)), oneline.Field(tokens.UsdPerMtok(allUsd, allTokens)))
+	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1.
+	// The report's one grammar line says OK when it succeeded or FAIL when it did not;
+	// unreadable source files make it a partial day, so we say FAIL and exit 1.
+	if unreadable > 0 {
+		fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
+			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
+		return 1
+	}
 	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
 	// it carries no unreadable= and no unparsed=, so what says the day is short is the
 	// TOKENS UNREADABLE / TOKENS UNPARSED lines above it, the TOKENS NOTE, and exit 1.
@@ -1272,11 +1280,8 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
 		oneline.Field(buildVersion()),
 		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
-	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
-	// and a line that did not parse is the same wall under fold (main.go's counts). The
-	// body still printed and --note still landed -- exit 1 still writes -- but a friend
-	// about to paste this onto the bus is told it does not cover what it claims.
-	if unreadable > 0 || unparsed > 0 {
+	// Exit 1 for unparsed lines (invalid timestamps, no id) even when body is produced.
+	if unparsed > 0 {
 		return 1
 	}
 	return 0
