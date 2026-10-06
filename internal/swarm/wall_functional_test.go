@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -23,6 +25,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testgit.Environ()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	return strings.TrimSpace(string(out))
@@ -75,9 +78,7 @@ func TestWallCommitsCountsPastTheBase(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=rowan", "GIT_AUTHOR_EMAIL=rowan@example.com",
-			"GIT_COMMITTER_NAME=rowan", "GIT_COMMITTER_EMAIL=rowan@example.com")
+		cmd.Env = testgit.Environ()
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 	}

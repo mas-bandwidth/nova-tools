@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // mirrorOrigin makes a throwaway origin with one commit on dev and returns its path;
@@ -147,7 +149,7 @@ func step1Clone(t *testing.T, dir, origin, benchHome string) {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	cmd := exec.Command("sh", "-c", line)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "GIT_TERMINAL_PROMPT=0", "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+	cmd.Env = testgit.Environ("HOME="+t.TempDir(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s\n%s", line, out)
 }
@@ -156,7 +158,7 @@ func mirrorExec(t *testing.T, dir, name string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = testgit.Environ("GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
 	return string(out)
