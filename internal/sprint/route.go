@@ -324,7 +324,10 @@ func CardTiers(c *Card) (now, ceiling string) {
 	return cardTier(c, m), ceilingTier(c, m)
 }
 
-// cardTierOf is the tier the primary c is on (cardTier).
+// cardTierOf is the tier the primary c is on (cardTier). Every friend decision
+// reads it through FriendTier (docs/SPEC-SPRINT.md, friend-deal-one-tier-b.w1):
+// this tier, flash when it names none, and the tier a withdrawn attempt at its
+// redeal bound below its ceiling escalates to.
 func cardTierOf(c *Card) string {
 	now, _ := CardTiers(c)
 	return now

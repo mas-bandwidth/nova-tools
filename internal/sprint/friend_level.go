@@ -6,6 +6,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // The friends' level (docs/SPEC-SPRINT.md section 1, friend level and
@@ -14,11 +16,15 @@ import (
 // not require you to remember, it should just happen mechanically."). fleet level evens
 // the members' ready queues (level); friend level evens the friends', and every tick runs
 // it after its deal (TickDeal), so no verb is needed. A card moves only to a friend whose
-// tiers hold its tier (friendTakes), never by class, and never to a friend it has left
-// (friendsLeft). Every card but a hard pin (WHO: only friend, OnlyFriend) that is ready on
-// her row behind her working cards and that she has not started moves: a card with no WHO
-// line, WHO: friend, or one preferring her (WHO is a preference, friends first); a hard pin
-// stays hers, and a working card is hers to finish or the coordinator's to take back
+// tiers hold its tier (friendTakes of FriendTier), never by the class string, and never
+// to a friend it has left (friendsLeft). An unstarted card, ready or working, whose
+// holder does not serve that tier is taken back and placed on a friend who does, or
+// withdrawn when none has room, a hard pin included (docs/SPEC-SPRINT.md,
+// friend-deal-one-tier-b.w1). Every other card but a hard pin (WHO: only friend,
+// OnlyFriend) that is ready on her row behind her working cards and that she has not
+// started moves: a card with no WHO line, WHO: friend, or one preferring her (WHO is a
+// preference, friends first); a hard pin to a friend who serves the tier stays hers, and
+// a card she has started stays and finishes or is the coordinator's to take back
 // (FriendTake).
 
 // FriendLevelPerTick is the most cards the tick's level moves in one tick.
@@ -87,7 +93,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	// to is where the card goes, "" when nowhere: below her room, of its tier, not a
 	// friend it left, and an idle lane for a giver with none or an even smaller backlog
 	to := func(giver string, c *Card) string {
-		tier, left := cardTierOf(s.Work.Placed(c.F("primary"))), friendsLeft(c)
+		tier, left := FriendTier(s, s.Work.Placed(c.F("primary"))), friendsLeft(c)
 		free, idle := map[string]int{}, map[string]int{}
 		var may []string
 		for _, f := range seats {
@@ -102,7 +108,102 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		}
 		return preferredFriend(may, idle, free)
 	}
+	// offTo is a friend up with room whose tiers hold tier, not the giver and not one
+	// the card has left: where an off-tier card is placed again. Idle lanes first.
+	offTo := func(giver string, c *Card, tier string) string {
+		left := friendsLeft(c)
+		free, idle := map[string]int{}, map[string]int{}
+		var may []string
+		for _, f := range seats {
+			n := f.Name
+			if n == giver || held[n] >= room[n] || slices.Contains(left, n) || !friendTakes(f, tier) {
+				continue
+			}
+			free[n], idle[n] = room[n]-held[n], lanes(n)
+			may = append(may, n)
+		}
+		return preferredFriend(may, idle, free)
+	}
+	dealtMove := map[string]bool{}
+	for _, u := range r.Taken {
+		for _, ch := range u.Changes {
+			if ch.Table == Fleet && ch.Entry.Move != nil {
+				dealtMove[ch.Entry.ID] = true
+			}
+		}
+	}
+	type holdOut struct {
+		giver string
+		c     *Card
+		work  bool
+	}
+	var outs []holdOut
+	for _, f := range seats {
+		for _, col := range []string{Ready, Working} {
+			cells := append([]*Card(nil), s.Fleet.Cell(FriendRow(f.Name), col)...)
+			SortCards(cells)
+			for _, c := range cells {
+				if c.F("kind") != "work" || dealtMove[c.ID] {
+					continue
+				}
+				pr := s.Work.Placed(c.F("primary"))
+				if pr == nil || r.Started[c.ID] != "" || friendStarted(s, f, c) {
+					continue
+				}
+				if friendTakes(f, FriendTier(s, pr)) || attemptCapHold(pr, f) {
+					continue
+				}
+				outs = append(outs, holdOut{f.Name, c, col == Working})
+			}
+		}
+	}
 	gives, got, moved := map[string]int{}, map[string]int{}, 0
+	for _, o := range outs {
+		if r.Max > 0 && moved >= r.Max {
+			break
+		}
+		pr := s.Work.Placed(o.c.F("primary"))
+		tier := FriendTier(s, pr)
+		dest := offTo(o.giver, o.c, tier)
+		if dest == "" {
+			why := "taken back: " + o.giver + "'s tiers do not hold " + tier
+			p.Units = append(p.Units, withdrawUnit(s, o.c, map[string]string{
+				FieldTakenBack: why, FieldTakenFrom: FriendRow(o.giver),
+			}, nil, NTakenBack, r.Who, why))
+		} else {
+			col := Ready
+			set, unset := nextGen(o.c, FriendRow(dest), s.Now), []string{FieldFriendDeadline}
+			set[FieldFriendsLeft] = strings.Join(append(friendsLeft(o.c), o.giver), ",")
+			if working[dest] < width[dest] {
+				working[dest]++
+				col = Working
+				tset, tunset := friendTaken(s, o.c, dest)
+				maps.Copy(set, tset)
+				delete(set, "untaken_since")
+				unset = tunset
+			}
+			if row := FriendRow(dest); !s.Fleet.HasRow(row) && !slices.Contains(p.Rows, RowAdd{Fleet, row}) {
+				p.Rows = append(p.Rows, RowAdd{Fleet, row})
+			}
+			p.Units = append(p.Units, Unit{Key: o.c.ID, Stream: o.c.F("stream"), Changes: []Change{change(Fleet, moveEntry(o.c, FriendRow(dest), col, set, unset...))},
+				Moved: fmt.Sprintf("%s %s:%s -> %s:%s gen=%d (her tiers do not hold %s)", o.c.ID, o.c.Row, o.c.Col, FriendRow(dest), col, o.c.Int("gen")+1, tier)})
+			held[dest]++
+			got[dest]++
+		}
+		held[o.giver]--
+		if o.work && working[o.giver] > 0 {
+			working[o.giver]--
+		}
+		q := queues[o.giver]
+		for i, c := range q {
+			if c.ID == o.c.ID {
+				queues[o.giver] = slices.Delete(q, i, i+1)
+				break
+			}
+		}
+		gives[o.giver]++
+		moved++
+	}
 	for r.Max == 0 || moved < r.Max {
 		givers := slices.Clone(seats)
 		slices.SortStableFunc(givers, func(a, b FriendSeat) int {
@@ -154,6 +255,22 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))
 	}
 	return p
+}
+
+// attemptCapHold says the card is the attempt cap's friend card (AttemptCapDeal):
+// placed on a frontier or heavy class friend, its WHO line naming her, and the
+// coordinator has not pinned a tier since (FieldTier). That placement is the
+// cap's answer. A later brief --tier is taken back like any other card
+// (docs/SPEC-SPRINT.md, friend-deal-one-tier-b.w1).
+func attemptCapHold(pr *Card, holder FriendSeat) bool {
+	if pr == nil || pr.F(FieldTier) != "" {
+		return false
+	}
+	who, ok := FriendCard(pr)
+	if !ok || who == "" || who != holder.Name || OnlyFriend(pr) {
+		return false
+	}
+	return holder.Class == cardhdr.RouteFrontier || holder.Class == cardhdr.RouteHeavy
 }
 
 // boolInt is 1 for true and 0 for false.

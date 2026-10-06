@@ -434,7 +434,9 @@ stays on her row and finishes (`TestTheHoldOfAFriendWithdrawsWhatSheHasNotStarte
 **Friend level** (the owner, 2026-10-04: "What else is like this? Missing
 verbs we need for friends, that machines already have"; `sprint.FriendLevel`).
 `friend level` (the coordinator's) evens the friends' ready queues as `fleet
-level` evens the members' (section 5), within each class: a friend's class is
+level` evens the members' (section 5). Superseded for eligibility: a card moves
+by its tier, not by the class string (friend-deal-idle-lanes-first.w1,
+friend-deal-one-tier-b.w1). Within each class, as first written: a friend's class is
 the tiers her nova-config row says she can do (`friend sync` copies them to
 the roster, sorted and comma joined), and a card moves only between friends of
 one class. Among the friends up of a class, while the largest backlog (the
@@ -977,14 +979,16 @@ not level the friends":
 - **Eligibility is by tier, never by class.** Every friend deal and every
   level move, whatever the card's WHO line, goes only to a friend up whose
   tiers (her `FriendSeat.Tiers`, else her class's) hold the card's tier; a card
-  with no tier is the dealer's default, flash (`cardTierOf`), and a withdrawn
+  with no tier is the dealer's default, flash (`FriendTier`), and a withdrawn
   attempt at its redeal bound below its ceiling is offered at the tier it
   escalates to (`escalating`), a new attempt on that tier. A friend whose row
   names no tier takes none; a named friend without the tier is passed over for
-  another friend with it, and a hard pin to her waits
-  (`TestAFrontierCardGoesOnlyToAFriendWithFrontier`,
+  another friend with it, a hard pin included (friend-deal-one-tier-b.w1;
+  `TestAFrontierCardGoesOnlyToAFriendWithFrontier`,
   `TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute`). A card no
-  friend up may take is the fleet's (WHO is a preference); a hard pin waits ready.
+  friend up may take is the fleet's (WHO is a preference). A hard pin waits ready
+  only while the friend she names serves the tier and is down, held, out of room,
+  or a friend the card has left.
 - **Idle lanes first.** Among the friends it may go to, a friend with an idle
   lane (width - working > 0) is preferred over every friend with none, the most
   idle lanes first, then the most room (DealAhead x width - working - ready),
@@ -1004,8 +1008,11 @@ not level the friends":
 - **The level runs inside every tick, after the deal.** The tick reads the
   friends' records whenever the roster has a friend, not only when a friend's
   card is ready, so a friend coming up (friend up, or a hold released) is
-  levelled on the same tick. An unstarted ready card that is not a hard pin (no
-  WHO line, `WHO: friend`, or one preferring a friend; never `WHO: only friend`,
+  levelled on the same tick. An unstarted card whose holder does not serve its
+  tier is taken back and placed again even from working, a hard pin included
+  (friend-deal-one-tier-b.w1). An unstarted ready card that is not a hard pin to
+  a friend who serves its tier (no WHO line, `WHO: friend`, or one preferring a
+  friend; never `WHO: only friend` while she serves it,
   `TestTheLevelMovesUnpinnedCardsToAnIdleFriend`) on a friend
   with no idle lane moves to a friend it may go to with an idle lane, into
   working; then backlogs even as before (a card moves from a backlog to one
@@ -1022,6 +1029,47 @@ not level the friends":
 
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
+
+### friend-deal-one-tier-b.w1
+
+**One tier decides every friend deal, level, take-back and the queue packet**
+(the owner, 2026-10-05: "You should automatically rebalance queues" and "it
+should just happen mechanically."). `sprint.FriendTier` is that resolution:
+the tier the card is on now (`cardTier`: `tier_now`, or the tier pinned, or
+its brief's line 1), and flash when that names none. A withdrawn attempt at
+its redeal bound below its ceiling is read at the tier it escalates to
+(`escalating`). The deal, the level and the take-back of a card whose holder
+does not serve the tier all read `FriendTier`. The queue packet names the same
+tier (`DealtTier` through `CardTiers`, filled by `store.Packets`; a placed
+friend card carries no `tier` of its own, so the packet cannot drift from
+`cardTier`). A friend lane reads that packet tier. `friend cards` still parses
+the brief as a fallback when the packet's tier is empty
+(`cmd/nova-sprint/friendcards_verb.go`); a dealt packet's tier is never empty,
+so that parse does not decide.
+
+- **A named friend is a preference among friends who serve the tier.**
+  `WHO: friend <name>` and `WHO: only friend <name>` are placed on her only
+  when her tiers hold `FriendTier`. When they do not, she is skipped and the
+  card goes to a friend up who does serve it, never held on her past the tier.
+  A hard pin to a friend who does serve the tier still waits while she is
+  down, held, out of room, or the card has left her. The attempt cap's friend
+  card stays: `AttemptCapDeal` places a capped machine card on a frontier or
+  heavy class friend and writes her WHO line, and that pin is the cap's answer,
+  not a preference. A later `brief --tier` takes it back when she does not
+  serve the pinned tier.
+- **A re-tier takes an unstarted card back.** `brief --tier` pins the tier
+  (`steps_edit.go`; the take-back is the next tick, not the brief verb). On
+  that tick an unstarted card, ready or working, whose holder does not serve
+  the new tier is placed on a friend up who does and has room, one move, at
+  its next generation. When none has room it is withdrawn (`taken_from` the
+  holder) and a later tick's deal places it again. A card she has started
+  stays and finishes where it is. The deal does not promote her ready card
+  into a lane in the same plan.
+- **The level is per card by tier, not by the class string.** A flash card
+  moves between a friend whose tiers are `flash,frontier,heavy,pro` and one
+  whose tiers are `flash,pro`.
+
+`TestEveryFriendDecisionReadsTheOneTierOfTheCard`.
 
 ### cycle-time-breakdownb.w1: where a card's wall time goes
 

@@ -47,7 +47,7 @@ func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 	require.Equal(t, "only."+FriendRow("amy"), pr.F(FieldWho), "add writes the brief's WHO line on the card")
 
 	// not up, or no width: it waits ready, and no machine is dealt it
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Down}, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"})
+	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Down, Class: "flash,pro"}, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"})
 	require.Equal(t, Ready, w.s.StateOf("s1-1"))
 	require.Nil(t, w.s.Fleet.Card("s1-1.w1"))
 

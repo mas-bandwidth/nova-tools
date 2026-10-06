@@ -44,8 +44,10 @@ type friendEntry struct {
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
-	// Class is her class: the tiers her nova-config row says she can do, sorted and
-	// comma joined (friend level evens the friends of one class).
+	// Class is the tiers her nova-config row says she can do, sorted and comma
+	// joined. The deal and the level match a card's tier against this list
+	// (friendTakes), not the list as one class (docs/SPEC-SPRINT.md,
+	// friend-deal-one-tier-b.w1).
 	Class string `json:"class,omitempty"`
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.

@@ -88,7 +88,8 @@ func TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute(t *testing.
 
 // A friend is dealt a card only when her tiers hold its tier, whatever its WHO line: a
 // frontier card goes to the friend with frontier, never to a friend it names without it
-// or to a friend whose row names no tier; a hard pin to a friend without the tier waits.
+// or to a friend whose row names no tier; a hard pin to a friend without the tier is
+// skipped for a friend whose tiers hold it.
 func TestAFrontierCardGoesOnlyToAFriendWithFrontier(t *testing.T) {
 	t.Parallel()
 	brief := func(who string) string { return "c: work tier: frontier\nWHO: " + who + "\n\nThe task." }
@@ -103,6 +104,6 @@ func TestAFrontierCardGoesOnlyToAFriendWithFrontier(t *testing.T) {
 
 	only := friendWorld(t, brief("only friend amy"))
 	dealWith(only, amy, dan, cat)
-	assert.Nil(t, only.s.Fleet.Card("s1-1.w1"), "a hard pin to amy without frontier waits for her")
-	assert.Equal(t, Ready, only.s.StateOf("s1-1"))
+	require.NotNil(t, only.s.Fleet.Card("s1-1.w1"), "a hard pin to amy without frontier is skipped")
+	assert.Equal(t, FriendRow("cat"), only.s.Fleet.Card("s1-1.w1").Row, "cat serves frontier; amy does not")
 }

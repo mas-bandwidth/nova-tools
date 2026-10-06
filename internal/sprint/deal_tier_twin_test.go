@@ -67,12 +67,13 @@ func TestADealtPacketAlwaysNamesItsTier(t *testing.T) {
 		"s1-3": "pro",   // brief --tier pins it over line 1
 		"f1-1": "flash", // a friend's card with no tier: the default, on the flash friend
 		"f1-2": "pro",   // named fay (flash): passed over for a pro friend
+		"f1-3": "pro",   // a hard pin to fay (flash) is skipped the same way
 	}, tiers)
 
 	// a friend of a class is dealt only the cards her class covers
 	assert.Equal(t, sprint.FriendRow("fay"), rows["f1-1"])
 	assert.Contains(t, []string{sprint.FriendRow("amy"), sprint.FriendRow("bob")}, rows["f1-2"])
-	assert.Equal(t, sprint.Ready, s.StateOf("f1-3"), "a hard pin to fay, who does not do pro, waits for her")
+	assert.Contains(t, []string{sprint.FriendRow("amy"), sprint.FriendRow("bob")}, rows["f1-3"])
 	for _, f := range []struct{ name, class string }{{"amy", "pro"}, {"bob", "pro"}, {"fay", "flash"}} {
 		for primary, row := range rows {
 			if row == sprint.FriendRow(f.name) {

@@ -252,14 +252,16 @@ func friendLoad(s *Snapshot, name string) int {
 // machines' deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
 // people busy by having 2X width queued up in ready per-friend"). A card whose WHO line
 // names a friend goes to her first while she is up, below her room, not one it has left,
-// and her tiers hold its tier; else (or with no WHO line, or WHO: friend) it goes to a
-// friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card with
-// no tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
-// left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
-// then the most room, then by name (docs/SPEC-SPRINT.md section 1,
-// friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
-// unless it says WHO: only friend <name> (OnlyFriend), the one hard pin: it waits ready for
-// her, and so does one whose friend's tiers do not hold its tier. A withdrawn attempt at its
+// and her tiers hold its tier (FriendTier); else (or with no WHO line, or WHO: friend, or
+// a named friend whose tiers do not hold it, a hard pin included) it goes to a friend up
+// whose tiers hold its tier (friendTakes, every friend deal's gate), below her room, and
+// never one it has left (friendsLeft), chosen by preferredFriend: an idle lane first, the
+// most idle lanes, then the most room, then by name (docs/SPEC-SPRINT.md section 1,
+// friend-deal-idle-lanes-first.w1, friend-deal-one-tier-b.w1). A card no friend takes stays
+// for the fleet's deal, unless it says WHO: only friend <name> (OnlyFriend) and she serves
+// the tier: that hard pin waits ready while she is down, held, out of room, or the card
+// has left her. A named friend who does not serve the tier is a preference skipped, never
+// a pin past it. A withdrawn attempt at its
 // redeal bound at its ceiling or its attempt cap (AtRedealBound), or refused at staging by
 // every member up, stays with the machines' deal and its judgment; one at its redeal bound
 // below its ceiling is offered at the tier it escalates to (escalating), as the machines
@@ -307,7 +309,15 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		row := FriendRow(name)
 		ready := append([]*Card(nil), s.Fleet.Cell(row, Ready)...)
 		SortCards(ready)
-		for _, c := range ready[:min(lanes[name], len(ready))] {
+		for _, c := range ready {
+			if lanes[name] <= 0 {
+				break
+			}
+			// a card she does not serve stays for the level to take back (friendLevel);
+			// promoting it here would pin it on her in the same plan
+			if pr := s.Work.Placed(c.F("primary")); pr != nil && !friendTakes(seat[name], FriendTier(s, pr)) {
+				continue
+			}
 			set, unset := friendTaken(s, c, name)
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, row, Working, set, unset...))},
 				Moved: fmt.Sprintf("%s %s:ready -> working (taken by the deal: a lane of hers was free)", c.ID, row)})
@@ -336,18 +346,29 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			continue
 		}
 		escalated := wc != nil && redealBound(wc)
-		tier := cardTierOf(escalating(s, c))
+		tier := FriendTier(s, c)
 		left := friendsLeft(wc)
 		pinned, pinnedCard := FriendCard(c)
 		leftAtPin := slices.Clone(left)
-		name := pinned
-		if !pinnedCard {
-			name = ""
+		var pinSeat FriendSeat
+		pinFound := false
+		if pinned != "" {
+			for _, f := range seats {
+				if f.Name == pinned {
+					pinSeat, pinFound = f, true
+					break
+				}
+			}
 		}
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
-			name = "" // the friend it names is not up with room, it has left her, or not her tier
+		// serves is her tiers against the tier, on the full roster: a friend who is
+		// down or held is not in seat, and an empty tier list takes none
+		serves := pinFound && friendTakes(pinSeat, tier)
+		name := ""
+		if pinnedCard && serves && free[pinned] > 0 && !slices.Contains(left, pinned) {
+			name = pinned
 		}
-		if name == "" && !OnlyFriend(c) {
+		// a hard pin waits only while she serves the tier; one who does not is skipped
+		if name == "" && !(OnlyFriend(c) && serves) {
 			var may []string
 			for _, f := range up {
 				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
