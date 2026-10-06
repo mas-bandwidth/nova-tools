@@ -30,7 +30,7 @@ type GateInput struct {
 // "GATE REFUSE rule=<n> check=<k> file=<f>: <why>" at exit 2. Independent inputs and
 // findings are reported together in the check order (SPEC-SECRETS "gate").
 func RunGate(in GateInput) (string, int) {
-	storeDir, base, head := in.StoreDir, in.Base, in.Head
+	storeDir := in.StoreDir
 	base, head, fleetSeats, findings, legacy := gateInputFindings(in)
 	if len(findings) > 0 {
 		if len(findings) == 1 {
