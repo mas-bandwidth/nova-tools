@@ -2894,6 +2894,31 @@ of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
 module that needs them changed fails the run, which is the card's finding.
 `--check` is the caller's own command on top, once a batch, as before.
 
+**The base's class gate.** The tree gate is not the tree's class suite: on 2026-10-05
+night the base was red for hours on gofmt, a staticcheck U1000, `TestDeadCode` and class
+tests the gate never ran, every card whose TEST was one of them failed whatever it did, and
+the lander kept landing onto the red base. The base's gate is the class suite
+(`sprint.BaseClasses`, internal/sprint/land_class.go), in order: `gofmt -l .` (red when it
+prints), `go vet ./...`, staticcheck and errcheck (`go test -tags functional -run
+'^(TestStaticcheckFindings|TestUncheckedErrors)$' ./internal/ci/`), dead code (`-run
+'^TestDeadCode$'`, the same tag) and the class tests (`go test ./internal/ci/
+./internal/docs/`); a class whose package the clone lacks is not run, and a clone with no
+`go.mod` has no gate. `sprint.BaseClassGate` runs it once per base commit, on the bench the
+lander runs on, and stops at the first red class. That class stops every landing onto the
+base at once (a class is not retried: the same tree is red on it again), through the merge
+step's `BaseRed` (`ClassRed.MergeReq`), with one judgment, `stream stopped: the base fails
+its tree gate`, naming the base and its commit, the class and its run, the finding, and the
+fix-red card the generator stamps for it (`cardgen.PlanClassRed`: id
+`fix-red-<class>-<base>`, PATHS the files the finding names, TEST the class test, or for
+gofmt and vet the internal/ci test the card writes, `cardgen.ClassTestName`). A head whose
+tree, merged onto the base alone, passes the whole suite is the cure and lands first
+(`sprint.FindBaseCure` with `BaseClassGate.Tree` as its gate); a head that cures one class
+and leaves another red is no cure. The test is `TestARedClassOnTheBaseStopsLandings`
+(internal/sprint/land_class_test.go): the base red on staticcheck stops the stream, the
+judgment names the class and the card, and only the head that passes every class cures it.
+The lander's own call (cmd/nova-sprint/landgo.go, `treeGateBase` and `cureBase`) is the
+next change: until it lands, the lander's base gate is the tree gate above.
+
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
 (`sprint.ScopeAmended`): the change also changes a file of its own (in `PATHS`), and the
