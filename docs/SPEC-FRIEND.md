@@ -535,8 +535,7 @@ tmux keeps its own harness adapter.
   the free state, the typed line is the action that starts the turn, and the prompt gone is its
   acceptance; Deferred is the wait the model has while busy. The adapter is a function of captured
   screens and a clock; every tmux call goes through the Exec seam.
-- **The screen.** The last screen of a hosted friend is the pane's capture, the verb `nova-friend
-  screen`; this section does not define it.
+- **The screen.** The last screen of a hosted friend is the pane's capture, the verb `nova-friend screen`; this section does not define it.
 - **To watch.** `tmux attach -t friend-<me>`; detach with the tmux prefix and `d`.
 
 ### Antigravity
