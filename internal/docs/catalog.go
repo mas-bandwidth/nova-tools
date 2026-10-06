@@ -129,6 +129,7 @@ var DefaultCatalog = []Entry{
 	E("internal/tokens", "token counter and budget tracker", "go test ./internal/tokens", "go test ./internal/tokens"),
 	E("internal/tty", "whether a file is a terminal and how large its screen is", "go test ./internal/tty", "go test ./internal/tty"),
 	E("internal/typedrec", "typed RESULT record contract, its format and the disposition line", "go test ./internal/typedrec", "go test ./internal/typedrec"),
+	E("internal/units", "the text and install of every unit a running sprint needs: a launchd agent or systemd user unit per kind, written and loaded by a verb, and the check of the installed units against the need", "go test ./internal/units", "go test ./internal/units"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/up", "nova-up's steps: the registry, the plan and apply of each step over a fake-able machine", "go test ./internal/up", "go test ./internal/up"),
 	E("internal/workfile", "nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff", "go test ./internal/workfile", "go test ./internal/workfile"),
