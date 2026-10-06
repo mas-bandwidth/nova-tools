@@ -162,7 +162,7 @@ func TestSeatInjectAddsANewNameAndKeepsTheClearOnes(t *testing.T) {
 	line, err := RunSeatInject(f.options("EXTRA_KEY,NOVA_REDIS_BENCH_PASSWORD", true))
 	require.NoError(t, err, "RunSeatInject: %v", err)
 	stdin := readMaybe(t, f.sopsStdin)
-	want := "SPACE_HOST: space.example\nGH_TOKEN: 'ghp_current'\nNOVA_REDIS_BENCH_PASSWORD: 'redis_new'\nEXTRA_KEY: 'extra_new'\n"
+	want := "SPACE_HOST: space.example\nGH_TOKEN: 'ghp_current'\nNOVA_REDIS_BENCH_PASSWORD: 'redis_new'\nEXTRA_KEY: 'extra_new'\nNOVA_SECRETS_WRITTEN_BY: seat inject dev\n"
 	assert.Equal(t, want, stdin, "encrypt stdin:\n got %q\nwant %q", stdin, want)
 	assert.Contains(t, line, "names=2", "OK line does not count both names or name the branch by them: %s", line)
 	assert.Contains(t, line, "branch=seal/air-EXTRA_KEY+NOVA_REDIS_BENCH_PASSWORD-", "OK line does not count both names or name the branch by them: %s", line)

@@ -200,9 +200,35 @@ func RunGate(in GateInput) (string, int) {
 		if plain {
 			return gateRefuse(ruleNum, f, fmt.Sprintf("key %s is a plain value, not encrypted", oneline.Field(key))), 2
 		}
+		// 2b. A seat file is written by a verb, never by hand: the mark every verb leaves
+		// in the clear is what tells a verb-made file from a hand seal, whose bytes are
+		// otherwise the same (SPEC-SECRETS "gate"; tla/SecretsSeat.tla on
+		// sprint/md-secrets-h.w1.g1.e15, the MCSecretsSeatReachHandSeal config).
+		if !gateHasMark(data) {
+			return gateRefuse(ruleNum, f, "the seat file was not written by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand"), 2
+		}
 	}
 
 	return gateApprove(len(changed), in.MachinesPath), 0
+}
+
+// gateHasMark reports whether the file carries a root key SeatMarkKey in the clear, naming a
+// verb that writes seat files. The mark is not a signature: a hand can copy it, and the
+// spec says so; it catches the seal made by accident, not the forger.
+func gateHasMark(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		val, ok := strings.CutPrefix(line, SeatMarkKey+":")
+		if !ok {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		for _, verb := range []string{"seal ", "seat add ", "seat inject "} {
+			if strings.HasPrefix(val, verb) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // gateApprove formats the one approval line. It carries the registry it read, or `-`, so an
@@ -314,7 +340,7 @@ func firstPlainValue(data []byte, unencryptedRegex string) (string, bool, error)
 			continue
 		}
 		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
-		if key == "" || val == "" || key == "sops" {
+		if key == "" || val == "" || key == "sops" || key == SeatMarkKey {
 			continue
 		}
 		if strings.HasPrefix(val, "ENC[") {

@@ -278,6 +278,13 @@ func (s *stringSlice) Set(val string) error {
 	return nil
 }
 
+// init gives the seat-file mark the build's version (SPEC-SECRETS "gate"); an ordinary build keeps "dev".
+func init() {
+	if version != "" {
+		secrets.MarkVersion = version
+	}
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 // run is nova-secrets on args, the words after its name, and returns its exit code.

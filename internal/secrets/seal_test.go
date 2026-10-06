@@ -368,7 +368,7 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 
 	const value = "newsecretvalue"
 	plaintext := []byte("TARGET: " + value + "\n")
-	out, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", plaintext)
+	out, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", "seal", plaintext)
 	require.NoError(t, err, "sealEncrypt: %v", err)
 	assert.Contains(t, gotStdin, "TARGET: "+value, "encrypt stdin missing the pasted value; got:\n%s", gotStdin)
 	n := strings.Count(gotStdin, "TARGET:")

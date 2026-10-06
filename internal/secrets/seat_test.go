@@ -386,7 +386,7 @@ func TestTheFakeSopsRefusesWhatRealSopsRefuses(t *testing.T) {
 
 	// An encrypt whose file matches no creation rule has no recipients, and sops refuses
 	// rather than writing something nobody can open.
-	_, err = sealEncrypt(realExecCommand, f.sopsPath, f.rowanKey, f.storeDir, "stranger.yaml", []byte("K: v\n"))
+	_, err = sealEncrypt(realExecCommand, f.sopsPath, f.rowanKey, f.storeDir, "stranger.yaml", "seat add", []byte("K: v\n"))
 	assert.Error(t, err, "the fake encrypted a file no creation rule matches")
 
 	// And the file argument the real tool insists on even when the bytes are on stdin.

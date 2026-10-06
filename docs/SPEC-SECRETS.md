@@ -401,6 +401,31 @@ other's witness, and neither substitutes for the other.
 Removing a seat is how a seat loses its credentials inside a pull request whose subject says
 it is adding one, and it is never part of adding a seat. Keep what exists.
 
+**It also refuses, at exit 2, a changed seat file no verb wrote.** `seal`, `seat add` and
+`seat inject` each put one root key into the file they write, in the clear:
+`NOVA_SECRETS_WRITTEN_BY: <seal|seat add|seat inject> <tool version>`, and the gate refuses a
+changed seat file that lacks it, `GATE REFUSE rule=<n> file=<f>: the seat file was not written
+by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand`. **The
+decision, and why.** Without the mark the gate is a check on bytes, and a seat file sealed by
+hand (`sops <seat>.yaml`, `sops updatekeys <seat>.yaml`, any editor that leaves sops metadata
+and `ENC[` values) is the same bytes as one a verb wrote, so every guarantee the verbs add on
+top of sops — a re-seal only out of a seat the operator can open, `seal`'s decrypt before
+write, the `--only` names — is bypassed by a file the gate approves
+(`tla/SecretsSeat.tla` on `sprint/md-secrets-h.w1.g1.e15`, the `MCSecretsSeatReachHandSeal`
+config). The gate is where the store enforces that a seat file is written only by a key that
+opens it or by `seat add` out of a seat the operator can open, so the gate marks. **What the
+mark catches:** a hand seal by accident, a stranger who did not read this page, and the
+hand `sops` steps a first run might otherwise follow. **What it does not:** a hand that copies the mark; a
+mark is not a signature, and that hand is the registry's and the reviewer's business, with
+check 1 on the rule and check 4 on the registry standing as before. The mark is read in the
+clear, so a rule that governs a seat file lists it in `unencrypted_regex`
+(`^NOVA_SECRETS_WRITTEN_BY$`; `seat add` writes new rules so); real sops seals a key the rule
+does not permit, and the gate then cannot read the mark. The mark key is never a "plain value"
+to the gate, `check` or `seat inject`, and is a clear key to `names`. The recipient change of
+an existing file (`updatekeys`) is a hand step, so a file re-keyed by hand and not re-sealed
+by a verb keeps the mark it already had and the gate approves it: the recovery path, named as
+what the gate cannot tell apart.
+
 **`--machines <registry>`: the fleet stands in for a second reviewer.** A secrets seat is set
 up **automatically** when the owner asks — no second human approval on `mas-bandwidth/secrets`; the
 mechanical gate is the required check. So the reviewer's question — *whose key is this, and
@@ -1135,7 +1160,7 @@ none of them. Nothing below is a default: every path is typed, once.
 ```
 mkdir -m 700 -p ~/.config/nova-secrets
 nova-secrets keygen --as <seat> --key ~/.config/nova-secrets/<seat>.key --age-keygen $(brew --prefix)/bin/age-keygen
-# paste the printed SECRETS RULE lines into .sops.yaml in a PR touching only your own rule; the other collaborator approves and merges it, and then a holder of an existing key seals the file in a second PR — `sops <seat>.yaml` if it is new, `sops updatekeys <seat>.yaml` if it exists — because the merge alone grants you nothing
+# give the printed public key to a holder of an existing key, who runs `nova-secrets seat add --as <seat> --pub <your public key> --from <their seat> --only NAMES` and opens one pull request carrying your rule and your file; the other collaborator approves it, because the merge alone grants you nothing — never `sops` by hand, which the gate refuses (see `gate`)
 nova-secrets check --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops
 nova-secrets names --store ~/secrets --as <seat>
 nova-secrets exec  --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
@@ -1145,14 +1170,16 @@ Six lines: one directory, one keygen, one comment that is the step other people 
 then check, names and a run that prints a name from GitHub. The third is a comment on purpose —
 **a stranger cannot finish this alone, and the page must say so where the wait happens** rather
 than leave them to find it in a refusal. That pull request needs a GitHub identity the stranger
-does not have yet (its token is inside the store), so the repository owner opens it, and the approver is the
-other collaborator, under **"Reviewed" is a control** above. `check` runs before `names`
+does not have yet (its token is inside the store), so a holder opens it, and the approver is the
+other collaborator, under **"Reviewed" is a control** above. The holder runs `seat add`
+and not `sops` because the verb re-seals only out of a seat the holder can open, only the
+`--only` names, and leaves the mark the gate reads; a file sealed by hand has none. `check` runs before `names`
 because the first command to touch the store should be the one that says whether the store is
 what this spec says. What it prints before the grant, exactly, in three states and not two:
 while `<seat>.yaml` does not exist, **exit 2 listing the names that are in the store**; once it
 exists sealed to somebody else's key, **green with `mine=0`**, invariant 4 passing over no file
-of yours; and for a seat whose file already exists, **between the two pull requests the comment
-above names** — your rule merged, the file not yet `updatekeys`-ed — **exit 1 on invariant 2**
+of yours; and for a seat whose file already exists, **between a rule merged by itself and the file
+re-sealed to it** (the grant path of "recipients, grant, revoke access": a rule merged, the file not yet `updatekeys`-ed) — **exit 1 on invariant 2**
 with the `updatekeys` line. The first two are the right answer rather than a stumble; the third
 is the wait, said as a red, and it clears when the second pull request lands.
 

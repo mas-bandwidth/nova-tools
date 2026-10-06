@@ -183,7 +183,7 @@ func TestAFirstStoreRefusalSaysWhatIsMissingAndHowToMakeIt(t *testing.T) {
 	failing := func(io.Reader, []string, string, string, ...string) ([]byte, error) {
 		return []byte("sops said: " + value), errors.New("exit status 1")
 	}
-	_, err = sealEncrypt(failing, "sops", "k", store, "ada.yaml", []byte(value))
+	_, err = sealEncrypt(failing, "sops", "k", store, "ada.yaml", "seal", []byte(value))
 	got = errText(err)
 	assert.Contains(t, got, "transcript withheld")
 	assert.Contains(t, got, "the .sops.yaml rule for ada.yaml")
