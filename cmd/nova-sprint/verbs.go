@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -63,7 +65,7 @@ func init() {
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --max 5 --epoch 0", (*app).cmdRead},
-		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
+		{"accept", "(<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"redo", "<card>... [--stream <s>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
@@ -2213,19 +2215,48 @@ func readShort(ctx context.Context, st *store.Store, res store.Result, readers [
 	return out
 }
 
+// cmdAccept is the coordinator accepting; --heavy records its own heavy read,
+// the evidence file read here and named with its sha256 (sprint.AcceptReq.Heavy;
+// docs/SPEC-SPRINT.md section 6, accept-heavy-verdict-b.w1).
 func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
-	var readOK *bool
-	var ans *string
+	var readOK, heavy *bool
+	var ans, evidence, reason *string
+	var sha string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
 		readOK = fs.Bool("read-ok", false, "every primary in review with the ok reads it needs (one reader's for a flash card, two different readers' for a pro card); moves eligible primaries into the merge queue")
 		ans = fs.String("answers", "", answersWords)
+		heavy = fs.Bool("heavy", false, "the coordinator's own heavy read of each named primary in review, at its attempt and head: one ok read toward its read rule, recorded on the primary under coordinator:<actor> with --evidence and its sha256, never as a reader's read; a reader's broken read at the attempt stays, marked overruled; wants ids, --evidence and --reason")
+		evidence = fs.String("evidence", "", "with --heavy: the path of a readable file the coordinator's heavy read rests on; its sha256 is recorded beside it")
+		reason = fs.String("reason", "", "with --heavy: why the coordinator's read stands, kept on the primary")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
 			return "wants ids, --stream <s>, --read-ok or --group <id>"
 		}
-		return ""
+		if !*heavy {
+			if *evidence != "" || *reason != "" {
+				return "--evidence and --reason go with --heavy"
+			}
+			return ""
+		}
+		var why []string
+		if len(ids) == 0 || s.stream != "" || *readOK || s.group != "" {
+			why = append(why, "--heavy wants named ids alone, not --stream, --read-ok or --group")
+		}
+		if *reason == "" {
+			why = append(why, "--heavy wants --reason <text>")
+		}
+		if b, err := os.ReadFile(*evidence); *evidence == "" || err != nil {
+			why = append(why, "--heavy wants --evidence <path>, a readable file: "+oneline.Escape(*evidence)+" is not")
+		} else {
+			sum := sha256.Sum256(b)
+			sha = hex.EncodeToString(sum[:])
+		}
+		return strings.Join(why, "; ")
 	}, func(ids []string, s *sel, c *common) store.Step {
 		r := sprint.AcceptReq{Sel: s.sel(ids), Answers: answers(*ans), Who: c.actor}
+		if *heavy {
+			r.Heavy, r.Evidence, r.EvidenceSHA, r.Reason = true, *evidence, sha, *reason
+		}
 		if s.group != "" {
 			r.Sel = sprint.Sel{Only: ids} // a selection: the eligible move
 		}
