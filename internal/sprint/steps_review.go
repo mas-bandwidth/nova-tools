@@ -216,7 +216,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			// in place only on a reader of the card's tier. A reader outside it
 			// is not asked the read again; the card is taken back (retired_by
 			// returned) and the read goes to a reader who reads the tier.
-			if len(chosenReaders)+len(again) < want && s.readerReadsTier(rc.F("reader"), s.readTierOf(c)) {
+			if len(chosenReaders)+len(again) < want && s.readerServesTier(rc.F("reader"), s.readTierOf(c)) {
 				inPlace = append(inPlace, rc)
 				again = append(again, rc.F("reader"))
 				continue
@@ -532,6 +532,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if r.Usage != "" {
 			set[FieldUsage] = rec
 		}
+		// a read drawn no route ran on its reader's own model: its usage line names it
+		// (read_route.go)
+		maps.Copy(set, readUsageFields(c, r.Usage))
 		if pr != nil {
 			record(pr, readConsumer(s, c, 0, r.Verdict, rec))
 		}
