@@ -409,6 +409,13 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		}
 		p.Units = append(p.Units, u)
 	}
+	// a hard pin behind a friend down or held past the friend-idle setting: unpinned by
+	// rule when a preference, else one judgment for her (friend_pin.go)
+	placed := map[string]bool{}
+	for _, u := range p.Units {
+		placed[u.Key] = true
+	}
+	p.Units = append(p.Units, friendPinWaits(s, seats, placed)...)
 	return Lawful(p), dealt, dealtWorking
 }
 
@@ -481,7 +488,7 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, col string, set map[string]
 	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, row, col, c.Score, fields)),
-		change(Work, moveEntry(c, c.Row, Working, prim, "result")),
+		change(Work, moveEntry(c, c.Row, Working, prim, "result", FieldPinWaits)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s %s (a friend's card: friend sync delivers it to her inbox)", c.ID, c.Col, card, row, col)}
 }
 
@@ -516,6 +523,6 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, row, col, set, unset...)),
-		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
+		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result", FieldPinWaits)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, col)}
 }

@@ -332,6 +332,26 @@ hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
 no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
 route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
+**A hard pin behind a friend down or held** (the owner, 2026-10-05: 31 ready cards
+sat pinned to friends down for the week or held, some for 20 hours, with no
+judgment; 2026-10-04: pins are the exception, hard-pin only true ownership).
+The tick's friend deal stamps a ready hard pin whose friend is not up (down,
+held, or off the friends roster) with `pin_waits` the first time it finds her
+so, and clears the stamp when she is up or the card is dealt. Once the stamp is
+older than the friend-idle setting (`set --friend-idle`, `FriendIdleAfter`),
+a pin that is a preference is unpinned by rule in that tick, its `who` removed
+as `unpin` removes it, and logged as a happened note (`WHO unpinned by rule:
+its friend is down or held`) naming the card, the dropped WHO line, the friend,
+her state and since when; the next tick deals it as any unpinned card. A pin
+that is ownership is never unpinned by the machine: the brief's WHO line ends
+in `(owner)` (the generator writes that mark only for ratings and a friend's
+own tool), or the card is her rating card, `rate-<name>-*` (`sprint.PinOwned`).
+Those, and any card `unpin` would refuse, are named in one judgment per friend
+(`ready cards wait pinned to a friend down or held`, on her row), whose first
+decision is the one `nova-sprint unpin <ids> --reason '<why>'` that frees them
+all, printed complete. The judgment is raised once while its cards stay the
+same, replaced when they change, and closed when she is up or no card waits
+behind her; ack and wait quiet it (`TestACardPinnedToADownFriendRaisesOneJudgment`).
 The tick reads the friends' records every tick while the roster has a friend.
 Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
