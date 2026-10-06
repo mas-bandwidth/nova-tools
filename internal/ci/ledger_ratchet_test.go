@@ -3,6 +3,7 @@ package ci
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // The counted class-rule ledgers only shrink and the slowtests budgets only
@@ -171,11 +174,92 @@ func sleepLedgerGrowth(base, head string) (added []string) {
 	return added
 }
 
+// ledgerGit runs one git command in root, with stdin when stdin is not empty,
+// and returns its standard output: gitOutIn in the ratchet, a counting fake in
+// TestTheLedgerTestReadsTheBaseOnce.
+type ledgerGit func(root, stdin string, args ...string) (string, error)
+
+// baseLookup answers a file as the merge base holds it, and false when the base
+// does not carry it (the change introduces it): ListAtCommit's answer.
+type baseLookup func(rel string) (text string, ok bool, err error)
+
+// ledgerBasePaths are what the ratchet reads at the merge base: every counted
+// shard lives under the first, and the two slowtests ledgers are the others.
+var ledgerBasePaths = []string{"internal/ci/testdata", slowTestsAllowlistPath, sleepsSkipsAllowlistPath}
+
+// readMergeBase reads every file the ratchet compares, as the merge base holds
+// it, with two git processes whatever the number of shards: one
+// `git ls-tree -r -z` names each blob under ledgerBasePaths, and one
+// `git cat-file --batch` prints the .txt ones. Two processes per shard (an
+// ls-tree and a show, ListAtCommit's way) were some 1,200 git starts a run,
+// which on a self-hosted runner's reused workspace took the test past 1m30s
+// and its CI shard past the two-minute cap. The lookup answers what
+// ListAtCommit answers for each of those paths (TestTheSinglePassReadsWhatTheTwoCallPathRead);
+// a path the base carries but this read did not print is an error, never a
+// silent "absent".
+func readMergeBase(git ledgerGit, root, base string) (baseLookup, error) {
+	listing, err := git(root, "", append([]string{"ls-tree", "-r", "-z", "--full-tree", base, "--"}, ledgerBasePaths...)...)
+	if err != nil {
+		return nil, fmt.Errorf("listing the merge base %s: %w", base, err)
+	}
+	inBase := map[string]bool{}     // every blob path the base carries under ledgerBasePaths
+	objectOf := map[string]string{} // the .txt ones the batch reads, by path
+	var order []string
+	for _, entry := range strings.Split(listing, "\x00") {
+		meta, rel, ok := strings.Cut(entry, "\t")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(meta) // <mode> <type> <object>
+		if len(fields) != 3 || fields[1] != "blob" {
+			continue
+		}
+		inBase[rel] = true
+		if strings.HasSuffix(rel, ".txt") {
+			objectOf[rel] = fields[2]
+			order = append(order, rel)
+		}
+	}
+	texts := make(map[string]string, len(order))
+	if len(order) > 0 {
+		var names strings.Builder
+		for _, rel := range order {
+			names.WriteString(objectOf[rel] + "\n")
+		}
+		batch, err := git(root, names.String(), "cat-file", "--batch")
+		if err != nil {
+			return nil, fmt.Errorf("reading the merge base %s: %w", base, err)
+		}
+		for _, rel := range order {
+			header, rest, ok := strings.Cut(batch, "\n")
+			fields := strings.Fields(header) // <object> blob <size>
+			if !ok || len(fields) != 3 || fields[0] != objectOf[rel] || fields[1] != "blob" {
+				return nil, fmt.Errorf("reading %s at the merge base %s: git cat-file --batch printed %q, want %q's blob header", rel, base, header, objectOf[rel])
+			}
+			size, err := strconv.Atoi(fields[2])
+			if err != nil || size < 0 || size+1 > len(rest) || rest[size] != '\n' {
+				return nil, fmt.Errorf("reading %s at the merge base %s: git cat-file --batch printed a %q body that does not fit what remains", rel, base, header)
+			}
+			texts[rel], batch = rest[:size], rest[size+1:]
+		}
+	}
+	return func(rel string) (string, bool, error) {
+		if !inBase[rel] {
+			return "", false, nil
+		}
+		text, ok := texts[rel]
+		if !ok {
+			return "", false, fmt.Errorf("%s is at the merge base %s but the single pass reads only .txt files", rel, base)
+		}
+		return text, true, nil
+	}, nil
+}
+
 // ledgerRatchetShards walks every counted shard under internal/ci/testdata:
 // the .txt files at least one directory deep whose head text or base text
 // carries a "# ceiling:" line (fixtures without a ceiling stay out). A brand-new
 // shard with a ceiling is kept so the ratchet reports it as all growth.
-func ledgerRatchetShards(root, base string) ([]string, error) {
+func ledgerRatchetShards(root string, atBase baseLookup) ([]string, error) {
 	var shards []string
 	testdata := filepath.Join(root, "internal", "ci", "testdata")
 	err := filepath.WalkDir(testdata, func(path string, d os.DirEntry, err error) error {
@@ -196,8 +280,8 @@ func ledgerRatchetShards(root, base string) ([]string, error) {
 		}
 		_, headCeil := parseLedgerRows(string(headBytes))
 		baseCeil := -1
-		if base != "" {
-			if baseText, ok, err := ListAtCommit(root, base, relShard); err == nil && ok {
+		if atBase != nil {
+			if baseText, ok, err := atBase(relShard); err == nil && ok {
 				_, baseCeil = parseLedgerRows(baseText)
 			}
 		}
@@ -215,14 +299,14 @@ func ledgerRatchetShards(root, base string) ([]string, error) {
 }
 
 // checkCountedShards checks every counted shard against its merge base version.
-func checkCountedShards(root, base string, shards []string) ([]string, error) {
+func checkCountedShards(root, base string, shards []string, atBase baseLookup) ([]string, error) {
 	var problems []string
 	for _, rel := range shards {
 		headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", rel, err)
 		}
-		baseText, ok, err := ListAtCommit(root, base, rel)
+		baseText, ok, err := atBase(rel)
 		if err != nil {
 			return nil, fmt.Errorf("%s at %s: %w", rel, base, err)
 		}
@@ -232,12 +316,12 @@ func checkCountedShards(root, base string, shards []string) ([]string, error) {
 }
 
 // checkSlowTestsLedger checks slow-tests_allowlist.txt against the merge base.
-func checkSlowTestsLedger(t testing.TB, root, base string) ([]string, error) {
+func checkSlowTestsLedger(t testing.TB, root, base string, atBase baseLookup) ([]string, error) {
 	headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(slowTestsAllowlistPath)))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", slowTestsAllowlistPath, err)
 	}
-	baseText, ok, err := ListAtCommit(root, base, slowTestsAllowlistPath)
+	baseText, ok, err := atBase(slowTestsAllowlistPath)
 	if err != nil {
 		return nil, fmt.Errorf("%s at %s: %w", slowTestsAllowlistPath, base, err)
 	}
@@ -259,12 +343,12 @@ func checkSlowTestsLedger(t testing.TB, root, base string) ([]string, error) {
 }
 
 // checkSleepsLedger checks sleeps-skips_allowlist.txt against the merge base.
-func checkSleepsLedger(t testing.TB, root, base string) ([]string, error) {
+func checkSleepsLedger(t testing.TB, root, base string, atBase baseLookup) ([]string, error) {
 	headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(sleepsSkipsAllowlistPath)))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", sleepsSkipsAllowlistPath, err)
 	}
-	baseText, ok, err := ListAtCommit(root, base, sleepsSkipsAllowlistPath)
+	baseText, ok, err := atBase(sleepsSkipsAllowlistPath)
 	if err != nil {
 		return nil, fmt.Errorf("%s at %s: %w", sleepsSkipsAllowlistPath, base, err)
 	}
@@ -290,22 +374,33 @@ func ledgerRatchetProblems(t testing.TB, root string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the ledger ratchet needs the same base the deprecated-imports ratchet resolves: %w", err)
 	}
-	shards, err := ledgerRatchetShards(root, base)
+	return ledgerRatchetFindings(t, gitOutIn, root, base)
+}
+
+// ledgerRatchetFindings is the ratchet over a resolved base: the merge base is
+// read once through git (readMergeBase), then every counted shard and the two
+// slowtests ledgers are compared with what that one read returned.
+func ledgerRatchetFindings(t testing.TB, git ledgerGit, root, base string) ([]string, error) {
+	atBase, err := readMergeBase(git, root, base)
+	if err != nil {
+		return nil, err
+	}
+	shards, err := ledgerRatchetShards(root, atBase)
 	if err != nil {
 		return nil, err
 	}
 	if len(shards) == 0 {
 		return nil, fmt.Errorf("no counted shards under internal/ci/testdata: the walk is broken, not the tree")
 	}
-	shardProbs, err := checkCountedShards(root, base, shards)
+	shardProbs, err := checkCountedShards(root, base, shards, atBase)
 	if err != nil {
 		return nil, err
 	}
-	slowProbs, err := checkSlowTestsLedger(t, root, base)
+	slowProbs, err := checkSlowTestsLedger(t, root, base, atBase)
 	if err != nil {
 		return nil, err
 	}
-	sleepProbs, err := checkSleepsLedger(t, root, base)
+	sleepProbs, err := checkSleepsLedger(t, root, base, atBase)
 	if err != nil {
 		return nil, err
 	}
@@ -397,6 +492,19 @@ func TestLedgerGrowthComparisonInMemory(t *testing.T) {
 	t.Run("SlowAndSleep", testSlowAndSleepInMemory)
 }
 
+// ratchetGit runs git in dir under the shared test identity (internal/testgit)
+// and returns its standard output; a failure ends the test.
+func ratchetGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testgit.Environ()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	require.NoError(t, err, "git %v: %s", args, stderr.String())
+	return string(out)
+}
+
 // TestCountedShardsRatchetInGitRepo verifies that checkCountedShards detects
 // added rows and raised ceilings against a base commit in a real git repository,
 // flags brand-new ceiling-bearing shards as all growth, and skips ceiling-less
@@ -409,15 +517,8 @@ func TestCountedShardsRatchetInGitRepo(t *testing.T) {
 		dir = r
 	}
 
-	for _, args := range [][]string{
-		{"init", "--quiet"},
-		{"config", "user.name", "Alex"},
-		{"config", "user.email", "alex@example.com"},
-		{"config", "commit.gpgSign", "false"},
-	} {
-		_, err := gitOut(dir, args...)
-		require.NoError(t, err, "git %v", args)
-	}
+	ratchetGit(t, dir, "init", "--quiet")
+	ratchetGit(t, dir, "config", "commit.gpgSign", "false")
 
 	// Base commit has an established shard and a ceiling-less fixture.
 	shardRel := "internal/ci/testdata/sample/shard.txt"
@@ -430,14 +531,9 @@ func TestCountedShardsRatchetInGitRepo(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(shardRel)), []byte(baseShard), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(fixtureRel)), []byte(fixtureCode), 0o644))
 
-	_, err := gitOut(dir, "add", ".")
-	require.NoError(t, err, "git add")
-	_, err = gitOut(dir, "commit", "-m", "base")
-	require.NoError(t, err, "git commit")
-
-	baseCommitOut, err := gitOut(dir, "rev-parse", "HEAD")
-	require.NoError(t, err, "git rev-parse HEAD")
-	baseCommit := strings.TrimSpace(baseCommitOut)
+	ratchetGit(t, dir, "add", ".")
+	ratchetGit(t, dir, "commit", "--quiet", "-m", "base")
+	baseCommit := strings.TrimSpace(ratchetGit(t, dir, "rev-parse", "HEAD"))
 
 	// In the working copy:
 	// 1. Existing shard adds a row and raises its ceiling.
@@ -460,12 +556,14 @@ func TestCountedShardsRatchetInGitRepo(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(newFixtureRel)), []byte(newFixtureCode), 0o644))
 
 	// ledgerRatchetShards discovers only counted shards: new and modified shards with ceilings.
-	shards, err := ledgerRatchetShards(dir, baseCommit)
+	atBase, err := readMergeBase(gitOutIn, dir, baseCommit)
+	require.NoError(t, err, "readMergeBase")
+	shards, err := ledgerRatchetShards(dir, atBase)
 	require.NoError(t, err, "ledgerRatchetShards")
 	require.Equal(t, []string{newShardRel, shardRel}, shards, "only counted shards with ceilings are selected")
 
 	// checkCountedShards reports the expected growth problems.
-	problems, err := checkCountedShards(dir, baseCommit, shards)
+	problems, err := checkCountedShards(dir, baseCommit, shards, atBase)
 	require.NoError(t, err, "checkCountedShards")
 	require.ElementsMatch(t, []string{
 		fmt.Sprintf("%s is not in the merge base %s: a new shard is all growth; justify it beside the rule it measures", newShardRel, baseCommit[:9]),
@@ -474,7 +572,201 @@ func TestCountedShardsRatchetInGitRepo(t *testing.T) {
 	}, problems)
 
 	// Explicitly passing ceiling-less fixtures to checkCountedShards yields no problems.
-	fixtureProblems, err := checkCountedShards(dir, baseCommit, []string{fixtureRel, newFixtureRel})
+	fixtureProblems, err := checkCountedShards(dir, baseCommit, []string{fixtureRel, newFixtureRel}, atBase)
 	require.NoError(t, err, "checkCountedShards on fixtures")
 	require.Empty(t, fixtureProblems, "ceiling-less fixtures produce no ratchet problems")
+}
+
+// fakeBaseGit is a merge base held in memory: it answers the git commands the
+// ratchet's read of the base may start (the per-file `ls-tree --name-only` and
+// `show`, the tree-wide `ls-tree -r -z` and `cat-file --batch`) and records
+// every one it was asked to run.
+type fakeBaseGit struct {
+	files map[string]string // path at the base -> its text
+	calls []string
+}
+
+// fakeBlobName is the object name the fake gives a path's blob.
+func fakeBlobName(rel string) string {
+	return fmt.Sprintf("%040x", len(rel)) + "-" + rel
+}
+
+func (f *fakeBaseGit) run(_, stdin string, args ...string) (string, error) {
+	f.calls = append(f.calls, strings.Join(args, " "))
+	switch {
+	case len(args) == 5 && args[0] == "ls-tree" && args[1] == "--name-only":
+		if _, ok := f.files[args[4]]; ok {
+			return args[4] + "\n", nil
+		}
+		return "", nil
+	case len(args) == 2 && args[0] == "show":
+		_, rel, _ := strings.Cut(args[1], ":")
+		return f.files[rel], nil
+	case len(args) > 2 && args[0] == "ls-tree" && args[1] == "-r":
+		var prefixes []string
+		for i, a := range args {
+			if a == "--" {
+				prefixes = args[i+1:]
+			}
+		}
+		var rels []string
+		for rel := range f.files {
+			for _, p := range prefixes {
+				if rel == p || strings.HasPrefix(rel, p+"/") {
+					rels = append(rels, rel)
+					break
+				}
+			}
+		}
+		sort.Strings(rels)
+		var out strings.Builder
+		for _, rel := range rels {
+			fmt.Fprintf(&out, "100644 blob %s\t%s\x00", fakeBlobName(rel), rel)
+		}
+		return out.String(), nil
+	case len(args) == 2 && args[0] == "cat-file" && args[1] == "--batch":
+		var out strings.Builder
+		for _, name := range strings.Fields(stdin) {
+			_, rel, _ := strings.Cut(name, "-")
+			text, ok := f.files[rel]
+			if !ok {
+				fmt.Fprintf(&out, "%s missing\n", name)
+				continue
+			}
+			fmt.Fprintf(&out, "%s blob %d\n%s\n", name, len(text), text)
+		}
+		return out.String(), nil
+	}
+	return "", fmt.Errorf("fake git: unexpected command %q", strings.Join(args, " "))
+}
+
+// writeRepoFile writes text at rel under root, making its directories.
+func writeRepoFile(t *testing.T, root, rel, text string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(text), 0o644))
+}
+
+// TestTheLedgerTestReadsTheBaseOnce holds the ratchet to two git processes for
+// the whole merge base, however many shards the tree carries: on the
+// self-hosted runners each git start cost tens of milliseconds, and two per
+// file over some 300 files ran TestClassRuleLedgersOnlyShrinkAgainstMergeBase
+// to 1m40s and its shard past the two-minute cap. The findings are the ones the
+// per-file read gave: one added row in one grown shard, nothing else.
+func TestTheLedgerTestReadsTheBaseOnce(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	base := strings.Repeat("ab", 20)
+	fake := &fakeBaseGit{files: map[string]string{}}
+	const shards = 60
+	for i := range shards {
+		rel := fmt.Sprintf("internal/ci/testdata/rule%02d/shard.txt", i)
+		text := fmt.Sprintf("# rule %d\nrow-a  reason\n# ceiling: 1\n", i)
+		fake.files[rel] = text
+		if i == 7 {
+			text = fmt.Sprintf("# rule %d\nrow-a  reason\nrow-b  reason\n# ceiling: 1\n", i)
+		}
+		writeRepoFile(t, root, rel, text)
+	}
+	fixture := "internal/ci/testdata/waits/fixture.go.txt"
+	fake.files[fixture] = "package waits\n"
+	writeRepoFile(t, root, fixture, "package waits\n\nfunc More() {}\n")
+	slow := "# slow\ninternal/pkg\t-\t14.1\t9.4s@studio\n"
+	sleeps := "# sleeps\ninternal/pkg\tFuncA\twhere.go:10\n"
+	fake.files[slowTestsAllowlistPath], fake.files[sleepsSkipsAllowlistPath] = slow, sleeps
+	writeRepoFile(t, root, slowTestsAllowlistPath, slow)
+	writeRepoFile(t, root, sleepsSkipsAllowlistPath, sleeps)
+
+	problems, err := ledgerRatchetFindings(t, fake.run, root, base)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		fmt.Sprintf("internal/ci/testdata/rule07/shard.txt adds the row %q, which its merge base %s lacks; the ledgers only shrink: fix the code and drop the row", "row-b", base[:9]),
+	}, problems)
+	require.Len(t, fake.calls, 2, "the ratchet read the merge base of %d shards with %d git processes, want one ls-tree and one cat-file --batch; the first: %q", shards, len(fake.calls), fake.calls[:min(4, len(fake.calls))])
+	require.True(t, strings.HasPrefix(fake.calls[0], "ls-tree -r"), "first call %q, want the tree-wide ls-tree", fake.calls[0])
+	require.Equal(t, "cat-file --batch", fake.calls[1])
+}
+
+// TestTheSinglePassReadsWhatTheTwoCallPathRead builds a repository with
+// shards, fixtures, an empty file, a file with no final newline, a file with
+// spaces in its name, and the two slowtests ledgers, and holds the single-pass
+// read of the base to ListAtCommit's answer for every path: present or not,
+// byte for byte, the same length; then the shard list and the findings the
+// ratchet derives from each read are the same.
+func TestTheSinglePassReadsWhatTheTwoCallPathRead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	ratchetGit(t, dir, "init", "--quiet")
+	ratchetGit(t, dir, "config", "commit.gpgSign", "false")
+	baseFiles := map[string]string{
+		"internal/ci/testdata/sample/shard.txt":         "# shard\nrow-a  reason\nrow-b  reason\n# ceiling: 2\n",
+		"internal/ci/testdata/sample/deep/nested.txt":   "# nested\nrow-n  reason\n# ceiling: 1\n",
+		"internal/ci/testdata/sample/no newline.txt":    "# spaced name\nrow-s  reason\n# ceiling: 1",
+		"internal/ci/testdata/sample/empty.txt":         "",
+		"internal/ci/testdata/waits/fixture.go.txt":     "package waits\n\nfunc Wait() {}\n",
+		"internal/ci/testdata/waits/binary.bin":         "\x00\x01\x02",
+		"internal/ci/testdata/top-level.txt":            "# ceiling: 9\n",
+		"internal/ci/testdata/gone/removed.txt":         "# removed\nrow-r  reason\n# ceiling: 1\n",
+		slowTestsAllowlistPath:                          "# slow\ninternal/pkg\t-\t14.1\t9.4s@studio\n",
+		sleepsSkipsAllowlistPath:                        "# sleeps\ninternal/pkg\tFuncA\twhere.go:10\n",
+		"internal/ci/testdata/sample/shard-ceiling.txt": "# ceiling: 3\nrow-x  reason\n",
+	}
+	for rel, text := range baseFiles {
+		writeRepoFile(t, dir, rel, text)
+	}
+	ratchetGit(t, dir, "add", ".")
+	ratchetGit(t, dir, "commit", "--quiet", "-m", "base")
+	base := strings.TrimSpace(ratchetGit(t, dir, "rev-parse", "HEAD"))
+
+	// The head: a grown shard, a raised ceiling, a new shard, a removed one.
+	writeRepoFile(t, dir, "internal/ci/testdata/sample/shard.txt", "# shard\nrow-a  reason\nrow-b  reason\nrow-c  reason\n# ceiling: 3\n")
+	writeRepoFile(t, dir, "internal/ci/testdata/newrule/shard.txt", "# new\nrow-z  reason\n# ceiling: 1\n")
+	writeRepoFile(t, dir, slowTestsAllowlistPath, "# slow\ninternal/pkg\t-\t15.0\t9.4s@studio\ninternal/pkg\tTestC\t1.0\t0.5s@bench\n")
+	require.NoError(t, os.Remove(filepath.Join(dir, filepath.FromSlash("internal/ci/testdata/gone/removed.txt"))))
+
+	twoCall := func(rel string) (string, bool, error) { return ListAtCommit(dir, base, rel) }
+	single, err := readMergeBase(gitOutIn, dir, base)
+	require.NoError(t, err)
+
+	paths := []string{slowTestsAllowlistPath, sleepsSkipsAllowlistPath, "internal/ci/testdata/newrule/shard.txt", "internal/ci/testdata/absent/nothing.txt"}
+	for rel := range baseFiles {
+		if strings.HasSuffix(rel, ".txt") {
+			paths = append(paths, rel)
+		}
+	}
+	sort.Strings(paths)
+	for _, rel := range paths {
+		wantText, wantOK, wantErr := twoCall(rel)
+		require.NoError(t, wantErr, "%s by ListAtCommit", rel)
+		gotText, gotOK, gotErr := single(rel)
+		require.NoError(t, gotErr, "%s by the single pass", rel)
+		require.Equal(t, wantOK, gotOK, "%s: present at the base by ListAtCommit %v, by the single pass %v", rel, wantOK, gotOK)
+		require.Equal(t, len(wantText), len(gotText), "%s: size by ListAtCommit %d, by the single pass %d", rel, len(wantText), len(gotText))
+		require.Equal(t, wantText, gotText, "%s: text differs", rel)
+	}
+
+	wantShards, err := ledgerRatchetShards(dir, twoCall)
+	require.NoError(t, err)
+	gotShards, err := ledgerRatchetShards(dir, single)
+	require.NoError(t, err)
+	require.Equal(t, wantShards, gotShards, "the shard list")
+	require.NotEmpty(t, gotShards)
+
+	for _, check := range []func(baseLookup) ([]string, error){
+		func(at baseLookup) ([]string, error) { return checkCountedShards(dir, base, gotShards, at) },
+		func(at baseLookup) ([]string, error) { return checkSlowTestsLedger(t, dir, base, at) },
+		func(at baseLookup) ([]string, error) { return checkSleepsLedger(t, dir, base, at) },
+	} {
+		want, err := check(twoCall)
+		require.NoError(t, err)
+		got, err := check(single)
+		require.NoError(t, err)
+		require.Equal(t, want, got, "the findings")
+	}
 }
