@@ -77,6 +77,10 @@ const (
 const (
 	SessionOK     = "ok"
 	SessionBroken = "broken"
+	// SessionTargetInvalid: the session --session names is gone (archived,
+	// deleted, moved; TargetInvalid), nothing is delivered until the friend
+	// rebinds, and the friend's row says so apart from down.
+	SessionTargetInvalid = "target-invalid"
 )
 
 // Daemon is one friend's loop: the recv loop over the friend's stream with
@@ -180,6 +184,10 @@ type Daemon struct {
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its
 	// Head.
 	Tip func(ctx context.Context, repo, branch string) (string, error)
+	// Invalid, when set, is the named session found gone before the loop
+	// (run reads it in place of the push proof): the loop starts
+	// target-invalid, tells once and delivers nothing.
+	Invalid *TargetInvalid
 	// Running is the beat's running list as the sprint server last said it, every friend's:
 	// a card id or job to the friend whose lane runs it. A lane is never started for a card
 	// it names another friend running, and a lane whose card left her row names its friend
@@ -349,6 +357,9 @@ type loop struct {
 	broken, told bool
 	unable       string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
 	unableTries  int    // the turns refused for it since
+	invalid      *TargetInvalid // the named session is gone: nothing is handed in again
+	invalidSent  [2]bool        // the coordinator's blocker and the friend's NOTE went out
+	recheck      bool           // the last batch turn was deferred or failed: the next reads the target first
 	results      chan result
 	lanes        *laneSet
 	reads        *readSet
@@ -396,6 +407,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if !l.passive {
 		d.status.Session = SessionOK
 	}
+	if d.Invalid != nil {
+		l.invalid = d.Invalid
+		d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionTargetInvalid, d.Invalid.Target, oneLine(d.Invalid.State+": "+d.Invalid.Detail, 200), d.m.LastPing
+		d.Record(fmt.Sprintf("%s session=target-invalid at the start: %s; nothing is delivered and nothing retried, every message stays pending, until she rebinds: %s",
+			d.m.LastPing.UTC().Format(time.RFC3339), d.Invalid.Error(), RebindLine(d.Friend)))
+	}
 	for ctx.Err() == nil {
 		now := d.Now()
 		for _, p := range d.m.Tick(now) {
@@ -434,7 +451,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.status.Mode = l.mode
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
 		switch {
-		case l.broken:
+		case l.broken, l.invalid != nil:
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
 			l.readStep(now)
@@ -454,6 +471,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		} else if l.unable != "" && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
+		if l.invalid != nil && !(l.invalidSent[0] && l.invalidSent[1]) {
+			l.tellInvalid(now)
+		}
 		if storeOK {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
@@ -464,7 +484,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		}
-		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil {
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.invalid == nil && l.busy == nil {
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now
 			}
@@ -691,7 +711,7 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 // It answers whether the store answered.
 func (l *loop) read(now time.Time) bool {
 	d, b := l.d, l.b
-	if l.busy == nil && !l.passive && !l.broken && len(l.hand) < MaxBatch {
+	if l.busy == nil && !l.passive && !l.broken && l.invalid == nil && len(l.hand) < MaxBatch {
 		// in one-shot mode the lanes' turns run while the loop reads: it reads
 		// at once and pauses after, so a lane's result is never a block behind
 		block := BeatEvery
@@ -806,8 +826,19 @@ func (l *loop) turnEnded() {
 	}
 }
 
+// deliverBatch is the batch turn. A retry, any turn after one that was
+// deferred or failed, reads the named session's lifecycle first (Gone), so a
+// session that is gone answers TargetInvalid and nothing more is handed in;
+// a turn after one that ended at exit 0 reads nothing (run reads it at the
+// start).
 func (l *loop) deliverBatch(t *turn) func(context.Context) result {
+	recheck := l.recheck
 	return func(ctx context.Context) result {
+		if recheck {
+			if err := Gone(ctx, l.d.Deliver); err != nil {
+				return result{t, 0, err}
+			}
+		}
 		exit, err := l.d.Deliver.Deliver(ctx, t.text)
 		return result{t, exit, err}
 	}
@@ -964,7 +995,21 @@ func (l *loop) batchDone(r result, now time.Time) {
 		return
 	}
 	var deferred Deferred
+	var gone TargetInvalid
+	if errors.As(r.err, &gone) && !r.t.stopped { // never a deferral: no retry can reach a session that is gone
+		l.invalid = &gone
+		for _, e := range r.t.entries {
+			delete(l.inHand, e) // pending on her stream, for the session she rebinds to
+		}
+		d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionTargetInvalid, gone.Target, oneLine(gone.State+": "+gone.Detail, 200), now
+		d.Record(fmt.Sprintf("%s subject=%s session=target-invalid: %s; nothing is delivered and nothing retried, every message stays pending, until she rebinds: %s",
+			now.UTC().Format(time.RFC3339), r.t.subjects, gone.Error(), RebindLine(d.Friend)))
+		l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
+		l.unable, l.unableTries = "", 0 // a refusal is superseded: the session is gone, not unable
+		return
+	}
 	if errors.As(r.err, &deferred) && !r.t.stopped { // not a failure: the turn stays in hand, tried again, counted toward nothing
+		l.recheck = !l.limited() // a limit's deferral is the harness's, not the session's: it reads nothing
 		l.deferrals++
 		l.retry = now.Add(RecheckEvery)
 		if l.deferrals == 1 || now.Sub(l.deferSaid) >= DeferredSaidEvery {
@@ -985,6 +1030,7 @@ func (l *loop) batchDone(r result, now time.Time) {
 		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
+	l.recheck = !ok && !l.limited()
 	line += l.settle(r.t, ok, r.err, now)
 	if ok && l.unable != "" {
 		line += fmt.Sprintf("\n%s session=ok: a turn succeeded after %d refused; no longer %s", now.UTC().Format(time.RFC3339), l.unableTries, l.unable)
@@ -1006,6 +1052,7 @@ func (l *loop) batchDone(r result, now time.Time) {
 func (l *loop) refusedTurn(t *turn, u SessionRefused, now time.Time) {
 	d := l.d
 	l.retry = now.Add(RecheckEvery)
+	l.recheck = true // a retry follows: it reads the target first
 	l.unableTries++
 	reason := oneLine(u.Reason, 200)
 	if reason == l.unable {
@@ -1040,6 +1087,45 @@ func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, why string) bool {
 	return true
 }
 
+// limited says the harness is at its limit now (Daemon.Limited).
+func (l *loop) limited() bool {
+	if l.d.Limited == nil {
+		return false
+	}
+	_, _, limited := l.d.Limited()
+	return limited
+}
+
+// tellInvalid sends, once, the coordinator one blocker and the friend one
+// NOTE that her named session is gone: the target, the state found and the
+// rebind command. No coordinator to tell is said on the record instead; a
+// send that fails is tried again the next step, the one already sent is not
+// sent again.
+func (l *loop) tellInvalid(now time.Time) {
+	d, gone := l.d, *l.invalid
+	subject := fmt.Sprintf("friend %s: session target-invalid: %s %s is %s", d.Friend, gone.Harness, gone.Target, gone.State)
+	body := subject + fmt.Sprintf("\n%s. The daemon delivers nothing into it and retries nothing; every message stays pending, none given up. It never unarchives a conversation and never picks another session. %s names her session again (or nova-friend install with the new --session); a fresh session check must be answered before anything is delivered.\n", gone.Detail, RebindLine(d.Friend))
+	if !l.invalidSent[0] {
+		to := l.coordinator()
+		if to == "" {
+			d.Record(now.UTC().Format(time.RFC3339) + " session target-invalid, and no coordinator to tell: no ping has named the seat and --coordinator is not set")
+			l.invalidSent[0] = true
+		} else if _, err := l.b.Send(l.ctx, bus.Message{From: d.Friend, To: []string{to}, Kind: bus.KindBlocker, Subject: subject, Body: body}); err != nil {
+			d.status.StoreError = "telling " + to + " the session target is invalid: " + err.Error()
+		} else {
+			l.invalidSent[0] = true
+		}
+	}
+	if !l.invalidSent[1] {
+		note := "NOTE: your session " + gone.Target + " is " + gone.State
+		if _, err := l.b.Send(l.ctx, bus.Message{From: d.Friend, To: []string{d.Friend}, Subject: note, Body: note + "\n" + body}); err != nil {
+			d.status.StoreError = "the NOTE to " + d.Friend + " that the session target is invalid: " + err.Error()
+		} else {
+			l.invalidSent[1] = true
+		}
+	}
+}
+
 // seatOf is the seat a ping names, else its sender.
 func seatOf(seat string, m bus.Message) string {
 	if seat == "" {
@@ -1070,7 +1156,7 @@ func (d *Daemon) flush(now time.Time) {
 	s := d.status
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
-	if d.Limited != nil && s.Session != SessionBroken {
+	if d.Limited != nil && s.Session != SessionBroken && s.Session != SessionTargetInvalid {
 		if kind, until, limited := d.Limited(); limited {
 			s.Session, s.LimitKind, s.LimitUntil = SessionLimited, kind, until
 			if d.limitSaid != until {
