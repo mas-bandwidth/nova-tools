@@ -51,8 +51,8 @@ func init() {
 		{"release check", "[--json] [--streams <glob>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
-		{"start", "", "start", (*app).cmdMachineStart},
-		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
+		{"start", "", "start", (*app).cmdGuardedStart},
+		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdGuardedStop},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRun},
 		{"tick", "[--answer-rules] [--idle-alarm] [--shadow]", "tick", (*app).cmdTick},
 		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
@@ -102,6 +102,8 @@ func init() {
 		{"friend take", "<friend> (<id>... | --all-unstarted) [--reason <text>]", "friend take friend-a s1-4 --reason 'she is on another job'", (*app).cmdFriendTake},
 		{"friend level", "", "friend level", (*app).cmdFriendLevel},
 		{"friend health", "<friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)", "friend health friend-a --state up --seen 2026-10-04T15:00:00Z --generation 1", (*app).cmdFriendHealth},
+		{"friends watch", "[--once]", "friends watch --once", (*app).cmdFriendsWatch},
+		{"status watch", "[--once]", "status watch --once", (*app).cmdStatusWatch},
 		{"friend clean", "[--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]", "friend clean --dry-run", (*app).cmdFriendClean},
 		{"friend reconcile", "<friend> [--root <dir>] [--dry-run]", "friend reconcile friend-a --dry-run", (*app).cmdFriendReconcile},
 		{"lane take", "<kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]", "lane take go --machine m1 --as m1", (*app).cmdLaneTake},
@@ -2709,6 +2711,9 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
 		return refuse(stderr, "resume", "--answers: "+err.Error())
 	}
+	if code := a.pushesBeforeWrite(st, "resume", c.json, stdout, stderr); code != 0 {
+		return code
+	}
 	return a.runStep("resume", *c, st, store.ResumeStep(sprint.ResumeReq{Stream: *stream, Did: *did, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
@@ -2748,6 +2753,11 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if op == "up" {
+		if code := a.pushesBeforeWrite(st, name, c.json, stdout, stderr); code != 0 {
+			return code
+		}
 	}
 	return a.runStep(name, *c, st, a.fleetStep(st, op, member, c.actor, w, drain, d, off), stdout, stderr)
 }

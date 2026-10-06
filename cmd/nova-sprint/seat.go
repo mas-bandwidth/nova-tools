@@ -73,6 +73,9 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 	} else if why != "" {
 		return refuse(stderr, "coordinator", why)
 	}
+	if code := a.pushesBeforeWrite(st, "coordinator", c.json, stdout, stderr); code != 0 {
+		return code
+	}
 	how := "given"
 	if req.Take {
 		how = "taken approved_by=" + oneline.Field(req.ApprovedBy)
@@ -449,7 +452,37 @@ func (a *app) seatTitle(holder string, seat *sprint.SeatChange, now time.Time) s
 	if seat != nil && seat.Taken && seat.Holder == holder {
 		t += " (taken " + a.clock12(seat.At, now) + ")"
 	}
-	return oneline.Escape(t)
+	title := oneline.Escape(t)
+	if !pushArmed(holder) {
+		return title
+	}
+	lines := a.seatPushLines(holder)
+	if lines == "" {
+		return title
+	}
+	return title + "\n" + lines
+}
+
+// seatPushLines is the four PUSH lines under where's title, for an armed
+// seat. A store this process cannot open (no NOVA_SPRINT_REDIS, or a read
+// that fails) leaves the title as it was: where still draws.
+func (a *app) seatPushLines(holder string) string {
+	redis := ""
+	if a.getenv != nil {
+		redis = a.getenv("NOVA_SPRINT_REDIS")
+	}
+	if redis == "" {
+		return ""
+	}
+	st, err := a.store(common{verb: "where", redis: redis})
+	if err != nil {
+		return ""
+	}
+	file, ok, err := readSeatPushes(context.Background(), st, holder)
+	if err != nil {
+		return ""
+	}
+	return formatPushSet(file, ok, a.now())
 }
 
 func sortedKeys[V any](m map[string]V) []string {

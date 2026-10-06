@@ -213,8 +213,15 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	assert.Contains(t, said.String(), "PUSH DOWN name="+name)
 	ta.refusedPushDown("start", "the last push into "+name+"'s opencode session failed: opencode's deliver command exited 1")
 
-	// the seat goes to a name the push reaches
-	pushed := sprint.PushRecord{Name: other, Harness: "opencode", Target: target, Nonce: "n1", Sent: ta.a.now(), Proven: ta.a.now(), PongOf: "n1"}
+	// the seat goes to a name the push reaches. The current holder's four
+	// proofs are fresh first: coordinator refuses a stale bus, friends check
+	// or transitions proof on the seat it leaves.
+	now := ta.a.now()
+	require.NoError(t, writePush(ctx, st, sprint.PushRecord{Name: name, Harness: "opencode", Target: target, Nonce: "n-live", Sent: now, Proven: now, PongOf: "n-live"}))
+	require.NoError(t, beatWatch(ctx, st, name, sprint.PushFieldBus, now))
+	require.NoError(t, beatWatch(ctx, st, name, sprint.PushFieldFriends, now))
+	require.NoError(t, beatWatch(ctx, st, name, sprint.PushFieldTransitions, now))
+	pushed := sprint.PushRecord{Name: other, Harness: "opencode", Target: target, Nonce: "n1", Sent: now, Proven: now, PongOf: "n1"}
 	require.NoError(t, writePush(ctx, st, pushed))
 	out = ta.ok("coordinator " + other + " --reason 'its push is proven'")
 	assert.Contains(t, out, "COORDINATOR OK holder="+other, out)
@@ -355,6 +362,9 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	pushTests.Store(other, pushArmedOnly{})
 	t.Cleanup(func() { pushTests.Delete(other) })
 	now := ta.a.now()
+	require.NoError(t, beatWatch(ctx, st, name, sprint.PushFieldBus, now))
+	require.NoError(t, beatWatch(ctx, st, name, sprint.PushFieldFriends, now))
+	require.NoError(t, beatWatch(ctx, st, name, sprint.PushFieldTransitions, now))
 	require.NoError(t, writePush(ctx, st, sprint.PushRecord{Name: other, Harness: "claude", Adapter: sprint.AdapterFolder, Target: folder, Nonce: "n1", Sent: now, Proven: now, PongOf: "n1"}))
 	out = ta.ok("coordinator " + other + " --reason 'its folder is proven'")
 	assert.Contains(t, out, "COORDINATOR OK holder="+other+" from="+name+" by="+name+" given adapter=folder proven="+now.UTC().Format(time.RFC3339), out)
