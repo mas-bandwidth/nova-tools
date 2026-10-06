@@ -150,6 +150,12 @@ var TickDecisions = map[string][]string{
 	NFriendDeaf:        {"ack", "wait"},
 	NFriendIdle:        {"ack", "wait"},
 	NCoordinatorBehind: {"act", "wait"},
+	// the drift alarms (drift.go): mended, or quiet for a while; raised again every
+	// PassEvery while they hold and not waited
+	NDriftAhead:    {"act", "wait"},
+	NDriftCardBase: {"act", "wait"},
+	NDriftServer:   {"act", "wait"},
+	NDriftBaseRed:  {"act", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -183,6 +189,11 @@ type TickReq struct {
 	// coordinator holds her, read by the binding with every tick (coordinator_pass.go);
 	// nil is none read, and no friend is deaf.
 	Sessions map[string]FriendSession
+	// Drift is the repository's drift facts, read by the binding (ReadDrift, with the last
+	// whole-tree gate at the base; drift.go, docs/SPEC-SPRINT.md section 8, "Drift alarms"):
+	// the deadlines part keeps a judgment for each drift. nil is none read, and no drift
+	// judgment is raised or closed.
+	Drift *DriftFacts
 }
 
 func (r TickReq) who() string {
@@ -1132,7 +1143,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// the backlog alarms, on a plan of their own: each notify closes and judges after its own closes
 	a, alarmsDue := tickAlarms(s, r)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, a.Notes...), append(p.Closes, a.Closes...), append(p.Updates, a.Updates...)
-	return p, due + alarmsDue
+	// the drift alarms, on a plan of their own the same way (drift.go)
+	d, driftDue := TickDrift(s, r, r.Drift)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, d.Notes...), append(p.Closes, d.Closes...), append(p.Updates, d.Updates...)
+	return p, due + alarmsDue + driftDue
 }
 
 // TickOverdue marks each open judgment overdue once, when it passes its due
@@ -1257,7 +1271,8 @@ type cond struct {
 func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind:
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
