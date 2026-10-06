@@ -472,7 +472,8 @@ holds five invariants on two hosts and two exit codes (`MCBenchRun.cfg`):
 `OnlyTheMadeDirIsRemoved`, `AtMostOneHostAnswers`, `FallbackOnlyOnNoAnswer`,
 `ExitIsTheCommands` and `NothingLeftBehind`. Its reversed witness
 (`MCBenchRunBrokenNoRemove.cfg`, a failed copy that returns without the
-deferred remove) must break `NothingLeftBehind`. `CASES.tsv` and `RUNS.tsv` carry its two rows. It does not model an
+deferred remove) must break `NothingLeftBehind`. `COVERAGE.tsv` carries its
+machine row, and `CASES.tsv` and `RUNS.tsv` its two cases. It does not model an
 interrupt that lands between mktemp and its answer: that directory exists on
 the bench but the run never learnt its name, so it is never removed.
 
