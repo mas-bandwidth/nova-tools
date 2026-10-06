@@ -182,13 +182,17 @@ type app struct {
 	// baseGateFails is the base-gate rule's record of base commits that failed their tree
 	// gate (landgo.go, treeGateBase), kept across rounds as the cache is.
 	baseGateFails map[string]*baseGateFail
-	// tickDeadline is how long the run loop waits for one tick (run
-	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
-	// it waits on (time.After unless a test sets it), and exit how the loop
-	// ends the process when a tick runs past it (os.Exit unless a test sets it).
+	// tickDeadline is the least time the run loop waits for one tick (run
+	// --tick-deadline, stretched by the walls of the last ticks; 0, a test's
+	// loop, waits for ever); after is the clock it waits on (time.After unless a
+	// test sets it), and exit how the loop ends the process when ticks in a row
+	// run past it (os.Exit unless a test sets it).
 	tickDeadline time.Duration
 	after        func(time.Duration) <-chan time.Time
 	exit         func(code int)
+	// tickFn, when set (a test), is the run loop's tick of its store: nil is
+	// store.Store.Tick.
+	tickFn func(ctx context.Context, st *store.Store) (store.TickResult, error)
 	// decide is the server's decide lane (run --decide, decidelane.go): nil records no
 	// attempt or grade decision and grades nothing.
 	decide *decideLane

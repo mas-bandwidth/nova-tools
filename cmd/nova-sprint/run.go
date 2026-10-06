@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -299,7 +300,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
-		fs.DurationVar(&a.tickDeadline, "tick-deadline", TickDeadline, "give up a tick that has not ended in this long: print the stacks and exit so the supervisor starts the loop again (0: wait for ever)")
+		fs.DurationVar(&a.tickDeadline, "tick-deadline", TickDeadline, "the least time a tick may take before it is given up (stretched to 3 x the median wall of the last 20 ticks, at most "+TickDeadlineCap.String()+"): past it the stacks are printed, the tick's plan is given up and the loop goes on; three wedged ticks in a row (given up and not stopped within a further deadline) exit 4 so the supervisor starts the loop again (0: wait for ever)")
 	})
 	if st == nil {
 		return code
@@ -380,47 +381,150 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 // a supervisor that restarts only a failed loop restarts it too.
 const exitReplaced = 3
 
-// TickDeadline is how long run waits for one tick before it gives the tick up
-// (--tick-deadline). A tick takes tens of milliseconds; on 2026-10-02 one whose
-// plan never ended held serial, the server's one line of control, for half an
-// hour while its heap grew to 244 GB, and no verb was answered
-// (nova-tools#5122).
+// TickDeadline is the least time run waits for one tick before it gives the
+// tick's plan up (--tick-deadline). A tick takes tens of milliseconds on a quiet
+// store; on 2026-10-02 one whose plan never ended held serial, the server's one
+// line of control, for half an hour while its heap grew to 244 GB, and no verb
+// was answered (nova-tools#5122). The deadline stretches with the store
+// (tickDeadlineOf): on 2026-10-06, under load, ticks took 7 to 8 s, a fixed 10 s
+// fired every few minutes and each exit left the workers refused for 15 to 30 s.
 const TickDeadline = 10 * time.Second
 
-// exitTickDeadline is run's exit when a tick ran past its deadline: not 0, so
-// its supervisor starts it again.
+// TickDeadlineCap is the most the deadline stretches to (unless --tick-deadline
+// asks for more), and tickWalls the ticks whose walls it is stretched by.
+const (
+	TickDeadlineCap = 60 * time.Second
+	tickWalls       = 20
+)
+
+// TickWedgedToExit is how many wedged ticks in a row mean the process is wedged:
+// run then exits exitTickDeadline. A tick is wedged when, given up past its
+// deadline and cancelled, it has not stopped within a further deadline; each
+// further deadline it has not stopped in counts one more. A tick given up that
+// stops when cancelled is no wedge: the store was slow, the process is not stuck
+// (a step change in load, 100 ms ticks become 12 s ticks, pays no exit).
+const TickWedgedToExit = 3
+
+// exitTickDeadline is run's exit when TickWedgedToExit wedged ticks came in a
+// row: not 0, so its supervisor starts it again.
 const exitTickDeadline = 4
 
-// tickWithin runs one tick, begun at began, and waits for it at most d (0 waits
-// for ever). Past d it says so on stdout and writes every goroutine's stack to
-// stderr (the stack names the planner the tick is in), and returns over: the
-// tick's goroutine cannot be stopped and still holds the plan it is making, so
-// the caller ends the process, and the supervisor starts it again, rather than
-// hold serial for ever. The plan is never written; a write already in flight is
-// the store's fence's to finish or repair.
-func (a *app) tickWithin(tick func() (store.TickResult, error), d time.Duration, began time.Time, stdout, stderr io.Writer) (res store.TickResult, err error, over bool) {
-	if d <= 0 {
-		res, err = tick()
-		return res, err, false
+// tickDeadlineOf is the deadline of the next tick: three times the median wall
+// of the ticks in walls (the last tickWalls; with an even count, the upper of
+// the two middle walls), never less than least and never more than
+// TickDeadlineCap, or least when that is more; 0 (no deadline) when least is 0.
+// A slow store stretches the deadline instead of killing the server.
+func tickDeadlineOf(least time.Duration, walls []time.Duration) time.Duration {
+	if least <= 0 {
+		return 0
 	}
-	type ended struct {
+	d := least
+	if len(walls) > 0 {
+		sorted := slices.Clone(walls)
+		slices.Sort(sorted)
+		d = max(d, 3*sorted[len(sorted)/2])
+	}
+	return min(d, max(TickDeadlineCap, least))
+}
+
+// liftAfterOverrun is the least deadline after a tick given up at deadline d:
+// three times d, at most TickDeadlineCap (or least when that is more). The walls'
+// median follows a step change in load only after ten slow ticks; the lift holds
+// the deadline up from the first one, until a tick ends within least.
+func liftAfterOverrun(least, d time.Duration) time.Duration {
+	return min(3*d, max(TickDeadlineCap, least))
+}
+
+// keepWall adds a tick's wall to the last tickWalls.
+func keepWall(walls []time.Duration, wall time.Duration) []time.Duration {
+	walls = append(walls, wall)
+	if len(walls) > tickWalls {
+		walls = slices.Delete(walls, 0, len(walls)-tickWalls)
+	}
+	return walls
+}
+
+// tickOf is one tick of the loop's store: a test's tick when it gives one.
+func (a *app) tickOf(ctx context.Context, st *store.Store) (store.TickResult, error) {
+	if a.tickFn != nil {
+		return a.tickFn(ctx, st)
+	}
+	return st.Tick(ctx)
+}
+
+// tickWithin runs one tick, begun at began, on a context of its own, and waits
+// for it at most d (0 waits for ever, reading no clock). Past d it says so on
+// stdout, writes every goroutine's stack to stderr (the stack names the planner
+// the tick is in), cancels the tick's context, so its store calls end and a
+// write not yet sent is never sent, and returns over: the tick's plan is given up
+// and never written (a write already in flight is the store's fence's to finish
+// or repair). ended is closed when the tick's goroutine has returned: the caller
+// waits for it before the next tick (awaitGivenUp), for the goroutine shares the
+// loop's store and its twin.
+func (a *app) tickWithin(ctx context.Context, tick func(context.Context) (store.TickResult, error), d time.Duration, began time.Time, stdout, stderr io.Writer) (res store.TickResult, over bool, ended <-chan struct{}, err error) {
+	end := make(chan struct{})
+	if d <= 0 {
+		res, err = tick(ctx)
+		close(end)
+		return res, false, end, err
+	}
+	type result struct {
 		res store.TickResult
 		err error
 	}
-	done := make(chan ended, 1)
+	tctx, cancel := context.WithCancel(ctx)
+	done := make(chan result, 1)
 	go func() {
-		res, err := tick()
-		done <- ended{res, err}
+		defer close(end)
+		r, e := tick(tctx)
+		done <- result{r, e}
 	}()
 	select {
-	case e := <-done:
-		return e.res, e.err, false
+	case r := <-done:
+		cancel()
+		return r.res, false, end, r.err
 	case <-a.after(d):
-		fmt.Fprintf(stdout, "%s TICK DEADLINE the tick begun at %s did not end within %s: its plan is given up and run exits %d so its supervisor starts it again; the stacks follow on stderr\n",
-			a.now().Format("15:04:05"), began.Format("15:04:05"), d, exitTickDeadline)
-		// ignored: the process is about to exit, and the line above says why
+		fmt.Fprintf(stdout, "%s TICK DEADLINE the tick begun at %s did not end within %s: its plan is given up and the loop goes on to the next tick once it has stopped; the stacks follow on stderr\n",
+			a.now().Format("15:04:05"), began.Format("15:04:05"), d)
+		// ignored: the stacks are a diagnosis; the line above says what happened
 		_ = pprof.Lookup("goroutine").WriteTo(stderr, 2)
-		return store.TickResult{}, nil, true
+		cancel()
+		return store.TickResult{}, true, end, nil
+	}
+}
+
+// awaitGivenUp waits for the tick given up (its context cancelled) to end, so the
+// next tick never runs beside it, and returns true once it has. A tick that has
+// not stopped within a further deadline d is wedged: each further deadline it has
+// not stopped in counts one more on wedged, the wedged ticks in a row; a tick that
+// stops within the first further deadline is no wedge and starts the count again.
+// At TickWedgedToExit the process is wedged: it says so, writes the stacks again,
+// and returns false, and the caller exits exitTickDeadline. A cancel ends no store
+// call in flight at once (a read already sent runs to its ReadTimeout, 5 s), so a
+// tick that stops is given a whole further deadline to do it.
+func (a *app) awaitGivenUp(ended <-chan struct{}, d time.Duration, began time.Time, wedged *int, stdout, stderr io.Writer) bool {
+	select {
+	case <-ended:
+		*wedged = 0
+		return true
+	case <-a.after(d):
+	}
+	for {
+		*wedged++
+		fmt.Fprintf(stdout, "%s TICK DEADLINE the tick begun at %s, given up, has not stopped within a further %s: a wedged tick, %d in a row\n",
+			a.now().Format("15:04:05"), began.Format("15:04:05"), d, *wedged)
+		if *wedged >= TickWedgedToExit {
+			fmt.Fprintf(stdout, "%s TICK WEDGED %d given-up ticks in a row did not stop within a further deadline (%s) of being cancelled, the last begun at %s: the process is wedged and run exits %d so its supervisor starts it again; the stacks follow on stderr\n",
+				a.now().Format("15:04:05"), *wedged, d, began.Format("15:04:05"), exitTickDeadline)
+			// ignored: the process is about to exit, and the line above says why
+			_ = pprof.Lookup("goroutine").WriteTo(stderr, 2)
+			return false
+		}
+		select {
+		case <-ended:
+			return true
+		case <-a.after(d):
+		}
 	}
 }
 
@@ -501,6 +605,12 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 	// show beside the seat's holder: written before the first tick and every
 	// store.ServerEvery (seat-key-follows-record.w2)
 	var said time.Time
+	// the walls of the last ticks, which stretch the deadline (tickDeadlineOf),
+	// the least deadline an overrun lifted it to (liftAfterOverrun), and the
+	// wedged ticks in a row (awaitGivenUp)
+	var walls []time.Duration
+	var lift time.Duration
+	wedged := 0
 	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {
 		if now := a.binaryStamp(); began0 != "" && now != began0 {
 			fmt.Fprintf(stdout, "RUN STOP the binary this loop runs was replaced on disk since it began (%s, now %s): exiting so its supervisor starts the new one; a loop that is not supervised: run nova-sprint run again\n", began0, orDashStr(now, "unreadable"))
@@ -514,11 +624,40 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		if waited := a.serial.TickLock(); waited > store.TickEvery {
 			fmt.Fprintf(stdout, "%s LINE the tick waited %s for the server's line of control (a batch or a lane held it)\n", a.now().Format("15:04:05"), waited.Round(time.Millisecond))
 		}
-		res, err, over := a.tickWithin(func() (store.TickResult, error) { return st.Tick(ctx) }, a.tickDeadline, began, stdout, stderr)
+		deadline := tickDeadlineOf(a.tickDeadline, walls)
+		if deadline > 0 && lift > deadline {
+			deadline = lift
+		}
+		start := a.now()
+		res, over, ended, err := a.tickWithin(ctx, func(c context.Context) (store.TickResult, error) { return a.tickOf(c, st) }, deadline, began, stdout, stderr)
 		if over {
-			// serial stays held: the tick's goroutine is still in its plan
-			a.exit(exitTickDeadline)
-			return false
+			// a tick past its deadline gives up its plan, never the process: the
+			// line is held until the tick given up has stopped, then the loop goes on
+			// (docs/SPEC-SPRINT.md section 14, The server, "The tick's deadline")
+			walls = keepWall(walls, deadline)
+			lift = liftAfterOverrun(a.tickDeadline, deadline)
+			if !a.awaitGivenUp(ended, deadline, began, &wedged, stdout, stderr) {
+				// serial stays held: the tick's goroutine is still in its plan
+				a.exit(exitTickDeadline)
+				return false
+			}
+			a.serial.Unlock()
+			if count, cerr := st.CountTickOverrun(ctx); cerr != nil {
+				fmt.Fprintf(stderr, "%s run: the tick's overrun was not counted on the heartbeat: %s\n", prog, oneline.Escape(cerr.Error()))
+			} else {
+				fmt.Fprintf(stdout, "%s TICK OVERRUN the tick begun at %s was given up and has stopped; tick_overrun=%d; the next deadline is at least %s; the loop goes on\n", a.now().Format("15:04:05"), began.Format("15:04:05"), count, lift)
+			}
+			if n != 0 && i == n-1 {
+				return false
+			}
+			why = tickRetry
+			continue
+		}
+		wedged = 0
+		wall := a.now().Sub(start)
+		walls = keepWall(walls, wall)
+		if wall <= a.tickDeadline {
+			lift = 0 // the store is as fast as --tick-deadline again
 		}
 		a.serial.Unlock()
 		if a.ticked != nil {
@@ -526,6 +665,9 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		}
 		if a.profiled != nil {
 			a.profiled(i + 1)
+		}
+		if res.BusyRetries > 0 {
+			fmt.Fprintf(stdout, "%s TICK BUSY other operations kept the fence moving under the tick: its parts ran again %d times within it\n", a.now().Format("15:04:05"), res.BusyRetries)
 		}
 		if res.State != was && res.State != "" {
 			fmt.Fprintf(stdout, "%s machine %s\n", a.now().Format("15:04:05"), res.State)
@@ -537,7 +679,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			if res.State == store.Running || err != nil {
 				// what the tick cost, part by part: its time, round trips,
 				// whole-table reads and records read (store/stats.go)
-				fmt.Fprintln(stdout, res.TimesLine())
+				fmt.Fprintf(stdout, "%s deadline=%s\n", res.TimesLine(), deadline)
 			}
 			if line := sprintLine(ctx, st); line != "" {
 				fmt.Fprintln(stdout, line)

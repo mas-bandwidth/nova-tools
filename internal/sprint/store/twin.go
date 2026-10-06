@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -275,7 +274,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		}
 		return snap, f2, nil
 	}
-	return nil, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
+	return nil, Fence{}, &FenceBusyError{Reads: r.tries, Slept: r.slept()}
 }
 
 // checkTwin gives CheckTwin the twin's snapshot with a fresh read of the
