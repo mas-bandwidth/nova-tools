@@ -53,8 +53,11 @@ func TestAReworkKeepsTheWhoPin(t *testing.T) {
 	t.Run("rework", func(t *testing.T) {
 		t.Parallel()
 		w := friendWorld(t, friendBrief("friend amy"))
-		dealWith(w, amy(Up), bob)
+		// dealt ready on her row, then started by her (her start receipt): working, so her
+		// finish takes it (docs/SPEC-SPRINT.md, "Working on her row means started")
+		dealStarted(w, amy(Up), bob)
 		require.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-1.w1").Row, "its first deal is to the friend it names")
+		require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "she started it")
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: FriendRow("amy"), Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "HOLD: the gate is red"}))
 		w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "make the gate green"}))
 		waitsForAmy(t, w, "s1-1")
