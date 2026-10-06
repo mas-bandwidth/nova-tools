@@ -81,6 +81,8 @@ func init() {
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
 		{"backup", "(--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])", "backup --file /tmp/nova-sprint-backup.rdb", (*app).cmdBackup},
+		{"demo load", "<backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]", "demo load sprint-store-2026-10-04-2336.redis.txt.xz.part-aa sprint-store-2026-10-04-2336.redis.txt.xz.part-ab", (*app).cmdDemoLoad},
+		{"demo stop", "[--dir <dir>]", "demo stop --dir ./no-demo-here", (*app).cmdDemoStop},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"hold", "<member|reader|friend|stream>... --reason <text> [--return] [--dry-run]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},

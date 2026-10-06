@@ -36,6 +36,8 @@ var verbExit = map[string]string{
 	"answer":        "exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer",
 	"dashboard":     "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
 	"selftest land": "exit codes: 0 done, 1 failed (lander broken or card did not land), 2 usage",
+	"demo load":     "exit codes: 0 the demo is up and where read it, 1 failed (a damaged backup, a demo already up, a Redis that did not start or a line not replayed: what this load started is stopped and removed), 2 usage",
+	"demo stop":     "exit codes: 0 stopped and removed, 1 failed (no demo up, or a recorded pid or directory that is not the demo's: nothing stopped or removed), 2 usage",
 	"server switch": "exit codes: 0 done, 1 failed or refused (the candidate's shadow tick failed: nothing changed), 2 usage",
 }
 
@@ -48,6 +50,8 @@ var verbEffect = map[string]string{
 	"routes":            "inspection: reads the route table and prints each route, writes nothing",
 	"cost reconcile":    "local write: reads each provider's usage of today through the seat's key and writes the reconciliation and its gap judgment to the sprint's store; --dry-run writes nothing",
 	"backup":            "local write: with --out, writes the epoch's keys and the shared keys as a RESTORE text dump, xz -9, split into parts under 100 MB, with SHA256SUMS and a README section, after restoring the parts into a throwaway store under this build's function library, comparing the counts, and scanning for every nova-secrets value under nova-secrets exec (counts only); --out is written only when every step passed. With --file, writes the store to a new owner-only file, restores it into a twin, compares and scans it for secrets, and removes the file when any step fails; --dry-run writes nothing; the store is only read",
+	"demo load":         "local write: starts a throwaway Redis on a free 127.0.0.1 port in a directory of its own under --dir, loads this build's function library and the backup into it, and records its port, pid and directory in the state file there; the live store is never opened",
+	"demo stop":         "local write: stops the Redis demo load started (the pid in its state file, only when the Redis at the recorded address is that pid) and removes the recorded directory and the state file; nothing else",
 	"promote":           "delivery: promotes the landed cards toward the development branch and records the promotion in the sprint's store; --dry-run prints the branch and the landed cards and changes nothing",
 	"friend clean":      "local write: removes the friends' finished job directories and listings past --days under --root; --dry-run prints every removal with the bytes it would free and removes nothing",
 	"where":             "inspection: reads the sprint table and its rows, writes nothing",
