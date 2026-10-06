@@ -89,6 +89,20 @@ were written for, because a rule document is a list of absolutes, and acting on
 that output weakened five rules before a cold reader caught them. One was
 floor-level. If you find the next one of those, we want it.
 
+### secrets-never-in-errors-t2-b.w1
+
+A secret handed to a tool never comes back in the tool's own words. A refusal
+that quotes the value it was given (a DSN, a URL with userinfo, a token) carries
+that value to a terminal, a log and a report, so a refusal names the defect and
+the error's type, or a fixed sentence, and never the input. The Postgres DSN
+parse error that printed a password (`internal/config/pg.go`) is the case, and
+`OpenPG` refuses with the type alone. `TestNoSecretReachesAnError` drives
+secret-shaped strings through every exported `Open*`, `Parse*`, `Dial*` and
+`New*` function that takes a string and refuses one whose error, panic or log
+output holds eight bytes of the secret; the openers that still echo their input
+are listed, each with its reason, in that test's shrink-only allowlist, and the
+list is the work left (docs/SPEC-CI.md, `secrets-never-in-errors`).
+
 ## Reporting
 
 Email <glenn@mas-bandwidth.com>. That is the route that works today, and it is
