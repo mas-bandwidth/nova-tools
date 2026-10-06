@@ -35,6 +35,9 @@ type StreamClock struct {
 	// repositories it lands dev and main of; empty for a plain stream
 	// (docs/SPEC-SPRINT.md section 7, protected-bases-pb-b.w2).
 	Promotion string `json:",omitempty"`
+	// Level is the stream's priority level from its control card (FieldLevel), 0 when
+	// none (docs/SPEC-SPRINT.md, the deal: priority).
+	Level int `json:",omitempty"`
 }
 
 // Stalled says a stream that has not landed has made no progress for longer

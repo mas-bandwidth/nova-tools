@@ -189,7 +189,7 @@ type held struct {
 	turn map[string]int
 }
 
-// dealTurn is the ready primary's place in the deal's order (streamTurns over the
+// dealTurn is the ready primary's place in the deal's order (dealOrder over the
 // ready primaries, sentinels aside): how many the deal takes before it.
 func (c *held) dealTurn(id string) int {
 	if c.turn == nil {
@@ -200,7 +200,7 @@ func (c *held) dealTurn(id string) int {
 			}
 		}
 		c.turn = map[string]int{}
-		for i, x := range streamTurns(ready, streamRound(c.s, PropStreamIndex)) {
+		for i, x := range dealOrder(c.s, ready) {
 			c.turn[x.ID] = i
 		}
 	}
@@ -550,8 +550,9 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			up = without(up, StagingRefusers(wc))
 		}
 		room := widthRoom(s, up)
-		// The deal's order is streamTurns from the deal's stream index (a
-		// stream at a time, in turn), so what is ahead is counted in that order.
+		// The deal's order is dealOrder: the higher level's first (priority.go), and
+		// inside a level streamTurns from the deal's stream index (a stream at a
+		// time, in turn), so what is ahead is counted in that order.
 		ahead := c.dealTurn(pr.ID)
 		if ahead < room {
 			return "a member is below its room (DealAhead times its width), and nothing deals it", "", false

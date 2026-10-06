@@ -424,3 +424,5 @@ MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	
 MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
+MCDeal.cfg	MCDeal.tla	pass	-	ignore-terminal	deal	required	-
+MCDealBrokenLevelIgnored.cfg	MCDeal.tla	action	LevelFirst	ignore-terminal	deal	required	-

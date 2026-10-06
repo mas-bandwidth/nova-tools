@@ -1126,6 +1126,8 @@ nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
+nova-sprint priority set (<stream>... | --release <name>) --level <n>
+nova-sprint why <id>
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
 nova-sprint fleet beat <member> [--load <percent>]
@@ -1225,6 +1227,18 @@ on something dropped" judgment, in one step. Where the drop and the add were mad
 `relink lint-pkg-cairn-t lint-pkg-cairn-tb` re-points the edges and answers the blocked
 judgments of that pair. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "A
 card replaced by its twin".
+
+### A group dealt first
+
+`priority set --release v1.1.0 --level 1` makes every stream of the release a group the
+deal takes before every stream at level 0; `priority set rel --level 2` names streams
+instead. Inside a level the streams take turns as before, and within a stream the order
+stays its own: a priority never reorders a stream, and no card has one. A group with
+nothing ready yields to the next level; `--level 0` takes the level off. `where` prints
+`priority: dealing level <n> (<streams>); levels ...` while a stream has a level, and
+`why <id>` prints what keeps a ready card from dealing this tick, one line each (group,
+order, hold, who, tier, friends, machines, bound). The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md) section 5, "The deal: priority".
 
 ### A sentinel whose cards were deferred
 

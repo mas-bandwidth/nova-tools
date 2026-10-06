@@ -2307,6 +2307,34 @@ and it is the coordinator's decision, receipted.
   (`tla/DirtyTick.tla`, `Room` and `WidthRespected`, which bound the room;
   `TestAReworkIsNotDealtToAMemberAtDealAheadTimesItsWidth`). A member takes
   its ready cards in stream turns, so it starts every stream alike.
+- **The deal: priority.** A priority is a group's, never a card's (the owner,
+  2026-10-06: "Priority should not be able to change work order within a
+  stream, but it should be able to make sure that certain groups of cards get
+  dealt first"). A group is a stream, or every stream of a release (`stream
+  set --release`), and its level a field of each stream's control card,
+  `level`, a whole number, absent at 0: `nova-sprint priority set
+  <stream>... --level <n>`, or `--release <name> --level <n>` for every
+  stream of the release, writes it, all or none, and `--level 0` takes it off.
+  The deal, the machines' and the friends' alike (and the `deal` verb), takes
+  the ready primaries in descending level and, inside a level, in stream turns
+  from the deal's stream index as before (`dealOrder`: a stable sort by level
+  over `streamTurns`); within a stream the order stays the stream's own, by
+  score (rank), so a priority never reorders a stream. A group with nothing
+  eligible (nothing ready, its stream held, its cards for a friend not up)
+  costs no turn: the next level is dealt. The no-stall rule counts what is
+  ahead of a ready card in the same order. There is no per-card priority and
+  no table beyond the level on the stream. `where` prints `priority: dealing
+  level <n> (<streams>); levels <stream> <n>, ..., the rest 0` while a stream
+  has a level, and `where --json` carries each stream's `Level` and
+  `priority` (`levels`, `group`, `streams`), which the dashboard's merge row
+  draws as the deal group. `nova-sprint why <card>` prints, for a ready card,
+  what keeps it from dealing this tick, one line each: `group` (its level and
+  the groups of a higher level with a ready card), `order` (the ready cards
+  dealt before it), `hold`, `who`, `tier`, `friends` (each friend, eligible or
+  why not, and her room), `machines` (the members up and their room) and
+  `bound`. The model is `tla/Deal.tla`: `LevelFirst`, a card of a higher
+  level is never passed over for a lower one while a worker eligible for it
+  has room (`TestAHigherLevelGroupIsDealtBeforeALowerOneWithoutReorderingAStream`).
 - A card's bench: a brief whose header carries `BENCH: <member>`, or a
   comma-separated list of members, names the members that have what the card
   needs (a tool one machine alone holds), and the card is dealt only to them.

@@ -805,6 +805,12 @@ function renderMerge(d) {
    ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {
     var e = $(f[0]); e._quiet = true; setText(e, f[1]);
   });
+  // the deal's group (where --json's priority): the level dealt now and its streams; the
+  // title names every stream's level. "-" while no stream has a level.
+  var pr = d.priority, ge = $("mr-group");
+  ge._quiet = true;
+  setText(ge, pr ? "level " + pr.group + (pr.streams && pr.streams.length ? " · " + pr.streams.join(", ") : "") : "-");
+  ge.title = pr ? Object.keys(pr.levels).sort().map(function (k) { return k + " " + pr.levels[k]; }).join(", ") + ", the rest 0" : "no stream has a priority level";
   var g = $("mr-gate");
   if (!g._pill) { g._pill = makePill(); g.appendChild(g._pill); }
   var gate = m.base_gate || "-", tone = gate === "red" ? "critical" : gate === "green" ? "good" : "neutral";

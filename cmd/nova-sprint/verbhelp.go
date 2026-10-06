@@ -64,6 +64,8 @@ var verbEffect = map[string]string{
 	"held":              "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":         "inspection: reads the sentinels and what each waits on, writes nothing",
 	"sentinel set":      "local write: replaces the sentinel's needs in the sprint's store, keeping its id, stream, score and log",
+	"priority set":      "local write: writes the group's level on each of its streams' control cards in the sprint's store",
+	"why":               "inspection: reads the tables, the routes and the friends' seats and prints what keeps a ready card from dealing, writes nothing",
 	"view cards":        "inspection: lists or counts (--by tier|stream|col|holder) the work table's primaries, filtered by --col, --stream, --holder; writes nothing",
 	"view coordinator":  "inspection: reads what needs the seat (the tables, the inbox, the friends and the machines), writes nothing",
 	"view worker":       "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
@@ -210,6 +212,10 @@ func verbProse(name string) string {
 		return releaseHoldWords
 	case "sentinel set":
 		return sentinelSetWords + "\n"
+	case "priority set":
+		return priorityWords + "\n"
+	case "why":
+		return whyWords + "\n"
 	case "friend beat", "friend down", "friend up", "friend health":
 		return friendVerbWords(name)
 	case "friend take":
