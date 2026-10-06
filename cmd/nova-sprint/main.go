@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -97,6 +98,9 @@ type app struct {
 	// profiled, when set, is told of each tick run finished, by its count:
 	// run --cpuprofile ends its profile at the last tick it covers.
 	profiled func(n int)
+	// dashListen, when set (a test), opens each of the dashboard's listeners in
+	// net.Listen's place, so the test holds the listener it was given.
+	dashListen func(network, addr string) (net.Listener, error)
 	// checkTwin, when set (a test), is every store's CheckTwin: each part a
 	// tick plans on its twin is checked against a fresh read (store/twin.go).
 	checkTwin func(held, fresh *sprint.Snapshot) error
