@@ -773,11 +773,31 @@ function renderTopStreams(d) {
   }
 }
 
+// Merge row (docs/SPEC-SPRINT-DASHBOARD.md, "Merge row"): where --json's merge_row.
+function renderMergeRow(d) {
+  var m = d.merge_row || {};
+  setText($("mr-merging"), m.merging == null ? "-" : String(m.merging));
+  setText($("mr-review"), m.review == null ? "-" : String(m.review));
+  setText($("mr-landed"), m.landed_per_30m == null ? "-" : String(m.landed_per_30m));
+  setText($("mr-oldest"), m.oldest_merging_min == null ? "-" : m.oldest_merging_min + "m");
+  var gate = m.base_gate || "-";
+  var g = $("mr-gate");
+  setText(g, gate);
+  g.className = "num" + (gate === "red" ? " gate-red" : gate === "green" ? " gate-green" : "");
+  setText($("mr-failing"), m.failing_test || "-");
+  var drift = "-";
+  if (d.merge_row) drift = "base lacks " + (m.base_lacks || 0) + ", dev lacks " + (m.dev_lacks || 0);
+  setText($("mr-drift"), drift);
+  setText($("mr-sync"), m.sync_minutes == null ? "-" : m.sync_minutes + "m");
+  setText($("mr-promo"), m.promotion_minutes == null ? "-" : m.promotion_minutes + "m");
+}
+
 function render(d) {
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
   renderPie(d);
   renderTopStreams(d);
+  renderMergeRow(d);
   renderFleet(d);
   renderFriends(d);
   renderWall(d);

@@ -22,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 )
 
 // The read verbs: queue, where, inbox, card, check. Each has --json, one
@@ -545,6 +546,12 @@ type whereView struct {
 	Width  int    `json:"width"`
 	Buffer string `json:"buffer"`
 	Low    bool   `json:"low"`
+	// MergeRow is the merge state the dashboard's merge row draws
+	// (docs/SPEC-SPRINT-DASHBOARD.md, "Merge row"): counts, landings of the
+	// last 30 minutes, the oldest merging card's age, the base gate, the drift
+	// between the base and the development branch, and the minutes since the
+	// last sync and the last promotion. The same object is on where --json.
+	MergeRow sprintdash.MergeRow `json:"merge_row"`
 	// Friends is the friends table's rows with what each friend's last beat reported (her
 	// load and her own counts, friend beat), beside the table's counts, which are the sprint's.
 	Friends []store.FriendRow `json:"friends,omitempty"`
@@ -636,6 +643,85 @@ func mergingView(cs []*sprint.Card) []mergingCard {
 	}
 	slices.SortFunc(out, func(a, b mergingCard) int { return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.ID, b.ID)) })
 	return out
+}
+
+// oldestMergingMinutes is the age in minutes of the earliest accepted stamp
+// among the merging primaries, nil when none of them carries one.
+func oldestMergingMinutes(cards []*sprint.Card, now time.Time) *int {
+	var oldest time.Time
+	for _, c := range cards {
+		t, err := time.Parse(time.RFC3339, c.F("accepted"))
+		if err != nil {
+			continue
+		}
+		if oldest.IsZero() || t.Before(oldest) {
+			oldest = t
+		}
+	}
+	if oldest.IsZero() {
+		return nil
+	}
+	mins := 0
+	if now.After(oldest) {
+		mins = int(now.Sub(oldest).Minutes())
+	}
+	return &mins
+}
+
+// mergeRowOf is the merge row from the shapes where already holds: the work
+// table's merging and review counts, the landings of the last 30 minutes, and
+// the drift and the last promotion the merge and work tables record
+// (sprint.DevDriftOf, sprint.Promotion). The base gate and its failing test
+// are the stream control card's cause and the NBaseRed note, which these
+// shapes do not carry, so both stay empty. The oldest merging card's age is
+// filled from the merging cards --cards already read.
+func mergeRowOf(work, merge ntable.Table, landed []time.Time, now time.Time) sprintdash.MergeRow {
+	row := sprintdash.MergeRow{
+		Merging:      columnCount(work, string(sprint.Merging)),
+		Review:       columnCount(work, string(sprint.Review)),
+		LandedPer30m: landedWithin(landed, now, 30*time.Minute),
+	}
+	w := sprint.NewTable(sprint.Work)
+	w.SetProps(work.Props)
+	m := sprint.NewTable(sprint.Merge)
+	m.SetProps(merge.Props)
+	snap := &sprint.Snapshot{Now: now, Work: w, Merge: m}
+	drift := sprint.DevDriftOf(snap)
+	row.BaseLacks, row.DevLacks = drift.BaseLacks, drift.DevLacks
+	if _, _, ok := sprint.LastDevSync(snap); ok {
+		syncMin := drift.Minutes
+		row.SyncMinutes = &syncMin
+	}
+	if at, _, ok := sprint.Promotion(snap); ok {
+		promoMin := 0
+		if now.After(at) {
+			promoMin = int(now.Sub(at).Minutes())
+		}
+		row.PromotionMinutes = &promoMin
+	}
+	return row
+}
+
+func columnCount(t ntable.Table, name string) int64 {
+	j := t.Column(name)
+	var n int64
+	for _, r := range t.Rows {
+		if j >= 0 && j < len(r.Cells) {
+			n += r.Cells[j].Count
+		}
+	}
+	return n
+}
+
+func landedWithin(landed []time.Time, now time.Time, window time.Duration) int64 {
+	from := now.Add(-window)
+	var n int64
+	for _, at := range landed {
+		if !at.Before(from) && !at.After(now) {
+			n++
+		}
+	}
+	return n
 }
 
 // judgmentRef is an open judgment naming a dealt card's primary: its note and its kind.
@@ -832,6 +918,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			}
 			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
 			v.Merging = mergingView(d.Merging)
+			v.MergeRow.OldestMergingMin = oldestMergingMinutes(d.Merging, v.At)
 			// every hold in force, with its reason (hold, docs/SPEC-SPRINT.md section 11): the
 			// status cells read held, and this says why; read for the dashboard's form only, so
 			// where --json keeps its one read of records
@@ -965,6 +1052,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
 	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
+	v.MergeRow = mergeRowOf(shapes[0], shapes[2], facts.Landed, now)
 
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID

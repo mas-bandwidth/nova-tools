@@ -158,6 +158,14 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .panel-head h2 { margin: 0; font-size: 2rem; line-height: 3rem; font-weight: 600; }
 .panel-head .muted { font-size: 1.625rem; }
 .panel-head .archived { background: none; border: 0; padding: 0; font: inherit; font-size: 1.625rem; cursor: pointer; text-decoration: underline dotted; }
+
+/* Merge row (docs/SPEC-SPRINT-DASHBOARD.md, "Merge row"): one dark row of the merge state. */
+.merge-row { margin-top: 3rem; }
+.merge-facts { display: flex; flex-wrap: wrap; gap: 1.25rem 2.5rem; padding: 0 3rem 2rem; }
+.merge-facts .label { display: block; color: var(--text-2); font-size: 1.125rem; }
+.merge-facts b { font-weight: 500; }
+.merge-facts .gate-red { color: var(--critical); }
+.merge-facts .gate-green { color: var(--good); }
 .empty { padding: 1rem 3rem 3rem; color: var(--text-2); font-size: 1.625rem; }
 .empty code { font: 1.5rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
@@ -359,6 +367,21 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
+</section>
+
+<section class="panel merge-row" id="merge-row">
+  <div class="panel-head"><h2>Merge row</h2></div>
+  <div class="merge-facts" id="merge-facts">
+    <div><span class="label">merging</span><b class="num" id="mr-merging">-</b></div>
+    <div><span class="label">review</span><b class="num" id="mr-review">-</b></div>
+    <div><span class="label">landed / 30m</span><b class="num" id="mr-landed">-</b></div>
+    <div><span class="label">oldest</span><b class="num" id="mr-oldest">-</b></div>
+    <div><span class="label">base gate</span><b class="num" id="mr-gate">-</b></div>
+    <div><span class="label">failing test</span><b id="mr-failing">-</b></div>
+    <div><span class="label">drift</span><b class="num" id="mr-drift">-</b></div>
+    <div><span class="label">since sync</span><b class="num" id="mr-sync">-</b></div>
+    <div><span class="label">since promotion</span><b class="num" id="mr-promo">-</b></div>
+  </div>
 </section>
 
 <section class="panel streams">

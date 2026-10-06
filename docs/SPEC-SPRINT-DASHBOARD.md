@@ -89,7 +89,7 @@ builder checks each line below against a screenshot at 1440 and 375 and fixes an
 from the owner edits one line here and nothing else moves.
 
 ## Page
-- Dark only: no theme toggle (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed). Panels full width, stacked: header, progress bar, Work, Fleet,
+- Dark only: no theme toggle (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed). Panels full width, stacked: header, progress bar, Merge row, Work, Fleet,
   Friends, Lanes, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
 - Base type 28 px (doubled). Labels and headers: system proportional face. All numbers: monospace (ui-monospace,
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
@@ -119,6 +119,9 @@ from the owner edits one line here and nothing else moves.
 ## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
+
+## Merge row (the card v11-merge-row-on-dashboard-b.w1, 2026-10-06; the owner, 2026-10-04: "Is this progress visible in the sprint dashboard yet?")
+- One dark row under the progress bar, the house style, full width. It reads `where --json`'s `merge_row`: cards in merging and in review, landed per 30 minutes, the oldest merging card's age in minutes, the base gate (green or red, and the failing test when one is named), the drift between the base and the development branch (base lacks, dev lacks), and the minutes since the last sync and the last promotion. The same object is on `where --json`. An unknown minute, or a gate the record does not carry, is "-". Nothing else moves.
 
 ## Work (title exactly "Work"; subtitle "<n> streams · <l> landed · <h> held")
 - Columns: stream | status | waiting | ready | working | review | merging | landed | cost (headers exactly so, all lowercase). The "landed" header is centred over its "n / total" cell (the owner, 7:34 PM: "Landed column in work stream table, please horizontal center align the column header"); every other numeric header stays right-aligned. The status column with its pills stays (the owner, after the lock, 7:32 PM: "we just lost the nice state tabs in the workstream table. undo pls."); the sort by status stays; a thin rule separates the groups (landed, working, stopped, held).
