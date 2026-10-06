@@ -35,6 +35,7 @@ type proofHarness struct {
 	mu       sync.Mutex
 	texts    []string
 	answer   bool
+	delay    time.Duration // the session answers a check this long after it went in
 	headless bool
 	running  bool
 	since    time.Time
@@ -46,7 +47,11 @@ func (h *proofHarness) Deliver(_ context.Context, text string) (int, error) {
 	answer := h.answer
 	h.mu.Unlock()
 	if m := checkLine.FindStringSubmatch(text); m != nil && answer {
-		h.r.pong(m[1])
+		if h.delay > 0 {
+			h.r.later(m[1], h.delay)
+		} else {
+			h.r.pong(m[1])
+		}
 	}
 	return 0, nil
 }
@@ -98,6 +103,8 @@ type proofRig struct {
 	status   Status
 	presence PresenceStatus
 	script   []scripted
+	due      map[string]time.Time // answers the session will send, by nonce, and when
+	after    func()               // run after each step's beat
 	stop     time.Duration
 	cancel   context.CancelFunc
 	nonces   int
@@ -150,7 +157,11 @@ func newProofRig(t *testing.T, headless bool) *proofRig {
 		Beat: func(ctx context.Context, _ time.Time) error {
 			synctest.Wait() // a turn under way settles before the step looks
 			r.look()
-			return beat(ctx)
+			err := beat(ctx)
+			if r.after != nil {
+				r.after()
+			}
+			return err
 		},
 		Pong:   func() (Pong, bool, error) { return Pong{}, false, nil },
 		Status: func(s Status) error { r.mu.Lock(); r.status = s; r.mu.Unlock(); return nil },
@@ -202,8 +213,30 @@ func (r *proofRig) at(offset time.Duration, f func()) {
 	r.script = append(r.script, scripted{at: offset, f: f})
 }
 
-// look runs what is due, and ends the run at stop.
+// later is the session answering nonce after d.
+func (r *proofRig) later(nonce string, d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.due == nil {
+		r.due = map[string]time.Time{}
+	}
+	r.due[nonce] = r.now.Add(d)
+}
+
+// look sends the answers due, runs what is due, and ends the run at stop.
 func (r *proofRig) look() {
+	r.mu.Lock()
+	var send []string
+	for nonce, at := range r.due {
+		if !r.now.Before(at) {
+			send = append(send, nonce)
+			delete(r.due, nonce)
+		}
+	}
+	r.mu.Unlock()
+	for _, nonce := range send {
+		r.pong(nonce)
+	}
 	elapsed := r.clock().Sub(t0)
 	for i := range r.script {
 		if s := &r.script[i]; !s.done && elapsed >= s.at {
@@ -527,4 +560,45 @@ func TestACheckNeverGoesInBesideATurnHeldAtTheGate(t *testing.T) {
 		sc.Step(context.Background())
 		assert.Equal(t, []string{"n1"}, checks(h.got()), "the check goes in once the turn ends")
 	})
+}
+
+// TestASlowAnswerNeverLeavesAGap: a session that takes three minutes to answer each
+// check is proved without a gap. The next check is timed from the ask, not the answer,
+// so the proof is renewed every ProveEvery whatever the answer's delay, and the
+// server's window (sprint.FriendProofLive) outlasts the cycle (the second cold read of
+// 2026-10-06: timed from the answer, a three-minute answer read down five minutes an
+// hour).
+func TestASlowAnswerNeverLeavesAGap(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newProofRig(t, false)
+		r.h.delay = 3 * time.Minute
+		var first time.Time
+		var gaps []string
+		r.after = func() {
+			word, why := r.server()
+			now := r.clock()
+			switch {
+			case first.IsZero() && word == sprint.Up:
+				first = now
+			case !first.IsZero() && word != sprint.Up:
+				gaps = append(gaps, now.Sub(t0).String()+": "+why)
+			}
+		}
+		r.run(time.Hour)
+		require.False(t, first.IsZero(), "proved once the first answer came")
+		assert.LessOrEqual(t, first.Sub(t0), 3*time.Minute+5*BeatEvery)
+		assert.Empty(t, gaps, "up every step from the first answer on")
+		assert.GreaterOrEqual(t, len(checks(r.h.got())), int(time.Hour/ProveEvery), "a check every ProveEvery, timed from the ask")
+	})
+}
+
+// TestTheProofCycleFitsTheEvidenceWindow: the slowest answer the daemon accepts comes
+// SessionBound after the ask, the next ask ProveEvery after this one, so a session that
+// answers is never proved longer ago than ProveEvery + SessionBound, which has to be
+// under the server's window for her session's proof.
+func TestTheProofCycleFitsTheEvidenceWindow(t *testing.T) {
+	t.Parallel()
+	assert.Less(t, ProveEvery+SessionBound, sprint.FriendProofLive)
+	assert.Less(t, SessionBound, sprint.CheckAnswerWithin, "the server takes every answer the daemon waits for")
 }

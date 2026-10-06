@@ -75,9 +75,9 @@ func TestATakeForAFriendUpOnHerSessionIsAdmittedWithoutAControlStatus(t *testing
 		want string
 	}{
 		{"held", FriendPresence{Held: true, Beat: Beat{At: now.Add(-time.Second)}}, "friend amy is held: held by the coordinator (friend down)"},
-		{"beating, no session evidence", FriendPresence{Beat: Beat{At: now.Add(-time.Second)}}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no session proof on her beat within 10m0s, no card finished within 30m0s; her beat 1s ago is not evidence"},
-		{"observed down", FriendPresence{Beat: Beat{At: now.Add(-time.Second)}, Health: FriendHealth{State: Down, Seen: now.Add(-time.Second), Generation: 1}, Generation: 1}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no session proof on her beat within 10m0s, no card finished within 30m0s; her beat 1s ago is not evidence"},
-		{"never beaten", FriendPresence{}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no session proof on her beat within 10m0s, no card finished within 30m0s"},
+		{"beating, no session evidence", FriendPresence{Beat: Beat{At: now.Add(-time.Second)}}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no session proof on her beat within 15m0s, no card finished within 30m0s; her beat 1s ago is not evidence"},
+		{"observed down", FriendPresence{Beat: Beat{At: now.Add(-time.Second)}, Health: FriendHealth{State: Down, Seen: now.Add(-time.Second), Generation: 1}, Generation: 1}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no session proof on her beat within 15m0s, no card finished within 30m0s; her beat 1s ago is not evidence"},
+		{"never beaten", FriendPresence{}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no session proof on her beat within 15m0s, no card finished within 30m0s"},
 	} {
 		t.Run(tc.name+": refused, naming it", func(t *testing.T) {
 			t.Parallel()

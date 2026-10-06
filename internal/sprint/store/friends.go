@@ -274,6 +274,10 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	if why != "" {
 		rec.NoProof = why
 	}
+	if legacy := w.Legacy.UTC().Truncate(time.Second); !legacy.IsZero() && !legacy.After(now) && legacy.After(rec.Pong) {
+		// a daemon from before the nonces, within the server's grace (sprint.LegacyPongGrace)
+		rec.Pong, rec.NoProof, proved = legacy, "", true
+	}
 	rec.Beat.Proof = rec.Pong
 	out, err := json.Marshal(rec)
 	if err != nil {

@@ -23,6 +23,13 @@ const (
 	MaxAsked          = 8
 )
 
+// LegacyPongGrace is how long after the sprint server starts a --pong that is a time
+// (the beat of a daemon from before the nonces: her session's last answer as that daemon
+// had it) still counts as it did before, the time itself her proof: the server is adopted
+// first and every daemon within the grace, so the adoption puts no friend down at once.
+// After it, a time is a beat with no proof.
+const LegacyPongGrace = time.Hour
+
 // AskedCheck is one session check her daemon said it asked: the nonce, the daemon's
 // run that asked it (its generation: a restart is another run), and when the server
 // recorded the ask.
@@ -36,6 +43,9 @@ type AskedCheck struct {
 // (--check) and the check its session answered (--pong), each "" for none.
 type BeatWords struct {
 	Run, Check, Pong string
+	// Legacy is a --pong that was a time, taken within LegacyPongGrace of the server's
+	// start (the verb decides): the store keeps it as the proof, as before the nonces.
+	Legacy time.Time
 }
 
 // NoProof is the word for a beat whose --pong proves nothing.

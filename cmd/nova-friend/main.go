@@ -409,7 +409,7 @@ again when their claims open, and the third failure acks a message, given_up=tru
 PING is answered at once with a daemon-pong and acked, never a turn; while a challenge is open the
 pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
 "coordinator back" when pings resume, collapsed to the latest and said only inside a turn that
-carries messages. Presence is the session's, never the daemon's: ` + friend.ProveEvery.String() + ` after the last check or answer
+carries messages. Presence is the session's, never the daemon's: ` + friend.ProveEvery.String() + ` after the last check went in
 (the session's own bus messages keep her up meanwhile; the daemon's never count), a SESSION CHECK <nonce> goes in through the harness
 as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
 deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `

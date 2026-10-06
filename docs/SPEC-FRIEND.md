@@ -162,7 +162,8 @@ Presence is therefore the session's, never the daemon's:
   check went in.
 - No answer within five minutes (`SessionBound`) and the friend is down, with
   the reason `no session answer`; a check turn still running then is stopped,
-  and a fresh check goes in ten minutes after the last. The next answer, to the
+  and a fresh check goes in ten minutes after the last once the session has
+  read it (an hour after, while it has not). The next answer, to the
   latest nonce, late or not, brings the friend back up, and so does any other
   message the session writes on the bus (`presence: up: the session wrote on
   the bus`): a session that speaks is alive, whatever process is or is not
@@ -193,8 +194,11 @@ Presence is therefore the session's, never the daemon's:
   go on ("Presence is her session's evidence" below); a bus message from the
   session keeps the daemon's presence up and proves nothing to the server. So
   while she is up a check goes in `ProveEvery` (eight minutes) after the last
-  check or answer, whatever she says on the bus, and the server's ten-minute
-  window never lapses while she answers within two. A per-card harness (claude:
+  check went in, timed from the ask and never from the answer, whatever she
+  says on the bus: the slowest answer the daemon takes comes `SessionBound`
+  (five minutes) after its ask, so her proof is never older than thirteen
+  minutes, inside the server's fifteen (`FriendProofLive`;
+  `TestASlowAnswerNeverLeavesAGap`, `TestTheProofCycleFitsTheEvidenceWindow`). A per-card harness (claude:
   a process per card) has no session for its daemon to check: its beat says no
   check and no answer, ever, and her evidence is a card of hers finished. The
   status file's `proof_sent` is when the server last took an answer as proof,
@@ -939,8 +943,8 @@ own session, within its window:
   (session-pong.w1), her session runs it, and the coordinator writes what it
   saw as `friend health <friend> --state up --seen <t>`, fenced by the seat's
   generation; or
-- her session's answer to a check her daemon asked, under `FriendPongWindow`
-  (ten minutes, the wake ping's own window) old while her beat is fresh
+- her session's answer to a check her daemon asked, under `FriendProofLive`
+  (fifteen minutes) old while her beat is fresh
   (`BeatDeadline`): her daemon's beat says `--check <nonce> --run <run>` when it
   asks and `--pong <nonce> --run <run>` when her session answers, and the
   server (`sprint.ProveBeat`) keeps the checks asked on her beat record and
@@ -950,7 +954,15 @@ own session, within its window:
   asked, another run's, one answered already or one asked too long ago is a
   beat with no proof, said on the beat's line (`no_proof=`) and never
   evidence; when her beats stop, her proof stops with them
-  (`TestAForgedPongNeverProvesAFriend`); or
+  (`TestABareTimeOrAnUnaskedNonceNeverProves`). The beat verb trusts its
+  caller's actor (a worker verb runs as the friend it names,
+  cmd/nova-sprint/coordinator.go `orActor`), so a caller that beats as her can
+  ask a check and answer it in one beat, and that proves her
+  (`TestTheBeatTrustsItsCallersActor`): the nonce rule keeps a bare time and an
+  answer to nothing asked out, never a caller who speaks as her. For
+  `LegacyPongGrace` (an hour) after the sprint server starts, the old form
+  `--pong <time>` still counts as before, the time her proof
+  (`TestAnOldPongCountsForAnHourAfterTheServerStarts`); or
 - a card of hers finished (working to done, ok or failed) under
   `FriendFinishWindow` (thirty minutes) old: friend sync's collect of the
   `REPORT.md` her session wrote records it (`friend-finish:<friend>`,
@@ -1033,10 +1045,17 @@ log line:
 - Her beats say the checks her daemon asks and the ones her session answers
   (`--check`, `--pong`, `--run`, Presence above); the server keeps the proof
   (the friend beat record's `pong`, the server's time of the last answer to a
-  check asked, `Beat.Proof`), her session's evidence for `FriendPongWindow`
+  check asked, `Beat.Proof`), her session's evidence for `FriendProofLive`
   while her beats go on ("Presence is her session's evidence" below). The
   coordinator's pass raises one `friend deaf` judgment when the proof is older
-  than `FriendProofLive` (internal/sprint/coordinator_pass.go).
+  than that (internal/sprint/coordinator_pass.go).
+- The deploy order: the sprint server first, then every daemon within
+  `LegacyPongGrace` (an hour) of the server's start. A daemon of this build
+  against an older server fails every beat (that server refuses `--check` and
+  `--run` as unknown flags); a daemon from before the nonces against this
+  server sends `--pong <time>`, which counts for the server's first hour and is
+  a beat with no proof after it, so that friend reads down, and deaf on the
+  coordinator's pass fifteen minutes on, until her daemon is rebuilt.
 
 The proof is the presence model's Ask then Answer within the bound
 (tla/FriendPresence.tla); `install` alone asks it before anything runs, and

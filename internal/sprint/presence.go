@@ -37,10 +37,10 @@ const (
 	// makes her up: it proves a daemon, not a session (FriendStatus).
 	FriendBeatEvery = time.Second
 	// FriendProofLive is how old the session proof her beat carries may be while she is
-	// up (docs/SPEC-FRIEND.md, The push proof): her daemon asks the session after ten
-	// minutes with no word from it and waits five for the answer (nova-friend's
-	// SessionQuiet and SessionBound), so a session that answers is never proved longer
-	// ago than that. The owner, 2026-10-05: "nova-bus is useless if the friend using it
+	// up (docs/SPEC-FRIEND.md, The push proof): her daemon asks the session eight
+	// minutes after its last ask and waits up to five for the answer (nova-friend's
+	// ProveEvery and SessionBound), so a session that answers is never proved longer
+	// ago than thirteen minutes, inside this window. The owner, 2026-10-05: "nova-bus is useless if the friend using it
 	// is deaf and is not listening to messages sent back."
 	FriendProofLive = 15 * time.Minute
 	// FriendPongWindow is how long a wake ping her session answered keeps her
@@ -192,7 +192,7 @@ func PresenceStatus(held bool, b Beat, now time.Time) string {
 // (the coordinator's friend health --state up, under the current seat
 // generation) under FriendPongWindow old, or her session's answer to a check her
 // daemon asked, proved on her beat (friend beat --check, then --pong naming its
-// nonce; ProveBeat; Beat.Proof) under FriendPongWindow old while her beat is
+// nonce; ProveBeat; Beat.Proof) under FriendProofLive old while her beat is
 // fresh, or a card of hers finished under FriendFinishWindow old;
 // else down. Her beat itself, whoever sends it, is never evidence: a daemon or a
 // loop beating for her says an app is open, not that her session can work; only
@@ -223,7 +223,7 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	// the proof her beat record keeps is an answer to a check her daemon asked (ProveBeat),
 	// and it counts only while her beat is fresh: a daemon that stopped proves nothing more
 	proof := !f.Beat.Proof.IsZero()
-	if age := now.Sub(f.Beat.Proof); proof && age >= 0 && age < FriendPongWindow && f.Beat.Fresh(now) {
+	if age := now.Sub(f.Beat.Proof); proof && age >= 0 && age < FriendProofLive && f.Beat.Fresh(now) {
 		return Up, "session proof " + ago(age)
 	}
 	if age := now.Sub(f.Finished); !f.Finished.IsZero() && age >= 0 && age < FriendFinishWindow {
@@ -233,7 +233,7 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if pong {
 		why += " (last " + ago(now.Sub(f.Health.Seen)) + ")"
 	}
-	why += ", no session proof on her beat within " + FriendPongWindow.String()
+	why += ", no session proof on her beat within " + FriendProofLive.String()
 	if proof {
 		why += " (last " + ago(now.Sub(f.Beat.Proof))
 		if !f.Beat.Fresh(now) {

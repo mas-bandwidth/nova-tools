@@ -141,13 +141,16 @@ evidence from her own session (docs/SPEC-FRIEND.md, "Presence is her
 session's evidence"; one definition, `sprint.FriendEvidence`): a wake ping her
 session answered (`friend health --state up`, below) under `FriendPongWindow`
 (10 minutes) old, or her session's answer to a check her daemon asked, under
-the same `FriendPongWindow` while her beat is fresh (`BeatDeadline`): her beat
+`FriendProofLive` (15 minutes) old while her beat is fresh (`BeatDeadline`): her beat
 says `--check <nonce> --run <run>` when her daemon asks and `--pong <nonce>
 --run <run>` when her session answers, and the answer proves only when it
 names a check that run asked, once, within `CheckAnswerWithin` (15 minutes) of
 the ask (`sprint.ProveBeat`; anything else, a bare time included, is a beat
-with no proof, `no_proof=` on the beat's line, never evidence; a stopped beat
-stops the proof), or a card of hers finished under `FriendFinishWindow` (30
+with no proof, `no_proof=` on the beat's line, never evidence, except the old
+`--pong <time>` for `LegacyPongGrace`, an hour, after the server starts; a stopped
+beat stops the proof; the verb trusts its caller's actor, so one beat that asks
+and answers as her proves her: the nonce keeps a bare time and an answer to
+nothing asked out, never a caller who speaks as her), or a card of hers finished under `FriendFinishWindow` (30
 minutes) old; else `down` (`friend down` holds her and shows `held`, never
 `down`); a beat that says down (`--until`, `--reason`) is down with its reason
 whatever else stands. Her beat itself is recorded and never evidence, whoever
@@ -1068,7 +1071,7 @@ tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
 (`take --as friend.<f>`, her own or her daemon's through the server) is
 admitted by `FriendStatus`, the friends table's word: up only on evidence from
 her own session (a wake ping her session answered within `FriendPongWindow`,
-her session's answer to a check her daemon asked within `FriendPongWindow` while her beats go on, or
+her session's answer to a check her daemon asked within `FriendProofLive` while her beats go on, or
 a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
 "Presence is her session's evidence"), never on her beat itself. `TakeStep` reads the friends' seats when it names a friend's row.
 Her take is held to her width (1 in one-shot mode), as a machine's is to its

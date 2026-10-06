@@ -234,11 +234,13 @@ func TestAFriendsNextCardsDeadlineFollowsHerRunWall(t *testing.T) {
 	ta.clean()
 }
 
-// A friend's beat proves her session only by naming a check her daemon asked: anyone can
-// send `friend beat <f> --pong <now>`, and that, a nonce never asked, or the same answer
-// twice proves nothing (recorded as a beat with no proof); the answer to a check her
-// daemon's run asked within fifteen minutes makes her up, and only while her beats go on.
-func TestAForgedPongNeverProvesAFriend(t *testing.T) {
+// A friend's beat proves her session only by naming a check her daemon's run asked: a bare
+// time (outside the server's first hour), a nonce never asked, another run's answer, or
+// the same answer twice proves nothing (recorded as a beat with no proof); the answer to
+// a check her daemon's run asked within fifteen minutes makes her up, and only while her
+// beats go on. It does not stop a caller who beats as her from asking and answering at
+// once (TestTheBeatTrustsItsCallersActor).
+func TestABareTimeOrAnUnaskedNonceNeverProves(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "amy")
 	ta.ok("friend sync")
@@ -264,10 +266,10 @@ func TestAForgedPongNeverProvesAFriend(t *testing.T) {
 	assert.Equal(t, sprint.Down, f.Status, "her beats stopped, so her proof stopped with them")
 	assert.Contains(t, f.Evidence, "her beat stopped")
 	ta.ok("friend beat amy")
-	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "beating again, within ten minutes of the answer")
-	ta.step(sprint.FriendPongWindow)
+	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "beating again, within fifteen minutes of the answer")
+	ta.step(sprint.FriendProofLive)
 	ta.ok("friend beat amy")
-	assert.Equal(t, sprint.Down, whereFriends(ta)["amy"].Status, "ten minutes on, the answer is out of its window")
+	assert.Equal(t, sprint.Down, whereFriends(ta)["amy"].Status, "fifteen minutes on, the answer is out of its window")
 
 	ta.ok("friend beat amy --check n2 --run r1")
 	ta.step(sprint.CheckAnswerWithin + time.Second)
@@ -275,4 +277,42 @@ func TestAForgedPongNeverProvesAFriend(t *testing.T) {
 	assert.Contains(t, out, "no_proof=", "an answer later than fifteen minutes after the ask proves nothing")
 	_, _, why := workerVerb([]string{"friend", "beat", "amy", "--check", "n3", "--run", "r1", "--pong", "2026-10-06T17:00:00Z"})
 	assert.Empty(t, why, "the server runs any --pong and its proof step says what it proved")
+}
+
+// The beat verb trusts its caller's actor (a worker verb is run as the friend it names,
+// cmd/nova-sprint coordinator.go orActor): one beat that asks a check and answers it
+// proves her session, from whoever sends it. The nonce rule stops a bare time and an
+// answer to nothing asked, never a caller who speaks as her; that is the server's
+// transport's to fence, not the proof's.
+func TestTheBeatTrustsItsCallersActor(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "zhi")
+	ta.ok("friend sync")
+	out := ta.ok("friend beat zhi --check x1 --pong x1 --run r9")
+	assert.Contains(t, out, "check=x1")
+	assert.Contains(t, out, "proved=x1", "asked and answered in one beat: accepted")
+	assert.Equal(t, sprint.Up, whereFriends(ta)["zhi"].Status)
+}
+
+// For an hour after the server starts, a beat's old --pong <time> (a daemon from before
+// the nonces) counts as it did before, the time her proof; after the hour, and on a verb
+// run with no server, it is a beat with no proof. So the server is adopted first and
+// every daemon within the hour, and the adoption puts no friend down at once.
+func TestAnOldPongCountsForAnHourAfterTheServerStarts(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync")
+	out := ta.ok("friend beat amy --pong " + ta.now.UTC().Format(time.RFC3339))
+	assert.Contains(t, out, "no_proof=", "no server: a time is no proof")
+
+	ta.a.serveStarted = ta.now
+	ta.step(time.Minute)
+	out = ta.ok("friend beat amy --pong " + ta.now.Add(-30*time.Second).UTC().Format(time.RFC3339))
+	assert.Contains(t, out, "proved=legacy")
+	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "in the server's first hour the old form counts as before")
+
+	ta.step(sprint.LegacyPongGrace)
+	out = ta.ok("friend beat amy --pong " + ta.now.UTC().Format(time.RFC3339))
+	assert.Contains(t, out, "no_proof=", "after the hour a time is a beat with no proof")
+	assert.Equal(t, sprint.Down, whereFriends(ta)["amy"].Status)
 }

@@ -26,9 +26,10 @@ const (
 	SessionQuiet = 10 * time.Minute
 	SessionBound = 5 * time.Minute
 	// ProveEvery is how long after the last check went in the next goes in while the
-	// session is up, whatever else it says on the bus: the sprint server counts only an
-	// answered check, for its ten-minute window (sprint.FriendPongWindow), so a session
-	// that answers within two minutes is never out of it.
+	// session is up, whatever else it says on the bus, timed from the ask: the sprint
+	// server counts only an answered check, for sprint.FriendProofLive (fifteen
+	// minutes), so a session that answers within SessionBound is proved again before
+	// the last proof lapses (ProveEvery + SessionBound < FriendProofLive).
 	ProveEvery = 8 * time.Minute
 	// ReaskAfter is how long an unanswered check waits before it is asked again when the
 	// session has not read it: a queueing harness keeps every copy, so a check is asked
@@ -62,11 +63,11 @@ type Presence struct {
 	LastHeard time.Time // the session's last bus message, or its last answer, while up
 	Nonce     string    // the latest check's nonce, until the session answers it
 	Asked     time.Time // when the latest check went in
-	Answered  time.Time // when the session last answered a check
 	Open      bool      // the latest check is unanswered and within the bound
 	Owed      bool      // a check is due and has not gone in
 	Checks    int
 	Answers   int
+	Answered  string // the nonce the session last answered
 	// Read is the latest check read by the session: its headless turn ended, or the
 	// adapter saw the session take it (ReadOnReturn). Until then it is asked again only
 	// after ReaskAfter, so a session that queues checks never holds a pile of them.
@@ -106,14 +107,14 @@ func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 	if nonce == "" || nonce != p.Nonce {
 		return false
 	}
-	p.Up, p.Reason, p.LastHeard, p.Answered, p.Nonce, p.Open, p.Owed, p.Answers, p.Proven = true, "", now, now, "", false, false, p.Answers+1, true
+	p.Up, p.Reason, p.LastHeard, p.Answered, p.Nonce, p.Open, p.Owed, p.Answers, p.Proven = true, "", now, nonce, "", false, false, p.Answers+1, true
 	return true
 }
 
 // Tick is the clock at now: an open check past the bound makes the friend
 // down, NoSessionAnswer, unless the session wrote on the bus since it went in,
 // and so does silence for SessionQuiet plus SessionBound with it unanswered;
-// a check is owed ProveEvery after the last check or answer while up and SessionQuiet after it
+// a check is owed ProveEvery after the last check went in while up and SessionQuiet after it
 // while down, and an unanswered one the session has not read is asked again
 // only after ReaskAfter.
 func (p *Presence) Tick(now time.Time) {
@@ -136,10 +137,7 @@ func (p *Presence) Tick(now time.Time) {
 	if p.Open || p.Owed {
 		return
 	}
-	since, every := now.Sub(p.Asked), ProveEvery
-	if p.Answered.After(p.Asked) {
-		since = now.Sub(p.Answered) // the server's window runs from the answer
-	}
+	since, every := now.Sub(p.Asked), ProveEvery // from the ask: a slow answer never stretches the cycle
 	if !p.Up {
 		every = p.Quiet
 	}
@@ -172,6 +170,7 @@ type PresenceStatus struct {
 	Asked     time.Time `json:"asked"`
 	Checks    int       `json:"checks"`
 	Answers   int       `json:"answers"`
+	Answered  string    `json:"answered,omitempty"` // the nonce the session last answered
 }
 
 func presencePath(stateDir string) string { return filepath.Join(stateDir, PresenceFile) }
@@ -754,7 +753,7 @@ func (s *SessionCheck) save(now time.Time) {
 	}
 	s.mu.Lock()
 	m := s.m
-	p := PresenceStatus{Friend: s.Friend, Presence: PresenceDown, Reason: m.Reason, LastHeard: m.LastHeard, Nonce: m.Nonce, Asked: m.Asked, Checks: m.Checks, Answers: m.Answers}
+	p := PresenceStatus{Friend: s.Friend, Presence: PresenceDown, Reason: m.Reason, LastHeard: m.LastHeard, Nonce: m.Nonce, Asked: m.Asked, Checks: m.Checks, Answers: m.Answers, Answered: m.Answered}
 	if m.Up {
 		p.Presence = PresenceUp
 	}
