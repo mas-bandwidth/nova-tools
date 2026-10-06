@@ -1612,6 +1612,54 @@ report with no PATHS-PROPOSED line, an attempt with no pushed head, no clone, a 
 climbs out with `..` or is absolute, and a glob that names no file at the base nor at the head;
 and as `recut` is refused otherwise (`TestRecutWidenAppliesPathsProposed`).
 
+### The roadmap: work deferred to a later release
+
+On 2026-10-04 the owner asked for the work of a later release to leave the sprint, "making sure
+it is stored somewhere in a sexp data structure". By hand it took an hour of redis-cli and jq,
+and a misread state column moved cards that were not waiting with the rest. Three verbs do it
+(`cmd/nova-sprint/roadmap.go`, `internal/sprint/roadmap.go`):
+
+- `defer --release <name> (<id>... | --stream <s> | --repo <owner/name>) [--expect <n>]
+  --record <dir>` takes waiting primaries only, the state read off the work table. A card named
+  that is not a waiting primary, or whose brief has no `REPO:` line (its product), is refused,
+  exit 1, and nothing changes. `--stream` and `--repo` take the waiting cards and print `LEFT
+  <id> <state>` for each other card. `--expect <n>` refuses another count, exit 1, with nothing
+  written. Each card goes into `<dir>/roadmaps/<product>-<release>.sexp`, where the product is the
+  name of its `REPO:`, appended under its stream when the file exists (a card the file already
+  holds is refused). It keeps the card's id, stream, tier, needs, who, repo, lineage
+  (`replaces`), rules file and whole brief. The file is written atomically, then read back and
+  counted, and only then are the cards dropped in one step (`sprint.Defer`) with the reason
+  `deferred to release <name>`. That step refuses whole any card that is no longer waiting. A
+  refused drop puts the files back as they were. A drop whose outcome is unknown leaves them,
+  and restore refuses a card that is still on the table.
+- `roadmap restore <id> --record <dir>` adds the card back as its twin (`sprint.Restore`). The
+  twin's id is chosen as `recut` chooses one (`TwinID`: `<id>b`, then the next letter). The card
+  keeps its stream, its brief and rules unchanged, its tier, and those of its needs still on the
+  table (a need that is gone is left out and said in a NOTE). It records `replaces=<id>`. Then the
+  card is taken out of the file, and a file left empty is removed. A card on the table under its
+  own id, or already restored as a twin, is refused.
+- `roadmap render --record <dir> [--out <file>]` writes the public `ROADMAP.md` (default
+  `<dir>/ROADMAP.md`). Under each product and release it lists the streams and their card
+  counts, with no card id, brief or name.
+
+The file is one form:
+
+```lisp
+(:roadmap
+ :product "nova-tools"
+ :releases ("v2")
+ :streams
+ ((:name "later"
+   :cards
+   ((:id "later-1" :stream "later" :tier "" :needs ("now-1") :who "" :repo "example/nova-tools"
+     :replaces () :rules ""
+     :brief "...")))))
+```
+
+A string escapes only `\` and `"`, as the Lisp reader reads one, so a brief reads back byte for
+byte. `TestDeferMovesWaitingCardsToTheRoadmapAndRestoreBringsOneBack` holds the three verbs on a
+twin store. `TestRoadmapFormReadsBack` holds the form.
+
 ## 3. The lifecycle of a primary
 
 Six states, fixed, in one Go file (`internal/sprint/lifecycle.go`) mirrored by
