@@ -267,7 +267,7 @@ func demoOwns(st demoState) error {
 	defer cancel()
 	// a client that never waits long on an address that does not answer
 	c := redis.NewClient(&redis.Options{Addr: st.Addr, DialTimeout: 2 * time.Second, MaxRetries: -1})
-	defer c.Close()
+	defer c.Close() // ignored: closing a probe client that only read the server's INFO, nothing is left to report it to
 	info, err := c.Info(ctx, "server").Result()
 	if err != nil {
 		return fmt.Errorf("%s does not answer: %v", st.Addr, err)
@@ -317,7 +317,7 @@ func demoRoot(flag string) (string, error) {
 	if flag == "" {
 		cache, err := os.UserCacheDir()
 		if err != nil {
-			return "", fmt.Errorf("no user cache directory (%v); run: nova-sprint demo load --dir <dir> <part>...", err)
+			return "", fmt.Errorf("no user cache directory (%v); run: nova-sprint demo load --dir <dir> <part>", err)
 		}
 		flag = filepath.Join(cache, "nova-sprint", "demo")
 	}
