@@ -50,9 +50,10 @@ func TestAReadWithoutUsageIsRefusedAndAPricedReadSumsIntoTheCard(t *testing.T) {
 	w, reads := routedReads(t)
 	a, b := reads[0], reads[1]
 
-	// a routed read's verdict with no usage, or a usage with no token, is refused naming
-	// the remedy, and changes nothing
-	for _, usage := range []string{"", "wall=3s budget=unmetered"} {
+	// a routed read's verdict with no --usage at all is refused naming the remedy, and
+	// changes nothing (a usage with no token keeps its verdict:
+	// TestAFleetReadWithNoTokensKeepsItsVerdict)
+	for _, usage := range []string{"", "  "} {
 		p := Read(w.s, ReadReq{As: a.Row, Verdict: "ok", Usage: usage, Sel: Sel{IDs: []string{a.ID}}})
 		requireNothingPlanned(t, p, "a read on route pro-a is priced as work is")
 		assert.Contains(t, p.Refused[0].Why, "--usage '<the harness's own token report", "the refusal names the remedy")
@@ -120,6 +121,7 @@ func TestAReadWithoutUsageIsRefusedAndAPricedReadSumsIntoTheCard(t *testing.T) {
 	assert.Equal(t, "$1.00", tc.ReadCost)
 	assert.Equal(t, int64(201000), tc.ReadTokens)
 	assert.Equal(t, 0, tc.UnpricedRuns)
+	assert.Equal(t, 0, tc.ReadsNoTokens)
 	assert.Equal(t, "reads today: pro-a $1.00 1 reads 550000 tokens · subscription tokens 1 reads 201000 tokens",
 		ReadSpendLine(map[string]TierCosts{"s1": tc}))
 }
@@ -135,4 +137,31 @@ func TestAnUnroutedReadIsTakenWithoutUsage(t *testing.T) {
 	require.Empty(t, rc.F(FieldRoute))
 	w.must(Read(w.s, ReadReq{As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
 	assert.Equal(t, "", ReadUsageMissing(rc, "", "ok"))
+}
+
+// A fleet read whose harness reported no tokens (its member passes --usage with no token
+// count: the harness printed none and its receipt held none) keeps its verdict, permissive
+// in what we read: the verdict is recorded, its record says unpriced=no-tokens, and the
+// stream counts it (ReadsNoTokens, reads_no_tokens in the where record), so the gap is
+// seen and never silently lost; the day's read line is spend, and holds none of them.
+func TestAFleetReadWithNoTokensKeepsItsVerdict(t *testing.T) {
+	t.Parallel()
+	w, reads := routedReads(t)
+	a, b := reads[0], reads[1]
+	w.must(Read(w.s, ReadReq{As: a.Row, Verdict: "ok", Usage: "wall=3s budget=unmetered usage_source=none", Sel: Sel{IDs: []string{a.ID}}}))
+	w.must(Read(w.s, ReadReq{As: b.Row, Verdict: "broken", Finding: "internal/x.go:3 is wrong: change it", Usage: "usage_source=none", Sel: Sel{IDs: []string{b.ID}}}))
+	ra, rb := w.s.Readers.Card(a.ID), w.s.Readers.Card(b.ID)
+	assert.Equal(t, "ok", ra.F("verdict"), "the verdict is kept")
+	assert.Equal(t, "broken", rb.F("verdict"), "the verdict is kept")
+	for _, rc := range []*Card{ra, rb} {
+		u := cardcost.ParseUsage(rc.F(FieldUsage))
+		assert.Equal(t, cardcost.WhyNoTokens, u.Unpriced, rc.F(FieldUsage))
+		assert.Equal(t, cardcost.CostNone, u.Present())
+	}
+	tc := StreamTierCosts(w.s)["s1"]
+	assert.Equal(t, 2, tc.ReadsNoTokens, "each tokenless read is counted")
+	assert.Equal(t, 2, tc.UnpricedRuns)
+	assert.Equal(t, "$2.00", tc.WorkCost)
+	assert.Empty(t, tc.ReadCost)
+	assert.Empty(t, ReadSpendLine(map[string]TierCosts{"s1": tc}), "no read spent anything today")
 }

@@ -52,6 +52,10 @@ type TierCosts struct {
 	// UnpricedRuns counts the stream's records that carry no cost at all: runs whose usage
 	// never reached the sprint (cardcost.WhyNoTokens), which the total cannot hold.
 	UnpricedRuns int `json:"unpriced_runs,omitempty"`
+	// ReadsNoTokens counts the stream's reads whose verdict was kept with a usage that
+	// reported no token (cardcost.WhyNoTokens): one of UnpricedRuns each, counted apart
+	// so a reader whose harness stops reporting is seen.
+	ReadsNoTokens int `json:"reads_no_tokens,omitempty"`
 	// Unreconciled is the SPRINT's, the same on every stream's record: what the providers
 	// counted beyond the sprint's records since the epoch began (UnreconciledSpend,
 	// cost_reconcile.go), dollars and cents rounded up; "" when nothing is.
@@ -119,6 +123,9 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 					// a subscription read's cost is its tokens: priced, never a run unpriced
 					t.UnpricedRuns--
 					t.ReadTokens += con.Usage.Tokens.Total()
+				}
+				if con.Kind == "read" && con.Usage.Unpriced == cardcost.WhyNoTokens {
+					t.ReadsNoTokens++
 				}
 				if con.Kind == "read" && strings.HasPrefix(con.At, day) {
 					addReadDay(t.ReadsToday, con)
@@ -218,11 +225,12 @@ type ReadDay struct {
 
 // addReadDay counts the read con into its route's day: the route that priced it, a
 // subscription reader's under WhySubscription, "-" for a read no route priced; a read
-// that reported nothing is not counted here.
+// that reported nothing is not counted here (it is one of UnpricedRuns, and of
+// ReadsNoTokens).
 func addReadDay(days map[string]ReadDay, con Consumer) {
 	u := con.Usage
 	if !u.Tokens.Reported() && u.Actual == "" && u.Predicted == "" {
-		return // a read that reported nothing: one of the runs unpriced (UnpricedRuns)
+		return
 	}
 	route := cmp.Or(u.Route, "-")
 	if u.Unpriced == WhySubscription {
