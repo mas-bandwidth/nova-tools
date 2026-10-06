@@ -11,7 +11,6 @@
 # at zero; it never adds a row or raises a count.
 # ceiling: 55
 cmd/nova-card/generate_functional_test.go 1 predates the rule; route its commits through testgit.Environ
-cmd/nova-card/generate_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/cli_examples_test.go 3 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/dogfood_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/hygiene_test.go 10 predates the rule; route its commits through testgit.Environ
