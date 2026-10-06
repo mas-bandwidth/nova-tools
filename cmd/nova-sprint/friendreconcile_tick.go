@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -62,13 +61,18 @@ func (a *app) reconcileFriendsTick(ctx context.Context, st *store.Store, ft *fri
 	if len(names) == 0 {
 		return
 	}
+	dirs, err := st.FriendDirs(ctx)
+	if err != nil {
+		fmt.Fprintf(stdout, "FRIEND-RECONCILE FAILED the friends table cannot be read: %s; the next tick reads it again; run: nova-sprint where --all\n", oneline.Escape(err.Error()))
+		return
+	}
 	root := a.getenv("HOME")
 	for _, friend := range names {
-		if root == "" {
-			ft.skip(friend, "HOME is not set on the server, so her working directory is not known", stdout)
+		if root == "" && dirs[friend] == "" {
+			ft.skip(friend, "HOME is not set on the server and her nova-config row has no dir, so her working directory is not known", stdout)
 			continue
 		}
-		if err := a.reconcileFriendTick(ctx, st, ft, friend, filepath.Join(root, friend+"-working"), stdout); err != nil {
+		if err := a.reconcileFriendTick(ctx, st, ft, friend, a.friendDir(friend, dirs[friend], root, stdout), stdout); err != nil {
 			fmt.Fprintf(stdout, "FRIEND-RECONCILE FAILED friend=%s: %s; the next tick reads her again; run: nova-sprint friend reconcile %s --dry-run\n", friend, oneline.Escape(err.Error()), friend)
 		}
 	}

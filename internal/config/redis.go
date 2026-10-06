@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "dir")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -257,6 +257,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"mode":  str(d, 3),
 			// her claude lanes' CLAUDE_CONFIG_DIR, "" when unset
 			"config_dir": str(d, 4),
+			"dir":        str(d, 5),
 		}
 	}
 	return views, revValue(rev), nil
@@ -435,8 +436,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
 	writeConfigDir := prev == nil || prev["config_dir"] != row.Fields["config_dir"]
+	writeDir := prev == nil && row.Fields["dir"] != "" || prev != nil && prev["dir"] != row.Fields["dir"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeRoles {
+	if !writeWidth && !writeMode && !writeConfigDir && !writeDir && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -449,6 +451,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeConfigDir { // her claude lanes' CLAUDE_CONFIG_DIR, a plain field beside mode; "" when unset
 		pipe.HSet(ctx, "friend:"+f+":desired", "config_dir", row.Fields["config_dir"])
+	}
+	if writeDir { // her working directory, a plain field beside mode; unset is no field
+		if row.Fields["dir"] != "" {
+			pipe.HSet(ctx, "friend:"+f+":desired", "dir", row.Fields["dir"])
+		} else {
+			pipe.HDel(ctx, "friend:"+f+":desired", "dir")
+		}
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

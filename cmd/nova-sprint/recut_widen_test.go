@@ -63,7 +63,7 @@ func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 		assert.Equal(t, head, p.BaseHead)
 		assert.Equal(t, 1, p.BaseFrom)
 		// and a friend dealt it is told to carry that head
-		assert.Contains(t, friendBrief("f", sprint.Packet{Card: id + "b.w1", Attempt: 1, Brief: p.Brief, Branch: "sprint/x"}), "its head, "+head)
+		assert.Contains(t, friendBrief("f", "", sprint.Packet{Card: id + "b.w1", Attempt: 1, Brief: p.Brief, Branch: "sprint/x"}), "its head, "+head)
 	}
 
 	// refused, nothing written
