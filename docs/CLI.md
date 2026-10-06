@@ -1139,6 +1139,7 @@ nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
+A friend down or held for a cause that ends (out of credit, a usage limit, deaf, or any --until) is probed by the tick and brought up at her nova-config width when her session answers, with one note to the coordinator. A hold by hand, with no such cause, is not.
 nova-sprint friend cards <friend> [--json]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint friend level

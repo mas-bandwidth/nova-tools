@@ -194,6 +194,12 @@ type TickReq struct {
 	// the deadlines part keeps a judgment for each drift. nil is none read, and no drift
 	// judgment is raised or closed.
 	Drift *DriftFacts
+	// Back is friends to note as brought up (docs/SPEC-SPRINT.md, a friend brought
+	// back up). The tick's own release is the store's, in friendSeats, before the
+	// parts: a part added to the tick still runs, and spends an operation id,
+	// when the tick could not preview it. TickFriendBack plans the notes for a
+	// caller that fills Back. The tick leaves it empty.
+	Back []FriendBack
 }
 
 func (r TickReq) who() string {
@@ -268,6 +274,12 @@ func TickCapDeal(s *Snapshot, r TickReq) (Plan, int) { return AttemptCapDeal(s, 
 
 // PartFriendStall is the friend stall ladder part (friend_stall.go).
 const PartFriendStall = "friend-stall"
+
+// PartFriendBack is the name of the bring-back notes (friend_back.go). The
+// release is not a part of TickTables: the tick brings her up in friendSeats,
+// before the deal, so this tick's level sees her (docs/SPEC-SPRINT.md, a friend
+// brought back up).
+const PartFriendBack = "friend-back"
 
 // PartLevel and PartLevelReads are the tick start's parts: the fleet's and the
 // readers' rebalance.

@@ -24,7 +24,8 @@ const FirstSeatGeneration uint64 = 1
 // DaemonPong is the observation word for a pong her daemon answered and her
 // session did not. It is the daemon's, kept on the row for it, and shown as
 // down: the table's words are up, held and down (the owner, 2026-10-04
-// 11:42 AM ET: "anything but up is down"; "sleeping = down").
+// 11:42 AM ET: "anything but up is down"; "sleeping = down"). A bring-back
+// probe does not count it (docs/SPEC-SPRINT.md, a friend brought back up).
 const DaemonPong = "asleep"
 
 // HealthStates are the words an observation carries; up alone shows as up.

@@ -59,6 +59,11 @@ type friendEntry struct {
 	Reason string    `json:"reason,omitempty"`
 	Until  time.Time `json:"until,omitzero"`
 	Return bool      `json:"return,omitempty"`
+	// ProbeAt is when the tick last probed her for a cause that ends, and ProbeN
+	// how many probes have failed since the cause (docs/SPEC-SPRINT.md, a friend
+	// brought back up). Both are cleared when the hold is set or released.
+	ProbeAt time.Time `json:"probe_at,omitzero"`
+	ProbeN  int       `json:"probe_n,omitempty"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
@@ -267,6 +272,7 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 		return noFriend(r, friend)
 	}
 	e.Held, e.At, e.By, e.Reason, e.Until = false, time.Time{}, "", "", time.Time{}
+	e.ProbeAt, e.ProbeN = time.Time{}, 0
 	if held {
 		e.Held, e.At, e.By, e.Reason, e.Until = true, st.now().UTC().Truncate(time.Second), who, reason, until.UTC().Truncate(time.Second)
 	}
@@ -402,8 +408,16 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 // a dependency resolution can make work ready later in the same tick, and a friend coming
 // up is levelled on the same tick (docs/SPEC-SPRINT.md, WHO preference, and section 1,
 // friend-deal-idle-lanes-first.w1); nil when it has none.
-// The snapshot no longer gates the read; it stays in the signature for its callers.
-func (st *Store) friendSeats(ctx context.Context, _ *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+// A tick (a snapshot was read) brings back a friend whose cause has ended before the
+// seats are returned, so the same tick's deal and level see her up
+// (docs/SPEC-SPRINT.md, a friend brought back up). A nil snapshot is a read, and
+// brings no one back. A shadow tick's store writes nothing.
+func (st *Store) friendSeats(ctx context.Context, snap *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	if snap != nil {
+		if err := st.bringFriendsBack(ctx, snap.Coordinator, now); err != nil {
+			return nil, err
+		}
+	}
 	return st.FriendSeats(ctx, now)
 }
 
@@ -629,4 +643,196 @@ func (st *Store) FriendBeats(ctx context.Context) (map[string]sprint.Beat, error
 		out[n] = b
 	}
 	return out, nil
+}
+
+// bringFriendsBack probes each friend held or down for a cause that ends, and
+// brings her up when the probe passes (docs/SPEC-SPRINT.md, a friend brought
+// back up). A hold by hand is not probed. The release is her session's health,
+// her beat no longer saying down, and the hold cleared, at the width she
+// already has. One note per friend goes to the coordinator.
+func (st *Store) bringFriendsBack(ctx context.Context, coordinator string, now time.Time) error {
+	if _, ok := st.B.(readOnly); ok {
+		return nil
+	}
+	now = now.UTC().Truncate(time.Second)
+	rows, _, err := st.friendRows(ctx, now)
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	roster, kv, err := st.roster(ctx)
+	if err != nil || kv == nil {
+		return err
+	}
+	gen, err := st.seatGeneration(ctx)
+	if err != nil {
+		return err
+	}
+	if coordinator == "" {
+		coordinator, err = st.B.Coordinator(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	byName := make(map[string]FriendRow, len(rows))
+	for _, row := range rows {
+		byName[row.Name] = row
+	}
+	probeFn := sprint.FriendProbeFrom(ctx)
+	var notes []sprint.Note
+	for _, name := range slices.Sorted(maps.Keys(roster)) {
+		e := roster[name]
+		row, ok := byName[name]
+		if !ok {
+			continue
+		}
+		facts, ending := backFacts(e, row, gen)
+		if !ending {
+			continue
+		}
+		failures := e.ProbeN
+		probed := e.ProbeAt
+		if probed.IsZero() || probed.Before(facts.causeAt) {
+			failures, probed = 0, time.Time{}
+		}
+		if !sprint.FriendBackDue(now, facts.causeAt, facts.until, probed, failures) {
+			continue
+		}
+		answer, used := sprint.FriendProbe{}, false
+		if probeFn != nil {
+			answer, used = probeFn(name)
+		}
+		if !used {
+			var health sprint.FriendHealth
+			if row.Health != nil {
+				health = *row.Health
+			}
+			answer = sprint.ProbeFromRecords(now, facts.causeAt, facts.credit, health, gen, row.Report)
+		}
+		if !sprint.FriendProbePasses(answer, facts.credit) {
+			if err := st.setFriendProbe(ctx, name, now, failures+1); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := st.writeFriendSessionUp(ctx, kv, name, now, gen); err != nil {
+			return err
+		}
+		if err := st.clearFriendBeatDown(ctx, kv, name); err != nil {
+			return err
+		}
+		if e.Held {
+			if err := st.SetFriendHeld(ctx, name, false, sprint.MachineActor, "", time.Time{}, 0); err != nil {
+				return err
+			}
+		} else if err := st.setFriendProbe(ctx, name, time.Time{}, 0); err != nil {
+			return err
+		}
+		notes = append(notes, sprint.FriendBackNote(name, facts.cause, sprint.MachineActor, coordinator, now))
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+	_, err = st.Run(ctx, Step{Verb: "friend back", Actor: sprint.MachineActor, Plan: func(s *sprint.Snapshot) sprint.Plan {
+		out := make([]sprint.Note, len(notes))
+		for i, n := range notes {
+			n.At = s.Now
+			if n.To == "" {
+				n.To = s.Coordinator
+			}
+			out[i] = n
+		}
+		return sprint.Plan{Notes: out}
+	}})
+	return err
+}
+
+// backFact is one friend's ending cause, when it began, and when it ends.
+type backFact struct {
+	cause   string
+	causeAt time.Time
+	until   time.Time
+	credit  bool
+}
+
+// backFacts is the friend's ending cause. A hold is taken as it stands: a hold
+// by hand wins even when her beat names a cause that ends. Otherwise her beat
+// saying down, then a health that says why she is not up.
+func backFacts(e friendEntry, row FriendRow, gen uint64) (backFact, bool) {
+	if e.Held {
+		cause, ok := sprint.FriendEnding(e.Reason, e.Until)
+		if !ok {
+			return backFact{}, false
+		}
+		return backFact{cause: cause, causeAt: e.At, until: e.Until, credit: cause == "out of credit"}, true
+	}
+	if row.Report != nil && !row.Report.Until.IsZero() {
+		cause, ok := sprint.FriendEnding(row.Report.Reason, row.Report.Until)
+		if !ok {
+			return backFact{}, false
+		}
+		return backFact{cause: cause, causeAt: row.Beat, until: row.Report.Until, credit: cause == "out of credit"}, true
+	}
+	if row.Health != nil && row.Health.Generation == gen && row.Health.State != sprint.Up && (row.Health.Reason != "" || !row.Health.Until.IsZero()) {
+		cause, ok := sprint.FriendEnding(row.Health.Reason, row.Health.Until)
+		if !ok {
+			return backFact{}, false
+		}
+		return backFact{cause: cause, causeAt: row.Health.Seen, until: row.Health.Until, credit: cause == "out of credit"}, true
+	}
+	return backFact{}, false
+}
+
+func (st *Store) setFriendProbe(ctx context.Context, friend string, at time.Time, n int) error {
+	r, kv, err := st.roster(ctx)
+	if err != nil {
+		return err
+	}
+	e, ok := r[friend]
+	if !ok {
+		return noFriend(r, friend)
+	}
+	e.ProbeAt, e.ProbeN = at.UTC().Truncate(time.Second), n
+	if at.IsZero() {
+		e.ProbeAt, e.ProbeN = time.Time{}, 0
+	}
+	r[friend] = e
+	return putRoster(ctx, kv, r)
+}
+
+// writeFriendSessionUp records a session pong at now under the seat's generation.
+// The tick is not the seat's holder, so this is the record itself, not friend health.
+func (st *Store) writeFriendSessionUp(ctx context.Context, kv KV, friend string, now time.Time, gen uint64) error {
+	b, err := json.Marshal(sprint.FriendHealth{State: sprint.Up, Seen: now.UTC().Truncate(time.Second), Generation: gen})
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, friendHealthKey(friend), string(b))
+}
+
+// clearFriendBeatDown clears a beat's down word (its until and reason) and keeps
+// the rest of the beat, including her session's pong. A report with nothing
+// left is dropped.
+func (st *Store) clearFriendBeatDown(ctx context.Context, kv KV, friend string) error {
+	raw, ok, err := kv.GetKey(ctx, friendBeatKey(friend))
+	if err != nil || !ok {
+		return err
+	}
+	var rec friendBeatRecord
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return nil
+	}
+	if rec.Friend == nil || (rec.Friend.Until.IsZero() && rec.Friend.Reason == "") {
+		return nil
+	}
+	rec.Friend.Until = time.Time{}
+	rec.Friend.Reason = ""
+	fr := rec.Friend
+	if len(fr.Running) == 0 && fr.Working == nil && fr.Queue == nil && fr.Width == nil && fr.Active.IsZero() && fr.Paced == nil && fr.Window == "" {
+		rec.Friend = nil
+	}
+	out, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, friendBeatKey(friend), string(out))
 }
