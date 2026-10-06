@@ -32,6 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -176,6 +177,13 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
 		return refuse(stderr, " member", why)
 	}
+	// a name --pass lists that this environment does not hold is read here, in
+	// this process, before any directory is made (keys.go)
+	held, extra, err := prepareMemberKeys(pass, os.Getenv)
+	if err != nil {
+		return refuse(stderr, " member", err.Error())
+	}
+	pass = append(pass, extra...)
 	if *slots == "" {
 		*slots = filepath.Join(*root, "slots")
 	}
@@ -196,15 +204,15 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		send = sprintwire.Client{Addr: *server}.Do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
-	// a member hands native the decide key when its environment holds it (the loop row's
-	// nova-secrets keys): a reader's native asks the decide read with it, a worker's the
-	// gate decision of a red gate, and neither hands it to the child (nativedecide.go,
-	// nativegate.go, nativeChildEnv)
+	// a member hands native the decide key when its environment holds it, or when
+	// --pass named it and this process read it (keys.go): a reader's native asks the
+	// decide read with it, a worker's the gate decision of a red gate, and neither
+	// hands it to the harness (nativedecide.go, nativegate.go, nativeChildEnv)
 	nativePass := append(append([]string{}, pass...), decide.JevSecret)
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, held: held, identity: *identity,
 		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
@@ -232,7 +240,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, os.Getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, rn.getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -449,6 +457,7 @@ type nativeRunner struct {
 	env                                            []string                     // added to this process's environment: none in production, a test's
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
 	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
+	held                                           map[string]secrets.Secret    // secrets read in this process; nil when the environment already held every name
 	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
 	load                                           hostload.Source
 	maxLoad, warnLoad                              float64
@@ -593,7 +602,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
-	cmd.Env = childEnviron(append(os.Environ(), r.env...), r.pass)
+	cmd.Env = r.childEnv(model)
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
