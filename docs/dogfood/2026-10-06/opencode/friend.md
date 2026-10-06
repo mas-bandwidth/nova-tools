@@ -3,7 +3,7 @@
 Run by an opencode friend who had never used the tool, reading nothing but
 `nova-friend -h`, `nova-friend help`, each verb's `-h`, and
 docs/SPEC-FRIEND.md, then using every verb at least once with its real flags
-against a scratch directory in the job's temp space (friends `bob` and
+against a scratch directory in the job's temp folder (friends `bob` and
 coordinator `ada`, the help's own example names). No redis-server was started
 (machine rule), so every bus verb was exercised against an address with
 nothing listening, which is itself one of the refusals a stranger meets.
