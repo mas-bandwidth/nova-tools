@@ -385,3 +385,56 @@ func TestAHeadlessDaemonSendsItsCheckWhenNoTurnRuns(t *testing.T) {
 		assert.Equal(t, []string{"n1", "n2"}, checks(r.h.got()), "the next check goes in once the turn ends")
 	})
 }
+
+// TestAQuietDshSessionStillGetsTheNextDelivery: a dsh session is seen only by its
+// turns, so after a quiet spell past AliveWithin no turn has ended recently. That is no
+// harness gone: the next message goes in as the next headless turn at once, with no
+// deferral, the harness check says the session is quiet (never "not seen"), and while
+// a turn does run the check says so with its start (the finding of 2026-10-06: Zhi's
+// row read the quiet dsh session as not seen while her cards sat ready).
+func TestAQuietDshSessionStillGetsTheNextDelivery(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		var mu sync.Mutex
+		var texts []string
+		var ranAt []int
+		dsh := &DSH{Dir: r.d.Dir, Session: "session-1", Program: "dsh", Run: func(_ context.Context, _, _ string, _ []string, stdin string) (string, int, error) {
+			r.mu.Lock()
+			beats := r.beats
+			r.mu.Unlock()
+			mu.Lock()
+			texts, ranAt = append(texts, stdin), append(ranAt, beats)
+			mu.Unlock()
+			return "done\n", 0, nil
+		}}
+		r.d.Deliver, r.d.Harness, r.passive = dsh, "dsh", true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		WatchHarness(r.d, dsh)
+		r.send(t, "ada", "first", "the first card")
+		quiet := int((AliveWithin + 5*time.Minute) / BeatEvery)
+		var sentAt int
+		r.at[quiet] = func() {
+			sentAt = quiet
+			r.send(t, "ada", "next", "the next card")
+		}
+		r.run(t, quiet+10)
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.Len(t, texts, 2, "both messages went in as headless turns: %q", texts)
+		assert.Contains(t, texts[1], `subject="next"`)
+		assert.LessOrEqual(t, ranAt[1]-sentAt, 2, "the next message goes in the step after it arrives, quiet or not")
+		all := strings.Join(r.records, "\n")
+		assert.NotContains(t, all, "deferred", "nothing was deferred")
+		assert.NotContains(t, all, "harness: not seen", "a quiet one-shot session is never not seen")
+		assert.Contains(t, all, "quiet: the last turn into the dsh session session-1 ended exit 0")
+
+		var s SessionTurns
+		s.clock(func() time.Time { return t0 })
+		s.begin()
+		l := s.alive("dsh")
+		assert.True(t, l.Running)
+		assert.Equal(t, "a turn is running in the dsh session since "+t0.Format(time.RFC3339), l.Why)
+	})
+}

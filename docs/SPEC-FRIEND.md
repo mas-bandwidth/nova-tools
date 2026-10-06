@@ -551,9 +551,16 @@ rule it read it by (`alive=session|app`):
   session ended exit 0 within `AliveWithin` (`SessionQuiet` plus
   `SessionBound`, fifteen minutes: a quiet session is sent a check every
   quiet spell). The adapter keeps its own last turn (`SessionTurns`: when it
-  ended, into which session, its exit), on the daemon's clock; a turn that
-  failed, or a session that refused it, is not alive; a deferred turn ran
-  nothing and moves nothing; before the first turn it cannot tell. DSH
+  ended, into which session, its exit, and the turns begun and not ended), on
+  the daemon's clock; a turn running is alive, `a turn is running in the
+  <harness> session since <t>`; a turn that failed, or a session that refused
+  it, is not alive; a deferred turn ran nothing and moves nothing; before the
+  first turn it cannot tell, and past `AliveWithin` with no turn it cannot tell
+  either, `quiet: ... delivering is the check`: a one-shot harness is seen only
+  by its turns, so a quiet session is never "not seen", and nothing it reads
+  ever holds a delivery (`TestAQuietDshSessionStillGetsTheNextDelivery`; the
+  finding of 2026-10-06). `check` says `route=push` for dsh: each delivery is
+  a headless turn. DSH
   (`dsh headless --session-id`), Codex (`codex exec resume`, `codex queue`),
   OpenCode (a batch turn, a lane's open and its turns) and Gemini
   (`gemini --resume`) read so, and no desktop app is read for them: a

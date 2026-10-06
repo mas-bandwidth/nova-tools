@@ -436,11 +436,9 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	}
 
 	// Harness facts
-	route := "push"
+	route := "push" // dsh included: each delivery is a headless turn into her session, never a deferral
 	if harness == "claude" || slices.Contains(RefusedHarnesses, harness) {
 		route = "passive"
-	} else if harness == "dsh" {
-		route = "defer"
 	}
 
 	hf := HarnessFacts{

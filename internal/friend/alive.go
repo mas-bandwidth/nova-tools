@@ -156,6 +156,8 @@ func (s *SessionTurns) alive(harness string) Liveness {
 	var l Liveness
 	age := now().Sub(s.at)
 	switch {
+	case s.running > 0:
+		l = running(fmt.Sprintf("a turn is running in the %s session since %s", harness, s.began.UTC().Format(time.RFC3339)))
 	case !s.any:
 		l = cannotTell("no turn into the " + harness + " session has ended yet; the session check alone")
 	case s.exit != 0 || s.err != "":
@@ -165,7 +167,9 @@ func (s *SessionTurns) alive(harness string) Liveness {
 		}
 		l = notRunning(why + " (" + Ago(age) + " ago)")
 	case age > AliveWithin:
-		l = notRunning(fmt.Sprintf("no turn into the %s session ended exit 0 within %s: the last, into %s, %s ago", harness, AliveWithin, s.session, Ago(age)))
+		// a one-shot harness is seen only by its turns: a quiet one is no harness gone,
+		// and its next delivery is the check (the finding of 2026-10-06)
+		l = cannotTell(fmt.Sprintf("quiet: the last turn into the %s session %s ended exit 0 %s ago; a one-shot harness is seen by its next turn, and delivering is the check", harness, s.session, Ago(age)))
 	default:
 		l = running(fmt.Sprintf("the last turn into the %s session %s ended exit 0 %s ago; no app is read", harness, s.session, Ago(age)))
 	}
