@@ -2391,7 +2391,16 @@ id (`--op`) returns the original result, with no second counter or notification.
   cards kept) until `reader up`. A held reader is asked nothing, its reads
   asked and not begun are asked of another, and its reads begun finish (with
   `--return` they are taken back at the hold, where a reader up is free to read
-  them); a reader away or down has every read, begun or not, taken back. The readers table has no `status`
+  them); a reader away or down has every read, begun or not, taken back.
+  `reader up` releases a hold and adds no capacity: reads are served by a bud's
+  reader loop or a friend's harness asking for the reader's queue, never by the
+  row, so a reader no process serves (no beat within `ReaderBeatBound`, held or
+  not) is away or down again on the next tick. `reader up` on such a reader is
+  refused, exit 1, all or none, nothing written, and names the beat that would
+  serve it (`nova-sprint queue --as <reader>`); once the loop beats, the verb
+  releases it. Each reader's row in `where` carries `served` or `unserved`,
+  from the beat alone (the held and retired states do not change it), and the
+  one text row counts them (`2/3`). The readers table has no `status`
   column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
@@ -2573,8 +2582,11 @@ id (`--op`) returns the original result, with no second counter or notification.
   is not asked (with one reader up the tick asks the flash cards and the pro
   cards wait): the tick raises one judgment, `fewer than two readers up:
   <readers and their states>`, for the sprint (not one for each primary),
-  closed when enough are up or no such primary waits; `reader up` and
-  `reader add` answer it.
+  closed when enough are up or no such primary waits; `reader up` (of a
+  reader a process serves) and `reader add` answer it. It is one open
+  judgment, its text updated in place as the readers change (a `judgment
+  updated:` line), never written again while it is open: the log carries one
+  line for it however many ticks run.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
   (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn

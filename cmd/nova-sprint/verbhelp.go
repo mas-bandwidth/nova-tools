@@ -13,7 +13,7 @@ import (
 const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
   unhold <name>... releases any of them (one verb for the four)
   fleet up <member> releases a held member
-  reader up <reader> releases a held reader
+  reader up <reader> releases a held reader a process serves (one that beats: queue --as <reader>); an unserved one is refused
   friend up <friend> releases a held friend
 `
 

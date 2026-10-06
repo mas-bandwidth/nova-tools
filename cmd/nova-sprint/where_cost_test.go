@@ -21,8 +21,9 @@ import (
 // four records (the seat, the machine's with the where record, the friends, the
 // goals) and the streams' control cards. Measured on this fixture: 22 on the code
 // before the record (5183's head, 7 of them reads of card records), 19 on this
-// code's own read of the cards when it cannot take the record, 9 with it.
-const whereTripsMax = 9
+// code's own read of the cards when it cannot take the record, 9 with it, and one
+// more for the readers' beats (the readers table's served column).
+const whereTripsMax = 10
 
 // bigSprint is the live sprint's shape at 3,000 cards (2026-10-02 10:13 PM ET,
 // 2,843 cards, where 5.2 to 7.0 s on the live store): five streams of a held sentinel

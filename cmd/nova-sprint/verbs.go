@@ -2863,6 +2863,26 @@ func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "%s %s: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, verbName, strings.Join(bad, ","), strings.Join(rows, ","))
 		return 1
 	}
+	// reader up releases a hold and adds no capacity: a reader no process serves
+	// (no beat within the bound) is away or down again on the next tick, so the
+	// call is refused whole, naming the beat that would serve each
+	if !away {
+		served, err := st.ReadersServed(ctx, names, a.now())
+		if err != nil {
+			return a.readFailed(verbName, err, stderr)
+		}
+		var cmds, bad []string
+		for _, n := range names {
+			if served != nil && !served[n] {
+				bad = append(bad, n)
+				cmds = append(cmds, "nova-sprint queue --as "+n)
+			}
+		}
+		if len(bad) > 0 {
+			fmt.Fprintf(stderr, "%s %s: no process serves %s (no beat within %s: reads are served by a bud's reader loop or a friend's harness, not by the row, so it would be away or down again on the next tick); nothing was changed; start the reader loop that beats it (%s), then run this again\n", prog, verbName, strings.Join(bad, ","), sprint.ReaderBeatBound, strings.Join(cmds, "; "))
+			return 1
+		}
+	}
 	// the old words of hold <reader>... --return and unhold <reader>... (one release): the
 	// reads it holds are asked of another, as a reader away's always were
 	// (docs/SPEC-SPRINT.md section 11)
