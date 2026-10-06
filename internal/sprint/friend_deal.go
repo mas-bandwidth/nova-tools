@@ -364,7 +364,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			continue // one live lane per card: no second row while her lane runs it
 		}
 		escalated := wc != nil && redealBound(wc)
-		tier := cardTierOf(escalating(s, c))
+		tier := DealTier(escalating(s, c))
 		left := friendsLeft(wc)
 		pinned, pinnedCard := FriendCard(c)
 		leftAtPin := slices.Clone(left)

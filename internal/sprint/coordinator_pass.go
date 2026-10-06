@@ -482,7 +482,7 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 // friendCouldTake says f may be given the primary: her tiers hold its tier, it
 // is not a hard pin to someone else, and the work card has not left her.
 func friendCouldTake(f FriendSeat, pr, wc *Card) bool {
-	if pr == nil || !friendTakes(f, cardTierOf(pr)) {
+	if pr == nil || !friendTakes(f, DealTier(pr)) {
 		return false
 	}
 	if name, ok := FriendCard(pr); ok && name != "" && name != f.Name && OnlyFriend(pr) {
