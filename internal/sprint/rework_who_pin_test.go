@@ -55,6 +55,9 @@ func TestAReworkKeepsTheWhoPin(t *testing.T) {
 		w := friendWorld(t, friendBrief("friend amy"))
 		dealWith(w, amy(Up), bob)
 		require.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-1.w1").Row, "its first deal is to the friend it names")
+		// dealt ready on her row (docs/SPEC-SPRINT.md, the friend row); her take puts it to work
+		startLanes(w, amy(Up))
+		require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "working once she takes it")
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: FriendRow("amy"), Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "HOLD: the gate is red"}))
 		w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "make the gate green"}))
 		waitsForAmy(t, w, "s1-1")

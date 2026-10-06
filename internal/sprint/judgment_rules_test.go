@@ -90,9 +90,12 @@ func brokenOnce(t *testing.T, w *world, finding string) {
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "broken", Finding: finding, Sel: Sel{IDs: []string{rc.ID}}}))
 }
 
-// friendDealt is a world with s1-1 a friend's card dealt to amy, working on her row, past
-// its bound; her seat as the tick reads it, running what is given.
-func friendDealt(t *testing.T, running ...string) (*world, FriendSeat) {
+// friendDealt is a world with s1-1 a friend's card dealt to amy, past its bound; her seat
+// as the tick reads it, running what is given. A deal to a friend holds the card ready on
+// her row until her take (docs/SPEC-SPRINT.md, the friend row): with took, her beat names
+// it running and the tick's start takes it into working (startLanes) before the bound
+// passes; without, it is dealt and never taken.
+func friendDealt(t *testing.T, took bool, running ...string) (*world, FriendSeat) {
 	t.Helper()
 	w := friendWorld(t, friendBrief("friend"))
 	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro", Running: running}
@@ -100,7 +103,11 @@ func friendDealt(t *testing.T, running ...string) (*world, FriendSeat) {
 	dealWith(w, amy)
 	wc := w.s.Fleet.Card("s1-1.w1")
 	require.Equal(t, FriendRow("amy"), wc.Row)
-	require.Equal(t, Working, wc.Col)
+	require.Equal(t, Ready, wc.Col, "dealt to her: ready until her take")
+	if took {
+		startLanes(w, amy)
+		require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "her take: working")
+	}
 	w.tick(DeadlineUnfinished * 4)
 	deadlines(w, on(amy, bob))
 	require.Len(t, openOf(w, NWorkLate, "s1-1"), 1, "past its bound on her row: a late judgment")
@@ -170,16 +177,20 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		assert.Len(t, logged(w, RuleReadBroken), 1)
 	})
 
-	t.Run("friend-take: a friend's card she has not started past its bound is taken back and dealt again", func(t *testing.T) {
-		t.Parallel()
-		w, bob := friendDealt(t)
+	// takenBack is the friend-take rule answering s1-1, not started by amy, past its bound
+	// on her row in the column given: taken back and dealt again, to bob.
+	takenBack := func(t *testing.T, took bool, col string) {
+		t.Helper()
+		w, bob := friendDealt(t, took)
+		require.Equal(t, col, w.s.Fleet.Card("s1-1.w1").Col)
 		amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}
 		a := answerOn(t, w, on(amy, bob), NWorkLate, "s1-1")
 		require.Equal(t, RuleFriendTake, a.Rule)
 		require.Equal(t, ActTake, a.Act, a.Why)
+		assert.Contains(t, a.Why, "("+col+")", "the rule names the column it takes from")
 		rules(w, on(amy, bob))
 		wc := w.s.Fleet.Card("s1-1.w1")
-		assert.Equal(t, Withdrawn, wc.Col, "taken back")
+		assert.Equal(t, Withdrawn, wc.Col, "taken back from %s", col)
 		assert.Equal(t, FriendRow("amy"), wc.F(FieldTakenFrom))
 		assert.Equal(t, Ready, w.state("s1-1"))
 		assert.Empty(t, openOf(w, NWorkLate, "s1-1"), "answered")
@@ -189,17 +200,32 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		dealWith(w, amy, bob)
 		again := w.s.Fleet.Card("s1-1.w1")
 		assert.Equal(t, FriendRow("bob"), again.Row, "dealt again, to another friend")
+		assert.Equal(t, Ready, again.Col, "ready on bob's row until his take")
 		w.clean("taken back by rule")
+	}
+
+	t.Run("friend-take: a friend's card she has not started past its bound is taken back and dealt again", func(t *testing.T) {
+		t.Parallel()
+		t.Run("dealt and never taken: ready", func(t *testing.T) {
+			t.Parallel()
+			takenBack(t, false, Ready)
+		})
+		t.Run("taken, no progress and not running: working", func(t *testing.T) {
+			t.Parallel()
+			takenBack(t, true, Working)
+		})
 	})
 
 	t.Run("friend-take: a card she started stays hers", func(t *testing.T) {
 		t.Parallel()
-		w, bob := friendDealt(t, "s1-1.w1")
+		w, bob := friendDealt(t, true, "s1-1.w1")
 		amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro", Running: []string{"s1-1.w1"}}
 		a := answerOn(t, w, on(amy, bob), NWorkLate, "s1-1")
 		assert.Equal(t, ActLeft, a.Act, a.Why)
 		rules(w, on(amy, bob))
-		assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
+		wc := w.s.Fleet.Card("s1-1.w1")
+		assert.Equal(t, FriendRow("amy"), wc.Row, "hers")
+		assert.Equal(t, Working, wc.Col, "started: working on her row")
 		assert.Len(t, openOf(w, NWorkLate, "s1-1"), 1)
 	})
 
@@ -294,11 +320,12 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		assert.Len(t, openOf(r, NReadLate, "s1-1"), 1)
 		assert.Empty(t, logged(r, RuleReadLate))
 
-		f, bob := friendDealt(t)
+		f, bob := friendDealt(t, false)
 		f.s.RulesOff = []string{RuleFriendTake}
 		amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}
 		rules(f, on(amy, bob))
-		assert.Equal(t, Working, f.s.Fleet.Card("s1-1.w1").Col)
+		assert.Equal(t, Ready, f.s.Fleet.Card("s1-1.w1").Col, "not taken back: still ready on her row")
+		assert.Equal(t, FriendRow("amy"), f.s.Fleet.Card("s1-1.w1").Row)
 		assert.Len(t, openOf(f, NWorkLate, "s1-1"), 1)
 
 		b := setup(t, 1)
