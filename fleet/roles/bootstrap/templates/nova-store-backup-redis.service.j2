@@ -1,0 +1,8 @@
+# /etc/systemd/system/nova-store-backup-redis.service: written by fleet/bootstrap.yml
+[Unit]
+Description=the fleet Redis's daily RDB copy (nova-store-backup-redis.timer)
+
+[Service]
+Type=oneshot
+User={{ ansible_user_id }}
+ExecStart=/usr/bin/cp --backup=numbered {{ nova_bootstrap_redis_dir }}/dump.rdb {{ nova_bootstrap_backup_dir }}/redis/dump.rdb

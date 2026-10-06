@@ -1,0 +1,97 @@
+# The host on the owner's tailnet, named for its inventory name: tailscale
+# from Tailscale's own apt repository, tailscaled enabled, and `tailscale up`
+# with the auth key the owner names (nova_bootstrap_tailscale_authkey_env)
+# only when the host is not already Running. The key reaches the host in a
+# file of mode 0600 that is removed in the same task block, never in an
+# argument or a log. The host's tailnet IPv4 address is the fact
+# nova_bootstrap_tailnet_ip, which the store's Redis binds.
+- name: tailscale's signing key
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }}/{{ ansible_distribution_release }}.noarmor.gpg"
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    mode: "0644"
+  become: true
+
+- name: tailscale's apt repository
+  ansible.builtin.copy:
+    content: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} main\n"
+    dest: /etc/apt/sources.list.d/tailscale.list
+    mode: "0644"
+  register: bootstrap_ts_repo
+  become: true
+
+- name: tailscale
+  ansible.builtin.apt: { name: tailscale, state: present, update_cache: "{{ bootstrap_ts_repo is changed }}" }
+  register: bootstrap_ts_pkg
+  become: true
+
+# Under --check a tailscale not yet installed has no unit: the install says so.
+- name: tailscaled, enabled and running
+  ansible.builtin.systemd_service: { name: tailscaled, enabled: true, state: started }
+  when: not (ansible_check_mode and bootstrap_ts_pkg is changed)
+  become: true
+
+- name: the host's tailnet state
+  ansible.builtin.command: { argv: [tailscale, status, --json] }
+  register: bootstrap_ts_status
+  changed_when: false
+  check_mode: false
+  # ignored: a host never logged in answers NeedsLogin, or nothing before tailscaled is installed
+  failed_when: false
+  become: true
+
+- name: whether the host is on the tailnet
+  ansible.builtin.set_fact:
+    bootstrap_ts_running: >-
+      {{ (bootstrap_ts_status.stdout | default('')).startswith('{')
+         and (bootstrap_ts_status.stdout | from_json).BackendState | default('') == 'Running' }}
+
+- name: what --check would join
+  ansible.builtin.debug: { msg: "WOULD-JOIN {{ inventory_hostname }} the tailnet (tailscale up --hostname={{ inventory_hostname }})" }
+  when: ansible_check_mode and not (bootstrap_ts_running | bool)
+
+- name: tailscale up, when the host is not Running
+  when: not ansible_check_mode and not (bootstrap_ts_running | bool)
+  block:
+    - name: the auth key, in a file only root reads
+      ansible.builtin.tempfile: { state: file, suffix: .tskey }
+      register: bootstrap_ts_keyfile
+      become: true
+
+    - name: the key written into it
+      ansible.builtin.copy:
+        content: "{{ lookup('env', nova_bootstrap_tailscale_authkey_env) }}"
+        dest: "{{ bootstrap_ts_keyfile.path }}"
+        mode: "0600"
+      no_log: true
+      become: true
+
+    - name: tailscale up
+      ansible.builtin.command:
+        argv: [tailscale, up, "--auth-key=file:{{ bootstrap_ts_keyfile.path }}", "--hostname={{ inventory_hostname }}"]
+      changed_when: true
+      become: true
+  always:
+    - name: the key file removed
+      ansible.builtin.file: { path: "{{ bootstrap_ts_keyfile.path }}", state: absent }
+      when: bootstrap_ts_keyfile.path is defined
+      become: true
+
+- name: the host's tailnet address
+  ansible.builtin.command: { argv: [tailscale, ip, "-4"] }
+  register: bootstrap_ts_ip
+  changed_when: false
+  check_mode: false
+  # ignored: under --check a host not yet up has none; the receipt says tailnet=none
+  failed_when: false
+
+- name: the tailnet address, as a fact
+  ansible.builtin.set_fact:
+    nova_bootstrap_tailnet_ip: "{{ (bootstrap_ts_ip.stdout_lines | default([]) | first | default('')) if bootstrap_ts_ip.rc | default(1) == 0 else '' }}"
+
+- name: a host that is up has a tailnet address
+  ansible.builtin.assert:
+    that: nova_bootstrap_tailnet_ip != ''
+    fail_msg: "BOOTSTRAP REFUSED host={{ inventory_hostname }}: tailscale up ran and the host has no tailnet IPv4 address; run tailscale status on it"
+    quiet: true
+  when: not ansible_check_mode

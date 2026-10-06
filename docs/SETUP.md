@@ -53,6 +53,15 @@ root (`~/nova`, or `--root <dir>`). The design is [SPEC-UP.md](SPEC-UP.md).
 What `--local` never touches, and how each step decides it has nothing to do, is in
 [SPEC-UP.md](SPEC-UP.md).
 
+## A fleet: fleet/bootstrap.yml, then the steady-state plays
+
+A fleet of hosts on a tailnet is set up from a machine with ssh to each, in two Ansible
+phases: `fleet/bootstrap.yml` takes fresh Debian or Ubuntu hosts to hosts with PostgreSQL,
+the fleet's Redis, Tailscale, the seat, the tools, the harness dependencies and the backups,
+from an inventory the owner writes and the inputs it names; the steady-state plays then read
+their inventory from nova-config. [FLEET.md](FLEET.md), "From a fresh host", is the
+contract, the inputs and the hand-off.
+
 ## Checking the setup
 
 ### setup-nova-doctor-r-r5.w1: nova-doctor
