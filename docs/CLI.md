@@ -1208,6 +1208,18 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 
 The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness whose adapter is still the Stub (Claude Code, until fg-claude-open-chatb-r lands) is refused at install.
 
+A fleet member back from down adopts the latest before it is dealt when the
+coordinator's machine sets `NOVA_SPRINT_ADOPT_FLAGS` to `nova-update release adopt`'s
+flags less `--machines`, `--version` and `--dry-run` (blank-separated: `--ssh`, `--from`,
+`--bin`, `--dest`, the stage's digest, `--no-certify` or the certification's three) and
+`nova-sprint` was built with a release stamp: the tick holds a member whose beat
+returns after it was down (the fleet table's status `adopting`, reason `adopting <release>: back
+from down`), adopts the release this `nova-sprint` runs onto that machine alone, reads its
+installed version back, and brings it up at its width with one note `<m> is back:
+<old> -> <new>`; a failed adoption keeps it held with the failure as its reason and
+one judgment (`fleet up <m>` brings it up as it is). Unset, a member back is up at
+once (docs/SPEC-SPRINT.md section 5, "Back from down: adopt the latest").
+
 ### The sprint backup
 
 `nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store, and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=<document+counts|counts> secrets=none`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).
