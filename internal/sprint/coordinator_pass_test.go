@@ -283,3 +283,155 @@ func TestAQuietFriendWhoseSessionAnswersIsNotDeafAndALapsedProofIsToldOnce(t *te
 	r.tick(time.Minute)
 	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendDeaf, "friend amy"), "told once an episode")
 }
+
+// An up friend with an empty row, while a card she could do sits unstarted on the
+// other friend's row, is told once: not before ten minutes, one judgment at ten
+// minutes naming her, the card, where it sits and the offers, raised again in
+// place one pass later, and closed when the card is finished.
+func TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce(t *testing.T) {
+	t.Parallel()
+	r := newPassRig(t)
+	s := r.snap()
+	fc := s.Fleet.Card(s.Work.Card("f1-1").F("work"))
+	require.NotNil(t, fc, "the friend's card is dealt")
+	require.Equal(t, sprint.Working, fc.Col)
+	holder, ok := sprint.FriendOfRow(fc.Row)
+	require.True(t, ok)
+	idle := map[string]string{"amy": "bob", "bob": "amy"}[holder]
+	require.Zero(t, r.snap().Fleet.Count(sprint.FriendRow(idle), sprint.Ready)+r.snap().Fleet.Count(sprint.FriendRow(idle), sprint.Working), "her row is empty")
+	row := sprint.FriendRow(idle)
+	fresh := func() { r.pongs[holder], r.pongs[idle] = r.clock(), r.clock() }
+
+	assert.Nil(t, r.open(sprint.NFriendEmpty, row), "the empty row has just been seen: the ten minutes start now")
+	assert.Equal(t, 0, r.count(sprint.Judgment, sprint.NFriendEmpty, ""))
+
+	fresh()
+	r.tick(9*time.Minute + 59*time.Second)
+	assert.Nil(t, r.open(sprint.NFriendEmpty, row), "nine minutes and fifty-nine seconds is not ten")
+	assert.Equal(t, 0, r.count(sprint.Judgment, sprint.NFriendEmpty, ""))
+
+	fresh()
+	r.tick(time.Second)
+	j := r.open(sprint.NFriendEmpty, row)
+	require.NotNil(t, j, "an up friend empty for ten minutes while a card she could do waits is told")
+	assert.Equal(t, sprint.Judgment, j.Kind)
+	assert.Contains(t, j.What, "friend "+idle)
+	assert.Contains(t, j.What, sprint.EmptyRowAfter.String())
+	assert.Contains(t, j.What, fc.ID)
+	assert.Contains(t, j.What, fc.Row+":"+fc.Col)
+	assert.Contains(t, j.What, "unstarted")
+	assert.Contains(t, j.What, "deal them to her")
+	assert.Contains(t, j.What, "friend take the other row")
+	assert.Contains(t, j.What, "keep")
+	assert.Contains(t, j.Decisions, "deal them to "+idle)
+	assert.Contains(t, j.Decisions, "friend take "+holder+" --all-unstarted")
+	assert.Contains(t, j.Decisions, "keep")
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendEmpty, "friend "+idle), "told once")
+
+	fresh()
+	r.tick(9*time.Minute + 59*time.Second)
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendEmpty, ""), "still the one judgment")
+	assert.Equal(t, 0, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendEmpty), "not again within ten minutes")
+
+	ends := r.tickEnds()
+	fresh()
+	r.tick(time.Second)
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendEmpty, "friend "+idle), "raised again in place")
+	assert.Equal(t, 1, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendEmpty))
+	again := r.open(sprint.NFriendEmpty, row)
+	require.NotNil(t, again)
+	assert.Equal(t, 1, again.Before, "the judgment counts its raises again")
+	assert.Greater(t, r.tickEnds(), ends, "the push wakes inbox --wait")
+
+	s = r.snap()
+	fc = s.Fleet.Card(fc.ID)
+	require.NotNil(t, fc)
+	r.must(store.FinishStep(sprint.FinishReq{As: fc.Row, Sel: sprint.Sel{IDs: []string{fc.ID}}, Gens: map[string]int{fc.ID: fc.Int("gen")}, Head: "abc", Who: fc.Row}))
+	fresh()
+	r.tick(time.Second)
+	assert.Nil(t, r.open(sprint.NFriendEmpty, row), "nothing she could do is waiting: the judgment closes")
+	pushes := r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendEmpty)
+	fresh()
+	r.tick(10 * time.Minute)
+	assert.Equal(t, pushes, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendEmpty), "a closed episode is not pushed")
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendEmpty, ""))
+}
+
+// A named pin the deal places on another friend's row is a judgment in that
+// step: why the pinned friend did not take it, and whose row holds the card.
+// The pass keeps that one note, raises it again in place, and closes it when
+// the card is finished. A hard pin is not rotated and is not this judgment.
+func TestAPinnedCardRotatedOffItsFriendIsJudgedOnce(t *testing.T) {
+	t.Parallel()
+	r := newPassRig(t)
+	r.hold(sprint.HoldReq{Names: []string{"amy"}, Reason: "she is away"})
+	r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-2", Brief: friendsBrief("friend amy")}}}))
+	r.pongs["bob"] = r.clock()
+	r.tick(time.Second)
+	s := r.snap()
+	wc := s.Fleet.Card(s.Work.Card("f1-2").F("work"))
+	require.NotNil(t, wc, "the pin was dealt")
+	require.Equal(t, sprint.FriendRow("bob"), wc.Row, "amy is held, so the pin rotates to bob")
+	j := r.open(sprint.NPinIgnored, "f1-2")
+	require.NotNil(t, j, "a pin placed on someone else's row is a judgment")
+	assert.Contains(t, j.What, wc.ID)
+	assert.Contains(t, j.What, "pinned to amy")
+	assert.Contains(t, j.What, "she is held")
+	assert.Contains(t, j.What, wc.Row+":"+wc.Col)
+	assert.Contains(t, j.Decisions, "friend take bob "+wc.ID+" --reason pinned to amy")
+	assert.Contains(t, j.Decisions, "keep")
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NPinIgnored, "f1-2"))
+
+	r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-3", Brief: friendsBrief("only friend amy")}}}))
+	r.pongs["bob"] = r.clock()
+	r.tick(time.Second)
+	assert.Equal(t, sprint.Ready, r.snap().Work.Card("f1-3").Col, "a hard pin waits for her")
+	assert.Nil(t, r.open(sprint.NPinIgnored, "f1-3"), "a hard pin is not rotated, and is not this judgment")
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NPinIgnored, ""), "the rotated pin is still the one judgment")
+
+	// the hard-pin tick above already took one second of the ten minutes
+	r.pongs["bob"] = r.clock()
+	r.tick(9*time.Minute + 58*time.Second)
+	assert.Equal(t, 0, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NPinIgnored))
+	r.pongs["bob"] = r.clock()
+	r.tick(time.Second)
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NPinIgnored, "f1-2"), "raised again in place")
+	assert.Equal(t, 1, r.count(sprint.Happened, sprint.NRaisedAgain, sprint.NPinIgnored))
+	again := r.open(sprint.NPinIgnored, "f1-2")
+	require.NotNil(t, again)
+	assert.Equal(t, 1, again.Before)
+
+	s = r.snap()
+	wc = s.Fleet.Card(wc.ID)
+	require.NotNil(t, wc)
+	r.must(store.FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Head: "abc", Who: wc.Row}))
+	r.pongs["bob"] = r.clock()
+	r.tick(time.Second)
+	assert.Nil(t, r.open(sprint.NPinIgnored, "f1-2"), "the card is finished: the judgment closes")
+}
+
+// A named pin the friends do not take, so the fleet deals it, is still a
+// judgment. The deal writes no friend unit for it; the pass raises the one
+// note from the row the card landed on.
+func TestAPinnedCardTheFleetTookIsJudgedOnce(t *testing.T) {
+	t.Parallel()
+	r := newPassRig(t)
+	r.hold(sprint.HoldReq{Names: []string{"amy", "bob"}, Reason: "both away"})
+	r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-9", Brief: friendsBrief("friend amy")}}}))
+	r.tick(time.Second)
+	s := r.snap()
+	wc := s.Fleet.Card(s.Work.Card("f1-9").F("work"))
+	require.NotNil(t, wc, "no friend is up, so the fleet deals the pin")
+	require.False(t, sprint.IsFriendRow(wc.Row), "it sits on a machine, %s", wc.Row)
+	j := r.open(sprint.NPinIgnored, "f1-9")
+	require.NotNil(t, j, "the pass tells the coordinator the pin was dealt away")
+	assert.Contains(t, j.What, wc.ID)
+	assert.Contains(t, j.What, "pinned to amy")
+	assert.Contains(t, j.What, "she is held")
+	assert.Contains(t, j.What, wc.Row+":"+wc.Col)
+	assert.NotContains(t, j.Decisions, "friend take")
+	assert.Contains(t, j.Decisions, "keep")
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NPinIgnored, "f1-9"))
+	r.tick(time.Second)
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NPinIgnored, "f1-9"), "the pass keeps the one note")
+}
