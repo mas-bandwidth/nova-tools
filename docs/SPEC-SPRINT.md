@@ -4994,3 +4994,90 @@ The TLA+ specification `tla/StallLadder.tla` verifies five invariants:
 - `NoWakeWithoutRung`: a wake is sent only at a rung the ladder climbed, and once
   (`PlanUncommitted`, a plan the tick makes and does not commit; reversed witness
   `wakeinplan`: the planner sends the wake as it plans).
+
+## friend-card-lifecycle-tla: a friend's card's lifecycle (tla/FriendCard.tla)
+
+**The model** is `tla/FriendCard.tla` (cases `MCFriendCard*`, group `friendcard` in
+`tla/CASES.tsv`, records in `tla/RUNS.tsv`). It holds a friend's card from the deal to its
+return and the friend's own liveness under it, as the chain the owner accepted on
+2026-10-05 ("we need to make sure that friends are up, they are not deaf, they are actually
+doing work, when they finish work they notify you, when the work is finished it is returned
+to you. And the whole time the dashboard needs to be accurate"): 1 up, 2 hears,
+3 delivered, 4 started, 5 progressing, 6 finished, 7 returned, 8 balanced, 9 shown.
+`tla/Friend.tla` is the daemon's challenge, `tla/FriendPresence.tla` the table's word and
+its take-back, `tla/StallLadder.tla` the stall ladder; this module is the card's life across
+them, at the grain of evidence and bounds.
+
+Per friend it holds the world (daemon up or down, session live or archived, credit ok or
+out) and the machine's evidence (the age of her session's last evidence, a wake ping it
+answered or a card it finished, the coordinator's hold, a refused delivery); per card its state (`pool`, `dealt`, `delivered`,
+`started`, `gone` (a started run that ended with no report), `finished`, `returned`), its
+friend and its evidence clock. Time is ages that stop at the bound, so the clock never ends
+and liveness is checked. The dashboard's word for a friend is `Lowest(f)`, the lowest
+failing layer (`held`, `up`, `hears`, `delivered`, `started`, `progressing`, `finished`,
+`returned`, else `ok`), a function of these variables.
+
+It proves, at two friends, three cards, width two and two disruptions (with friend and card
+symmetry): `WorkingOnlyAfterStart` (a card is working only after a start receipt),
+`DeadRunFinishedWithinBound` (a card whose run is gone is finished within the bound),
+`DealOnlyToHearing` (a friend not hearing is dealt nothing, the deal and the level),
+`DeliveredOnlyIntoLiveSession`, `NoUnstartedCardOffUp` (no unstarted card is held by a held
+or down friend; a started card stays and is held to the finish bound), `DeafShownWithinBound`,
+`DashIsLowestLayer` and `DashNeverOkWhileFailing`; and under fairness (`SpecLive`: finite
+disruptions, the clock ticks, a daemon is restarted and a session renewed, a session able
+to answer does, every run ends by a report or by dying) `DealtEnds` (every dealt card is
+eventually finished or taken back), `FinishedReturned` and `AbleFriendUp` (every friend whose
+provider has allowance is eventually up: her session hears).
+
+One design point the liveness check found while the model was written: a level that
+restarts a card's clock lets an unstarted card pass between two friends for ever. The code
+does not restart it (the dealt bound counts from `untaken_since`, which no redeal rewrites,
+`WorkDeadline`), and the model's `Level` keeps the clock to match.
+
+**The transitions, with the evidence each reads and the bound past which the machine raises
+an alarm** (Alarm(c) in the model: a card at its bound in a state it must leave):
+
+| Transition | Layer | Who | Evidence the code reads | Bound, and what happens past it |
+|---|---|---|---|---|
+| `BringUp(f)` | 1 up | tick | her beat, `friend beat` every `FriendBeatEvery` (1 s), its age on her row (`BeatDeadline`, 15 s); since presence-from-session-only it decides nothing but a beat that says down | the daemon is restarted by its launchd or systemd unit (`KeepAlive`) |
+| `Answer(f)` | 2 hears | friend | her session's pong carrying the wake ping's nonce, written as `friend health --state up` (`FriendHealth.Seen`) | `FriendPongWindow` (10 min) with no evidence: down, her unstarted cards taken back the same tick. Design: every friend is pinged every pass and a deaf pass is written to the table; today the wake loop pings only friends shown up (`WakeTargets`), a deaf pass is one bus note, and the pong is written by the coordinator's hand |
+| `Renew(f)` | 1-2 | tick | the daemon's session state (`Session` broken after `BrokenAfter` refusals) | design: renewed automatically; today a person renews it and restarts the daemon |
+| `Deal(c, f)` | 8 balanced | tick | her status (up = hears), her load against her room (`friendDeal`) | never to a friend not up |
+| `Level(c, g)` | 8 balanced | tick | loads and lanes of the friends up (`FriendLevel`); the card keeps its clock | an unstarted card only |
+| `Deliver(c)` | 3 delivered | daemon | the turn that hands the brief in exits 0, its messages acked (the daemon's `Delivered`) | dealt and undelivered at the dealt bound: taken back (today: `DealtMax`, 6 h, a judgment) |
+| `FailDelivery(c)` | 3 delivered | daemon | the provider's refusal streak (`refused=n/BrokenAfter`) | shown on her row at once (`delivered` is her lowest failing layer) |
+| `Start(c)` | 4 started | friend | her start receipt (today `friendStarted`: her beat's `Running` names it, or a `FieldProgress` stamp) | delivered and unstarted at the bound: taken back (today: the stall ladder's rung 4) |
+| `Progress(c)` | 5 progressing | friend | `FriendReport.Active` (the newest write under her directory) or `FieldProgress` | `friend_stall_after` (20 min): stalled, alarm, the stall ladder climbs (`friend_stall_step`, 5 min) |
+| `Report(c)` | 6 finished | friend | `outbox/<job>/REPORT.md` collected by friend sync (`friendFinish`), its bus note to the coordinator; the finish is her session's evidence too | started and silent: the stall bound above; as evidence, design: the pong's bound; today `FriendFinishWindow` (30 min) |
+| `Die(c)` | 6 finished | friend | the lane's end with no report (`CardTurns` turns, or its tier's wall cap), or a daemon starting up over a card its lanes marked started (`internal/friend/lane_end.go`) | gone at the bound: finished, failed. Design: by the tick, whatever her daemon; today by her own daemon only (the failed finish `FinishArgv`), so not while it is down |
+| `Return(c)` | 7 returned | tick | the work card in review at the reported Head | finished and not returned at the bound: alarm |
+| `Tick` | all | tick | every evidence clock above | takes back, finishes and raises the alarms in the step that ages a clock to its bound |
+| `Hold(f)` / `Release(f)` | 8 | coordinator | `friend down` / `friend up` | the hold takes back her unstarted cards in the same step |
+| `Reboot`, `Archive`, `CreditOut`, `CreditBack` | world | world | none directly: they end her live runs and stop her answers | seen through the clocks above |
+
+**What the code does that the design does not** (each a counterexample TLC found with one
+gap switched on, read against the code by hand, a case of `tla/CASES.tsv` whose config name
+is the card that closes it). Read again on 2026-10-06 at base ba3d867c0 (card
+friend-card-lifecycle-tla-b; first read 2026-10-05 at 3cac64dbb): presence-from-session-only
+and the running-daemon half of lane-end-finishes-the-card have landed since, and the daemon's
+`SessionQuiet` no longer reaches the table.
+
+| Case | Property violated | The code at ba3d867c0 | Card |
+|---|---|---|---|
+| `MCFriendCardFindingWakePingEvery` | `DeafShownWithinBound` | a card of hers finished keeps her up `FriendFinishWindow` (30 min), past the pong's `FriendPongWindow` (10 min), and a wake pass that finds her deaf writes nothing to the table (`cmd/nova-friend/wakeping.go`): a session that can take no turn after its last finish (TLC's trace: her machine rebooted) still hears at the bound | wake-ping-every |
+| `MCFriendCardFindingWakePingEveryDown` | `AbleFriendUp` | the wake loop pings only friends the table shows up (`WakeTargets`) and no code writes an answered pong as `friend health --state up`: a friend down, or never observed, is never asked again | wake-ping-every |
+| `MCFriendCardFindingFriendDeliveryVisible` | `DeliveredOnlyIntoLiveSession` | friend sync writing `inbox/<job>/BRIEF.md` is the delivery, whatever the session (`friendCardsOf`); a broken session is one bus line (`tellBroken`), never on the table | friend-delivery-visible |
+| `MCFriendCardFindingFriendWorkingMeansStarted` | `WorkingOnlyAfterStart` | the deal moves the card ready -> working on her row while she has a lane free (`friendDeal`) and the friends table counts that column working (`cmd/nova-sprint/reads.go`) | friend-working-means-started |
+| `MCFriendCardFindingPrFriendStallComplete` | `NoUnstartedCardOffUp` | a friend down keeps her cards on her row; only the hold and the stall ladder's rung 4 take them back | pr-friend-stall-complete |
+| `MCFriendCardFindingLaneEndFinishesTheCard` | `DeadRunFinishedWithinBound` | only her own daemon finishes a dead run (`lane_end.go`); while it is down the card stays working, the coordinator raising `WorkDeadline` and finishing nothing | lane-end-finishes-the-card (the half for a daemon down) |
+| `MCFriendCardFindingFriendBackUpAutomatic` | `AbleFriendUp` | a broken session delivers nothing until a person renews it and restarts the daemon | friend-back-up-automatic |
+| `MCFriendCardFindingDashboardFriendLowestLayer` | `DashNeverOkWhileFailing` | the row's word is up, held or down (`FriendEvidence`, its evidence beside it); up is drawn while a layer below fails (here: her daemon stopped while her session's pong is under `FriendPongWindow`) | dashboard-friend-lowest-layer |
+
+`MCFriendCardBrokenBeatUp` keeps the closed gap as a reversed witness: a friend never observed
+up on her daemon's beat alone breaks `DealOnlyToHearing`; presence-from-session-only (landed,
+c5ceb5257) made the code the design there.
+
+Not modelled: the judgments' path to the coordinator (coordinator-pass-judgments,
+`tla/CoordinatorPass.tla`), the deal's tier and idle-lane order (friend-deal-one-tier,
+friend-deal-idle-lanes-first; the model's deal takes any friend up with room), and the
+ready-behind-working split of a batch friend's row (every card on her row is one lane here).
