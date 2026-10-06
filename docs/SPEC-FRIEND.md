@@ -1575,7 +1575,7 @@ addresses its fix or not, and `NoUnaddressedLand` (a reworked card lands only fr
 that addresses its fix) holds with `Finished`. Friend sync is in it as a second writer of the
 brief (`Deliver`, whichever hand comes first, never over one there) and a second finisher
 (`SyncFinish`, the server taking the first finish), and `FixFirst` (a reworked card's brief
-opens with its fix, whoever wrote it) holds too (TLC on a Linux bench, vision, two cards, one
+opens with its fix, whoever wrote it) holds too (TLC on a Linux bench, two cards, one
 reworked: 1764 distinct states, no error). The reversed witnesses:
 `MCOutboxFinishBrokenUnaddressedLand.cfg`, the daemon before w1, breaks `NoUnaddressedLand` (she
 writes a LAND that does not address the fix, the daemon asks and lands it);
