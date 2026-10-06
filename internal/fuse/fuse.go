@@ -39,12 +39,19 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     hand-edits into that shape is a readable empty box. Reaching the
     fail-closed answer by a crash deep inside a caller is not a design; this is.
 
- 3. THE WRITE IS TEMP-FILE + RENAME. The file whose corruption means PERMANENT
-    LOCKDOWN must never be left torn: a truncating write can leave half a file if
-    the process dies, and a half file is an unreadable box that only a person can
-    clear, by hand, live. Rename within one directory is atomic, so a reader sees
-    the old box or the new one and never a fragment. Two copies of the tool blowing
-    fuses at once lose one WRITE, but neither can produce a corrupt box.
+ 3. THE WRITE IS TEMP-FILE + RENAME, PUBLISHED UNDER THE BOX'S LOCK. The file
+    whose corruption means PERMANENT LOCKDOWN must never be left torn: a
+    truncating write can leave half a file if the process dies, and a half file
+    is an unreadable box that only a person can clear, by hand, live. Rename
+    within one directory is atomic, so a reader sees the old box or the new one
+    and never a fragment. A box mutation (MutateBox) holds the lock file beside
+    the box -- <box>.lock, internal/filelock -- across its read, its change and
+    its publish, so two copies of the tool blowing fuses at once land BOTH
+    writes, and neither can produce a corrupt box. The one deliberate exception
+    is a lockdown whose lock cannot be taken: it blows unserialized rather than
+    not at all -- a fuse you cannot blow is not a fuse -- and cmd/nova-fuse says
+    so on a NOTE line (BoxLockUntaken tells that failure from a box that cannot
+    be written at all).
 
  4. SURFACE NAMES ARE MATCHED NORMALIZED, AND THAT CUTS BOTH WAYS. Raw string
     comparison lets `quarantine Discord` then `check discord` answer CLEAR -- a
@@ -94,6 +101,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -374,6 +382,20 @@ func CreateBox(path string) error {
 // A symlink at the cleaned path is refused and is not followed.
 func WriteBox(path string, b Box) error {
 	return writeBox(path, b)
+}
+
+// BoxLockUntaken reports whether a box mutation failed because the box's LOCK
+// could not be taken -- another writer holds it, the wait timed out, or only
+// askers stood in the way (internal/filelock's ErrHeld, ErrTimeout and ErrBusy;
+// MutateBox returns that failure verbatim). It tells "the box is being mutated
+// elsewhere right now" from "this box cannot be written here at all", and the
+// difference is a policy, not a detail: a lockdown answers the first by blowing
+// unserialized and saying so (a fuse you cannot blow is not a fuse), while every
+// other failure stays a failed blow. See note 3.
+func BoxLockUntaken(err error) bool {
+	return errors.Is(err, filelock.ErrHeld) ||
+		errors.Is(err, filelock.ErrTimeout) ||
+		errors.Is(err, filelock.ErrBusy)
 }
 
 // PlanCreateBox is CreateBox with nothing written: every check the creation

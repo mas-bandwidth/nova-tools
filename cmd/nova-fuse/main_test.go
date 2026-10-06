@@ -14,10 +14,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -572,6 +574,64 @@ func TestTheWriteLeavesNoLitter(t *testing.T) {
 	require.Len(t, entries, 2, "temp files must not survive the rename, dir holds %v", names)
 	assert.Equal(t, []string{"fuses.json", "fuses.json" + fuse.LockSuffix}, names,
 		"the box and the lock its mutations hold are all that stays; dir holds %v", names)
+
+	// A dry run makes every check the write would and writes nothing -- so it takes no
+	// lock and must leave no lock file behind either.
+	dry := t.TempDir()
+	dryBox := filepath.Join(dry, "fuses.json")
+	writeRaw(t, dryBox, `{"lockdown":null,"quarantine":{"discord":{"at":"2026-01-01T00:00:00Z","reason":"r"}}}`)
+	mustRun(t, []string{"lockdown", "--box", dryBox, "--dry-run", "a"}, now)
+	mustRun(t, []string{"quarantine", "--box", dryBox, "--dry-run", "zulip", "b"}, now)
+	mustRun(t, []string{"lift", "quarantine", "--box", dryBox, "--dry-run", "discord"}, now)
+	dEntries, err := os.ReadDir(dry)
+	require.NoError(t, err)
+	var dNames []string
+	for _, e := range dEntries {
+		dNames = append(dNames, e.Name())
+	}
+	assert.Equal(t, []string{"fuses.json"}, dNames,
+		"a dry run writes nothing and creates no lock file; dir holds %v", dNames)
+}
+
+// TestConcurrentQuarantinesAllLandWhenTheyAnnounceOK is the lost-update pin (security#74
+// finding 3): a burst of parallel `quarantine` runs against one box must not lose a fuse
+// it announced. Before the box's read-modify-write was serialized, two writers could each
+// read the box before either renamed over it: the loser printed QUARANTINE OK ... verified
+// by re-reading the box and exited 0, yet its entry was gone from the final box. Every run
+// that returned 0 must find its surface in the box afterwards, however the 16 writers
+// interleave. No sleep and no wall-clock bound here: the wait is the work itself.
+func TestConcurrentQuarantinesAllLandWhenTheyAnnounceOK(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	const writers = 16
+
+	var wg sync.WaitGroup
+	codes := make([]int, writers)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			surface := fmt.Sprintf("surf-%d", i)
+			code, _, _ := capture(t, []string{"quarantine", "--box", box, surface, "a burst of parallel blows"}, now)
+			codes[i] = code
+		}(i)
+	}
+	wg.Wait()
+
+	after, err := fuse.ReadBox(box)
+	require.NoError(t, err, "the box must be readable after the burst")
+	for i, code := range codes {
+		surface := fmt.Sprintf("surf-%d", i)
+		if code != 0 {
+			continue // a run that did not announce OK owes nothing to the box; it said why on its own streams
+		}
+		_, _, present := after.Quarantined(surface)
+		assert.True(t, present,
+			"run %d exited 0 announcing quarantine=%s, yet %s is missing from the final box (surfaces: %v)",
+			i, surface, surface, after.Surfaces())
+	}
 }
 
 func TestPathEchoesTheBoxFlag(t *testing.T) {

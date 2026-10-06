@@ -692,6 +692,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv inv
 	// lockdown blown and verified in between, and both runs reported success. A
 	// dry run takes no lock and writes nothing.
 	var standing *fuse.Fuse
+	wantsBlow := false
 	what := "blow the lockdown in the box there"
 	err := fuse.MutateBox(boxFile(inv.wd, box), !dry, func(b fuse.Box, readErr error) (fuse.Box, bool, error) {
 		switch {
@@ -735,12 +736,30 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv inv
 		}
 
 		b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
+		wantsBlow = true
 		return b, true, nil
 	})
 	if standing != nil {
 		fmt.Fprintf(stdout, "LOCKDOWN OK already=blown since=%s: %s (standing record kept; the new reason was not recorded: %s)\n",
 			since(*standing), why(*standing), oneline.Escape(reason))
 		return 0
+	}
+	// The box's lock refused to be taken -- another writer holds it, the wait timed
+	// out -- and this is the one mutation that answers that by blowing anyway: a
+	// fuse you cannot blow is not a fuse (fuse.BoxLockUntaken, note 3). WriteBox
+	// publishes by temp-file + rename, so the blow is still atomic -- what it loses
+	// is the serialization, and that loss is said on the NOTE line rather than
+	// kept silent under an exit 0.
+	if err != nil && wantsBlow && fuse.BoxLockUntaken(err) {
+		fmt.Fprintf(stderr, "LOCKDOWN NOTE could not take the box's lock (%s): blowing the lockdown anyway, unserialized -- a quarantine landing at the same moment may still be overwritten by this one, or this one by it\n", oneline.Err(err))
+		next, rerr := fuse.ReadBox(boxFile(inv.wd, box))
+		if rerr != nil {
+			// The same reading the closure gives an unreadable box: a fresh one
+			// holding the lockdown, and nothing is less blocked than before.
+			next = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+		}
+		next.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
+		err = fuse.WriteBox(boxFile(inv.wd, box), next)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "LOCKDOWN FAILED could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell the person you work with now)\n", oneline.Err(err))
