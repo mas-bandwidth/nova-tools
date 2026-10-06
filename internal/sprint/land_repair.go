@@ -102,17 +102,26 @@ func DocChanged(diff string) map[string]DocLines {
 	return out
 }
 
-// RepairNote is the landing note's words for fixes: "the documents were repaired at the
-// merge: <file>:<line> <what>; ...", "" for none.
+// joinedWhat opens a fix's words for the code spans joined in a file: "E4 repaired: N
+// spans joined in <file>", one fix a file, said on the note as it is.
+const joinedWhat = "E4 repaired: "
+
+// RepairNote is the landing note's words for fixes: "E4 repaired: N spans joined in
+// <file>" for each file whose wrapped code spans were joined, then "the documents were
+// repaired at the merge: <file>:<line> <what>; ..." for the rest, "" for none.
 func RepairNote(fixes []DocFix) string {
-	if len(fixes) == 0 {
-		return ""
+	var s, rest []string
+	for _, f := range fixes {
+		if strings.HasPrefix(f.What, joinedWhat) {
+			s = append(s, f.What)
+		} else {
+			rest = append(rest, f.String())
+		}
 	}
-	s := make([]string, len(fixes))
-	for i, f := range fixes {
-		s[i] = f.String()
+	if len(rest) > 0 {
+		s = append(s, "the documents were repaired at the merge: "+strings.Join(rest, "; "))
 	}
-	return "the documents were repaired at the merge: " + strings.Join(s, "; ")
+	return strings.Join(s, "; ")
 }
 
 // StreamProse is a stream's prose globs (FieldProse, written by `stream set --prose`):
@@ -215,6 +224,31 @@ func RepairDoc(file, text string, changed DocLines, prose bool) (fixed string, f
 	finalNL := strings.HasSuffix(text, "\n")
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	fix := func(n int, what string) { fixes = append(fixes, DocFix{file, n, what}) }
+
+	// a code span the change wraps across a line break is joined onto one line first, and
+	// the change's lines and cuts are read by the joined file's lines from here on
+	if !prose {
+		joined, to, joins := joinSpans(lines, fences(lines), ch)
+		if len(joins) > 0 {
+			lines, ch = joined, map[int]bool{}
+			for _, n := range changed.Added {
+				if n >= 1 && n <= len(to) {
+					ch[to[n-1]+1] = true
+				}
+			}
+			cuts := make([]DocCut, len(changed.Deleted))
+			for k, c := range changed.Deleted {
+				cuts[k] = c
+				if c.At >= 1 && c.At <= len(to) {
+					cuts[k].At = to[c.At-1] + 1
+				} else if c.At > len(to) {
+					cuts[k].At = len(lines) + 1
+				}
+			}
+			changed.Deleted = cuts
+			fix(joins[0]+1, fmt.Sprintf("%s%d spans joined in %s", joinedWhat, len(joins), file))
+		}
+	}
 
 	// CRLF: a line the change writes loses its CR, unless the file's own lines are CRLF.
 	crlf := false
@@ -355,6 +389,77 @@ func blankThenText(lines []string) bool {
 		}
 	}
 	return false
+}
+
+// joinSpans joins each code span the change wraps across a line break: a line of prose it
+// writes that ends inside a span its own last backquote opens (the paragraph's count odd
+// at its end, the line holding a backquote) is joined to the lines of the paragraph it
+// writes after it up to the first that brings the count even, with a blank where each
+// line broke. A line that starts a block (a heading, a quote, a list item, a table row)
+// is not joined to the one above it and opens its count afresh, and a line of the base's
+// is never touched; a wrap with no line of the change's to close it is left to the span
+// check (repairSpans), which drops a stray backquote or refuses with the line. Inside a
+// paragraph a line break reads as a blank, so the join changes the lines and not the
+// text. joined is the lines after it, to each line's (0-based) line in joined, and joins
+// the line of joined each span opens on.
+func joinSpans(lines []string, fence []int, ch map[int]bool) (joined []string, to, joins []int) {
+	to = make([]int, len(lines))
+	text := func(i int) bool { return fence[i] == inProse && strings.TrimSpace(lines[i]) != "" }
+	odd := false // the paragraph's count so far is odd: a span opened above is still open
+	for i := 0; i < len(lines); {
+		to[i] = len(joined)
+		if !text(i) {
+			odd = false
+			joined = append(joined, lines[i])
+			i++
+			continue
+		}
+		if startsBlock(lines[i]) {
+			odd = false
+		}
+		n, end := strings.Count(lines[i], "`"), i
+		open := odd != (n%2 == 1)
+		if open && n > 0 && ch[i+1] && !strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
+			for k := i + 1; k < len(lines) && text(k) && ch[k+1] && !startsBlock(lines[k]); k++ {
+				if open = open != (strings.Count(lines[k], "`")%2 == 1); !open {
+					end = k
+					break
+				}
+			}
+		}
+		if end == i {
+			odd = odd != (n%2 == 1)
+			joined = append(joined, lines[i])
+			i++
+			continue
+		}
+		l := lines[i]
+		for k := i + 1; k <= end; k++ {
+			to[k] = len(joined)
+			l = strings.TrimRight(strings.TrimSuffix(l, "\r"), " \t") + " " + strings.TrimLeft(lines[k], " \t")
+		}
+		joins = append(joins, len(joined))
+		joined = append(joined, l)
+		i, odd = end+1, false
+	}
+	return joined, to, joins
+}
+
+// startsBlock says a line opens a block of its own rather than going on with the
+// paragraph above it: a heading, a quote, a list item or a table row.
+func startsBlock(l string) bool {
+	t := strings.TrimLeft(l, " ")
+	if t == "" || len(l)-len(t) > 3 {
+		return false
+	}
+	switch t[0] {
+	case '#', '>', '|':
+		return true
+	case '-', '*', '+':
+		return len(t) == 1 || t[1] == ' ' || t[1] == '\t'
+	}
+	d := len(t) - len(strings.TrimLeft(t, "0123456789"))
+	return d > 0 && d <= 9 && d < len(t) && (t[d] == '.' || t[d] == ')') && (d+1 == len(t) || t[d+1] == ' ' || t[d+1] == '\t')
 }
 
 // paragraphs is each run of non-blank prose lines, as 0-based line indexes.
