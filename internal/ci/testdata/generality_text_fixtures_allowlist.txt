@@ -15,7 +15,6 @@ internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded sessi
 internal/ci/testdata/generality-text/.github/workflows.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/cmd/nova-tokens/testdata/example-bench/bus.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/docs.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality-text/fleet/roles/container-runtime/tasks.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/tla.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
