@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,14 +32,51 @@ func init() {
 // whole in memory and on the file system.
 func (a *app) cmdBackup(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("backup")
-	file := fs.String("file", "", "the file the backup is written to (required; it must not exist)")
+	file := fs.String("file", "", "the file the backup is written to (it must not exist); or --out")
 	dry := fs.Bool("dry-run", false, "verify the backup in memory without writing --file; writes nothing")
+	outDir := fs.String("out", "", "the directory the RESTORE dump's parts, SHA256SUMS and README.md are written to (it must not exist or be empty); or --file")
+	partBytes := fs.Int64("part-bytes", backupPartBytes, "the largest part of the xz with --out, in bytes (under 100 MB)")
+	novaSecrets := fs.String("nova-secrets", "nova-secrets", "the nova-secrets program the --out scan runs under")
+	secStore := fs.String("secrets-store", "", "the nova-secrets store the --out scan reads (default: the seat login's)")
+	secAs := fs.String("secrets-as", "", "the nova-secrets seat the --out scan reads (default: the seat login's)")
+	secKey := fs.String("secrets-key", "", "the seat's age key file (default: the seat login's)")
+	sops := fs.String("sops", "", "the sops program nova-secrets exec runs (default: the seat login's)")
+	xz := fs.String("xz", "xz", "the xz program --out compresses with")
+	split := fs.String("split", "split", "the split program --out splits with")
+	redisServer := fs.String("redis-server", "redis-server", "the redis-server --out restores a Redis store's dump into, a throwaway on a unix socket")
+	scan := fs.String("scan", "", "the child nova-secrets exec runs: count the values of these variables found on stdin (backup --out runs it)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "backup", argErr("takes no words ", err, pos...))
 	}
+	if *scan != "" {
+		if err := backupScan(strings.Split(*scan, ","), a.getenv, os.Stdin, stdout); err != nil {
+			return backupFailed(stderr, "the scan could not read its stream: "+err.Error())
+		}
+		return 0
+	}
+	if *outDir != "" {
+		if *file != "" || *dry {
+			return refuse(stderr, "backup", "--out takes no --file or --dry-run; run: nova-sprint backup --out <dir>")
+		}
+		if *partBytes < 1 || *partBytes >= 100_000_000 {
+			return refuse(stderr, "backup", "--part-bytes is a size above zero and under 100 MB; run: nova-sprint backup --out <dir>")
+		}
+		sc := backupScanner{bin: *novaSecrets, store: *secStore, as: *secAs, key: *secKey, sops: *sops}
+		if l, ok, err := a.recordedLogin(); err == nil && ok {
+			sc.store, sc.as, sc.key, sc.sops = cmp.Or(sc.store, l.Store), cmp.Or(sc.as, l.As), cmp.Or(sc.key, l.Key), cmp.Or(sc.sops, l.Sops)
+		}
+		exe := os.Executable
+		if a.executable != nil {
+			exe = a.executable
+		}
+		if sc.self, err = exe(); err != nil {
+			return backupFailed(stderr, "this binary has no path for the scan to run: "+err.Error())
+		}
+		return a.backupOut(c, &backupOut{out: *outDir, partBytes: *partBytes, xz: *xz, split: *split, scan: sc}, *redisServer, stdout, stderr)
+	}
 	if *file == "" {
-		return refuse(stderr, "backup", "wants --file <path>, a file that does not exist yet; run: nova-sprint backup --file sprint-backup.rdb")
+		return refuse(stderr, "backup", "wants --out <dir> or --file <path>, one that does not exist yet; run: nova-sprint backup --out sprint-backup")
 	}
 	if _, err := os.Lstat(*file); err == nil {
 		return backupFailed(stderr, *file+" exists and is never overwritten; run: nova-sprint backup --file <a path that does not exist>")
@@ -71,6 +109,38 @@ func (a *app) cmdBackup(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	fmt.Fprint(stdout, out.String())
+	return 0
+}
+
+// backupOut opens the store and runs backup --out on it: a twin store
+// restores into a throwaway twin, a Redis store into a throwaway redis-server.
+func (a *app) backupOut(c *common, b *backupOut, redisServer string, stdout, stderr io.Writer) int {
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "backup", err.Error())
+	}
+	switch be := st.B.(type) {
+	case *store.Mem:
+		b.src = memBackup{st: st}
+		b.twin = func(context.Context, string) (backupTwin, error) { return &memTwin{}, nil }
+		b.load = "-h <host> -p <port>"
+	case *store.Redis:
+		b.src = redisBackup{b: be, names: st.Names}
+		b.twin = func(ctx context.Context, work string) (backupTwin, error) {
+			return startServerTwin(ctx, redisServer, work, st.Names)
+		}
+		b.load = "-h <host> -p <port>"
+	default:
+		return backupFailed(stderr, "this store has no backup; run: nova-sprint backup --redis <a Redis address> --out "+b.out)
+	}
+	res, err := b.run(context.Background())
+	if err != nil {
+		return backupFailed(stderr, err.Error())
+	}
+	for _, f := range res.files {
+		fmt.Fprintln(stdout, f)
+	}
+	fmt.Fprintln(stdout, res.line)
 	return 0
 }
 
