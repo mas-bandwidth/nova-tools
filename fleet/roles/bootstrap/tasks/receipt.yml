@@ -1,5 +1,8 @@
 # One line per host: what the phase left there. The versions are measured on
 # the host, never echoed from the inputs.
+- name: the host's tailnet address
+  ansible.builtin.import_tasks: tailnet.yml
+
 - name: the versions on the host
   ansible.builtin.command: { argv: "{{ item.argv }}" }
   loop:
@@ -19,5 +22,5 @@
     msg: >-
       BOOTSTRAP host={{ inventory_hostname }} store={{ 'yes' if inventory_hostname in groups['fleet_store'] else 'no' }}
       tailnet={{ nova_bootstrap_tailnet_ip | default('', true) or 'none' }}
-      {% for r in bootstrap_versions.results %}{{ r.item.name }}={{ ((r.stdout | default('')) | regex_search('v?[0-9]+[.][0-9]+[.][0-9]+[^ \n]*') or 'none') if r.rc | default(1) == 0 else 'none' }} {% endfor %}
-      {{- '(check: nothing changed)' if ansible_check_mode else '' }}
+      {% for r in bootstrap_versions.results %}{{ r.item.name }}={{ ((r.stdout | default('')) | regex_search('v?[0-9]+[.][0-9]+[.][0-9]+[^ \n]*') or 'none') if r.rc | default(1) == 0 else 'none' }}{{ ' ' if not loop.last else '' }}{% endfor %}
+      {{- ' (check: nothing changed)' if ansible_check_mode else '' }}

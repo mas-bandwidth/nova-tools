@@ -1,0 +1,23 @@
+# The store host's seat holds every secret the store is made and run with:
+# the configuration role's, the default user's that `nova-redis serve` reads,
+# and one per ACL user the steady state's first redis.yml creates
+# (nova_bootstrap_redis_user_password_keys). Read by name with nova-secrets
+# names, never by value; one missing refuses the run naming it, before the
+# stores are made with a seat that cannot run them. First in the stores play,
+# after the nova build (tools.yml) has installed nova-secrets.
+- name: the names the store host's seat holds
+  ansible.builtin.command:
+    argv: ["{{ nova_bin_dir }}/nova-secrets", names, --store, "{{ nova_secrets_store }}", --as, "{{ nova_seat }}"]
+  register: bootstrap_seat_names
+  when: not ansible_check_mode
+  changed_when: false
+
+- name: the store host's seat holds every secret the stores need
+  ansible.builtin.assert:
+    that: bootstrap_seat_missing | length == 0
+    fail_msg: "BOOTSTRAP REFUSED host={{ inventory_hostname }}: the seat {{ nova_seat }} lacks {{ bootstrap_seat_missing | join(',') }}; seal each into {{ nova_bootstrap_secrets_store }}/{{ nova_seat }}.yaml and run the play again (docs/FLEET.md, \"The owner's inputs\")"
+    quiet: true
+  vars:
+    bootstrap_seat_held: "{{ bootstrap_seat_names.stdout | regex_findall('SECRETS NAME key=(\\S+)') }}"
+    bootstrap_seat_missing: "{{ ([nova_pg_password_key, 'NOVA_REDIS_PASSWORD'] + (nova_bootstrap_redis_user_password_keys.values() | list)) | reject('in', bootstrap_seat_held) | list }}"
+  when: not ansible_check_mode

@@ -7,10 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -36,12 +38,19 @@ import (
 //   - the store's Redis is `nova-redis serve` on its own directory (the
 //     persistence is serve's), with the distro's redis-server masked.
 //
-// The host half runs the phase on a disposable host the environment names
-// (NOVA_FLEET_DISPOSABLE_INVENTORY, a bootstrap inventory of one host that is
-// fleet_store and a member, the secrets in the environment as FLEET.md says):
-// provision, a second run with changed=0, a managed setting drifted by hand,
-// then --check --diff showing it, the run converging it, and --check clean.
-// Without that inventory and ansible-playbook it is skipped, by name.
+// The host half is the acceptance of both phases on a disposable host the
+// environment names (docs/FLEET.md, "The acceptance on a disposable host"):
+// NOVA_FLEET_DISPOSABLE_INVENTORY, a bootstrap inventory of one host that is
+// fleet_store and a member; NOVA_FLEET_DISPOSABLE_STORE, its store as
+// <host>:<port>; the play's secrets and NOVA_REDIS_PASSWORD in the
+// environment; the host's seat holding the friends' NOVA_BUS_ADA_PASSWORD and
+// NOVA_BUS_BOB_PASSWORD besides the stores'. Provision, a second run with
+// changed=0, the hand-off and the steady state from nova-config's inventory,
+// a test message delivered and receipted, a bounded worker job, every play
+// again with changed=0, then a managed setting drifted by hand, --check
+// --diff showing it, the run converging it, and --check clean
+// (bootstrapOnADisposableHost). Without that inventory and ansible-playbook
+// it is skipped, by name.
 func TestFleetPlaysConvergeAFreshHostIdempotently(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
@@ -75,8 +84,14 @@ func TestFleetPlaysConvergeAFreshHostIdempotently(t *testing.T) {
 			}, "reads nova_bootstrap_typo"},
 			{"missing template", func(s *bootstrapSource) { delete(s.templates, "nova-store-redis.service.j2") }, "nova-store-redis.service.j2, which does not exist"},
 			{"contract part dropped", func(s *bootstrapSource) {
-				s.play = strings.Replace(s.play, "tags: [postgres, redis, services, backup]", "tags: [postgres, redis, services]", 1)
+				s.play = strings.ReplaceAll(s.play, "backup]", "nobackup]")
 			}, `the contract's "backup" is no tag of bootstrap.yml`},
+			{"a part's play gathers no facts", func(s *bootstrapSource) {
+				s.play = strings.Replace(s.play, "  gather_facts: true\n  gather_subset: [min]\n  tags: [seat]\n", "  gather_facts: false\n  tags: [seat]\n", 1)
+			}, `play "the seat on every host" runs the role and gathers no facts`},
+			{"the unit's address carried from the tailscale part", func(s *bootstrapSource) {
+				s.tasks["redis.yml"] = strings.Replace(s.tasks["redis.yml"], "import_tasks: tailnet.yml", "debug: { msg: tailnet }", 1)
+			}, "redis.yml does not read the tailnet address itself"},
 			{"input given a default", func(s *bootstrapSource) { s.defaults["nova_bootstrap_backup_dir"] = true }, "nova_bootstrap_backup_dir is the owner's input and has a default"},
 			{"input not documented", func(s *bootstrapSource) {
 				s.docs = strings.ReplaceAll(s.docs, "`nova_bootstrap_seat_keys`", "the keys")
@@ -203,6 +218,18 @@ func bootstrapProblems(s bootstrapSource) []string {
 		for _, tag := range fleetListAny(p["tags"]) {
 			tags[fmt.Sprint(tag)] = true
 		}
+		for _, t := range bootstrapTasks(p["tasks"]) {
+			for _, tag := range fleetListAny(t["tags"]) {
+				tags[fmt.Sprint(tag)] = true
+			}
+		}
+		// A play that runs a part of the role gathers its own facts: under
+		// --tags <part> no earlier play has gathered them (nova_home reads
+		// ansible_env), and the part fails on a run limited to it.
+		body, _ := yaml.Marshal(p["tasks"])
+		if strings.Contains(string(body), "name: bootstrap") && p["gather_facts"] != true {
+			out = append(out, fmt.Sprintf("bootstrap.yml: play %q runs the role and gathers no facts, so --tags on it alone fails", fmt.Sprint(p["name"])))
+		}
 	}
 	for _, part := range fleetKeys(bootstrapContract) {
 		if !tags[part] {
@@ -309,6 +336,13 @@ func bootstrapProblems(s bootstrapSource) []string {
 	if !strings.Contains(s.tasks["redis.yml"], "masked: true") {
 		out = append(out, "redis.yml does not mask the distro's redis-server")
 	}
+	// The unit binds the tailnet address, read where it is used: a run that
+	// skips the tailscale part renders the unit a whole run does.
+	for _, f := range []string{"tailscale.yml", "redis.yml", "receipt.yml"} {
+		if !strings.Contains(s.tasks[f], "import_tasks: tailnet.yml") {
+			out = append(out, f+" does not read the tailnet address itself (import_tasks: tailnet.yml)")
+		}
+	}
 	return out
 }
 
@@ -317,9 +351,12 @@ func fleetListAny(v any) []any {
 	return l
 }
 
-// bootstrapOnADisposableHost is the acceptance on a real host: provision,
-// rerun with zero changes, drift a managed setting, see --check --diff name
-// it, converge, and see --check clean.
+// bootstrapOnADisposableHost is the acceptance on a real host
+// (fleet/testdata/acceptance.yml says each step): provision; rerun with zero
+// changes; the hand-off's rows; the steady state from the inventory
+// nova-config prints; a test message delivered and receipted; a bounded
+// worker job; every play run again with zero changes; a managed setting
+// drifted by hand, seen by --check --diff, converged, and --check clean.
 func bootstrapOnADisposableHost(t *testing.T, root, inv, playbook string) {
 	dir := t.TempDir()
 	run := func(args ...string) (string, error) {
@@ -328,30 +365,59 @@ func bootstrapOnADisposableHost(t *testing.T, root, inv, playbook string) {
 		cmd := exec.CommandContext(ctx, playbook, args...)
 		cmd.WaitDelay = 10 * time.Second
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "ANSIBLE_HOME="+filepath.Join(dir, "ansible"), "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "ansible", "tmp"))
+		cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true",
+			"ANSIBLE_HOME="+filepath.Join(dir, "ansible"), "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "ansible", "tmp"))
 		b, err := cmd.CombinedOutput()
 		return string(b), err
 	}
-	vars := []string{"-i", inv, filepath.Join(root, "fleet", "bootstrap.yml"),
-		"-e", "nova_version=v0.0.0-bootstrap", "-e", "nova_source=" + root, "-e", "nova_release_out=" + filepath.Join(dir, "release"),
+	build := []string{"-e", "nova_version=" + fleetEnvOr("NOVA_FLEET_DISPOSABLE_VERSION", "v0.0.0-bootstrap"), "-e", "nova_source=" + root,
+		"-e", "nova_release_out=" + filepath.Join(dir, "release"),
 		"-e", `{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "the disposable-host acceptance of bootstrap.yml"]}`}
-	play := func(extra ...string) string {
+	play := func(inventory, name string, extra ...string) string {
 		t.Helper()
-		out, err := run(append(vars, extra...)...)
+		out, err := run(append([]string{"-i", inventory, filepath.Join(root, "fleet", name)}, extra...)...)
 		require.NoError(t, err, out)
 		return out
+	}
+	bootstrap := func(extra ...string) string {
+		t.Helper()
+		return play(inv, "bootstrap.yml", append(append([]string{}, build...), extra...)...)
 	}
 	clean := regexp.MustCompile(`(?m)^\S+\s+: ok=\d+\s+changed=0 `)
 	changed := regexp.MustCompile(`(?m)^\S+\s+: ok=\d+\s+changed=[1-9]`)
 
-	first := play()
+	first := bootstrap()
 	assert.Regexp(t, `BOOTSTRAP host=\S+ store=yes tailnet=100\.`, first)
 	assert.NotContains(t, first, "sops=none")
 	assert.NotContains(t, first, "nova=none")
-
-	second := play()
+	second := bootstrap()
 	assert.Regexp(t, clean, second, "a second run changed something")
 	assert.NotRegexp(t, changed, second)
+
+	// The hand-off: the rows, then the steady state from the inventory
+	// nova-config prints, with the group_vars FLEET.md has the owner write.
+	acceptance := func(tag string, extra ...string) string {
+		t.Helper()
+		return play(inv, filepath.Join("testdata", "acceptance.yml"), append([]string{"--tags", tag}, extra...)...)
+	}
+	acceptance("rows")
+	steady := bootstrapSteadyInventory(t, root, dir, inv)
+	steadyPlays := func() []string {
+		t.Helper()
+		return []string{play(steady, "redis.yml"), play(steady, "tools.yml", build...), play(steady, "loops.yml")}
+	}
+	steadyPlays()
+	assert.Regexp(t, `DELIVERED id=\S+ from=ada to=bob receipted=yes owed=0`, acceptance("deliver"))
+	harness := bootstrapLinuxBinary(t, root, dir, "./cmd/nova-swarm/testdata/fakeharness")
+	assert.Contains(t, acceptance("work", "-e", "acceptance_harness="+harness), "WORKED NATIVE OK label=finishes NATIVE INCOMPLETE label=outlives")
+
+	// Every play again: nothing changes.
+	assert.Regexp(t, clean, bootstrap(), "bootstrap.yml changed something on a converged fleet")
+	assert.Regexp(t, clean, acceptance("rows"), "the hand-off's rows changed on a second run")
+	for _, out := range steadyPlays() {
+		assert.Regexp(t, clean, out, "a steady-state play changed something on a converged fleet")
+		assert.NotRegexp(t, changed, out)
+	}
 
 	// The drift is made by hand, outside bootstrap.yml: a play of the test's own
 	// adds a line to the store's Redis unit.
@@ -363,13 +429,60 @@ func bootstrapOnADisposableHost(t *testing.T, root, inv, playbook string) {
 	out, err := run("-i", inv, hand)
 	require.NoError(t, err, out)
 
-	check := play("--check", "--diff")
+	check := bootstrap("--check", "--diff")
 	assert.Regexp(t, changed, check, "--check does not see the drift")
 	assert.Contains(t, check, "-"+drift, "--diff does not show the drift going")
 
-	converge := play()
+	converge := bootstrap()
 	assert.Regexp(t, changed, converge)
-	after := play("--check", "--diff")
+	after := bootstrap("--check", "--diff")
 	assert.Regexp(t, clean, after, "the run did not converge the drift")
 	assert.NotContains(t, after, drift)
+}
+
+// bootstrapSteadyInventory is the steady state's inventory for the disposable
+// fleet: a wrapper running nova-config inventory (built from this checkout)
+// against the bootstrapped store as its default user, whose password is
+// NOVA_REDIS_PASSWORD in the test's environment, and beside it the
+// group_vars/store_deployer.yml the hand-off has the owner write
+// (docs/FLEET.md, "The hand-off to steady state").
+func bootstrapSteadyInventory(t *testing.T, root, dir, inv string) string {
+	t.Helper()
+	store := os.Getenv("NOVA_FLEET_DISPOSABLE_STORE")
+	require.NotEmpty(t, store, "NOVA_FLEET_DISPOSABLE_STORE names the store <host>:<port> the steady state reads (the fleet_store host of %s)", inv)
+	require.NotEmpty(t, os.Getenv("NOVA_REDIS_PASSWORD"), "the steady state's inventory logs in as the store's default user: NOVA_REDIS_PASSWORD")
+	config := filepath.Join(dir, "nova-config")
+	cmd := exec.Command("go", "build", "-o", config, "./cmd/nova-config")
+	cmd.Dir, cmd.Env = root, goenv.Clean(os.Environ())
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	steady := filepath.Join(dir, "steady")
+	require.NoError(t, os.MkdirAll(filepath.Join(steady, "group_vars"), 0o755))
+	wrapper := filepath.Join(steady, "nova-inventory")
+	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec env NOVA_SPRINT_REDIS="+store+
+		" NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_PASSWORD "+config+" inventory \"$@\"\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(steady, "group_vars", "store_deployer.yml"), []byte(
+		"nova_redis_admin_user: default\nnova_redis_admin_password_key: NOVA_REDIS_PASSWORD\n"+
+			"nova_redis_user_password_keys: \"{{ nova_bootstrap_redis_user_password_keys }}\"\n"), 0o644))
+	return wrapper
+}
+
+// bootstrapLinuxBinary builds a package for the disposable host: linux, on
+// NOVA_FLEET_DISPOSABLE_GOARCH (else this machine's architecture).
+func bootstrapLinuxBinary(t *testing.T, root, dir, pkg string) string {
+	t.Helper()
+	bin := filepath.Join(dir, filepath.Base(pkg))
+	cmd := exec.Command("go", "build", "-o", bin, pkg)
+	cmd.Dir = root
+	cmd.Env = append(goenv.Clean(os.Environ()), "GOOS=linux", "GOARCH="+fleetEnvOr("NOVA_FLEET_DISPOSABLE_GOARCH", runtime.GOARCH), "CGO_ENABLED=0")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	return bin
+}
+
+func fleetEnvOr(name, or string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return or
 }
