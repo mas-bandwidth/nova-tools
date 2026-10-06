@@ -30,6 +30,30 @@ func (c *Claude) Spent() (cost float64, usage Usage) {
 	return c.cost, c.usage
 }
 
+// Spender is a lane harness that prices its runs (docs/SPEC-FRIEND.md, the
+// Claude lanes, on the beat): SpendLine is what its runs have cost so far and
+// the limit it last read, one line the daemon says on its beat when it
+// changed; empty before any run.
+type Spender interface {
+	SpendLine() string
+}
+
+// SpendLine is every run's cost so far and the five-hour and weekly windows
+// the last run read: `spend: harness=claude runs=<n> cost_usd=<sum>
+// five_hour=<f> seven_day=<f> five_hour_resets=<t> seven_day_resets=<t>`.
+func (c *Claude) SpendLine() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.runs == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("spend: harness=claude runs=%d cost_usd=%.4f", c.runs, c.cost)
+	if !c.usage.At.IsZero() {
+		line += fmt.Sprintf(" five_hour=%.2f seven_day=%.2f five_hour_resets=%s seven_day_resets=%s", c.usage.FiveHour, c.usage.SevenDay, resetText(c.usage.FiveHourResets), resetText(c.usage.SevenDayResets))
+	}
+	return line
+}
+
 // claudeResult is the stream-json result line of a run.
 type claudeResult struct {
 	Type      string  `json:"type"`
@@ -62,6 +86,7 @@ func (c *Claude) account(id, out string) error {
 	cost := runCost(out)
 	lim, found := ReadLimit(out, c.now())
 	c.mu.Lock()
+	c.runs++
 	c.cost += cost
 	total := c.cost
 	if found && !lim.Usage.At.IsZero() {

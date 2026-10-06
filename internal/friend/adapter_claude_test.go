@@ -87,6 +87,8 @@ func TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit(t *testing.T) {
 	assert.True(t, usage.FiveHourResets.Equal(fiveReset))
 	assert.True(t, usage.SevenDayResets.Equal(sevenReset))
 	assert.Contains(t, out.String(), "claude: run=c1 cost=$0.0125 total=$0.0250 five_hour=0.42 seven_day=0.10 five_hour_resets=2026-10-04T20:00:00Z")
+	var spender Spender = cl
+	assert.Equal(t, "spend: harness=claude runs=2 cost_usd=0.0250 five_hour=0.42 seven_day=0.10 five_hour_resets=2026-10-04T20:00:00Z seven_day_resets=2026-10-06T20:30:00Z", spender.SpendLine(), "the daemon's beat says what the lanes cost and the limit last read")
 
 	// a rejected event is a usage limit until its reset, never a backoff, and the card stays in hand
 	program, _ = fakeClaudeStream(t, claudeEvent("rejected", false, 1.0, 0.10, fiveReset, sevenReset), "0.0010", "")
@@ -98,6 +100,8 @@ func TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit(t *testing.T) {
 	assert.Equal(t, "c2", limited.Session)
 	cost, _ = cl.Spent()
 	assert.InDelta(t, 0.026, cost, 1e-9, "a limited run is priced too")
+	assert.Contains(t, cl.SpendLine(), "runs=3 cost_usd=0.0260 five_hour=1.00", "the limit that stopped the lanes is on the beat's line")
+	assert.Empty(t, NewClaude("cy", dir, RealExec, nil).SpendLine(), "no run, nothing to say")
 }
 
 // A usage limit pauses the lanes until its reset and lowers no cap: the

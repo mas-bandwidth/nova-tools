@@ -406,7 +406,10 @@ next only when the turn ends; a card with no RESULT.md after two turns is set as
 lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
 /dev/null, inside the lane wall with the row's config_dir as its --config-dir), its result read from the
 card's outbox; a claude row in one-shot mode with no config_dir (nor --config-dir) is refused on the
-record with the remedy, and no lane runs. A lane
+record with the remedy, and no lane runs. Each claude run is priced from its stream-json and its
+rate_limit_event read, an opencode run from its session's record (opencode export), and each beat says
+what the lanes have cost and the limit they last read, one record line when it changed (spend: harness=
+runs= cost_usd= five_hour= seven_day= ..._resets=, or limited_until=). A lane
 turn the provider rate-limits (429, "rate limit reached", "too many requests", "input token limit
 exceeded") keeps its card and pauses new lanes for a backoff (30s doubling to 10m), lowers the live lane
 cap by a quarter and raises it one lane per clean 10m, no hold; three lowerings in an hour are one
@@ -964,6 +967,21 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		return friend.WritePresence(state, p)
 	}
+	// what her lanes have cost and the limit they last read (friend.Spender), said on the beat
+	// when it changed since the last one said it (docs/SPEC-FRIEND.md, the Claude lanes)
+	var spent atomic.Pointer[string]
+	saySpend := func() {
+		s, ok := deliver.(friend.Spender)
+		if !ok {
+			return
+		}
+		line := s.SpendLine()
+		if last := spent.Load(); line == "" || (last != nil && *last == line) {
+			return
+		}
+		spent.Store(&line)
+		record(w.now().UTC().Format(time.RFC3339) + " " + line)
+	}
 	// the seat (else --coordinator) is told of each limit and each wake; set once the store is open
 	tellSeat := func(subject, body string) {}
 	fl.Down = func(until time.Time, reason string) {
@@ -1070,6 +1088,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
 		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
 		Beat: func(ctx context.Context, active time.Time) error {
+			// up or down, held back or not: the beat's record says what the lanes cost
+			saySpend()
 			held := sc.Beat // the session's answer holds the beat back; a per-card harness has no session, its process is the daemon
 			if perCard {
 				held = func(beat func(context.Context) error) func(context.Context) error { return beat }

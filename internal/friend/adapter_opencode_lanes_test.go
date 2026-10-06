@@ -181,4 +181,7 @@ func TestAnOpenCodeLanePricesEveryRunFromItsSessionRecordAndPausesAtItsLimit(t *
 	assert.Equal(t, "ses_a", limited.Session)
 	assert.WithinDuration(t, before.Add(3*time.Hour), limited.Until, time.Minute)
 	assert.Contains(t, out.String(), "opencode: session=ses_a cost=$0.0000 total=$0.0350\n", "a limited run is priced too")
+	var spender Spender = p
+	assert.Equal(t, "spend: harness=opencode runs=3 cost_usd=0.0350 limited_until="+limited.Until.UTC().Format(time.RFC3339), spender.SpendLine(), "the daemon's beat says what the lanes cost and the limit they stopped at")
+	assert.Empty(t, (&OpenCodePriced{OpenCode: &OpenCode{Dir: dir, Run: run}}).SpendLine(), "no run, nothing to say")
 }

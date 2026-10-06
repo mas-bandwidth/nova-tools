@@ -270,9 +270,11 @@ func laneLimit(session, out string) error {
 type OpenCodePriced struct {
 	*OpenCode
 
-	mu   sync.Mutex
-	seen map[string]float64 // each session's cost when last read
-	cost float64
+	mu    sync.Mutex
+	seen  map[string]float64 // each session's cost when last read
+	cost  float64
+	runs  int       // the runs priced so far
+	until time.Time // the reset of the last run's usage limit; zero when it ran unlimited
 }
 
 // Spent is the cost of every run priced so far, in US dollars.
@@ -280,6 +282,23 @@ func (p *OpenCodePriced) Spent() float64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.cost
+}
+
+// SpendLine is every run's cost so far and, when the last run stopped at a
+// usage limit, its reset: `spend: harness=opencode runs=<n> cost_usd=<sum>
+// [limited_until=<t>]`. An API friend has no five-hour or weekly window to
+// read; her limit is what the run said (Spender).
+func (p *OpenCodePriced) SpendLine() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.runs == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("spend: harness=opencode runs=%d cost_usd=%.4f", p.runs, p.cost)
+	if !p.until.IsZero() {
+		line += " limited_until=" + p.until.UTC().Format(time.RFC3339)
+	}
+	return line
 }
 
 // OpenSession is OpenCode's, then the first run priced.
@@ -294,6 +313,13 @@ func (p *OpenCodePriced) OpenSession(ctx context.Context, seed string) (string, 
 // DeliverTo is OpenCode's, then the run priced, whatever it answered.
 func (p *OpenCodePriced) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	lt, err := p.OpenCode.DeliverTo(ctx, id, text)
+	var limited UsageLimited
+	p.mu.Lock()
+	p.until = time.Time{}
+	if errors.As(err, &limited) {
+		p.until = limited.Until
+	}
+	p.mu.Unlock()
 	p.price(ctx, id)
 	return lt, err
 }
@@ -351,6 +377,7 @@ func (p *OpenCodePriced) price(ctx context.Context, id string) {
 	if p.seen == nil {
 		p.seen = map[string]float64{}
 	}
+	p.runs++
 	run := max(now-p.seen[id], 0)
 	p.seen[id] = now
 	p.cost += run
