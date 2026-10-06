@@ -30,6 +30,8 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		want = "set, show or history"
 	case k.Name == config.KindMachine:
 		want = "add, set, remove, list, show, history, width or self"
+	case k.Name == config.KindRoute:
+		want = "add, set, remove, list, show, history or prices"
 	}
 	if len(args) == 0 {
 		return refuse(stderr, k.Name, "want "+want)
@@ -41,6 +43,9 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		case "width":
 			return runMachineWidth(ctx, args[1:], stdout, stderr, d)
 		}
+	}
+	if k.Name == config.KindRoute && args[0] == "prices" {
+		return runRoutePrices(ctx, args[1:], stdout, stderr, d)
 	}
 	if k.Singleton {
 		switch args[0] {

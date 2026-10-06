@@ -326,6 +326,45 @@ is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
 `price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
 
+### route prices
+
+A price row is read from the provider's published list, never typed and left:
+on 2026-10-05 two flash rows priced by hand on 2026-10-01 at a tenth of the
+list's input price had the dashboard showing under half the real spend.
+`nova-config route prices --refresh [--provider <p>] [--from <path>] [--dry-run] --as <name>`
+reads the list and sets each enabled route's `price_input`, `price_cache_read`,
+`price_cache_write`, `price_output` and `price_request` from it, with
+`price_as_of` today (UTC) and `price_source` the list's URL
+(`internal/config/prices.go`, `PlanPriceRefresh`).
+
+- The lists: `openrouter` rows read OpenRouter's public models endpoint
+  (`GET https://openrouter.ai/api/v1/models`, no key; USD per token, written per
+  million exactly). OpenCode publishes no list, so `opencode` rows are priced from
+  OpenRouter's, the verb prints `NOTE route=<r> provider=opencode: priced from
+  openrouter's list, assumed until opencode publishes its own` for each, and the
+  row's note is left as it is. A provider with no list is refused at usage.
+- A route's model is matched by its id on the list, else by the one id whose last
+  part is the model's (an OpenCode model named without its vendor); none, or two,
+  is `PRICES MISSING` and nothing is set. A field the list does not carry is left
+  as it is; a request fee of 0 is no fee.
+- A price that moved past 2x either way since the row's last read (`PriceJump`) is
+  never set silently: it is left as it is, the line is
+  `JUDGMENT route=<r> <field> moved past 2x: have <old>, the list says <new>; ...; decide: nova-config route set <r> --<field> <new> --price_source <url> --price_as_of <date>`,
+  and the verb exits 1 after writing the rest. A row with no price takes the list's.
+- A row whose price differs from the list by more than 10 percent of the list's
+  (`PriceStale`) is stale; the refresh is what clears it.
+- Lines: `PRICES SET route=<r> list=<id> changed=<field>:<old>-><new>,... rev=<n>`,
+  `PRICES SAME` (nothing to write; no revision), `PRICES DRY-RUN` (with
+  `--dry-run`, nothing written), `PRICES MISSING`, then
+  `CONFIG PRICES source=<url> as_of=<date> routes=<n> set=<n> same=<n> missing=<n> judgments=<n>`.
+  `--from <path>` reads a copy of the list saved from its URL, which the rows still
+  name as their source. Exit 0, 1 on a judgment, 2 when the list or the store could
+  not be read.
+- The machine runs it daily as a loop row, then applies:
+  `nova-config loop add route-prices --machine <coordinator machine> --argv '["nova-config","route","prices","--refresh","--as","<coordinator>"]' --every 86400 --as <coordinator>`
+  (the row is the fleet's, added by its coordinator; an `apply --kind route` after
+  it carries the prices to the sprint).
+
 ### The note
 
 The owner, 2026-10-02, on the route and width choices the first real sprint made
