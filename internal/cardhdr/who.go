@@ -7,12 +7,15 @@ import (
 
 // Who is a preference or a hard pin from the brief header (docs/SPEC-SPRINT.md,
 // WHO preference). `WHO: friend` is any friend, `WHO: friend <name>` prefers that
-// friend, and `WHO: only friend <name>` waits for her alone. A card with no WHO
-// line, or `WHO: -`, is unpinned: friends whose class covers its tier, then the fleet.
+// friend, and `WHO: only friend <name>` waits for her alone. `WHO: friend <name> (owner)`
+// (or `only friend <name> (owner)`) is the card she owns, her rating or her own tool: a
+// hard pin that is ownership, never a preference. A card with no WHO line, or `WHO: -`,
+// is unpinned: friends whose class covers its tier, then the fleet.
 type Who struct {
 	Only   bool   // only friend is a hard pin
 	Friend bool   // a friend's card: WHO: friend [<name>] or WHO: only friend <name>
 	Name   string // the friend it names, "" for any friend
+	Owner  bool   // the (owner) mark: a hard pin that is ownership
 }
 
 // friendNameRE is a friend's name as a friend row names her: letters, digits, _ and -.
@@ -35,6 +38,16 @@ func ReadWho(brief string) (w Who, why string) {
 			continue
 		}
 		f := strings.Fields(v)
+		if n := len(f); n > 1 && strings.EqualFold(f[n-1], "(owner)") {
+			// the card she owns: friend <name> (owner) or only friend <name> (owner), a hard pin
+			if f = f[:n-1]; len(f) == 3 && strings.EqualFold(f[0], "only") {
+				f = f[1:]
+			}
+			if len(f) == 2 && strings.EqualFold(f[0], "friend") && friendNameRE.MatchString(f[1]) {
+				return Who{Friend: true, Only: true, Name: f[1], Owner: true}, ""
+			}
+			f = nil // refused below
+		}
 		switch {
 		case len(f) == 1 && f[0] == "-":
 			return Who{}, ""
@@ -45,7 +58,7 @@ func ReadWho(brief string) (w Who, why string) {
 		case len(f) == 2 && strings.EqualFold(f[0], "friend") && friendNameRE.MatchString(f[1]):
 			return Who{Friend: true, Name: f[1]}, ""
 		}
-		return Who{}, "WHO: " + v + " is not `friend` or `friend <name>` or `only friend <name>` (a friend row's name: letters, digits, _ and -); a card with no WHO line, or WHO: -, is dealt to the fleet"
+		return Who{}, "WHO: " + v + " is not `friend` or `friend <name>` or `only friend <name>`, or `friend <name> (owner)` for a card she owns (a friend row's name: letters, digits, _ and -); a card with no WHO line, or WHO: -, is dealt to the fleet"
 	}
 	return Who{}, ""
 }

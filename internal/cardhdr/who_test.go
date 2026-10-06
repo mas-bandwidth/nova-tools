@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The one parser of a brief's WHO line: `friend` is any friend, `friend <name>` one, no
-// line is a machine's, anything else is refused naming the two forms; a WHO under the
+// The one parser of a brief's WHO line: `friend` is any friend, `friend <name>` one,
+// `friend <name> (owner)` a hard pin she owns, no line is a machine's, anything else is refused naming the two forms; a WHO under the
 // header's blank line is prose.
 func TestReadWhoReadsAFriendOrNone(t *testing.T) {
 	t.Parallel()
@@ -20,6 +20,10 @@ func TestReadWhoReadsAFriendOrNone(t *testing.T) {
 		{"c1: do it\nREPO: o/r\nWHO: friend\n\nThe task.", Who{Friend: true}, ""},
 		{"c1: do it\nwho: Friend amy\n", Who{Friend: true, Name: "amy"}, ""},
 		{"c1: do it\nWHO: only friend amy\n", Who{Friend: true, Only: true, Name: "amy"}, ""},
+		{"c1: do it\nWHO: friend amy (owner)\n", Who{Friend: true, Only: true, Name: "amy", Owner: true}, ""},
+		{"c1: do it\nWHO: only friend amy (Owner)\n", Who{Friend: true, Only: true, Name: "amy", Owner: true}, ""},
+		{"c1: do it\nWHO: friend (owner)\n", Who{}, "or `friend <name> (owner)`"},
+		{"c1: do it\nWHO: friend amy (owner) x\n", Who{}, "is not `friend` or `friend <name>`"},
 		{"c1: do it\n\nWHO: friend amy is prose here", Who{}, ""},
 		{"c1: do it\nWHO: machine\n", Who{}, "WHO: machine is not `friend` or `friend <name>`"},
 		{"c1: do it\nWHO: friend a b\n", Who{}, "is not `friend` or `friend <name>`"},

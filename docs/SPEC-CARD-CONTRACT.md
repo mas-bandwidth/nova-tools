@@ -174,7 +174,11 @@ nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on fri
 would normally do friend work."; 2026-10-04: pins only by choice). `WHO: friend` prefers any
 friend whose class covers the tier. `WHO: friend <name>` prefers that friend while she is up
 with room, then another covering friend, then the fleet. `WHO: only friend <name>` waits for
-that friend alone. A card with no WHO line, or `WHO: -`, is offered to covering friends and
+that friend alone. `WHO: friend <name> (owner)` (or `WHO: only friend <name> (owner)`) is a
+card she owns, a rating or her own tool (the owner, 2026-10-05: hard-pin only true ownership):
+a hard pin as `only friend <name>` is, which the sprint never unpins by rule when she is down or
+held (docs/SPEC-SPRINT.md section 1, a hard pin behind a friend down or held); the generator
+writes the mark only for those. A card with no WHO line, or `WHO: -`, is offered to covering friends and
 then framed for the fleet as this page says. A card placed on a friend is never framed or
 staged: the sprint delivers it to her inbox as `inbox/<card>/BRIEF.md` and finishes it from
 her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md section 1, a friend's card; docs/FRIENDS.md,
