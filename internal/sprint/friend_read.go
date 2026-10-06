@@ -187,15 +187,16 @@ func readHeadMatches(s *Snapshot, pr, rc *Card) bool {
 	return work != "" && h == work
 }
 
-// friendReadAgrees says a friend's read card is hers: the reader its id names
-// and its reader field are her, and its row is her fleet row. A retired read
-// has been taken off that row (its row is empty) and the id still names her.
+// friendReadAgrees says a read card on the fleet table is its reader's: the reader
+// its id names and its reader field are one, and its row is that reader's fleet row,
+// a friend's (friend.<name>) or a member's (read cards, read_cards.go). A retired read
+// has been taken off that row (its row is empty) and the id still names the reader.
 func friendReadAgrees(c *Card) bool {
 	_, _, idReader, ok := ParseReadCard(c.ID)
 	if !ok || c.F("reader") != idReader {
 		return false
 	}
-	if c.Row == "" {
+	if c.Row == "" || c.Row == idReader {
 		return true
 	}
 	name, rowOK := FriendOfRow(c.Row)
@@ -210,21 +211,31 @@ func friendReadAgrees(c *Card) bool {
 // as it is. A read taken back with no verdict, retired or withdrawn on her row,
 // does not stand: the attempt is asked of another reader, and the withdrawn
 // record stays as history. The ok and broken copies are not placed on a table.
+//
+// A read card a member is dealt (read_cards.go) is on the fleet table as hers is,
+// on the member's row, and stands the same way (fleetReadLive is this, by its
+// other name).
 func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
 	}
+	return fleetReadLiveOf(s, pr, s.Fleet.Cards())
+}
+
+// fleetReadLiveOf is friendReadLive over the fleet cards given (every card of the table,
+// or those of the primary a caller indexed once: fleetReadIndex).
+func fleetReadLiveOf(s *Snapshot, pr *Card, cards []*Card) (placed, okCards, broken []*Card) {
 	attempt := pr.Int("attempt")
 	if attempt == 0 {
 		attempt = 1
 	}
 	prefix := pr.ID + ".r" + itoa(attempt) + "."
-	for _, c := range s.Fleet.Cards() {
+	for _, c := range cards {
 		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
 			continue
 		}
 		if c.Placed() {
-			if _, isFriend := FriendOfRow(c.Row); !isFriend {
+			if !friendReadAgrees(c) {
 				continue
 			}
 			placed = append(placed, c)
@@ -248,6 +259,21 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 		}
 	}
 	return placed, okCards, broken
+}
+
+// fleetReadIndex is the fleet table's read cards, placed or kept, by their primary field,
+// in id order: read once for a step that asks of many primaries.
+func fleetReadIndex(s *Snapshot) map[string][]*Card {
+	out := map[string][]*Card{}
+	if s == nil || s.Fleet == nil {
+		return out
+	}
+	for _, c := range s.Fleet.Cards() {
+		if c != nil && c.F("kind") == "read" {
+			out[c.F("primary")] = append(out[c.F("primary")], c)
+		}
+	}
+	return out
 }
 
 // machineReaderHasRoom says a paid reader of the primary's collapsed read tier
@@ -609,6 +635,9 @@ func friendAskPart(machine TickPartFn) TickPartFn {
 		if seats == nil {
 			seats = withoutDirs(s.Friends)
 		}
+		if s.ReadCardsOn() {
+			return readCardsAskPart(s, r, seats)
+		}
 		fp, waits, err := friendReadAsk(s, seats, "")
 		var hide []string
 		if s != nil && s.Work != nil {
@@ -661,12 +690,7 @@ func withoutDirs(seats []FriendSeat) []FriendSeat {
 // no paid reader has room, are friends (friendReadAsk). The mark is a
 // work-table field the pump applies, as the ask's asked field is.
 func waitingForReader(p *Plan, s *Snapshot, friends []*Card) {
-	asked := map[string]int{} // the unit of each primary the plan asks
-	for i, u := range p.Units {
-		if s.Work.Placed(u.Key) != nil {
-			asked[u.Key] = i
-		}
-	}
+	asked := askedUnits(p, s)
 	judged := map[string]bool{} // the primaries the plan judges
 	for _, n := range p.Notes {
 		if n.Kind == Judgment {
@@ -689,6 +713,23 @@ func waitingForReader(p *Plan, s *Snapshot, friends []*Card) {
 		}
 		waits[c.ID] = "no reader of its tier up has room this tick"
 	}
+	markWaiting(p, s, asked, waits)
+}
+
+// askedUnits is the unit of each primary the plan asks, by primary.
+func askedUnits(p *Plan, s *Snapshot) map[string]int {
+	asked := map[string]int{}
+	for i, u := range p.Units {
+		if s.Work.Placed(u.Key) != nil {
+			asked[u.Key] = i
+		}
+	}
+	return asked
+}
+
+// markWaiting writes the waiting mark and its note on each primary in review that waits
+// (waits: why), once an attempt, and clears the mark on each primary the plan asks (asked).
+func markWaiting(p *Plan, s *Snapshot, asked map[string]int, waits map[string]string) {
 	var marks []Unit
 	for _, c := range s.Work.Column(Review) {
 		attempt := c.Int("attempt")
