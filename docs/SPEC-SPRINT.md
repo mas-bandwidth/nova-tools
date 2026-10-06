@@ -63,7 +63,7 @@ ceiling: a flash card escalated to pro shows both), every dollar of the stream's
 `total_cost` in one tier: a record with no tier takes its route's (the route row's
 tier, else the route name's prefix `pro-*`, `flash-*`, `heavy-*`, `frontier-*`), else
 the card attempt's (its `tier_now`, else its pinned `tier`, else its brief's), and a
-card's records past the list's bound take the card attempt's; `untiered` only when none
+card's records past the list's bound take the card attempt's; no tier only when none
 of these exists (`TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`); and
 `reconciles`, each provider's latest cost reconciliation (the sprint's, the same on every
 stream: its day, the provider's figure, the records', the gap), money strings as the cost column shows them. All of it is counted
@@ -108,11 +108,12 @@ refused (exit 3) and changes nothing.
 
 A friend's counts are her sprint cards' (a friend's card, below), read by
 `where` from her fleet row `friend.<name>`, never from her working directory: a
-card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
+card dealt to her is `ready` until she starts it and `working` from her start
+(a friend's card is working once she starts it, section 1), so `working` counts
+started cards only; a `Verdict: LAND` report (with its `Head:` the
 tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
 report done failed, and a report with no verdict word is done failed too,
-never ok. `ready` is never a friend's card's state: the tick deals a card
-straight into `working` (`sprint.TickDeal`). A hand-written inbox job that is
+never ok. A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
 is its pointer. `ready` and `working` count her cards in those states; `width`
@@ -327,16 +328,18 @@ batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, count against it; the owner,
 2026-10-04: "Do it just like the fleet, you keep people busy by having 2X width
-queued up in ready per-friend"): on her row the card is `working` while she has a
-lane free (her width less her working cards; dealt and taken at once) and `ready`
-behind her working cards otherwise, so her inbox holds her width working and as
-many again ready; her finish of a card takes the oldest ready card on her row
+queued up in ready per-friend"): on her row the card is `ready`, whatever her
+lanes, until she starts it (a friend's card is working once she starts it,
+below), a lane of hers idle while no card on her row holds it, so her inbox
+holds her width to start and as many again behind; her finish of a card takes the oldest ready card on her row
 into working in the same step (`sprint.Finish`, `friendNext`), no tick between,
-as a machine's lane that frees takes its next; the next tick fills her room
+as a machine's lane that frees takes its next, and the next tick puts it back
+`ready` unless she has started it (working on her row means started, below);
+the next tick fills her room
 again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`: width 8 with 30
 waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
-(`mode: one-shot`), the machine deals one card at a time, straight into
-`working` (room 1, lane 1), and the next only after the last one finished
+(`mode: one-shot`), the machine deals one card at a time (room 1, lane 1), and
+the next only after the last one finished
 (item 22 of tmp/manual-to-verbs-2026-10-04.md;
 `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
 first, before the machines' deal) offers every ready card to its named friend
@@ -357,8 +360,8 @@ route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`)
 The tick reads the friends' records every tick while the roster has a friend.
 Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
-holds, so it is no machine's and no fleet verb names it), straight into
-`working` at generation 1, dealt and taken at once (nothing takes it), member
+holds, so it is no machine's and no fleet verb names it), `ready` at
+generation 1 until she starts it, member
 `friend.<name>`, with the primary's fix, finding and why as a machine's deal
 carries them; its primary moves ready -> working. The fleet's members are its
 rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
@@ -377,7 +380,72 @@ rule, written here for friends under its own names because #5300 was not on
 dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
 `TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
-offer again.
+offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own
+rating, `WHO: friend <name>`, was dealt to another worker): a `WHO: friend <name>` card
+come back by a rework, a return or a redo (its `reworks` or `returns` counted;
+`sprint.ReworkPinned`) is the hard pin `OnlyFriend`, dealt only to her as on its first
+deal, and while she is down, held or without room it waits ready, held as a hard pin is,
+dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone
+(`friend take`) counts neither, so a preference taken back from her is still offered on.
+
+**A friend's card is working once she starts it** (the owner, 2026-10-05: "They
+are not working unless work turns from working to done."; the friends table had
+shown a friend working 8 of 8 for half an hour while she had started none, and
+the deadline clock running on cards nobody had begun). The deal places a
+friend's card `ready` on her row whatever her lanes, with no `taken` stamp and
+no deadline running (`sprint.friendDealUnit`, `friendRedealUnit`, and the
+level's moves). It goes to `working` on a start receipt naming its job, its
+`taken` stamp and her deadline (`friend_deadline`) set then, and its generation
+written as `started` (`sprint.friendStartSet`, `FieldStarted`): her beat naming
+it running (`friend beat --running`, `FriendSeat.Running`, `friendStarted`),
+which the tick reads before its deal (`sprint.friendStartUnits`), or friend
+sync seeing her job begun, a `REPORT.md` in `outbox/<job>` or a write under
+`jobs/<job>` after its staging (`JOB.md`), its start receipt
+(`sprint.FriendStart`, `store.FriendStartStep`, run as `friend sync`, one
+`FRIEND-CARD STARTED friend=<f> card=<card> job=<job>: <why>` line each;
+`friendStartsOf`, `friendJobBegun`). Friend sync reads the starts before it
+collects her reports, so a report on a card the deal holds ready is read as her
+start and the card is finished in the same sync. A start is her fact: her lanes
+and her status do not gate it. The tree carries both receipts; her daemon's beat
+(`nova-friend`) names no running job yet, so for a daemon-driven friend the
+receipt in use is friend sync's.
+
+Working on her row means started: a work card working on a friend's row whose
+`started` is not its generation was moved there by no start of hers (her
+finish's next, `friendNext`; a take-back's next, `FriendTake`; a `take --as
+friend.<name>`, which is no start receipt), and the tick, before its deal, puts
+it back `ready` on her row, `taken` and her deadline unset (and its first take,
+when no friend ever started it), its start bound from then (`untaken_since`), one
+line each (`<card> friend.<f>:working -> ready (working with no start of hers:
+it waits ready until she starts it)`; `sprint.friendUnstartedWorking`); one her
+beat names running is stamped started where it is. The friends table's
+`working` is then started cards only.
+
+A card dealt and not started within the start bound (`friend_start_max`, a
+duration on the work table, default 20 minutes, `Snapshot.FriendStartMax`) of
+running time since its deal onto her row or its return to ready there, while
+she runs no job (her beat names none, no card she started is working on her
+row, and her daemon has seen no write of hers under her working directory
+within the bound: `FriendSeat.Active`, her beat's `--active`), is moved by the
+tick, before the level, to an up friend with an idle lane (her width less the
+cards on her row, ready and working), below her room, whose tiers hold its tier,
+that it has not left and who is not herself stuck so, ready on that row at its
+next generation, the friend it left added to `friends_left` so it never goes
+back to her, one line each (`... (not started 20m0s after its deal, and friend
+<name> names no job running)`; `sprint.friendUnstartedLevel`; a hard pin stays).
+A card no friend may take stays, and the deadline rule judges it once
+`friend_start_max` plus `FriendReadyMax` has run (`TickDeadlines`). The level's
+own evening leaves the oldest unstarted cards that hold her free lanes to her
+start (`TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt`,
+`TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards`,
+`TestAFriendRunningAJobKeepsHerUnstartedCards`,
+`TestTwinStoreAFriendCardIsWorkingOnlyOnceSheStartsIt`,
+`TestFriendSyncStartsACardWhoseJobSheBegan`,
+`TestFriendSyncCollectsAReportOnACardStillReady`). Not yet built: the
+`collect` verb, `friend reconcile` and her daemon's outbox pass read only cards
+working on her row, so a report on a card still ready waits for friend sync's
+start receipt; and `friendNext`, `FriendTake` and a friend's `take` still move a
+card to working, for the tick to put back.
 
 **A friend takes her own ready cards** (2026-10-05, 11:20 PM: a friend held
 fourteen cards, six of them ready, and could not take one: `take --as
@@ -398,14 +466,12 @@ friend.<name> ready`), a friend not on the roster is refused (`no friend
 why on a NOTE line. The server runs her verbs as `friend.<name>` (the HTTP form,
 her bus login, no store address of hers: `workerVerb` takes `friend.<name>` as a
 worker's name beside a member's). A card on her row never sits ready with no one
-to take it: in batch mode the tick's deal takes her oldest ready cards into her
-free lanes before it deals her anything new (a width raised, a level or a
-take-back can leave a lane free with no finish to fill it; `friendDeal`), and
-the level does not move a card the deal took that tick; in one-shot mode her
-daemon or her session takes it. A work card ready on a friend's row while she
-has a lane free for `FriendReadyMax` (ten minutes) of running time is a
+to take it: her start takes it into working (a friend's card is working once
+she starts it, above), and a card she has not started within the start bound
+is moved to a friend with an idle lane. A work card ready on a friend's row while she
+has a lane free for `friend_start_max` plus `FriendReadyMax` (ten minutes) of running time is a
 judgment, a work card past its deadline (`dealt, never taken, at
-friend.<name>:ready (... ready over 10m0s while friend <name> has a lane
+friend.<name>:ready (... ready over 30m0s while friend <name> has a lane
 free)`), answered by `friend take <name> <card>` (the deal places it again on a
 friend who takes) or a wait; a card ready behind her lanes, all of them
 working, is her queue, held to the dealt bound as a member's is
@@ -1593,7 +1659,7 @@ gap=<$> share=<n>%` or `COST provider=<p> unknown: <why>`, then `COST RECONCILE 
 providers=<n> notes=<n>` (with `--json`, the providers' records and the notes written; with
 no provider named by a route, `providers=0` and nothing written; with `--dry-run`, the same
 lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`); the
-release's spend check (docs/SPEC-RELEASE.md section 15) sets the same records beside each
+release's spend check (docs/SPEC-RELEASE.md section 16) sets the same records beside each
 provider's own count over the release's window, refusing a cut past 5%
 (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
 **Not yet run by the loop:** the read when `nova-sprint run` begins and every hour after
@@ -2283,6 +2349,25 @@ and it is the coordinator's decision, receipted.
   CPU busy percent of all its cores, measured between beats; where that cannot
   be measured, the one-minute load average over the logical cores, capped at
   1000%. `--load <percent>` gives it instead.
+- Every beat, the load given or measured, also reads the machine's open file
+  descriptors (internal/hostload, files.go): the count and the system's limit
+  (darwin: the sysctl `kern.num_files` and `kern.maxfiles`; Linux:
+  `/proc/sys/fs/file-nr`), against the member's warn and alarm bounds:
+  `--fd-warn <n>` and `--fd-alarm <n>`, else the environment's `NOVA_FD_WARN` and
+  `NOVA_FD_ALARM` for a local beat, else 50000 and 150000, the bounds of the
+  workshop tool this replaces; an alarm under the warn is refused. Over the warn
+  bound the beat lists
+  the top ten holders, most first (darwin: `lsof -n -P -F pcLf`; Linux:
+  `/proc/<pid>/fd`), a walk of every process the beat's user can see, read at most
+  once every 30 s (`HoldersEvery`) and bounded by 10 s (`HoldersTimeout`), a read
+  that runs over or fails saying so with the count standing. The reading rides in
+  the beat record's measuring state (`meter.files`); the beat line adds `fds=<n>
+  fds-max=<limit> fds-level=ok|warn|alarm` and, over the warn bound, one line per
+  holder, and `--json` carries it whole. A machine that cannot count them says
+  nothing of them. A served beat carries no files reading until the member
+  sends its own: the server cannot measure another machine. The member's files
+  word (`sprint.FilesText`) is the count and warn or alarm while a fresh reading
+  is over its warn bound, else empty.
 - A member's status is derived, never typed: up until it has missed three beat
   windows of 15 s in a row (`MissedBeatsDown`, `BeatDeadline`; one missed beat,
   such as a store round trip that timed out, marks nothing, and a beat resets
@@ -3563,6 +3648,29 @@ line (cmd/nova-sprint), so on the running machine no drift judgment is raised un
 follow-up card has the binding read `ReadDrift` beside the ticks (never in one: a fetch never
 holds a tick) and record the whole-tree gate's last run at the base.
 
+### Open files
+
+A sprint once ran its machine out of file descriptors, and only one coordinator's
+workshop tool watched the count. The tick keeps an alarm of each member (with the
+backlog alarms, in its deadlines part) from the open files its beat reads (section 5):
+while a member's beat is fresh, its reading taken within a beat window, and the count
+above its alarm bound, one judgment of the member, "open files above the alarm",
+filed under `member:<m>`, written when the condition starts and never again while it
+stands, whatever the count does (the episode is keyed by its type and member, and its
+line is updated in place with the latest count and holders). Its
+line names the member, the count, the alarm bound, the system's limit, the top
+holders (or why they are not listed), and, as an alarm is an effect on cards, the
+member's cards that ended on a timeout within the overload window, or that none did.
+Its decisions are `fleet up <m> --width <half>`, `fleet down <m>`, `ack` (seen: the
+acknowledgement holds the episode quiet until the count falls under) and `wait 15m`
+(quiet for that running time; when it runs out on a count still over, the judgment is
+raised again and nothing is cleared). It closes when the count falls to the alarm or
+under, or the beat or the reading goes stale, in the same step as one happened note to
+the coordinator, "an alarm cleared", whose text opens with "open files above the
+alarm:" and says the count now. Over the warn bound only, no judgment is written; the
+fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
+`alarm` above the alarm bound), while the beat and its reading are fresh.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you
@@ -3751,9 +3859,9 @@ these kinds were open, some 3h39m old). One pure function decides
 (`sprint.RuleAnswers`, internal/sprint/rules.go): for every open judgment and subject, the
 rule that answers it and its act, or `left` (it needs a mind) or `off` (its rule is turned
 off), with why. The tick applies it in its end, after the checks and the deadlines and
-before the overdue part, as ten parts, each a step on a fresh read (`rule paths`, `rule
-return`, `rule resume`, `rule twin`, `rule rework`, `rule late`, `rule take`, `rule ask`, `rule need`, `rule
-brief`), so a judgment the end raises is
+before the overdue part, as eleven parts, each a step on a fresh read (`rule paths`, `rule
+return`, `rule resume`, `rule twin`, `rule widen`, `rule rework`, `rule late`, `rule take`, `rule ask`,
+`rule need`, `rule brief`), so a judgment the end raises is
 answered in its own tick, and a conflict's three moves are made in one. Each answer is a
 verb the judgment's decisions name, applied as the machine; it closes the judgment with
 the decided note `answered by rule <name>: <act>: <why>` (the log and the inbox's decided
@@ -3773,6 +3881,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `hold-need` | work came back failed and its report says the word `HOLD` | a HOLD naming a card on the table that has not landed (the first by id; the stream controls aside) waits for it: `rule_need` (`<card>@<attempt>`) and `rule_answer` on the primary and the judgment's text prefixed `waiting on <card> by rule hold-need: `, once an attempt (`rule need`); the judgment stays open, since a primary in review has no move to waiting (section 3). Once that card lands the primary is reworked (`rule rework`), its fix `<card> has landed: do the brief again on the current tip` with the report. A HOLD naming no such card, or one dropped since, is left, and `failed` does not redeal it |
 | `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
 | `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers), the card is twinned instead (`rule twin`, as `recut --widen`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
+| `widen` | work came back failed, a card reached its bound, or its brief is wrong, where the worker's report is a HOLD that says PATHS and names files outside them; or returned to review by the `conflict` rule on an E12 refusal (files outside its PATHS) at this attempt; on a card in review at a full sha head, not a friend's, a brief defect or a pinned model's | when every file named outside PATHS (`sprint.FilesOutsidePaths`) is adjacent to the change (`sprint.WidenAdjacent`: a test file of a package PATHS name, a file under that package's `testdata/`, a ledger under `internal/ci/testdata/`, a markdown file under `docs/` or an `AGENTS.md` map, or, in a HOLD, a file named with its reason, three words or more after it), the card is twinned (`rule widen`, before `rule rework`; `recut`: `add --replaces`), its brief's `PATHS:` and `SHARED:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the finished head, the twin's `fix` naming the head to start from and the files, one card a tick, and the coordinator gets one happened note, `PATHS widened by rule`, naming each file and why it is adjacent. A HOLD naming a file that is not adjacent stays a judgment, its text prefixed `outside PATHS and not adjacent: <files> (its HOLD): ` once, and neither `failed` nor `bound` reworks it; an E12 refusal naming one is the `conflict` rule's redo, inside its PATHS. A HOLD with a `PATHS-PROPOSED:` line is `paths`'s, one naming a card that has not landed `hold-need`'s, and a reader's finding `read-broken`'s (`TestACardHeldOnlyForAdjacentPathsIsTwinnedWider`, `TestAFileOutsidePathsIsAdjacentByRule`) |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
 | `paths` | work came back failed (or at its bound or its attempt cap) and its report proposes PATHS: a `PATHS-PROPOSED:` line (docs/SPEC-CARD-CONTRACT.md section 4), read off its work card's report; checked before the judgment's own rule, so the same brief is never dealt again on the same proposal | no proposed glob SHARED (named on the `PATHS:` or `SHARED:` line of another open card, or on the card's own `SHARED:` line): the card replaced by its twin (`recut`, so dependents need the twin), its id the old one with `-t` (`-t2` to `-t9` after it), its brief every `PATHS:` line widened by the proposed globs it lacked and a `CARRY:` line naming the held attempt's pushed head; the judgment closed with `answered by rule paths: <id> attempt <n> held with PATHS-PROPOSED: <globs>: replaced by <twin>, ...`. A proposed glob SHARED: the judgment stays the one judgment, its text prefixed `paths proposed, shared: a mind's; ...` with the shared globs and the cards that name them and the complete command `nova-sprint add --stream <s> --replaces <id> --before <id> --brief-file <file> [--needs ...] [--held]`, the twin's brief written by the machine at `<jobs>/<id>/<twin>.md` (`NOVA_SPRINT_JOBS`, else `~/nova-sprint/jobs`), once (`paths_proposed` on the primary); the card is dealt nothing more. A proposal that climbs out of the repository, is no glob, or is inside its PATHS already is left, and not dealt again either |
@@ -3787,12 +3896,13 @@ judgment. `run` and `tick` answer
 by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rules`); nova-config's sprint row `answer_rules_off` (a list of
 `base-gate, bound, brief-defect, conflict, failed, friend-take, hold-need, late, read-broken,
 read-late`, applied to `sprint:answer_rules_off` and read with the routes) turns single
-rules off (`TestEachRuleHasAnOffSwitch`, `TestAMechanicalJudgmentIsAnsweredByItsRule`).
+rules off (`TestEachRuleHasAnOffSwitch`, `TestAMechanicalJudgmentIsAnsweredByItsRule`);
+`widen` is turned off by that key too, though nova-config's enum does not list it yet.
 `view coordinator` counts what the rules saved the seat: its summary line ends `| rules
 <n>/h`, and its counts carry `rules`, the cards a rule answered in the last hour by the
 `rule_answer` each move writes (`sprint.RuleAnsweredWithin`; a card answered twice in the
 hour counts once). The tests are internal/sprint/store/rule_answers_test.go, internal/sprint/rules_read_test.go,
-internal/sprint/judgment_rules_test.go,
+internal/sprint/judgment_rules_test.go, internal/sprint/widen_test.go,
 internal/sprint/rules_conflict_test.go and cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
 `LadderClimbs`, `WaitOnce`, `BaseStopsOnThird`, `ReadAnswersBounded`, `TwinsWiden`).
 

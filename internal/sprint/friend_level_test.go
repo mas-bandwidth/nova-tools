@@ -19,7 +19,7 @@ func TestFriendLevelEvensTheReadyQueuesOfAClass(t *testing.T) {
 	}
 	w := friendWorld(t, briefs...)
 	// amy alone up at width 2: her room of 4 is filled, s1-1 (hers by name) and s1-2 working
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash"})
+	dealStarted(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash"})
 	amy, bob, cat := FriendRow("amy"), FriendRow("bob"), FriendRow("cat")
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}, {Name: "bob", Width: 2, Status: Up, Class: "flash"}, {Name: "cat", Width: 2, Status: Up, Class: "pro"}}
@@ -27,11 +27,11 @@ func TestFriendLevelEvensTheReadyQueuesOfAClass(t *testing.T) {
 	// s1-4 is started (her beat names it running): it stays
 	p := w.must(FriendLevel(w.s, FriendLevelReq{Seats: seats, Started: map[string]string{"s1-4.w1": "her beat names it running"}}))
 	require.Len(t, p.Units, 1, "amy's backlog 2 against bob's -2: one card moves; 1 against -1 would move s1-4, but she started it")
-	assert.Contains(t, p.Units[0].Moved, "s1-3.w1 friend.amy:ready -> friend.bob:working gen=2; moved=1 to bob(1) from amy(1)")
+	assert.Contains(t, p.Units[0].Moved, "s1-3.w1 friend.amy:ready -> friend.bob:ready gen=2; moved=1 to bob(1) from amy(1)")
 	wc := w.s.Fleet.Card("s1-3.w1")
 	assert.Equal(t, bob, wc.Row)
-	assert.Equal(t, Working, wc.Col, "bob had a lane free")
-	assert.NotEmpty(t, wc.F("taken"))
+	assert.Equal(t, Ready, wc.Col, "bob had a lane free, and the card is ready on his row until he starts it")
+	assert.Empty(t, wc.F("taken"))
 	assert.Equal(t, Ready, w.s.Fleet.Card("s1-4.w1").Col)
 	assert.Equal(t, amy, w.s.Fleet.Card("s1-4.w1").Row, "the started one stays")
 	assert.Equal(t, 0, w.s.Fleet.Count(cat, Working)+w.s.Fleet.Count(cat, Ready), "cat is of another class")
@@ -40,7 +40,7 @@ func TestFriendLevelEvensTheReadyQueuesOfAClass(t *testing.T) {
 	// not started now, s1-4 moves too (1 against -1); then they are even and nothing moves
 	w.must(FriendLevel(w.s, FriendLevelReq{Seats: seats}))
 	assert.Equal(t, bob, w.s.Fleet.Card("s1-4.w1").Row)
-	assert.Equal(t, 2, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Ready))
 	p = FriendLevel(w.s, FriendLevelReq{Seats: seats})
 	assert.Empty(t, p.Units)
 }
@@ -56,7 +56,7 @@ func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 	}
 	w := friendWorld(t, briefs...)
 	// amy alone up at width 2: her room of 4 is filled, s1-1 (hers by name) and s1-2 working, s1-3 and s1-4 ready
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash", Mode: config.FriendModeBatch})
+	dealStarted(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash", Mode: config.FriendModeBatch})
 	amy, bob := FriendRow("amy"), FriendRow("bob")
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
@@ -68,14 +68,14 @@ func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 	}
 
 	// amy's backlog is 4 - 2 = 2. bob's backlog is 0 - 1 = -1.
-	// 1 card moves to bob into working (room 1, width 1).
+	// 1 card moves to bob, ready until he starts it (room 1, width 1).
 	// bob now holds 1 (his room is full).
 	// amy holds 3 (backlog 1). bob holds 1 (backlog 0).
 	// No more cards move to bob because bob has reached his room of 1.
 	p := w.must(FriendLevel(w.s, FriendLevelReq{Seats: seats}))
 	require.Len(t, p.Units, 1)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready), "one-shot friend holds no ready cards")
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready), "a one-shot friend holds one card, ready until he starts it")
 	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready), "amy keeps her remaining ready card")
 	assert.Empty(t, Check(w.s, nil))

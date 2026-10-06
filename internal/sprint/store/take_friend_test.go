@@ -23,6 +23,7 @@ func TestTwinStoreTakeForAFriendUpOnHerSessionReadsHerPresence(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "s1-1", Brief: brief}, {ID: "s1-2", Brief: brief}, {ID: "s1-3", Brief: brief}}}))
 	h.startMachine()
 	h.machine()
+	h.start("amy", 2) // her start receipt: dealt ready, working once she starts it
 	amy := sprint.FriendRow("amy")
 	snap := h.snap()
 	require.Equal(t, 2, snap.Fleet.Count(amy, sprint.Working))

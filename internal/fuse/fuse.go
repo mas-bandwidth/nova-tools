@@ -259,8 +259,13 @@ func ReadBox(path string) (Box, error) {
 	// null, an array, a string, a number or a boolean decodes into a Box with no
 	// error -- a null leaves it zero -- and a zero box reads as VERIFIED CLEAR, a
 	// fail-open in a safety control reached by one hand-edited byte (note 2).
-	if kind, object, found := topLevelKind(data); found && !object {
-		return Box{}, fmt.Errorf("%s is not a box: top level is %s; %s", path, kind, restoreBoxRemedy)
+	if kind, object, found := topLevelKind(data); found {
+		if !object {
+			return Box{}, fmt.Errorf("%s is not a box: top level is %s; %s", path, kind, restoreBoxRemedy)
+		}
+		if err := rejectDuplicateBoxMembers(data); err != nil {
+			return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
+		}
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	// A box is an object with the two members SPEC.md names, and an unknown member
@@ -281,6 +286,46 @@ func ReadBox(path string) (Box, error) {
 		b.Quarantine = map[string]Fuse{}
 	}
 	return b, nil
+}
+
+// rejectDuplicateBoxMembers walks the top-level object before struct decoding. JSON field
+// matching is case-insensitive, so spelling aliases of either box member are duplicates
+// too; note 2 treats an ambiguous hand-edited box as unreadable, never clear.
+func rejectDuplicateBoxMembers(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.Token(); err != nil { // ReadBox already established the opening object token.
+		return err
+	}
+	seen := make(map[string]struct{}, 2)
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return errors.New("top-level box member name is not a string")
+		}
+		canonical := ""
+		switch {
+		case strings.EqualFold(key, "lockdown"):
+			canonical = "lockdown"
+		case strings.EqualFold(key, "quarantine"):
+			canonical = "quarantine"
+		}
+		if canonical != "" {
+			if _, exists := seen[canonical]; exists {
+				return fmt.Errorf("duplicate top-level member %q", key)
+			}
+			seen[canonical] = struct{}{}
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+	}
+	_, err := dec.Token() // Consume the object's closing brace.
+	return err
 }
 
 // restoreBoxRemedy is the remedy for a box whose top level is not an object. It

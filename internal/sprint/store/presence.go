@@ -266,7 +266,8 @@ func getKeys(ctx context.Context, kv KV, names []string) ([]string, []bool, erro
 
 // SyncFleet brings every display cell of the fleet up to date, reading the
 // control cards: each member's status (derived: held, up or down), width, load (the
-// highest measured load of the last LoadWindow while its beat is fresh); done
+// highest measured load of the last LoadWindow while its beat is fresh, with its open
+// file descriptors beside it over the warn bound, sprint.LoadText); done
 // and ok% are the table's own formulas. A store that keeps no beats shows the
 // control card's status and no load. It is what a step's mirrors run. It says whether it wrote.
 func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
@@ -383,7 +384,7 @@ func freshOf(shape ntable.Table, beats map[string]sprint.Beat, now time.Time) []
 
 // showFleet is the tick's own pass over the fleet's display cells, from the
 // row texts and the beats alone, reading no control card: the load of each
-// member, and its status up or down by its beat. A member shown held stays
+// member (with its open files over the warn bound, sprint.LoadText), and its status up or down by its beat. A member shown held stays
 // held: a hold is set and released only by a verb, whose step brings every
 // cell up to date (SyncFleet). It says whether it wrote.
 func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[string]sprint.Beat, now time.Time) (bool, error) {

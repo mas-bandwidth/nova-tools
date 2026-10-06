@@ -223,7 +223,7 @@ func TestFriendSyncSaysTheBusStoresAlarmAndTheNextSendClearsIt(t *testing.T) {
 	require.Len(t, said, 1)
 	assert.Contains(t, said[0], "FRIEND-CARD BUS-ALARM bus store bus.test:6379 answers user sprint again: 2 sends failed (auth)")
 	assert.Equal(t, 1, fake.Len(bus.StreamOf("amy")), "the message reached her stream once the store answered")
-	assert.Equal(t, []string{"bus.test:6379 as sprint", "bus.test:6379 as sprint", "bus.test:6379 as sprint"}, dialed, "one connection per send")
+	assert.Equal(t, []string{"bus.test:6379 as sprint", "bus.test:6379 as sprint", "bus.test:6379 as sprint", "bus.test:6379 as sprint"}, dialed, "one connection per send, and one before the deal's to name her (enrollBus)")
 }
 
 // friend health --clear removes the coordinator's observation of a friend, so her status is

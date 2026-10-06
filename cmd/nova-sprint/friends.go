@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -247,6 +249,11 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 		}
 	}
 	for _, s := range specs {
+		// her starts first, so a card she began is working before its report is read
+		if err := a.friendStartsOf(ctx, st, s.Name, filepath.Join(root, s.Name+"-working"), say); err != nil {
+			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be read for her starts: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))
+			return 1, false
+		}
 		d, f, err := a.friendCardsOf(ctx, st, s.Name, filepath.Join(root, s.Name+"-working"), say)
 		delivered, finished = delivered+d, finished+f
 		if err != nil {
@@ -264,6 +271,77 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 	sayOK(stdout, c.json, name, line, map[string]any{"added": orEmpty(added), "removed": orEmpty(removed), "updated": orEmpty(updated), "friends": len(rows),
 		"delivered": delivered, "finished": finished, "cards": orEmpty(said)})
 	return 0, len(added)+len(removed)+len(updated)+delivered+finished > 0
+}
+
+// friendJobWalk bounds the walk of one job's directory for her first write: a checkout of
+// this size is read whole, and a larger one up to it.
+var friendJobWalk = friend.ActivityLimits{Files: 20000, Time: 250 * time.Millisecond}
+
+// friendJobBegun is why friend sync reads her job as begun, "" while it is not: her report
+// in outbox/<job>/REPORT.md, or a write under jobs/<job> after its staging (its JOB.md, which
+// her daemon writes after the clone: friend.Stage). A job not staged is not begun.
+func friendJobBegun(dir, job string, now func() time.Time) string {
+	if fi, err := os.Lstat(filepath.Join(dir, "outbox", job, "REPORT.md")); err == nil && fi.Mode().IsRegular() {
+		return "her report is in outbox/" + job
+	}
+	jobDir := filepath.Join(dir, friend.JobsDir, job)
+	staged, err := os.Lstat(filepath.Join(jobDir, friend.JobFile))
+	if err != nil || !staged.Mode().IsRegular() {
+		return ""
+	}
+	if friend.NewestWrite(os.DirFS(jobDir), []string{"."}, now, friendJobWalk).After(staged.ModTime()) {
+		return "a write under " + friend.JobsDir + "/" + job + " after its staging"
+	}
+	return ""
+}
+
+// friendStartsOf is friend sync's start receipt for one friend's cards (docs/SPEC-SPRINT.md
+// section 1, a friend's card is working once she starts it): each card on her row, ready, or
+// working with no start of hers (her finish's next or a take-back's next moved it there),
+// whose job she has begun (friendJobBegun) is started (sprint.FriendStart, by id at its
+// generation): working, its deadline from now, one line each. A start refused is said on a
+// line and read again next sync. It runs before her cards are collected, so a report on a
+// card she began and the deal held ready is read on a working card.
+func (a *app) friendStartsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) error {
+	row := sprint.FriendRow(name)
+	cards, err := st.ReadCells(ctx, sprint.Fleet, row, sprint.Ready, sprint.Working)
+	if err != nil || len(cards) == 0 {
+		return err
+	}
+	cards = slices.DeleteFunc(cards, func(c *sprint.Card) bool {
+		return c.F("kind") != "work" || c.Col == sprint.Working && c.F(sprint.FieldStarted) == strconv.Itoa(max(c.Int("gen"), 1))
+	})
+	if len(cards) == 0 {
+		return nil
+	}
+	packets, err := st.Packets(ctx, cards)
+	if err != nil {
+		return err
+	}
+	for i, p := range packets {
+		if p.Kind == "read" || !sprint.ValidCardID(p.Card) {
+			continue
+		}
+		job := friendJobOf(p)
+		why := friendJobBegun(dir, job, a.now)
+		if why == "" {
+			continue
+		}
+		c := cards[i]
+		r := sprint.FriendStartReq{Friend: name, IDs: []string{c.ID}, Gens: map[string]int{c.ID: max(c.Int("gen"), 1)}, Why: map[string]string{c.ID: why}}
+		step := store.FriendStartStep(r)
+		step.Actor, step.Epoch = st.Actor, &p.Epoch
+		res, err := st.Run(ctx, step)
+		if err != nil {
+			return err
+		}
+		if len(res.Refused) > 0 {
+			say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s job=%s: begun (%s), and not started: %s; the next sync reads it again", name, c.ID, oneline.Field(job), why, oneline.Escape(res.Refused[0].Why)))
+			continue
+		}
+		say(fmt.Sprintf("FRIEND-CARD STARTED friend=%s card=%s job=%s: %s", name, c.ID, oneline.Field(job), why))
+	}
+	return nil
 }
 
 func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {

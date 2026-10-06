@@ -555,7 +555,17 @@ for an unkept promise, not for evidence about something else: evidence that does
 *Tests: `TestTheGateRefusesAPromisedJourneyWithoutEvidence`, `TestThePromisedJourneysAreTheChaosSuitesSubtests`,
 `TestTheJourneyGateIsInTheReleaseSpec`.*
 
-## 15. The spend the store recorded matches each provider's own, or the cut refuses
+## 15. The adoption after a landing is a pipeline
+
+`(*app).cmdAdopt` is sections 8 and 13's order as one pass, meant to run unattended whenever the sprint base moves past the live
+build. Nothing in the tick calls it yet (`cmd/nova-sprint/run.go`, `internal/sprint/store/tick.go`): a tick part is also the shadow tick's planner, and the verb table that would name `nova-sprint adopt` is `cmd/nova-sprint/verbs.go`. The pass itself is: build on a bench, verify, canary and shadow, a cold read, one judgment to the coordinator, then on yes
+the switch and, through **the build's own** `nova-update release adopt`, one push per machine row with the
+version read back, and a rollback from kept copies on missed ticks. The runbook is
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
+
+*Test: `TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment`.*
+
+## 16. The spend the store recorded matches each provider's own, or the cut refuses
 
 The owner, 2026-10-05: "We should not make a release without verifying that we capture actual spend,
 not < 1/2 of it." and "We must be reliable, and accurate." On 2026-10-04 openrouter's own account
@@ -615,7 +625,7 @@ and the CHANGELOG section carries `Spend gate waived: <why> (window <from>..<to>
 reconciliation (`streams[<s>].reconciles`, the sprint's, the same on every stream), and the
 per-tier split (`streams[<s>].cost_by_tier`) accounts for every dollar of `total_cost`: a run with
 no recorded tier takes its route's (the route row's tier, else the route name's prefix `pro-*`,
-`flash-*`, `heavy-*`, `frontier-*`), else the card attempt's; `untiered` only when none exists.
+`flash-*`, `heavy-*`, `frontier-*`), else the card attempt's; no tier only when none exists.
 
 *Tests: `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn`, `TestOpenRouterSpendIsTheActivityDaysAndToday`,
 `TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`.*

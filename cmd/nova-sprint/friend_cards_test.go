@@ -74,7 +74,7 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	ta.json("card s1-1", &c)
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "the card is dealt to amy's row")
-	assert.Equal(t, sprint.Working, c.Work[0].Col)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col, "ready until she starts it")
 	assert.Equal(t, "friend.amy", c.Who)
 	assert.Contains(t, ta.ok("card s1-1"), "who=friend.amy", "card shows who")
 
@@ -92,7 +92,8 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 
 	// a sync after a sync delivers nothing again, and the card is no job of hers
 	assert.Contains(t, ta.ok("friend sync --root "+root), "nothing to do")
-	// the friends table counts it under working; the fleet table names no friend
+	// once she starts it the friends table counts it under working; the fleet table names no friend
+	ta.startFriend("amy", 1)
 	frame := ta.frame()
 	assert.Contains(t, tableOf(frame, sprint.Friends), "amy     |     0 |       1 |     8 |    0 | 0.0% | up")
 	assert.NotContains(t, tableOf(frame, sprint.Fleet), "friend")
@@ -336,7 +337,7 @@ func TestFleetSyncLeavesAFriendsRowAndCard(t *testing.T) {
 	ta.json("card s1-1", &c)
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "her card stays on her row")
-	assert.Equal(t, sprint.Working, c.Work[0].Col)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col, "ready until she starts it")
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
 }
 
@@ -420,6 +421,7 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	ta.ok("add --stream s1 --brief-dir " + dir)
 	ta.ok("start")
 	ta.ok("tick")
+	ta.startFriend("amy", 1) // dealt ready; she starts what her width holds
 	var w whereView
 	ta.json("where", &w)
 	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"], "her width working")
@@ -448,6 +450,9 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.Working, c.Work[0].Col, "her finish took her next ready card, no tick between")
 	ta.ok("tick")
+	ta.json("card s1-2", &c)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col, "no start of hers: the tick puts it back ready until she starts it")
+	ta.startFriend("amy", 1)
 	ta.json("card s1-3", &c)
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.Ready, c.Work[0].Col, "the tick fills her room again")

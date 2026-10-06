@@ -266,6 +266,7 @@ func TestHoldTakesNoNewCardsAndUnholdResumesForMembersFriendsAndStreams(t *testi
 		t.Parallel()
 		r := newHoldRig(t, 0, 2)
 		r.tick()
+		r.startFriends()
 		s := r.snap()
 		amy := onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working)
 		require.Len(t, amy, 1, "a card for any friend goes to the one with the most free width, the first by name among equals")

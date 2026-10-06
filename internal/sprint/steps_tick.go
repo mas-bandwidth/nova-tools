@@ -146,6 +146,8 @@ var TickDecisions = map[string][]string{
 	NAlarmMerging: {"ack", "wait"},
 	NAlarmReady:   {"ack", "wait"},
 	NAlarmFleet:   {"ack", "wait"},
+	// a member's open files over its alarm bound (fd.go): named per member, seen, or quiet a while
+	NFilesAlarm: {"fleet up <m> --width <half>", "fleet down <m>", "ack", "wait 15m"},
 	// the coordinator's pass (coordinator_pass.go): each names its own
 	NFriendDeaf:        {"ack", "wait"},
 	NFriendIdle:        {"ack", "wait"},
@@ -301,11 +303,18 @@ var TickEnd = []TickPartDef{
 // overdue part, each a step that may write any table, as a coordinator's verb does, its
 // work-table changes queued for the next pump; with idle (TickReq.IdleAlarm, run
 // --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part.
-// With neither the end is TickEnd's alone, as before them.
+// With neither the end is TickEnd's alone, as before them. The widen rule's part (widen.go)
+// runs before the rule rework, which reworks nothing the widen rule leaves to a mind.
 func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {
-		out = append(out, TickRules...)
+		for _, p := range TickRules {
+			if p.Name == PartRuleRework {
+				out = append(out, TickPartDef{PartRuleWiden, TickRuleWiden})
+				p.Fn = TickRuleReworkUnwidened
+			}
+			out = append(out, p)
+		}
 	}
 	out = append(out, TickEnd[2])
 	if idle {
@@ -733,7 +742,23 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
 		// FriendLevelPerTick cards a tick (docs/SPEC-SPRINT.md section 1,
 		// friend-deal-idle-lanes-first.w1)
-		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units}, dealt, dealtWorking)
+		// a card dealt to a friend and not started within the start bound, while her beat
+		// names no job running, goes first to a friend with an idle lane, never back to
+		// her (friendUnstartedLevel; docs/SPEC-SPRINT.md section 1, a friend's card is
+		// working once she starts it); the level then neither moves it again nor counts it
+		// on her row
+		up := friendUnstartedLevel(s, r.Friends, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
+		moved := map[string]bool{}
+		for _, u := range up.Units {
+			c := s.Fleet.Card(u.Key)
+			moved[c.ID] = true
+			from, _ := FriendOfRow(c.Row)
+			to, _ := FriendOfRow(u.Changes[0].Entry.Move.Row)
+			dealt[from]--
+			dealt[to]++
+		}
+		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units, Moved: moved}, dealt, dealtWorking)
+		lp.Rows, lp.Units = append(up.Rows, lp.Rows...), append(up.Units, lp.Units...)
 		for _, row := range lp.Rows {
 			if !slices.Contains(p.Rows, row) {
 				p.Rows = append(p.Rows, row)
@@ -1081,7 +1106,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		field, limit, word, own := WorkDeadline(s, c)
 		friend, idle := friendLaneIdle(s, r.Friends, c)
 		if idle {
-			limit = FriendReadyMax // ready on her row while she has a lane free: no one is taking it
+			// ready on her row while she has a lane free and not started: the start bound
+			// is the level's to move it (friendUnstartedLevel), and FriendReadyMax past it
+			// no one has
+			limit = s.FriendStartMax() + FriendReadyMax
 		}
 		at, ok := late(field, c, limit)
 		if !ok {
@@ -1274,7 +1302,7 @@ type cond struct {
 func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
 		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
 		what = ""
 	case NWorkLate, NReadLate:
@@ -1406,7 +1434,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NReadersBehind || c.typ == NDevBehind) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}

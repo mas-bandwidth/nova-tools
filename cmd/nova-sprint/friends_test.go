@@ -113,7 +113,11 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 		ta.json("where", &w)
 		return w.Tables[sprint.Friends]["amy"]
 	}
-	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, both working; the hand job is nowhere")
+	// dealt, not started: ready, and none working (docs/SPEC-SPRINT.md section 1, a friend's
+	// card is working once she starts it)
+	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, neither started")
+	ta.startFriend("amy", 2)
+	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
 
 	// amy finishes s1-1 with a LAND: done ok
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed.\n")
@@ -178,6 +182,7 @@ func TestFriendSyncWritesOnlyACardsBriefAndReadsItsReport(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	jobs(t, root, "amy", []string{"hand"}, nil, nil) // a hand job, no card
 	hand := filepath.Join(root, "amy-working", "inbox", "hand", "BRIEF.md")
 	handText, err := os.ReadFile(hand)
@@ -346,6 +351,7 @@ func TestADownFriendShowsNoneWorking(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	ta.ok("friend sync --root " + root)
 	cells := func() map[string]string {
 		var w whereView
