@@ -20,9 +20,13 @@ import (
 // (FieldIssuesClosed). A close GitHub refused stays pending, its why on the card, and the
 // tick's closer tries it again after IssuesRetry; the landing is landed whatever GitHub
 // says. An issue already closed, on GitHub or by another landed card (a twin's), is left
-// alone and noted, with no second comment. The model is tla/LandingIssues.tla: one comment
-// per issue, what a card records closed is closed on GitHub, and every issue ends closed
-// once GitHub answers, with a closer that dies between the close and the write.
+// alone and noted, with no second comment. Two closers run, the lander's as a landing ends
+// and the server loop's, often in two processes: each pass first takes the closer's lease
+// (IssuesLeaseTake), planned on the work table as its queue leaves it, so one pass at a
+// time asks GitHub and each pass reads what the last one recorded. The model is
+// tla/LandingIssues.tla: one comment per issue, what a card records closed is closed on
+// GitHub, and every issue ends closed once GitHub answers, with two closers and a closer
+// that dies anywhere, its lease lapsing.
 
 // The fields of a landed primary the closer reads and writes.
 const (
@@ -71,6 +75,61 @@ func LandingIssues(c *Card, commit string, closes []string) map[string]string {
 		return nil
 	}
 	return set
+}
+
+// PropIssuesCloser is the work table's property that holds the closer's lease: the pass's
+// token and when the lease lapses (RFC 3339), one blank between; "free" once the pass gave
+// it back. A pass that died holding it is waited on until it lapses.
+const PropIssuesCloser = "issues_closer"
+
+// IssuesLease is how long a pass holds the closer's lease: past the pass's GitHub budget,
+// so a live pass never loses it, and short, so a dead one holds the closes up little.
+const IssuesLease = 2 * time.Minute
+
+// leaseFree is PropIssuesCloser given back.
+const leaseFree = "free"
+
+// IssuesLeaseHolder is the token holding the closer's lease at now, "" when none does.
+func IssuesLeaseHolder(s *Snapshot, now time.Time) string {
+	v, _ := s.Work.Prop(PropIssuesCloser)
+	token, until, ok := strings.Cut(v, " ")
+	if !ok {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, until)
+	if err != nil || !now.Before(t) {
+		return ""
+	}
+	return token
+}
+
+// IssuesLeaseTake takes the closer's lease for the pass token until IssuesLease past now,
+// and says whether the pass holds it: never while another pass's is live, and not when no
+// landed card has an issue pending (nothing to do, nothing written). Run on the work table
+// as its queue leaves it, two passes cannot both take it (tla/LandingIssues.tla, Acquire;
+// the reversed witness MCLandingIssuesBrokenNoLease comments twice without it).
+func IssuesLeaseTake(s *Snapshot, token string, now time.Time) (Plan, bool) {
+	var p Plan
+	if len(PendingCloses(s)) == 0 {
+		return p, false
+	}
+	if h := IssuesLeaseHolder(s, now); h != "" && h != token {
+		p.refuse(PropIssuesCloser, "the closer's lease is held by pass "+h+"; that pass closes what is pending")
+		return p, false
+	}
+	was, had := s.Work.Prop(PropIssuesCloser)
+	p.Props = []PropWrite{{Table: Work, Name: PropIssuesCloser, Value: token + " " + now.Add(IssuesLease).UTC().Format(time.RFC3339), Was: was, WasAbsent: !had}}
+	return p, true
+}
+
+// IssuesLeaseGive gives the closer's lease back as the pass ends: nothing when token does
+// not hold it (it lapsed, and another pass may hold it now).
+func IssuesLeaseGive(s *Snapshot, token string) Plan {
+	was, _ := s.Work.Prop(PropIssuesCloser)
+	if h, _, _ := strings.Cut(was, " "); h != token || was == leaseFree {
+		return Plan{}
+	}
+	return Plan{Props: []PropWrite{{Table: Work, Name: PropIssuesCloser, Value: leaseFree, Was: was}}}
 }
 
 // PendingClose is a landed card with an issue its landing has not closed yet.

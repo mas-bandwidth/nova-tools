@@ -12,6 +12,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -186,34 +187,62 @@ func Issues(text, repo string) []Issue {
 }
 
 // Closer is GitHub as the lander closes an issue on it: Close comments and closes an
-// open issue, and leaves a closed one alone (already true, no comment). The lander's is gh
+// open issue, and leaves a closed one alone (already true, no comment); an open issue
+// that holds the comment already is closed with no second one. The lander's is gh
 // (GH); a test gives a fake and asks no GitHub.
 type Closer interface {
 	Close(ctx context.Context, i Issue, comment string) (already bool, err error)
 }
 
 // GH closes issues through gh as the caller's gh is authenticated on github.com: one read
-// of the issue's state, then, when it is open, one close with the comment. Run, when set,
-// stands in for gh (a test).
+// of the issue's state and comments, then, when it is open, one close with the comment, or
+// with none when a comment already there starts with the comment's first line (a close
+// that commented and then failed, or a pass that died between the two: gh posts the
+// comment first). Run, when set, stands in for gh (a test).
 type GH struct {
 	Run func(ctx context.Context, args ...string) (string, error)
 }
 
-// Close reads the issue's state and closes it with the comment when it is open.
+// ghIssue is what gh issue view --json state,comments answers, as Close reads it.
+type ghIssue struct {
+	State    string `json:"state"`
+	Comments []struct {
+		Body string `json:"body"`
+	} `json:"comments"`
+}
+
+// Close reads the issue's state and comments and closes it when it is open, with the
+// comment unless the issue holds it already.
 func (g GH) Close(ctx context.Context, i Issue, comment string) (bool, error) {
 	n := strconv.Itoa(i.N)
-	state, err := g.gh(ctx, "issue", "view", n, "--repo", i.Repo, "--json", "state", "--jq", ".state")
+	out, err := g.gh(ctx, "issue", "view", n, "--repo", i.Repo, "--json", "state,comments")
 	if err != nil {
 		return false, err
 	}
-	switch strings.TrimSpace(state) {
+	var is ghIssue
+	if err := json.Unmarshal([]byte(out), &is); err != nil {
+		return false, fmt.Errorf("gh issue view %s answered what is not an issue: %w", i, err)
+	}
+	switch is.State {
 	case "CLOSED":
 		return true, nil
 	case "OPEN":
 	default:
-		return false, fmt.Errorf("gh issue view %s answered %q, not OPEN or CLOSED", i, strings.TrimSpace(state))
+		return false, fmt.Errorf("gh issue view %s answered state %q, not OPEN or CLOSED", i, is.State)
 	}
-	_, err = g.gh(ctx, "issue", "close", n, "--repo", i.Repo, "--comment", comment)
+	args := []string{"issue", "close", n, "--repo", i.Repo}
+	mark, _, _ := strings.Cut(comment, "\n")
+	commented := false
+	for _, c := range is.Comments {
+		if mark != "" && strings.HasPrefix(c.Body, mark) {
+			commented = true
+			break
+		}
+	}
+	if !commented {
+		args = append(args, "--comment", comment)
+	}
+	_, err = g.gh(ctx, args...)
 	return false, err
 }
 

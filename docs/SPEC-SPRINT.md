@@ -2940,10 +2940,19 @@ repository on GitHub. The merge step writes on each card it lands the issues it 
 landing commit the lander pushed (`land_commit`); a card landed before this was written
 carries none, and nothing is closed for it here (the stream archive closes that backlog). The
 closer (`sprint.CloseLandedIssues`) closes each issue of a landed card not yet closed through
-gh (`gh issue view` for its state, then `gh issue close --comment`), with one comment naming
+gh (`gh issue view --json state,comments`, then `gh issue close --comment`), with one comment naming
 the card, its stream, the landing commit and the release it ships in (the stream's
 `release`, else "the next release"); an issue GitHub has closed already, or another landed
-card closed (a twin's), is left alone with no comment and noted. Each pass is recorded on the
+card closed (a twin's), is left alone with no comment and noted; an open issue that holds
+the comment already (gh posts it before the close, so a close that failed or a pass that died
+between the two leaves it) is closed with no second one. One pass runs at a time: each takes
+the closer's lease first (`sprint.IssuesLeaseTake`, the work table's `issues_closer`
+property: the pass's token and when it lapses, two minutes on, `free` once given back),
+planned on the work table as its queue leaves it, and a pass refused it asks GitHub nothing;
+the closer then reads the cards from that same view, so a close recorded and not yet pumped
+is not asked again, and a pass that died holding the lease holds the closes up until it lapses
+(tla/LandingIssues.tla: the lander's closer and the loop's, each reading an issue open before
+it closes it, comment twice without the lease, `MCLandingIssuesBrokenNoLease`). Each pass is recorded on the
 card in one step (`sprint.IssuesClosed`: `issues_closed`, and `issues_why` and
 `issues_tried` while one is pending). `land` runs the closer on the cards it landed as its
 pass ends (a `LAND ISSUES <card> issues: closed ...; left alone (closed already) ...;
@@ -2955,8 +2964,8 @@ card, and the loop tries it again once `sprint.IssuesRetry` (a minute) has passe
 shows what is pending on one line from the work table's `issues_pending` property, which
 each pass writes (`ISSUES PENDING <n> issues of <k> landed cards: <card> <issues> (<why>);
 ...`, `issues_pending` in `--json`), so where reads no card. A twin asks no GitHub
-(`TestALandingClosesTheIssuesTheCardReferences`,
-`TestLandClosesTheIssuesOfTheBriefAndTheLandedCommits`,
+(`TestALandingClosesTheIssuesTheCardReferences`, `TestTheTwoClosersCommentOnceOnAnIssue`,
+`TestGHClosesOnlyAnOpenIssue`, `TestLandClosesTheIssuesOfTheBriefAndTheLandedCommits`,
 `TestWhereShowsThePendingClosesUntilGitHubTakesThem`,
 `TestAddRefusesAnIssueOfAnotherRepositoryUnlessByFullURL`).
 

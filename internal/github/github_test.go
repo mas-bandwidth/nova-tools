@@ -45,28 +45,40 @@ func TestSlugReadsEverySpelling(t *testing.T) {
 }
 
 // GH reads the state first: a closed issue is left alone, an open one is closed with the
-// comment, and gh's refusal is the error.
+// comment, an open one holding the comment already is closed with no second one, and gh's
+// refusal is the error.
 func TestGHClosesOnlyAnOpenIssue(t *testing.T) {
 	t.Parallel()
 	var calls []string
-	state := "OPEN\n"
+	view := `{"state":"OPEN","comments":[{"body":"a person's word"}]}`
 	g := GH{Run: func(_ context.Context, args ...string) (string, error) {
 		calls = append(calls, strings.Join(args, " "))
 		if args[1] == "view" {
-			return state, nil
+			return view, nil
 		}
 		return "", nil
 	}}
 	i := Issue{Repo: "o/r", N: 4}
-	already, err := g.Close(context.Background(), i, "done")
+	already, err := g.Close(context.Background(), i, "done by a\n\n- more")
 	require.NoError(t, err)
 	assert.False(t, already)
-	assert.Equal(t, []string{"issue view 4 --repo o/r --json state --jq .state", "issue close 4 --repo o/r --comment done"}, calls)
-	calls, state = nil, "CLOSED"
+	assert.Equal(t, []string{"issue view 4 --repo o/r --json state,comments", "issue close 4 --repo o/r --comment done by a\n\n- more"}, calls)
+
+	calls, view = nil, `{"state":"OPEN","comments":[{"body":"done by a\n\n- more"}]}`
+	already, err = g.Close(context.Background(), i, "done by a\n\n- more")
+	require.NoError(t, err)
+	assert.False(t, already)
+	assert.Equal(t, []string{"issue view 4 --repo o/r --json state,comments", "issue close 4 --repo o/r"}, calls, "the comment is there: closed with no second one")
+
+	calls, view = nil, `{"state":"CLOSED","comments":[]}`
 	already, err = g.Close(context.Background(), i, "done")
 	require.NoError(t, err)
 	assert.True(t, already)
 	assert.Len(t, calls, 1, "a closed issue is not closed again")
+
+	view = `not json`
+	_, err = g.Close(context.Background(), i, "done")
+	assert.ErrorContains(t, err, "not an issue")
 	g.Run = func(context.Context, ...string) (string, error) { return "", errors.New("gh issue view: no network") }
 	_, err = g.Close(context.Background(), i, "done")
 	assert.ErrorContains(t, err, "no network")

@@ -418,3 +418,4 @@ MCLandingIssues.cfg	MCLandingIssues.tla	pass	-	ignore-terminal	landingissues	req
 MCLandingIssuesBrokenErrDone.cfg	MCLandingIssues.tla	invariant	RecordedIsClosed	ignore-terminal	landingissues	required	-
 MCLandingIssuesBrokenNoCheck.cfg	MCLandingIssues.tla	invariant	OneComment	ignore-terminal	landingissues	required	-
 MCLandingIssuesBrokenNoRetry.cfg	MCLandingIssues.tla	temporal	AllClose	ignore-terminal	landingissues	required	-
+MCLandingIssuesBrokenNoLease.cfg	MCLandingIssues.tla	invariant	OneComment	ignore-terminal	landingissues	required	-
