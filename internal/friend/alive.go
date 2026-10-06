@@ -167,6 +167,12 @@ func (g *Grok) Alive(ctx context.Context) Liveness {
 	return notRunning("no grok window is open in " + g.Dir + " (no live pid of active_sessions.json with that cwd)")
 }
 
+// Alive: a claude session is reached only through its own wait on the wake
+// file, and no process says which window runs it.
+func (c *ClaudeWake) Alive(context.Context) Liveness {
+	return cannotTell("claude is reached by the session's own wait on " + ClaudeWakePath(c.Dir, c.Name) + "; the session check alone")
+}
+
 // Alive: the runner, opencode, which every turn and every lane starts
 // afresh.
 func (o *OpenCode) Alive(context.Context) Liveness { return runnerAlive(exec.LookPath, o.program()) }

@@ -664,6 +664,25 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
+// A claude friend is reached by the open session's own wait: install
+// prints the one line the session runs, and status says the route is
+// passive with that line, never a silent loss.
+func TestClaudeInstallPrintsTheSessionsWaitAndStatusSaysPassive(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := "/w/bob" // the rig's fake file system has it
+	// install names the wake file in the state directory the daemon will keep, <dir>/.nova-friend
+	planned := "nova-bus wait --as bob --after <cursor> --wake-file /w/bob/.nova-friend/bob.wake"
+	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", dir, "--config-dir", "/w/bob-claude", "--dry-run").Exit(0).Out("NOTE run as a background task", planned)
+	// status names it in the state directory the daemon did keep
+	state := friend.DefaultStateDir(r.home, "bob")
+	wait := "nova-bus wait --as bob --after <cursor> --wake-file " + filepath.Join(state, "bob.wake")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", dir, "--dry-run").Exit(0).NotOut("nova-bus wait")
+	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "claude", At: start, Connection: friend.Connected, Challenge: friend.Quiet}))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("route=passive", wait)
+}
+
 // The daemon's new flags reach the agent's command line when they are set
 // and not the default, so a reinstall with the same flags writes the same
 // plist.
@@ -1124,8 +1143,10 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	r.deaf = true
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
 		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
-	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
-		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude: nothing the bus holds`, "CHECK NOTE remedy: the adapter card: give internal/friend a deliver command for claude")
+	// claude: the check is one line in the wake file of the state directory, for the session's own wait
+	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
+		Err(`CHECK FAIL harness=claude stage=act why="no pong r4nd0m from bob within 10s`)
+	assert.FileExists(t, filepath.Join(state, "bob.wake"))
 	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
 		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor (not installed here`)
 

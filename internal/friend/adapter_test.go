@@ -2,8 +2,11 @@ package friend
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,17 +57,75 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	assert.ErrorContains(t, err, "not a JSON list")
 }
 
-func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
+func TestAnUnknownHarnessIsNamed(t *testing.T) {
 	t.Parallel()
-	for _, h := range []string{"claude"} {
-		t.Run(h, func(t *testing.T) {
-			t.Parallel()
-			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)
-			require.NoError(t, err)
-			_, err = d.Deliver(context.Background(), "x")
-			assert.EqualError(t, err, "no deliver command for "+h+" yet; run the session's blocking read: nova-bus recv --as <friend>")
-		})
-	}
 	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)
 	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp`)
+}
+
+func TestClaudeIsPassiveAndInstallPrintsTheSessionsWait(t *testing.T) {
+	t.Parallel()
+	d, err := NewDeliverer("claude", "/work/bob", "", nil, nil)
+	require.NoError(t, err)
+	_, passive := d.(interface{ Passive() })
+	assert.True(t, passive, "the daemon takes nothing off the stream for claude")
+
+	wake := ClaudeWakePath("/state", "bob")
+	assert.Equal(t, "/state/bob.wake", wake)
+	line := ClaudeInstallLine("claude", "bob", wake)
+	assert.Contains(t, line, "nova-bus wait --as bob --after <cursor> --wake-file "+wake)
+	assert.Contains(t, line, "background task")
+	for _, h := range []string{"grok", "opencode", "codex", "dsh", ""} {
+		assert.Empty(t, ClaudeInstallLine(h, "bob", wake), h)
+	}
+}
+
+// The claude adapter puts nothing into the session: each push is one line
+// appended to the wake file in the state directory, which the session's own
+// wait is watching; the file is made when absent and never truncated, and a
+// missing directory is a refusal naming it.
+func TestTheClaudeDelivererAppendsOneLineToTheWakeFile(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	d, err := NewDeliverer("claude", state, "bob", nil, nil)
+	require.NoError(t, err)
+	_, stub := d.(Stub)
+	assert.False(t, stub, "claude has a deliver command")
+	_, passive := d.(interface{ Passive() })
+	assert.True(t, passive, "the daemon still takes nothing off the stream for claude")
+	assert.Contains(t, Pushing(), "claude")
+
+	at := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	c := d.(*ClaudeWake)
+	var out strings.Builder
+	c.Now, c.Out = func() time.Time { return at }, &out
+	exit, err := d.Deliver(context.Background(), "CHECK n-1\nanswer it: /in/judgments/j-1.json\n")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	at = at.Add(time.Second)
+	_, err = d.Deliver(context.Background(), "judgment j-2 /in/judgments/j-2.json")
+	require.NoError(t, err)
+	wake := ClaudeWakePath(state, "bob")
+	b, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-10-06T12:00:00Z nova-friend: CHECK n-1 ⏎ answer it: /in/judgments/j-1.json\n"+
+		"2026-10-06T12:00:01Z nova-friend: judgment j-2 /in/judgments/j-2.json\n", string(b))
+	assert.Contains(t, out.String(), "one line appended to "+wake)
+
+	// no session named: the friend of the state directory's status file
+	require.NoError(t, WriteStatus(state, Status{Friend: "ada"}))
+	d2, _ := NewDeliverer("claude", state, "", nil, nil)
+	_, err = d2.Deliver(context.Background(), "x")
+	require.NoError(t, err)
+	assert.FileExists(t, ClaudeWakePath(state, "ada"))
+	none := t.TempDir()
+	d3, _ := NewDeliverer("claude", none, "", nil, nil)
+	_, err = d3.Deliver(context.Background(), "x")
+	assert.ErrorContains(t, err, "no friend named for the claude wake file in "+none)
+
+	missing := filepath.Join(state, "gone")
+	d4, _ := NewDeliverer("claude", missing, "bob", nil, nil)
+	_, err = d4.Deliver(context.Background(), "x")
+	assert.ErrorContains(t, err, "no state directory "+missing)
+	assert.NoDirExists(t, missing, "a refusal makes nothing")
 }
