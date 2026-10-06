@@ -1,4 +1,4 @@
-package main
+package functionalrun
 
 import (
 	"context"
@@ -27,6 +27,32 @@ type verdict struct {
 	remove bool
 	// reason, when the container is left: young, or unreadable.
 	reason string
+}
+
+// parseDockerListed reads docker's listing (dockerListFormat): one container a
+// line, tab-separated id, state, then the run, start, deadline and owner
+// labels; a label the container lacks is an empty field and is left out of the
+// map, as podman's listing leaves it out.
+func parseDockerListed(out string) ([]listed, error) {
+	var cs []listed
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) != 6 {
+			return nil, fmt.Errorf("docker ps printed a line of %d fields, not 6: %q", len(f), line)
+		}
+		c := listed{ID: f[0], State: f[1], Labels: map[string]string{}}
+		for i, name := range []string{labelRun, labelStart, labelDeadline, labelOwner} {
+			if f[2+i] != "" {
+				c.Labels[name] = f[2+i]
+			}
+		}
+		cs = append(cs, c)
+	}
+	return cs, nil
 }
 
 // parseListed reads `podman ps --format json`. An empty listing is `[]` or
@@ -99,7 +125,9 @@ func judge(cs []listed, now time.Time, grace time.Duration, ownerID string) (out
 	return out, foreign
 }
 
-// reap removes every container of this tool and this user past its deadline
+// reap is the reaper of tla/ContainerRun.tla (Reap): it selects by label and
+// deadline, never by name or age alone, in any state, and never a volume by
+// name. It removes every container of this tool and this user past its deadline
 // plus the grace, in any state, and returns how many it removed (or would, on
 // a dry run) and how many of ours it left with an unreadable label. It never
 // touches another container, never removes a volume by itself (a removed
@@ -107,11 +135,15 @@ func judge(cs []listed, now time.Time, grace time.Duration, ownerID string) (out
 func reap(ctx context.Context, eng engine, now time.Time, grace time.Duration, ownerID string, dryRun bool, stderr io.Writer) (reaped, unreadable int, err error) {
 	lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := eng.Output(lctx, reapListArgs()...)
+	out, err := eng.Output(lctx, reapListArgsFor(eng.Kind())...)
 	if err != nil {
 		return 0, 0, err
 	}
-	cs, err := parseListed(out)
+	parse := parseListed
+	if eng.Kind() == kindDocker {
+		parse = parseDockerListed
+	}
+	cs, err := parse(out)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -132,9 +164,9 @@ func reap(ctx context.Context, eng engine, now time.Time, grace time.Duration, o
 			continue
 		}
 		rctx, rcancel := context.WithTimeout(ctx, 60*time.Second)
-		_, err := eng.Output(rctx, removeArgs(v.id)...)
+		_, err := eng.Output(rctx, removeArgsFor(eng.Kind(), v.id)...)
 		rcancel()
-		if err != nil {
+		if err != nil && !isGone(err) {
 			fmt.Fprintf(stderr, "REAP-FAILED id=%s run=%s state=%s err=%q\n", short(v.id), v.run, v.state, err.Error())
 			left++
 			continue

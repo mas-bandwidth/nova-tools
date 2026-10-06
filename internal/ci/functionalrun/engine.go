@@ -1,4 +1,4 @@
-package main
+package functionalrun
 
 import (
 	"bytes"
@@ -14,9 +14,19 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
-// engine is the container runtime as this tool uses it. The podman type below
+// The two container runtimes this package drives, through their command lines
+// and never a client library (docs/SPEC-CI.md, "functional-container").
+const (
+	kindPodman = "podman"
+	kindDocker = "docker"
+)
+
+// engine is the container runtime as this tool uses it. The cli type below
 // is the real one; the tests give a fake that records every argv.
 type engine interface {
+	// Kind is the runtime's name, kindPodman or kindDocker: the argv differs
+	// where docker has no equivalent flag (see testArgs and removeArgsFor).
+	Kind() string
 	// Output runs one command to completion, bounded by ctx, and returns its
 	// standard output. A non-zero exit is an error carrying its stderr.
 	Output(ctx context.Context, args ...string) (string, error)
@@ -34,14 +44,17 @@ type process interface {
 	Kill() error
 }
 
-type podman struct {
-	bin string
-	env []string
+type cli struct {
+	bin  string
+	kind string
+	env  []string
 }
 
-func newPodman(bin string, _ io.Writer) *podman {
-	return &podman{bin: bin, env: runtimeEnv(os.Environ())}
+func newEngine(bin, kind string) *cli {
+	return &cli{bin: bin, kind: kind, env: runtimeEnv(os.Environ())}
 }
+
+func (p *cli) Kind() string { return p.kind }
 
 // runtimeEnv is the environment the runtime's client is started with: this
 // process's, less RUNNER_TRACKING_ID, the variable a CI runner's end-of-job
@@ -59,7 +72,7 @@ func runtimeEnv(environ []string) []string {
 	return out
 }
 
-func (p *podman) Output(ctx context.Context, args ...string) (string, error) {
+func (p *cli) Output(ctx context.Context, args ...string) (string, error) {
 	cmd := subproc.Context(ctx, p.bin, args...)
 	cmd.Env = p.env
 	var out, errb bytes.Buffer
@@ -75,7 +88,7 @@ func (p *podman) Output(ctx context.Context, args ...string) (string, error) {
 	return out.String(), nil
 }
 
-func (p *podman) Start(args []string, stdout, stderr io.Writer) (process, error) {
+func (p *cli) Start(args []string, stdout, stderr io.Writer) (process, error) {
 	// A long-lived child (the container run): a cancellable context and no deadline,
 	// released when the wait returns; the run's own deadline kills it through Kill.
 	ctx, release := context.WithCancel(context.Background())
@@ -117,33 +130,69 @@ func firstWords(args []string, n int) string {
 	return strings.Join(args[:n], " ")
 }
 
-// runtimeNames are the container runtimes in the order this tool prefers them:
+// runtimeNames are the container runtimes in the order `auto` prefers them:
 // the fleet's runtime is podman (docs/FLEET.md); docker is the fallback for a
 // machine that has only it.
-var runtimeNames = []string{"podman", "docker"}
+var runtimeNames = []string{kindPodman, kindDocker}
+
+// errNoRuntime is what a machine with no container runtime gets: the tests
+// never run bare (docs/SPEC-CI.md, "functional-container").
+var errNoRuntime = errors.New("no container runtime on PATH: install podman (docs/FLEET.md; the fleet's container-runtime play does it) or docker")
+
+// kindOf names the runtime of a binary by its file name: docker for a name
+// holding docker, podman otherwise.
+func kindOf(bin string) string {
+	if strings.Contains(strings.ToLower(filepath.Base(bin)), kindDocker) {
+		return kindDocker
+	}
+	return kindPodman
+}
 
 // chooseRuntime is the binary to run and the name to say it by. An explicit
-// --podman path is used as given, not looked up.
-func chooseRuntime(explicit string, lookPath func(string) (string, error)) (bin, name string, err error) {
+// binary path (--podman) is used as given, not looked up. Otherwise want is
+// auto (podman first, docker second), podman or docker, looked up on PATH; a
+// runtime that is not there is an error, never a bare run.
+func chooseRuntime(explicit, want string, lookPath func(string) (string, error)) (bin, name string, err error) {
 	if explicit != "" {
-		return explicit, filepath.Base(explicit), nil
+		return explicit, kindOf(explicit), nil
 	}
-	for _, n := range runtimeNames {
+	names := runtimeNames
+	switch want {
+	case "", "auto":
+	case kindPodman, kindDocker:
+		names = []string{want}
+	default:
+		return "", "", fmt.Errorf("--runtime %q is not podman, docker or auto", want)
+	}
+	for _, n := range names {
 		if p, lerr := lookPath(n); lerr == nil {
 			return p, n, nil
 		}
 	}
-	return "", "", fmt.Errorf("no container runtime on PATH: install podman (docs/FLEET.md; the fleet's container-runtime play does it) or docker, or name one with --podman")
+	if len(names) == 1 {
+		return "", "", fmt.Errorf("--runtime %s: %w (not on PATH)", want, errNoRuntime)
+	}
+	return "", "", errNoRuntime
 }
 
 // useRuntime picks the runtime and names it on stderr, so a run's log says
 // which one ran the container; false when there is none.
-func useRuntime(explicit string, lookPath func(string) (string, error), stderr io.Writer) (string, bool) {
-	bin, name, err := chooseRuntime(explicit, lookPath)
+func useRuntime(explicit, want string, lookPath func(string) (string, error), stderr io.Writer) (string, string, bool) {
+	bin, name, err := chooseRuntime(explicit, want, lookPath)
 	if err != nil {
+		if errors.Is(err, errNoRuntime) {
+			fmt.Fprintf(stderr, "CI FUNCTIONAL REFUSED reason=no_container_runtime requested=%s\n", orAuto(want))
+		}
 		fmt.Fprintf(stderr, "functionalrun: %v\n", err)
-		return "", false
+		return "", "", false
 	}
 	fmt.Fprintf(stderr, "functionalrun: container runtime: %s (%s)\n", name, bin)
-	return bin, true
+	return bin, name, true
+}
+
+func orAuto(s string) string {
+	if s == "" {
+		return "auto"
+	}
+	return s
 }

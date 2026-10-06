@@ -84,13 +84,13 @@ build cache is written by the code under test, so it is kept per trust domain
 the modules behind its `tool` lines among them (staticcheck, errcheck,
 deadcode), so the class tests that build those tools (`TestStaticcheckFindings`,
 `TestUncheckedErrors`, `TestDeadCode` in `internal/ci`) build them under
-`GOPROXY=off`. `tools/functionalrun` stamps the volume with the hash of
+`GOPROXY=off`. `internal/ci/functionalrun` (the engine of `tools/functionalrun` and of `nova-ci functional --in-container`) stamps the volume with the hash of
 `go.mod` and `go.sum`, so a new `tool` line fills it again.
 
 The run:
 
     podman run --rm --name nova-functional-run --init --timeout 600 \
-      --network none --ipc private --pids-limit 512 --memory 4g --memory-swap 4g --cpus 4 \
+      --network none --ipc private --pid private --pids-limit 512 --memory 4g --memory-swap 4g --cpus 4 \
       --security-opt no-new-privileges --cap-drop all \
       --read-only --tmpfs /tmp:rw,exec,size=2g --tmpfs /home/bench:rw,size=1g,mode=1777 \
       -v "$PWD":/src:ro -v nova-gocache-<domain>:/gocache -v nova-gomod:/gomodcache:ro \
@@ -111,6 +111,7 @@ user as "other", so it is world-readable.
 | `--timeout <seconds>` | the runtime's own hard bound: the container is ended when it expires, even if the client that started it is killed. The inner `go test -timeout` bounds each test binary but not a client that dies |
 | `--network none` | loopback only. The fixtures bind `127.0.0.1`; nothing leaves the container and nothing reaches in. A missing module fails at once (`GOPROXY=off`) instead of waiting on a dial |
 | `--ipc private` | System V shared memory and queues are the container's own, so Postgres's segment cannot outlive the run or collide with another |
+| `--pid private` | the container's own PID namespace, explicit (podman; docker refuses the word and its default is private) |
 | `--pids-limit` | a fork bomb or a leak stops at the limit |
 | `--memory` | the run, tmpfs included, stops at the limit |
 | `--memory-swap` | equal to `--memory`, so the run may use no swap: without it the runtime allows as much swap again as memory, and the run takes more from the machine than it was given |
