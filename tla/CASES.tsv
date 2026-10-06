@@ -1,5 +1,9 @@
 config	module	expected	property	deadlock	group	gate	debt
 MCBenchRun.cfg	MCBenchRun.tla	pass	-	ignore-terminal	benchrun	required	-
+MCCardLifecycle.cfg	MCCardLifecycle.tla	pass	-	ignore-terminal	cardlifecycle	required	-
+MCCardLifecycleBrokenDealtAfterLanded.cfg	MCCardLifecycle.tla	invariant	LandedFinal	ignore-terminal	cardlifecycle	required	-
+MCCardLifecycleBrokenTwoColumns.cfg	MCCardLifecycle.tla	invariant	OneColumn	ignore-terminal	cardlifecycle	required	-
+MCCardLifecycleBrokenNeedDealtBeforeLanded.cfg	MCCardLifecycle.tla	invariant	WaitingWithNeedNotDealt	ignore-terminal	cardlifecycle	required	-
 MCBenchRunBrokenNoRemove.cfg	MCBenchRun.tla	invariant	NothingLeftBehind	ignore-terminal	benchrun	required	-
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
