@@ -546,7 +546,7 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 
 	// 12. the push proof: PUSH DOWN with the setup while the seat has none live
 	if p := m.Push; p.Measured && !failed(SeatCheckPush) {
-		facts := []string{"holder=" + orDash(p.Holder), "harness=" + orDash(p.Record.Harness)}
+		facts := []string{"holder=" + orDash(p.Holder), "harness=" + orDash(p.Record.Harness), "adapter=" + p.Record.AdapterName()}
 		if why := PushWhy(p.Holder, p.Record, p.Recorded, now); why != "" {
 			add(SeatCheckLine{Thing: SeatCheckPush, Facts: append(facts, "why="+quoteSeatCheck(why)), Remedy: PushSetup(p.Holder, p.Record, p.Recorded)})
 		} else {
