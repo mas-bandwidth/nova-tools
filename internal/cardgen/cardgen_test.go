@@ -1,6 +1,7 @@
 package cardgen
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -314,4 +316,43 @@ func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, gateStep(tmpl), sentence, "the card template")
 	assert.Less(t, len(tmpl), cardlimits.BriefAdvisoryBytes)
+}
+
+// A card whose PATHS reach tla/ runs the model in its own gate: STEP 4 names make tlc for
+// the groups of the cases it touched and the merge into tla/RUNS.tsv, the PATHS line
+// carries tla/RUNS.tsv so the record can be committed, and the brief still passes the
+// lint; a card that touches no model has neither.
+func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
+	t.Parallel()
+	gateStep := func(brief string) string {
+		for _, line := range strings.Split(brief, "\n") {
+			if strings.HasPrefix(line, "STEP 4.") {
+				return line
+			}
+		}
+		return ""
+	}
+	for _, paths := range [][]string{{"tla/Land.tla", "tla/MCLand.cfg"}, {"tla/*", "internal/sprint/land*.go"}, {"tla/**"}} {
+		c := Card{ID: "model-land", File: paths[0], Paths: paths, Test: "internal/tlc TestTLCRecordsCoverCurrentModels", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix the model."}
+		brief := Render(header, c)
+		step := gateStep(brief)
+		assert.Contains(t, step, "make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g", paths)
+		assert.Contains(t, step, "go run ./tools/tlacheck groups --root . --stale", paths)
+		assert.Contains(t, step, "go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv", paths)
+		assert.Contains(t, step, swarm.GateNamesWhoseFile, paths)
+		var line []string
+		for _, l := range strings.Split(brief, "\n") {
+			if rest, ok := strings.CutPrefix(l, "PATHS: "); ok {
+				line = strings.Split(rest, ", ")
+			}
+		}
+		assert.True(t, slices.ContainsFunc(line, func(g string) bool { return hygiene.MatchGlob(g, "tla/RUNS.tsv") }), "PATHS covers the records: %v", line)
+		assert.LessOrEqual(t, strings.Count(strings.Join(line, " ")+" ", "tla/RUNS.tsv "), 1, "named at most once: %v", line)
+		assert.Empty(t, Lint(c.ID, brief), paths)
+		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, paths)
+		assert.Equal(t, paths, c.Paths, "the card's own PATHS are not changed")
+	}
+	plain := Render(header, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
+	assert.NotContains(t, plain, "make tlc")
+	assert.NotContains(t, plain, "tla/RUNS.tsv")
 }

@@ -136,6 +136,8 @@ A group that ends over its budget exits 1 and still writes its records (the case
 
 3. Commit `tla/RUNS.tsv` with the change. `merge --keep` keeps a record of the base branch's file only when its case was not measured again and the record is current; a stale record it cannot carry is named as stale with its group, and a kept record of a case the plan no longer declares is dropped and named.
 
+The lander holds a change to this: a head that edits `tla/*.tla` or `tla/*.cfg` without a current record for each case whose inputs it edits is refused, one line per case naming it and its group (`internal/sprint/land_records.go`; docs/SPEC-SPRINT.md section 7, the run records). A generated card whose PATHS reach `tla/` runs `make tlc` for the stale groups in its own STEP 4 gate and commits the `tla/RUNS.tsv` the merge writes.
+
 To measure every case instead (a new jar, or a runner change that stales everything), run every group and merge without `--keep`:
 
 ```sh

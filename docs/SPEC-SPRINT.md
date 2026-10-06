@@ -2847,6 +2847,7 @@ What each of the lander's checks does with a head:
 | a line the change ends in CRLF, trailing whitespace, a missing final newline | repairs |
 | a code fence the change leaves open | repairs; refuses when ambiguous, naming the line |
 | a ledger the merge leaves stale | repairs (regenerated at the merge) |
+| a model or configuration under `tla/` edited without a current `tla/RUNS.tsv` record for a case it touches | refuses, one line per case naming it and its group |
 | the tree gate | refuses |
 
 **The document repairs** (`sprint.RepairMerge` and `sprint.RepairDoc`,
@@ -2908,6 +2909,25 @@ set on its stream by the coordinator. The tests are internal/sprint/land_repair_
 internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`,
 `TestE4CatchesADeletionThatUnbalancesASpan` and
 `TestTheLanderJoinsAWrappedCodeSpanInAddedLines`, on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
+
+**The run records** (internal/sprint/land_records.go). A head that edits a model
+(`tla/*.tla`) or a configuration (`tla/*.cfg`) lands only with a current record in
+`tla/RUNS.tsv` for every case whose inputs the merge edits: the record `make tlc` writes on a
+bench and `tlacheck merge` joins in, never a row typed by hand (tla/README.md, "Refreshing
+the records after a model edit"). Five seat-model cards came back broken on the night of
+2026-10-05 only because the records lacked rows for the cases they edited or added. A
+case's inputs are what its TLC run reads (`tlc.Source.Inputs`), so an edit to a module
+another case extends touches that case too; a record is current when it names the
+fingerprint the merged tree gives the case (`tlc.StaleGroups`, the runner's files read from
+the merged tree). `sprint.RepairMerge` runs the check on each merge commit, so `checkCard`
+refuses with it, one line per case: `tla/RUNS.tsv:<line> has no current run record for the
+case <config> (group <group>) and the change edits <files>; run make tlc TLC_GROUP=<group>
+...`, the line the case's stale row, or the one where a missing row is owed. A base's stale
+record is not the card's: a head that edits no model is not asked for one, and a tree with
+no `tla/CASES.tsv` is not checked. A generated card whose PATHS reach `tla/` runs the model
+in its own STEP 4 gate and carries `tla/RUNS.tsv` on its PATHS line (docs/SPEC-CARD-CONTRACT.md
+section 6). The test is internal/sprint/land_records_test.go
+(`TestTheLanderWantsARunRecordForAnEditedModel`, on a real merge commit).
 
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
