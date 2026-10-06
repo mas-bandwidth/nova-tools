@@ -63,7 +63,7 @@ func TestATakeOfACardDealtToAnotherFriendIsRefused(t *testing.T) {
 	w := takeWorld(t)
 	p := FriendTake(w.s, FriendTakeReq{Friend: "bob", IDs: []string{"s1-1", "nope"}})
 	require.Len(t, p.Refused, 2)
-	assert.Equal(t, "s1-1.w1 is not dealt to friend bob: it is at friend.amy:working", p.Refused[0].Why)
+	assert.Equal(t, "s1-1.w1 is taken: it works in the lane at friend.amy:working; it stays there and finishes", p.Refused[0].Why)
 	assert.Equal(t, "no card nope is dealt to friend bob", p.Refused[1].Why)
 	assert.Empty(t, p.Units)
 }

@@ -839,7 +839,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if StreamHeld(s, c.Row) {
 			return "its stream " + c.Row + " is held by the coordinator (hold.go): nova-sprint unhold " + c.Row + " deals it again"
 		}
-		if OnlyFriend(c) {
+		if PinnedFriend(c) != "" {
 			return friendCardWhy
 		}
 		return inState(c, Ready)
