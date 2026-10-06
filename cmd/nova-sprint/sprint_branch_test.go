@@ -108,7 +108,7 @@ func TestEveryStreamLandsOnTheSprintBranchAndOnlyPromotionReachesDev(t *testing.
 			assert.Contains(t, out+errs, "LAND REFUSED stream=s1 cards=1 base=dev tip=- ids=s1-1 ", land)
 			assert.Contains(t, out+errs, "card s1-1 lands on dev, a protected branch of its repository (it names no REPO: line), and stream s1 is not marked to land on it", land)
 			assert.Contains(t, out+errs, "every stream lands on the sprint branch, and promotion alone reaches dev; re-cut the card with BASE: <the sprint branch>", land)
-			assert.Contains(t, out+errs, "; run: nova-sprint stream set s1 --land-protected any\n", land)
+			assert.Contains(t, out+errs, "; run: nova-sprint stream set s1 --land-protected any; or mark it the promotion stream, for every repository: nova-sprint stream set s1 --promotion\n", land)
 		}
 		assert.Equal(t, dev, r.git(r.remote, "rev-parse", "dev"), "nothing was pushed to dev")
 		assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"), "nothing was recorded")

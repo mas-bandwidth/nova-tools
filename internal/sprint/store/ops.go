@@ -498,7 +498,8 @@ func (st *Store) inboxUpTo(ctx context.Context, upto string) ([]sprint.Note, err
 	}
 }
 
-// StreamClocks is every stream's state, since and progress.
+// StreamClocks is every stream's state, since and progress, and its protected-branch
+// mark, all from the one readset of the control cards.
 func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error) {
 	st, err := st.pin(ctx)
 	if err != nil {
@@ -547,7 +548,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 			p = since
 		}
 		out = append(out, sprint.StreamClock{Stream: r.Key, Release: ctl.Fields[sprint.FieldRelease], State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
-			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
+			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview]), Promotion: ctl.Fields[sprint.FieldLandProtected]})
 	}
 	return out, nil
 }
