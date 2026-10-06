@@ -25,14 +25,26 @@ type needLine struct {
 	State string `json:"state"`
 }
 
+// needsMore follows a list --max cut short: how many items were left out, and
+// the command that prints them. Boundary, on a cut of cards or streams, is
+// the first card the cut hid and how many unmet needs it has, so the cut
+// cannot be read as that card needing nothing.
+type needsMore struct {
+	Omitted  int    `json:"omitted"`
+	Command  string `json:"command"`
+	Boundary string `json:"boundary,omitempty"`
+	Needs    *int   `json:"needs,omitempty"`
+}
+
 // needsCard is one waiting card in the graph: its stream, its depth, whether
-// it is a root, and its unmet needs.
+// it is a root, and its unmet needs. More follows Needs when --max hid some.
 type needsCard struct {
 	ID     string     `json:"id"`
 	Stream string     `json:"stream"`
 	Depth  int        `json:"depth"`
 	Root   bool       `json:"root"`
 	Needs  []needLine `json:"needs"`
+	More   *needsMore `json:"more,omitempty"`
 }
 
 // needsWidth is the number of a stream's waiting cards at one depth.
@@ -43,22 +55,27 @@ type needsWidth struct {
 
 // needsStream is one stream's graph: its waiting cards in chain order, the
 // width at each depth, and the number of its cards that name a dropped or
-// absent id. Total is every waiting card of the stream (the JSON view carries
-// the same cards the text prints).
+// absent id. Total is every waiting card of the stream, whether or not --max
+// listed it. CardsMore, WidthsMore and CycleMore follow the list each cut.
 type needsStream struct {
-	Stream  string       `json:"stream"`
-	Cards   []needsCard  `json:"cards"`
-	Widths  []needsWidth `json:"width"`
-	Total   int          `json:"total"`
-	Orphans int          `json:"dropped_or_absent"`
+	Stream     string       `json:"stream"`
+	Cards      []needsCard  `json:"cards"`
+	CardsMore  *needsMore   `json:"cards_more,omitempty"`
+	Widths     []needsWidth `json:"width"`
+	WidthsMore *needsMore   `json:"width_more,omitempty"`
+	Total      int          `json:"total"`
+	Orphans    int          `json:"dropped_or_absent"`
 	// Cycle names the cards whose needs make a cycle in this stream, so the
 	// graph prints the cycle instead of being followed around it.
-	Cycle []string `json:"cycle,omitempty"`
+	Cycle     []string   `json:"cycle,omitempty"`
+	CycleMore *needsMore `json:"cycle_more,omitempty"`
 }
 
 // needsView is the whole graph: a stream a section, and the sprint's totals.
+// More follows Streams when --max hid some. Cards counts every waiting card.
 type needsView struct {
 	Streams []needsStream `json:"streams"`
+	More    *needsMore    `json:"more,omitempty"`
 	Cards   int           `json:"cards"`
 	Orphans int           `json:"dropped_or_absent"`
 }
@@ -94,7 +111,7 @@ func (a *app) cmdNeeds(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("needs", err, stderr)
 	}
-	v := sprintNeeds(s, *stream, *roots)
+	v := sprintNeeds(s, *stream, *roots).bound(c.max, *roots)
 	if c.json {
 		b, _ := json.Marshal(v)
 		fmt.Fprintln(stdout, string(b))
@@ -212,6 +229,82 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 	return v
 }
 
+// needsRestCommand is the needs invocation that prints the list a cap cut,
+// the same stream and --roots the reader asked for, with --max 0.
+func needsRestCommand(stream string, rootsOnly bool) string {
+	var b strings.Builder
+	b.WriteString("nova-sprint needs")
+	if stream != "" {
+		b.WriteString(" --stream ")
+		b.WriteString(stream)
+	}
+	if rootsOnly {
+		b.WriteString(" --roots")
+	}
+	b.WriteString(" --max 0")
+	return b.String()
+}
+
+func intPtr(n int) *int { return &n }
+
+// bound keeps at most max items of each listed kind (streams, a stream's
+// cards, a card's needs, widths, and a cycle). max <= 0 leaves the graph
+// whole. Totals are already the whole counts and are not reduced. A cut list
+// gets a more field. A cut of cards or streams names the first card it hid
+// and that card's unmet-need count, taken before the kept cards' own needs
+// are cut, so a blocked card is not shown as needing nothing.
+func (v needsView) bound(max int, rootsOnly bool) needsView {
+	if max <= 0 {
+		return v
+	}
+	if len(v.Streams) > max {
+		v.More = listMore(len(v.Streams)-max, needsRestCommand("", rootsOnly), v.Streams[max].Cards)
+		v.Streams = append([]needsStream(nil), v.Streams[:max]...)
+	}
+	for i := range v.Streams {
+		v.Streams[i] = v.Streams[i].bound(max, rootsOnly)
+	}
+	return v
+}
+
+func (st needsStream) bound(max int, rootsOnly bool) needsStream {
+	if len(st.Cards) > max {
+		st.CardsMore = listMore(len(st.Cards)-max, needsRestCommand(st.Stream, rootsOnly), st.Cards[max:])
+		st.Cards = append([]needsCard(nil), st.Cards[:max]...)
+	}
+	for i := range st.Cards {
+		ns := st.Cards[i].Needs
+		if len(ns) > max {
+			st.Cards[i].More = &needsMore{
+				Omitted: len(ns) - max,
+				Command: "nova-sprint card --fields " + st.Cards[i].ID,
+			}
+			st.Cards[i].Needs = append([]needLine(nil), ns[:max]...)
+		}
+	}
+	if len(st.Widths) > max {
+		st.WidthsMore = &needsMore{Omitted: len(st.Widths) - max, Command: needsRestCommand(st.Stream, rootsOnly)}
+		st.Widths = append([]needsWidth(nil), st.Widths[:max]...)
+	}
+	if len(st.Cycle) > max {
+		st.CycleMore = &needsMore{Omitted: len(st.Cycle) - max, Command: needsRestCommand(st.Stream, rootsOnly)}
+		st.Cycle = append([]string(nil), st.Cycle[:max]...)
+	}
+	return st
+}
+
+// listMore is the more field for a cut whose first hidden item is a card,
+// when the cut hid cards. hidden is the cards the cut did not list, in the
+// order the graph would have printed them.
+func listMore(omitted int, command string, hidden []needsCard) *needsMore {
+	m := &needsMore{Omitted: omitted, Command: command}
+	if len(hidden) > 0 {
+		m.Boundary = hidden[0].ID
+		m.Needs = intPtr(len(hidden[0].Needs))
+	}
+	return m
+}
+
 // needsWidths is the width at each depth of one stream's waiting cards, depth
 // 0 first and a line for every depth between the shallowest and the deepest.
 func needsWidths(waiting []*sprint.Card, depth map[string]int, stream string) []needsWidth {
@@ -301,7 +394,9 @@ func needsText(v needsView, rootsOnly bool) string {
 				}
 			}
 			b.WriteString("\n")
+			writeNeedsMore(&b, "needs", "card="+c.ID, c.More, len(c.Needs))
 		}
+		writeNeedsMore(&b, "cards", "stream="+st.Stream, st.CardsMore, len(st.Cards))
 		b.WriteString("WIDTH stream=" + st.Stream)
 		for i, w := range st.Widths {
 			if i == 0 {
@@ -312,16 +407,39 @@ func needsText(v needsView, rootsOnly bool) string {
 			fmt.Fprintf(&b, "depth %d: %d", w.Depth, w.Width)
 		}
 		b.WriteString("\n")
-		if len(st.Cycle) > 0 {
+		writeNeedsMore(&b, "width", "stream="+st.Stream, st.WidthsMore, len(st.Widths))
+		if len(st.Cycle) > 0 || st.CycleMore != nil {
 			fmt.Fprintf(&b, "CYCLE stream=%s its needs make a cycle through %s\n", st.Stream, strings.Join(st.Cycle, ", "))
+			writeNeedsMore(&b, "cycle", "stream="+st.Stream, st.CycleMore, len(st.Cycle))
 		}
 		if rootsOnly {
 			continue
 		}
 		fmt.Fprintf(&b, "NEEDS stream=%s cards=%d dropped-or-absent=%d\n", st.Stream, st.Total, st.Orphans)
 	}
+	writeNeedsMore(&b, "streams", "", v.More, len(v.Streams))
 	if !rootsOnly {
 		fmt.Fprintf(&b, "NEEDS OK cards=%d dropped-or-absent=%d\n", v.Cards, v.Orphans)
 	}
 	return b.String()
+}
+
+// writeNeedsMore prints the one line that stands for a list --max cut, and
+// prints nothing when the list was whole.
+func writeNeedsMore(b *strings.Builder, kind, attr string, m *needsMore, shown int) {
+	if m == nil {
+		return
+	}
+	if attr != "" {
+		fmt.Fprintf(b, "MORE kind=%s %s shown=%d total=%d omitted=%d", kind, attr, shown, shown+m.Omitted, m.Omitted)
+	} else {
+		fmt.Fprintf(b, "MORE kind=%s shown=%d total=%d omitted=%d", kind, shown, shown+m.Omitted, m.Omitted)
+	}
+	if m.Boundary != "" {
+		fmt.Fprintf(b, " boundary=%s", m.Boundary)
+		if m.Needs != nil {
+			fmt.Fprintf(b, " needs=%d", *m.Needs)
+		}
+	}
+	fmt.Fprintf(b, " run: %s\n", m.Command)
 }

@@ -1127,6 +1127,7 @@ nova-sprint ack <note>... --reason <text>
 nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id>
+nova-sprint needs [--stream <s>] [--roots]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
@@ -1160,7 +1161,15 @@ leaves the delivered card in her inbox and records that she was not woken.
 Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`, then the address `seat login` recorded), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
 verb that writes wants one), `--op <id>` (the same id again returns the recorded
-result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
+result), `--json` and `--max <n>` (listed items; 0 is all). `needs` keeps that
+promise: `--max` lists at most that many streams, cards of a stream, needs of a
+card, widths, and cycle ids, the totals stay the whole count, and a list it
+cuts is followed by a `MORE` line (and, under `--json`, a more field) naming
+how many were omitted and the command that prints the rest (`needs --max 0`,
+`needs --stream <s> [--roots] --max 0`, or `card --fields <id>` for one card's
+needs). A cut of cards or streams also names the first card it hid and how
+many unmet needs that card has, so the cap does not read as a blocked card
+needing nothing. The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
