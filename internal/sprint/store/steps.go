@@ -376,3 +376,15 @@ func ServerRestartStep() Step {
 		Plan: sprint.ServerRestart,
 	}
 }
+
+// StreamSetBaseStep re-points stream cards to a new base branch.
+func StreamSetBaseStep(r sprint.StreamSetBaseReq) Step {
+	return Step{Named: len(r.Streams) > 0, Args: ArgsOf(r), Verb: "stream set", Load: tables(sprint.Work, sprint.Merge),
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{
+				sprint.Work:  append([]string(nil), r.Streams...),
+				sprint.Merge: append([]string(nil), r.Streams...),
+			}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.StreamSetBase(s, r) }}
+}

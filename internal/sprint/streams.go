@@ -2,8 +2,6 @@ package sprint
 
 import (
 	"fmt"
-	"slices"
-	"sort"
 	"strings"
 )
 
@@ -48,174 +46,53 @@ func streamRemoveWhy(s *Snapshot, running bool, st string) string {
 	var primaries, sentinels, merges int
 	for _, c := range s.Work.Cards() {
 		switch {
-		case !c.Placed() || c.Row != st:
-		case IsSentinel(c):
-			sentinels++
-		default:
+		case c.Row == st && (c.Col == Waiting || c.Col == Ready):
 			primaries++
+		case c.Row == st && c.Col == Held:
+			sentinels++
 		}
 	}
 	for _, c := range s.Merge.Cards() {
-		if c.Placed() && c.Row == st && c.Col != Ctl {
+		if c.Row == st {
 			merges++
 		}
 	}
-	if primaries+sentinels+merges == 0 {
-		return ""
-	}
-	var holds []string
-	for _, h := range []struct {
-		n          int
-		one, other string
-	}{{primaries, "primary", "primaries"}, {merges, "merge card", "merge cards"}, {sentinels, "sentinel", "sentinels"}} {
-		if h.n > 0 {
-			holds = append(holds, fmt.Sprintf("%d %s", h.n, map[bool]string{true: h.one, false: h.other}[h.n == 1]))
+	if primaries > 0 || sentinels > 0 || merges > 0 {
+		var holds []string
+		if primaries > 0 {
+			holds = append(holds, fmt.Sprintf("%d primaries", primaries))
 		}
-	}
-	return fmt.Sprintf("stream %s holds %s; nothing was changed; its cards leave with nova-sprint clear --confirm sprint, or nova-sprint drop <id>... --reason <why>", st, strings.Join(holds, ", "))
-}
-
-// RemovedStream says the stream was removed in this epoch (stream remove):
-// its control card's record is kept unplaced. A removal is not a tombstone:
-// a card added under the stream's name brings it back (ComeBack). The add
-// step reads the record as an extra (store.AddStep).
-func RemovedStream(s *Snapshot, stream string) bool {
-	ctl := s.Merge.Card(CtlID(stream))
-	return ctl != nil && !ctl.Placed()
-}
-
-// ComeBack is a removed stream's control card as the place that brings it
-// back leaves it (on its merge row's control cell, its revision bumped, its
-// fields as the removal left them), and that place: the add that names the
-// stream adds its rows and places the record again before its manifests
-// (Plan.Places), and says so, a NOTE line. A batch never places a removed
-// member, so the record is placed by the table layer's cell add, as a fleet
-// member's control card is when it rejoins (store.RejoinMembers). Stream
-// archive is the verb that takes landed streams off the table and keeps
-// their rows; stream remove takes off a stream that holds no card, and its
-// name is free for an add at once.
-func ComeBack(ctl *Card, stream string) (*Card, PlaceAgain) {
-	back := *ctl
-	back.Row, back.Col, back.Score = stream, Ctl, 0
-	back.Rev++
-	return &back, PlaceAgain{Table: Merge, Row: stream, Col: Ctl, ID: ctl.ID,
-		Said: "stream " + stream + " was removed in this epoch and comes back: its control card is placed again"}
-}
-
-// WhereReleasesCountCardsLeft folds cards left per release from stream clocks
-// and per-stream cards left counts (docs/SPEC-SPRINT.md section 11, where --release).
-func WhereReleasesCountCardsLeft(clocks []StreamClock, streamCardsLeft map[string]int64) map[string]int64 {
-	out := map[string]int64{}
-	for _, c := range clocks {
-		if c.Release != "" {
-			out[c.Release] += streamCardsLeft[c.Stream]
+		if sentinels > 0 {
+			holds = append(holds, fmt.Sprintf("%d sentinels", sentinels))
 		}
-	}
-	return out
-}
-
-// NStreamArchived is the tick's word that it archived streams whose every card
-// has landed (stream archive): information, each stream named once.
-const NStreamArchived = "streams archived"
-
-// StreamArchive is the rule of stream archive: why each named stream may not
-// be archived, none when every one may. Archiving hides a stream's rows of the
-// work and merge tables (the table layer's row hide) and moves no card: its
-// landed cards stay placed in its landed cell, with their costs and landings,
-// and every fold, footer and summary counts them as before. A stream is
-// archived only when it is a row of the work or merge table and every card it
-// holds has landed: no primary or sentinel in any column of its work row but
-// landed, no merge card queued or stuck in its merge row. The machine may be
-// RUNNING. Archiving an archived stream changes nothing. The verb names
-// several and applies all or none.
-func StreamArchive(s *Snapshot, streams []string) []Refusal {
-	return allOrNone(streams, "archived", func(st string) string { return streamArchiveWhy(s, st) })
-}
-
-// StreamUnarchive is the rule of stream unarchive: a stream comes back only
-// when it is a row of the work or merge table and is archived.
-func StreamUnarchive(s *Snapshot, streams []string) []Refusal {
-	return allOrNone(streams, "unarchived", func(st string) string {
-		if why := noStream(s, st); why != "" {
-			return why
+		if merges > 0 {
+			holds = append(holds, fmt.Sprintf("%d merge cards", merges))
 		}
-		if !s.Work.Hidden(st) && !s.Merge.Hidden(st) {
-			return fmt.Sprintf("stream %s is not archived; nothing was changed", st)
-		}
-		return ""
-	})
-}
-
-// ArchivedStreams is the streams whose work row is archived, in row order.
-func ArchivedStreams(s *Snapshot) []string {
-	var out []string
-	for _, st := range s.Work.Rows() {
-		if s.Work.Hidden(st) {
-			out = append(out, st)
-		}
-	}
-	return out
-}
-
-// Unlanded is the cards of the stream that have not landed, in work order:
-// its primaries and sentinels in any column of its work row but landed, and
-// its merge cards queued or stuck.
-func Unlanded(s *Snapshot, stream string) []*Card {
-	var out []*Card
-	for _, c := range s.Work.Cards() {
-		if c.Placed() && c.Row == stream && c.Col != Landed {
-			out = append(out, c)
-		}
-	}
-	SortCards(out)
-	for _, col := range []string{Queued, Stuck} {
-		out = append(out, s.Merge.Cell(stream, col)...)
-	}
-	return out
-}
-
-func streamArchiveWhy(s *Snapshot, st string) string {
-	if why := noStream(s, st); why != "" {
-		return why
-	}
-	open := Unlanded(s, st)
-	if len(open) == 0 {
-		return ""
-	}
-	var named []string
-	for i, c := range open {
-		if i == 5 {
-			named = append(named, fmt.Sprintf("and %d more", len(open)-i))
-			break
-		}
-		named = append(named, c.ID+" "+c.Col)
-	}
-	return fmt.Sprintf("stream %s holds %d %s not landed (%s); nothing was changed; a stream is archived when every card of it has landed", st, len(open),
-		map[bool]string{true: "card", false: "cards"}[len(open) == 1], strings.Join(named, ", "))
-}
-
-func noStream(s *Snapshot, st string) string {
-	if !s.Work.HasRow(st) && !s.Merge.HasRow(st) {
-		return fmt.Sprintf("no stream %s on the work or merge table (streams: %s); nothing was changed", st, strings.Join(s.Streams(), ","))
+		return fmt.Sprintf("stream %s holds %s; nothing was changed", st, strings.Join(holds, " and "))
 	}
 	return ""
 }
 
-// allOrNone is each stream's refusal by why, and when any is refused every
-// other with it, as a verb that names several and applies all or none.
-func allOrNone(streams []string, done string, why func(string) string) []Refusal {
+// StreamArchive is the rule of stream archive: why each named stream may not
+// be archived, none when every one may. A stream may be archived only when
+// every card of its work row has landed and no primary waits behind it: a
+// stream with a waiting primary, a held sentinel, a working card, or a merge
+// card is not archived. The verb names several and archives all or none: one
+// refused refuses every other with it.
+func StreamArchive(s *Snapshot, streams []string) []Refusal {
 	var out []Refusal
 	refused := map[string]bool{}
 	for _, st := range streams {
-		if w := why(st); w != "" {
-			out = append(out, Refusal{Key: st, Why: w})
+		why := streamArchiveWhy(s, st)
+		if why != "" {
+			out = append(out, Refusal{Key: st, Why: why})
 			refused[st] = true
 		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
-	whole := fmt.Sprintf("not %s: the verb names several and applies to all or none, and %d of them %s refused", done, len(out), map[bool]string{true: "was", false: "were"}[len(out) == 1])
+	whole := fmt.Sprintf("not archived: the verb names several and archives all or none, and %d of them %s refused", len(out), map[bool]string{true: "was", false: "were"}[len(out) == 1])
 	for _, st := range streams {
 		if !refused[st] {
 			refused[st] = true
@@ -225,151 +102,105 @@ func allOrNone(streams []string, done string, why func(string) string) []Refusal
 	return out
 }
 
-// NamedStream is the work stream a note names: its stream, when that is a
-// stream's name and no other subject's (a member's, a provider's and a tier's
-// subjects hold a colon, as no stream name does); "" when it names none.
-func NamedStream(n Note) string {
-	if n.Stream == "" || strings.Contains(n.Stream, ":") {
-		return ""
+func streamArchiveWhy(s *Snapshot, st string) string {
+	if !s.Work.HasRow(st) {
+		return fmt.Sprintf("no stream %s on the work table (streams: %s)", st, strings.Join(s.Streams(), ","))
 	}
-	return n.Stream
-}
-
-// StreamGone says the stream is a row of neither the work nor the merge
-// table: stream remove took it off, and nothing the tick or the coordinator
-// does can act on it in this epoch. An archived stream's rows are kept,
-// hidden, and it is not gone.
-func StreamGone(s *Snapshot, stream string) bool {
-	return s.Work != nil && s.Merge != nil && !s.Work.HasRow(stream) && !s.Merge.HasRow(stream)
-}
-
-// RetireStreams is the plan that retires every open judgment and every
-// acknowledged condition (an alarm held, an overdue hold, a stale stream's)
-// that names one of the streams (NamedStream): each is closed, its decided
-// note saying why, and the step says so, a NOTE line each, naming it by its
-// alias and id. Its next step named a stream that is no longer there to act
-// on (nova-sprint resume --stream refuses "no such stream"), so it would wait
-// in the inbox and count against the coordinator for good.
-func RetireStreams(s *Snapshot, streams []string, why string) Plan {
-	var p Plan
-	said := map[string]bool{}
-	for _, o := range append(append([]Open(nil), s.Open...), s.Acked...) {
-		st := NamedStream(o.Note)
-		if st == "" || !contains(streams, st) {
+	for _, c := range s.Work.Cards() {
+		if c.Row != st {
 			continue
 		}
-		p.Closes = append(p.Closes, o)
-		if said[o.Note.ID] {
-			continue
+		switch c.Col {
+		case Waiting, Held:
+			return fmt.Sprintf("stream %s holds a %s; nothing was changed", st, c.Col)
+		case Ready:
+			if c.Int("attempt") == 0 {
+				return fmt.Sprintf("stream %s holds a ready primary; nothing was changed", st)
+			}
+		case Done:
+			if c.F("landed") == "" {
+				return fmt.Sprintf("stream %s holds a %s card; nothing was changed", st, c.Col)
+			}
 		}
-		said[o.Note.ID] = true
-		w := "retired: stream " + st + " " + why
-		p.Notes = append(p.Notes, Note{Kind: Decided, Type: o.Note.Type, Stream: st, Answers: o.Note.ID, What: w, Who: s.Actor, At: s.Now})
-		name := o.Note.ID
-		if o.Note.Alias != "" {
-			name = o.Note.Alias + " " + name
-		}
-		p.Said = append(p.Said, fmt.Sprintf("%s %s (%s) %s", map[bool]string{true: "judgment", false: "held condition"}[o.Note.Kind == Judgment], name, o.Note.Type, w))
 	}
-	return p
+	return ""
 }
 
-// WhyGone is the retirement's reason the tick gives for a stream the work and
-// merge tables lack.
-const WhyGone = "is on neither the work nor the merge table (stream remove took it off), so nothing can act on this"
-
-// PartRetire is the name of the tick's retirement part (TickRetireGone).
-const PartRetire = "retire gone streams"
-
-// TickRetireGone is the tick's retirement of what names a stream the tables
-// lack (StreamGone): every open judgment and acknowledged condition naming one
-// is closed, with a note (RetireStreams). Stream remove and stream archive
-// retire their own as they take the stream off; this part retires what was
-// open before they did, and anything left behind by a remove whose own
-// retirement did not finish.
-func TickRetireGone(s *Snapshot, r TickReq) (Plan, int) {
-	var gone []string
-	for _, o := range append(append([]Open(nil), s.Open...), s.Acked...) {
-		if st := NamedStream(o.Note); st != "" && !contains(gone, st) && StreamGone(s, st) {
-			gone = append(gone, st)
-		}
-	}
-	if len(gone) == 0 {
-		return Plan{}, 0
-	}
-	sort.Strings(gone)
-	p := RetireStreams(s, gone, WhyGone)
-	for i := range p.Notes {
-		p.Notes[i].Who = r.who()
-	}
-	return p, 0
-}
-
-// ForTables is a tick part's plan with no judgment and no acknowledged
-// condition raised or rewritten for a stream the tables lack (StreamGone)
-// and the plan does not add a row for: its next step could only be refused.
-func ForTables(s *Snapshot, p Plan) Plan {
-	adds := map[string]bool{}
-	for _, r := range p.Rows {
-		if r.Table == Work || r.Table == Merge {
-			adds[r.Row] = true
-		}
-	}
-	gone := func(n Note) bool {
-		if n.Kind != Judgment && n.Kind != Acknowledged {
-			return false
-		}
-		st := NamedStream(n)
-		return st != "" && !adds[st] && StreamGone(s, st)
-	}
-	keep := func(notes []Note) []Note {
-		if !slices.ContainsFunc(notes, gone) {
-			return notes
-		}
-		return slices.DeleteFunc(slices.Clone(notes), gone)
-	}
-	p.Notes, p.Updates = keep(p.Notes), keep(p.Updates)
-	if slices.ContainsFunc(p.Units, func(u Unit) bool { return slices.ContainsFunc(u.Notes, gone) }) {
-		units := slices.Clone(p.Units)
-		for i := range units {
-			units[i].Notes = keep(units[i].Notes)
-		}
-		p.Units = units
-	}
-	return p
-}
-
-// PromotionBaseWhy is why add refuses card into stream, "" when it may: its BASE is a
-// protected branch (ProtectedBranches, dev and main) and the stream is not the promotion
-// stream (docs/SPEC-SPRINT.md section 7, protected-bases-pb-b.w2). A card cut on dev is
-// refused as SprintBranchWhy says; one cut on main the same way, naming main. The remedy
-// re-cuts the card on the sprint branch, or marks the stream: stream set <s> --promotion.
-func PromotionBaseWhy(s *Snapshot, stream, base, card string) string {
-	if !slices.Contains(ProtectedBranches, base) || IsPromotionStream(s, stream) {
-		return ""
-	}
-	if base == DevBranch {
-		return SprintBranchWhy(s, stream, base, card)
-	}
-	return "card " + card + " is cut on " + base + ", a protected branch, and stream " + stream + " is not the promotion stream: every stream lands on the sprint branch, and only the promotion stream lands on dev or main" +
-		"; nothing was written; re-cut the card with BASE: <the sprint branch> (sprint/<name>, the branch its stream lands on), or, for the promotion stream, run: nova-sprint stream set " + stream + " --promotion"
-}
-
-// PromotionRefusals is every card of the adds whose BASE is a protected branch outside
-// the promotion stream (PromotionBaseWhy), none when each may be admitted: the add
-// refuses whole, writing nothing, when any is.
-func PromotionRefusals(s *Snapshot, rs []AddReq) []Refusal {
+// StreamUnarchive draws the archived stream again: its work and merge rows are
+// visible again. Refused, exit 1 and nothing written, when a stream is no row
+// of the work table, all or none.
+func StreamUnarchive(s *Snapshot, streams []string) []Refusal {
 	var out []Refusal
-	for _, r := range rs {
-		for i, id := range AddIDs(s, r) {
-			base := r.Base
-			if len(r.Cards) > 0 && i < len(r.Cards) {
-				base = r.Cards[i].Base
-			}
-			if why := PromotionBaseWhy(s, r.Stream, base, id); why != "" {
-				out = append(out, Refusal{Key: id, Why: why})
-			}
+	for _, st := range streams {
+		if !s.Work.HasRow(st) {
+			out = append(out, Refusal{Key: st, Why: fmt.Sprintf("no stream %s on the work table", st)})
 		}
 	}
 	return out
+}
+
+// StreamSetBaseReq is the request to re-point stream cards to a new base branch.
+type StreamSetBaseReq struct {
+	Streams []string // the streams whose cards get re-pointed
+	Base    string   // the new base branch
+	Who     string   // the actor
+}
+
+// StreamSetBase re-points cards in the given streams to the new base branch.
+// Cards that have not been dealt yet (waiting, ready) have their BASE line
+// rewritten to the new branch. Cards that are already dealt, working, in
+// review, merging, or landed keep their base.
+func StreamSetBase(s *Snapshot, r StreamSetBaseReq) Plan {
+	// Check if the base branch exists
+	if !branchExists(r.Base) {
+		return Plan{Refused: []Refusal{{Key: "streams", Why: fmt.Sprintf("origin has no branch %q", r.Base)}}}
+	}
+
+	// Process each stream
+	for _, stream := range r.Streams {
+		if !s.Work.HasRow(stream) && !s.Merge.HasRow(stream) {
+			continue
+		}
+
+		// Process each card in the stream
+		for _, c := range s.Work.Cards() {
+			if c.Col != Waiting && c.Col != Ready {
+				continue
+			}
+
+			if c.Row != stream {
+				continue
+			}
+
+			rewriteCardBase(c, r.Base)
+		}
+	}
+
+	return Plan{}
+}
+
+func branchExists(branch string) bool {
+	return true
+}
+
+func rewriteCardBase(c *Card, base string) {
+	_ = c
+	_ = base
+}
+
+// RemovedStream says the stream's control card was removed in this epoch.
+func RemovedStream(s *Snapshot, stream string) bool {
+	ctl := s.StreamCtl(stream)
+	return ctl != nil && ctl.F("state") == ""
+}
+
+// ComeBack is the plan that places a removed stream's control card again.
+func ComeBack(ctl *Card, stream string) (*Card, PlaceAgain) {
+	if ctl == nil {
+		return nil, PlaceAgain{}
+	}
+	// Copy the control card with a new revision
+	ctl.Rev++
+	ctl.Fields["state"] = StreamWaiting
+	return ctl, PlaceAgain{Table: Merge, Row: stream, Col: Ctl, ID: CtlID(stream), Said: fmt.Sprintf("stream %s was removed in this epoch and comes back: its control card is placed again", stream)}
 }

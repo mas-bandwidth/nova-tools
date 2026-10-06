@@ -3473,3 +3473,30 @@ func (a *app) afterAnswering(verb string, before []sprint.Open, reason, fix, act
 		return append(said, a.recordAnswers(ctx, st, verb, before, res, reason, fix, actor)...)
 	}
 }
+
+// streamSetBase registers the stream set --base verb.
+func init() {
+	verbs = append(verbs, verb{
+		name:    "stream",
+		syntax:  "set <stream>... --base <branch>: re-point stream cards to a live base",
+		example: "stream set sprint-next --base rowan/bus-rename",
+		run:     (*app).cmdStreamSetBase,
+	})
+}
+
+func (a *app) cmdStreamSetBase(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("stream set")
+	base := fs.String("base", "", "the new base branch")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "stream set", err.Error())
+	}
+	if len(pos) == 0 || *base == "" {
+		return refuse(stderr, "stream set", "wants streams and --base <branch>")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "stream set", err.Error())
+	}
+	return a.runStep("stream set", *c, st, store.StreamSetBaseStep(sprint.StreamSetBaseReq{Streams: pos, Base: *base, Who: c.actor}), stdout, stderr)
+}
