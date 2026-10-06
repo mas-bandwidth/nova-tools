@@ -116,13 +116,16 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		assert.Contains(t, redis, "ACL SETUSER "+u+" on ")
 	}
 
-	// the backup play on the fixture's store: neither backup loop is a record
-	// yet, so --check names the line that adds each, and writes no settings
+	// the backup play on the fixture's store: no backup loop is a record yet,
+	// so --check names the line that adds each, and writes no settings
 	backup := play("backup.yml", append(check, "-e", "nova_data_backup_dir="+filepath.Join(dir, "backups"), "-e", "nova_data_bus_addr=localhost:6381")...)
 	assert.Contains(t, backup, "BACKUP LOOP data-backup-sprint missing; run: nova-config loop add data-backup-sprint --machine localhost")
 	assert.Contains(t, backup, "BACKUP LOOP data-backup-bus missing; run: nova-config loop add data-backup-bus --machine localhost")
-	assert.Contains(t, backup, "BACKUP config OWED")
-	assert.Contains(t, backup, "loops=0/2 config=owed")
+	assert.Contains(t, backup, "BACKUP LOOP data-backup-config missing; run: nova-config loop add data-backup-config --machine localhost")
+	assert.Contains(t, backup, `"nova-config", "backup", "--pg", "postgres://nova_config@localhost:5432/nova"`)
+	assert.Contains(t, backup, "--keys NOVA_PG_CONFIG_PASSWORD")
+	assert.NotContains(t, backup, "OWED")
+	assert.Contains(t, backup, "loops=0/3")
 	assert.Contains(t, backup, `"redis_memory_percent": 75`)
 
 	// Three units already in the place: one this play wrote whose record is

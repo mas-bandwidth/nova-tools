@@ -3,11 +3,11 @@
 # setting of group_vars (the backups, the thresholds, the retention) to
 # nova_data_settings_file (JSON, 0600), and holds the Redis backup loops to
 # those settings: data-backup-sprint and data-backup-bus, each a loop record
-# running nova-sprint snapshot on its store. A loop record is configuration in
-# PostgreSQL that loops.yml renders; this play writes no record, so one missing
-# or different is a BACKUP LOOP line with the nova-config line that sets it, and
-# outside --check the play then fails. The PostgreSQL backup has no verb yet:
-# BACKUP config OWED says so on every run.
+# running nova-sprint snapshot on its store, and data-backup-config, the loop
+# record running nova-config backup against the fleet row's pg_dsn. A loop
+# record is configuration in PostgreSQL that loops.yml renders; this play writes
+# no record, so one missing or different is a BACKUP LOOP line with the
+# nova-config line that sets it, and outside --check the play then fails.
 #
 #   ansible-playbook -i ./nova-inventory fleet/backup.yml -e nova_data_backup_dir=<a volume off the store's disk> -e nova_data_bus_addr=<host:port> --check --diff | cat
 #   ansible-playbook -i ./nova-inventory fleet/backup.yml -e nova_data_backup_dir=<a volume off the store's disk> -e nova_data_bus_addr=<host:port> | cat
@@ -23,10 +23,20 @@
       bus: "{{ nova_data_backup_dir }}/redis-bus"
     data_login: [/usr/bin/env, "NOVA_SPRINT_REDIS_USER={{ nova_data_redis_user }}", "NOVA_SPRINT_REDIS_PASSWORD_ENV={{ nova_data_redis_password_key }}"]
     data_every: [--keep, "{{ nova_data_redis_keep | string }}", --every, "{{ nova_data_redis_every | string }}s"]
-    # the loop records the Redis backups run as, by name: the argv each must carry
+    # the PostgreSQL login: the fleet row's password-free DSN, the password the
+    # secret nova_pg_password_key names
+    data_pg_login: [/usr/bin/env, "NOVA_PG_PASSWORD_ENV={{ nova_pg_password_key }}"]
+    data_pg_every: [--keep, "{{ nova_data_pg_keep | string }}", --every, "{{ nova_data_pg_every | string }}s"]
+    # the loop records the backups run as, by name: the argv each must carry,
+    # and the secret its seat opens for it
     data_records:
       data-backup-sprint: "{{ data_login + ['nova-sprint', 'snapshot', '--redis', nova_redis_addr, '--dir', data_dirs.sprint] + data_every }}"
       data-backup-bus: "{{ data_login + ['nova-sprint', 'snapshot', '--redis', nova_data_bus_addr, '--dir', data_dirs.bus] + data_every }}"
+      data-backup-config: "{{ data_pg_login + ['nova-config', 'backup', '--pg', nova_pg_dsn | default(''), '--dir', data_dirs.config] + data_pg_every }}"
+    data_keys:
+      data-backup-sprint: "{{ nova_data_redis_password_key }}"
+      data-backup-bus: "{{ nova_data_redis_password_key }}"
+      data-backup-config: "{{ nova_pg_password_key }}"
     data_settings:
       backup:
         dir: "{{ nova_data_backup_dir }}"
@@ -73,10 +83,11 @@
       ansible.builtin.assert:
         that:
           - nova_redis_addr | default('') != ''
+          - nova_pg_dsn | default('') != ''
           - nova_loops is defined
         fail_msg: >-
-          {{ inventory_hostname }} has no applied Redis endpoint or no nova_loops; run: nova-config apply, then print the
-          inventory again
+          {{ inventory_hostname }} has no applied Redis endpoint, no pg_dsn or no nova_loops; run: nova-config fleet set
+          --pg_dsn <dsn> if the fleet row has none, then nova-config apply, then print the inventory again
         quiet: true
 
     - name: every setting is a whole number above zero, a percent at most 100
@@ -119,17 +130,10 @@
         msg: >-
           BACKUP LOOP {{ item.name }} {{ item.state }}{% if item.state != 'ok' %}; run: nova-config loop
           {{ 'add' if item.state == 'missing' else 'set' }} {{ item.name }} --machine {{ inventory_hostname }}
-          --argv '{{ item.argv | to_json }}' --keepalive true --seat {{ nova_seat }} --keys {{ nova_data_redis_password_key }}
+          --argv '{{ item.argv | to_json }}' --keepalive true --seat {{ nova_seat }} --keys {{ data_keys[item.name] }}
           --as <you>; then: nova-config apply --kind loop and fleet/loops.yml{% endif %}
       loop: "{{ data_loops }}"
       loop_control: { label: "{{ item.name }}" }
-
-    - name: the configuration backup
-      ansible.builtin.debug:
-        msg: >-
-          BACKUP config OWED: no verb takes, rotates and verifies a PostgreSQL backup yet (docs/DATA.md, Backups); take one
-          by hand before every nova-config migrate: pg_dump --format=custom --file {{ data_dirs.config }}/config-<UTC time>.dump
-          {{ nova_pg_dsn | default('<nova_pg_dsn>') }}
 
     - name: the backup loops are the records the settings name
       ansible.builtin.fail:
@@ -142,4 +146,4 @@
       ansible.builtin.debug:
         msg: >-
           BACKUP host={{ inventory_hostname }} dir={{ nova_data_backup_dir }} settings={{ nova_data_settings_file }}
-          loops={{ data_loops | selectattr('state', 'equalto', 'ok') | list | length }}/{{ data_loops | length }} config=owed
+          loops={{ data_loops | selectattr('state', 'equalto', 'ok') | list | length }}/{{ data_loops | length }}
