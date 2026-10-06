@@ -46,10 +46,13 @@ usage, in any Go module (no state, no store):
                       total elapsed time is over its budget (--budget, whole
                       seconds, default 60; --package-budget replaces it) and
                       per top-level test over --test-budget, then one CI-LOAD
-                      line. The allowlist (internal/pkg<TAB>test<TAB>seconds<TAB>
-                      <measured>s@<where>, where is run<id> or a bench, - in
-                      the test column for a package's own row) raises one
-                      package's or test's budget. One row, tab-separated:
+                      line. The allowlist (row shape:
+                      internal/pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>,
+                      where is run<id> or a bench, - in the test column for a
+                      package's own row; bound: budget sits between its
+                      measurement and three times it, the 3x headroom ceiling)
+                      raises one package's or test's budget. One row,
+                      tab-separated:
                       internal/ci/slowtests	TestA	4.5	3s@run1
                       The host's load average (the
                       larger of its 1- and 5-minute figures, over its CPUs;

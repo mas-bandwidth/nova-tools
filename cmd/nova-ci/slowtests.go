@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"flag"
@@ -115,7 +116,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	budget := fs.Int("budget", 60, "whole seconds a package's tests may take before it is over budget")
 	packageBudget := fs.Float64("package-budget", 0, "seconds a package's tests may take; replaces --budget when set")
 	testBudget := fs.Float64("test-budget", 0, "seconds one top-level test may take; 0 judges packages only")
-	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where> rows that raise one package's or one test's budget")
+	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where> rows (bound: between measurement and 3x it) that raise one package's or one test's budget")
 	sleeps := fs.String("sleeps", "", "pkg<TAB>test<TAB>where rows: the tests already skipped with the SLEEPS marker")
 	enforce := fs.Bool("enforce", false, "fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails")
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
@@ -148,7 +149,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		budgets.Package = *packageBudget
 	}
 	var err error
-	if budgets.Rows, err = readRows(*allowlist, slowtests.ParseAllowlist); err != nil {
+	if budgets.Rows, err = readAllowlist(*allowlist); err != nil {
 		problems = append(problems, "--allowlist "+oneline.Err(err))
 	}
 	if budgets.Sleeps, err = readRows(*sleeps, slowtests.ParseSleeps); err != nil {
@@ -247,6 +248,61 @@ func nonFinite(fs *flag.FlagSet) []string {
 		}
 	})
 	return bad
+}
+
+// readAllowlist parses the allowlist file, reporting every bad row in one refusal
+// with its 1-based line number.
+func readAllowlist(path string) ([]slowtests.Row, error) {
+	if path == "" {
+		return nil, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	var errs []string
+	var rows []slowtests.Row
+	seen := map[string]int{}
+	lineNum := 0
+
+	for sc.Scan() {
+		lineNum++
+		raw := sc.Text()
+		text := strings.TrimSpace(raw)
+		if text == "" || strings.HasPrefix(text, "#") {
+			continue
+		}
+		input := strings.Repeat("\n", lineNum-1) + raw + "\n"
+		parsed, parseErr := slowtests.ParseAllowlist(strings.NewReader(input))
+		if parseErr != nil {
+			errs = append(errs, parseErr.Error())
+			continue
+		}
+		if len(parsed) > 0 {
+			r := parsed[0]
+			key := r.Package + "\t" + r.Test
+			testCol := r.Test
+			if testCol == "" {
+				testCol = "-"
+			}
+			if first, dup := seen[key]; dup {
+				errs = append(errs, fmt.Sprintf("line %d: %s %s is already on line %d", lineNum, r.Package, testCol, first))
+				continue
+			}
+			seen[key] = lineNum
+			rows = append(rows, r)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("%s: %s", path, strings.Join(errs, "; "))
+	}
+	return rows, nil
 }
 
 // readRows parses the file a ledger flag names; an empty name is no rows.

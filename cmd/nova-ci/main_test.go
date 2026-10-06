@@ -379,6 +379,34 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	assert.Contains(t, stderr, "--allowlist", "a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
 }
 
+// TestSlowtestsAllowlistReportsAllBadRowsInOneRefusal pins that slowtests reports
+// every bad row of the allowlist file in one refusal with its line number, and that
+// help slowtests states the allowlist row shape and the bound.
+func TestSlowtestsAllowlistReportsAllBadRowsInOneRefusal(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	allow := filepath.Join(dir, "allow.txt")
+	content := "internal/ci\tTestA\t999\t1s@run1\n" +
+		"bad row without tabs\n"
+	require.NoError(t, os.WriteFile(allow, []byte(content), 0o644))
+
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--allowlist", allow}, "")
+	assert.Equal(t, 2, code, "bad allowlist: exit %d stderr %q, want a refusal", code, stderr)
+	assert.Empty(t, stdout, "stdout = %q, want empty", stdout)
+	assert.Contains(t, stderr, "nova-ci slowtests REFUSED: ")
+	assert.Contains(t, stderr, "line 1")
+	assert.Contains(t, stderr, "line 2")
+	assert.Contains(t, stderr, "run: nova-ci slowtests -h")
+	assert.Equal(t, 1, strings.Count(stderr, "\n"), "want exactly one refusal line, got %q", stderr)
+
+	// help slowtests must state the row shape and the bound.
+	code, helpOut, _ := runCI(t, []string{"help", "slowtests"}, "")
+	require.Equal(t, 0, code)
+	assert.Contains(t, helpOut, "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>")
+	assert.Contains(t, helpOut, "bound")
+}
+
 // PROBES 1, 5 and 6 of the #4413 ruling at the verb, with the load and CPUs
 // given by hand. The same go test -json -- a 1.4 s test with a row measured at
 // 0.4 s (budget 1.2 s, three times it), and cmd/nova-bus at 58.8 s with no row
@@ -504,6 +532,34 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 			assert.Contains(t, stderr, w, "%s: stderr %q lacks %q", tc.name, stderr, w)
 		}
 	}
+}
+
+// TestFunctionalPrintsPathsAcceptedByGoTest pins that `nova-ci functional ./...`
+// prints package paths in the form `go test -timeout 600s` accepts (./internal/x/),
+// and a test runs the printed line's paths through `go list` in a temp module.
+func TestFunctionalPrintsPathsAcceptedByGoTest(t *testing.T) {
+	t.Parallel()
+
+	bin := buildCLI(t)
+	dir := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/testmod\n\ngo 1.24\n"), 0o644))
+
+	pkgDir := filepath.Join(dir, "internal", "x")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "x.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "x_test.go"), []byte("//go:build functional\n\npackage x\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {}\n"), 0o644))
+
+	out := runIn(t, dir, bin, "functional", "./...")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 2, "output = %q, want paths on line 1 and run pattern on line 2", out)
+
+	paths := strings.Fields(lines[0])
+	require.Equal(t, []string{"./internal/x/"}, paths)
+	assert.Equal(t, "^(TestX)$", lines[1])
+
+	listOut := runIn(t, dir, "go", append([]string{"list"}, paths...)...)
+	assert.Contains(t, listOut, "example.com/testmod/internal/x")
 }
 
 // --max bounds the finding lines slowtests prints: at most --max CI-SLOW lines,
