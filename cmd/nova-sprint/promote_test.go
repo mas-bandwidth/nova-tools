@@ -19,6 +19,7 @@ type promoteScript struct {
 	gitCalls, ghCalls                     [][]string
 	gated                                 string
 	cfg                                   map[string]string
+	enqueued                              bool
 }
 
 func (s *promoteScript) config(args []string) (string, error) {
@@ -52,9 +53,9 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 	case "rev-parse":
 		rev := args[len(args)-1]
 		switch rev {
-		case s.live, "refs/heads/" + s.live:
+		case s.live, "refs/heads/" + s.live, "refs/remotes/origin/" + s.live:
 			return s.tip, nil
-		case "dev", "refs/heads/dev":
+		case "dev", "refs/heads/dev", "refs/remotes/origin/dev":
 			return s.baseSHA, nil
 		case "refs/promoted/last":
 			return "", errors.New("missing")
@@ -70,8 +71,10 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 		return "", nil
 	case "config":
 		return s.config(args)
-	case "push", "update-ref":
+	case "push", "update-ref", "fetch", "merge-base":
 		return "", nil
+	case "rev-list":
+		return "2", nil
 	default:
 		return "", errors.New("unexpected git " + strings.Join(args, " "))
 	}
@@ -85,12 +88,19 @@ func (s *promoteScript) gh(_ context.Context, _ string, args ...string) (string,
 		return "https://example.invalid/nova-tools/pull/42", nil
 	case args[0] == "pr" && args[1] == "view":
 		return `{"id":"PR_node_1","state":"OPEN"}`, nil
+	case args[0] == "pr" && args[1] == "checks":
+		return `[{"name":"ci","bucket":"pass"}]`, nil
 	case strings.Contains(joined, "enqueuePullRequest"):
+		s.enqueued = true
 		return `{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}`, nil
+	case args[0] == "api" && !s.enqueued:
+		return `{"data":{"node":{"mergeQueueEntry":null}}}`, nil
 	case args[0] == "api":
 		return `{"data":{"node":{"mergeQueueEntry":{"id":"MQE_1","state":"AWAITING_CHECKS"}}}}`, nil
+	case args[0] == "run" && args[1] == "list" && !s.enqueued:
+		return `[]`, nil
 	case args[0] == "run" && args[1] == "list":
-		return `[{"databaseId":7,"conclusion":"failure","status":"completed","name":"ci"}]`, nil
+		return `[{"databaseId":7,"conclusion":"failure","status":"completed","name":"ci","headBranch":"gh-readonly-queue/dev/pr-42-aaaa"}]`, nil
 	case args[0] == "run" && args[1] == "view":
 		return s.groupLog, nil
 	default:
@@ -147,15 +157,19 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 			return "", nil
 		},
 	}
+	queued, code := p.step(context.Background(), io.Discard, io.Discard)
+	require.Zero(t, code, "the first pass cuts, opens and queues")
+	require.True(t, queued.Pending, "the queued pull request is in flight")
+	require.Nil(t, queued.Judgment)
 	out, code := p.step(context.Background(), io.Discard, io.Discard)
 	require.Equal(t, 1, code, "a failed merge-group run is the judgment, not a clean pass")
-	require.Equal(t, "promo/2026-10-04-1", out.Branch, "the cut branch")
-	require.Equal(t, "promo/2026-10-04-1", out.Head, "the pull request head")
-	require.NotEqual(t, live, out.Head, "the live sprint branch is never the pull request head")
+	require.Equal(t, "promo/2026-10-04-1", queued.Branch, "the cut branch")
+	require.Equal(t, "promo/2026-10-04-1", queued.Head, "the pull request head")
+	require.NotEqual(t, live, queued.Head, "the live sprint branch is never the pull request head")
 	require.Equal(t, tip, s.gated, "the tree gate runs on the frozen commit")
-	require.Equal(t, []string{"s1-1", "s1-2"}, out.Cards)
-	require.Contains(t, out.Body, "s1-1")
-	require.Contains(t, out.Body, "s1-2")
+	require.Equal(t, []string{"s1-1", "s1-2"}, queued.Cards)
+	require.Contains(t, queued.Body, "s1-1")
+	require.Contains(t, queued.Body, "s1-2")
 
 	require.Equal(t, "promo/2026-10-04-1", s.ghFlag("create", "--head"))
 	require.NotEqual(t, live, s.ghFlag("create", "--head"))
@@ -183,6 +197,7 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 	require.NotNil(t, out.Judgment, "one judgment")
 	require.Equal(t, []string{"fix-and-recut", "skip"}, out.Judgment.Decisions)
 	require.Contains(t, out.Judgment.Tail, "FAIL: TestTree")
+	require.Equal(t, "ci", out.Judgment.Check, "the judgment names the failing check")
 	require.Empty(t, out.Promoted, "a failed merge-group run does not record promoted --sha")
 
 	// the same branch does not raise a second judgment
