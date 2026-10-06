@@ -1272,13 +1272,17 @@ func readerTiersSummary(t ntable.Table) string {
 
 // readersWidths is the readers table with a width column beside reading, each
 // reader's the width of its fleet row (sprint.ReaderWidth: reader-<m> runs at
-// m's width, the fleet table's width cell), "-" for a reader named for no
-// fleet row. Display only: the readers table holds no width column; the width
-// is derived, and where --json carries it on each reader's row.
+// m's width, the fleet table's width cell), a friend's reader her read slots
+// (reader-<friend> runs at those, apart from her card width), "-" for a reader
+// named for neither. Display only: the readers table holds no width column; the
+// width is derived, and where --json carries it on each reader's row.
 func readersWidths(t ntable.Table, fleet ntable.Table) ntable.Table {
 	widths := map[string]string{}
 	for _, r := range fleet.Rows {
 		widths[r.Key] = r.Texts[sprint.FieldWidth]
+	}
+	for f, n := range sprint.FriendReadSlotsOf(fleet) {
+		widths[f] = strconv.Itoa(n) // her read slots win, as in ReaderWidth
 	}
 	at := slices.Index(columnNames(t.Columns), sprint.Reading) + 1
 	cols := slices.Clone(t.Columns)
