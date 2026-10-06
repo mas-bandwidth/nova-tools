@@ -461,12 +461,12 @@ func (a *app) tickOf(ctx context.Context, st *store.Store) (store.TickResult, er
 // or repair). ended is closed when the tick's goroutine has returned: the caller
 // waits for it before the next tick (awaitGivenUp), for the goroutine shares the
 // loop's store and its twin.
-func (a *app) tickWithin(ctx context.Context, tick func(context.Context) (store.TickResult, error), d time.Duration, began time.Time, stdout, stderr io.Writer) (res store.TickResult, err error, over bool, ended <-chan struct{}) {
+func (a *app) tickWithin(ctx context.Context, tick func(context.Context) (store.TickResult, error), d time.Duration, began time.Time, stdout, stderr io.Writer) (res store.TickResult, over bool, ended <-chan struct{}, err error) {
 	end := make(chan struct{})
 	if d <= 0 {
 		res, err = tick(ctx)
 		close(end)
-		return res, err, false, end
+		return res, false, end, err
 	}
 	type result struct {
 		res store.TickResult
@@ -482,14 +482,14 @@ func (a *app) tickWithin(ctx context.Context, tick func(context.Context) (store.
 	select {
 	case r := <-done:
 		cancel()
-		return r.res, r.err, false, end
+		return r.res, false, end, r.err
 	case <-a.after(d):
 		fmt.Fprintf(stdout, "%s TICK DEADLINE the tick begun at %s did not end within %s: its plan is given up and the loop goes on to the next tick once it has stopped; the stacks follow on stderr\n",
 			a.now().Format("15:04:05"), began.Format("15:04:05"), d)
 		// ignored: the stacks are a diagnosis; the line above says what happened
 		_ = pprof.Lookup("goroutine").WriteTo(stderr, 2)
 		cancel()
-		return store.TickResult{}, nil, true, end
+		return store.TickResult{}, true, end, nil
 	}
 }
 
@@ -629,7 +629,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			deadline = lift
 		}
 		start := a.now()
-		res, err, over, ended := a.tickWithin(ctx, func(c context.Context) (store.TickResult, error) { return a.tickOf(c, st) }, deadline, began, stdout, stderr)
+		res, over, ended, err := a.tickWithin(ctx, func(c context.Context) (store.TickResult, error) { return a.tickOf(c, st) }, deadline, began, stdout, stderr)
 		if over {
 			// a tick past its deadline gives up its plan, never the process: the
 			// line is held until the tick given up has stopped, then the loop goes on

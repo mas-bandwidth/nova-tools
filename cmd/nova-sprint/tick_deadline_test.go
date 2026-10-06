@@ -36,7 +36,7 @@ func TestTickPastItsDeadlineIsGivenUp(t *testing.T) {
 	var out, errb bytes.Buffer
 	began := time.Date(2026, 10, 2, 14, 26, 1, 0, time.Local)
 	cancelled := make(chan struct{})
-	_, err, over, ended := a.tickWithin(context.Background(), func(ctx context.Context) (store.TickResult, error) {
+	_, over, ended, err := a.tickWithin(context.Background(), func(ctx context.Context) (store.TickResult, error) {
 		<-ctx.Done() // a plan that does not end until it is given up
 		close(cancelled)
 		<-stuck
@@ -66,7 +66,7 @@ func TestTickWithinItsDeadlineIsReturned(t *testing.T) {
 			return make(chan time.Time) // never fires: the tick ends first
 		}
 		var out, errb bytes.Buffer
-		res, err, over, ended := a.tickWithin(context.Background(), func(context.Context) (store.TickResult, error) {
+		res, over, ended, err := a.tickWithin(context.Background(), func(context.Context) (store.TickResult, error) {
 			return store.TickResult{State: store.Running}, nil
 		}, d, time.Time{}, &out, &errb)
 		assert.False(t, over)
