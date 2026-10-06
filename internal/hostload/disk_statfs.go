@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package sprint
+package hostload
 
 import (
 	"os"

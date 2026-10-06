@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package sprint
+package hostload
 
 // StatVolume answers ErrNoStatfs on a system this tool cannot ask for a volume's figures:
 // the beat carries no reading there.

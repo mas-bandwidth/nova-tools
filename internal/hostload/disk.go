@@ -1,4 +1,4 @@
-package sprint
+package hostload
 
 import (
 	"encoding/json"
@@ -7,12 +7,14 @@ import (
 	"io/fs"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Measuring a volume for a beat (docs/SPEC-SPRINT.md section 8, "Disk watermark"): the
+// The volume a working directory lives on, measured for a beat (docs/SPEC-SPRINT.md section
+// 8, "Disk watermark"): the
 // volume's figures are one statfs each beat; the largest directories under the AI root are a
 // bounded scan, taken at most every DiskScanEvery, so a beat every second costs one system
 // call and a full volume of millions of files costs one bounded walk in ten minutes.
@@ -26,7 +28,115 @@ const (
 	DiskScanBound = 200000
 	// EnvAIRoot names the AI root a beat scans, when it is not the working directory.
 	EnvAIRoot = "NOVA_AI_ROOT"
+	// DiskTop is how many of the largest directories under the AI root a reading names.
+	DiskTop = 5
 )
+
+// DirSize is one directory under the AI root and the bytes the bounded scan found in it;
+// Partial says the scan stopped at its bound inside it, so it holds at least that.
+type DirSize struct {
+	Path    string `json:"path"`
+	Bytes   int64  `json:"bytes"`
+	Partial bool   `json:"partial,omitempty"`
+}
+
+// Disk is one reading of the volume a working directory lives on: when, which machine,
+// the directory, the volume's mount point, its size and free bytes, its inodes and free
+// inodes (zero when the file system does not count them), and the largest directories
+// under the AI root (Root) by a bounded scan, or why they could not be listed.
+type Disk struct {
+	At         time.Time `json:"at"`
+	Host       string    `json:"host"`
+	Dir        string    `json:"dir"`
+	Volume     string    `json:"volume"`
+	Size       uint64    `json:"size"`
+	Free       uint64    `json:"free"`
+	Inodes     uint64    `json:"inodes,omitempty"`
+	InodesFree uint64    `json:"inodes_free,omitempty"`
+	Root       string    `json:"root,omitempty"`
+	Top        []DirSize `json:"top,omitempty"`
+	TopErr     string    `json:"top_err,omitempty"`
+}
+
+// pct is used of all as a whole percent, rounded up so a volume a byte from full never
+// reads under 100 only by rounding; 0 when all is zero.
+func pct(used, all uint64) int {
+	if all == 0 || used == 0 {
+		return 0
+	}
+	return int((used*100 + all - 1) / all)
+}
+
+// BytesUsed and InodesUsed are the percent of the volume's bytes and inodes in use.
+func (d Disk) BytesUsed() int  { return pct(d.Size-min(d.Free, d.Size), d.Size) }
+func (d Disk) InodesUsed() int { return pct(d.Inodes-min(d.InodesFree, d.Inodes), d.Inodes) }
+
+// Used is the volume's use: the larger of its bytes and its inodes used.
+func (d Disk) Used() int { return max(d.BytesUsed(), d.InodesUsed()) }
+
+// Valid says the reading names its volume and its machine and has a size.
+func (d Disk) Valid() bool { return d.Host != "" && d.Volume != "" && d.Size > 0 && !d.At.IsZero() }
+
+// Text is the reading as a row's disk cell says it: the percent used, the free bytes and,
+// when the file system counts them, the free inodes, "81% used, 120G free, 3.1M inodes
+// free".
+func (d Disk) Text() string {
+	out := fmt.Sprintf("%d%% used, %s free", d.Used(), HumanBytes(d.Free))
+	if d.Inodes > 0 {
+		out += ", " + HumanCount(d.InodesFree) + " inodes free"
+	}
+	return out
+}
+
+// HumanBytes is a count of bytes with a binary unit and one decimal under ten: 512B,
+// 3.4K, 120G.
+func HumanBytes(n uint64) string {
+	const units = "KMGTPE"
+	if n < 1024 {
+		return strconv.FormatUint(n, 10) + "B"
+	}
+	v, u := float64(n), -1
+	for v >= 1024 && u < len(units)-1 {
+		v /= 1024
+		u++
+	}
+	if v < 10 {
+		return strconv.FormatFloat(v, 'f', 1, 64) + string(units[u])
+	}
+	return strconv.FormatFloat(v, 'f', 0, 64) + string(units[u])
+}
+
+// HumanCount is a count with a decimal unit: 950, 3.1K, 12M.
+func HumanCount(n uint64) string {
+	switch {
+	case n < 1000:
+		return strconv.FormatUint(n, 10)
+	case n < 1_000_000:
+		return strconv.FormatFloat(float64(n)/1e3, 'f', 1, 64) + "K"
+	case n < 1_000_000_000:
+		return strconv.FormatFloat(float64(n)/1e6, 'f', 1, 64) + "M"
+	}
+	return strconv.FormatFloat(float64(n)/1e9, 'f', 1, 64) + "G"
+}
+
+// TopText is the largest directories as a judgment names them, "jobs 310G, cache 41G+"
+// (a + where the scan stopped at its bound inside it), or why they are not listed.
+func (d Disk) TopText() string {
+	if len(d.Top) == 0 {
+		if d.TopErr != "" {
+			return "not listed: " + d.TopErr
+		}
+		return "none listed"
+	}
+	parts := make([]string, len(d.Top))
+	for i, t := range d.Top {
+		parts[i] = t.Path + " " + HumanBytes(uint64(max(t.Bytes, 0)))
+		if t.Partial {
+			parts[i] += "+"
+		}
+	}
+	return strings.Join(parts, ", ")
+}
 
 // DiskStat is a volume's figures as the file system reports them for a directory on it.
 type DiskStat struct {
@@ -35,7 +145,7 @@ type DiskStat struct {
 }
 
 // ErrNoStatfs is the answer of a system this tool cannot ask for a volume's figures.
-var ErrNoStatfs = errors.New("this system cannot report a volume's free space")
+var ErrNoStatfs = errors.New("this system cannot report a volume's free bytes")
 
 // DiskMeter measures the volume Dir lives on, for each beat: Stat (the system's statfs
 // when nil) gives the volume's figures, and FS (os.DirFS(Root) when nil) is walked for the
