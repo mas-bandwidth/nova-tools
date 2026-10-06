@@ -33,7 +33,8 @@ import (
 // HeldCard is one card on the friend's row as the server answers it: the card, the job it
 // is delivered as (inbox/<job>), its column (ready or working) and its BRIEF.md whole, with
 // its packet (its kind, work or read, the branch it is pushed to, its tier, attempt,
-// generation and epoch); Why is, for a card the answer sends no brief for, why not (the
+// generation and epoch, and the repository and base its checkout is staged from: PacketOf
+// reads the brief's REPO: and BASE: lines when the server sends neither); Why is, for a card the answer sends no brief for, why not (the
 // worker view's, ParseView).
 type HeldCard struct {
 	Card    string `json:"card"`
@@ -45,6 +46,8 @@ type HeldCard struct {
 	Attempt int    `json:"attempt,omitempty"`
 	Gen     int    `json:"gen,omitempty"`
 	Epoch   uint64 `json:"epoch"`
+	Repo    string `json:"repo,omitempty"`
+	Base    string `json:"base,omitempty"`
 	Brief   string `json:"brief"`
 	Why     string `json:"-"`
 }
@@ -229,6 +232,12 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 	return c, firstErr
 }
 
+// jobOfWrote is the job a wrote line names: inbox/<job>/BRIEF.md (card ...).
+func jobOfWrote(rest string) string {
+	p, _, _ := strings.Cut(rest, " ")
+	return path.Base(path.Dir(p))
+}
+
 // briefHead is the first line of a BRIEF.md, read no further than it needs.
 func briefHead(path string) (string, bool) {
 	f, err := os.Open(path)
@@ -279,6 +288,9 @@ func cmpErr(first, err error) error {
 // it once a second), and a write or a retirement is always said.
 func (l *loop) inboxStep(now time.Time) {
 	d := l.d
+	if d.Stage != nil {
+		l.stageStep(nil, now) // every stage that ended is said each step, not once a reconcile
+	}
 	if d.Held == nil || (!d.inboxAt.IsZero() && now.Sub(d.inboxAt) < InboxEvery) {
 		return
 	}
@@ -312,6 +324,10 @@ func (l *loop) inboxStep(now time.Time) {
 		}
 	}
 	said := map[string]bool{}
+	byJob := map[string]HeldCard{}
+	for _, h := range row.Cards {
+		byJob[h.Job] = h
+	}
 	record := func(line string) {
 		_, key, _ := strings.Cut(line, " ") // the line without its time
 		if !strings.HasPrefix(key, "inbox: wrote ") && !strings.HasPrefix(key, "inbox: retired ") {
@@ -322,8 +338,13 @@ func (l *loop) inboxStep(now time.Time) {
 		}
 		d.Record(line)
 		if _, rest, ok := strings.Cut(line, " inbox: wrote "); ok && l.mode == ModeBatch {
-			// a batch session is told of each brief written, in a turn of its own (startDealt)
-			l.dealt = append(l.dealt, rest)
+			// a batch session is told of each brief written, in a turn of its own (startDealt),
+			// once its job is staged when it is one the daemon stages (stageStep)
+			if h, ok := byJob[jobOfWrote(rest)]; ok && d.stageOwed(h) {
+				d.stageDealt[h.Job] = rest
+			} else {
+				l.dealt = append(l.dealt, rest)
+			}
 		}
 	}
 	c, err := SyncInbox(d.Dir, row, keep, asked, now, record)
@@ -334,6 +355,9 @@ func (l *loop) inboxStep(now time.Time) {
 	}
 	d.status.HeldKnown, d.status.Held, d.status.InboxJobs, d.status.Missing = true, c.Held, c.Inbox, c.Missing
 	d.status.HeldFrom = row.From
+	if d.Stage != nil {
+		l.stageStep(row.Cards, now)
+	}
 	ids := make([]string, 0, len(row.Cards))
 	for _, h := range row.Cards {
 		ids = append(ids, h.Card)
@@ -363,7 +387,7 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 			return t.ID == h.Card && t.State == "done" && (t.Job == "" || t.Job == h.Job)
 		})
 		c := Card{ID: h.Card, Brief: filepath.Join(d.Dir, "inbox", h.Job, "BRIEF.md"), Outbox: filepath.Join(d.Dir, "outbox", h.Job)}
-		if done || skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) {
+		if done || skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) || d.stageOwed(h) {
 			continue
 		}
 		return c, true, nil

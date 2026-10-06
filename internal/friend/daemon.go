@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -153,6 +154,10 @@ type Daemon struct {
 	Sprint    func(ctx context.Context, argv []string) (string, error)
 	ReadSlots func() int
 	ReadModel func(tier string) string
+	// Stage stages a held work card's job (Stager.Stage: jobs/<job>/repo and its JOB.md) and
+	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
+	// its brief alone.
+	Stage func(ctx context.Context, p Packet) (string, error)
 
 	m           *Machine
 	status      Status
@@ -165,8 +170,15 @@ type Daemon struct {
 	inboxAt     time.Time // when the inbox was last reconciled
 	heldIDs     []string  // the cards on her row at it
 	heldCards   []HeldCard
-	inboxSaid   map[string]bool // the inbox lines the last reconcile said that are said once while they stand
-	outbox      outboxState     // the outbox jobs finished, tried and noted (outbox.go)
+	inboxSaid   map[string]bool      // the inbox lines the last reconcile said that are said once while they stand
+	outbox      outboxState          // the outbox jobs finished, tried and noted (outbox.go)
+	staging     map[string]bool      // the jobs a stage is under way for
+	stageRetry  map[string]time.Time // when a job whose stage failed is staged again
+	stageSaid   map[string]bool      // the stage failures said, once while they stand
+	stageDealt  map[string]string    // a written brief's line for the batch session, held until its job is staged
+	stageMu     sync.Mutex
+	stageDone   []stageResult // the stages that ended, for the loop
+	stageWG     sync.WaitGroup
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
@@ -306,6 +318,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.brokenAfter = DefaultBrokenAfter
 	}
 	d.m = Start(d.Now())
+	if d.staging == nil {
+		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
+	}
+	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
