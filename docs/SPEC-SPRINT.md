@@ -2663,6 +2663,52 @@ renamed it from the name its PATHS gives), which the review passed. A head that 
 the batch branch and ends the batch as a head in conflict does: the conflict fact
 on it names every failure, `<file>:<line>` and the rule.
 
+What each of the lander's checks does with a head:
+
+| check | does |
+|---|---|
+| files outside PATHS (E12) | refuses |
+| a rename outside PATHS (E12) | refuses |
+| a stranded sentence fragment (E4) | refuses |
+| an unmatched backquote in a Markdown or text file (E4) | repairs; refuses only when ambiguous, naming the line; not read on a prose path |
+| an unmatched backquote in a Go comment (E4) | refuses; not read on a prose path |
+| a line the change ends in CRLF, trailing whitespace, a missing final newline | repairs |
+| a code fence the change leaves open | repairs; refuses when ambiguous, naming the line |
+| a ledger the merge leaves stale | repairs (regenerated at the merge) |
+| the tree gate | refuses |
+
+**The document repairs** (`sprint.RepairMerge` and `sprint.RepairDoc`,
+internal/sprint/land_repair.go). A fault a formatter fixes is fixed at the merge, as the
+ledgers are regenerated, not refused: the owner, 2026-10-05, "Can we be more robust than
+rejecting work with a stray backquote?", after two landings that evening were refused for
+one backquote each. `checkCard` (cmd/nova-sprint/land.go) runs the repair on each merge
+commit before E12 and E4 are read. The repair reads each Markdown or text file the merge
+writes, and only the lines the change writes (`sprint.DocChanged` of the merge's diff); a
+fault of the base's is left. It makes a line the change ends in CRLF LF (not in a file
+whose own lines are CRLF), trims trailing whitespace outside a code block (not a Markdown
+hard break, two spaces before more of the paragraph), adds a missing final newline, and
+closes at the end of the file a fence the change leaves open when no blank line and text
+follow it. A paragraph with an odd count of backquotes and a run on a changed line loses
+the one run whose loss leaves every other run closed in a span that reads as one: an
+opening run is not after a word and before a blank, a closing run is not after a blank
+and before a word. When no run or more than one does, there are two ways to read it, and
+the head is refused with the line, `<file>:<line> leaves a code span unmatched and the
+repair is ambiguous: ... (E4)`, and nothing is written. A repaired file is written and the
+merge commit amended, its parents and subject kept and the repair in its body. Each repair
+is named in the landing note: the card's record (the merge's `resolved` note, beside a
+ledger's) and a `NOTE <card>: the documents were repaired at the merge: <file>:<line>
+<what>; ...` line under the batch (`sprint.RepairNote`). A symlink is not written
+through. With the repair run, a Markdown or text file's backquotes are the repair's to
+judge and E4's count no longer refuses them; E4 still reads a Go comment's.
+
+A stream's prose globs (`stream set <s> --prose <glob,...>`, the control card's field
+`prose`, `sprint.StreamProse`; `default` takes them off) name the files whose backquotes
+are their own: on them the code-span check does not run at all, neither the repair's nor
+E4's (`sprint.DocProse`). The private record's `security/**` and `ratings/**` are prose,
+set on its stream by the coordinator. The tests are internal/sprint/land_repair_test.go,
+internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`,
+on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
+
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
 and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
@@ -3576,7 +3622,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader up | `unhold <reader>...` in the old words, for one release: releases the hold; the reader's state is then its beat's |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
-| stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: `--attempts` sets the streams' attempt cap, their control cards' `attempts`, over the sprint's (section 2); `--reason` records why the read tier is set as `read_tier_reason`, and `--answers` answers the judgment `raise the read tier of the stream?`; the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
+| stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: `--prose` sets the streams' prose globs, their control cards' `prose`, the files the lander does not read for a code span (section 7, the document repairs), `default` takes them off; `--attempts` sets the streams' attempt cap, their control cards' `attempts`, over the sprint's (section 2); `--reason` records why the read tier is set as `read_tier_reason`, and `--answers` answers the judgment `raise the read tier of the stream?`; the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
 | set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--attempts <n|default>]`: also `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | stream archive | takes streams whose every card has landed off the work and merge tables and keeps their record (the owner, 2026-10-05 ~11:45 PM ET: "I would like you to remove all the already landed work streams"; 107 streams of landed cards crowded the table, and `stream remove` refuses them): each stream's rows of both tables are hidden (the table layer's row hide) and no card moves, so every landed card stays placed in its landed cell with its cost and its landing, the footers, the summary line, `where --json --rows --archived`, `stream_costs` and every record that reads the cards count them as before; runs on a RUNNING machine (no stop); refused (exit 1, nothing written) for a stream that is no row of either table and for one holding a card not landed (a primary or sentinel in any column of its work row but landed, a merge card queued or stuck), naming the cards; all or none for the streams named; archiving an archived stream changes nothing. The tick archives a stream itself (the archive part, after the end, every tick and on the tick that finds the sprint done) once its last card has landed and nothing waits behind it (no card of it in another column, no merge card queued or stuck, no queued change for its row), and writes one happened note, `streams archived`, naming each stream it archived once (information, addressed to no one); an archived stream that holds a card not landed again (an `add`) is drawn again by the next tick, RUNNING or STOPPED. A clear keeps an archived stream archived. where draws no archived row and prints one line under the work table, `N archived streams, M cards landed, $X (where --json --archived)`; `where --json` carries `archived` (`streams`, `landed`, `cost`, the cost cells summed to the cent) and leaves the archived rows out of `tables` and `rows` but with `--archived` (`sprint.StreamArchive`, `store.ArchiveStreams`, `store.keepArchive`) |
