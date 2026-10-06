@@ -3712,6 +3712,22 @@ The sprint's server serves both read-only (section 14, the server): `GET
 /api/view/coordinator[?all=1][&since=<cursor>]` and `GET
 /api/view/worker?as=<name>[&since=<cursor>]`, the verb's JSON as it prints it.
 
+#### view-cards-by-r2.w1
+
+`nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by
+tier|stream|col|holder] [--json]` lists, or with `--by` counts, the work table's primaries
+(sentinels aside), so the coordinator scans no keys by hand to learn what is in review by tier.
+It is `sprint.CardRows` and `sprint.CardsBy` (internal/sprint/cards_view.go) over one read of
+the work and fleet tables at one epoch, and writes nothing. `--col` is a column
+(waiting, ready, working, review, merging, landed); `--holder` is the member or friend whose
+fleet row holds the primary's working card. The tier is read as the dealer reads it
+(`sprint.CardTier`): the tier its last deal drew, a pinned tier or model, else its brief's
+line 1, flash when it names none. The JSON (schema 1) carries `view` ("cards"), `schema`,
+`at`, `epoch`, the filters given, `by`, `total`, and either `counts` (with `--by`; `"-"` is
+no holder) or `cards`, each with `id`, `stream`, `col`, `tier` and `holder`. The text is one
+`key=count` line per key then `total=<n>`, or one line per card. The server serves it at
+`GET /api/view/cards[?col=][&stream=][&holder=][&by=]` (no `since`).
+
 #### view-coordinator-needs.w1
 
 `nova-sprint view coordinator --needs [--json]` lists every decision waiting on the
