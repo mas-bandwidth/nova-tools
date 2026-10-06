@@ -738,6 +738,58 @@ naming that card (`inbox: the sprint server does not serve friend cards (card
 daemon-writes-every-taken-card3 adds it) ...`), never once a loop; with no worker view to
 fall back on (`friend.NotServed`) it writes and retires nothing.
 
+## The daemon stages every job it writes (internal/friend/stage.go)
+
+On 2026-10-05 the first lanes of the rocketnet audit held with "no worktree, no remote" and the
+schema cards with "JOB.md missing: card not staged": the daemon wrote the brief and nothing
+else, and the coordinator staged clones and `JOB.md` files by hand from a scratchpad script all
+night. Writing the brief without staging the job is half a delivery.
+
+Each reconcile, for every held work card whose `inbox/<job>/BRIEF.md` is there (the daemon's
+write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages the job
+(`Daemon.Stage`, `friend.Stager`, wired by `nova-friend run` with her working directory):
+
+- The packet is `PacketOf`: the server's `repo`, `base`, `branch` and `attempt` in the
+  `friend cards` answer when it sends them, else the brief's own lines (`REPO:`, `BASE:`, and
+  the STATUS line's branch and attempt). A read, and a work card whose brief names no `REPO`,
+  stage nothing here. A packet git could misread (a repository that is no `owner/name`, a base
+  or branch that is no ref name, a job that is no single path element) is refused before any
+  git runs.
+- One bare mirror per repository, `mirrors/<owner>/<name>.git`, cloned the first time with her
+  account's git credentials (the daemon's environment, `GIT_TERMINAL_PROMPT=0`), fetched before
+  a stage unless fetched within `MirrorFreshFor` (10 s), so a stage is a fetch and a local
+  clone: seconds. The base is a branch, else a tag, else a full sha, in the mirror.
+- The checkout is cloned from the mirror beside the job (`jobs/<job>/.repo.staging`), its
+  origin set to the repository itself (never the mirror, so the child's push goes out), checked
+  out at the base on the card's branch, and moved in whole as `jobs/<job>/repo`; `JOB.md` is
+  written last (`JobText`, the card-contract shape of docs/SPEC-CARD-CONTRACT.md: `# JOB: work
+  <card>, attempt <n>`, the checkout, the repository, base and commit, the branch and its push,
+  the outbox `REPORT.md` and `RESULT.md`, and the `no push` HOLD). A job with a `JOB.md` is
+  never staged again, and is never written over.
+- Each stage runs on a goroutine of its own, so the loop beats on while a mirror is cloned
+  (`MirrorCloneBudget`, 30 minutes, bounds the first clone); a repository's fetch and its
+  clones run one at a time. A stage the daemon's stop ends is said nowhere and runs again on
+  the next start.
+- No lane is handed a card whose job the daemon stages until its `JOB.md` is there, and in
+  batch mode the session is told of such a brief once its job is staged.
+- A repository her account cannot reach (its clone or fetch fails), or a base it does not
+  hold, is one judgment to the coordinator (a blocker message, `judgment: <friend> cannot reach
+  <repo>` or `judgment: card <c> cannot be staged on <friend>`) with its remedy, said once
+  until a stage of that repository or card succeeds, never one per card and never once a loop;
+  the job is tried again once a `StageRetryEvery` (a minute). Any other failure is said once in
+  the log (`stage: not staged jobs/<job>: ...`) and tried again the same way. A success is one
+  line (`stage: staged jobs/<job>/repo (<repo> at <base>, <sha>, on <branch>) and its JOB.md`).
+
+`TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile` pins it with a local bare repository:
+two cards on one repository are staged at its base on their branches from one mirror, with
+origin the repository and their `JOB.md`; two cards on a repository that is not there are one
+judgment and no checkout; a card with no `REPO` and a read are handed on their briefs, the
+unstaged cards are handed to no lane, and later loops stage nothing again.
+`TestAStageEndedByTheDaemonsStopIsStagedAgain` and `TestPacketOfAndItsRefusals` pin the rest.
+Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
+outside this card's paths), so the brief's lines are read; a read's checkout at the head under
+read is not staged here; and the staging has no TLA+ module of its own yet.
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,

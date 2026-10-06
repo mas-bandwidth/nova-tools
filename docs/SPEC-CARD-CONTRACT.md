@@ -435,6 +435,13 @@ card's branch on origin and, when the child ran `gh pr create`, opened the pull 
 its title and body. Run it with `go test -tags functional -run TestTheScriptedChildEndToEnd
 ./cmd/nova-swarm/`; it needs no store and no network.
 
+A friend's card is staged by her own daemon, not by native: for each held work card whose
+brief it writes, `nova-friend run` clones the card's `REPO` at its `BASE` on the card's branch
+into `jobs/<job>/repo`, from a mirror it keeps per repository, and writes `jobs/<job>/JOB.md` in
+this shape (`friend.JobText`: the checkout, the branch and its push, the outbox report and the
+finish); a repository her account cannot reach is a judgment to the coordinator
+(docs/SPEC-FRIEND.md, "The daemon stages every job it writes").
+
 The card template (`nova-swarm template --name card`) ends with STEP 6, "End as JOB.md says":
 under a profile whose JOB.md ends the card with its pull request, there is nothing else to write;
 under one that asks for RESULT.md, the shape above.

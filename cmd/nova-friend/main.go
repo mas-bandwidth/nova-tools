@@ -71,6 +71,7 @@ type world struct {
 	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
+	stage     func(dir string) func(ctx context.Context, p friend.Packet) (string, error)                         // stages a held card's job under her working directory (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -193,6 +194,9 @@ func realWorld() world {
 		finish:   sprintVerb,
 		cards:    sprintAsk,
 		view:     sprintView,
+		stage: func(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
+			return (&friend.Stager{Dir: dir}).Stage
+		},
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
 		settings: friend.OSFS{},
@@ -882,6 +886,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		Held:      w.held(name, server),
+		Stage:     w.stager(dir),
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -941,6 +946,15 @@ func (w world) held(name, server string) func(context.Context) (friend.Row, erro
 		now = time.Now
 	}
 	return friend.HeldVia(name, func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }, view, now)
+}
+
+// stager is the daemon's Stage: every held work card's job staged under her working directory
+// (jobs/<job>/repo and its JOB.md); nil in a world that stages none or asks no held cards.
+func (w world) stager(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
+	if w.stage == nil || w.cards == nil || dir == "" {
+		return nil
+	}
+	return w.stage(dir)
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
