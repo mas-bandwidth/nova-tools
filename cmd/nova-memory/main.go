@@ -247,17 +247,16 @@ func refuseWith(stderr io.Writer, where, what, remedy string) int {
 // verbHelp is the lines run adds to a verb's -h: its effect, and for verbs that
 // need extra context (eval's gold file format, boot's pin check), that context.
 func verbHelp(verb string) string {
-	var b strings.Builder
+	extra := ""
 	switch verb {
 	case "eval":
-		b.WriteString("gold file format: query<TAB>expected[,expected]\n")
-		b.WriteString("  how often should the lantern glazing be washed\tnotes/lantern.md\n")
-		b.WriteString("  washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md\n")
+		extra = "gold file format: query<TAB>expected[,expected]\n" +
+			"  how often should the lantern glazing be washed\tnotes/lantern.md\n" +
+			"  washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md\n"
 	case "boot":
-		b.WriteString("checks the pin: every file present and readable, and their size\n")
+		extra = "checks the pin: every file present and readable, and their size\n"
 	}
-	b.WriteString("effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n")
-	return b.String()
+	return extra + "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
