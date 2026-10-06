@@ -34,6 +34,9 @@ type FriendLevelReq struct {
 	Started map[string]string
 	Who     string
 	Max     int
+	// Taken is the tick's friend deal's units (friendDeal): a ready card it took into a
+	// lane of hers this tick does not move.
+	Taken []Unit `json:"-"`
 }
 
 // FriendLevel evens the ready queues of the friends up, as level evens the members': a
@@ -72,6 +75,9 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		row := FriendRow(f.Name)
 		held[f.Name], working[f.Name] = friendLoad(s, f.Name)+dealt[f.Name], s.Fleet.Count(row, Working)+dealtWorking[f.Name]
 		for _, c := range s.Fleet.Cell(row, Ready) {
+			if dealtWorking[f.Name] > 0 && unitPromoted(r.Taken, c.ID) {
+				continue // the deal took it into a lane of hers this tick (friendDeal)
+			}
 			if pr := s.Work.Placed(c.F("primary")); pr != nil && !OnlyFriend(pr) && r.Started[c.ID] == "" && !friendStarted(s, f, c) {
 				queues[f.Name] = append(queues[f.Name], c)
 			}
