@@ -422,5 +422,11 @@ MCFriendReadyTakeBrokenNoFill.cfg	MCFriendReadyTake.tla	action	FilledAfterTick	i
 MCFriendReadyTakeBrokenPastWidth.cfg	MCFriendReadyTake.tla	invariant	LanesHard	ignore-terminal	friendreadytake	required	-
 MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	ignore-terminal	friendreadytake	required	-
 MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
+MCFriendStartWindow.cfg	MCFriendStartWindow.tla	pass	-	ignore-terminal	friendstartwindow	required	-
+MCFriendStartWindowBrokenNoFloor.cfg	MCFriendStartWindow.tla	invariant	CeilingAndFloor	ignore-terminal	friendstartwindow	required	-
+MCFriendStartWindowBrokenReturnStarted.cfg	MCFriendStartWindow.tla	invariant	StartedStays	ignore-terminal	friendstartwindow	required	-
+MCFriendStartWindowBrokenRedeal.cfg	MCFriendStartWindow.tla	invariant	NeverBackToHer	ignore-terminal	friendstartwindow	required	-
+MCFriendStartWindowBrokenNoReturn.cfg	MCFriendStartWindow.tla	action	ReturnedAtWindow	ignore-terminal	friendstartwindow	required	-
+MCFriendStartWindowBrokenNoTrim.cfg	MCFriendStartWindow.tla	action	BoundedAfterPart	ignore-terminal	friendstartwindow	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
