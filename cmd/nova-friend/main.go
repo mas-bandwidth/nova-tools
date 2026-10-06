@@ -74,7 +74,7 @@ type world struct {
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
 	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage     func(dir string) func(ctx context.Context, p friend.Packet) (string, error)                         // stages a held card's job under her working directory (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	stage     func(dir, mirrors string) func(ctx context.Context, p friend.Packet) (string, error)                // stages a held card's job under her working directory from the mirrors under mirrors (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -224,8 +224,8 @@ func realWorld() world {
 		cards:    sprintAsk,
 		view:     sprintView,
 		friends:  coordinatorFriends,
-		stage: func(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
-			return (&friend.Stager{Dir: dir}).Stage
+		stage: func(dir, mirrors string) func(ctx context.Context, p friend.Packet) (string, error) {
+			return (&friend.Stager{Dir: dir, Mirrors: mirrors}).Stage
 		},
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
@@ -340,11 +340,19 @@ func friendTool(w world) *tool.Tool {
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
+		f.String("stages", StagesDaemon, "who stages each work card's job (jobs/<job>/repo and JOB.md): daemon, before it writes the card's BRIEF.md, or runner, a friend whose runner stages its own jobs, whose briefs the daemon writes alone")
+		f.String("mirrors", "", "the directory of the bare mirrors the daemon stages jobs from, <mirrors>/<owner>/<name>.git, each a full mirror (default: mirrors under the state dir, cloned the first time and fetched before each stage)")
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
 			if h := c.Str("harness"); h != "" && !friend.Known(h) {
 				c.Problem(fmt.Sprintf("--harness %q is no harness; it wants one of %s", h, strings.Join(friend.Harnesses, ", ")))
+			}
+			if s := c.Str("stages"); s != StagesDaemon && s != StagesRunner {
+				c.Problem(fmt.Sprintf("--stages %q wants daemon or runner", s))
+			}
+			if m := c.Str("mirrors"); m != "" && !filepath.IsAbs(m) {
+				c.Problem(fmt.Sprintf("--mirrors %q wants an absolute path", m))
 			}
 		})
 	}
@@ -363,7 +371,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--stages daemon|runner] [--mirrors <d>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -409,7 +417,12 @@ record with the remedy, and no lane runs. A lane
 turn the provider rate-limits (429, "rate limit reached", "too many requests", "input token limit
 exceeded") keeps its card and pauses new lanes for a backoff (30s doubling to 10m), lowers the live lane
 cap by a quarter and raises it one lane per clean 10m, no hold; three lowerings in an hour are one
-blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. With a sprint server the daemon also serves the friend's reader row (reader-<friend>): every 10s it asks queue --as reader-<friend> --json,
+blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. Each loop
+the daemon asks the sprint server for every card on her row (friend cards) and delivers each, whatever its WHO line
+prefers, in order: a work card naming its REPO has its job staged first (jobs/<job>/repo cloned at its BASE on its
+branch from a full bare mirror under --mirrors, then jobs/<job>/JOB.md), and only then its inbox/<job>/BRIEF.md
+written, so a lane never meets a brief with no checkout; --stages runner, a friend whose runner stages its own jobs,
+has her briefs written alone, and a job directory another hand made is never staged over. With a sprint server the daemon also serves the friend's reader row (reader-<friend>): every 10s it asks queue --as reader-<friend> --json,
 begins each asked read up to the row's read slots (row_read_slots=, 2 until the beat says; read slots are in addition to width, never taken by cards and never lent to them), writes <dir>/reads/<card>/{READ.md,BRIEF.md,WORKER-REPORT.txt},
 runs it as a one-shot of the harness (a claude account's model by the read's tier) inside the lane wall, and records read --ok|--broken --finding --usage from the RESULT.md, or read --return --reason --usage when it names no verdict or the provider's usage limit stops it. Every
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
@@ -441,7 +454,7 @@ dir= state= redis=): no store is opened and nothing is written.`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--stages daemon|runner] [--mirrors <d>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -1128,7 +1141,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		Held:      w.held(name, server),
-		Stage:     w.stager(dir),
+		Stage:     w.stager(c, dir, state),
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -1200,13 +1213,27 @@ func (w world) held(name, server string) func(context.Context) (friend.Row, erro
 }
 
 // stager is the daemon's Stage: every held work card's job staged under her working directory
-// (jobs/<job>/repo and its JOB.md); nil in a world that stages none or asks no held cards.
-func (w world) stager(dir string) func(ctx context.Context, p friend.Packet) (string, error) {
-	if w.stage == nil || w.cards == nil || dir == "" {
+// (jobs/<job>/repo and its JOB.md) before its brief is written, from the bare mirrors under
+// --mirrors (default: mirrors under the state dir); nil in a world that stages none or asks no
+// held cards, and for a friend whose runner stages its own jobs (--stages runner), whose
+// briefs are written alone.
+func (w world) stager(c *tool.Call, dir, state string) func(ctx context.Context, p friend.Packet) (string, error) {
+	if w.stage == nil || w.cards == nil || dir == "" || c.Str("stages") == StagesRunner {
 		return nil
 	}
-	return w.stage(dir)
+	mirrors := c.Str("mirrors")
+	if mirrors == "" {
+		mirrors = filepath.Join(state, friend.MirrorsDir)
+	}
+	return w.stage(dir, mirrors)
 }
+
+// Who stages a friend's jobs (--stages): the daemon, before it writes each brief, or her
+// runner, after it reads one.
+const (
+	StagesDaemon = "daemon"
+	StagesRunner = "runner"
+)
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	bin, err := w.binary()
@@ -1223,6 +1250,10 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		Mirrors: c.Str("mirrors"),
+	}
+	if c.Str("stages") == StagesRunner {
+		a.Stages = StagesRunner
 	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
