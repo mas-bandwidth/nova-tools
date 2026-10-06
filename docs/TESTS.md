@@ -1255,3 +1255,16 @@ LINT OK file=./cards/finding-internal-bus-send.md
 $ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 LINT OK file=./cards/finding-cmd-nova-bus-main.md
 ```
+
+## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
+
+`TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row
+rules, take back, generation job names, width under load, token cap, provider stop, cost line, tokens from opencode's
+database, route row, go shims, bus note); `TestLanesTakeBackACardOutsideTheRowsTiersAndRunOnlyTheRest`,
+`TestLanesAreHeldToTheLoadWidthWhileTheLoadIsHigh`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished`,
+`TestAFinishedCardPublishesItsCostOrWhyNot`, `TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt`,
+`TestAProviderFailureStopsEveryLaneUnderWayAndKeepsItsCard` and `TestAPauseMarkerNotWrittenIsNotAResume` run them through
+the lane rig on its fake clock (synctest, no socket, no wall-clock sleep), the take-back's fake server refusing a
+coordinator verb as the real one does; `TestResumeClearsTheLanesPauseAPersonBringsUp` and
+`TestRefuseGoRefusesWithTheWayToABench` run the two new verbs, and `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`
+the daemon's down beat while the pause stands.

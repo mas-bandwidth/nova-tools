@@ -103,6 +103,19 @@ nova-config apply --kind friend
 A claude row in one-shot mode without `config_dir` runs no lane: her daemon
 says so on its record with the `nova-config friend set` that fixes it.
 
+## One-shot lanes at parity with the card runner
+
+A friend whose delivery mode is `one-shot` runs her cards through nova-friend's lanes, not through a runner script:
+`run` takes the card filter, the load width, the per-card token cap, the provider pause, the go refusal and the card's
+cost from the friend row (`row_tiers=`, `row_streams=`, `row_token_cap=`, `row_load_max=`, `row_load_width=`,
+`row_pause_on=`, `row_refuse_go=`) or its flags, and says a card's cost on its `REPORT.md` (`Cost:` under `Head:`) and
+`RESULT.md`. A provider failure stops every lane under way (each card kept for later), writes `PAUSED` in her state
+directory, and her beat says her down with the provider's message while it stands; `nova-friend resume --as <me>` is the
+person bringing her up. A dealt card outside her tiers is never run, and the coordinator is asked by bus to take it back
+(`nova-sprint friend take`): the sprint server serves no friend's own take-back yet. Until nova-config's row and
+`nova-sprint friend beat` carry the `row_*` words, set them with `run`'s flags (docs/SPEC-FRIEND.md,
+opencode-lanes-parity-b.w1).
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or

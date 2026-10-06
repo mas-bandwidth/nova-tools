@@ -1713,6 +1713,50 @@ friends' rows at once is ended on her side only when it leaves her row. The lane
 marks still hold for every daemon on one working directory. The daemon still
 sends no `--running` on its beat.
 
+### opencode-lanes-parity-b.w1 — the lanes do what the runner scripts did (internal/friend/lane_parity.go)
+
+The owner, 2026-10-05: "can you please create cards to remove any shell scripts you use while coordinating with
+real golang nova-tool or nova-sprint verbs and flags", "We need to get away from these one shot shell scripts".
+Two friends ran their cards through two copies of one zsh runner because the one-shot lanes lacked what it did.
+Each behaviour is now a small function of `lane_parity.go`, configured on the friend row as the beat answers it
+(`row_<name>=<value>`, `LaneRulesOf`), the `run` flags being the defaults the row overrides (`LaneRules.Over`);
+nothing about a friend is in the code. Every one is off while `Daemon.Rules` is nil.
+
+| behaviour | row word / flag | function | test |
+|---|---|---|---|
+| card filter: a card of a tier outside the row's tiers is taken back; a card whose stream and id match none of the patterns is skipped | `row_tiers=flash`, `row_streams=security*,fp-sec*` / `--lane-tiers`, `--lane-streams` | `LaneRules.Judge` | `TestOpencodeLanesDoWhatTheRunnerStopgapsDid/the_card_filter` |
+| a dealt card outside the tiers that no lane began, no `jobs/<job>` exists for, and has no report is never run, and the coordinator is asked once, by a bus request, to take it back for the dealer with the exact verb (`nova-sprint friend take <friend> <card> --reason '<why>'`): the server serves no friend's take-back (below) | as above | `TakeBackNote`, `TakeArgv`, `loop.takeBack` | `.../take_back`, `TestLanesTakeBackACardOutsideTheRowsTiersAndRunOnlyTheRest` (its fake server refuses a coordinator verb as the real one does) |
+| job names carry the generation, `<card>~<epoch>` and `.g<gen>` past the first, as friend sync names the inbox directory; the lanes take a card's job from its inbox directory, which friend sync named, so `JobName` is the rule written down for the test, read back by the `ParseJob` the lanes use | | `JobName`, `ParseJob` | `.../the_job_name_carries_the_generation` |
+| at most the row's width at once, held to the load width (3) while the machine's one-minute load is above the bound; each change said once | `row_load_max=90`, `row_load_width=3` / `--load-max`, `--load-width` | `LaneRules.LaneWidthUnderLoad`, `Load1Of` | `.../width_under_load`, `TestLanesAreHeldToTheLoadWidthWhileTheLoadIsHigh` |
+| a per-card token cap: a HOLD `REPORT.md` naming the cap, tokens and turns, then the lane's turn is stopped | `row_token_cap=6000000` / `--token-cap` | `LaneRules.OverTokenCap`, `TokenCapReport`, `loop.capStep` | `.../the_token_cap`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished` |
+| a provider failure stops every lane: each turn under way is ended (its process group signalled) and its card kept in its lane's hand, counted toward nothing, one line per lane stopped; it writes `PAUSED` in the state directory with the provider's exact message, and while it stands her beat says her down with it (`friend beat <friend> --until <now+1h> --reason "provider failure (<model>): <message>"`, a worker's verb the server serves, sent again each beat); nothing resumes until a person runs `nova-friend resume`, after which the kept cards run again and her next beat withdraws the down. A marker that cannot be written holds the lanes in that daemon until it restarts and is never read as a resume | out of funds always; `row_pause_on=any` / `--pause-on any` adds a rate limit | `LaneRules.ProviderStop`, `WritePause`, `ReadPause`, `ClearPause`, `PauseBeat`, `loop.holdDown`, `loop.stopEvery`, `loop.heldTurn`, `loop.markerStep` | `.../a_provider_failure_stops_every_lane`, `TestAProviderFailureStopsEveryLaneUnderWayAndKeepsItsCard`, `TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt`, `TestAPauseMarkerNotWrittenIsNotAResume`, `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`, `TestResumeClearsTheLanesPauseAPersonBringsUp` |
+| a card's tokens read from opencode's own database (the lane's session and its children, less the session's totals when the card began: a lane's session serves many cards), priced by the store's route row for `--model` (`routes --json`), rounded up to the cent, `unpriced (<why>)` when there is no row or the sheet cannot price them; published as `Cost:` under `Head:` on `REPORT.md` and `tokens:`/`cost:` on `RESULT.md` | `--model`, `--db` | `TokensFromOpenCode` (the `sqlite3` CLI, read only: the tree has no sqlite driver), `LaneTokens.Sub`, `RoutePriceOf`, `CostOf`, `CostLine`, `WithCost`, `PublishCost` | `.../the_cost_line`, `.../tokens_come_from_opencode's_own_database`, `.../the_route_row_is_the_store's`, `TestAFinishedCardPublishesItsCostOrWhyNot` |
+| `go` and `gofmt` that refuse, first on every lane child's PATH, GOROOT pointing nowhere: a directory of symlinks to this binary, which run by those names answers the `refuse-go` verb (exit 2, with the way to a bench); no script | `row_refuse_go=1` / `--refuse-go` | `GoShims`, `GoShimName`, `ShimExec` (outside `Wall.Exec`, so `env` runs inside the wall), `GoRefusal` | `.../go_on_the_lane_machine_is_refused_by_a_shim_on_the_lane's_PATH`, `TestRefuseGoRefusesWithTheWayToABench` |
+| a bus note to the coordinator at each finish: `<friend> card <job>: <verdict>`, with the cost and wall | | `FinishNote`, `loop.finishNote` | `.../a_bus_note_at_each_finish`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished` |
+
+A rate limit still backs off by default (rate-limit-backs-off-not-down.w1, above): the runner held a friend down on
+a 429 as on a 402, and that finding stands unless the row says `pause_on=any`. The pause marker outlives the daemon:
+a daemon that starts and finds `PAUSED` holds its lanes at once, and one that finds it cleared lifts the hold it
+made; `nova-friend resume` removes it and does not bring the friend up on the sprint (`nova-sprint friend up`).
+
+The pause is modelled in `internal/friend/tla/LanePause.tla`: two lanes, two cards, a provider that fails twice, a
+marker write that may fail, a person who pays, resumes or restarts. TLC on a Linux bench (`MCLanePause.cfg`): 411
+distinct states; `NoSpendWhileHeld` (no turn runs while the lanes are held), `ResumeOnlyByPerson`, `OneHand` and
+`Finished` (every card ends with its report) hold. Its reversed witnesses: `MCLanePauseBrokenNoStop.cfg`, lanes that
+only stop starting turns, breaks `NoSpendWhileHeld`; `MCLanePauseBrokenMarkFirst.cfg`, a hold marked as the marker's
+before the write succeeded, breaks `ResumeOnlyByPerson`. The same two reversals of lanes.go turn
+`TestAProviderFailureStopsEveryLaneUnderWayAndKeepsItsCard` and `TestAPauseMarkerNotWrittenIsNotAResume` red.
+
+Not done here, and what blocks the stopgaps' retirement, each outside this card's paths: the sprint server does not
+yet answer the lane rules on the beat (`row_tiers=` and the rest are read, but nova-config's friend row and
+`nova-sprint friend beat` do not carry them, so until they do the `run` flags are the only source); `friend cards
+--json` does not carry a card's stream, so `--lane-streams` matches the id alone until it does (`HeldCard.Stream`
+reads `stream` when it comes); the server serves no friend's own take-back (`friend take` is the coordinator's class
+and the server runs only the workers' verbs), so a card outside her tiers waits on her row, unrun, until the
+coordinator acts on the request (a served `friend give <friend> <card> --reason` would end that); the runner's raise
+(width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
+ported; the invoice-effective price beside the card price is not ported.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
