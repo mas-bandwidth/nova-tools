@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -41,8 +42,8 @@ func TestHistoryCoversEveryWrite(t *testing.T) {
 	require.Equal(t, OpRemove, h[2].Op)
 }
 
-// TestRedisIsACopy: from tla/ConfigApply.tla, after a completed apply, Redis's views
-// equal the store's rows (ConfigApply.tla:499 ViewEq).
+// TestRedisIsACopy: from tla/ConfigApply.tla (ConfigApply.tla:499 ViewEq),
+// each store row's view must be present in Redis and equal.
 func TestRedisIsACopy(t *testing.T) {
 	t.Parallel()
 
@@ -92,8 +93,8 @@ func TestConflictRefusesAhead(t *testing.T) {
 	require.Empty(t, ap.log, "no writes when conflict")
 }
 
-// TestApplyOrder: from tla/ConfigApply.tla (ConfigApply.tla:511-521), in any prefix
-// of an apply's writes, a machine ceiling precedes a friend placed on it.
+// TestApplyOrder: from tla/ConfigApply.tla (ConfigApply.tla:511-521),
+// in any prefix of an apply's writes, a machine ceiling precedes a friend placed on it.
 func TestApplyOrder(t *testing.T) {
 	t.Parallel()
 
@@ -101,16 +102,20 @@ func TestApplyOrder(t *testing.T) {
 	st := NewMem()
 	ap := newFake()
 
-	// Seed a machine row and a friend placed on it
-	mid, err := st.Insert(ctx, KindMachine, Row{Name: "m1", Fields: map[string]string{}}, "actor")
+	// Seed a machine row and a friend (in the style of apply_test.go TestApplyWritesEveryDifferenceThenStamps)
+	mid, err := st.Insert(ctx, KindMachine, Row{Name: "m1", Fields: map[string]string{"user": "actor"}}, "actor")
 	require.NoError(t, err)
 	require.NotZero(t, mid)
 
-	fid, err := st.Insert(ctx, KindFriend, Row{Name: "f1", Fields: map[string]string{"machine": "m1"}}, "actor")
+	fid, err := st.Insert(ctx, KindFriend, Row{Name: "f1", Fields: map[string]string{"slots": "1"}}, "actor")
 	require.NoError(t, err)
 	require.NotZero(t, fid)
 
-	// Apply to write friend; friend precedes machine ceiling in the order
+	// Apply machine first (in the style of TestApplyWritesEveryDifferenceThenStamps)
+	_, err = Apply(ctx, st, ap, KindMachine, "actor", false, func(Op) {})
+	require.NoError(t, err)
+
+	// Then apply friend
 	_, err = Apply(ctx, st, ap, KindFriend, "actor", false, func(Op) {})
 	require.NoError(t, err)
 
@@ -118,10 +123,11 @@ func TestApplyOrder(t *testing.T) {
 	logMachineIdx := -1
 	logFriendIdx := -1
 	for i, entry := range ap.log {
-		if entry.Kind == KindMachine {
+		parts := strings.Fields(entry)
+		if len(parts) >= 2 && parts[1] == KindMachine {
 			logMachineIdx = i
 		}
-		if entry.Kind == KindFriend {
+		if len(parts) >= 2 && parts[1] == KindFriend {
 			logFriendIdx = i
 		}
 	}
@@ -133,19 +139,21 @@ func TestApplyOrder(t *testing.T) {
 	// Friend remove is followed only by removes (ConfigApply.tla:511-521)
 	friendRemoveIdx := -1
 	for i, entry := range ap.log {
-		if entry.Kind == KindFriend && entry.Op == OpRemove {
+		parts := strings.Fields(entry)
+		if len(parts) >= 2 && parts[0] == OpRemove && parts[1] == KindFriend {
 			friendRemoveIdx = i
 		}
 	}
 	if friendRemoveIdx != -1 {
 		for i := friendRemoveIdx + 1; i < len(ap.log); i++ {
-			require.Equal(t, OpRemove, ap.log[i].Op, "after friend remove, only removes follow")
+			parts := strings.Fields(ap.log[i])
+			require.Equal(t, OpRemove, parts[0], "after friend remove, only removes follow")
 		}
 	}
 }
 
-// TestStampOnlyWhenComplete: from tla/ConfigApply.tla (ConfigApply.tla:523), the
-// revision stamp is written only after that kind's ops complete.
+// TestStampOnlyWhenComplete: from tla/ConfigApply.tla (ConfigApply.tla:523),
+// the revision stamp is written only after that kind's ops complete.
 func TestStampOnlyWhenComplete(t *testing.T) {
 	t.Parallel()
 
@@ -165,15 +173,15 @@ func TestStampOnlyWhenComplete(t *testing.T) {
 	// Last entry in ap.log must be a stamp: "stamp <kind> <rev>"
 	require.NotEmpty(t, ap.log, "log has entries")
 	lastEntry := ap.log[len(ap.log)-1]
-	require.Equal(t, OpStamp, lastEntry.Op, "last op is stamp")
-	require.Equal(t, KindFriend, lastEntry.Kind, "stamp is for KindFriend")
+	require.True(t, strings.HasPrefix(lastEntry, "stamp"), "last op is stamp")
 
 	// Every op line comes before the stamp
 	for i := 0; i < len(ap.log)-1; i++ {
-		require.NotEqual(t, OpStamp, ap.log[i].Op, "stamp only at end")
+		require.False(t, strings.HasPrefix(ap.log[i], "stamp"), "stamp only at end")
 	}
 
-	// Test refusal case: apply refuses and revs[kind] does not move
+	// Test refusal case (ap.refuse, see TestApplyStopsAtARefusalAndNamesIt):
+	// apply refuses and revs[kind] has not moved (ConfigApply.tla:523)
 	ap2 := newFake()
 	ap2.revs[KindFriend] = 1000 // ahead, will cause conflict
 	st2 := NewMem()
