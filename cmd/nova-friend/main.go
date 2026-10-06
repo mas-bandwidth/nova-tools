@@ -581,7 +581,7 @@ state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything 
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
 CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
-CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|-> session_live=<conversation|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|queue|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|-> session_live=<conversation|-> queued=<n|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
 CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
@@ -596,7 +596,7 @@ with "untrue: shown <state>/<working>, ", and when the facts are ok but the frie
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
 friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
-reason, session_live}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
+reason, session_live, queued}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
 (a refused flag, an unreadable --shown).
@@ -1035,6 +1035,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		ag.Now, ag.State = w.now, state // the ledger of every delivery lives in her state directory
 		mailbox = ag
 	}
+	// a harness with its own queue (codex: the open chat's): its length on the status
+	var queued func() (int, bool)
+	if cx, ok := deliver.(*friend.Codex); ok {
+		cx.Now, queued = w.now, cx.Queued
+	}
 	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike
 	dry := c.DryRun()
 	// a harness that runs each card as a process of its own (friend.CardRunner) has no session to
@@ -1211,6 +1216,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Mailbox: mailbox,
+		Queued:  queued,
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},

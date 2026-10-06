@@ -147,7 +147,7 @@ func TestLineFormatting(t *testing.T) {
 		Last: "2026-10-05T10:00:00Z", LastExit: "0", FailedOfLast20: 0,
 		Deferred: 0, Broken: "-", Reason: "-",
 	}
-	assert.Equal(t, "CHECK HARNESS friend=bob harness=opencode route=push last=2026-10-05T10:00:00Z last_exit=0 failed_of_last20=0 deferred=0 broken=- reason=- session_live=-", hf.Line())
+	assert.Equal(t, "CHECK HARNESS friend=bob harness=opencode route=push last=2026-10-05T10:00:00Z last_exit=0 failed_of_last20=0 deferred=0 broken=- reason=- session_live=- queued=-", hf.Line())
 
 	bf := BusFacts{Friend: "bob", RealSince: 4, LastReal: "2026-10-05T10:05:00Z"}
 	assert.Equal(t, "CHECK BUS friend=bob real_since=4 last_real=2026-10-05T10:05:00Z", bf.Line())

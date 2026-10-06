@@ -48,7 +48,7 @@ type DaemonFacts struct {
 type HarnessFacts struct {
 	Friend         string `json:"friend"`
 	Harness        string `json:"harness"`
-	Route          string `json:"route"` // push, mailbox or passive
+	Route          string `json:"route"` // push, mailbox, queue or passive
 	Last           string `json:"last"`  // RFC3339 or "-"
 	LastExit       string `json:"last_exit"`
 	FailedOfLast20 int    `json:"failed_of_last20"`
@@ -58,6 +58,7 @@ type HarnessFacts struct {
 	Broken         string `json:"broken"`       // RFC3339 or "-"
 	Reason         string `json:"reason"`       // one line or "-"
 	SessionLive    string `json:"session_live"` // the conversation a mailbox harness delivers into, or "-"
+	Queued         string `json:"queued"`       // the harness's own queue not yet taken (codex), or "-"
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -442,6 +443,8 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		route = "passive"
 	} else if harness == "antigravity" {
 		route = "mailbox" // delivered into the conversation's mailbox at once, never deferred for a turn
+	} else if harness == "codex" {
+		route = "queue" // the open chat's queue: a turn under way is never steered from outside (Codex)
 	}
 
 	hf := HarnessFacts{
@@ -453,6 +456,10 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		Broken:      "-",
 		Reason:      "-",
 		SessionLive: dash(st.SessionLive),
+		Queued:      "-",
+	}
+	if st.QueueKnown {
+		hf.Queued = strconv.Itoa(st.Queued)
 	}
 
 	if seams.ReadLog != nil {
@@ -592,8 +599,8 @@ func (df DaemonFacts) Line() string {
 
 // Line renders the CHECK HARNESS line.
 func (hf HarnessFacts) Line() string {
-	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s session_live=%s",
-		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason), dash(hf.SessionLive))
+	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s session_live=%s queued=%s",
+		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason), dash(hf.SessionLive), dash(hf.Queued))
 }
 
 // Line renders the CHECK BUS line.

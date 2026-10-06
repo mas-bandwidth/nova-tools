@@ -757,6 +757,46 @@ such flag; ordinary-launch and idle-session behavior remain separate live
 checks. A later end-to-end check was sent at 17:11:00 and answered by the
 session at 17:11:10, but its transport was not independently identified.
 
+**A delivery during a turn is queued, never steered.** The Codex app holds
+what is queued until the turn under way ends, and shows each queued message
+under its composer with a "Steer" control. That control is not reachable from
+outside: the open chat's turn runs in the app's own app-server, and the local
+app-server daemon the adapter can reach (`codex app-server`, a WebSocket on
+`<CODEX_HOME>/app-server-control/app-server-control.sock` speaking JSON-RPC)
+does not have the thread loaded. `turn/steer` there for the friend's thread
+answers `thread not found`, because steering needs the active turn's id on
+the server that runs it. The `codex` CLI has no steer verb, and its `steer`
+feature flag reads "removed". Measured 2026-10-06 with codex 0.153.4, against
+the friend's thread mid-turn: `thread/loaded/list` was empty, `turn/steer`
+answered `thread not found`, `thread/queue/list` returned her three queued
+pong requests, and `thread/queue/delete` answered `{"deleted": false}` for an
+id not on the queue.
+
+So the queue holds one request for a pong at a time (`Codex.tidy`,
+`PongRequest`). A request for a pong is a session check, a wake turn or an
+idle wake: a delivery that asks for the pong and nothing else. Before such a
+delivery is queued, the adapter reads the thread's queue
+(`thread/queue/list`) and acts on each queued request:
+
+- A request the new one supersedes is withdrawn (`thread/queue/delete`), one
+  line each. That is a request for an older nonce, or the same request queued
+  an hour or more ago (`CodexCheckRequeue`, judged by the queued id's UUIDv7
+  time).
+- The same request still unread inside the hour stands for the new one, which
+  is not queued twice: one line, the delivery answered 0.
+- A withdrawal the app refuses is one line, marked superseded.
+- A queued message that carries anything else (a bus message, a card dealt)
+  is never withdrawn.
+
+So one session check is in flight: asked again on the check's cadence while
+it stands unread, it goes in again only once the session has taken it, or
+after the hour. The queue's length as the last delivery read it is on the
+status (`queued`) and on the check's harness line, `route=queue queued=<n>`.
+With no app-server socket the queue is not read and delivery goes on as
+before. `TestACodexDeliveryDuringATurnIsNotQueuedTwice`,
+`TestOneSessionCheckInFlightForCodex`,
+`TestTheCodexAppServerClientSpeaksJSONRPCOverAWebSocket`.
+
 ### Hosted in tmux
 
 A terminal harness (OpenCode, Grok, Aider, any TUI) started by `nova-friend host` runs in a detached
@@ -2087,14 +2127,15 @@ the log file, the bus store, the directory listing) so the verdict is a function
 1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
    (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
    and its seen age.
-2. Harness: the route (`push`, `mailbox` for antigravity, or `passive` for a harness nothing pushes into; dsh is `push`, each
+2. Harness: the route (`push`, `mailbox` for antigravity, `queue` for codex, or `passive` for a harness nothing pushes into; dsh is `push`, each
    delivery a headless turn) and, from the daemon's log, the deliveries (`exit=`
    lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
    window. `last` and `last_exit` are the newest delivery in the window, `failed_of_last20` the failures
    among the newest twenty in the window. `delivered` and `failed` (JSON only) are the window's whole
    counts: the verdict reads them. And the session mark: `broken` and its `reason` when the status says
-   the session is broken; and `session_live`, the conversation a mailbox harness delivers into as the
-   status says it (`-` for every other harness).
+   the session is broken; `session_live`, the conversation a mailbox harness delivers into as the
+   status says it (`-` for every other harness); and `queued`, her harness's own queue not yet taken
+   as the status says it (codex; `-` for every other harness).
 3. Bus: `real_since`, the messages from the friend in the window that are real (not ping, pong,
    daemon-pong or keepalive), and `last_real`.
 4. Work: the entries in the friend's `inbox/` (not dotfiles or `QUEUE.json`) and `outbox/`, and the

@@ -212,6 +212,9 @@ type Daemon struct {
 	// clock, off the loop, and it follows the conversation that reads (Antigravity.Follow),
 	// which the status says (session_live). Nil for every other harness.
 	Mailbox Mailbox
+	// Queued is her harness's own queue of deliveries not yet taken, as the adapter last read
+	// it (Codex.Queued), on the status each flush; nil, or not known, says none.
+	Queued func() (int, bool)
 	// Seat is the coordinator seat holder as the sprint server says it. An
 	// error, an empty name or a nil Seat is the seat unknown, and while it is
 	// unknown no message is delivered as an instruction (BatchFor).
@@ -1217,6 +1220,9 @@ func (d *Daemon) flush(now time.Time) {
 	s := d.status
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
+	if d.Queued != nil {
+		s.Queued, s.QueueKnown = d.Queued()
+	}
 	if d.Limited != nil && s.Session != SessionBroken {
 		if kind, until, limited := d.Limited(); limited {
 			s.Session, s.LimitKind, s.LimitUntil = SessionLimited, kind, until

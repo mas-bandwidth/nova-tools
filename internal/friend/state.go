@@ -83,8 +83,12 @@ type Status struct {
 	SessionReason string `json:"session_reason,omitempty"`
 	// SessionLive is the conversation a mailbox harness delivers into (Daemon.Mailbox):
 	// the one that reads, as the daemon last followed it; empty for every other harness.
-	SessionLive string    `json:"session_live,omitempty"`
-	BrokenAt    time.Time `json:"broken_at,omitempty"`
+	SessionLive string `json:"session_live,omitempty"`
+	// Queued is her harness's own queue of deliveries not yet taken, as the last delivery
+	// read it (codex: the open chat's queue), when QueueKnown.
+	Queued     int       `json:"queued,omitempty"`
+	QueueKnown bool      `json:"queue_known,omitempty"`
+	BrokenAt   time.Time `json:"broken_at,omitempty"`
 	// While the harness is at its usage limit or out of credits Session is
 	// SessionLimited, LimitKind says which (KindLimit or KindCredits) and
 	// LimitUntil is the reset (docs/SPEC-FRIEND.md, limits-mean-down-w-r.w1~15).
