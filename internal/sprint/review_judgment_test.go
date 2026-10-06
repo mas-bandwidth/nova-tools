@@ -27,7 +27,7 @@ func readOK(w *world, id string) {
 	for {
 		for _, rc := range w.s.Readers.Of(id) {
 			if rc.Col == Asked || rc.Col == Reading {
-				w.must(Read(w.s, ReadReq{As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+				w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
 			}
 		}
 		pr := w.s.Work.Card(id)
@@ -116,10 +116,10 @@ func TestReviewJudgmentRead(t *testing.T) {
 	finished(w, "s1-2", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 	rcs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // the second read, once the first came back ok
 	rcs = readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{rcs[1].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[1].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{rcs[1].ID}}}))
 	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, "s1-2"), Reason: "seen"}))
 	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)
 	got = openTypes(w, "s1-2")

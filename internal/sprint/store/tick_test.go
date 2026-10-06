@@ -72,7 +72,7 @@ func (h *harness) readAll() {
 	h.t.Helper()
 	for {
 		for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
-			h.run(ReadStep(sprint.ReadReq{As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
+			h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
 		}
 		// reads are asked one at a time (sprint.ReadsWanted): the next read of each
 		// card whose first came back ok is asked here, as the tick's ask would
@@ -97,7 +97,7 @@ func (h *harness) readAll() {
 func (h *harness) readOutstanding() {
 	h.t.Helper()
 	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
-		h.run(ReadStep(sprint.ReadReq{As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
+		h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
 	}
 }
 
