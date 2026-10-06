@@ -8,6 +8,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,6 +19,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	store := []string{"--redis", "{addr}"}
 	cli := newRig(t).cli().NoStdin()
 	testverbhelp.Check(t, cli, []testverbhelp.Case{
+		{Verb: "host"},
 		{Verb: "run", Flags: store},
 		{Verb: "install", Flags: store},
 		{Verb: "uninstall"},
@@ -28,7 +30,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "status"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "host", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -79,4 +81,53 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 		require.Contains(t, help, text)
 		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))
 	}
+}
+
+// The host verb's help names every flag, every output line and JSON field, the
+// exit codes and one example, and docs/CLI.md carries the same lines.
+func TestHostHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "host", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	doc := string(raw)
+	for _, text := range []string{
+		"--as", "--harness", "--dir", "--prompt", "--state-dir", "--dry-run", "--json", "-- <launch command...>",
+		"tmux new-session -d -s friend-<me> -c <d> -- <launch command...>", "host.json",
+		`HOST OK session=friend-<me> dir=<d> attach="tmux attach -t friend-<me>"`,
+		"HOST FAILED: friend-<me> runs already; run: tmux attach -t friend-<me>",
+		`HOST DRY-RUN session=friend-<me> dir=<d> dry_run=true command="tmux new-session ..."`,
+		`"facts":{"session","dir","attach"}`,
+		"Exit 0 started (or a dry run), 1 the session exists already, 2 could not run (a flag, no tmux, tmux refused the start).",
+		"example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider",
+	} {
+		require.Contains(t, help, text)
+		if strings.HasPrefix(text, "--") && !strings.Contains(text, " ") {
+			continue // a flag is in the doc's usage line
+		}
+		require.Contains(t, doc, strings.TrimPrefix(text, "example: "), "docs/CLI.md carries the help's text")
+	}
+	for _, name := range []string{"aider", "grok", "opencode"} {
+		require.Contains(t, help, name)
+		require.Contains(t, friend.HostPrompts, name)
+	}
+}
+
+// host takes its launch command after "--" and refuses a run without one,
+// and a harness it knows no prompt for without --prompt.
+func TestHostRefusesWhatItCannotStart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &tmuxRig{}
+	host := r.hosted(f)
+	code, _, errs := host("host", "--as", "bob", "--harness", "aider", "--dir", "/w/bob", "--state-dir", t.TempDir())
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "no launch command: put it after --")
+	code, _, errs = host("host", "--as", "bob", "--harness", "vim", "--dir", "/w/bob", "--state-dir", t.TempDir(), "--", "vim")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, `--harness "vim" has no idle prompt of its own; give --prompt <regexp>`)
+	code, _, errs = host("host", "--as", "bob", "--harness", "vim", "--prompt", "(", "--dir", "/w/bob", "--state-dir", t.TempDir(), "--", "vim")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--prompt is no regular expression")
+	assert.Empty(t, f.calls, "nothing ran")
 }

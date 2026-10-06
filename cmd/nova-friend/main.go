@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -79,6 +81,7 @@ type world struct {
 	uid       int
 	home      string
 	binary    func() (string, error)
+	launch    []string                     // host's launch command: the words after "--", split off in run (the verb table takes no positional)
 	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
 	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
@@ -229,7 +232,47 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 		// does not carry, so it is dispatched here (internal/friend RunWall)
 		return friend.RunWall(args[1:], os.Environ(), stdin, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "host" {
+		// the launch command follows "--", which the verb table does not carry
+		if i := slices.Index(args, "--"); i >= 0 {
+			w.launch, args = slices.Clone(args[i+1:]), args[:i]
+		}
+	}
 	return friendTool(w).Run(args, stdin, stdout, stderr)
+}
+
+// hostPromptNames is the harnesses host knows an idle prompt for, as help says them.
+func hostPromptNames() string {
+	names := slices.Sorted(maps.Keys(friend.HostPrompts))
+	return strings.Join(names, ", ")
+}
+
+// host starts the friend's terminal harness in a detached tmux session and
+// saves what run needs (friend.Host; SPEC-FRIEND.md, "Hosted in tmux").
+func (w world) host(c *tool.Call) *tool.Out {
+	dry := c.DryRun()
+	prompt := c.Str("prompt")
+	if prompt == "" {
+		prompt = friend.HostPrompts[c.Str("harness")]
+	}
+	spec := friend.HostSpec{Name: c.Str("as"), Harness: c.Str("harness"), Dir: c.Str("dir"), Prompt: prompt, Command: w.launch}
+	err := friend.Host(c.Ctx, w.exec, spec, dry)
+	switch {
+	case errors.Is(err, friend.ErrHostRuns):
+		o := tool.Fail(spec.Session() + " runs already")
+		o.Remedy = spec.Attach()
+		return o
+	case err != nil:
+		return tool.Refuse(err.Error())
+	case dry:
+		return tool.Done().As("DRY-RUN").Fact("session", spec.Session()).Fact("dir", spec.Dir).Fact("command", tool.Text(spec.Said())).
+			Note("nothing was started or saved")
+	}
+	rec := friend.HostRecord{Session: spec.Session(), Prompt: prompt, Harness: spec.Harness, Dir: spec.Dir}
+	if err := friend.WriteHost(w.stateDir(c), rec); err != nil {
+		return tool.Refuse("the session " + spec.Session() + " runs, but its record was not saved: " + err.Error())
+	}
+	return tool.Done().Fact("session", spec.Session()).Fact("dir", spec.Dir).Fact("attach", tool.Text(spec.Attach()))
 }
 
 // openRedis dials the bus store the way nova-bus does (internal/redisconn,
@@ -305,8 +348,54 @@ harness's deliver command), beats to the sprint server while the session answers
 coordinator PING at once (daemon-pong, never presence); presence is the session's answer to a nonce.
 state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
-		Words:     []string{"NONE", "FAIL", "DRIFT"},
+		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
+			{
+				Name:    "host",
+				Usage:   "host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>",
+				Example: "", // the example is in the detail: a pasted example line is a transcript a test must execute
+				Effect:  tool.LocalWrite + ": starts a detached tmux session and saves the friend's hosting record in the state directory; --dry-run starts and saves nothing",
+				DryRun:  true,
+				Detail: `Hosts the friend's terminal harness (any TUI: opencode, grok, aider) in tmux, so one uniform push reaches its
+open chat: the session is the TUI in the pane, the daemon types into it as a person would, and a person can
+attach and watch. It runs ` + "`tmux new-session -d -s friend-<me> -c <d> -- <launch command...>`" + ` (the launch command
+follows ` + "`--`" + `, and is required) and saves the session name and the idle prompt pattern in the state directory
+(host.json), so run and install need no flag for them: start the daemon with --harness tmux. The idle prompt is
+data per harness (` + hostPromptNames() + `); --prompt <regexp> overrides it and is required for any other --harness.
+The pattern is matched against the last non-empty line of the pane: it matches while the TUI waits for a
+message, and a turn runs while it does not. Hosting is opt-in: a TUI a person started outside tmux keeps its
+own harness adapter.
+Output, one line:
+  HOST OK session=friend-<me> dir=<d> attach="tmux attach -t friend-<me>"
+  HOST FAILED: friend-<me> runs already; run: tmux attach -t friend-<me>       (stderr, exit 1: the session exists)
+  HOST DRY-RUN session=friend-<me> dir=<d> dry_run=true command="tmux new-session ..."   (nothing started or saved)
+--json: {"result":{"verb","status","exit","remedy","why","reasons"},"facts":{"session","dir","attach"},...} with
+session, dir, command and dry_run=true for a dry run.
+Exit 0 started (or a dry run), 1 the session exists already, 2 could not run (a flag, no tmux, tmux refused the start).
+example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider   (runs as written; starts nothing)
+The same, started: drop --dry-run, then: nova-friend install --as bob --harness tmux --dir ./bob ...`,
+				ExitTable: "0 started, 1 the session exists already, 2 could not run.",
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name: the session is friend-<name>")
+					f.Required("harness", "the harness in the pane: "+hostPromptNames()+" (any other needs --prompt)")
+					f.Required("dir", "the friend's working directory: the pane's, and where the state files live")
+					f.String("prompt", "", "the idle prompt, a regular expression matched against the pane's last non-empty line (default: the harness's)")
+					stateDir(f)
+					f.Check(func(c *tool.Call) {
+						if len(w.launch) == 0 {
+							c.Problem("no launch command: put it after --, as in: nova-friend host --as bob --harness aider --dir ./bob -- aider")
+						}
+						p := c.Str("prompt")
+						if _, known := friend.HostPrompts[c.Str("harness")]; p == "" && c.Str("harness") != "" && !known {
+							c.Problem(fmt.Sprintf("--harness %q has no idle prompt of its own; give --prompt <regexp>", c.Str("harness")))
+						}
+						if _, err := regexp.Compile(p); err != nil {
+							c.Problem("--prompt is no regular expression: " + err.Error())
+						}
+					})
+				},
+				Run: w.host,
+			},
 			{
 				Name:    "run",
 				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--dry-run]",
@@ -781,6 +870,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
 	}
+	if tm, ok := deliver.(*friend.Tmux); ok {
+		tm.Name, tm.StateDir = name, state
+	}
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
@@ -1195,6 +1287,9 @@ func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, t
 	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
 	if err != nil {
 		return friend.CheckResult{}, "", false, err.Error()
+	}
+	if tm, ok := deliver.(*friend.Tmux); ok {
+		tm.Name, tm.StateDir = name, state
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	st, closeStore, err := w.open(ctx, c.Str("redis"))

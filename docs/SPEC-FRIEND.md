@@ -1081,6 +1081,41 @@ facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `w
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in
 internal/friend/check.go; each cites this section.
 
+## Hosted in tmux (internal/friend/adapter_tmux.go)
+
+A terminal harness (OpenCode, Grok, Aider, any TUI) is reached by one uniform push into its open chat when it is
+hosted in tmux: the friend's session is the TUI in the pane, the daemon types into it exactly as a person would,
+and a person can attach and watch. Hosting is opt-in: a TUI started outside tmux keeps its own harness adapter.
+No tmux library: the adapter runs the tmux binary through the package's `Exec` seam, and is a function of the
+screens it captures and a clock.
+
+**host.** `nova-friend host --as <name> --harness <h> --dir <d> [--prompt <regexp>] [--dry-run] [--json] --
+<launch command...>` runs `tmux new-session -d -s friend-<name> -c <d> -- <launch command...>`, refuses when
+the session exists (`HOST FAILED: friend-<name> runs already; run: tmux attach -t friend-<name>`, exit 1) and
+prints `HOST OK session=friend-<name> dir=<d> attach="tmux attach -t friend-<name>"`; exit 2 could not run.
+The session name and the idle prompt pattern are saved in the state directory (`host.json`), so `run` and
+`install` with `--harness tmux` need no flag for them. The idle prompt is data per harness (`HostPrompts`:
+aider, grok, opencode; the shapes are not yet measured on a live pane); `--prompt` overrides it.
+
+**The idle rule.** Deliver captures the pane (`tmux capture-pane -p`). When its last non-empty line matches the
+idle prompt, the session is idle: the text is typed literally as one line, each newline shown as ` ⏎ `
+(`tmux send-keys -l`), and Enter is a second call. It is accepted once the prompt line has gone (the turn
+started), polled each half second for up to a minute; a prompt that stays shows an error and the text is not typed
+again. While the prompt is absent a turn runs: Deliver returns `Deferred` and `Tmux.Busy` says busy, so no second
+turn lands beside one. A missing session is `Deferred` with the host line to run, no remedy (starting it fixes it)
+and no failure counted. A turn so short that the prompt is back at the first poll reads as a prompt that stayed.
+
+**The target.** Every call names the session as `=friend-<name>:` (exact match). A bare `friend-ada` is a prefix
+match in tmux and would reach `friend-adam`'s pane when `friend-ada` is missing (measured, tmux 3.6).
+
+**The model.** The pane's prompt drives the actions of `tla/Friend.tla`'s turn machine: the prompt showing is
+idle, where `Turn` may start; the prompt absent is a turn in flight, which `TurnEnds` closes when the prompt is
+back. The per-session busy and idle states of the delivery model (`tla/Delivery.tla`, fg-session-broken-on-provider-refusal)
+are not in this tree yet; the same two actions are the ones to cite there.
+
+**The screen.** The last screen of a hosted friend is the verb `nova-friend screen`
+(fg-friend-screen-verb), not this section. What a person runs to watch: `tmux attach -t friend-<name>`.
+
 ## Harness settings (internal/friend/settings.go)
 
 The finding of 2026-10-05: each friend's harness was set up by hand-editing

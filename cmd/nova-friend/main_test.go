@@ -898,3 +898,71 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 
 	cli.Do(t, "status", "--as", "bob", "--dir", dir, "--redis", "").Exit(0).Out(`undelivered not counted`)
 }
+
+// tmuxRig is the host verb over a fake tmux behind the Exec seam: it records
+// every argv and says whether friend-bob's session exists.
+type tmuxRig struct {
+	mu     sync.Mutex
+	exists bool
+	calls  []string
+}
+
+func (f *tmuxRig) run(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, name+" "+strings.Join(args, " "))
+	if args[0] == "has-session" && !f.exists {
+		return "can't find session: friend-bob\n", 1, nil
+	}
+	return "", 0, nil
+}
+
+func (r *rig) hosted(f *tmuxRig) func(args ...string) (code int, stdout, stderr string) {
+	w := r.world()
+	w.exec = f.run
+	return func(args ...string) (int, string, string) {
+		var out, errb strings.Builder
+		code := run(args, strings.NewReader(""), &out, &errb, w)
+		return code, out.String(), errb.String()
+	}
+}
+
+func TestHostRefusesASessionThatRuns(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &tmuxRig{exists: true}
+	code, out, errs := r.hosted(f)("host", "--as", "bob", "--harness", "aider", "--dir", "/w/bob", "--state-dir", t.TempDir(), "--", "aider")
+	assert.Equal(t, 1, code, "out=%q err=%q", out, errs)
+	assert.Contains(t, errs, "HOST FAILED: friend-bob runs already; run: tmux attach -t friend-bob")
+	assert.Equal(t, []string{"tmux has-session -t =friend-bob"}, f.calls, "nothing started")
+}
+
+func TestHostDryRunPrintsTheTmuxCommand(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &tmuxRig{}
+	state := t.TempDir()
+	code, out, errs := r.hosted(f)("host", "--as", "bob", "--harness", "aider", "--dir", "/w/bob", "--state-dir", state, "--dry-run", "--", "aider", "--model", "x y")
+	require.Equal(t, 0, code, "out=%q err=%q", out, errs)
+	assert.Contains(t, out, `HOST DRY-RUN session=friend-bob dir=/w/bob dry_run=true command="tmux new-session -d -s friend-bob -c /w/bob -- aider --model 'x y'"`)
+	assert.Empty(t, f.calls, "a dry run runs no tmux")
+	_, found, err := friend.ReadHost(state)
+	require.NoError(t, err)
+	assert.False(t, found, "a dry run saves nothing")
+}
+
+func TestHostStartsTheSessionAndSavesWhatRunNeeds(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &tmuxRig{}
+	state := t.TempDir()
+	code, out, errs := r.hosted(f)("host", "--as", "bob", "--harness", "aider", "--dir", "/w/bob", "--state-dir", state, "--", "aider", "--model", "x")
+	require.Equal(t, 0, code, "out=%q err=%q", out, errs)
+	assert.Contains(t, out, `HOST OK session=friend-bob dir=/w/bob attach="tmux attach -t friend-bob"`)
+	assert.Equal(t, []string{"tmux has-session -t =friend-bob", "tmux new-session -d -s friend-bob -c /w/bob -- aider --model x"}, f.calls)
+	h, found, err := friend.ReadHost(state)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "friend-bob", h.Session)
+	assert.Equal(t, friend.HostPrompts["aider"], h.Prompt)
+}
