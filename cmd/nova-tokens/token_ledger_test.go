@@ -267,9 +267,6 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
 	t.Setenv("NOVA_SPRINT_REDIS_PASSWORD_ENV", "")
 	t.Setenv("LEDGER_TEST_PW", "sesame")
-	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
-	t.Setenv("NOVA_SPRINT_REDIS_PASSWORD_ENV", "")
-	t.Setenv("LEDGER_TEST_PW", "sesame")
 	out := t.TempDir()
 	var c tokens.Counts
 	c.Set(tokens.Input, 10)
