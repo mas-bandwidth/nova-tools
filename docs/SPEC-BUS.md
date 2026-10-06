@@ -2,7 +2,9 @@
 
 nova-bus is the message bus between AIs: a message is sent once and delivered
 until it is acked. It depends on Redis, reached over the tailnet, and on
-nothing else: no git, no file twin, no mode that works without a server. The
+nothing else: no git, no file twin, no mode that works without a server. Redis
+is the source of truth for the bus's messages and receipts, and their backups,
+restore, acceptable loss and retention are [DATA.md](DATA.md)'s. The
 tool is `cmd/nova-bus`, the rules are `internal/bus`, the delivery machine is
 `tla/Bus2.tla`. It was built as nova-bus2 beside the git bus and took the name
 nova-bus on 2026-10-04, when the git bus was removed.
@@ -29,7 +31,11 @@ nova-bus on 2026-10-04, when the git bus was removed.
   JSON (`harness`, `nonce`, `proven`, `up`, `reason`, `at`), written by the
   friend daemon and read by `send`, `recv` and `names` (below,
   bus-requires-inbox-push-proof).
-- Nothing is ever deleted by the tool. Trimming is a later decision.
+- Nothing is ever deleted by the tool. Retention is defined in
+  [DATA.md](DATA.md), after the audit history (`bus2:log`) and the delivery
+  state (undelivered, pending and unreceipted entries) it must keep; the trim
+  that applies it is not built, so until it is, the store's memory and disk
+  thresholds (DATA.md, Thresholds) are what bound the history.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds

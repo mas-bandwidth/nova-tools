@@ -1,0 +1,145 @@
+# backup.yml: the backup configuration of the fleet's data (docs/DATA.md), on
+# the store machine. It makes the backup directories (0700), writes every data
+# setting of group_vars (the backups, the thresholds, the retention) to
+# nova_data_settings_file (JSON, 0600), and holds the Redis backup loops to
+# those settings: data-backup-sprint and data-backup-bus, each a loop record
+# running nova-sprint snapshot on its store. A loop record is configuration in
+# PostgreSQL that loops.yml renders; this play writes no record, so one missing
+# or different is a BACKUP LOOP line with the nova-config line that sets it, and
+# outside --check the play then fails. The PostgreSQL backup has no verb yet:
+# BACKUP config OWED says so on every run.
+#
+#   ansible-playbook -i ./nova-inventory fleet/backup.yml -e nova_data_backup_dir=<a volume off the store's disk> -e nova_data_bus_addr=<host:port> --check --diff | cat
+#   ansible-playbook -i ./nova-inventory fleet/backup.yml -e nova_data_backup_dir=<a volume off the store's disk> -e nova_data_bus_addr=<host:port> | cat
+- name: the backup configuration
+  hosts: store
+  # the facts give nova_home (group_vars) the login's home
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    data_dirs:
+      config: "{{ nova_data_backup_dir }}/postgres"
+      sprint: "{{ nova_data_backup_dir }}/redis-sprint"
+      bus: "{{ nova_data_backup_dir }}/redis-bus"
+    data_login: [/usr/bin/env, "NOVA_SPRINT_REDIS_USER={{ nova_data_redis_user }}", "NOVA_SPRINT_REDIS_PASSWORD_ENV={{ nova_data_redis_password_key }}"]
+    data_every: [--keep, "{{ nova_data_redis_keep | string }}", --every, "{{ nova_data_redis_every | string }}s"]
+    # the loop records the Redis backups run as, by name: the argv each must carry
+    data_records:
+      data-backup-sprint: "{{ data_login + ['nova-sprint', 'snapshot', '--redis', nova_redis_addr, '--dir', data_dirs.sprint] + data_every }}"
+      data-backup-bus: "{{ data_login + ['nova-sprint', 'snapshot', '--redis', nova_data_bus_addr, '--dir', data_dirs.bus] + data_every }}"
+    data_settings:
+      backup:
+        dir: "{{ nova_data_backup_dir }}"
+        redis_every_seconds: "{{ nova_data_redis_every | int }}"
+        redis_keep: "{{ nova_data_redis_keep | int }}"
+        pg_every_seconds: "{{ nova_data_pg_every | int }}"
+        pg_keep: "{{ nova_data_pg_keep | int }}"
+      thresholds:
+        bus_messages_per_hour: "{{ nova_data_bus_messages_per_hour | int }}"
+        oldest_pending_seconds: "{{ nova_data_oldest_pending_seconds | int }}"
+        unreceipted_age_seconds: "{{ nova_data_unreceipted_age_seconds | int }}"
+        disk_free_percent: "{{ nova_data_disk_free_percent | int }}"
+        redis_memory_percent: "{{ nova_data_redis_memory_percent | int }}"
+      retention:
+        bus_stream_keep_days: "{{ nova_data_bus_stream_keep_days | int }}"
+        bus_log_keep_days: "{{ nova_data_bus_log_keep_days | int }}"
+    data_numbers:
+      - [nova_data_redis_every, "{{ nova_data_redis_every }}"]
+      - [nova_data_redis_keep, "{{ nova_data_redis_keep }}"]
+      - [nova_data_pg_every, "{{ nova_data_pg_every }}"]
+      - [nova_data_pg_keep, "{{ nova_data_pg_keep }}"]
+      - [nova_data_bus_messages_per_hour, "{{ nova_data_bus_messages_per_hour }}"]
+      - [nova_data_oldest_pending_seconds, "{{ nova_data_oldest_pending_seconds }}"]
+      - [nova_data_unreceipted_age_seconds, "{{ nova_data_unreceipted_age_seconds }}"]
+      - [nova_data_disk_free_percent, "{{ nova_data_disk_free_percent }}"]
+      - [nova_data_redis_memory_percent, "{{ nova_data_redis_memory_percent }}"]
+      - [nova_data_bus_stream_keep_days, "{{ nova_data_bus_stream_keep_days }}"]
+      - [nova_data_bus_log_keep_days, "{{ nova_data_bus_log_keep_days }}"]
+  tasks:
+    - name: the backup directory and the bus store are named
+      ansible.builtin.assert:
+        that:
+          - nova_data_backup_dir is defined
+          - nova_data_backup_dir is string and nova_data_backup_dir.startswith('/')
+          - nova_data_bus_addr is defined
+          - nova_data_bus_addr is string and nova_data_bus_addr != ''
+        fail_msg: >-
+          backup.yml wants -e nova_data_backup_dir=<an absolute path on a volume that outlives the store's host> and
+          -e nova_data_bus_addr=<the fleet row's bus, host:port> (or both in host_vars/{{ inventory_hostname }}.yml);
+          a backup on the store's own disk does not survive the host (docs/DATA.md)
+        quiet: true
+
+    - name: the inventory carries the store and this machine's loop records
+      ansible.builtin.assert:
+        that:
+          - nova_redis_addr | default('') != ''
+          - nova_loops is defined
+        fail_msg: >-
+          {{ inventory_hostname }} has no applied Redis endpoint or no nova_loops; run: nova-config apply, then print the
+          inventory again
+        quiet: true
+
+    - name: every setting is a whole number above zero, a percent at most 100
+      ansible.builtin.assert:
+        that:
+          - (item[1] | string) is match('^[0-9]+$')
+          - (item[1] | int) > 0
+          - (item[1] | int) <= 100 or not item[0].endswith('_percent')
+        fail_msg: "{{ item[0] }} is {{ item[1] }}: it wants a whole number above zero{{ ', at most 100' if item[0].endswith('_percent') else '' }}"
+        quiet: true
+      loop: "{{ data_numbers }}"
+      loop_control: { label: "{{ item[0] }}" }
+
+    - name: the backup directories
+      ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0700" }
+      loop: "{{ data_dirs.values() | list }}"
+
+    - name: the settings directory
+      ansible.builtin.file: { path: "{{ nova_data_settings_file | dirname }}", state: directory, mode: "0700" }
+
+    - name: the settings the watchers and the backups read
+      ansible.builtin.copy:
+        content: "{{ data_settings | to_nice_json }}\n"
+        dest: "{{ nova_data_settings_file }}"
+        mode: "0600"
+
+    - name: the backup loops against the loop records
+      ansible.builtin.set_fact:
+        data_loops: >-
+          {%- set out = [] -%}
+          {%- for name, argv in data_records.items() -%}
+          {%- set have = nova_loops | selectattr('name', 'equalto', name) | list -%}
+          {%- set state = 'missing' if not have else ('ok' if (have[0].argv == argv and have[0].keepalive and have[0].enabled) else 'differs') -%}
+          {%- set _ = out.append({'name': name, 'argv': argv, 'state': state}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: each backup loop
+      ansible.builtin.debug:
+        msg: >-
+          BACKUP LOOP {{ item.name }} {{ item.state }}{% if item.state != 'ok' %}; run: nova-config loop
+          {{ 'add' if item.state == 'missing' else 'set' }} {{ item.name }} --machine {{ inventory_hostname }}
+          --argv '{{ item.argv | to_json }}' --keepalive true --seat {{ nova_seat }} --keys {{ nova_data_redis_password_key }}
+          --as <you>; then: nova-config apply --kind loop and fleet/loops.yml{% endif %}
+      loop: "{{ data_loops }}"
+      loop_control: { label: "{{ item.name }}" }
+
+    - name: the configuration backup
+      ansible.builtin.debug:
+        msg: >-
+          BACKUP config OWED: no verb takes, rotates and verifies a PostgreSQL backup yet (docs/DATA.md, Backups); take one
+          by hand before every nova-config migrate: pg_dump --format=custom --file {{ data_dirs.config }}/config-<UTC time>.dump
+          {{ nova_pg_dsn | default('<nova_pg_dsn>') }}
+
+    - name: the backup loops are the records the settings name
+      ansible.builtin.fail:
+        msg: >-
+          the backup loops {{ data_loops | rejectattr('state', 'equalto', 'ok') | map(attribute='name') | join(',') }} are not
+          the records the settings name; run the BACKUP LOOP lines above
+      when: not ansible_check_mode and (data_loops | rejectattr('state', 'equalto', 'ok') | list | length > 0)
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: >-
+          BACKUP host={{ inventory_hostname }} dir={{ nova_data_backup_dir }} settings={{ nova_data_settings_file }}
+          loops={{ data_loops | selectattr('state', 'equalto', 'ok') | list | length }}/{{ data_loops | length }} config=owed
