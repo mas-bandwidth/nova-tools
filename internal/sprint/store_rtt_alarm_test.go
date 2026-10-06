@@ -2,13 +2,13 @@ package sprint_test
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
@@ -26,7 +26,7 @@ func newStoreRig(t *testing.T) *storeRig {
 	t.Helper()
 	r := &storeRig{t: t, ctx: context.Background(), m: store.NewMem(), rtt: 1 * time.Millisecond}
 	n := 0
-	r.st = &store.Store{B: r.m, Names: storetest.Names{Prefix: "r-"}, Actor: "coordinator",
+	r.st = &store.Store{B: r.m, Names: sprint.Names{Prefix: "r-"}, Actor: "coordinator",
 		Now:   func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC) },
 		NewID: func() string { r.mu.Lock(); defer r.mu.Unlock(); n++; return "note-" + string(rune('A'+n)) },
 		Sleep: func(time.Duration) {}}
