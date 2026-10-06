@@ -62,5 +62,5 @@ func TestThePushProofRefusesWhatCannotBeDriven(t *testing.T) {
 			assert.Equal(t, c.delivered, ran, "a stub is refused before anything is delivered")
 		})
 	}
-	assert.Equal(t, []string{"opencode", "codex", "antigravity", "dsh", "gemini", "grok"}, Pushing())
+	assert.Equal(t, []string{"opencode", "codex", "antigravity", "dsh", "gemini", "grok", "tmux"}, Pushing())
 }

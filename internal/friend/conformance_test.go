@@ -140,6 +140,31 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 			return "100 1 grok\n200 100 tail -n 0 -F " + wake + "\n", 0, nil
 		})}
 	},
+	"tmux": func(t *testing.T, s *fakeSession, dir string) Deliverer {
+		// the pane shows its prompt until a line is typed and entered; the typed line is a turn of the session
+		var typed string
+		turn := false
+		return &Tmux{Dir: dir, Session: "friend-bob", Prompt: PromptPattern(`^>$`),
+			Sleep: func(context.Context, time.Duration) {},
+			Run: s.exec(func(name string, args []string, _ string) (string, int, error) {
+				require.Equal(t, "tmux", name)
+				switch args[0] {
+				case "capture-pane":
+					if turn {
+						return "working\n", 0, nil
+					}
+					return "output\n>\n", 0, nil
+				case "send-keys":
+					if args[len(args)-1] == "Enter" {
+						turn = true
+						s.act(strings.ReplaceAll(typed, " ⏎ ", "\n"))
+					} else {
+						typed = args[len(args)-1]
+					}
+				}
+				return "", 0, nil
+			})}
+	},
 	"antigravity": func(t *testing.T, s *fakeSession, dir string) Deliverer {
 		mailbox := ".gemini/antigravity/brain/conv1/.system_generated/messages"
 		home := fstest.MapFS{mailbox: &fstest.MapFile{Mode: fs.ModeDir}}
@@ -208,7 +233,7 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 	for harness := range harnessRigs {
 		require.True(t, Known(harness), "a rig for %s, which is no harness", harness)
 	}
-	assert.Len(t, harnessRigs, 6, "the six adapters with a deliver command each run the check")
+	assert.Len(t, harnessRigs, 7, "the seven adapters with a deliver command each run the check")
 	for _, harness := range Harnesses {
 		t.Run(harness, func(t *testing.T) {
 			t.Parallel()
