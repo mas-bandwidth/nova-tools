@@ -1192,6 +1192,16 @@ variable named by `NOVA_BUS_REDIS_PASSWORD_ENV`, separately from the sprint
 store's login. With no bus user it uses the default user; a failed bus send
 leaves the delivered card in her inbox and records that she was not woken.
 
+A friend held (`friend down`, for a cause that ends: `--until`, or a reason
+naming credit, funds, a limit or deaf) or down by her beat's word is brought
+back by the machine: the tick wakes her session at the known end, else on a
+backoff from 5 minutes to an hour, and when her session answers after that (a
+wake ping her session answered, `friend health --state up`, or a card of hers
+finished) releases the hold at her row's width, levels her queue the same
+tick, and tells the coordinator once (`<friend> is back up: <cause> ended`).
+A hold by hand, with neither, stays until `friend up`
+([SPEC-SPRINT.md](SPEC-SPRINT.md), A friend back up).
+
 Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`, then the address `seat login` recorded), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
 verb that writes wants one), `--op <id>` (the same id again returns the recorded

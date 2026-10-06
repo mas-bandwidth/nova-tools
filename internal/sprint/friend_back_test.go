@@ -198,6 +198,24 @@ func TestAFriendHeldForACauseThatEndedIsBroughtBackUp(t *testing.T) {
 		assert.Equal(t, sprint.Up, r.status("amy"))
 		assert.Equal(t, []string{"amy is back up: out of credit ended"}, r.backNotes())
 	})
+	t.Run("a deaf hold is probed on the backoff and her session's answer ends it", func(t *testing.T) {
+		t.Parallel()
+		r := newBackRig(t)
+		require.NoError(t, r.st.SetFriendHeld(r.ctx, "amy", true, "coordinator", "deaf", time.Time{}, 0))
+		r.at(time.Minute)
+		r.tick()
+		assert.Empty(t, r.woken(), "the first wake waits its first backoff")
+		r.at(sprint.FriendBackFirst)
+		r.tick()
+		assert.Equal(t, []string{"amy rung=0"}, r.woken())
+		assert.Equal(t, sprint.Held, r.status("amy"), "no answer yet")
+		r.at(sprint.FriendBackFirst + 30*time.Second)
+		r.pong("amy")
+		r.tick()
+		assert.Equal(t, sprint.Up, r.status("amy"), "her session answered after the wake")
+		assert.Equal(t, 4, r.dealt("amy"), "her queue filled to twice her row's width the same tick")
+		assert.Equal(t, []string{"amy is back up: deaf ended"}, r.backNotes())
+	})
 	t.Run("a hold by hand with no cause is never released", func(t *testing.T) {
 		t.Parallel()
 		r := newBackRig(t)
@@ -233,4 +251,33 @@ func TestAFriendHeldForACauseThatEndedIsBroughtBackUp(t *testing.T) {
 		}
 		assert.Equal(t, []string{"bob is back up: usage limit ended"}, r.backNotes())
 	})
+}
+
+// The cause a hold or a beat's down word carries (sprint.HoldCause): the
+// vocabulary the probe and the note ("<friend> is back up: <cause> ended")
+// name, and the holds by hand it names none of.
+func TestAHoldCarriesItsCauseAndItsEnd(t *testing.T) {
+	t.Parallel()
+	when := backT0.Add(time.Hour)
+	for _, c := range []struct {
+		name   string
+		reason string
+		until  time.Time
+		want   string
+	}{
+		{"out of credit", "out of credit", time.Time{}, sprint.CauseCredit},
+		{"funds", "her plan ran out of funds", time.Time{}, sprint.CauseCredit},
+		{"usage limit", "usage limit", time.Time{}, sprint.CauseLimit},
+		{"a limit by its words", "harness limit: opus limit reached", time.Time{}, sprint.CauseLimit},
+		{"deaf", "deaf", time.Time{}, sprint.CauseDeaf},
+		{"an until names its reason", "on leave", when, "on leave"},
+		{"an until alone", "", when, "the hold until " + when.UTC().Format(time.RFC3339)},
+		{"a hold by hand", "stalled", time.Time{}, ""},
+		{"no reason, no until", "", time.Time{}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, sprint.HoldCause(c.reason, c.until))
+		})
+	}
 }
