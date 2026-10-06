@@ -129,6 +129,7 @@ var DefaultCatalog = []Entry{
 	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
+	E("docs/acceptance", "release acceptance records: one measured requirement per file, with the raw numbers", "go test ./internal/ci", "go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
