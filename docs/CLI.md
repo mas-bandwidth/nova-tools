@@ -1147,6 +1147,7 @@ nova-sprint install seat-push|friend-sync (seat install's and friend sync instal
 nova-sprint install table --out <file> [--every <duration>] [--redis <addr>] [--dir <dir>] [--log <file>] [--dry-run]
 nova-sprint uninstall server|member|seat-push|friend-sync|table [--dir <dir>] [--dry-run]
 nova-sprint units --check [--dir <dir>]
+nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
@@ -1205,7 +1206,7 @@ result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
-are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
+are reports; `tick`, `run`, `friend clean` and `gc` are the machine's. Reads need no
 actor except `inbox --read`, which moves the coordinator's cursor. A set is
 ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 `--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
@@ -1232,6 +1233,10 @@ A running sprint needs nine units on its coordinator's machine: the store and th
 ### A backup as a demo
 
 `nova-sprint demo load sprint-store-2026-10-04-2336.redis.txt.xz.part-*` loads a store backup (the RESTORE text dump, xz, split into parts) into a throwaway Redis on a free 127.0.0.1 port, with the function library of this nova-sprint binary (never the installed nova-redis's), and prints `where` against it and the line `DEMO UP --addr 127.0.0.1:<port>`: point any read verb at the demo with `--redis 127.0.0.1:<port>`. The parts are joined in name order and checked against the sum beside them when there is one: `<file>.sha256` (the hand backup's), else the line of `SHA256SUMS` naming the joined file (`backup --out`'s), or `--sha256 <hex>`. It takes no `--redis`: the only store it opens is the one it starts. The server's directory and the state file (`demo.json`: address, port, pid, directory) are under `--dir`, by default the user cache directory's `nova-sprint/demo`; a second load while one is up is refused. `nova-sprint demo stop` stops that Redis by the pid it recorded, only when the Redis at the recorded address is that pid, and removes the recorded directory and nothing else. The live store is never opened. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#demo-load-verb).
+
+### The machinery's scratch
+
+`nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]` reclaims, on the machine it runs on (or, with `--machine`, on that machine through the fleet runner, which runs the same verb there), exactly the scratch the machinery made and no longer needs: the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees, bench directories under `~/nova-bench` older than `--max-age` (default `2d`; days or a Go duration), and the go caches trimmed to their cap. It refuses a path under no known scratch root (the AI root, `NOVA_AI_ROOT` else `~/ai`; the bench root; land's clone root), and keeps a clone with uncommitted work, a stash or unpushed commits. It prints one line per class, `GC jobs|reads|landers|bench|cache count=<n> bytes=<b> kept=<n> refused=<n> failed=<n>`, and `GC OK freed=<bytes> volume=<use%>`; `--dry-run` says `GC WOULD-REMOVE` and removes nothing. `nova-sprint run` runs it on every machine once an hour and as soon as a machine's volume is at 80%. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 1, "gc".
 
 ### A card re-cut as its twin
 
