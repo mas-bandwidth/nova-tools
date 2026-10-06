@@ -51,8 +51,11 @@ const (
 	// PassEvery is the running time between two raises of one pass judgment.
 	PassEvery = 10 * time.Minute
 	// FriendDeafAfter is how old a friend's last session pong may be before her
-	// session is deaf.
-	FriendDeafAfter = 10 * time.Minute
+	// session is deaf: FriendProofLive, since her daemon asks a quiet session after ten
+	// minutes and waits five for the answer (docs/SPEC-FRIEND.md, The push proof), so a
+	// session that answers is never proved longer ago than that. Shorter, and a quiet
+	// friend whose session answers is judged deaf every ten minutes and cleared again.
+	FriendDeafAfter = FriendProofLive
 	// FriendFinishDefault is the friend-finish window when the coordinator set none.
 	FriendFinishDefault = 30 * time.Minute
 	// PropFriendFinish is the work table's property: the friend-finish window, a
@@ -130,9 +133,9 @@ func TickCoordinatorPass(s *Snapshot, r TickReq) (Plan, int) {
 }
 
 // deafConds is one condition for each friend not held whose beat carries a session pong
-// older than FriendDeafAfter, in running time. Not yet live: the nova-friend daemon's
-// beat sends no --pong, so until it does no beat carries one and this finds nothing
-// (docs/SPEC-SPRINT.md, "The coordinator's pass").
+// older than FriendDeafAfter, in running time: the nova-friend daemon's beat carries
+// her session's last proof (--pong), so a lapsed proof is told to the coordinator once,
+// as this judgment, with the remedy (docs/SPEC-SPRINT.md, "The coordinator's pass").
 func deafConds(s *Snapshot, r TickReq) []cond {
 	var out []cond
 	for _, f := range slices.Sorted(maps.Keys(r.Sessions)) {
