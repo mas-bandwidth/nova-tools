@@ -256,7 +256,7 @@ const PartDrain = "drain"
 // model is tla/DirtyTick.tla.
 var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {PartCapDeal, TickCapDeal}, {"deal", TickDeal}, {"accept", TickAccept}}},
-	{Readers, []TickPartDef{{"ask", TickAsk}}},
+	{Readers, []TickPartDef{{"ask", readCardsAskPart}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
 	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}}},
 }

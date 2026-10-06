@@ -28,21 +28,6 @@ import (
 // (fleetReadCloseUnit), and the primary leaves review only by the existing rules. With the
 // setting off, the readers table's ask and the friends' read packet ask, as before.
 
-// PropReadCards is the work table's property that turns read cards on: ReadCardsOnWord.
-const PropReadCards = "read_cards"
-
-// ReadCardsOnWord is the setting's on word; any other value is off.
-const ReadCardsOnWord = "on"
-
-// ReadCardsOn says the sprint asks its reads as read cards (PropReadCards).
-func (s *Snapshot) ReadCardsOn() bool {
-	if s == nil || s.Work == nil {
-		return false
-	}
-	v, _ := s.Work.Prop(PropReadCards)
-	return v == ReadCardsOnWord
-}
-
 // FieldReadDeadline is a read card's deadline, a stamp: asked plus ReadCardDeadline. Past
 // it the ask retires the card (RetiredByLate) and asks the read of another unit.
 const FieldReadDeadline = "read_deadline"
@@ -517,7 +502,11 @@ func fieldOf(c *Card, name string) string {
 // due so the no-stall rule holds it, clears the mark of one that waits no more, and keeps
 // the readers' standing judgments: the readers behind and the read tier to raise; cannot
 // ask and fewer than two readers up close.
-func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
+func readCardsAskPart(s *Snapshot, r TickReq) (Plan, int) {
+	seats := r.Friends
+	if seats == nil {
+		seats = s.Friends
+	}
 	var p Plan
 	_, waits := readCardsAsk(s, seats, nil)
 	for _, c := range s.Work.Column(Review) {
@@ -563,9 +552,9 @@ func readCardsWaitingCount(s *Snapshot) int {
 // cards placed and the cards it takes back off their rows, which the work of the same deal
 // is dealt on: every room the deal counts (memberLoads, widthRoom, friendLoad) holds the
 // reads first, at half a slot each (reads are a card priority: a read waits behind no
-// work card). With read cards off, nothing and the snapshot as it is.
+// work card).
 func (s *Snapshot) withReadCards(seats []FriendSeat) (*Snapshot, Plan) {
-	if !s.ReadCardsOn() || s.Fleet == nil {
+	if s.Work == nil || s.Fleet == nil {
 		return s, Plan{}
 	}
 	if seats == nil {
