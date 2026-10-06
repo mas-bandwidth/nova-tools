@@ -97,7 +97,7 @@ To ask whether this machine is ready for one job, name the job:
 
 ```
 nova-doctor --job local-notes
-nova-doctor --job friend --as bob --dir ~/bob
+nova-doctor --job friend --as bob --dir /Users/bob/work --config-dir /Users/bob/.claude-bob
 nova-doctor --job coordinator --as ada --json
 ```
 
@@ -106,4 +106,7 @@ one dependency, checked in order (Redis reachable, the login, the config, the ap
 state, the binaries and functions, the supervisor, the session), by the tool that owns it.
 The first step that fails is the one to fix; every step after it says `blocked`, and the last
 line is `DOCTOR job=<job> not-ready first_missing=<step> ... next: <command>`. Run that
-command, then the doctor again.
+command, then the doctor again. Every line it prints is one the tool named accepts as printed. The friend
+job's session step is nova-friend's own verdict over `--since` (default 24h): `deaf` fails it,
+and its fix is the delivery check, `nova-friend check --as <friend> --harness <h> --dir <d>
+--redis <addr> --to <coordinator>`.
