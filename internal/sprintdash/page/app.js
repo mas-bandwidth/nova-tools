@@ -558,10 +558,13 @@ function renderHero(d, s) {
   // cost per card is every recorded take and read over the cards that landed
   var recorded = s.sum.totalCost, unreconciled = s.sum.unreconciled;
   setText($("cost"), money(recorded + unreconciled));
-  // the reads are their own number beside the work: "$0.42 per card · $310 work · $96 reads"
-  var split = (s.sum.workCost || s.sum.readCost) ? money(s.sum.workCost) + " work \u00b7 " + money(s.sum.readCost) + " reads" : "";
+  // the reads are their own number beside the work, with their share of the two:
+  // "$0.42 per card · $310 work · $96 reads (24%)"
+  var both = s.sum.workCost + s.sum.readCost;
+  var split = both ? money(s.sum.workCost) + " work \u00b7 " + money(s.sum.readCost) + " reads (" + Math.round(100 * s.sum.readCost / both) + "%)" : "";
   var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
   setHTML($("cost-per"), [per, split].filter(Boolean).join(" \u00b7 ") || " ");
+  setTitle($("cost-per"), readerSpendTitle(d));
   setText($("cost-unreconciled"), money(unreconciled) + " unreconciled" + (s.sum.unpriced ? " · " + s.sum.unpriced + " runs unpriced" : ""));
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
@@ -570,6 +573,23 @@ function renderHero(d, s) {
   setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
   setMachine(d.machine);
+}
+
+// readerSpendTitle is the cost tile's tooltip: each reader's spend, all time and the last hour,
+// summed over every stream's where record (stream_costs[s].readers, sprint.ReaderSpend: exact
+// dollars), most first; "" with no reader priced
+function readerSpendTitle(d) {
+  var by = {}, sc = d.stream_costs || {};
+  Object.keys(sc).forEach(function (k) {
+    var rs = sc[k].readers || {};
+    Object.keys(rs).forEach(function (r) {
+      var b = by[r] || (by[r] = { usd: 0, hour: 0 });
+      b.usd += parseFloat(rs[r].usd) || 0; b.hour += parseFloat(rs[r].hour_usd) || 0;
+    });
+  });
+  var names = Object.keys(by).filter(function (r) { return by[r].usd > 0; });
+  names.sort(function (a, b) { return by[b].usd - by[a].usd || (a < b ? -1 : 1); });
+  return names.map(function (r) { return r + " " + money(cents(by[r].usd)) + " (" + money(cents(by[r].hour)) + " last hour)"; }).join("\n");
 }
 
 // the In flight tile's subline: one line, two parts,

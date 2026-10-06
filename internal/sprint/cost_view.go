@@ -56,6 +56,9 @@ type TierCosts struct {
 	// reported no token (cardcost.WhyNoTokens): one of UnpricedRuns each, counted apart
 	// so a reader whose harness stops reporting is seen.
 	ReadsNoTokens int `json:"reads_no_tokens,omitempty"`
+	// Readers is each reader's spend on the stream's cards, by the reader that ran the read
+	// (readers_spend.go): ReaderSpendsOf sums it over the streams for the readers table.
+	Readers map[string]ReaderSpend `json:"readers,omitempty"`
 	// Unreconciled is the SPRINT's, the same on every stream's record: what the providers
 	// counted beyond the sprint's records since the epoch began (UnreconciledSpend,
 	// cost_reconcile.go), dollars and cents rounded up; "" when nothing is.
@@ -91,7 +94,7 @@ func StreamTierCosts(s *Snapshot) map[string]TierCosts {
 }
 
 func streamTierCosts(s *Snapshot, stream string) TierCosts {
-	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}}
+	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}, Readers: map[string]ReaderSpend{}}
 	byTier := map[string]*big.Rat{}
 	workCost, readCost := new(big.Rat), new(big.Rat)
 	pricedWork, pricedRead := false, false
@@ -129,6 +132,11 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 				}
 				if con.Kind == "read" && strings.HasPrefix(con.At, day) {
 					addReadDay(t.ReadsToday, con)
+				}
+				if con.Kind == "read" {
+					rd := t.Readers[cmp.Or(con.Who, "-")]
+					rd.addRead(con, s.Now)
+					t.Readers[cmp.Or(con.Who, "-")] = rd
 				}
 				usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
 				if err != nil || usd == nil {
@@ -170,6 +178,9 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	}
 	if len(t.ReadsToday) == 0 {
 		t.ReadsToday = nil
+	}
+	if len(t.Readers) == 0 {
+		t.Readers = nil
 	}
 	tiers := make([]string, 0, len(byTier))
 	for tier := range byTier {
