@@ -106,6 +106,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"reader remove":     "reader remove reader-c",
 		"reader retire":     "reader retire reader-c",
 		"stream remove":     "stream remove s1",
+		"stream archive":    "stream archive s1",
+		"stream unarchive":  "stream unarchive s1",
 		"stream set":        "stream set s1 --read-tier pro",
 		"set":               "set --read-tier pro",
 		"promoted":          "promoted --sha 0123abc",

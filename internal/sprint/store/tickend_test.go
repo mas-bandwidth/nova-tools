@@ -27,7 +27,9 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 	_, from, err := h.m.Tails(h.ctx)
 	require.NoError(t, err)
 	h.landThrough("s1", "s1-1", "s1-2")
-	if res := h.machine(); res.Done == "" || res.TickEnd != 1 || h.written(sprint.NTickEnd) != 1 {
+	// the done tick addresses the coordinator twice: the stream it archived (its last card
+	// landed, stream_archive.go) and the sprint done
+	if res := h.machine(); res.Done == "" || res.TickEnd != 2 || h.written(sprint.NTickEnd) != 1 {
 		require.Failf(t, "", "the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
 	}
 	notes, _, err := h.m.NotesSince(h.ctx, from, 1000)
@@ -36,7 +38,7 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 	require.Equal(t, sprint.NTickEnd, last.Type, "the tick end: %+v", last)
 	require.Equal(t, sprint.Happened, last.Kind, "the tick end: %+v", last)
 	require.Equal(t, h.st.Actor, last.To, "the tick end: %+v", last)
-	require.Equal(t, "judgments=1", last.What, "the tick end: %+v", last)
+	require.Equal(t, "judgments=2", last.What, "the tick end: %+v", last)
 	woke, err := h.st.WaitTickEnd(h.ctx, from, time.Minute)
 	require.NoError(t, err, "a wait from before the done tick: %v %v", woke, err)
 	require.True(t, woke, "a wait from before the done tick: %v %v", woke, err)

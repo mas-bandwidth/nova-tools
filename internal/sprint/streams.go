@@ -23,10 +23,16 @@ func StreamRemove(s *Snapshot, running bool, streams []string) []Refusal {
 			refused[st] = true
 		}
 	}
+	return allOrNone("removed", "removes", streams, out, refused)
+}
+
+// allOrNone is the refusals of a stream verb that names several and applies all or
+// none: one refused refuses every other with it, each named.
+func allOrNone(done, does string, streams []string, out []Refusal, refused map[string]bool) []Refusal {
 	if len(out) == 0 {
 		return nil
 	}
-	whole := fmt.Sprintf("not removed: the verb names several and removes all or none, and %d of them %s refused", len(out), map[bool]string{true: "was", false: "were"}[len(out) == 1])
+	whole := fmt.Sprintf("not %s: the verb names several and %s all or none, and %d of them %s refused", done, does, len(out), map[bool]string{true: "was", false: "were"}[len(out) == 1])
 	for _, st := range streams {
 		if !refused[st] {
 			refused[st] = true

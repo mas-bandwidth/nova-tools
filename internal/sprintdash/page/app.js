@@ -230,8 +230,18 @@ function streamStatus(state, c, total) {
   return [state || "idle", "neutral"];
 }
 
+// The archived streams (nova-sprint stream archive): every card of each landed. The table
+// draws the live streams; one line under it counts the archived and toggles them in
+// (?archived=1 starts with them shown). The totals and the hero count them always.
+var SHOW_ARCHIVED = /(?:^|[?&])archived=1(?:&|$)/.test(location.search);
+function archivedOf(d) {
+  var set = {}; ((d.archived && d.archived.streams) || []).forEach(function (k) { set[k] = 1; });
+  return set;
+}
+
 function renderStreams(d) {
   var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {};
+  var archived = archivedOf(d);
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
   // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 merging, 8 landed, 9 cost
   if (!box._head) {
@@ -252,10 +262,21 @@ function renderStreams(d) {
     statusOf[k] = streamStatus((states[k] || {}).State, c, total)[0];
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
-  var keys = streamOrder(d).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
+  var every = streamOrder(d).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
+  var keys = every.filter(function (k) { return SHOW_ARCHIVED || !archived[k]; });
   var sum = { cost: 0, totalCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
-  var digits = digitsOf(keys.reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
+  var digits = digitsOf(every.reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
+  // the sums are of every stream, drawn or archived: the Total row and the hero count them all
+  every.forEach(function (k) {
+    var w = work[k], sc = (d.stream_costs || {})[k] || {};
+    FLOW.forEach(function (st) { sum[st] += int(w[st]); });
+    var ct = cents(w.cost); if (ct) sum.cost += ct;
+    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+    // the sprint's unreconciled spend rides on every stream's record: read once, never summed
+    var uc = cents(sc.unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
+    sum.unpriced += int(sc.unpriced_runs);
+  });
   syncRows(box, box._head, keys, function () {
     var r = { node: el("div", "row"), n: {} };
     r.name = el("div", "name"); r.nameT = el("span"); r.tag = el("span", "tag");
@@ -267,13 +288,8 @@ function renderStreams(d) {
     return r;
   }, function (r, k) {
     var w = work[k], m = merge[k] || {}, s = states[k] || {}, c = {}, total = 0;
-    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; sum[st] += c[st]; });
-    var ct = cents(w.cost); if (ct) sum.cost += ct;
-    var sc = (d.stream_costs || {})[k] || {};
-    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
-    // the sprint's unreconciled spend rides on every stream's record: read once, never summed
-    var uc = cents(sc.unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
-    sum.unpriced += int(sc.unpriced_runs);
+    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; });
+    var ct = cents(w.cost);
     var status = statusOf[k];
     if (status === "held") held++;
     if (status === "landed") landedStreams++;
@@ -294,6 +310,7 @@ function renderStreams(d) {
   setHTML(tc[7], frac(sum.landed, all, digits));
   setText(tc[8], money(sum.cost));
   setText($("streams-sub"), keys.length + " streams · " + landedStreams + " landed · " + held + " held");
+  renderArchived(box, d, every.filter(function (k) { return archived[k]; }));
   // the "landed" header is centred over its n / total cell: same width as the cell, text centred
   var lw = tc[7].offsetWidth ? tc[7].offsetWidth + "px" : "";
   if (lw && box._head.children[7].style.width !== lw) box._head.children[7].style.width = lw;
@@ -320,6 +337,22 @@ function renderOverall(sum, all) {
   STATES.forEach(function (st) { setText(lg._items[st], st + " " + sum[st]); });
 }
 window.addEventListener("resize", function () { if (overallLast) renderOverall(overallLast.sum, overallLast.all); });
+
+// renderArchived is the one line under the Work table for the archived streams: "N archived
+// streams, M cards landed, $X", and a click shows them in the table or hides them again.
+function renderArchived(box, d, keys) {
+  if (!box._arch) {
+    box._arch = el("div", "muted archived");
+    box._arch.style.cursor = "pointer";
+    box._arch.addEventListener("click", function () { SHOW_ARCHIVED = !SHOW_ARCHIVED; if (lastGood) render(lastGood); });
+  }
+  var a = d.archived;
+  if (!a || !keys.length) { box._arch.remove(); return; }
+  var n = keys.length, landed = int(a.landed);
+  setText(box._arch, n + " archived stream" + (n === 1 ? "" : "s") + ", " + landed.toLocaleString("en-US") + " card" + (landed === 1 ? "" : "s") +
+    " landed, " + a.cost + " · " + (SHOW_ARCHIVED ? "hide them" : "show them"));
+  if (box._total.nextSibling !== box._arch) box.insertBefore(box._arch, box._total.nextSibling);
+}
 
 // Where wall time goes: one stacked bar of the stages' medians over the cards landed in the
 // last 24 h (where --json stage_times, docs/SPEC-SPRINT.md), shown once there is one.

@@ -38,6 +38,9 @@ type Backend interface {
 	// stays in the table, its cells and its folds, and is not drawn (a friend's fleet row,
 	// sprint.FriendRow, in the stored view).
 	RowsHide(ctx context.Context, table string, rows []string) error
+	// RowsShow draws hidden rows again, as the table layer's row hide undoes (a stream
+	// unarchived, sprint.StreamUnarchive); a row not hidden or absent is skipped.
+	RowsShow(ctx context.Context, table string, rows []string) error
 	// RowsDel removes rows, with the cards placed in them (a row absent is
 	// skipped): the readers table's reader remove, which first refuses a row
 	// that holds a card (docs/SPEC-SPRINT.md section 6), and stream remove,

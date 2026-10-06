@@ -698,8 +698,11 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if err != nil {
 			return res, fmt.Errorf("fleet: %w", err)
 		}
-		// a verb moves cards while the machine is STOPPED: where's record
-		// follows them
+		// a verb moves cards while the machine is STOPPED: the archive and where's
+		// record follow them
+		if err := st.keepArchive(ctx); err != nil {
+			return res, fmt.Errorf("archive: %w", err)
+		}
 		if err := st.keepWhere(ctx, m); err != nil {
 			return res, fmt.Errorf("where: %w", err)
 		}
@@ -728,6 +731,15 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if nerr := st.tellTick(ctx, "tick recovered", sprint.NTickRecovered, fmt.Sprintf("failed=%d; the last error: %s", hb.Failures, hb.Error), ""); nerr != nil {
 			err = fmt.Errorf("tick recovered: %w", nerr)
 		}
+	}
+	if err == nil && res.Stale == "" && res.Halted == "" {
+		// a stream whose last card landed leaves the drawn tables, its record kept
+		// (stream_archive.go)
+		mt := st.meter()
+		if aerr := st.keepArchive(ctx); aerr != nil {
+			err = fmt.Errorf("archive: %w", aerr)
+		}
+		res.Times = append(res.Times, mt.part("", "archive"))
 	}
 	if err == nil && res.Stale == "" {
 		// where's record counted from what the tick left (where.go)
@@ -1673,6 +1685,7 @@ func (r readOnly) Apply(context.Context, ntable.BatchManifest) (ntable.Receipt, 
 func (r readOnly) Create(context.Context, ntable.Table) error       { return ErrReadOnly }
 func (r readOnly) RowsAdd(context.Context, string, []string) error  { return ErrReadOnly }
 func (r readOnly) RowsHide(context.Context, string, []string) error { return ErrReadOnly }
+func (r readOnly) RowsShow(context.Context, string, []string) error { return ErrReadOnly }
 func (r readOnly) RowsDel(context.Context, string, []string) error  { return ErrReadOnly }
 func (r readOnly) RowsDelIf(context.Context, string, []RowGuard) ([]string, error) {
 	return nil, ErrReadOnly

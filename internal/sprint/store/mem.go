@@ -650,6 +650,16 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 // RowsHide marks rows of the table hidden, as the table layer's row hide does, under
 // RowsAdd's epoch check; a row the table does not have is skipped.
 func (m *Mem) RowsHide(_ context.Context, table string, rows []string) error {
+	return m.rowsHide(table, rows, true)
+}
+
+// RowsShow marks rows of the table drawn again, as the table layer's row hide undoes,
+// under RowsAdd's epoch check; a row the table does not have is skipped.
+func (m *Mem) RowsShow(_ context.Context, table string, rows []string) error {
+	return m.rowsHide(table, rows, false)
+}
+
+func (m *Mem) rowsHide(table string, rows []string, hide bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Calls["rowshide"]++
@@ -662,11 +672,15 @@ func (m *Mem) RowsHide(_ context.Context, table string, rows []string) error {
 	}
 	ep := t.at(m.active(t))
 	for _, r := range rows {
-		if slices.Contains(ep.rows, r) {
+		switch {
+		case !slices.Contains(ep.rows, r):
+		case hide:
 			if ep.hidden == nil {
 				ep.hidden = map[string]bool{}
 			}
 			ep.hidden[r] = true
+		default:
+			delete(ep.hidden, r)
 		}
 	}
 	t.rev++

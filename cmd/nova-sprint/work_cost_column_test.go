@@ -109,6 +109,8 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 		[]string{"input=10 actual_usd=0.00005 actual_by=harness", ""},
 		[]string{"input=1 actual_usd=0.000004 actual_by=harness", ""},
 		[]string{"", ""})
+	// the tick archived both, their last cards landed: drawn again to read their cells
+	ta.ok("stream unarchive s1 s2")
 	cells := ta.costCells()
 	assert.Equal(t, "$0.01", cells["s1"], "0.0016 + 0.003, shown in cents, rounded up")
 	assert.Equal(t, "$0.01", cells["s2"], "0.000054 rounds up to a cent, and the unpriced card adds nothing")
@@ -123,6 +125,7 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 
 	// a landing replayed by its op id writes nothing again: s3 counts its card once
 	ta.landStream("s3", []string{"input=1 actual_usd=0.01 actual_by=harness"}, []string{""}, []string{""}, "land-s3")
+	ta.ok("stream unarchive s3")
 	cells = ta.costCells()
 	assert.Equal(t, "$0.01", cells["s3"], "a replayed merge does not count twice")
 	assert.Equal(t, "$0.03", cells[""])
@@ -169,5 +172,6 @@ func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 	var v cardView
 	ta.json("card s1-1", &v)
 	assert.Equal(t, "0.126", v.Primary.F("cost"), "the work, the returned read and the two reads: 0.1 + 0.02 + 0.003 + 0.003")
+	ta.ok("stream unarchive s1") // the tick archived it, its card landed
 	assert.Equal(t, "$0.13", ta.costCells()["s1"])
 }
