@@ -85,7 +85,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 
 	// One reader's ok is never enough.
 	first := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	w.must(Read(w.s, ReadReq{As: first[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[0].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[0].ID}}}))
 	acc := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}})
 	require.Empty(t, acc.Units, "accept with one ok: %+v", acc)
 	require.Len(t, acc.Refused, 1, "accept with one ok: %+v", acc)
@@ -95,7 +95,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	first = readsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, first, 2)
 	require.NotEqual(t, first[0].F("reader"), first[1].F("reader"))
-	w.must(Read(w.s, ReadReq{As: first[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[1].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[1].ID}}}))
 	require.Len(t, w.notesOf(NReadyToAccept), 1, "ready-to-accept notes: %d", len(w.notesOf(NReadyToAccept)))
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	require.Equal(t, Merging, w.state("s1-1"), "accept: work %s", w.state("s1-1"))
@@ -105,7 +105,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 
 	// A broken read, rework with the finding; the fixed work is asked of two different readers again.
 	second := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{As: second[0].F("reader"), Verdict: "broken", Finding: "line 1: off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: second[0].F("reader"), Verdict: "broken", Finding: "line 1: off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
 	require.Len(t, w.openOn("s1-2"), 1, "a broken read is not an open judgment")
 	score := w.s.Work.Card("s1-2").Score
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "off by one"}))

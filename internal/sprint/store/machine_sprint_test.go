@@ -245,7 +245,7 @@ func (w *crWorld) round(r int) {
 					v = "broken"
 				}
 				// a finding per attempt: the same finding twice is the brief's bound (sprint.AtBriefBound)
-				h.run(ReadStep(sprint.ReadReq{As: rd, Verdict: v, Finding: "f:" + c.F("attempt"), Sel: sprint.Sel{IDs: []string{c.ID}}, Who: rd}))
+				h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rd, Verdict: v, Finding: "f:" + c.F("attempt"), Sel: sprint.Sel{IDs: []string{c.ID}}, Who: rd}))
 			}
 		}
 		h.clean(fmt.Sprintf("round %d after the readers", r))

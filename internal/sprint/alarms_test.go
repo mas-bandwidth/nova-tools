@@ -170,7 +170,7 @@ func TestBacklogAlarmsPushOncePerEpisodeFromConfigThresholds(t *testing.T) {
 
 	// the reads come back ok: the machine accepts all three, merging 3 above 0, review clears
 	for _, rd := range []string{"reader-a", "reader-b"} {
-		res, err := r.st.Run(r.ctx, store.ReadStep(sprint.ReadReq{As: rd, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: rd}))
+		res, err := r.st.Run(r.ctx, store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rd, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: rd}))
 		require.NoError(t, err, "read as %s: %+v", rd, res)
 	}
 	r.ticks(3)

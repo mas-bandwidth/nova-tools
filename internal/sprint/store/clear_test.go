@@ -87,7 +87,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	held := uint64(0)
 	for name, step := range map[string]Step{
 		"finish": FinishStep(sprint.FinishReq{As: before.Fleet.Card("s1-5.w1").Row, Sel: sprint.Sel{IDs: []string{"s1-5.w1"}}, Gens: map[string]int{"s1-5.w1": 1}}),
-		"read":   ReadStep(sprint.ReadReq{As: before.Readers.Of("s1-4")[1].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{before.Readers.Of("s1-4")[1].ID}}}),
+		"read":   ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: before.Readers.Of("s1-4")[1].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{before.Readers.Of("s1-4")[1].ID}}}),
 		"merge":  MergeStep(sprint.MergeReq{Stream: "s1"}),
 	} {
 		step.Epoch = &held

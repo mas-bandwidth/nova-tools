@@ -25,7 +25,7 @@ func (h *harness) readsOf(id string) []*sprint.Card {
 // readOne has the reader of the one read card read it with the verdict.
 func (h *harness) readOne(rc *sprint.Card, verdict, finding string) {
 	h.t.Helper()
-	h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: finding, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: finding, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 }
 
 // A pro card whose first read finds attempt 1 broken: attempt 1 costs one read (not two),
