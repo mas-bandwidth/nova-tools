@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -204,4 +205,110 @@ func allOrNone(streams []string, done string, why func(string) string) []Refusal
 		}
 	}
 	return out
+}
+
+// NStreamRetired is what a judgment of a stream taken off the tables is
+// answered with: its decided note's what opens with it, then the stream and
+// how it left (stream remove, stream archive, or gone when the tick finds it).
+const NStreamRetired = "retired with its stream"
+
+// StreamGone says the stream is a row of neither the work nor the merge table:
+// removed (stream remove), or never added. An archived stream is a row still.
+// A note's stream that holds a colon is no stream (a tier's, a provider's or a
+// member's subject: TierSubject, ProviderSubject, MemberSubject), and is never
+// gone: no stream id has a colon.
+func StreamGone(s *Snapshot, stream string) bool {
+	return stream != "" && !strings.Contains(stream, ":") && !s.Work.HasRow(stream) && !s.Merge.HasRow(stream)
+}
+
+// StreamOpens is the open notes that name a stream of the set, judgments and
+// acknowledged holds both, in their order: a note of the stream, or one about
+// the stream as a whole.
+func StreamOpens(s *Snapshot, named func(string) bool) []Open {
+	var out []Open
+	for _, all := range [][]Open{s.Open, s.Acked} {
+		for _, o := range all {
+			sub, ok := strings.CutPrefix(o.Subject(), "stream:")
+			if named(o.Note.Stream) || ok && named(sub) {
+				out = append(out, o)
+			}
+		}
+	}
+	return out
+}
+
+// RetireStreams is the plan that retires every open note naming one of the
+// streams (judgments, alarms and stale notes, and the holds acknowledged on
+// them): each closed with a decided note "retired with its stream: <stream>
+// <how>", and one Said line a stream that has any, naming the notes. A stream
+// that leaves the tables (stream remove, stream archive) leaves no judgment
+// whose next step it would refuse with "no such stream".
+func RetireStreams(s *Snapshot, streams []string, how, who string) Plan {
+	var p Plan
+	for _, st := range streams {
+		opens := StreamOpens(s, func(x string) bool { return x == st })
+		if len(opens) == 0 {
+			continue
+		}
+		var ids []string
+		for _, o := range opens {
+			if !slices.Contains(ids, o.Note.ID) {
+				ids = append(ids, o.Note.ID)
+				what := fmt.Sprintf("%s: %s %s", NStreamRetired, st, how)
+				p.Notes = append(p.Notes, decided(o, what, who, s.Now))
+			}
+			p.Closes = append(p.Closes, o)
+		}
+		p.Said = append(p.Said, fmt.Sprintf("stream %s %s: %d open %s retired with it (%s)", st, how, len(ids),
+			map[bool]string{true: "note", false: "notes"}[len(ids) == 1], Preview(ids, ", ")))
+	}
+	return p
+}
+
+// TickRetire is the tick's retire part: the open notes of every stream the
+// tables no longer hold (StreamGone), written before the stream left or by a
+// remove that did not finish, are retired, each with its note.
+func TickRetire(s *Snapshot, r TickReq) (Plan, int) {
+	var gone []string
+	for _, o := range StreamOpens(s, func(x string) bool { return StreamGone(s, x) }) {
+		st := o.Note.Stream
+		if sub, ok := strings.CutPrefix(o.Subject(), "stream:"); ok && StreamGone(s, sub) {
+			st = sub
+		}
+		if !slices.Contains(gone, st) {
+			gone = append(gone, st)
+		}
+	}
+	return RetireStreams(s, gone, "is gone from the tables", r.who()), 0
+}
+
+// WithRetire is the tick part fn with TickRetire's plan joined to its own: the
+// tick's end runs its first part so (store.Tick), and a tick with nothing to
+// retire runs no step more than it did.
+func WithRetire(fn TickPartFn) TickPartFn {
+	return func(s *Snapshot, r TickReq) (Plan, int) {
+		p, due := fn(s, r)
+		q, _ := TickRetire(s, r)
+		p.Notes = append(p.Notes, q.Notes...)
+		p.Closes = append(p.Closes, q.Closes...)
+		p.Said = append(p.Said, q.Said...)
+		return p, due
+	}
+}
+
+// WithoutGoneStreams is the tick's plan with every judgment for a stream the
+// tables do not hold taken out: the tick never raises one, since its next step
+// would be refused with "no such stream".
+func WithoutGoneStreams(s *Snapshot, p Plan) Plan {
+	keep := func(ns []Note) []Note {
+		return slices.DeleteFunc(slices.Clone(ns), func(n Note) bool { return n.Kind == Judgment && StreamGone(s, n.Stream) })
+	}
+	p.Notes = keep(p.Notes)
+	if len(p.Units) > 0 {
+		p.Units = slices.Clone(p.Units)
+		for i := range p.Units {
+			p.Units[i].Notes = keep(p.Units[i].Notes)
+		}
+	}
+	return p
 }

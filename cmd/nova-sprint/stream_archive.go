@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
@@ -22,6 +23,8 @@ func init() {
 // placed, counted in the folds and the summary. Refused, exit 1 and nothing
 // written, for a stream that is no row, for one holding a card not landed
 // (sprint.StreamArchive), or, unarchived, for one not archived, all or none.
+// Archived, every open note naming the streams retires with them, a NOTE line
+// a stream that had any (retireStreams).
 func (a *app) cmdStreamArchive(archive bool, args []string, stdout, stderr io.Writer) int {
 	verb, word := "stream archive", "STREAM-ARCHIVE"
 	do := (*store.Store).ArchiveStreams
@@ -54,6 +57,38 @@ func (a *app) cmdStreamArchive(archive bool, args []string, stdout, stderr io.Wr
 		fmt.Fprintf(stderr, "%s %s: %s; run: nova-sprint help stream\n", prog, verb, oneline.Escape(strings.Join(whys, "; ")))
 		return 1
 	}
-	sayOK(stdout, c.json, verb, word+" OK streams="+strings.Join(names, ","), map[string]any{"streams": names})
+	var said []string
+	if archive {
+		said = retireStreams(context.Background(), st, verb, names, "archived", "run it again to retire them")
+	}
+	sayRetired(stdout, c.json, verb, word+" OK streams="+strings.Join(names, ","), names, said)
 	return 0
+}
+
+// retireStreams retires every open note naming the streams, judgments, alarms
+// and stale notes (sprint.RetireStreams), in one step, and is what it says: a
+// NOTE line a stream that had any, or the line that it failed and what then.
+func retireStreams(ctx context.Context, st *store.Store, verb string, names []string, how, then string) []string {
+	r, err := st.Run(ctx, store.Step{Verb: verb, Load: []string{sprint.Work, sprint.Merge}, Plan: func(s *sprint.Snapshot) sprint.Plan {
+		return sprint.RetireStreams(s, names, how, s.Actor)
+	}})
+	if err != nil {
+		return []string{"the streams' open notes were not retired: " + err.Error() + "; " + then}
+	}
+	return r.Said
+}
+
+// sayRetired is a stream verb's OK line, with what retireStreams said: NOTE
+// lines after it, or says in its JSON.
+func sayRetired(stdout io.Writer, asJSON bool, verb, line string, names, said []string) {
+	facts := map[string]any{"streams": names}
+	if len(said) > 0 {
+		facts["says"] = said
+	}
+	sayOK(stdout, asJSON, verb, line, facts)
+	if !asJSON {
+		for _, l := range said {
+			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
+		}
+	}
 }

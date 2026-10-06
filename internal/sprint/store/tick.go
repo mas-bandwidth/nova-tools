@@ -585,7 +585,8 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 			if due != nil {
 				*due = d
 			}
-			return unchangedNotWritten(s, p)
+			// no part raises a judgment for a stream the tables do not hold
+			return unchangedNotWritten(s, sprint.WithoutGoneStreams(s, p))
 		}}
 }
 
@@ -1059,6 +1060,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	t.res.Order = append(t.res.Order, "end")
 	// the machine's own answers, when the loop gives them: the rule parts and the idle alarm
 	end := sprint.TickEndWith(t.req.AnswerRules, t.req.IdleAlarm)
+	// the first, the checks, also retires the open notes of every stream gone
+	// from the tables (sprint.TickRetire), in its own step: no step more
+	end[0].Fn = sprint.WithRetire(end[0].Fn)
 	if out := t.parts("", end); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
 	}
