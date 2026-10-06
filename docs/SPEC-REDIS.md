@@ -1,9 +1,12 @@
 # nova-redis — specification
 
-`nova-redis` owns the local Redis instance and its scratch verbs. Redis is the
-fleet's low-latency store — a place for signals, slots, locks, counters and
-scratch — and never the record. **Git stays the record; nothing in Redis is the
-only copy of anything.**
+`nova-redis` owns the local Redis instance and its scratch verbs. The instance
+is the fleet's store: the bus's streams ([SPEC-BUS.md](SPEC-BUS.md)), the
+sprint's tables ([SPEC-SPRINT.md](SPEC-SPRINT.md)) and the configuration
+nova-config applies ([SPEC-CONFIG.md](SPEC-CONFIG.md)) live in it, and for the
+bus it is the only copy, which is why persistence is on and nothing is evicted.
+Scratch is the one exception: a spilled value has an owner and a TTL, is never a
+record, and is allowed to miss.
 
 This spec is normative. If the code and this document disagree, one of them
 has a bug, and the tests decide which. It is a sibling of [SPEC.md](SPEC.md),
@@ -106,7 +109,9 @@ nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.
 
 ## Rules
 
-1. **Git stays the record; nothing in Redis is the only copy of anything.**
+1. **Store keys are kept; scratch keys are not a record.** A store key (a bus
+   stream, a sprint table, an applied configuration row) carries no TTL and is
+   never evicted; a scratch key is never the only copy of anything.
 2. Every ephemeral (scratch) key carries an owner prefix and a TTL; an
    unbounded scratch key is a bug. Store keys carry no TTL: the store has no
    TTL policy.
