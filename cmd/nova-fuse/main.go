@@ -22,7 +22,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -30,7 +29,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -126,10 +124,6 @@ func hintFor(name string) string {
 	}
 	return ""
 }
-
-// maxRemedy is the second half of the one MORE line this binary prints. A cap with no
-// remedy is censorship; a cap with one is an index.
-const maxRemedy = "--max <n> raises the ceiling, --max 0 lists every quarantine"
 
 // refuse is what an unusable invocation costs: one line, `nova-fuse[ <verb>] REFUSED:
 // <what was wrong>; run: nova-fuse help`, naming the door to the usage rather than
@@ -499,167 +493,6 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer, wd 
 	return 0
 }
 
-// cmdStatus reports. It exits 0 whenever the box was readable, blown or not, because
-// answering the question is the job, and 2 when it could not read, because then it did
-// not answer at all. Never gate on the exit code of status; check is the gate.
-func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	var max int
-	box, positional, ok, parsed := parseBoxWith("status", rest, stderr, inv.getenv, func(fs *flag.FlagSet) {
-		fs.IntVar(&max, "max", bounded.Default, "quarantine lines to list before one MORE line stands for the rest; 0 lists all")
-	})
-	if !parsed {
-		return 2
-	}
-	if len(positional) > 0 {
-		refuse(stderr, " status", fmt.Sprintf("unexpected argument %q", positional[0]))
-		ok = false
-	}
-	if max < 0 {
-		// Zero already means "all", so a negative ceiling is a typo with two readings.
-		fmt.Fprintf(stderr, "nova-fuse status REFUSED: --max must be a line ceiling of zero or more (got %d); 0 lists them all; run: nova-fuse help\n", max)
-		ok = false
-	}
-	if !ok {
-		return 2
-	}
-
-	b, err := fuse.ReadBox(boxFile(inv.wd, box))
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status REFUSED: %s -- a box that cannot be read is treated as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
-		return 2
-	}
-
-	names := b.Surfaces()
-	if b.Lockdown != nil {
-		fmt.Fprintf(stdout, "STATUS OK lockdown=blown since=%s quarantines=%d: %s\n",
-			since(*b.Lockdown), len(names), why(*b.Lockdown))
-	} else {
-		fmt.Fprintf(stdout, "STATUS OK lockdown=clear quarantines=%d\n", len(names))
-	}
-	// The count is never capped and the listing always is. quarantines= above is the truth
-	// about the box; the lines below are a sample of it in the box's own order, and the
-	// MORE line says how big the sample was, on a verb whose job is to be glanced at.
-	list := bounded.Capped(stdout, max, "STATUS", "quarantine", maxRemedy)
-	for _, n := range names {
-		f := b.Quarantine[n]
-		list.Line(fmt.Sprintf("STATUS OK quarantine=%s since=%s: %s", oneline.Field(n), since(f), why(f)))
-	}
-	list.More()
-	return 0
-}
-
-// cmdCheck gates. Every ingestion path calls it, and only exit 0 is permission: 1 means
-// a fuse is positively blown, 2 means it could not be proven clear.
-func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	box, positional, ok, parsed := parseBox("check", rest, stderr, inv.getenv)
-	if !parsed {
-		return 2
-	}
-	if len(positional) > 1 {
-		refuse(stderr, " check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]))
-		ok = false
-	}
-	surface := ""
-	if len(positional) == 1 {
-		if fuse.Surface(positional[0]) == "" {
-			refuse(stderr, " check", "surface must not be blank; omit it to check lockdown only")
-			ok = false
-		}
-		surface = positional[0]
-	}
-	if !ok {
-		return 2
-	}
-
-	b, err := fuse.ReadBox(boxFile(inv.wd, box))
-	if err != nil {
-		// Fail closed, and say which fact this is: "could not be read" is not "a fuse is
-		// blown", and a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check REFUSED: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
-		return 2
-	}
-
-	if b.Lockdown != nil {
-		fmt.Fprintf(stderr, "FUSE FAILED lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with the person you work with)\n",
-			since(*b.Lockdown), why(*b.Lockdown))
-		return 1
-	}
-
-	if name, f, ok := b.Quarantined(surface); ok {
-		fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
-			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
-		return 1
-	}
-	// Besides the typed surface, fail closed against the spelling obtained by decoding
-	// oneline.Field escapes (\xNN and \uNNNN) in it (docs/SECURITY.md; security#74 finding 2).
-	// If a surface "spaced name" is quarantined, status displays quarantine=spaced\x20name;
-	// typing back that displayed token must refuse with FUSE FAILED rather than failing open.
-	if decoded := unescapeField(surface); decoded != surface {
-		if name, f, ok := b.Quarantined(decoded); ok {
-			fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
-				oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
-			return 1
-		}
-	}
-
-	if surface == "" {
-		// Name what was verified and what was not. A bare check has proven only that there
-		// is no lockdown; it has checked no quarantine at all, and a caller that reads
-		// "clear" as "this surface is clear" leaves reads reaching the wire ungated.
-		fmt.Fprintln(stdout, "FUSE OK lockdown=clear (no surface named; no quarantine checked)")
-		return 0
-	}
-	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
-	return 0
-}
-
-func unhex(c byte) (byte, bool) {
-	switch {
-	case '0' <= c && c <= '9':
-		return c - '0', true
-	case 'a' <= c && c <= 'f':
-		return c - 'a' + 10, true
-	case 'A' <= c && c <= 'F':
-		return c - 'A' + 10, true
-	default:
-		return 0, false
-	}
-}
-
-// unescapeField decodes oneline.Field escapes (\xNN and \uNNNN) in s, acting as
-// the inverse of oneline.Field (docs/SECURITY.md; security#74 finding 2).
-// oneline.Field emits \xNN for each byte of invalid UTF-8, so \xNN decodes to the
-// raw byte, never to a rune; \uNNNN decodes to that rune's UTF-8 encoding.
-// Incomplete or invalid escape sequences are left as literal text.
-func unescapeField(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); {
-		if i+4 <= len(s) && s[i] == '\\' && s[i+1] == 'x' {
-			h1, ok1 := unhex(s[i+2])
-			h2, ok2 := unhex(s[i+3])
-			if ok1 && ok2 {
-				out = append(out, h1<<4|h2)
-				i += 4
-				continue
-			}
-		}
-		if i+6 <= len(s) && s[i] == '\\' && s[i+1] == 'u' {
-			h1, ok1 := unhex(s[i+2])
-			h2, ok2 := unhex(s[i+3])
-			h3, ok3 := unhex(s[i+4])
-			h4, ok4 := unhex(s[i+5])
-			if ok1 && ok2 && ok3 && ok4 {
-				out = append(out, string(rune(h1)<<12|rune(h2)<<8|rune(h3)<<4|rune(h4))...)
-				i += 6
-				continue
-			}
-		}
-		out = append(out, s[i])
-		i++
-	}
-	return string(out)
-}
-
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
 // box is already broken: a fuse you cannot blow is not a fuse.
 func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
@@ -859,59 +692,6 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 
 	fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)\n",
 		oneline.Field(surface), since(landed), oneline.Escape(reason))
-	return 0
-}
-
-// cmdInit makes an empty box where none is. It is the one way a box comes into being
-// clear, and it never replaces a box: a box already at the path, blown or not, readable
-// or not, is left as it is and the run exits 1, because replacing a box is the lockdown
-// reset this tool does not have.
-//
-// tla/FuseBox.tla is the model of the box these verbs act on: its invariants are
-// that the gate answers only from a box it read and from every --box named, that
-// only a lift, init or a hand-edit makes a surface clear, that init never
-// replaces a box and that a lockdown always blows (MCFuseBox*.cfg, five reversed
-// witnesses).
-func cmdInit(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	box, positional, ok, parsed, dry := parseWrite("init", rest, stderr, inv.getenv)
-	if !parsed {
-		return 2
-	}
-	if len(positional) > 0 {
-		refuse(stderr, " init", fmt.Sprintf("unexpected argument %q", positional[0]))
-		ok = false
-	}
-	if !ok {
-		return 2
-	}
-	exists := func() int {
-		fmt.Fprintf(stderr, "INIT FAILED box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with the person you work with); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
-		return 1
-	}
-	// A dry run is this run's own plan: the creation's every check, refusing where
-	// it would, and nothing written.
-	create := fuse.CreateBox
-	if dry {
-		create = fuse.PlanCreateBox
-	}
-	if err := create(boxFile(inv.wd, box)); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return exists()
-		}
-		fmt.Fprintf(stderr, "INIT FAILED box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
-		return 1
-	}
-	if dry {
-		fmt.Fprintf(stdout, "INIT OK box=%s dry_run=true: nothing written; a real run would make an empty box there\n", oneline.Field(box))
-		return 0
-	}
-	// Re-read. The exit code of a remedy is not evidence the remedy worked.
-	after, err := fuse.ReadBox(boxFile(inv.wd, box))
-	if err != nil || after.Lockdown != nil || len(after.Quarantine) != 0 {
-		fmt.Fprintf(stderr, "INIT FAILED box=%s: made but unverifiable (%s): do not trust it; tell the person you work with\n", oneline.Field(box), oneline.Err(err))
-		return 1
-	}
-	fmt.Fprintf(stdout, "INIT OK box=%s: an empty box, no fuse blown (verified by re-reading the box)\n", oneline.Field(box))
 	return 0
 }
 
