@@ -12,12 +12,15 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
 
 // Row is one entry of a source: the file (or package directory) the work lives in,
@@ -641,6 +644,25 @@ func Deadline(tier string) int {
 	return 45
 }
 
+// modelGate is what a card whose PATHS reach tla/ adds to its STEP 4 gate: the model is run
+// in the gate, by the tree's own tool on a TLC bench, and the RUNS.tsv it writes is committed
+// with the change, because the lander refuses a head that edits a model or a configuration
+// without a current record for each case it touches (internal/sprint/land_records.go;
+// tla/README.md, "Refreshing the records after a model edit").
+const modelGate = "The PATHS reach tla/, so the gate also runs the model: on a Linux TLC bench (java, the pinned jar at /opt/tla/tla2tools.jar; never a working machine), for each group g that `go run ./tools/tlacheck groups --root . --stale` lists (the groups of the cases your edit touched), run `make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g`, then `go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv $JOB/scratch/tlc-*/RUNS.tsv`, until the groups command prints []; commit tla/RUNS.tsv with the change, never a row written by hand. The lander refuses a head that edits tla/*.tla or tla/*.cfg without a current RUNS.tsv row for each case it touches, naming the case."
+
+// touchesModels says a card's PATHS reach a model or a configuration under tla/.
+func touchesModels(paths []string) bool {
+	for _, f := range []string{"tla/M.tla", "tla/MCM.cfg"} {
+		if slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, f) }) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(paths, func(g string) bool {
+		return path.Dir(g) == "tla" && (path.Ext(g) == ".tla" || path.Ext(g) == ".cfg")
+	})
+}
+
 // Render writes one brief: the header lines nova-sprint add reads, the paragraph
 // every card of the night carried, the rules verbatim from the card template, the
 // task, and the steps. It is the card template's shape with the <...> filled, so
@@ -669,13 +691,20 @@ func Render(h Header, c Card) string {
 	if pkg != "internal/ci" && !strings.HasPrefix(pkg, "internal/ci") {
 		gate += " ./internal/ci/"
 	}
+	paths, model := c.Paths, ""
+	if touchesModels(paths) {
+		model = " " + modelGate
+		if !slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, "tla/"+tlc.RunsFile) }) {
+			paths = append(slices.Clip(paths), "tla/"+tlc.RunsFile)
+		}
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "RESULT: %s sha=%s tier: %s\n", c.ID, sha12, c.Tier)
 	fmt.Fprintf(&b, "REPO: %s\n", h.Repo)
 	fmt.Fprintf(&b, "BASE: %s\n", h.Base)
 	fmt.Fprintf(&b, "KIND: %s\n", c.Kind)
 	fmt.Fprintf(&b, "DEPENDS-ON: %s\n", deps)
-	fmt.Fprintf(&b, "PATHS: %s\n", strings.Join(c.Paths, ", "))
+	fmt.Fprintf(&b, "PATHS: %s\n", strings.Join(paths, ", "))
 	if len(c.New) > 0 {
 		fmt.Fprintf(&b, "NEW: %s\n", strings.Join(c.New, ", "))
 	}
@@ -691,7 +720,7 @@ func Render(h Header, c Card) string {
 	b.WriteString("STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.\n")
 	fmt.Fprintf(&b, "STEP 2. Make it red first, as the task says, with the test %s: run %s -run %s and keep the failing line as evidence.\n", testName(c.Test), gate, testName(c.Test))
 	b.WriteString("STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.\n")
-	fmt.Fprintf(&b, "STEP 4. Run the gate: %s and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing. %s\n", gate, swarm.GateNamesWhoseFile)
+	fmt.Fprintf(&b, "STEP 4. Run the gate: %s and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing.%s %s\n", gate, model, swarm.GateNamesWhoseFile)
 	fmt.Fprintf(&b, "STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against %s, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n", h.Base)
 	b.WriteString("STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n")
 	return b.String()
