@@ -138,7 +138,8 @@ func StreamProse(s *Snapshot, stream string) []string {
 // backquotes unread under
 // a prose glob), written back, and the merge commit amended with the repair in its body,
 // its parents and subject kept. note is the landing note (RepairNote), "" when nothing
-// was repaired; refused is each fault with no one repair, and then nothing is written. A
+// was repaired; refused is each fault with no one repair, and each case of an edited model
+// without a current run record (recordsRefusals, land_records.go), and then nothing is written. A
 // symlink is not written through. git runs git in dir and returns its trimmed stdout.
 func RepairMerge(dir string, git func(args ...string) (string, error), before string, prose []string) (note string, refused []DocFix, err error) {
 	diff, err := git("diff", "-M", "--no-color", before, "HEAD")
@@ -175,6 +176,12 @@ func RepairMerge(dir string, git func(args ...string) (string, error), before st
 			writes = append(writes, write{f, text, fi.Mode().Perm()})
 		}
 	}
+	// a merge that edits a model is refused without its run records (land_records.go)
+	owed, err := recordsRefusals(dir, diff)
+	if err != nil {
+		return "", nil, err
+	}
+	refused = append(refused, owed...)
 	if len(refused) > 0 || len(writes) == 0 {
 		return "", refused, nil
 	}
