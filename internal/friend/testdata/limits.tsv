@@ -1,0 +1,38 @@
+# harness<TAB>kind<TAB>until<TAB>the text as the harness prints it, one line each.
+# kind is limit, credits, or none (not recognised: an ordinary failure); until is RFC3339, default (now + the rest), or -.
+# The clock the test reads them at is 2026-10-05T10:00:00Z, the rest one hour.
+claude	limit	2026-10-05T13:00:00Z	Claude AI usage limit reached|1791205200
+claude	limit	2026-10-05T15:00:00Z	You've hit your limit · resets 3pm (UTC)
+claude	limit	default	5-hour limit reached
+claude	limit	2026-11-01T00:00:00Z	API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}}
+claude	credits	default	Credit balance is too low
+claude	credits	default	API Error: 400 {"type":"error","error":{"type":"billing_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}
+claude	credits	default	API Error: 402 {"type":"error","error":{"type":"payment_required","message":"Payment required"}}
+claude	none	-	API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account's rate limit. Please try again later."}}
+claude	none	-	error: exit status 1
+codex	limit	2026-10-05T13:00:00Z	ERROR: You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again at 1:00 PM.
+codex	limit	2026-10-07T13:04:00Z	ERROR: You've hit your usage limit. Try again in 2 days 3 hours 4 minutes.
+codex	limit	2026-10-05T13:00:00Z	{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":1791205200,"resets_in_seconds":10800}}
+codex	limit	2026-10-05T11:00:00Z	{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_in_seconds":3600}}
+codex	credits	default	{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}
+codex	none	-	stream error: stream disconnected before completion: idle timeout waiting for SSE
+opencode	credits	default	Insufficient balance. Manage your billing here: https://opencode.ai/workspace/billing
+opencode	credits	default	{"type":"error","error":{"type":"CreditsError","message":"No payment method. Add a payment method here: https://opencode.ai/billing"}}
+opencode	limit	default	FreeUsageLimitError: Free usage exceeded, subscribe to Go https://opencode.ai/go
+opencode	none	-	Rate limit exceeded. Please try again later.
+grok	credits	default	{"code":"Some resource has been exhausted","error":"Your team has either used all available credits or reached its monthly spending limit. To continue making API requests, please purchase more credits or raise your spending limit."}
+grok	limit	2026-10-05T14:30:00Z	Usage limit reached. Resets at 2026-10-05T14:30:00Z.
+grok	limit	default	You've reached your usage limit.
+grok	none	-	error: request timed out
+antigravity	credits	2026-10-05T18:52:00Z	Insufficient AI Credits. Your credits will refresh 6:52 PM.
+antigravity	credits	default	Out of AI credits
+antigravity	limit	2026-10-05T13:12:05Z	You have exhausted your capacity on this model. Your quota will reset after 3h12m5s.
+antigravity	none	-	language server exited with code 1
+dsh	credits	default	Error: 402 Insufficient Balance
+dsh	credits	default	{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}
+dsh	limit	2026-10-05T11:30:00Z	dsh: daily usage limit reached, try again in 90 minutes
+dsh	none	-	dsh: unknown session id
+gemini	credits	default	Your prepayment credits are depleted.
+gemini	limit	2026-10-06T00:02:03Z	You exceeded your current quota, please check your plan and billing details. Your quota will reset after 14h2m3s.
+gemini	limit	default	[API Error: You exceeded your current quota, please check your plan and billing details.]
+gemini	none	-	[API Error: Please submit a new query to continue with the Flash model.]
