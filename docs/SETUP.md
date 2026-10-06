@@ -70,3 +70,28 @@ nova-doctor --check self --json
 Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
 nova tools on PATH and fails when they are not one release, naming the odd one. The
 contract is [SPEC-DOCTOR.md](SPEC-DOCTOR.md).
+
+### dep-redis-stores-b.w2: The Redis stores and their ACL users
+
+The nova tools keep their shared state in Redis: the sprint store, the bus store and
+whatever else the applied inventory names. Each store has one ACL user per role — the
+coordinator, the member, the friend and the read-only table reader — rendered from the
+function library and the key families by `internal/redisacl` and set with `nova-redis acl
+apply`.
+
+On one machine, `nova-up --local` provides it: the `redis` step serves one loopback Redis
+through the service manager, draws a password per user, seals each in the secrets store
+and applies the users with `nova-redis acl apply` under `nova-secrets exec`, so no password
+is written to a file or printed. In a fleet the `redis.yml` play renders the users on the
+machine running the play and checks and applies them on the store deployer
+([FLEET.md](FLEET.md), "redis.yml"); a person does the same by hand with `nova-redis acl
+apply`.
+
+The doctor's `redis` check reads each store the environment names (`NOVA_REDIS_ADDR` for
+the machine's Redis, `NOVA_SPRINT_REDIS` for the sprint store, `NOVA_BUS_REDIS` for the
+bus store; a `mem:` address is the sprint's in-process twin and holds no ACL), dials it,
+holds `redis-server` to the version floor the ACL users need, and compares the store's
+live ACL with the users this build renders. A user that is missing or different is a
+`fail` naming the user and the store, with the `nova-redis acl apply` line that fixes it;
+a password is never printed. A machine with no Redis store named is a `warn` with the
+setup step.
