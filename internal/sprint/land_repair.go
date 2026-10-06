@@ -2,7 +2,9 @@ package sprint
 
 import (
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode"
@@ -18,8 +20,9 @@ import (
 // final newline, a code fence the change leaves open, and a backquote the change leaves
 // unmatched in a paragraph. A fault is repaired only when there is one repair; when
 // there are two ways to put it right that read differently, it is refused with the
-// line. A fault of the base's (no line of the change in it) is left alone. Only the
-// repair is written here; cmd/nova-sprint/land.go does not call it yet.
+// line. A fault of the base's (no line of the change in it) is left alone. The lander
+// calls RepairMerge on each merge commit before its E4 check (cmd/nova-sprint/land.go,
+// checkCard); a stream's prose globs (FieldProse) are not read for backquotes at all.
 
 // DocFix is one fault of a document: its file, the line (1-based, in the file as
 // repaired), and what was done or, for a refusal, why there is no one repair.
@@ -54,6 +57,9 @@ func DocChanged(diff string) map[string][]int {
 		for _, h := range f.Hunks {
 			line := h.NewStart
 			for _, l := range h.Lines {
+				if l == "" {
+					continue
+				}
 				switch l[0] {
 				case '+':
 					out[f.New] = append(out[f.New], line)
@@ -78,6 +84,88 @@ func RepairNote(fixes []DocFix) string {
 		s[i] = f.String()
 	}
 	return "the documents were repaired at the merge: " + strings.Join(s, "; ")
+}
+
+// StreamProse is a stream's prose globs (FieldProse, written by `stream set --prose`):
+// the files whose backquotes are their own, nil when it names none.
+func StreamProse(s *Snapshot, stream string) []string {
+	ctl := s.StreamCtl(stream)
+	if ctl == nil {
+		return nil
+	}
+	var out []string
+	for _, g := range strings.Split(ctl.F(FieldProse), ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// RepairMerge repairs the documents a merge commit at HEAD of the clone dir changes
+// against before (the batch branch's tip before the merge), the lander's fix on the way
+// in as the ledgers' regeneration is: each Markdown or text file the merge writes is read
+// from the tree, repaired on the merge's own lines (RepairDoc, its backquotes unread under
+// a prose glob), written back, and the merge commit amended with the repair in its body,
+// its parents and subject kept. note is the landing note (RepairNote), "" when nothing
+// was repaired; refused is each fault with no one repair, and then nothing is written. A
+// symlink is not written through. git runs git in dir and returns its trimmed stdout.
+func RepairMerge(dir string, git func(args ...string) (string, error), before string, prose []string) (note string, refused []DocFix, err error) {
+	diff, err := git("diff", "-M", "--no-color", before, "HEAD")
+	if err != nil {
+		return "", nil, err
+	}
+	changed := DocChanged(diff)
+	files := make([]string, 0, len(changed))
+	for f := range changed {
+		if DocFile(f) {
+			files = append(files, f)
+		}
+	}
+	slices.Sort(files)
+	type write struct {
+		file, text string
+		mode       os.FileMode
+	}
+	var writes []write
+	var fixes []DocFix
+	for _, f := range files {
+		p := filepath.Join(dir, filepath.FromSlash(f))
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return "", nil, err
+		}
+		text, fx, rf := RepairDoc(f, string(b), changed[f], DocProse(prose, f))
+		fixes, refused = append(fixes, fx...), append(refused, rf...)
+		if text != string(b) {
+			writes = append(writes, write{f, text, fi.Mode().Perm()})
+		}
+	}
+	if len(refused) > 0 || len(writes) == 0 {
+		return "", refused, nil
+	}
+	for _, w := range writes {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(w.file)), []byte(w.text), w.mode); err != nil {
+			return "", nil, err
+		}
+		if _, err := git("add", "--", w.file); err != nil {
+			return "", nil, err
+		}
+	}
+	msg, err := git("log", "-1", "--format=%B")
+	if err != nil {
+		return "", nil, err
+	}
+	note = RepairNote(fixes)
+	body := strings.ToUpper(note[:1]) + note[1:] + "."
+	if _, err := git("commit", "-q", "--amend", "-m", msg, "-m", body); err != nil {
+		return "", nil, err
+	}
+	return note, nil, nil
 }
 
 // RepairDoc repairs the faults of text, a document's content after a merge, that lie on
