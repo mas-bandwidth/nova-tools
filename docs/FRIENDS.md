@@ -50,7 +50,13 @@ hours). Name the real path with `--dir`.
 with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and has no session to push into) is refused
 before anything is written, with the adapter card as the remedy; a dsh
 session under an agent preset is refused with `start a session in <dir> with
-no agent preset and name it with --session <id>`. `run` delivers one SESSION
+no agent preset and name it with --session <id>`. A headless turn whose
+output carries that preset refusal, or `MISSING_CREDENTIAL`, is a failed
+delivery whatever the exit code, even 0: the message stays pending, and her
+row reads down until a turn succeeds, with the reason
+`dsh session <id>: agent preset <preset>` or `dsh: missing credential`. No
+credential value is printed (docs/SPEC-FRIEND.md, a dsh turn the session
+cannot take). `run` delivers one SESSION
 CHECK before its loop and exits 2 when no pong comes back within five
 minutes. Her beat carries her session's last proof, and the sprint deals
 nothing to a friend whose proof is older than fifteen minutes

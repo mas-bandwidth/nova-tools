@@ -1,10 +1,15 @@
 package friend
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -409,7 +414,171 @@ func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
 		}
 		require.NotEmpty(t, r.records)
 		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
+		s := r.last()
+		assert.Equal(t, SessionBroken, s.Session, "the first refusal marks the session broken, not the third")
+		assert.Equal(t, "dsh session session-zhi: agent preset minimal", s.SessionReason)
+		said := 0
+		for _, line := range r.records {
+			if strings.Contains(line, `presence=down reason="dsh session session-zhi: agent preset minimal"`) {
+				said++
+			}
+		}
+		assert.Equal(t, 1, said, "recorded once, not once a refusal: %v", r.records)
 	})
+}
+
+// TestDSHFakeChild is the fake dsh, a re-exec of this test binary. The parent
+// sets NOVA_FRIEND_DSH_FAKE; a direct run skips. It prints the refusal or a
+// clean turn and exits 0. It prints no credential.
+func TestDSHFakeChild(t *testing.T) {
+	mode := os.Getenv("NOVA_FRIEND_DSH_FAKE")
+	if mode == "" {
+		t.Skip("spawned by TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason")
+	}
+	session := os.Getenv("NOVA_FRIEND_DSH_SESSION")
+	switch mode {
+	case "preset":
+		fmt.Printf("dsh: session %q runs under agent preset \"minimal\", which the one-shot runner does not compose\n", session)
+	case "missing":
+		fmt.Println("MISSING_CREDENTIAL")
+	default:
+		fmt.Println("ok")
+	}
+	_ = os.Stdout.Sync()
+	os.Exit(0)
+}
+
+// fakeDSH is this test binary standing in for dsh. mode is read on each
+// turn, so a later turn can succeed. The process exits 0; the refusal is
+// in what it prints.
+func fakeDSH(t *testing.T, mode *atomic.Value) Exec {
+	t.Helper()
+	bin, err := os.Executable()
+	require.NoError(t, err)
+	return func(ctx context.Context, dir, _ string, args []string, stdin string) (string, int, error) {
+		session := ""
+		for i, a := range args {
+			if a == "--session-id" && i+1 < len(args) {
+				session = args[i+1]
+			}
+		}
+		m, _ := mode.Load().(string)
+		cmd := exec.CommandContext(ctx, bin, "-test.run=^TestDSHFakeChild$", "-test.count=1", "-test.timeout=20s")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NOVA_FRIEND_DSH_FAKE="+m, "NOVA_FRIEND_DSH_SESSION="+session)
+		cmd.Stdin = strings.NewReader(stdin)
+		cmd.WaitDelay = 5 * time.Second
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		out := stdout.String() + stderr.String()
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return out, exitErr.ExitCode(), nil
+		}
+		return out, 0, err
+	}
+}
+
+// A dsh headless turn that prints the agent-preset refusal or
+// MISSING_CREDENTIAL and exits 0 is a failed delivery: after one turn the
+// session is broken, the friend's row reads down with the reason, and every
+// message is still pending. The down line is recorded once. A later turn
+// that succeeds clears it (docs/SPEC-FRIEND.md, a dsh turn the session
+// cannot take).
+func TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, mode, reason string
+	}{
+		{"agent preset", "preset", "dsh session session-zhi: agent preset minimal"},
+		{"missing credential", "missing", "dsh: missing credential"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			var mode atomic.Value
+			mode.Store(tc.mode)
+			var calls atomic.Int32
+			run := fakeDSH(t, &mode)
+			dsh := &DSH{Dir: r.d.Dir, Session: "session-zhi", Program: "dsh", Run: func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+				calls.Add(1)
+				return run(ctx, dir, name, args, stdin)
+			}}
+			// The rig's pause waits on a gate token. This deliverer counts one,
+			// or the loop waits forever. A deaf turn leaves the batch in
+			// hand, so later pauses have no token until the recheck: wait
+			// only while a delivery has counted itself. The short grace is
+			// the turn goroutine entering Deliver; a recheck sends nothing.
+			r.d.Deliver = deliverFunc(func(ctx context.Context, text string) (int, error) {
+				r.mu.Lock()
+				r.owed++
+				r.mu.Unlock()
+				return dsh.Deliver(ctx, text)
+			})
+			r.d.Pause = func(ctx context.Context, _ time.Duration) {
+				r.mu.Lock()
+				live := r.owed > 0
+				r.mu.Unlock()
+				if live {
+					select {
+					case <-r.gate:
+					case <-ctx.Done():
+					}
+					return
+				}
+				wait := time.NewTimer(100 * time.Millisecond)
+				defer wait.Stop()
+				select {
+				case <-r.gate:
+				case <-ctx.Done():
+				case <-wait.C:
+				}
+			}
+			r.send(t, "ada", "hello", "one")
+			r.send(t, "ada", "again", "two")
+			var down Status
+			sawDown := false
+			status := r.d.Status
+			r.d.Status = func(s Status) error {
+				err := status(s)
+				if !sawDown && s.Session == SessionBroken {
+					sawDown = true
+					down = s
+					pending, fresh, perr := r.bus.Peek(context.Background(), "bob")
+					assert.NoError(t, perr)
+					assert.Len(t, pending, 2, "both messages stay pending")
+					assert.Empty(t, fresh)
+					v := FriendStatus(Evidence{LastAnswer: s.At, BusBlocked: "session broken", Undelivered: len(pending)}, s.At, AnswerBound, time.UTC)
+					assert.Equal(t, "down", v.Status, "the row reads down while the session cannot take a turn")
+					assert.NotEqual(t, "up", v.Status)
+					mode.Store("ok")
+				}
+				return err
+			}
+			r.run(t, 40)
+			require.True(t, sawDown, "one refusal was enough to mark the session broken: %v", r.records)
+			assert.Equal(t, SessionBroken, down.Session)
+			assert.Equal(t, "session-zhi", down.SessionID)
+			assert.Equal(t, tc.reason, down.SessionReason)
+			assert.GreaterOrEqual(t, calls.Load(), int32(2), "a later turn still runs, so a success can clear it")
+			s := r.last()
+			assert.Equal(t, SessionOK, s.Session, "a turn that succeeds clears the broken mark")
+			assert.Empty(t, s.SessionReason)
+			pending, _, err := r.bus.Peek(context.Background(), "bob")
+			require.NoError(t, err)
+			assert.Empty(t, pending, "the successful turn acks the messages")
+			said := 0
+			for _, line := range r.records {
+				if strings.Contains(line, "presence=down reason="+fmt.Sprintf("%q", tc.reason)) {
+					said++
+				}
+				assert.NotContains(t, line, "given_up")
+			}
+			assert.Equal(t, 1, said, "recorded once across the retries: %v", r.records)
+			assert.Contains(t, strings.Join(r.records, "\n"), "presence=up")
+		})
+	}
 }
 
 // A wake check is answered by the session, never by the daemon

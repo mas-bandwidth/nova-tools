@@ -185,12 +185,20 @@ func ProviderRefusal(out string) (reason string, ok bool) {
 	return reason, true
 }
 
-// refused is the answer of an adapter whose turn exited nonzero: the
-// provider's refusal when the output carries one, else the exit as it was.
+// refused is the answer of an adapter whose turn ended: a dsh headless turn
+// whose output says the session cannot take a turn at all (an agent preset
+// the one-shot runner will not compose, or a missing provider key), whatever
+// the exit code, including 0; else, on a nonzero exit, the provider's
+// refusal when the output carries one; else the exit as it was.
 func refused(session string, out string, exit int, err error) (int, error) {
-	if exit != 0 && err == nil {
-		if reason, ok := ProviderRefusal(out); ok {
-			return exit, ProviderRefused{Session: session, Reason: reason}
+	if err == nil {
+		if deaf, ok := dshDeafFrom(session, "", out); ok {
+			return 0, deaf
+		}
+		if exit != 0 {
+			if reason, ok := ProviderRefusal(out); ok {
+				return exit, ProviderRefused{Session: session, Reason: reason}
+			}
 		}
 	}
 	return exit, err

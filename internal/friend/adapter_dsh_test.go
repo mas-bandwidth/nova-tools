@@ -87,23 +87,39 @@ func (f *fakeStdinExec) run(_ context.Context, dir, name string, args []string, 
 }
 
 // A session that runs under an agent preset is refused by dsh's one-shot
-// runner, whatever the text (measured 2026-10-04 12:50 PM ET on Zhi's
-// session, preset "minimal"): nothing has failed that a retry fixes and
-// nothing was delivered, so the delivery is Deferred, never a failure the
-// daemon gives up on. Any other nonzero exit stays the harness's exit.
+// runner, whatever the text and whatever the exit (measured 2026-10-04 on
+// Zhi's session, preset "minimal", and again when the same text exited 0):
+// nothing was delivered, so the delivery is Deferred, and it is DSHDeaf so
+// the row reads down. A missing provider key is the same. Any other nonzero
+// exit stays the harness's exit.
 func TestDSHDefersASessionUnderAPresetTheOneShotRunnerDoesNotCompose(t *testing.T) {
 	t.Parallel()
 	refusal := `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n"
-	var turn strings.Builder
-	fe := &fakeStdinExec{exit: 1, out: refusal}
-	d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: fe.run, Program: "dsh", Out: &turn}
+	for _, exitCode := range []int{1, 0} {
+		var turn strings.Builder
+		fe := &fakeStdinExec{exit: exitCode, out: refusal}
+		d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: fe.run, Program: "dsh", Out: &turn}
+		exit, err := d.Deliver(context.Background(), "hello")
+		assert.Equal(t, 0, exit)
+		var deferred Deferred
+		require.ErrorAs(t, err, &deferred)
+		assert.Contains(t, deferred.Reason, `session-zhi runs under agent preset "minimal"`)
+		assert.Contains(t, deferred.Reason, "nova-bus recv", "says what the friend does")
+		var deaf DSHDeaf
+		require.ErrorAs(t, err, &deaf)
+		assert.Equal(t, "session-zhi", deaf.Session)
+		assert.Equal(t, "dsh session session-zhi: agent preset minimal", deaf.Down)
+		assert.Empty(t, turn.String(), "the daemon says the reason, once; the refusal is not written every recheck")
+	}
+
+	fe := &fakeStdinExec{exit: 0, out: "stopped\nMISSING_CREDENTIAL\n"}
+	d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Run: fe.run, Program: "dsh"}
 	exit, err := d.Deliver(context.Background(), "hello")
 	assert.Equal(t, 0, exit)
-	var deferred Deferred
-	require.ErrorAs(t, err, &deferred)
-	assert.Contains(t, deferred.Reason, `session-zhi runs under agent preset "minimal"`)
-	assert.Contains(t, deferred.Reason, "nova-bus recv", "says what the friend does")
-	assert.Empty(t, turn.String(), "the daemon says the reason, once a minute; the refusal is not written every recheck")
+	var deaf DSHDeaf
+	require.ErrorAs(t, err, &deaf)
+	assert.Equal(t, "dsh: missing credential", deaf.Down)
+	assert.NotContains(t, deaf.Error(), "sk-")
 
 	fe = &fakeStdinExec{exit: 1, out: "dsh: unknown session \"session-gone\"\n"}
 	d = &DSH{Dir: "/w/zhi", Session: "session-gone", Run: fe.run, Program: "dsh"}

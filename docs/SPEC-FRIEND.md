@@ -355,6 +355,21 @@ which is how a renewed session is taken up. The finding of 2026-10-04:
 a friend's session refused every turn with `invalid_request_error` for two hours
 and nothing said so.
 
+A dsh headless turn the session cannot take is the same kind of failure on
+the first turn, not after `--broken-after`. The output carries either the
+one-shot runner's agent-preset refusal (`runs under agent preset "<preset>",
+which the one-shot runner does not compose`) or `MISSING_CREDENTIAL`, and the
+exit code does not matter, including 0 (the finding of 2026-10-04: Zhi's
+session printed the preset refusal and exited 0, so a check that required a
+nonzero exit counted every turn delivered, and for four hours her row read
+up while nothing arrived). The adapter answers `DSHDeaf`: a deferral, so
+every message stays pending, counted toward nothing, never given up, and no
+credential value is printed. The daemon marks the session broken on that
+first turn, records it once, and the friend's row reads down with the reason
+`dsh session <id>: agent preset <preset>` or `dsh: missing credential`.
+Delivery is still tried. A later turn that succeeds clears the mark. Until
+then the row does not say up.
+
 A harness at its usage limit or out of credits is down until its reset,
 woken after it, and its measured usage rides on its beat
 (`internal/friend/limit.go`; the finding of 2026-10-04: a friend's harness
@@ -1968,8 +1983,12 @@ route is defer: `DSH.Route` answers `defer` with the line the session runs
 carries no route for dsh until that wiring (cmd/nova-friend, outside this card's
 paths) lands.
 A session that has selected an agent preset is refused by the one-shot runner
-whatever the text (exit 1, "runs under agent preset ..., which the one-shot
-runner does not compose"; measured 2026-10-04 on a "minimal" session), so the
-adapter answers Deferred: the message stays pending, never given up, and the
-reason tells the friend to start a session without a preset or read the bus with
-`nova-bus recv`.
+whatever the text ("runs under agent preset ..., which the one-shot runner
+does not compose"; measured 2026-10-04 on a "minimal" session, exit 1, and
+the same text has been seen with exit 0). A turn that stops at
+`MISSING_CREDENTIAL` is the same: the session cannot take a turn at all. The
+adapter answers `DSHDeaf` whatever the exit code. The message stays pending,
+never given up, and the reason tells the friend to start a session without a
+preset or read the bus with `nova-bus recv`. The friend's row reads down
+until a turn succeeds, with `dsh session <id>: agent preset <preset>` or
+`dsh: missing credential`. No credential value is printed.

@@ -304,6 +304,7 @@ type loop struct {
 	refusal      string // the last provider refusal, and how many turns in a row said it
 	streak       int
 	broken, told bool
+	deafReason   string // the dsh presence reason standing, "" once a turn succeeds; said once
 	results      chan result
 	lanes        *laneSet
 	reads        *readSet
@@ -819,6 +820,12 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		if l.deafReason != "" {
+			// a turn the session took clears the dsh deaf mark (docs/SPEC-FRIEND.md)
+			l.deafReason = ""
+			d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionOK, "", "", time.Time{}
+			line += " presence=up"
+		}
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -884,7 +891,9 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 }
 
 // batchDone is the batch turn's end: a deferral keeps it in hand, tried
-// again; anything else settles its messages.
+// again; anything else settles its messages. A dsh turn the session cannot
+// take (DSHDeaf) is that deferral, and also marks the session broken on the
+// first such turn, recorded once, until a turn succeeds.
 func (l *loop) batchDone(r result, now time.Time) {
 	d := l.d
 	r.t.running = false
@@ -896,6 +905,10 @@ func (l *loop) batchDone(r result, now time.Time) {
 			l.deferSaid = now
 			d.Record(fmt.Sprintf("%s subject=%s deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
 				now.UTC().Format(time.RFC3339), r.t.subjects, l.deferrals, deferred.Reason, RecheckEvery, DeferredSaidEvery))
+		}
+		var deaf DSHDeaf
+		if errors.As(r.err, &deaf) {
+			l.noteDeaf(deaf, now)
 		}
 		return
 	}
@@ -915,6 +928,20 @@ func (l *loop) batchDone(r result, now time.Time) {
 		d.Record(part)
 	}
 	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
+}
+
+// noteDeaf marks the session broken the first time dsh says it cannot take
+// a turn, with the presence reason, and not again while that reason stands.
+// The messages stay pending (the deferral above). A later successful turn
+// clears it (settle). It is not the provider streak: one turn is enough, and
+// delivery is still tried, so a turn that succeeds can clear it.
+func (l *loop) noteDeaf(deaf DSHDeaf, now time.Time) {
+	if l.deafReason == deaf.Down && l.d.status.Session == SessionBroken {
+		return
+	}
+	l.deafReason = deaf.Down
+	l.d.status.Session, l.d.status.SessionID, l.d.status.SessionReason, l.d.status.BrokenAt = SessionBroken, deaf.Session, deaf.Down, now
+	l.d.Record(fmt.Sprintf("%s session=broken presence=down reason=%q", now.UTC().Format(time.RFC3339), deaf.Down))
 }
 
 // tellBroken sends the coordinator one message that the session is broken:

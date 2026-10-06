@@ -24,10 +24,14 @@ const DSHProgram = "/Applications/DeepSeek Harness.app/Contents/Resources/runtim
 // Dir from the store (DSH_HOME, else ~/.dsh). The desktop app the friend
 // sits in shares the store. Measured 2026-10-04 and 2026-10-05 (docs/SPEC-FRIEND.md,
 // the dsh row): a session under an agent preset is refused by the one-shot
-// runner whatever the text, exit 1 before any write, its transcript hash
-// unchanged (the runner adopts only a session with no preset, and a session
-// never returns to none): that delivery is Deferred, so the message stays
-// pending instead of being given up after three refusals. On the survey machine,
+// runner whatever the text, before any write, its transcript hash unchanged
+// (the runner adopts only a session with no preset, and a session never
+// returns to none). From 2026-10-04 that refusal was printed and the process
+// exited 0, so a check that required a nonzero exit counted the turn
+// delivered. The same for a missing provider key (MISSING_CREDENTIAL in the
+// output). Either text, whatever the exit code, is DSHDeaf: the message
+// stays pending, and the friend's row reads down until a turn succeeds
+// (docs/SPEC-FRIEND.md, a dsh turn the session cannot take). On the survey machine,
 // deliver.log records 1339+ deferred deliveries against Zhi's real open session,
 // and the desktop app exposes no local listener or IPC socket. No route into
 // the open desktop session exists, so Route answers defer; the session reads the
@@ -99,9 +103,10 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 		program = DSHProgram
 	}
 	out, exit, err := d.Run(ctx, d.Dir, program, DSHArgs(id), text)
-	if m := dshPresetRefusal.FindStringSubmatch(out); exit != 0 && err == nil && m != nil {
-		return 0, Deferred{Reason: fmt.Sprintf("session %s runs under agent preset %q, which dsh's headless runner does not compose (it adopts only a session with no agent preset); the message stays pending: start a session in %s without an agent preset and name it with --session, or read the bus with nova-bus recv", id, m[1], d.Dir),
-			Remedy: DSHNoPresetRemedy(d.Dir)}
+	if err == nil {
+		if deaf, ok := dshDeafFrom(id, d.Dir, out); ok {
+			return 0, deaf // not written out: the daemon says the reason once, not every recheck
+		}
 	}
 	if d.Out != nil && out != "" {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
@@ -127,6 +132,45 @@ func DSHNoPresetRemedy(dir string) string {
 // dshPresetRefusal is the one-shot runner's refusal of a session under an
 // agent preset, the preset its group.
 var dshPresetRefusal = regexp.MustCompile(`runs under agent preset "([^"]*)", which the one-shot runner does not compose`)
+
+// DSHDeaf is a dsh headless turn the session cannot take at all: the output
+// carries the agent-preset refusal or MISSING_CREDENTIAL, whatever the exit
+// code. It is a Deferred, so the message stays pending and is never given
+// up, and Down is the presence reason the daemon marks the row down with on
+// the first such turn (docs/SPEC-FRIEND.md, a dsh turn the session cannot
+// take). No credential value is in it.
+type DSHDeaf struct {
+	Deferred
+	Session string
+	Down    string
+}
+
+func (d DSHDeaf) Unwrap() error { return d.Deferred }
+
+// dshDeafFrom reads a headless turn's output. ok is false when the turn
+// does not say the session cannot take one. dir is the friend's directory,
+// used in the preset remedy; empty leaves that remedy unnamed.
+func dshDeafFrom(session, dir, out string) (DSHDeaf, bool) {
+	if m := dshPresetRefusal.FindStringSubmatch(out); m != nil {
+		reason := fmt.Sprintf("session %s runs under agent preset %q, which dsh's headless runner does not compose (it adopts only a session with no agent preset); the message stays pending: start a session in %s without an agent preset and name it with --session, or read the bus with nova-bus recv", session, m[1], dir)
+		return DSHDeaf{
+			Deferred: Deferred{Reason: reason, Remedy: DSHNoPresetRemedy(dir)},
+			Session:  session,
+			Down:     fmt.Sprintf("dsh session %s: agent preset %s", session, m[1]),
+		}, true
+	}
+	if strings.Contains(out, "MISSING_CREDENTIAL") {
+		return DSHDeaf{
+			Deferred: Deferred{
+				Reason: "dsh: missing credential; the message stays pending, and no credential value is printed",
+				Remedy: "set the provider key the headless profile reads; nothing here prints the key",
+			},
+			Session: session,
+			Down:    "dsh: missing credential",
+		}, true
+	}
+	return DSHDeaf{}, false
+}
 
 func dshHome() string {
 	if h := os.Getenv("DSH_HOME"); h != "" {
