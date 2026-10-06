@@ -60,8 +60,9 @@ store machine. It creates the backup directories (mode 0700) and writes every
 setting on this page to `nova_data_settings_file` (JSON, mode 0600). It holds
 the three backup loops (`data-backup-config`, `data-backup-sprint`,
 `data-backup-bus`) against what those settings say. A loop that is missing,
-or whose argv differs, gets a `BACKUP LOOP` line carrying the `nova-config loop
-add` line that fixes it, and outside `--check` the play then fails. A loop
+or whose argv differs, gets a `BACKUP LOOP` line carrying the
+`nova-config loop add` line that fixes it, and outside `--check` the play then
+fails. A loop
 record goes into PostgreSQL and is rendered by `fleet/loops.yml`, and the play
 never writes PostgreSQL itself.
 
@@ -88,8 +89,9 @@ existed.
    come from Git.
 2. **Secrets.** Restore the nova-secrets store from its own backup
    (SPEC-SECRETS.md). Every later step logs in through it.
-3. **PostgreSQL.** Check the newest dump against its sum (`sha256sum -c
-   <file>.sha256`, in the dump's directory), create an empty database, run
+3. **PostgreSQL.** Check the newest dump against its sum
+   (`sha256sum -c <file>.sha256`, in the dump's directory), create an empty
+   database, run
    `pg_restore --no-owner --exit-on-error --dbname <dsn> <file>`, then
    `nova-config migrate` (it applies nothing on a dump at the binary's
    schema). `nova-config status` then refuses until step 5: the Redis copy is
@@ -99,11 +101,11 @@ existed.
    **Do not start `nova-redis serve` on it yet:** a server started with its
    AOF on, in a directory holding only an RDB, loads nothing and writes an
    empty AOF (Redis 8 on the bench; the drill holds it as a witness). Load it in two steps: start
-   `redis-server --bind 127.0.0.1 --port <a free port> --dir <dir>
-   --dbfilename dump.rdb --appendonly no`, run `CONFIG SET appendonly yes`
-   on it, wait until `INFO persistence` says `aof_rewrite_in_progress:0` and
-   `aof_last_bgrewrite_status:ok`, then `SHUTDOWN`; now start `nova-redis
-   serve` on that dir, and it loads the AOF. Then run `fleet/redis.yml`. The
+   `redis-server --bind 127.0.0.1 --port <a free port> --dir <dir> --dbfilename dump.rdb --appendonly no`,
+   run `CONFIG SET appendonly yes` on it, wait until `INFO persistence` says
+   `aof_rewrite_in_progress:0` and `aof_last_bgrewrite_status:ok`, then
+   `SHUTDOWN`; now start `nova-redis serve` on that dir, and it loads the AOF.
+   Then run `fleet/redis.yml`. The
    users come back through `acl apply`, because `users.acl` lives beside the
    store and is not in the snapshot. Then run `nova-redis fn load`.
 5. **Apply config.** Run `nova-config apply` (PostgreSQL over the copy the
@@ -169,8 +171,9 @@ delivered entry, and what was never delivered). The time must fall within the
 restore time above.
 
 The drill is `TestRestoreDrillOntoAFreshHost`
-(cmd/nova-config/restore_drill_functional_test.go, `go test -tags functional
--run TestRestoreDrillOntoAFreshHost ./cmd/nova-config/`). It configures a
+(cmd/nova-config/restore_drill_functional_test.go,
+`go test -tags functional -run TestRestoreDrillOntoAFreshHost ./cmd/nova-config/`).
+It configures a
 fleet and uses its bus (sent, delivered, acked, pending, never delivered,
 receipted and owed), takes the bus snapshot and then the configuration dump
 the way the loops do, changes the configuration and sends a message in

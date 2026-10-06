@@ -34,11 +34,12 @@ read the old host.
 The witness, before the clock starts: a Redis started with its AOF on, in a directory holding only
 the snapshot as `dump.rdb`, loads nothing (DBSIZE 0). DATA.md's restore order steps around it.
 
-The restore, timed from here: a fresh PostgreSQL cluster (initdb), an empty database, `pg_restore
---no-owner --exit-on-error` of the dump, `nova-config migrate` (applied=0), `nova-config status`
+The restore, timed from here: a fresh PostgreSQL cluster (initdb), an empty database,
+`pg_restore --no-owner --exit-on-error` of the dump, `nova-config migrate` (applied=0),
+`nova-config status`
 (refuses: the Redis copy is behind until apply). The snapshot's sum checked (`store.RestoreDrill`),
-the file placed as `dump.rdb` in an empty directory, a Redis started there with the AOF off, `CONFIG
-SET appendonly yes` and the rewrite waited for, that Redis shut down, and the store's own shape (AOF
+the file placed as `dump.rdb` in an empty directory, a Redis started there with the AOF off,
+`CONFIG SET appendonly yes` and the rewrite waited for, that Redis shut down, and the store's own shape (AOF
 on, fsync every second) started on the directory; its key count equals the loader's. The function
 library loaded. Before apply the roster is the snapshot's (ada, bob, m1). Then `nova-config apply`,
 then the facts read again.
@@ -48,8 +49,8 @@ then the facts read again.
 - The bus store's facts after the restore equal the facts at the snapshot, field for field: 6
   messages in `bus2:log` with the same newest id, the same stream lengths and group positions, bob's
   2 pending and 2 never delivered, 4 receipts owed to bob and 1 to ada.
-- The configuration after the restore equals the configuration at the dump (`friend list`, `fleet
-  show`), and apply replaced the snapshot's older roster with PostgreSQL's (ada, bob, cy, m1).
+- The configuration after the restore equals the configuration at the dump (`friend list`,
+  `fleet show`), and apply replaced the snapshot's older roster with PostgreSQL's (ada, bob, cy, m1).
 - The message sent after the snapshot is not in the log: the loss DATA.md accepts, at most
   `nova_data_redis_every`.
 - The deliveries resume: bob is handed the two never-delivered entries, in order; the friends'
