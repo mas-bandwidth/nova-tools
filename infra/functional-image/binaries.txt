@@ -64,3 +64,4 @@ initdb	apt	postgresql-16
 postgres	apt	postgresql-16
 redis-cli	source	redis-build
 perl	base	perl-base
+tmux	absent	the hosted-pane functional test skips with its reason when tmux is not installed; the unit tests replay captured screens through a fake Exec
