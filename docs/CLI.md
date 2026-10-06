@@ -2891,6 +2891,23 @@ wrong:
   whole of it.
 
 
+## nova-up
+
+Sets up nova on one machine, from nothing to a first sprint: platform, dirs,
+binaries, sprint, secrets, redis, seat and smoke, in that order. Each step
+plans first (`UP <step> <ok|create|change|missing> <detail>`); apply runs every
+step not ok, and a missing program stops the run before anything is written,
+naming its install command. `--dry-run` plans and writes nothing.
+
+<!-- clidoc:begin nova-up -->
+```
+nova-up --local [--root <dir>] [--dry-run] [--json]
+nova-up version
+nova-up help [<verb>]
+```
+<!-- clidoc:end nova-up -->
+
+
 ## nova-table
 
 Work tables over Redis: ordered-set cells, text notes, percentage formulas,
