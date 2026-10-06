@@ -382,13 +382,6 @@ func friendEscalateUnit(s *Snapshot, c, prev *Card, card, row, col, tier string)
 	return u
 }
 
-// FriendDeal is the tick's friend deal alone (friendDeal), its plan without the counts
-// the level reads.
-func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
-	p, _, _ := friendDeal(s, cards, seats)
-	return p
-}
-
 // friendWithFree is the up friend of one of the classes with the most free width in
 // free, the first by name among equals; "" when none has room. AttemptCapDeal passes
 // the free width it has left in this plan, decremented after each deal.
