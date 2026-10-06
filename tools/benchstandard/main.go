@@ -69,8 +69,6 @@ import (
 	"strings"
 )
 
-const tool = "benchstandard"
-
 const usage = `usage: benchstandard [--apply]
   --apply   kills stray runner listeners (the tool's only mutation); nothing more
 `
