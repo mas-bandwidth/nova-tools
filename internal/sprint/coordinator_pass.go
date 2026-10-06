@@ -48,8 +48,8 @@ const (
 	// NFriendEmpty is an up friend whose row has been empty for EmptyRowAfter while
 	// cards she could do sit ready in the pool or unstarted on another friend's row.
 	NFriendEmpty = "an up friend has an empty row while cards wait"
-	// NPinIgnored is a named pin (WHO: friend <name>, not a hard pin) sitting ready
-	// or working off that friend's row.
+	// NPinIgnored is a named pin (WHO: friend <name> or only friend <name>) sitting
+	// ready or working off that friend's row.
 	NPinIgnored = "a pinned card was dealt away from its friend"
 	// NFriendRowEmpty is the clock for NFriendEmpty: an acknowledgement, not a
 	// judgment, written when an up friend's empty row and the cards she could do

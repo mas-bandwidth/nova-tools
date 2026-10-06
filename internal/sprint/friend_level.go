@@ -15,11 +15,10 @@ import (
 // the members' ready queues (level); friend level evens the friends', and every tick runs
 // it after its deal (TickDeal), so no verb is needed. A card moves only to a friend whose
 // tiers hold its tier (friendTakes), never by class, and never to a friend it has left
-// (friendsLeft). Every card but one whose WHO line names a friend (PinnedFriend) that is ready on
-// her row behind her working cards and that she has not started moves: a card with no WHO
-// line, WHO: friend, or one preferring her (WHO is a preference, friends first); a hard pin
-// stays hers, and a working card is hers to finish or the coordinator's to take back
-// (FriendTake).
+// (friendsLeft). A card that is ready on her row behind her working cards and that she has
+// not started moves when it has no WHO line or WHO: friend; a card whose WHO line names a
+// friend (PinnedFriend) stays hers, and a working card is hers to finish or the
+// coordinator's to take back (FriendTake).
 
 // FriendLevelPerTick is the most cards the tick's level moves in one tick.
 const FriendLevelPerTick = 4

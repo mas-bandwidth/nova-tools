@@ -323,8 +323,9 @@ is redealt at its next generation. It changes no brief bytes. Each unpin records
 actor, time, reason and removed WHO line. An already-unpinned card is a reported
 no-op. `--dry-run` reports the plan without writing it; any refusal, including a
 mixed preview, has status `refused` and exit 1 in text and JSON. `WhoPreference.tla`
-checks the selection among friends; `Deal.tla` checks that a named card is never
-dealt elsewhere. The tick reads the friends' roster before each pump,
+checks the selection and unpin, a named card waiting for its friend alone
+(`OnlyToItsFriend`); `Deal.tla` checks that a named card is never on another
+friend's row (`WhoIsHonored`). The tick reads the friends' roster before each pump,
 because a queued change can make work ready in the same tick. The tick's deal offers
 ready work, in the deal's stream turns, to a
 friend up (the friends' rule: not held, with evidence from her own session) below her room: in
@@ -1076,9 +1077,9 @@ holds the same rule for her lanes (docs/SPEC-FRIEND.md, one lane per card).
 
 Not done here: the machines' deal (`TickDeal` in steps_tick.go, outside this
 card's paths) still offers a card the friends' deal passed over to the fleet, so
-a card whose WHO line is a preference can still reach a machine while a friend's
-lane runs it. A card whose WHO line is a hard pin (`only friend`) never reaches a
-machine.
+a card with no WHO line, or `WHO: friend`, can still reach a machine while a friend's
+lane runs it. A card whose WHO line names a friend never reaches a machine
+(the-dealer-honors-who.w1).
 
 ### cycle-time-breakdownb.w1: where a card's wall time goes
 

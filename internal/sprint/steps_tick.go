@@ -175,7 +175,7 @@ type TickReq struct {
 	// with every tick while the roster has a friend (friendDeal, before the residual
 	// fleet deal), with what her beat names running (FriendSeat.Running): the tick
 	// levels them after its deal (FriendLevel). nil is none: every card is the fleet's
-	// but a hard pin, which waits ready, and no friend is levelled.
+	// but one whose WHO line names a friend, which waits ready, and no friend is levelled.
 	Friends []FriendSeat
 	// AnswerRules says the tick answers the mechanical judgments by rule (rules.go; run
 	// --answer-rules); false leaves every judgment to the coordinator.

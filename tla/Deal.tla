@@ -11,8 +11,8 @@ EXTENDS Naturals, FiniteSets, TLC
 \* which the deal treats alike: PinnedFriend). A card is ready (owner "none"),
 \* dealt to a worker and not taken, or taken. Room is one card a worker; up
 \* changes freely. The model checks where a card may sit, not tiers, routes,
-\* generations or retry bounds (WhoPreference.tla's selection among unnamed
-\* cards still holds: an unnamed card goes to a friend first).
+\* generations or retry bounds (WhoPreference.tla checks the selection: an
+\* unnamed card goes to a friend first, a named one waits for her alone).
 CONSTANTS BadFallback, BadTakeOnto
 Cards == {"c1", "c2"}
 Friends == {"a", "b"}
