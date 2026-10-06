@@ -168,3 +168,23 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)
 }
+
+// TestLogSinceWithWideWindow verifies that --since with a window wider than 22h
+// returns all entries since that time. Uses an injected clock to avoid real-time
+// dependencies.
+func TestLogSinceWithWideWindow(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "handle the empty case"))
+	ta.deal(1)
+	// Advance the injected clock by 10 hours
+	ta.mu.Lock()
+	ta.now = ta.now.Add(10 * time.Hour)
+	ta.mu.Unlock()
+	// Use --since with a window wider than 22h (26h = 22h + 4h)
+	out := ta.ok("log --since 26h")
+	assert.Contains(t, out, "LOG OK lines=", "log --since 26h should return entries")
+	assert.Contains(t, out, "added to s1", "log --since 26h should include the add entry")
+}
