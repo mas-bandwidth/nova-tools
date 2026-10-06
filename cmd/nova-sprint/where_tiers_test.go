@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // where's cost visibility (docs/SPEC-SPRINT.md section 1; the owner, 2026-10-04): the work
@@ -34,6 +36,14 @@ func TestWhereCarriesTiersAndPerLandedCost(t *testing.T) {
 	assert.Equal(t, "$3.00", s1["cost"], "the cost cell as it was")
 	assert.Equal(t, map[string]int{"pro": 2}, v.StreamCosts["s1"].Tiers)
 	assert.Equal(t, map[string]string{"pro": "$3.00"}, v.StreamCosts["s1"].CostByTier, "both attempts ran on pro")
+	// the cost headlines carry their denominators and coverage, and the ETA its basis
+	assert.Equal(t, 2, v.StreamCosts["s1"].Landed)
+	assert.Equal(t, 2, v.StreamCosts["s1"].LandedPriced, "both landed cards priced whole")
+	assert.Equal(t, "$1.50", v.StreamCosts["s1"].PerLanded)
+	assert.Equal(t, v.StreamCosts["s1"].Coverage.Records, v.StreamCosts["s1"].Coverage.Actual+v.StreamCosts["s1"].Coverage.Estimated+
+		v.StreamCosts["s1"].Coverage.Tokens+v.StreamCosts["s1"].Coverage.Unpriced)
+	assert.Equal(t, sprint.ETAWork{Left: 1, Executing: 1}, v.ETA.Work, "s2's one card, dealt by the tick: executing, not held")
+	assert.NotEmpty(t, v.ETA.Rate.Window)
 	s2 := v.Tables["work"]["s2"]
 	assert.Equal(t, "-", s2["per_landed"], "nothing landed")
 	assert.Equal(t, map[string]int{"flash": 1}, v.StreamCosts["s2"].Tiers)

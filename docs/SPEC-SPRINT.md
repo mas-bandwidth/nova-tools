@@ -49,8 +49,9 @@ empties it with the tables.
 After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
 visibility, after a night of $437 for 844 landings whose pro streams landed at
 $4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's
-dollars per landed card, rounded up to the cent, `-` with nothing landed or
-nothing priced, the tick's count when its where record holds one
+dollars per landed card priced whole (below), rounded up to the cent, `-` with
+nothing landed, `unknown` with cards landed and none priced whole, the tick's
+count when its where record holds one
 (`sprint.TierCosts`, cost_view.go) and else the row's cost cell over its landed
 count (`sprint.PerLandedOf`); its footer is blank (the sprint's figure is the
 dashboard's). `where --json` carries, additively: `tiers` at the top, every
@@ -66,6 +67,49 @@ by the tick from the sprint it reads anyway and kept in the where record
 of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
 cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
 `TestWhereCarriesTiersAndPerLandedCost`).
+
+**Every cost headline carries its completeness** (the 2026-10-06 nova-sprint review, item 6: a
+live stream read `total_cost` 7.18, `unpriced_runs` 19, `per_landed` 1.20, the priced
+landed cost divided by every landed card, so each unpriced landing made the stream read
+cheaper). Each stream's record in `stream_costs` (`sprint.TierCosts`) carries:
+
+- `per_landed` over its denominators: `landed`, every landed card, and `landed_priced`, the
+  landed cards priced whole (records, every one priced: an actual or an estimated dollar,
+  or a subscription read's tokens). A landed card with any record unpriced is in neither the
+  sum nor the count, so an unpriced completion cannot make a stream, a tier or the sprint
+  read cheaper; with cards landed and none priced whole it is `unknown`
+  (`sprint.CostUnknown`). `landed_coverage` is how the landed cards' records were priced.
+  Scope `sprint.PerLandedScope`: each landed card's own takes and reads.
+- `coverage` (`sprint.Coverage`): every record behind `total_cost`, counted `actual` (the
+  harness's cost), `estimated` (tokens at the route's price sheet), `tokens` (a subscription
+  read, no dollar) and `unpriced` (no cost at all), the four summing to `records`.
+  `unpriced_runs` is its `unpriced`. `total_cost` holds no unpriced record: with any, the
+  spend is at least `total_cost` and the rest is unknown, and the dashboard prints it `≥`.
+- `spend_per_landed`, the spend per verified dev outcome (a card landed: read, accepted and
+  merged), scope `sprint.SpendPerLandedScope`: `total_cost`, every recorded take and read of
+  every card of the stream in any column with its dropped and re-cut cards', over `landed`;
+  `unknown` while any of those records is unpriced, `-` with nothing landed.
+- `dropped` (`sprint.DroppedSpend`): the spend of the cards the stream took off the table.
+  `drop`, and so a re-cut's `add --replaces`, writes the dropped cards' charged sum and
+  coverage on the stream's control card in the same step (`dropped_cost`, `dropped_cover`,
+  `dropped_cards`; `sprint.DroppedSpendFields`), and the tick counts them into `total_cost`,
+  `coverage` and `spend_per_landed`, so dropping or re-cutting a costly card never improves
+  the stream's figures (`TestADroppedOrRecutCardsSpendStaysInItsStream`). The dropped spend is
+  not split by kind or tier: `work_cost`, `read_cost` and `cost_by_tier` are the cards on the
+  table.
+- `unpriced_by_tier`: by the tier each ran on, the records `cost_by_tier` cannot hold; and in
+  `reads today`, a route with some reads charged no dollar says how many
+  (`pro-a $1.24 12 reads (2 unpriced) ...`), so its dollars never read as every read's.
+
+The two per-card figures are compared only with themselves: a stream's `per_landed` with
+another's `per_landed`, `spend_per_landed` with `spend_per_landed`, each at the same stage
+(landed) and in the same scope; the sprint's are every stream counted as one
+(`sprint.SprintTierCosts`), never added up from rounded cells
+(`TestAnUnpricedLandingCannotLowerPerLanded`, `TestCostHeadlinesCarryTheirDenominatorsAndCoverage`,
+`TestADroppedCardsSpendStaysInTheStream`, `TestTheSprintsHeadlinesCountEveryStreamAsOne`,
+`TestUnpricedRunsAreCountedByTierAndRoute`). The row's fallback before the first tick of an
+epoch (`sprint.PerLandedOf`, the cost cell over the landed count) has no coverage to read
+and is the one figure without it.
 
 Each reader's spend (the owner, 2026-10-05, before funding a provider for reads: "I would ask
 that you need to track spend on readers, can you do this before we start?"; the coordinator had
@@ -784,6 +828,19 @@ made dirty and recalculated."; nova-tools#5171), so the first read of `where`,
 the estimate recomputed over the new count at the rate measured. The verbs' sprint
 line, printed after every step, reads no cards, so it has no stamps: its ETA is
 over every card left at the whole sprint's average.
+
+**The ETA states its basis** (the 2026-10-06 nova-sprint review, item 6: the ETA showed no rate
+window or sample size and did not separate blocked from executing work). `where --json`
+carries `eta`: `rate` (`sprint.ETABasis`, `sprint.LandingRateBasis`, by the rule above and at
+its value): `window`, `last 1h of running time`, `since the first start` or `none`;
+`landings`, the sample, the landings counted in the window; `hours`, its running time;
+`per_hour`; and `work` (`sprint.ETAWork`): `left`, every primary not landed, split `held`
+(`sprint.HeldBack`, which no tick moves on its own), `executing` (working, review, merging)
+and `queued` (waiting or ready and not held), the three summing to `left`. `view coordinator`
+carries the same as `eta` and its summary says it, `| eta 7.0/h over last 1h of running time
+(7 landings), left 1182: held 770 executing 12 queued 400`, and the dashboard's ETA tile
+prints it under the time (`TestTheETAStatesItsRateWindowAndSample`,
+`TestTheETAShowsHeldWorkApartFromExecutingWork`, `TestTheHeadlinesCarryTheirCompleteness`).
 
 `where` reads the tables' cells and one record, never every card: under 1 s
 at 3,000 cards is the requirement (2026-10-02 10:13 PM ET, at 2,843 cards with
@@ -1697,7 +1754,11 @@ what is unreconciled, on a line of its own beside the count of runs unpriced. Un
 over the days since the epoch began, each day's last provider figure beyond the sprint's
 records of that day, summed over the providers (`unreconciled`, the sprint's, the same on
 every stream's record). The cost per card is that recorded total over the cards landed, so
-every attempt and read behind them counts, those of cards not landed included.
+every attempt and read behind them counts, those of cards not landed and of cards dropped or
+re-cut included (`spend_per_landed`'s scope), printed with its denominator, `$0.24 per card
+of 27 landed`; while any run is unpriced the total reads `≥ $7.18` and the cost per card
+`per card unknown`, never the priced spend over every landed card, and the line beside it
+names the coverage, `$0.00 unreconciled · 2 actual · 19 estimated · 19 unpriced · 2 dropped`.
 
 **A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
@@ -4478,7 +4539,12 @@ the seat, from one read of the work, merge and fleet tables, the inbox, the frie
 machines' beats and the machine's record, at one epoch. Its fields: `sum` (one line: the seat,
 the machine, the open judgments and the heaviest's cards behind, the count of each item type,
 landed of all and landed in the last 30 minutes, the work table's counts, the up machines'
-cards working of their width), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
+cards working of their width, then `| eta <rate>, left <n>: held <n> executing <n> queued <n> |
+cost <total> (<coverage>) · per landed <x> of <n> priced of <n> landed · spend per landed <x>`),
+`eta` (the ETA's basis, as `where --json` carries it, above), `cost` (the sprint's cost
+headlines, `sprint.SprintTierCosts`: `total`, `≥` in the summary while a record is unpriced;
+`coverage`; `dropped`; `per_landed` with `landed` and `landed_priced`; `spend_per_landed`),
+`at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
 `l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels aside;
 `held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
 judgments) and `items`, ranked by the cards behind each (`b`), then by type in the order

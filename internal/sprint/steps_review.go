@@ -1727,7 +1727,8 @@ type DropReq struct {
 
 // Drop takes open primaries off the table with the reason: their record,
 // outcome and reason are kept; their live work card, unread read cards and
-// merge place go with them. Waiting primaries that need one are blocked, and
+// merge place go with them, and their spend stays the stream's, on its control
+// card (DroppedSpendFields). Waiting primaries that need one are blocked, and
 // the coordinator is told.
 func Drop(s *Snapshot, r DropReq) Plan {
 	var p Plan
@@ -1790,15 +1791,18 @@ func Drop(s *Snapshot, r DropReq) Plan {
 	// the weights the drop changes: every primary the dropped cards waited on (weight.go)
 	p.Units = append(p.Units, weighUnits(s, nil, dropping)...)
 	settle(&p, s, r.Who, dropping, dropping)
-	// Each stream counts its dropped primaries on its control card.
+	// Each stream counts its dropped primaries on its control card, and keeps their spend
+	// there (DroppedSpendFields): a card off the table is still the stream's cost.
 	for _, st := range unitStreams(p) {
-		k := 0
+		var gone []*Card
 		for _, u := range p.Units {
 			if u.Stream == st && dropping[u.Key] {
-				k++
+				gone = append(gone, s.Work.Card(u.Key))
 			}
 		}
-		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
+		set := map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + len(gone))}
+		maps.Copy(set, DroppedSpendFields(s.StreamCtl(st), gone))
+		setStream(&p, s, st, set)
 	}
 	// A sprint this drop finishes is found done by the tick's done part
 	// (TickDone), which says so and stops the machine.

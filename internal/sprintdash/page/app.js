@@ -64,7 +64,7 @@ function el(tag, cls, text) {
 // (.fv) inside the node, so the tint hugs the digits, not the cell. A track
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
-["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
+["all", "all2", "pct", "eta", "eta-at", "eta-basis", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
  "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
   if (!e._fv) {
@@ -271,7 +271,7 @@ function renderStreams(d) {
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
   var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0, costLanded: 0, landedPriced: 0, actual: 0, estimated: 0, dropped: 0 }, held = 0, landedStreams = 0, prevRank = null;
   var digits = digitsOf(streamOrder(d).reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
   syncRows(box, box._head, keys, function () {
@@ -295,6 +295,7 @@ function renderStreams(d) {
     // the sprint's unreconciled spend rides on every stream's record: read once, never summed
     var uc = cents(sc.unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
     sum.unpriced += int(sc.unpriced_runs);
+    addCoverage(sum, sc);
     var status = statusOf[k];
     if (status === "held") held++;
     if (status === "landed") landedStreams++;
@@ -320,6 +321,7 @@ function renderStreams(d) {
     var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
     var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
     sum.unpriced += int(sc.unpriced_runs);
+    addCoverage(sum, sc);
   });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
@@ -541,6 +543,26 @@ function setMachine(line) {
   var box = $("overall"); if (box) box.classList.toggle("stopped", !running);
 }
 
+// addCoverage adds a stream's cost denominators and coverage (sprint.TierCosts) to the sums:
+// its landed cards, those priced whole, how its records were priced, and its dropped cards.
+function addCoverage(sum, sc) {
+  sum.costLanded += int(sc.landed); sum.landedPriced += int(sc.landed_priced);
+  var c = sc.coverage || {};
+  sum.actual += int(c.actual); sum.estimated += int(c.estimated);
+  sum.dropped += int((sc.dropped || {}).cards);
+}
+
+// etaBasis is the ETA tile's second sub-line (docs/SPEC-SPRINT.md section 1, the ETA): the
+// rate with its window and sample, then the cards left with the held ones apart from the
+// executing ones, from where's eta (sprint.ETABasis, sprint.ETAWork); " " when where has none.
+function etaBasis(e) {
+  if (!e || !e.work) return " ";
+  var r = e.rate || {}, c = e.work;
+  var rate = r.window && r.window !== "none" && Number(r.per_hour) > 0
+    ? Number(r.per_hour).toFixed(1) + "/h over " + r.window + " (" + int(r.landings) + " landed)" : "no rate yet";
+  return rate + " \u00b7 " + int(c.held) + " held \u00b7 " + int(c.executing) + " executing \u00b7 " + int(c.queued) + " queued";
+}
+
 function renderHero(d, s) {
   var landed = int(d.landed), all = int(d.all);
   setText($("landed"), landed.toLocaleString("en-US")); setText($("all"), all.toLocaleString("en-US")); setText($("all2"), all.toLocaleString("en-US"));
@@ -553,19 +575,28 @@ function renderHero(d, s) {
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
   } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
+  setText($("eta-basis"), all && landed >= all ? " " : etaBasis(d.eta));
   // the complete cost (docs/SPEC-SPRINT.md, "What a card cost"): every take and read of
   // every card in any column, plus what the providers counted beyond those records; the
   // cost per card is every recorded take and read over the cards that landed
   var recorded = s.sum.totalCost, unreconciled = s.sum.unreconciled;
-  setText($("cost"), money(recorded + unreconciled));
+  // with a run unpriced the spend is at least the figure, the rest unknown
+  setText($("cost"), (s.sum.unpriced ? "\u2265 " : "") + money(recorded + unreconciled));
   // the reads are their own number beside the work, with their share of the two:
   // "$0.42 per card · $310 work · $96 reads (24%)"
   var both = s.sum.workCost + s.sum.readCost;
   var split = both ? money(s.sum.workCost) + " work \u00b7 " + money(s.sum.readCost) + " reads (" + Math.round(100 * s.sum.readCost / both) + "%)" : "";
-  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  // the cost per card is the spend per landed card (sprint.TierCosts.spend_per_landed's
+  // scope): every recorded take and read, the dropped and re-cut cards' too, over the cards
+  // that landed, with its denominator; unknown while a run is unpriced, for an unpriced run
+  // would read as free
+  var n = s.sum.costLanded || landed;
+  var per = !n ? "" : s.sum.unpriced ? "per card unknown" : money(Math.ceil(recorded / n)) + " per card of " + n.toLocaleString("en-US") + " landed";
   setHTML($("cost-per"), [per, split].filter(Boolean).join(" \u00b7 ") || " ");
   setTitle($("cost-per"), readerSpendTitle(d));
-  setText($("cost-unreconciled"), money(unreconciled) + " unreconciled" + (s.sum.unpriced ? " · " + s.sum.unpriced + " runs unpriced" : ""));
+  // the coverage: how the records behind the figure were priced, and the dropped cards it holds
+  setText($("cost-unreconciled"), money(unreconciled) + " unreconciled \u00b7 " + s.sum.actual + " actual \u00b7 " + s.sum.estimated + " estimated \u00b7 " +
+    s.sum.unpriced + " unpriced" + (s.sum.dropped ? " \u00b7 " + s.sum.dropped + " dropped" : ""));
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples

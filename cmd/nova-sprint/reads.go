@@ -473,6 +473,28 @@ func noSprintYet(err error) error {
 		Next: "nova-sprint init --coordinator <name>"}
 }
 
+// whereETA is the ETA's basis as where carries it: the rate (sprint.LandingRateBasis) and
+// the cards left (sprint.ETAWork), counted from the work table's shape and the held cards.
+type whereETA struct {
+	Rate sprint.ETABasis `json:"rate"`
+	Work sprint.ETAWork  `json:"work"`
+}
+
+// columnCount is the primaries in the columns across the work table's streams: the sum of
+// those columns' counts.
+func columnCount(t ntable.Table, cols ...string) int64 {
+	var n int64
+	for _, col := range cols {
+		j := t.Column(col)
+		for _, r := range t.Rows {
+			if j >= 0 && j < len(r.Cells) {
+				n += r.Cells[j].Count
+			}
+		}
+	}
+	return n
+}
+
 // whereView is the view, for a program.
 type whereView struct {
 	At      time.Time `json:"at"`
@@ -480,9 +502,14 @@ type whereView struct {
 	All     int64     `json:"all"`
 	Held    int64     `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
 	Summary string    `json:"summary"`
+	// ETA is what the summary's ETA stands on (docs/SPEC-SPRINT.md section 1, the ETA): the
+	// landing rate with its window and sample, and the cards left split held, executing and
+	// queued.
+	ETA whereETA `json:"eta"`
 	// Tables is table -> row -> column -> cell as printed (a string, every cell of every
 	// row, the shape the dashboard's pull reads); a work row carries besides its cells
-	// `per_landed` (dollars per landed card, as the cost column shows money).
+	// `per_landed` (dollars per landed card priced whole, as the cost column shows money;
+	// "unknown" with cards landed and none priced whole).
 	// StreamCosts carries what is no string, beside it.
 	Tables map[string]map[string]map[string]any `json:"tables"`
 	// Tiers counts every card by its brief's tier (flash, pro, heavy, or whatever word the
@@ -1035,8 +1062,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if len(facts.StageTimes.All) > 0 {
 		v.StageTimes = &facts.StageTimes
 	}
-	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
-	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
+	basis := sprint.LandingRateBasis(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], basis.PerHour)))
+	exec := columnCount(shapes[0], sprint.Working, sprint.Review, sprint.Merging)
+	queued := max(columnCount(shapes[0], sprint.Waiting, sprint.Ready)-v.Held, 0)
+	v.ETA = whereETA{Rate: basis, Work: sprint.ETAWork{Left: int(v.Held + exec + queued), Held: int(v.Held), Executing: int(exec), Queued: int(queued)}}
 	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
 	if err != nil {
 		return whereView{}, "", err

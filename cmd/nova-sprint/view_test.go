@@ -74,6 +74,17 @@ func TestTheCoordinatorViewNamesAnIdleFleetAndItsRelease(t *testing.T) {
 	assert.Equal(t, 2, dry.B)
 	assert.Contains(t, dry.Next, "nova-sprint release s1-stop")
 	assert.True(t, strings.HasPrefix(v.Sum, "seat=coordinator machine=running"), "the summary line comes first: %s", v.Sum)
+	// the ETA's basis: no landing, no rate; the cards left with the held ones apart from the
+	// executing ones, summing to the cards not landed
+	assert.Equal(t, sprint.RateWindowNone, v.ETA.Rate.Window)
+	assert.Equal(t, sprint.ETAWork{Left: 5, Held: 3, Executing: 2, Queued: 0}, v.ETA.Work, "%+v", v.N)
+	assert.Contains(t, v.Sum, " | eta rate none, left 5: held 3 executing 2 queued 0 | cost ")
+	// the cost headlines carry their denominators: nothing landed, and the finished take
+	// reported no usage, so its spend is unknown
+	assert.Equal(t, 0, v.Cost.Landed)
+	assert.Equal(t, "-", v.Cost.PerLanded)
+	assert.Equal(t, "-", v.Cost.SpendPerLanded)
+	assert.Equal(t, v.Cost.Coverage.Records, v.Cost.Coverage.Actual+v.Cost.Coverage.Estimated+v.Cost.Coverage.Tokens+v.Cost.Coverage.Unpriced)
 	for i := 1; i < len(v.Items); i++ {
 		assert.GreaterOrEqual(t, v.Items[i-1].B, v.Items[i].B, "ranked by the cards behind: %+v", v.Items)
 	}
