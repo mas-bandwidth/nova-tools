@@ -358,8 +358,16 @@ proven by one line is a store proven for one line), or who has cloned the store.
 ```
 nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 GATE APPROVE files=<n> machines=<registry|->
-GATE REFUSE rule=<n> file=<f>: <why>
+GATE REFUSE rule=<n> check=<k> file=<f>: <why>
 ```
+
+**Gate checks (k = 1..5):**
+
+1. **Rule's recipients and path_regex**: Every changed `.sops.yaml` rule has exactly two age recipients (one the declared recovery key) and a `path_regex` naming exactly one seat file.
+2. **Seat file's encryption and its rule**: Every changed seat file `<seat>.yaml` is encrypted (with `sops:` metadata present and no plain values outside `unencrypted_regex`) and its rule exists in `.sops.yaml`.
+3. **No other file changes**: No files other than `.sops.yaml`, `README.md`, and seat `.yaml` files change.
+4. **New recipient needs the registry's seat** (inside check 1): A recipient key this diff introduces is permitted only when a machine in `--machines` carries this rule's seat.
+5. **Seat gone at head**: A seat file in the store at `--base` must still be in the store at `--head`; removing a seat is never part of adding one.
 
 **The store's own gate, as a verb.** What the store repo ran as a shell gate lives here in
 the tool instead, so the workflow calls this tool and the rule

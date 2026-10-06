@@ -61,5 +61,5 @@ func TestGateTellsAVerbMadeSealFromAHandSeal(t *testing.T) {
 
 	line, code = gate(t, handMade)
 	assert.Equal(t, 2, code, "the hand-made file was approved: %s", line)
-	assert.Equal(t, "GATE REFUSE rule=1 file=rowan.yaml: the seat file was not written by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand", line)
+	assert.Equal(t, "GATE REFUSE rule=1 check=2 file=rowan.yaml: the seat file was not written by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand", line)
 }
