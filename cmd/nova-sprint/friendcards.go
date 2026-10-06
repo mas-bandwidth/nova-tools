@@ -67,7 +67,7 @@ func friendJobOf(p sprint.Packet) string {
 func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
-	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
+	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
 		// a twin recut --widen made starts from the held attempt's head (member.Carried)
@@ -138,6 +138,30 @@ func friendReportOf(report string) (verdict, head, para string) {
 		}
 	}
 	return verdict, head, strings.Join(lines, " ")
+}
+
+// friendReportPinNote follows docs/FRIENDS.md, the pinned report shape. It
+// shares reportValue's lenient key grammar and names the first header lines;
+// their position advises the friend without changing the finish's verdict.
+func friendReportPinNote(report string) string {
+	lines := map[string]int{}
+	for i, line := range strings.Split(report, "\n") {
+		key, _, ok := strings.Cut(strings.TrimLeft(line, "#*-_ \t"), ":")
+		key = strings.ToLower(strings.TrimSpace(key))
+		if ok && (key == "verdict" || key == "head") && lines[key] == 0 {
+			lines[key] = i + 1
+		}
+	}
+	var where []string
+	for i, key := range []string{"verdict", "head"} {
+		if at := lines[key]; at != 0 && at != i+1 {
+			where = append(where, fmt.Sprintf("%s: is on line %d", strings.ToUpper(key[:1])+key[1:], at))
+		}
+	}
+	if len(where) == 0 {
+		return ""
+	}
+	return "NOTE: friend report's " + strings.Join(where, " and ") + "; write Verdict: on line 1 and Head: on line 2"
 }
 
 func firstWord(s string) string {
@@ -225,6 +249,10 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 		}
 	default:
 		r.Failed, r.Report = true, "friend "+name+" verdict "+cmp.Or(verdict, "none")+" is not LAND, HOLD or FAIL; "+para
+	}
+	// docs/FRIENDS.md: shifted headers still finish; the card records their lines.
+	if note := friendReportPinNote(report); note != "" {
+		r.Report += "; " + note
 	}
 	// the report's PATHS-PROPOSED line, wherever it stands, rides on the card for recut --widen
 	// (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1")

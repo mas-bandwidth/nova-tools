@@ -84,7 +84,7 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
 	require.NoError(t, err)
 	lines := strings.Split(string(text), "\n")
-	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; when done, write outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
+	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; when done, write outbox/s1-1.w1/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)", lines[0])
 	assert.Contains(t, lines[1], "Work in ~/amy-working/jobs/s1-1.w1/")
 	assert.Contains(t, string(text), "\n\ns1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n", "the brief follows")
 	_, err = os.Stat(filepath.Join(root, "bob-working", "inbox", "s1-1.w1"))
@@ -106,23 +106,38 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 
 func TestFriendSyncFinishesALandReportAndTheCardReachesReview(t *testing.T) {
 	t.Parallel()
-	ta, root := friendCardApp(t, "friend", "amy")
-	ta.ok("tick")
-	ta.ok("friend sync --root " + root)
-	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed and the gate is green.\nTwo files.\n\nMore detail.\n")
-	out := ta.ok("friend sync --root " + root)
-	assert.Contains(t, out, "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok head="+landHead+": friend amy LAND: The change is pushed and the gate is green. Two files.")
-	assert.Contains(t, out, "delivered=0 finished=1")
-	ta.ok("tick")
-	var c cardView
-	ta.json("card s1-1", &c)
-	assert.Equal(t, sprint.Review, c.Primary.Col, "LAND is a worker's ok: the card is in review, for its reads")
-	assert.Equal(t, landHead, c.Primary.F("head"))
-	assert.Equal(t, "ok", c.Primary.F("result"))
-	assert.Equal(t, "sprint/s1-1.w1.g1.e0", c.Work[0].F("branch"))
-	// collected once: the card is finished, and the sync after finishes nothing
-	assert.Contains(t, ta.ok("friend sync --root "+root), "nothing to do")
-	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "amy     |     0 |       0 |     8 |    1 | 100.0% | up")
+	for _, tc := range []struct {
+		name, prefix string
+		note         bool
+	}{
+		{name: "pinned"},
+		{name: "later", prefix: "# s1-1\n\n", note: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ta, root := friendCardApp(t, "friend", "amy")
+			ta.ok("tick")
+			ta.ok("friend sync --root " + root)
+			outboxReport(t, root, "amy", "s1-1.w1", tc.prefix+"Verdict: LAND\nHead: "+landHead+"\n\nThe change is pushed and the gate is green.\nTwo files.\n\nMore detail.\n")
+			out := ta.ok("friend sync --root " + root)
+			assert.Contains(t, out, "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok head="+landHead+": friend amy LAND: The change is pushed and the gate is green. Two files.")
+			assert.Contains(t, out, "delivered=0 finished=1")
+			ta.ok("tick")
+			var c cardView
+			ta.json("card s1-1", &c)
+			assert.Equal(t, sprint.Review, c.Primary.Col, "LAND is a worker's ok: the card is in review, for its reads")
+			assert.Equal(t, landHead, c.Primary.F("head"))
+			assert.Equal(t, "ok", c.Primary.F("result"))
+			assert.Equal(t, "sprint/s1-1.w1.g1.e0", c.Work[0].F("branch"))
+			if tc.note {
+				assert.Contains(t, c.Work[0].F("report"), "NOTE: friend report's Verdict: is on line 3 and Head: is on line 4")
+			} else {
+				assert.NotContains(t, c.Work[0].F("report"), "NOTE:")
+			}
+			// collected once: the card is finished, and the sync after finishes nothing
+			assert.Contains(t, ta.ok("friend sync --root "+root), "nothing to do")
+			assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "amy     |     0 |       0 |     8 |    1 | 100.0% | up")
+		})
+	}
 }
 
 func TestAHoldReportRaisesTheWorkCameBackFailedJudgment(t *testing.T) {

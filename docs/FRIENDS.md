@@ -128,7 +128,7 @@ normally do friend work."). It arrives as a job like any other:
 `nova-sprint friend sync`. Its first line is the STATUS line:
 
 ```
-STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
+STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)
 ```
 
 then the working-directory line below, a later attempt's start (the current tip
@@ -153,10 +153,13 @@ asks:`), a blank line, and the card's brief. What a friend does with it:
 
    `LAND` is work ready for its reads and its landing; `HOLD` is work stopped
    for the coordinator's decision, `FAIL` work that could not be done; for
-   either, `Head:` may be left out, and the first paragraph says why. The
-   first `Verdict:` and `Head:` lines are read (markdown marks around them
-   are fine); the first paragraph that is neither of them nor a heading goes
-   onto the card, cut to 1 KiB.
+   either, `Head:` may be left out with line 2 blank, and the first paragraph
+   says why. The first line is exactly `Verdict: LAND|HOLD|FAIL`, and the
+   second exactly `Head: <40-hex>`. Reading stays lenient: the first
+   `Verdict:` and `Head:` lines are read wherever they sit (markdown marks
+   around them are fine). Headers outside the first two lines add a NOTE to
+   the card naming their line numbers. The first paragraph that is neither
+   of them nor a heading goes onto the card, cut to 1 KiB before the NOTE.
 
 The sync finishes the card on its next run after the report (the period of the
 loop that runs it: 15 s in the friend sync loop, below): `LAND` goes to review at

@@ -356,3 +356,11 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 	assert.NotContains(t, plain, "make tlc")
 	assert.NotContains(t, plain, "tla/RUNS.tsv")
 }
+
+// docs/FRIENDS.md: all generated briefs teach the friend report's pinned shape.
+func TestGeneratedBriefPinsTheFriendReportFirstTwoLines(t *testing.T) {
+	t.Parallel()
+	brief := Render(header, Card{ID: "shape", File: "internal/x/x.go", Paths: []string{"internal/x/x.go"}, Test: "internal/x TestX", Tier: "pro", Kind: "fix-red", Task: "Fix x."})
+	assert.Contains(t, brief, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
+	assert.Contains(t, brief, "for HOLD and FAIL omit Head: and leave line 2 blank")
+}
