@@ -289,6 +289,13 @@ func TestNothingUnderDoneOrFailedIsOpened(t *testing.T) {
 // ---------------------------------------------------------------- one pass over each file
 
 func TestEachDeclaredFileIsOpenedOncePerRun(t *testing.T) {
+	t.Parallel()
+	if os.Getenv(childTestEnv) == "" {
+		// tokens.Opens() is process-wide and every parallel fold in this process adds to
+		// it; the body runs in a child where this test owns the counter.
+		reenterTest(t, "TestEachDeclaredFileIsOpenedOncePerRun")
+		return
+	}
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))

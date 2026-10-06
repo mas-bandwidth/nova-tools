@@ -22,7 +22,12 @@ import (
 
 // fakeGit puts a git on PATH that records every invocation, so a test can assert that this
 // tool ran none. A fold that fetched would be a fold whose numbers depend on a network call.
-func fakeGit(t *testing.T) (logPath string) {
+// fakeGit puts a git on PATH that records every invocation, so a test can assert that this
+// tool ran none. A fold that fetched would be a fold whose numbers depend on a network call.
+// It returns the log path and the environment (PATH) the run under test needs; the caller
+// hands the environment to runToolChild, so the fake is on the child's PATH rather than this
+// process's, which its parallel neighbours share.
+func fakeGit(t *testing.T) (logPath string, env []string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake git is a shell script")
@@ -34,8 +39,7 @@ func fakeGit(t *testing.T) (logPath string) {
 		err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755)
 		require.NoError(t, err, err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return logPath
+	return logPath, []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH")}
 }
 
 // reversedHistory makes dir a git repository whose commits land in the order given, using
@@ -68,10 +72,12 @@ func reversedHistory(t *testing.T, git, dir string, files ...string) {
 }
 
 func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
-	// The real git, resolved before the fake one goes on PATH: the fixture's history is
-	// built with it, and the tool must still never run git.
+	t.Parallel()
+
+	// The real git, resolved before the fake one goes on the child's PATH: the fixture's
+	// history is built with it, and the tool must still never run git.
 	realGit, _ := exec.LookPath("git")
-	gitLog := fakeGit(t)
+	gitLog, gitEnv := fakeGit(t)
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -85,7 +91,7 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 
 	fold := func(t *testing.T, out string) string {
 		t.Helper()
-		r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
+		r := runToolChild(t, "", gitEnv, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
 		wantExit(t, r, 0)
 		wantContains(t, r.stdout, "TOKENS SUPERSEDED")
 		return read(t, filepath.Join(out, "2026-09-11.tsv"))

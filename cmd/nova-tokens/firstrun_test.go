@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,9 +21,10 @@ import (
 // problem, and the TESTS.md transcript is compared against what the tool actually prints.
 
 // fixtureIn copies cmd/nova-tokens/testdata/example-bench into t.TempDir(), makes the
-// output directory the examples write to, and moves the test into it. Nothing here
-// reaches outside t.TempDir(): a first run WRITES, so the fixture is copied rather than
-// run in place.
+// output directory the examples write to, and returns it. The caller runs the tool with
+// that directory as its working directory (cmd.Dir), so the documented ./paths resolve as
+// written without a process-wide Chdir. Nothing here reaches outside t.TempDir(): a first
+// run WRITES, so the fixture is copied rather than run in place.
 func fixtureIn(t *testing.T) string {
 	t.Helper()
 	dst := t.TempDir()
@@ -54,7 +56,6 @@ func fixtureIn(t *testing.T) string {
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
 		require.NoError(t, err, err)
 	}
-	t.Chdir(dst)
 	return dst
 }
 
@@ -62,7 +63,9 @@ func fixtureIn(t *testing.T) string {
 var firstRunStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
 func TestTheExampleLinesRun(t *testing.T) {
-	fixtureIn(t)
+	t.Parallel()
+
+	dir := fixtureIn(t)
 	var banner bytes.Buffer
 	{
 		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
@@ -73,11 +76,10 @@ func TestTheExampleLinesRun(t *testing.T) {
 	require.NotEmpty(t, examples, "the example: block holds no line")
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
-		var out, errb bytes.Buffer
-		exit := run(args, &out, &errb, firstRunStamp)
+		r := runToolChild(t, dir, nil, args...)
 		// A line that RUNS answers 0 or 1. Exit 2 is "could not run", and an example
 		// exiting 2 is a broken example.
-		assert.NotEqual(t, 2, exit, "the example `%s` could not run (exit 2):\n%s", line, errb.String())
+		assert.NotEqual(t, 2, r.exit, "the example `%s` could not run (exit 2):\n%s", line, r.stderr)
 	}
 }
 
@@ -138,10 +140,12 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 // names in order -- and deliberately not by value, so the transcript stays a document
 // instead of becoming a fixture.
 func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(doc, "nova-tokens")
 	require.NoError(t, err, err)
-	fixtureIn(t)
+	dir := fixtureIn(t)
 	var want []string
 	var got []string
 	var pending []string
@@ -152,9 +156,8 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	for _, line := range lines {
 		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
 			flush()
-			var out, errb bytes.Buffer
-			run(strings.Fields(args), &out, &errb, firstRunStamp)
-			for _, printed := range strings.Split(out.String()+errb.String(), "\n") {
+			r := runToolChild(t, dir, nil, strings.Fields(args)...)
+			for _, printed := range strings.Split(r.stdout+r.stderr, "\n") {
 				if shape := onboarding.Shape(printed); shape != "" {
 					pending = append(pending, shape)
 				}
@@ -195,6 +198,8 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 // the test moves there rather than rewriting them -- a rewritten path is no
 // longer the line the document promised.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	require.NoError(t, err, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-tokens")
@@ -207,26 +212,39 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// line for line and is still short of the run a reader is promised.
 	assert.Equal(t, 3, len(steps), "the `### First run` block runs %d commands, want 3", len(steps))
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
-	// and the test moves into it; the documented paths are relative to here.
-	fixtureIn(t)
-	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+	// and each command runs in a child whose working directory is it; the
+	// documented paths are relative to here.
+	dir := fixtureIn(t)
+	for _, p := range onboarding.Execute(steps, runDocumentedInDir(dir)) {
 		assert.Fail(t, "%v", p)
 	}
 }
 
-// runDocumented calls this binary's own entry point with the documented
-// arguments and the clock the transcript was produced under. nova-tokens takes
-// no stdin, so a step that names a `< path` is reported rather than quietly run
+// runDocumentedInDir calls this binary's own entry point with the documented
+// arguments in a child whose working directory is dir, so the documented relative
+// paths resolve as written without a process-wide Chdir; the child's clock is
+// foldStamp, the instant the transcript was produced under. nova-tokens takes no
+// stdin, so a step that names a `< path` is reported rather than quietly run
 // without it.
-func runDocumented(t *testing.T) onboarding.Runner {
-	t.Helper()
+func runDocumentedInDir(dir string) onboarding.Runner {
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
 		}
+		self, err := os.Executable()
+		if err != nil {
+			return onboarding.Result{}, err
+		}
+		cmd := exec.Command(self, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), asToolEnv+"=1")
 		var out, errb bytes.Buffer
-		code := run(s.Args, &out, &errb, firstRunStamp)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		err = cmd.Run()
+		if err != nil && cmd.ProcessState == nil {
+			return onboarding.Result{}, err
+		}
+		return onboarding.Result{Code: cmd.ProcessState.ExitCode(), Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
 
