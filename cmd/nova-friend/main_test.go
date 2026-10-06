@@ -386,6 +386,150 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, "batch", s.Mode, "the row's mode, read from the beat's answer")
 }
 
+// The beat's row_config_dir= (or --config-dir over it) is the directory a
+// claude lane runs with: the row one-shot with one, the daemon runs lanes.
+func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, answer string
+		flags        []string
+	}{
+		{"from the beat", " row_config_dir=/accounts/heavy-a", nil},
+		{"the override", "", []string{"--config-dir", "/accounts/heavy-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "ada", "bob")
+			w := r.world()
+			var cancel context.CancelFunc
+			w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel = context.WithCancel(ctx)
+				return ctx, cancel
+			}
+			beats := 0
+			w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+				beats++
+				if beats == 3 {
+					cancel()
+				}
+				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2" + tc.answer, nil
+			}
+			var out, errb strings.Builder
+			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+			assert.Equal(t, 0, code, errb.String())
+			assert.NotContains(t, out.String(), "REFUSED")
+			assert.Contains(t, out.String(), "push proof: none owed: claude runs each card as a process of its own")
+			assert.Contains(t, out.String(), "mode: one-shot, from batch (the friend row)")
+		})
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--config-dir", "~/accounts"}, strings.NewReader(""), &out, &errb, newRig(t, "ada", "bob").world())
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errb.String(), `--config-dir "~/accounts" wants an absolute path`)
+}
+
+// A claude row in one-shot mode with no config_dir (and no --config-dir) is
+// refused on the daemon's record with the remedy, and no lane runs.
+func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	beats := 0
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+		beats++
+		if beats == 3 {
+			cancel()
+		}
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2", nil
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code, errb.String())
+	s, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	require.NoError(t, err)
+	assert.Equal(t, "batch", s.Mode, "the row says one-shot and names no config_dir: claude is refused")
+	assert.Contains(t, out.String(), "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir")
+	assert.Contains(t, out.String(), "run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>")
+}
+
+// A claude one-shot lane runs its card inside the lane wall, and the wall's
+// --config-dir is the row's config_dir when no --config-dir is given (the
+// flag over it when it is): the card's process is a lane's, never the plain
+// daemon's, so it cannot write outside the friend's directories.
+func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, want string
+		flags      []string
+	}{
+		{"the row's", "/accounts/heavy-a", nil},
+		{"the flag over it", "/accounts/other", []string{"--config-dir", "/accounts/other"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { // not parallel: a bubble at a time
+			synctest.Test(t, func(t *testing.T) {
+				r := newRig(t, "ada", "bob")
+				w := r.world()
+				var cancel context.CancelFunc
+				w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+					ctx, cancel = context.WithCancel(ctx)
+					return ctx, cancel
+				}
+				w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+				dir := t.TempDir()
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+				var mu sync.Mutex
+				var walls []string // the config dir of each wall a lane's child ran in
+				var plain int      // children run outside any lane's wall
+				w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
+					return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+						mu.Lock()
+						defer mu.Unlock()
+						if !friend.InLane(ctx) {
+							plain++
+							return "", 0, nil
+						}
+						walls = append(walls, wl.ConfigDir)
+						out := filepath.Join(dir, "outbox", "c1~15")
+						if err := os.MkdirAll(out, 0o755); err != nil {
+							return "", 0, err
+						}
+						for _, f := range []string{"REPORT.md", "RESULT.md"} {
+							if err := os.WriteFile(filepath.Join(out, f), []byte("done\n"), 0o644); err != nil {
+								return "", 0, err
+							}
+						}
+						return "ok\n", 0, nil
+					}
+				}
+				beats := 0
+				w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+					beats++
+					if beats == 12 {
+						cancel()
+					}
+					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=/accounts/heavy-a", nil
+				}
+				var out, errb strings.Builder
+				code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+				require.Equal(t, 0, code, errb.String())
+				mu.Lock()
+				defer mu.Unlock()
+				require.NotEmpty(t, walls, "the card ran inside a lane's wall\n%s", out.String())
+				assert.Equal(t, tc.want, walls[0], "the wall's --config-dir")
+				assert.Zero(t, plain, "no child of the lane ran outside the wall")
+				assert.Contains(t, out.String(), "card=done")
+			})
+		})
+	}
+}
+
 // A store that is down when the daemon starts is no reason to exit: under launchd's
 // KeepAlive an exit 2 was a crash loop every five seconds (the finding of
 // 2026-10-04). The store is opened until it answers, waiting longer each time up

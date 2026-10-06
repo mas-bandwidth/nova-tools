@@ -47,7 +47,7 @@ hours). Name the real path with `--dir`.
 ## Her inbox pushes to her: the push proof
 
 `nova-friend install` and `run` refuse a harness nothing pushes into: one
-with no deliver command (claude, and every surveyed harness) is refused
+with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and has no session to push into) is refused
 before anything is written, with the adapter card as the remedy; a dsh
 session under an agent preset is refused with `start a session in <dir> with
 no agent preset and name it with --session <id>`. `run` delivers one SESSION
@@ -72,6 +72,25 @@ Completion of the same job is preserved. Lane reservations and set-aside records
 name the job, so an older generation cannot suppress or reserve a newer one. Legacy
 set-aside records containing only a card id apply to generation 1. Progress passes only the numeric
 sprint epoch, without the generation suffix.
+## Claude friends: one account each
+
+A Claude account is a friend of its own: a friend row with mode `one-shot`,
+the tier it can do, and `config_dir`, the account's Claude config directory,
+which each of her lanes runs `claude -p` with as `CLAUDE_CONFIG_DIR`
+(docs/SPEC-FRIEND.md, one-shot lanes). Four accounts on one machine are four
+rows, each its own working directory and daemon. The example, four heavy-tier
+rows of one person's four accounts:
+
+```
+nova-config friend add amy-a --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-a
+nova-config friend add amy-b --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-b
+nova-config friend add amy-c --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-c
+nova-config friend add amy-d --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-d
+nova-config apply --kind friend
+```
+
+A claude row in one-shot mode without `config_dir` runs no lane: her daemon
+says so on its record with the `nova-config friend set` that fixes it.
 
 ## A sprint card
 

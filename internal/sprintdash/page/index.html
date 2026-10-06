@@ -146,6 +146,7 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .fb { display: inline-block; text-align: left; }
 .fs { color: var(--text-3); }
 .fb { color: var(--text-2); }
+.win { color: var(--text-3); font-size: .85em; } /* a friend's subscription window use, beside her width */
 .waiting { background: var(--s-waiting); } .ready { background: var(--s-ready); }
 .working { background: var(--s-working); } .review { background: var(--s-review); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
@@ -248,13 +249,13 @@ footer a:hover { color: var(--text); }
 
 /* Fleet and Friends, full: Machine capped; Status and the numeric columns share the spare
    width (contents right-aligned); 56 px gutters; ~64 px from Ready to the track and from the
-   track to the figure; cells a fixed 27 x 11 px with 4 px gaps */
+   track to the figure; cells a fixed 27 x 11 px with 4 px gaps; the bar column is the widest bar
+   plus 8 px each side (the cells' padding), so the bar reads centred in its own column */
 .fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
-.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
-.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
-.fleet .row > :nth-child(4), .friends .row > :nth-child(4) { margin-left: .5rem; }
-.fleet .row > :nth-child(5), .friends .row > :nth-child(5) { padding-left: .5rem; }
-.fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; }
+.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
+.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
+.fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; padding: 0 .5rem; }
+.fleet .row.head > :nth-child(4), .friends .row.head > :nth-child(4) { margin-left: .5rem; }
 
 /* compact forms: Work is stream | status (dot) | landed; Fleet and Friends are
    Machine | Status (dot only) | Working "n / width" | OK% */

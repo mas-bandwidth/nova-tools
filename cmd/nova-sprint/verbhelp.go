@@ -63,6 +63,7 @@ var verbEffect = map[string]string{
 	"needs":             "inspection: reads the waiting cards, writes nothing",
 	"held":              "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":         "inspection: reads the sentinels and what each waits on, writes nothing",
+	"view cards":        "inspection: lists or counts (--by tier|stream|col|holder) the work table's primaries, filtered by --col, --stream, --holder; writes nothing",
 	"view coordinator":  "inspection: reads what needs the seat (the tables, the inbox, the friends and the machines), writes nothing",
 	"view worker":       "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
 	"seat":              "inspection: reads the seat (holder, epoch, generation), writes nothing",

@@ -295,13 +295,17 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 	for i, c := range cards {
 		heads[i], at[c.id] = sprint.CureHead{ID: c.id, Head: c.head}, i
 	}
-	notes := map[string]string{}
+	notes, repairs := map[string]string{}, map[string]string{}
 	cure, err := sprint.FindBaseCure(ctx, sprint.BaseCureReq{RepoDir: dir, Base: baseSha, Heads: heads, Env: l.a.gitEnv,
 		Merge: func(ctx context.Context, h sprint.CureHead) (string, string) {
 			c := cards[at[h.ID]]
 			card, env, note := l.mergeHead(ctx, dir, stream, c)
 			if card == "" && env == "" {
-				card, env = l.checkCard(ctx, dir, c, baseSha)
+				var repaired string
+				if card, env, repaired = l.checkCard(ctx, dir, stream, c, baseSha); repaired != "" {
+					note = strings.TrimPrefix(note+"; "+repaired, "; ")
+				}
+				repairs[h.ID] = repaired
 			}
 			notes[h.ID] = note
 			return card, env
@@ -324,6 +328,9 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 	c.resolved = cure.Note(baseSha, why)
 	if n := notes[cure.ID]; n != "" {
 		c.resolved = n + "; " + c.resolved
+	}
+	if r := repairs[cure.ID]; r != "" {
+		l.ledgerLog = append(l.ledgerLog, cure.ID+": "+r)
 	}
 	l.baseFix = cure.ID + " " + c.resolved
 	return i, ""
