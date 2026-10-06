@@ -1351,7 +1351,8 @@ at the attempt that landed, `later-<tier>` for one decided earlier (the tier tha
 it), `dropped`; a grade's outcome is that tier, or `dropped`.
 
 **Read card.** One reader's read of one primary at one attempt. Identity
-`<primary>.r<attempt>.<reader>`. Fields: primary, stream, kind=read, reader,
+`<primary>.r<attempt>.<reader>` (or `<primary>.r<attempt>.<reader>.g1` when
+re-asked at the same attempt after being taken back by the away sweep). Fields: primary, stream, kind=read, reader,
 attempt, head, asked and begun (clock times), verdict, finding, usage. It takes its
 primary's score. `queue` shows each card's times. A read card
 exists because a member has one place per table and a pro card has two readers
@@ -2465,12 +2466,17 @@ id (`--op`) returns the original result, with no second counter or notification.
   rework, drop; tla/DirtyTick.tla, ReasksBounded and StrandingIsJudged). A
   reader is asked an attempt once: its read card at the attempt is one read
   per reader per attempt (`<primary>.r<attempt>.<reader>`), so a reader whose
-  read was taken back (away, levelled, returned) holds the card retired and is
+  read was taken back (levelled, returned) holds the card retired and is
   not asked that attempt again, where the model leaves such a reader out of
-  `seen`; the next attempt is read on new cards, by every reader. The tick's
-  `cannot ask` is one judgment per tick, `no eligible reader for <ids>`, every
-  such primary a subject of it (the night of 2026-10-03: five cards whose reads
-  were taken back from five readers in turn, five judgments). Its
+  `seen`; the next attempt is read on new cards, by every reader. When a read
+  was taken back by the away sweep (`retired_by` away) and the reader comes
+  back up, the read can be asked again at the same attempt under a second
+  identity with a generation suffix (`<primary>.r<attempt>.<reader>.g1`), and
+  the store's per-tick record enumeration enumerates both identities without
+  extra round trips. The tick's `cannot ask` is one judgment per tick, `no
+  eligible reader for <ids>`, every such primary a subject of it (the night
+  of 2026-10-03: five cards whose reads were taken back from five readers in
+  turn, five judgments). Its
   member does not begin a read it returned again before
   `member.ReadStageRetry`. A return of a read the caller does not hold is
   refused, and so is a second return of a read returned and not begun since:
