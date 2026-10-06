@@ -1104,8 +1104,34 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // resolveLedgers), a shrink-only ledger as the union of both sides' removals
 // (ledgerunion.go, unionLedgers), and the agents maps plus a catalog that both
 // sides only add rows to as the union of those rows then the map family
-// (landledger.go, stageCatalogUnion). note is what the card's timeline says of it.
+// (landledger.go, stageCatalogUnion). An append-only record is resolved as the union of
+// both sides' rows (landappend.go, mergeRecords), and after any merge a record holding a
+// row twice is taken down to one (dedupeRecords). note is what the card's timeline says
+// of it.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
+	before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", "the batch branch has no tip before the merge of " + c.id + ": " + firstLine("", err), ""
+	}
+	if card, env, note = l.mergeOnce(ctx, dir, stream, c); card != "" || env != "" {
+		return card, env, note
+	}
+	if after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}"); err != nil || after == before {
+		return "", "", note
+	}
+	lines, changed, denv := l.dedupeRecords(ctx, dir, before)
+	if denv != "" {
+		return "", denv, ""
+	}
+	if len(changed) > 0 {
+		l.ledgerLog = append(l.ledgerLog, lines...)
+		note = strings.TrimPrefix(note+"; "+dedupeNote(changed), "; ")
+	}
+	return "", "", note
+}
+
+// mergeOnce is mergeHead before the records' repeated rows are taken out.
+func (l *lander) mergeOnce(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
 		return why, "", ""
 	}
@@ -1150,24 +1176,47 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		// the shrink-only ledgers first (ledgerunion.go): each resolved as the union of
 		// both sides' removals and staged; what is left is the generated ledgers a
 		// family regenerates (landledger.go), or a conflict refused as before
-		union, rest := unionPaths(paths, l.ledgers())
+		// the append-only records before them (landappend.go): each resolved as the
+		// union of both sides' rows and staged
+		records, others := recordPaths(paths)
+		union, rest := unionPaths(others, l.ledgers())
 		lines, uwhy, uenv := []string(nil), "", ""
-		if len(union) > 0 {
-			lines, uwhy, uenv = l.unionLedgers(ctx, dir, union)
+		if len(records) > 0 {
+			lines, uwhy, uenv = l.mergeRecords(ctx, dir, records)
+		}
+		var ulines []string
+		if len(union) > 0 && uwhy == "" && uenv == "" {
+			ulines, uwhy, uenv = l.unionLedgers(ctx, dir, union)
+		}
+		lines = append(lines, ulines...)
+		resolvedNote := func(note string) string {
+			if len(union) > 0 {
+				note = strings.TrimSuffix(unionNote(union)+"; "+note, "; ")
+			}
+			if len(records) > 0 {
+				note = strings.TrimSuffix(recordNote(records)+"; "+note, "; ")
+			}
+			return note
 		}
 		switch {
 		case uenv != "":
 			env = uenv
 		case uwhy != "":
 			why = "; " + uwhy
-		case len(union) > 0 && len(rest) == 0:
-			msg := unionMessage(c.id, stream, lines)
+		case len(rest) == 0:
+			msg := unionMessage(c.id, stream, ulines)
+			switch {
+			case len(union) == 0:
+				msg[1] = recordSentence(lines)
+			case len(records) > 0:
+				msg[1] = recordSentence(lines[:len(lines)-len(ulines)]) + " " + msg[1]
+			}
 			if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
 				env = "the resolved merge of " + c.id + " could not be committed: " + firstLine("", err)
 				break
 			}
 			l.ledgerLog = append(l.ledgerLog, lines...)
-			return "", "", unionNote(union)
+			return "", "", resolvedNote("")
 		default:
 			var cline, cwhy, cenv string
 			rest, cline, cwhy, cenv = l.stageCatalogUnion(ctx, dir, rest)
@@ -1185,10 +1234,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 							note = catalogUnionNote() + "; " + note
 						}
 						l.ledgerLog = append(l.ledgerLog, lines...)
-						if len(union) > 0 {
-							note = unionNote(union) + "; " + note
-						}
-						return "", "", note
+						return "", "", resolvedNote(note)
 					}
 					// the failed resolution ended the merge and restored the clone
 					env, why, inMerge = renv, "; "+why, errors.New("no merge in progress")
@@ -1540,11 +1586,12 @@ func firstLine(out string, err error) string {
 	return oneline.Cap(strings.ReplaceAll(out, "\n", " | "), 400)
 }
 
-// allLedgers says every path is a ledger: a shrink-only one (ledgerunion.go) or a generated
-// one a family regenerates (landledger.go). A conflict on those alone is the lander's own to
+// allLedgers says every path is a ledger: an append-only record (landappend.go), a
+// shrink-only one (ledgerunion.go) or a generated one a family regenerates (landledger.go). A conflict on those alone is the lander's own to
 // resolve, and one it could not is no conflict the conflict rule redoes.
 func allLedgers(paths []string, ledgers []landLedger) bool {
-	_, rest := unionPaths(paths, ledgers)
+	_, others := recordPaths(paths)
+	_, rest := unionPaths(others, ledgers)
 	_, outside := ledgerOwners(rest, ledgers)
 	return len(outside) == 0
 }

@@ -17,3 +17,9 @@
 # `# ceiling:` line and rows an update removes, which a union merge would
 # resurrect or duplicate.
 internal/ci/testdata/deleted-tests.txt merge=union
+
+# The append-only records: rows only appended, order irrelevant (docs/SPEC-SPRINT.md
+# section 7, the merge classes of a file). A union merge keeps both sides' rows; the lander
+# then takes out a row held twice (cmd/nova-sprint/landappend.go, dedupeRows).
+tla/CASES.tsv merge=union
+tla/RUNS.tsv merge=union
