@@ -189,7 +189,7 @@ var childScans = []childScan{
 		Remedy: "every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline",
 		Allow:  childHasTimeout},
 	{Check: "step-honest-attribution",
-		RE:     regexp.MustCompile(`(?i)(?:never\s+claim|do\s+not\s+(?:mention|name|state)|hide|omit|misstate|sign\s+as\s+another|fixed\s+model|use\s+(?:the|a)\s+model\s+.*\s+whatever)`),
+		RE:     regexp.MustCompile(`(?i)((?:never\s+claim|do\s+not\s+(?:mention|name|state)|hide|omit|misstate|sign\s+as\s+another|fixed\s+model|use\s+(?:the|a)\s+model\s+.*\s+whatever))`),
 		Remedy: "name the actual model and harness you run on; never tell a worker to deny, hide, omit, or misstate its model or harness"},
 }
 
