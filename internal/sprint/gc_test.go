@@ -13,7 +13,7 @@ import (
 )
 
 // gcTree is a machine's scratch as the machinery leaves it, on a temp tree with a fake
-// clock: a bud's working directory under the AI root (linked from the home, as the Studio
+// clock: a bud's working directory under the AI root (linked from the home, as the coordinator's machine
 // links them) with its runner's log beside it, a friend's working directory outside the AI
 // root, the bench root and land's clones.
 type gcTree struct {
@@ -219,10 +219,10 @@ func TestGcRefusesARootThatIsTheHome(t *testing.T) {
 	assert.Contains(t, strings.Join(res.Lines(), "\n"), "GC REFUSED class=bench path="+g.home)
 }
 
-// A machine that exports no AI root still reaches it: the Studio sets no NOVA_AI_ROOT and
-// has no ~/ai, and its working directories are the home's <name>-working links to
+// A machine that exports no AI root still reaches it: with no NOVA_AI_ROOT and no ~/ai,
+// its working directories are the home's <name>-working links to
 // <ai-root>/<name>/working and <ai-root>/buds/<name>/working, so the links name the AI root
-// and its finished jobs and reads are reclaimed. A bench (vision) keeps them as plain
+// and its finished jobs and reads are reclaimed. A bench keeps them as plain
 // <name>-working directories in the home, each its own scratch root. A link to a directory
 // outside that layout is still refused, and links that name two AI roots name none.
 func TestGcFindsTheAIRootThroughTheHomesWorkingLinks(t *testing.T) {
@@ -244,7 +244,7 @@ func TestGcFindsTheAIRootThroughTheHomesWorkingLinks(t *testing.T) {
 		r := g.req(false)
 		r.AIRoot = ""
 		if given != "" {
-			r.AIRoot = filepath.Join(g.home, "ai") // the ~/ai fallback, absent on the Studio
+			r.AIRoot = filepath.Join(g.home, "ai") // the ~/ai fallback, absent on such a machine
 		}
 		assert.Equal(t, mustReal(t, g.ai), GCAIRoot(g.home, r.AIRoot), "given %q", given)
 		res := GC(r)
