@@ -424,3 +424,6 @@ MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	
 MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
+MCPromoteRecord.cfg	MCPromoteRecord.tla	pass	-	ignore-terminal	promoterecord	required	-
+MCPromoteRecordBrokenNoOnceGuard.cfg	MCPromoteRecord.tla	invariant	RecordedOnce	ignore-terminal	promoterecord	required	-
+MCPromoteRecordBrokenRefFirst.cfg	MCPromoteRecord.tla	invariant	CloneFollowsStore	ignore-terminal	promoterecord	required	-
