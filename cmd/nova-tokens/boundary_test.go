@@ -268,6 +268,7 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 // on PATH records any invocation. Then every verb runs, and afterwards: the fake was never
 // called, the bare repository is byte-identical, and the checkout's own .git is too.
 func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
+	t.Parallel()
 	realGit, _ := exec.LookPath("git")
 	if realGit == "" || runtime.GOOS == "windows" {
 		t.Skip("the fixture wants a real git to build the checkout and a shell script for the fake")

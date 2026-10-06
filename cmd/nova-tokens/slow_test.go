@@ -50,6 +50,7 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 
 // SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
 func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))

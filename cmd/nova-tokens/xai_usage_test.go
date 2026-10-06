@@ -17,6 +17,7 @@ import (
 // *XaiUsageMissingError, and a directory is not walked. A session store
 // planted under HOME is never opened.
 func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
 	t.Setenv("HOME", home)

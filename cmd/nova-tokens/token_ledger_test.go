@@ -217,6 +217,7 @@ func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 // TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly: the password is never a flag and
 // no variable is consulted unless --password-env names it.
 func TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly(t *testing.T) {
+	t.Parallel()
 	addr, mr := ledgerRedis(t)
 	mr.RequireAuth("sesame")
 	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
@@ -261,6 +262,7 @@ func TestReportRedisPartialMonthNamesIndexedMissing(t *testing.T) {
 // comes from NOVA_SPRINT_REDIS_USER when no --user is given (the one config nova-sprint
 // uses); a user whose password variable is empty is refused before any dial.
 func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
+	t.Parallel()
 	addr, mr := ledgerRedis(t)
 	mr.RequireUserAuth("bench", "sesame")
 	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
