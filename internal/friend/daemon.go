@@ -309,6 +309,8 @@ type loop struct {
 	refusal      string // the last provider refusal, and how many turns in a row said it
 	streak       int
 	broken, told bool
+	unable       string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
+	unableTries  int    // the turns refused for it since
 	results      chan result
 	lanes        *laneSet
 	reads        *readSet
@@ -408,7 +410,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
 		}
 		if l.broken && !l.told {
-			l.told = d.tellBroken(ctx, l.b, l.brokenAfter)
+			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
+		} else if l.unable != "" && !l.told {
+			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
 		if storeOK {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
@@ -889,11 +893,18 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	return line
 }
 
-// batchDone is the batch turn's end: a deferral keeps it in hand, tried
-// again; anything else settles its messages.
+// batchDone is the batch turn's end: a session that cannot take a turn
+// (SessionRefused) breaks the session at once and keeps the turn in hand, as
+// a deferral does, tried again; anything else settles its messages, and a
+// turn that succeeds clears that break.
 func (l *loop) batchDone(r result, now time.Time) {
 	d := l.d
 	r.t.running = false
+	var unable SessionRefused
+	if errors.As(r.err, &unable) && !r.t.stopped {
+		l.refusedTurn(r.t, unable, now)
+		return
+	}
 	var deferred Deferred
 	if errors.As(r.err, &deferred) && !r.t.stopped { // not a failure: the turn stays in hand, tried again, counted toward nothing
 		l.deferrals++
@@ -917,17 +928,42 @@ func (l *loop) batchDone(r result, now time.Time) {
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
 	line += l.settle(r.t, ok, r.err, now)
+	if ok && l.unable != "" {
+		line += fmt.Sprintf("\n%s session=ok: a turn succeeded after %d refused; no longer %s", now.UTC().Format(time.RFC3339), l.unableTries, l.unable)
+		l.unable, l.unableTries, l.told = "", 0, false
+		d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionOK, "", "", time.Time{}
+	}
 	for _, part := range strings.Split(line, "\n") {
 		d.Record(part)
 	}
 	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
 }
 
+// refusedTurn is a batch turn the session could not take (SessionRefused):
+// a failed delivery, never a delivered one. The first such turn breaks the
+// session with its reason, said once on the record and once to the seat, so
+// the friend reads down with it; the turn stays in hand, tried again every
+// RecheckEvery, counted toward nothing and acked never, so every message
+// stays pending (docs/SPEC-FRIEND.md, "A turn the session cannot take").
+func (l *loop) refusedTurn(t *turn, u SessionRefused, now time.Time) {
+	d := l.d
+	l.retry = now.Add(RecheckEvery)
+	l.unableTries++
+	reason := oneLine(u.Reason, 200)
+	if reason == l.unable {
+		return // said once: the rechecks say nothing until it changes or a turn succeeds
+	}
+	l.unable, l.told = reason, false
+	d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, u.Session, reason, now
+	d.Record(fmt.Sprintf("%s subject=%s messages=%d took=%s session=broken reason=%q: %s; every message stays pending, tried again every %s until a turn succeeds",
+		now.UTC().Format(time.RFC3339), t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), reason, oneLine(u.Detail, 400), RecheckEvery))
+}
+
 // tellBroken sends the coordinator one message that the session is broken:
 // to the seat the last ping named, else Coordinator. It answers whether
 // the word went out, or there was no one to tell (said on the record); a
 // send that fails is tried again the next step.
-func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, brokenAfter int) bool {
+func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, why string) bool {
 	to := d.m.Seat
 	if to == "" {
 		to = d.Coordinator
@@ -938,7 +974,7 @@ func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, brokenAfter int) bo
 		return true
 	}
 	subject := fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, s.SessionID, s.SessionReason)
-	body := subject + fmt.Sprintf("\nThe provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).\n", brokenAfter, d.Friend)
+	body := subject + "\n" + why + "\n"
 	if _, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
 		d.status.StoreError = "telling " + to + " the session is broken: " + err.Error()
 		return false

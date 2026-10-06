@@ -41,6 +41,32 @@ type Deferred struct{ Reason, Remedy string }
 
 func (d Deferred) Error() string { return "deferred: " + d.Reason }
 
+// SessionRefused is a Deliverer's answer when the turn's output says the
+// session cannot take a turn at all, whatever the exit code (dsh: a session
+// under an agent preset, a missing provider key; DSHRefusal): a failed
+// delivery, never a delivered one. Reason is one line naming the session and
+// why, what the status and the friend's row say; Detail what to do; Remedy as
+// in Deferred. The daemon marks the session broken with Reason on the first
+// such turn, keeps every message pending and tries again every RecheckEvery,
+// and a turn that succeeds clears it (docs/SPEC-FRIEND.md, "A turn the
+// session cannot take"). As a Deferred it is the same message kept, so a
+// reader of Deferred (PushProof, the check) still sees its remedy.
+type SessionRefused struct{ Session, Reason, Detail, Remedy string }
+
+func (s SessionRefused) Error() string {
+	return "the session cannot take a turn: " + s.Reason + "; " + s.Detail
+}
+
+// As answers a SessionRefused as the Deferred it also is: the message stays
+// pending, and a session it cannot drive carries its Remedy.
+func (s SessionRefused) As(target any) bool {
+	d, ok := target.(*Deferred)
+	if ok {
+		*d = Deferred{Reason: s.Reason + "; " + s.Detail, Remedy: s.Remedy}
+	}
+	return ok
+}
+
 // Exec runs one command for an adapter: the program, its arguments and its
 // working directory, with the text on stdin, answering what it printed and
 // its exit code. The daemon passes the real one (RealExec); a test its own.

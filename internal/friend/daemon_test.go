@@ -3,6 +3,10 @@ package friend
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -408,8 +412,87 @@ func TestADSHSessionUnderAPresetKeepsTheMessagePending(t *testing.T) {
 			assert.NotContains(t, line, "acked")
 		}
 		require.NotEmpty(t, r.records)
-		assert.Contains(t, r.records[0], `subject="hello" deferred=1: session session-zhi runs under agent preset "minimal"`)
+		assert.Equal(t, 1, strings.Count(strings.Join(r.records, "\n"), "session=broken"), "said once, not once a refusal")
+		assert.Contains(t, r.records[0], `subject="hello" messages=1`)
+		assert.Contains(t, r.records[0], `session=broken reason="dsh session session-zhi: agent preset minimal": session session-zhi runs under agent preset "minimal"`)
 	})
+}
+
+// A dsh headless turn whose output carries the agent preset refusal or
+// MISSING_CREDENTIAL, on exit 0 (the finding of 2026-10-06: Zhi's turns
+// printed the refusal and exited 0 for four hours, each counted delivered
+// while her row read up), is a failed delivery: the first such turn marks
+// the session broken with the reason, said once on the record and once to
+// the seat; the friend's row reads it; the message stays pending, never acked
+// nor given up, tried again every RecheckEvery; and the first turn that
+// succeeds clears it and acks the message. dsh is this test binary as the
+// fake (adapter_dsh_test.go, fakeDSH); no credential value reaches the
+// record, the status or the bus.
+func TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ mode, reason string }{
+		{"preset", "dsh session session-zhi: agent preset minimal"},
+		{"credential", "dsh: missing credential"},
+	} {
+		t.Run(c.mode, func(t *testing.T) {
+			t.Parallel()
+			fixed := filepath.Join(t.TempDir(), "fixed")
+			dir := t.TempDir()
+			synctest.Test(t, func(t *testing.T) {
+				r := newRig(t)
+				r.d.Deliver = &DSH{Dir: dir, Session: "session-zhi", Run: fakeDSHExec(c.mode, fixed), Program: os.Args[0]}
+				r.passive = true
+				r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+				r.d.Coordinator = "ada"
+				r.send(t, "ada", "hello", "x")
+				var broken Status
+				var pending []bus.Entry
+				var records int
+				r.at[3*int(RecheckEvery/BeatEvery)] = func() { // three refusals in: broken since the first, still pending
+					broken, records = r.last(), len(r.records)
+					var err error
+					pending, _, err = r.bus.Peek(context.Background(), "bob")
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(fixed, nil, 0o600)) // the session is renewed: the next turn is taken
+				}
+				r.run(t, 5*int(RecheckEvery/BeatEvery))
+
+				assert.Equal(t, SessionBroken, broken.Session, "broken on the first refusal, not after a count")
+				assert.Equal(t, "session-zhi", broken.SessionID)
+				assert.Equal(t, c.reason, broken.SessionReason)
+				assert.Len(t, pending, 1, "the message stays pending")
+				assert.Equal(t, 1, records, "the break is recorded once over three refusals")
+				fc := CheckFriend(context.Background(), "bob", CheckSeams{
+					Now:          func() time.Time { return broken.At },
+					ReadStatus:   func(string) (Status, bool, error) { return broken, true, nil },
+					ReadPresence: func(string) (PresenceStatus, bool, error) { return PresenceStatus{}, false, nil },
+					ReadPong:     func(string) (Pong, bool, error) { return Pong{}, false, nil },
+					ReadWork:     func(string, string) (int, int, string, time.Time, error) { return 0, 0, "", time.Time{}, nil },
+					HarnessDir:   func(string) (string, string, error) { return "dsh", dir, nil },
+				}, time.Hour, nil)
+				assert.Equal(t, VerdictBroken, fc.Verdict.Verdict, "the friend's row reads the broken session, never up")
+				assert.Equal(t, "session broken: "+c.reason, fc.Verdict.Why)
+
+				s := r.last()
+				assert.Equal(t, SessionOK, s.Session, "a turn that succeeds clears it")
+				assert.Empty(t, s.SessionReason)
+				assert.Equal(t, 1, s.Delivered)
+				pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+				require.NoError(t, err)
+				assert.Empty(t, pending, "acked by the turn that was taken")
+				assert.Empty(t, fresh)
+				got := r.adaGot(t)
+				require.Len(t, got, 1, "the seat is told once")
+				assert.True(t, strings.HasPrefix(got[0], "friend bob: session session-zhi broken: "+c.reason), got[0])
+				all := strings.Join(r.records, "\n")
+				assert.Contains(t, all, `session=broken reason="`+c.reason+`"`)
+				assert.Regexp(t, `session=ok: a turn succeeded after [3-9] refused; no longer `+regexp.QuoteMeta(c.reason), all)
+				assert.Contains(t, all, "acked=true")
+				assert.NotContains(t, all, "given_up")
+				assert.NotContains(t, all+fmt.Sprint(r.status)+strings.Join(got, "\n"), fakeDSHKey, "no credential value is printed")
+			})
+		})
+	}
 }
 
 // A wake check is answered by the session, never by the daemon
