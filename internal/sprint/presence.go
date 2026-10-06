@@ -113,7 +113,16 @@ type FriendReport struct {
 	// last read them (docs/SPEC-FRIEND.md, subscription pacing); absent when it reported none.
 	Paced  *int   `json:"paced,omitempty"`
 	Window string `json:"window,omitempty"`
+	// Until and Reason are her daemon's word that she is down until then and why (friend
+	// beat --until --reason: her harness at its usage limit or out of credits,
+	// docs/SPEC-FRIEND.md, limits-mean-down-w-r5.w1~15); zero and empty while she is up.
+	Until  time.Time `json:"until,omitzero"`
+	Reason string    `json:"reason,omitempty"`
 }
+
+// SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
+// however fresh, it never makes her up.
+func (b Beat) SaysDown() bool { return b.Friend != nil && !b.Friend.Until.IsZero() }
 
 // Beaten says the member has beaten at least once.
 func (b Beat) Beaten() bool { return !b.At.IsZero() }
@@ -194,7 +203,8 @@ func ProofLive(b Beat, now time.Time) bool {
 }
 
 // FriendStatus is the one rule of a friend's status at now: held while the
-// coordinator holds her (friend down); else, once the coordinator has observed her
+// coordinator holds her (friend down); else down while her last beat says so (SaysDown:
+// her harness at its limit, whatever the coordinator observed); else, once the coordinator has observed her
 // (friend health), the observation's word under the current seat generation
 // while its proof is fresh and down otherwise (ObservedStatus: her own beat
 // never makes an observed friend up again); else up while her last beat is
@@ -206,6 +216,8 @@ func FriendStatus(f FriendPresence, now time.Time) string {
 	switch {
 	case f.Held:
 		return Held
+	case f.Beat.SaysDown():
+		return Down
 	case f.Health.Observed():
 		return ObservedStatus(f.Health, f.Generation, now)
 	case FriendBeating(f.Beat, now) && ProofLive(f.Beat, now):
@@ -323,13 +335,20 @@ func StrangerNotes(s *Snapshot, names []string) Plan {
 }
 
 // FriendDownWhy is why FriendStatus does not say up at now, in the words a take refused
-// for her names (takeOne): held by the coordinator; observed not up by the coordinator
+// for her names (takeOne): held by the coordinator; her beat says down, until when and why;
+// observed not up by the coordinator
 // (her word, an older seat's observation, or one too old); never beaten; silent past
 // FriendDownAfter; or her session's proof lapsed. "" while she is up.
 func FriendDownWhy(f FriendPresence, now time.Time) string {
 	switch {
 	case f.Held:
 		return "held by the coordinator (friend down)"
+	case f.Beat.SaysDown():
+		why := "her beat says down until " + f.Beat.Friend.Until.UTC().Format(time.RFC3339)
+		if f.Beat.Friend.Reason != "" {
+			why += ": " + f.Beat.Friend.Reason
+		}
+		return why
 	case f.Health.Observed():
 		h := f.Health
 		switch {
