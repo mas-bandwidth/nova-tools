@@ -143,4 +143,3 @@ func TestClockConcurrent(t *testing.T) {
 	}
 	<-done
 }
-
