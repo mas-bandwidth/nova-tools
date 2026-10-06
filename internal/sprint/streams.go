@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -204,4 +206,118 @@ func allOrNone(streams []string, done string, why func(string) string) []Refusal
 		}
 	}
 	return out
+}
+
+// NamedStream is the work stream a note names: its stream, when that is a
+// stream's name and no other subject's (a member's, a provider's and a tier's
+// subjects hold a colon, as no stream name does); "" when it names none.
+func NamedStream(n Note) string {
+	if n.Stream == "" || strings.Contains(n.Stream, ":") {
+		return ""
+	}
+	return n.Stream
+}
+
+// StreamGone says the stream is a row of neither the work nor the merge
+// table: stream remove took it off, and nothing the tick or the coordinator
+// does can act on it in this epoch. An archived stream's rows are kept,
+// hidden, and it is not gone.
+func StreamGone(s *Snapshot, stream string) bool {
+	return s.Work != nil && s.Merge != nil && !s.Work.HasRow(stream) && !s.Merge.HasRow(stream)
+}
+
+// RetireStreams is the plan that retires every open judgment and every
+// acknowledged condition (an alarm held, an overdue hold, a stale stream's)
+// that names one of the streams (NamedStream): each is closed, its decided
+// note saying why, and the step says so, a NOTE line each, naming it by its
+// alias and id. Its next step named a stream that is no longer there to act
+// on (nova-sprint resume --stream refuses "no such stream"), so it would wait
+// in the inbox and count against the coordinator for good.
+func RetireStreams(s *Snapshot, streams []string, why string) Plan {
+	var p Plan
+	said := map[string]bool{}
+	for _, o := range append(append([]Open(nil), s.Open...), s.Acked...) {
+		st := NamedStream(o.Note)
+		if st == "" || !contains(streams, st) {
+			continue
+		}
+		p.Closes = append(p.Closes, o)
+		if said[o.Note.ID] {
+			continue
+		}
+		said[o.Note.ID] = true
+		w := "retired: stream " + st + " " + why
+		p.Notes = append(p.Notes, Note{Kind: Decided, Type: o.Note.Type, Stream: st, Answers: o.Note.ID, What: w, Who: s.Actor, At: s.Now})
+		name := o.Note.ID
+		if o.Note.Alias != "" {
+			name = o.Note.Alias + " " + name
+		}
+		p.Said = append(p.Said, fmt.Sprintf("%s %s (%s) %s", map[bool]string{true: "judgment", false: "held condition"}[o.Note.Kind == Judgment], name, o.Note.Type, w))
+	}
+	return p
+}
+
+// WhyGone is the retirement's reason the tick gives for a stream the work and
+// merge tables lack.
+const WhyGone = "is on neither the work nor the merge table (stream remove took it off), so nothing can act on this"
+
+// PartRetire is the name of the tick's retirement part (TickRetireGone).
+const PartRetire = "retire gone streams"
+
+// TickRetireGone is the tick's retirement of what names a stream the tables
+// lack (StreamGone): every open judgment and acknowledged condition naming one
+// is closed, with a note (RetireStreams). Stream remove and stream archive
+// retire their own as they take the stream off; this part retires what was
+// open before they did, and anything left behind by a remove whose own
+// retirement did not finish.
+func TickRetireGone(s *Snapshot, r TickReq) (Plan, int) {
+	var gone []string
+	for _, o := range append(append([]Open(nil), s.Open...), s.Acked...) {
+		if st := NamedStream(o.Note); st != "" && !contains(gone, st) && StreamGone(s, st) {
+			gone = append(gone, st)
+		}
+	}
+	if len(gone) == 0 {
+		return Plan{}, 0
+	}
+	sort.Strings(gone)
+	p := RetireStreams(s, gone, WhyGone)
+	for i := range p.Notes {
+		p.Notes[i].Who = r.who()
+	}
+	return p, 0
+}
+
+// ForTables is a tick part's plan with no judgment and no acknowledged
+// condition raised or rewritten for a stream the tables lack (StreamGone)
+// and the plan does not add a row for: its next step could only be refused.
+func ForTables(s *Snapshot, p Plan) Plan {
+	adds := map[string]bool{}
+	for _, r := range p.Rows {
+		if r.Table == Work || r.Table == Merge {
+			adds[r.Row] = true
+		}
+	}
+	gone := func(n Note) bool {
+		if n.Kind != Judgment && n.Kind != Acknowledged {
+			return false
+		}
+		st := NamedStream(n)
+		return st != "" && !adds[st] && StreamGone(s, st)
+	}
+	keep := func(notes []Note) []Note {
+		if !slices.ContainsFunc(notes, gone) {
+			return notes
+		}
+		return slices.DeleteFunc(slices.Clone(notes), gone)
+	}
+	p.Notes, p.Updates = keep(p.Notes), keep(p.Updates)
+	if slices.ContainsFunc(p.Units, func(u Unit) bool { return slices.ContainsFunc(u.Notes, gone) }) {
+		units := slices.Clone(p.Units)
+		for i := range units {
+			units[i].Notes = keep(units[i].Notes)
+		}
+		p.Units = units
+	}
+	return p
 }

@@ -585,7 +585,8 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 			if due != nil {
 				*due = d
 			}
-			return unchangedNotWritten(s, p)
+			// no judgment for a stream the tables lack: its next step is refused
+			return unchangedNotWritten(s, sprint.ForTables(s, p))
 		}}
 }
 
@@ -1026,6 +1027,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	byTable := map[string]sprint.TableUpdate{}
 	for _, u := range updates {
 		byTable[u.Table] = u
+	}
+	// What names a stream the work and merge tables lack retires first, each with
+	// a note (sprint.TickRetireGone): a judgment open before stream remove took its
+	// stream off, whose next step would only be refused.
+	if out := t.parts("", []sprint.TickPartDef{{Name: sprint.PartRetire, Fn: sprint.TickRetireGone}}); out != tickOn {
+		return t.end(out, last, unfinished, seen)
 	}
 	// 0. The start: the fleet's and the readers' rebalance, once, before any
 	// table's update (sprint.TickStart). What it writes is in the tables
