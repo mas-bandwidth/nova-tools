@@ -14,10 +14,10 @@ import (
 )
 
 // Harnesses are the harness names run and install take, in the order the
-// help lists them; OpenCode, Codex, Antigravity, DSH, Gemini and Grok have a
+// help lists them; OpenCode, Codex, Antigravity, DSH, Gemini, Grok and tmux (a TUI hosted by nova-friend host) have a
 // deliver command, the rest refuse honestly (Stub), the surveyed ones with
 // their reason.
-var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok"}, RefusedHarnesses...)
+var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok", "tmux"}, RefusedHarnesses...)
 
 // Deliverer pushes one text into the friend's running session as a turn
 // and normally blocks until the turn ends. Codex queue instead confirms
@@ -186,6 +186,8 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "gemini":
 		return &Gemini{Dir: dir, Session: session, Run: run, Out: out}, nil
+	case "tmux":
+		return &Tmux{Dir: dir, Session: session, Run: run, Out: out}, nil
 	}
 	if reason, ok := Refusals[harness]; ok {
 		return Stub{Harness: harness, Reason: reason}, nil
