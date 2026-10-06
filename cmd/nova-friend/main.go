@@ -69,8 +69,8 @@ type world struct {
 	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
-	cards     func(ctx context.Context, server string, argv []string) (string, error)                       // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
-	view      func(ctx context.Context, server, friend string) (string, error)                              // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
+	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
