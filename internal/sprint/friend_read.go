@@ -559,11 +559,19 @@ func FriendReadOutboxLine(row, id string, epoch uint64) string {
 // wrote one), is hers to report. A read on her row has no begin and is handed
 // back by friend take, not by --return.
 func friendReadVerb(s *Snapshot, r ReadReq, name string) Plan {
+	return readCardVerb(s, r, FriendRow(name), name)
+}
+
+// readCardVerb is the read verb on a fleet row, a friend's or a member's (read_cards.go):
+// a verdict closes its read card as her outbox report does (friendReadCloseUnit); a return
+// (--return, with the reason) hands it back with no verdict, retired by returned, which
+// spends the reader's read of the attempt, and the read-card deal deals it to another
+// reader. A read card has no begin: the take moves it to working.
+func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	var p Plan
-	row := FriendRow(name)
-	if r.Begin || r.Return {
-		p.refuse("read", "a read on a friend's row has no begin and no return: report it with "+
-			"read --as "+row+" (--ok | --broken) <read> --finding <text>, or write outbox/<read>/REPORT.md")
+	if r.Begin {
+		p.refuse("read", "a read card has no begin: the take moves it to working; report it with "+
+			"read --as "+row+" (--ok | --broken) <read> --finding <text>, hand it back with read --as "+row+" --return <read> --reason <text>, or write outbox/<read>/REPORT.md")
 		return p
 	}
 	if s.Fleet == nil {
@@ -599,6 +607,17 @@ func friendReadVerb(s *Snapshot, r ReadReq, name string) Plan {
 	namePrimarysReads(&p, all)
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
+		if r.Return {
+			set := map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByReturned, "reason": cutText(r.Reason, MaxCardTextBytes)}
+			if r.Usage != "" {
+				set["usage"] = r.Usage
+			}
+			n := happened(NReadReturned, pr.Row, s.Now, pr.ID)
+			n.Who, n.Attempt, n.What = name, c.Int("attempt"), name+" returned "+c.ID+": "+r.Reason
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{change(Fleet, removeEntry(c, set))},
+				Moved: c.ID + " " + c.Col + " -> returned (retired: " + name + " gave no verdict)", Notes: []Note{n}})
+			continue
+		}
 		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding, r.Usage)
 		u.Moved = c.ID + " " + c.Col + " -> " + r.Verdict + " (retired: read by " + name + ")"
 		p.Units = append(p.Units, u)

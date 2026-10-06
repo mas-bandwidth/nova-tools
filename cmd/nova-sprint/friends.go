@@ -232,7 +232,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r)})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -730,4 +730,12 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 	sayOK(stdout, c.json, name, line, map[string]any{"friend": friend, "state": h.State, "seen": h.Seen, "generation": h.Generation,
 		"queue": h.Queue, "working": h.Working, "width": h.Width, "status": status, "replayed": replayed})
 	return 0
+}
+
+// friendRoles is the friend row's roles, sorted and comma joined: reader is the read
+// cards' role (sprint read_cards.go; nova-config friend set <f> --roles builder,reader).
+func friendRoles(r config.Row) string {
+	words := sprint.Split(r.Fields["roles"])
+	slices.Sort(words)
+	return strings.Join(slices.Compact(words), ",")
 }

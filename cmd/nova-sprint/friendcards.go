@@ -52,13 +52,10 @@ const (
 // friendJobOf is the job a friend's sprint card is delivered as: its stored id, and from its
 // second generation (a card taken back and dealt again, sprint.FriendTake) .g<gen> after it, so
 // a card dealt again to the same friend is a new job whose brief names its own branch.
-// A read on her row is delivered as the card id at every epoch and generation, the path
-// the ask writes (sprint.FriendReadAsk) and friend sync closes it from (friendReadOf), so
-// her QUEUE.json and friend reconcile name the directory her report is in.
+// A read card is a card: it is delivered as a work card is, under the same job (a one-shot
+// runner finds inbox/<job>/BRIEF.md where it finds a work card's), and friend sync closes it
+// from outbox/<job>/REPORT.md (friendReadOf).
 func friendJobOf(p sprint.Packet) string {
-	if p.Kind == "read" {
-		return p.Card
-	}
 	job := sprint.StoredID(p.Card, p.Epoch)
 	if p.Gen > 1 {
 		job += ".g" + strconv.Itoa(p.Gen)
@@ -550,8 +547,12 @@ func (a *app) enrollBus(ctx context.Context, name string, say func(string)) {
 // told.
 func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, brief, line string, say func(string)) error {
 	a.enrollBus(ctx, name, say)
+	start := "Read it and start; its STATUS line says where to push and where to report."
+	if p.Kind == "read" {
+		start = "It is a read: read it and start; its STATUS line says where to report, and nothing is pushed."
+	}
 	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " dealt: " + line,
-		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report."}
+		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\n" + start}
 	err := a.bus(ctx, m, say)
 	if err == nil {
 		return nil
@@ -600,16 +601,17 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
 // else the card's), and a deadline of thirty minutes on the sprint clock.
 func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
-	branch, head, start := p.WorkBranch, p.Head, ""
-	if c != nil {
-		branch, head = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head"))
-		start = c.F("start")
-	}
+	start := ""
 	var deadline time.Time
-	if st.Now != nil {
-		deadline = st.Now().Add(sprint.FriendReadDeadline)
+	if c != nil {
+		p.WorkBranch, p.Head = cmp.Or(p.WorkBranch, c.F("branch")), cmp.Or(p.Head, c.F("head"))
+		start = c.F("start")
+		deadline, _ = time.Parse(time.RFC3339, c.F(sprint.FieldReadDeadline))
 	}
-	return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
+	if deadline.IsZero() && st.Now != nil {
+		deadline = st.Now().Add(sprint.ReadCardDeadline)
+	}
+	return sprint.ReadCardBrief(name, friendJobOf(p), p, start, deadline)
 }
 
 // friendReadOf delivers one friend's read and closes it from the friend's
@@ -619,9 +621,8 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
 func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string)) (delivered, finished int, err error) {
-	q := p
-	q.Epoch = 0 // inbox/<card id>, the ask's path; StoredID would be another directory after epoch 0
-	in, why, err := friendInbox(dir, q)
+	job := friendJobOf(p)
+	in, why, err := friendInbox(dir, p)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -638,14 +639,22 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			delivered++
-			say(fmt.Sprintf("FRIEND-READ DELIVERED friend=%s card=%s job=%s", name, p.Card, oneline.Field(p.Card)))
+			line := fmt.Sprintf("FRIEND-READ DELIVERED friend=%s card=%s job=%s", name, p.Card, oneline.Field(job))
+			say(line)
+			if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
+				return delivered, finished, err
+			}
 		case !errors.Is(err, fs.ErrExist):
 			return delivered, finished, err
 		}
 	} else if err != nil {
 		return delivered, finished, err
 	}
-	report, why, _, err := friendReadReport(dir, p.Card) // a read close takes no report time; the work finish does
+	report, why, _, err := friendReadReport(dir, job) // a read close takes no report time; the work finish does
+	if err == nil && report == "" && why == "" && job != p.Card {
+		// a read delivered before read cards was named by its card id alone
+		report, why, _, err = friendReadReport(dir, p.Card)
+	}
 	if err != nil {
 		return delivered, finished, err
 	}

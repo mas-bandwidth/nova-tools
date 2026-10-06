@@ -167,7 +167,9 @@ func friendDealByLadder(s *Snapshot, offer []*Card, seats []FriendSeat) (p Plan,
 		work[cardRank(c)] = append(work[cardRank(c)], c)
 	}
 	var waiting []*Card
-	if s != nil && s.Work != nil && s.Fleet != nil && len(seats) > 0 {
+	if s != nil && s.Work != nil && s.Fleet != nil && len(seats) > 0 && !s.ReadCardsOn() {
+		// while read cards are on, the reads are cut by the read-card ask, and the deal's
+		// snapshot already holds the room they take (TickDeal, withReadsReserved)
 		waiting = readOrder(readsWaitingCards(s))
 	}
 	cur := slices.Clone(seats)
