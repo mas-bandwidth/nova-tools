@@ -207,25 +207,45 @@ func Tool(reg *Registry, env Env, stamp string) *tool.Tool {
 		What:    "says what is missing for the nova tools to work, and the one line that fixes each",
 		Stamp:   stamp,
 		Default: "run",
-		How: `each check covers one dependency: ok, warn or fail, with evidence and a fix line.
-Every check runs; a fail does not stop the others. --local skips the checks only a fleet
-needs and says which. Exit 0 is all ok (or warn), 1 a warn under --strict, 2 a fail.
+		How: `each check covers one dependency: ok, warn or fail, with evidence and a fix line;
+every check runs; --local skips the fleet's. Exit 0 ok (or warn), 1 a warn under --strict, 2 a fail.
+--job <name> is one job's readiness, its dependencies in order, each step the tool's own check;
+the first fail blocks the rest and its fix is the next command (jobs and steps: help run).
 first run: the binary alone, no flags; nothing is changed, no fix is run for you.`,
-		NoJSON:    "run prints one `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line per check; with --json it prints the same results as one object",
+		NoJSON:    "run prints one `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line per check (with --job, one per step, blocked after the first fail, then one `DOCTOR job=` line); with --json it prints the same results as one object",
 		ExitTable: "0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage",
 		Verbs: []tool.Verb{{
 			Name:    "run",
-			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json]",
+			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json]\n[run] --job <local-notes|messaging|friend|worker|coordinator> [--as <name>] [--dir <d>] [--harness <h>] [--redis <host:port>] [--strict] [--json]",
 			Example: "--local",
 			Effect:  tool.Inspection,
-			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\nexample: nova-doctor --local",
+			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\njobs: " + jobsDetail() + "\nexample: nova-doctor --local\nexample: nova-doctor --job friend --as bob --dir ~/bob",
 			Flags: func(f *tool.Flags) {
 				f.Prints()
 				f.Var(new(list), "check", "run only this check (repeatable); the names are in `help run`")
 				f.Bool("local", false, "skip the checks only a fleet needs, and say which")
 				f.Bool("strict", false, "exit 1 on a warn")
 				f.Bool("json", false, "print the results as one JSON object instead of lines")
+				f.String("job", "", "check this machine's readiness for one `job` ("+strings.Join(Jobs, ", ")+"), its dependencies in order")
+				f.String("as", "", "with --job friend, the friend's `name`; with --job coordinator, the coordinator whose friends are checked")
+				f.String("dir", "", "with --job friend, the friend's working `directory`, for the fix lines")
+				f.String("harness", "", "with --job friend, the friend's `harness`, for the fix lines when its check cannot say")
+				f.String("redis", "", "with --job, the Redis `host:port` (default NOVA_REDIS_ADDR, then NOVA_SPRINT_REDIS)")
 				f.Check(func(c *tool.Call) {
+					if job := c.Str("job"); job != "" {
+						if JobSteps(job) == nil {
+							c.Problem(fmt.Sprintf("no job named %q; the jobs are %s", job, strings.Join(Jobs, ", ")))
+						}
+						if len(c.Get("check").([]string)) > 0 || c.Bool("local") {
+							c.Problem("--job runs the job's own steps; --check and --local select checks, not steps")
+						}
+					} else {
+						for _, n := range []string{"as", "dir", "harness", "redis"} {
+							if c.Str(n) != "" {
+								c.Problem("--" + n + " is read only with --job")
+							}
+						}
+					}
 					for _, n := range c.Get("check").([]string) {
 						if !slices.Contains(reg.Names(), n) {
 							c.Problem(fmt.Sprintf("no check named %q; the checks are %s", n, strings.Join(reg.Names(), ", ")))
@@ -234,6 +254,9 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 				})
 			},
 			Run: func(c *tool.Call) *tool.Out {
+				if c.Str("job") != "" {
+					return runJob(c, env)
+				}
 				results, skipped, err := reg.Run(c.Ctx, env, Options{Only: c.Get("check").([]string), Local: c.Bool("local")})
 				if err != nil {
 					return tool.Refuse(err.Error())
@@ -254,6 +277,38 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 			},
 		}},
 	}
+}
+
+// runJob is run --job: the job's steps, one line each and the summary, or one JSON object.
+func runJob(c *tool.Call, env Env) *tool.Out {
+	in := JobInput{Job: c.Str("job"), As: c.Str("as"), Dir: c.Str("dir"), Harness: c.Str("harness"), Redis: c.Str("redis")}
+	rep, err := RunJob(c.Ctx, env, in, c.Bool("strict"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if c.Bool("json") {
+		b, _ := json.Marshal(rep)
+		fmt.Fprintf(c.Stdout, "%s\n", b)
+		return tool.Exit(rep.Exit)
+	}
+	for _, r := range rep.Steps {
+		fmt.Fprintln(c.Stdout, r.Line())
+	}
+	fmt.Fprintln(c.Stdout, rep.SummaryLine())
+	return tool.Exit(rep.Exit)
+}
+
+// jobsDetail is each job and its steps, for help run.
+func jobsDetail() string {
+	parts := make([]string, 0, len(Jobs))
+	for _, j := range Jobs {
+		var names []string
+		for _, s := range JobSteps(j) {
+			names = append(names, s.Name)
+		}
+		parts = append(parts, j+" ("+strings.Join(names, " > ")+")")
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Main runs nova-doctor over args: no arguments is a run.
