@@ -308,6 +308,9 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	}
 	st.AnswerRules, st.IdleAlarm = rules, idle
 	st.WakeFriend = a.stallWaker(st, stderr)
+	// the landing step's groups die with the server: every return from here
+	// ends them before the process does (landproc.go)
+	defer a.endLandChildren()
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}
@@ -334,6 +337,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		go func() {
 			<-sigs
 			stopped()
+			// the landing step's groups go too, whatever else ends the process
+			a.endLandChildren()
 			os.Exit(0)
 		}()
 		a.profiled = func(n int) {
@@ -352,6 +357,15 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if land {
+		// a signalled server ends the landing step's groups before it goes
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigs)
+		go func() {
+			<-sigs
+			a.endLandChildren()
+			a.exit(1)
+		}()
 		go a.landLoop(context.Background(), c.redis, stdout)
 	}
 	// the providers' balances, read outside every tick (balance.go)
@@ -643,7 +657,10 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			walls = keepWall(walls, deadline)
 			lift = liftAfterOverrun(a.tickDeadline, deadline)
 			if !a.awaitGivenUp(ended, deadline, began, &wedged, stdout, stderr) {
-				// serial stays held: the tick's goroutine is still in its plan
+				// serial stays held: the tick's goroutine is still in its plan.
+				// The landing step's groups go before the process does, so the
+				// exit leaves no gate running (landproc.go).
+				a.endLandChildren()
 				a.exit(exitTickDeadline)
 				return false
 			}

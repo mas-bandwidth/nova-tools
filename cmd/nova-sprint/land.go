@@ -1523,7 +1523,7 @@ func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	raw, err := b.Cmd.CombinedOutput()
+	raw, err := landChildOutput(b.Cmd, landGatesDir(l.root), false)
 	if err = b.Wrap("check "+l.check, err); err != nil {
 		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
 	}
@@ -1771,7 +1771,7 @@ func rejected(err error) bool {
 // except -z output whose status columns and paths are byte-exact; an error
 // carries git's own words.
 func (l *lander) git(ctx context.Context, dir string, args ...string) (string, error) {
-	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
+	res, err := l.landGit(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
 	if err != nil {
 		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, words)

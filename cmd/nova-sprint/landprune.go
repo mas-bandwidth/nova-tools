@@ -406,12 +406,18 @@ func (a *app) tidyRefs(ctx context.Context, dir string, bases []string) (refs in
 
 // pruneGit runs one git of the cleaner in the clone dir, in land's environment: its
 // trimmed stdout (kept on a failure too: a push says what it did to each ref), and an
-// error carrying git's words.
+// error carrying git's words. The git runs in a process group of its own under the
+// land root's gates (landproc.go), so the server's end takes it with the landing
+// step's children.
 func (a *app) pruneGit(ctx context.Context, dir string, stdin io.Reader, args ...string) (string, error) {
-	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true, Stdin: stdin}, args...)
-	out := strings.TrimSpace(string(res.Stdout))
+	b := gitrun.Prepare(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true, Stdin: stdin}, args...)
+	defer b.Cancel()
+	out, errb, err := landChildStreams(b.Cmd, a.landGatesOf())
+	res := gitrun.Result{Stdout: out, Stderr: errb}
+	err = b.Wrap("git "+strings.Join(args, " "), err)
+	trimmed := strings.TrimSpace(string(res.Stdout))
 	if err != nil {
-		return out, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(res.Stderr)+"\n"+out))
+		return trimmed, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(res.Stderr)+"\n"+trimmed))
 	}
-	return out, nil
+	return trimmed, nil
 }

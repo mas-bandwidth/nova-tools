@@ -3766,6 +3766,18 @@ of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
 module that needs them changed fails the run, which is the card's finding.
 `--check` is the caller's own command on top, once a batch, as before.
 
+Every process the landing step starts -- a gate's `go`, a check's `sh`, git,
+and the cleaner's git too -- runs in a process group of its own, registered
+while it runs, so the whole tree a run starts dies with it and not only the one
+process the kill reached (the orphan of 2026-10-06: `run --land` exited 4 on a
+tick past its deadline and left `ci.test` at 310% CPU under launchd, parent
+pid 1). The server's exit, whatever ended it -- the wedged tick's exit 4, a
+signal, any return from the run -- ends every group before the process goes, and
+the landing step's start ends any gate group an earlier run recorded under its
+land root (`<root>/gates/<pgid>`), one `LANDING ended <n> gate process
+group(s) an earlier landing run left under <root>: pgid=<id>,...` line
+(`landproc.go`; `TestTheLandingGateDiesWithTheServer`).
+
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
 (`sprint.ScopeAmended`): the change also changes a file of its own (in `PATHS`), and the
