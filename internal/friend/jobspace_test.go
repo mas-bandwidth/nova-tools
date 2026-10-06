@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -144,4 +145,51 @@ func TestUnpublishedJobsCannotStarveTheCollector(t *testing.T) {
 	result, err = s.GC(context.Background(), nil, false, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{last.Job}, result.Removed)
+}
+
+func TestAJobClaimCannotCrossCollectionOrAReport(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s := &Stager{Dir: dir}
+	job := "a.w1~15"
+	s.admission.Lock()
+	holder, err := s.ClaimJob(job, "new lane", time.Time{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, holder)
+	s.admission.Unlock()
+	out := filepath.Join(dir, "outbox", job)
+	require.NoError(t, os.MkdirAll(out, 0o755))
+	report := filepath.Join(out, "REPORT.md")
+	require.NoError(t, os.WriteFile(report, []byte("reported"), 0o644))
+	holder, err = s.ClaimJob(job, "new lane", time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, "reported job", holder)
+	assert.NoFileExists(t, laneMarkPath(dir, job))
+	require.NoError(t, os.Remove(report))
+	holder, err = s.ClaimJob(job, "new lane", time.Time{})
+	require.NoError(t, err)
+	assert.Empty(t, holder)
+	mark, found := ReadLaneMark(dir, job)
+	assert.True(t, found)
+	assert.True(t, s.localJobProtected(job, mark, found))
+}
+
+func TestAdmissionRechecksScratchGrowthInsteadOfCachedMetrics(t *testing.T) {
+	t.Parallel()
+	jobs := int64(10)
+	now := time.Time{}
+	a := &CapacityAdmission{Cap: 20, Now: func() time.Time { return now }, Measure: func(string) (int64, error) { return jobs, nil }}
+	assert.ErrorContains(t, a.Check(context.Background(), Card{}), "fresh admission measurement")
+	a.Wait()
+	assert.NoError(t, a.Check(context.Background(), Card{}))
+	// The last admitted sample was below the cap, but the running job grew.
+	jobs = 30
+	assert.ErrorContains(t, a.Check(context.Background(), Card{}), "fresh admission measurement")
+	a.Wait()
+	assert.ErrorContains(t, a.Check(context.Background(), Card{}), "jobs cap 20 bytes refuses a new lane: jobs=30")
+	jobs = 10
+	assert.Error(t, a.Check(context.Background(), Card{}))
+	a.Wait()
+	now = now.Add(3 * BeatEvery)
+	assert.ErrorContains(t, a.Check(context.Background(), Card{}), "expired")
 }

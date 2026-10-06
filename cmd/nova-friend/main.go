@@ -1104,6 +1104,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return result.Removed, err
 		}
 	}
+	var admit func(context.Context, friend.Card) error
+	var claim func(string, string, time.Time) (string, error)
+	if stager.s != nil {
+		probe := &friend.CapacityAdmission{Dir: dir, Cap: stager.s.JobsCap, Now: w.now, Measure: friend.JobsBytes}
+		admit = probe.Check
+		claim = stager.s.ClaimJob
+		defer probe.Wait()
+	}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
@@ -1215,21 +1223,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Held:      w.held(name, server),
 		Stage:     stager.stage(),
 		Prune:     prune,
-		Admit: func(ctx context.Context, c friend.Card) error {
-			if stager.s == nil {
-				return nil
-			}
-			sample := rowCapacity.Load()
-			cap := stager.s.JobsCap
-			if sample == nil || sample.Jobs < 0 {
-				return fmt.Errorf("jobs cap %d bytes refuses a new lane until capacity is measured", cap)
-			}
-			if sample.Jobs >= cap {
-				return fmt.Errorf("jobs cap %d bytes refuses a new lane: jobs=%d", cap, sample.Jobs)
-			}
-			return nil
-		},
-		Tip: w.tip,
+		Admit:     admit,
+		Claim:     claim,
+		Tip:       w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
