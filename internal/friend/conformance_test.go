@@ -105,6 +105,14 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 				return "done\n", 0, nil
 			})}
 	},
+	"claude": func(t *testing.T, s *fakeSession, dir string) Deliverer {
+		return &Claude{Dir: dir, Session: "c1", Run: s.exec(func(name string, args []string, _ string) (string, int, error) {
+			require.Equal(t, "claude", name)
+			require.Contains(t, strings.Join(args, " "), "--resume c1")
+			s.act(args[len(args)-1])
+			return `{"type":"result","total_cost_usd":0.01}` + "\n", 0, nil
+		})}
+	},
 	"gemini": func(t *testing.T, s *fakeSession, dir string) Deliverer {
 		return &Gemini{Dir: dir, Session: "g1", Run: s.exec(func(name string, args []string, _ string) (string, int, error) {
 			text, ok := strings.CutPrefix(args[len(args)-1], "--prompt=")
@@ -208,7 +216,7 @@ func TestEveryAdapterPassesDeliveryConformance(t *testing.T) {
 	for harness := range harnessRigs {
 		require.True(t, Known(harness), "a rig for %s, which is no harness", harness)
 	}
-	assert.Len(t, harnessRigs, 6, "the six adapters with a deliver command each run the check")
+	assert.Len(t, harnessRigs, 7, "the seven adapters with a deliver command each run the check")
 	for _, harness := range Harnesses {
 		t.Run(harness, func(t *testing.T) {
 			t.Parallel()

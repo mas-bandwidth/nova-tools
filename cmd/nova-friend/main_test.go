@@ -575,6 +575,9 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 				}
 				return `[{"id":"ses_lane1","directory":"` + dir + `","updated":1}]`, 0, nil
 			}
+			if args[0] == "export" { // the run's price, from her session record
+				return `{"messages":[{"info":{"role":"assistant","cost":0.002}}]}`, 0, nil
+			}
 			runs = append(runs, strings.Join(args, " "))
 			return "ok\n", 0, nil
 		}
@@ -604,6 +607,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)
 		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
+		assert.Contains(t, out.String(), "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
 	})
 }
 
@@ -839,8 +843,6 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	r.deaf = true
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
 		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
-	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
-		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude: nothing the bus holds`, "CHECK NOTE remedy: the adapter card: give internal/friend a deliver command for claude")
 	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
 		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor (not installed here`)
 
