@@ -439,9 +439,10 @@ func TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason(t *testing.T) {
 			t.Parallel()
 			fixed := filepath.Join(t.TempDir(), "fixed")
 			dir := t.TempDir()
+			sessions := liveDSHSession(t, dir, "session-zhi") // the session exists: refused, never gone
 			synctest.Test(t, func(t *testing.T) {
 				r := newRig(t)
-				r.d.Deliver = &DSH{Dir: dir, Session: "session-zhi", Run: fakeDSHExec(c.mode, fixed), Program: os.Args[0]}
+				r.d.Deliver = &DSH{Dir: dir, Session: "session-zhi", Run: fakeDSHExec(c.mode, fixed), Program: os.Args[0], Sessions: sessions}
 				r.passive = true
 				r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
 				r.d.Coordinator = "ada"
