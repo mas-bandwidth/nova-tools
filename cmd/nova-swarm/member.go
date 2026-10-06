@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -33,7 +32,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -238,7 +236,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// watermark"): figures each beat, the AI root's largest directories every ten minutes
 	var disk func() string
 	if !*reader {
-		dm := &sprint.DiskMeter{Dir: *slots, Root: cmp.Or(os.Getenv(sprint.EnvAIRoot), *root)}
+		dm := &hostload.DiskMeter{Dir: *slots, Root: os.Getenv(hostload.EnvAIRoot)}
+		if dm.Root == "" {
+			dm.Root = *root
+		}
 		disk = func() string { return dm.Arg(time.Now()) }
 	}
 	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Disk: disk, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, os.Getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart

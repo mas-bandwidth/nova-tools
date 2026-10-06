@@ -36,7 +36,7 @@ func (w *world) diskNotes() (raised []Note, cleared int) {
 
 // On 2026-10-06 the AI volume reached 100% with no warning: the first sign was the bus
 // store refusing writes and lanes dying, the rows carried no disk figure, the tick raised
-// no judgment about space and nothing refused a new lane on a full disk (docs/SPEC-SPRINT.md
+// no judgment of the volume and nothing refused a new lane on a full disk (docs/SPEC-SPRINT.md
 // section 8, "Disk watermark"). Over the alarm (80% by default) the tick raises one
 // judgment per volume, two names on one volume sharing it, naming the volume, the machine
 // and the largest directories; its line follows the figure in place; it is raised again

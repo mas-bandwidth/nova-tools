@@ -34,11 +34,11 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -70,7 +70,7 @@ type world struct {
 	exec      friend.Exec
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                                    // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat      func(ctx context.Context, server, friend string, active, pong time.Time, extra ...string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row; extra are more flags (--disk)
-	diskStat  func(dir string) (sprint.DiskStat, error)                                                                            // her volume's figures; nil is the system's (sprint.StatVolume)
+	diskStat  func(dir string) (hostload.DiskStat, error)                                                                          // her volume's figures; nil is the system's (hostload.StatVolume)
 	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) error                       // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
 	progress  func(ctx context.Context, server string, argv []string) error                                                        // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                                        // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
@@ -1062,7 +1062,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// the volume her working directory lives on, measured for each beat: its figures each
 	// beat, the AI root's largest directories every ten minutes (docs/SPEC-SPRINT.md section
 	// 8, "Disk watermark"); w.diskStat is a test's volume, nil the system's
-	disk := &sprint.DiskMeter{Dir: dir, Root: cmp.Or(w.getenv(sprint.EnvAIRoot), dir), Stat: w.diskStat}
+	disk := &hostload.DiskMeter{Dir: dir, Root: cmp.Or(w.getenv(hostload.EnvAIRoot), dir), Stat: w.diskStat}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,

@@ -3760,7 +3760,7 @@ fleet table's load cell says it instead, the load followed by `fds <count> warn`
 
 On 2026-10-06 at 09:50 ET the AI volume reached 100% with no warning from the machine: the
 first sign was the bus store refusing writes and lanes dying. The rows carried no disk figure,
-the tick raised no judgment about space, and nothing refused a new lane on a full disk. The
+the tick raised no judgment of the volume, and nothing refused a new lane on a full disk. The
 owner, 2026-10-03: "alarms are effects on cards, every alarm is a pushed judgment"; 2026-10-06:
 "Don't shit in your own bed" (disk-watermark-is-an-alarm.w2; `internal/sprint/disk.go`).
 
@@ -3789,7 +3789,7 @@ owner, 2026-10-03: "alarms are effects on cards, every alarm is a pushed judgmen
   free bytes and inodes, the largest directories under the AI root, and whether new lanes
   start there; it is updated in place while the episode stands. While the use stays above the
   alarm, the judgment is closed and written again every 30 minutes of running time, so it is
-  pushed again, never a line that went quiet. Its decisions are `act` (free space; the next
+  pushed again, never a line that went quiet. Its decisions are `act` (free bytes on the volume; the next
   reading closes it), `ack` (quiet for the episode; the hold of new lanes stands) and
   `wait 30m`. It closes when the use falls to the alarm or under, or the reading goes stale,
   with one "an alarm cleared" note to the coordinator opening "a volume above its watermark:".
