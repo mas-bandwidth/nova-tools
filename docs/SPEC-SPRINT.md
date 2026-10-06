@@ -5311,6 +5311,21 @@ removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
 
+#### missed-12-nova-sprint-log-json-since-with-afc-b.w3
+
+`log --since` takes a time back from now or an instant. The grammar is
+explicit: a Go duration (`10m`, `36h`); a whole number of days with a `d`
+suffix (`1d`, `2d`; `time.ParseDuration` has no day unit); or an instant in
+RFC 3339 or one of the shapes a person types (`2006-01-02`, `2006-01-02
+15:04`, `2006-01-02 15:04:05`, `01-02`, `01-02 15:04`, each with an optional
+zone). A value that names no year is read in the current year, and one that
+names no zone in the run's own zone. A window wider than a page returns every
+entry since that time, whichever shape it is given in: `keepLine` compares the
+line's instant with the window in UTC, so 48h, 2d or a date two days back
+returns the entries 30 h and 10 h old alike, in one `--json` document.
+`TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry` and the tests
+beside it (cmd/nova-sprint/log_test.go, log_brief_test.go) pin it on the twin
+store with an injected clock.
 
 ## 18. Lanes
 
