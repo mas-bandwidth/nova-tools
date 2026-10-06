@@ -21,7 +21,9 @@ import (
 // machine card as a friend. The lifecycle refuses a second move to landed, so
 // the duplicate is a second line on the log the store wrote. An earlier
 // friend.amy:ok for the machine card is appended after the real m1:ok, so the
-// last line is not the last time.
+// last line is not the last time. A set :ok line names every card of one
+// finish step, so each card keeps the set's worker. A set move names every card
+// and counts each one once.
 func TestTheLandedSeriesCountsEachCardOnceByItsWorker(t *testing.T) {
 	t.Parallel()
 	r := newLandedRig(t)
@@ -98,9 +100,24 @@ func TestTheLandedSeriesCountsEachCardOnceByItsWorker(t *testing.T) {
 		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Fleet, Card: "batch-a.w1", To: "m2:ok"},
 		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Fleet, Card: "batch-b.w1", To: "friend.bea:ok"},
 	)
+	// A set :ok line names two work cards of one finish step. Both keep the
+	// set's worker, so neither lands unknown.
+	lines = append(lines,
+		sprint.Line{
+			Kind: sprint.LineMove, At: r.now, Table: sprint.Fleet,
+			Card: "set-a.w1", Cards: []string{"set-a.w1", "set-b.w1"}, To: "m3:ok",
+		},
+		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Work, Card: "set-a", From: "s:merging", To: "s:landed"},
+		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Work, Card: "set-b", From: "s:merging", To: "s:landed"},
+	)
+	// A landing with no :ok line is unknown: it counts in totals.unknown
+	// and not in workers, so workers never carries a "-" key.
+	lines = append(lines,
+		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Work, Card: "unknown-card", From: "s:merging", To: "s:landed"},
+	)
 
 	got := sprint.LandedSeriesOf(lines, r.now)
-	require.Equal(t, int64(600), got.BucketSeconds)
+	require.Equal(t, 600, got.BucketSeconds)
 	require.Equal(t, 144, got.Buckets)
 	require.Len(t, got.Friends, 144)
 	require.Len(t, got.Fleet, 144)
@@ -111,9 +128,11 @@ func TestTheLandedSeriesCountsEachCardOnceByItsWorker(t *testing.T) {
 		require.Zero(t, got.Fleet[i], "fleet bucket %d", i)
 	}
 	require.Equal(t, 2, got.Friends[143], "amy and bea, once each")
-	require.Equal(t, 2, got.Fleet[143], "m1 and m2, once each; the second mach-1 landing does not count")
-	require.Equal(t, sprint.LandedTotals{Friends: 2, Fleet: 2, Unknown: 0}, got.Totals)
-	require.Equal(t, sprint.LandedHour{Friends: 2, Fleet: 2}, got.LastHour)
+	require.Equal(t, 4, got.Fleet[143], "m1, m2 and m3's two, once each; the second mach-1 landing does not count")
+	require.Equal(t, sprint.SeriesTotals{Friends: 2, Fleet: 4, Unknown: 1}, got.Totals)
+	require.Equal(t, sprint.SeriesLastHour{Friends: 2, Fleet: 4}, got.LastHour)
+	require.NotContains(t, got.Workers, "-", "an unknown landing is not a worker")
+	require.Equal(t, map[string]int{"friend.amy": 1, "friend.bea": 1, "m1": 1, "m2": 1, "m3": 2}, got.Workers)
 }
 
 type landedRig struct {

@@ -1296,7 +1296,7 @@ the cards she holds; `/api/team`, `/api/friend/<name>`,
 `/events/machine/<name>` push each new copy as server-sent events. All of it is read-only,
 no-store, carries the copy's time in `Sprint-At`, and comes from one copy of `where --json
 --cards` read at most once a second however many pull. An unknown name is a 404 of one
-line. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
+line; `where --json` also carries `landedSeries` (cards landed per 10-minute bucket over 24 hours, split between friends and fleet). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
 
 ### A provider out of funds
 

@@ -83,6 +83,27 @@ Drawing those four cells after the readers table's counts, and on each reader's 
 `tables.readers`, is owed: the table is drawn in `cmd/nova-sprint/reads.go` (`readersWidths`,
 `readersAll`), outside card reader-spend-on-the-table-b's paths.
 
+`where --json` carries `landedSeries` for the Landings panel (cards landed per 10-minute
+bucket over 24 hours, split between friends and fleet): `generated` (RFC 3339),
+`generatedEpoch`, `bucketSeconds` (600), `start` (Unix epoch seconds of the first bucket),
+`buckets` (144), `friends` (144 counts), `fleet` (144 counts), `totals` (`friends`, `fleet`,
+`unknown`), `lastHour` (`friends`, `fleet`), and `workers` (each worker's landed count, keyed
+by its full row name). A landing is a work-table move to `<stream>:landed` from any state but
+waiting (a sentinel's release is not work): each card counts once, its first landing in the
+log. A set move counts every card on the line. The worker is the last `<who>:ok` move of the
+card's work attempt (`<card>.wN`), by the line's time; `friend.<name>` is friends, any other
+row is a fleet machine, and a missing worker is unknown, counted in `totals.unknown` and in
+neither series. The lander is not the worker: the `:ok` row is. `totals` and `lastHour` split
+the same landings; the hour is the clock's last 3600 seconds. The series is read from the
+store `--redis` names and the epoch `--at-epoch` names, in any order with where's other flags
+(`where --json --cards --redis <addr>` is the dashboard's call), at the frame's `at`; a frame
+the sprint's server drew already carries it. The text frame does not carry the series.
+An unknown flag with `--json` is refused, never read as a series of another store
+(`TestWhereLandedSeriesReadsTheNamedStoreAndEpoch`, `TestWhereSeriesFlagsAreWheresFlags`).
+The series is a fold of the epoch's log on each JSON frame: it is not a card read, and it does
+not keep a counter on the where record; an incremental record, so `where` never rescans the
+day, is owed outside this.
+
 The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
 below merge. friends | status for now. up/down/held"; "friends should be
 configured in nova-config"; "you should use heartbeats from each friend to track
@@ -828,8 +849,6 @@ cards when it cannot take the record), and `-tags perf`, which gates a release,
 holds it under 200 ms of wall time on the in-memory store. A tick's count costs
 2 round trips when idle, with no write, and 8 when the table moved
 (`TestTheWhereCountsTripsArePinned`).
-
-`where --json` carries `landedSeries`, the cards landed per 10 minutes over the last 24 hours, split friends and fleet (the owner, 2026-10-05 ~9:20 AM ET: the dashboard's Landings panel reads one verb, and the shell loop that pulled `log --json` is not the product). A landing is a work-table move to `<stream>:landed` from any state but waiting: a sentinel's release, waiting to landed, is not work. Each card counts once, its first landing in the log; a set move counts every card on the line. The worker is the last `<who>:ok` move of that card's work attempt (`<card>.wN`), by the line's time: `friend.<name>` is a friend and any other row is a fleet machine. A missing worker is unknown, counted in `totals.unknown` and in neither series. The lander is not the worker. `bucketSeconds` is 600, `buckets` is 144, `start` is the unix time of the oldest bucket, and the last bucket is the one the clock is in. `friends` and `fleet` are those 144 counts. `totals` and `lastHour` split the same landings; the hour is the clock's last 3600 seconds. The dashboard's one read (`where --json --cards --rows --archived`, served as `/api/sprint`) carries the series, and the text frame does not. The series is a fold of the epoch's log on each JSON frame. It is not a card read, and it does not keep a counter on the where record: an incremental record, so a where never rescans the day, is owed outside this.
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no
