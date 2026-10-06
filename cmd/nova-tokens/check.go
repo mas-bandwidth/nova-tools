@@ -23,7 +23,7 @@ import (
 // named only under --strict or a --no-spend list. A gate that cannot go green is a gate
 // people learn to skip, and this one could not: 40 findings on reports/tokens, none of
 // them work anybody would do.
-func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time, wd string) int {
 	fs := newFlagSet("check")
 	out := fs.String("out", "", "directory containing daily token files")
 	max := fs.Int("max", bounded.Default, "maximum findings to print; 0 prints all")
@@ -47,7 +47,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	opt := tokens.CheckOptions{Strict: *strict, Through: strings.TrimSpace(*through)}
 	if strings.TrimSpace(*noSpend) != "" {
-		days, err := tokens.ReadNoSpendFile(*noSpend)
+		days, err := tokens.ReadNoSpendFile(resolveIn(wd, *noSpend))
 		if err != nil {
 			r.add("--no-spend " + *noSpend + ": " + err.Error())
 		} else {
@@ -57,7 +57,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	res, err := tokens.Check(*out, opt)
+	res, err := tokens.Check(resolveIn(wd, *out), opt)
 	if err != nil {
 		r.add(err.Error())
 		return r.print(stderr)

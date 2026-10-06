@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -235,12 +236,17 @@ func effectOf(verb string) string {
 	return ""
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) }
+func main() {
+	wd, _ := os.Getwd() // ignored: an unknown directory leaves a relative path as typed
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC(), wd))
+}
 
-// run is the whole tool, with its streams and clock injected so the tests can drive it.
+// run is the whole tool, with its streams, clock and working directory injected so a
+// test drives it without changing the process (docs/STANDARD.md section 8).
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+// wd is the directory a relative path is read from. main passes os.Getwd.
+func run(args []string, stdout, stderr io.Writer, now time.Time, wd string) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
@@ -253,26 +259,26 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
 			// --help goes right after the verb: after a word or a -- it would be one.
-			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now)
+			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now, wd)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "fold":
-		return cmdFold(rest, stdout, stderr, now)
+		return cmdFold(rest, stdout, stderr, now, wd)
 	case "report":
-		return cmdReport(rest, stdout, stderr, now)
+		return cmdReport(rest, stdout, stderr, now, wd)
 	case "ledger":
-		return cmdLedger(rest, stdout, stderr)
+		return cmdLedger(rest, stdout, stderr, wd)
 	case "sum":
-		return cmdSum(rest, stdout, stderr, now)
+		return cmdSum(rest, stdout, stderr, now, wd)
 	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
+		return cmdCheck(rest, stdout, stderr, now, wd)
 	case "sources":
-		return cmdSources(rest, stdout, stderr, now)
+		return cmdSources(rest, stdout, stderr, now, wd)
 	case "profiles":
-		return cmdProfiles(rest, stdout, stderr, now)
+		return cmdProfiles(rest, stdout, stderr, now, wd)
 	case "session":
-		return cmdSession(rest, stdout, stderr, now)
+		return cmdSession(rest, stdout, stderr, now, wd)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
@@ -339,6 +345,22 @@ const (
 	wantsScratch = "a directory this run may copy the OpenCode database into"
 )
 
+// resolveIn joins a relative path onto wd, the working directory one run reads
+// (docs/STANDARD.md section 8). main passes os.Getwd; a test passes its own directory.
+// An absolute path, an empty path and an empty wd are returned as typed. A wd that is
+// the process directory is too: the open is already that directory, and a refusal
+// names the path the caller typed rather than a joined one.
+func resolveIn(wd, p string) string {
+	if p == "" || wd == "" || filepath.IsAbs(p) {
+		return p
+	}
+	cwd, err := os.Getwd()
+	if err != nil || filepath.Clean(cwd) == filepath.Clean(wd) {
+		return p
+	}
+	return filepath.Join(wd, p)
+}
+
 // sourceFlags are the five source flags, declared once so that fold, sources and report
 // cannot drift apart about what a source is.
 type sourceFlags struct {
@@ -350,7 +372,12 @@ type sourceFlags struct {
 	scratch  string
 	timeout  int
 	repos    string
+	wd       string
 }
+
+// io is the path a filesystem call opens. The flag value itself stays what was typed,
+// which is what a line of output names.
+func (s *sourceFlags) io(p string) string { return resolveIn(s.wd, p) }
 
 func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	s.claude.kind, s.opencode.kind, s.swarm.kind, s.provider.kind = "claude", "opencode", "swarm", "provider"
@@ -407,7 +434,7 @@ func (s *sourceFlags) check(r *refusals) {
 			}
 			switch l.kind {
 			case "claude":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
+				if fi, err := os.Stat(s.io(it.value)); err != nil || !fi.IsDir() {
 					if err != nil && os.IsNotExist(err) {
 						r.add("--claude " + it.label + "=" + it.value + " does not exist; it wants the directory the transcripts live under")
 					} else if err != nil {
@@ -417,7 +444,7 @@ func (s *sourceFlags) check(r *refusals) {
 					}
 				}
 			case "swarm":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
+				if fi, err := os.Stat(s.io(it.value)); err != nil || !fi.IsDir() {
 					if err != nil && os.IsNotExist(err) {
 						r.add("--swarm " + it.label + "=" + it.value + " does not exist; it wants the swarm pool directory")
 					} else if err != nil {
@@ -431,7 +458,7 @@ func (s *sourceFlags) check(r *refusals) {
 	}
 	if s.bus != "" {
 		any = true
-		if fi, err := os.Stat(s.bus); err != nil || !fi.IsDir() {
+		if fi, err := os.Stat(s.io(s.bus)); err != nil || !fi.IsDir() {
 			if err != nil && os.IsNotExist(err) {
 				r.add("--bus does not exist: " + s.bus + "; it wants the bus directory")
 			} else if err != nil {
@@ -447,7 +474,7 @@ func (s *sourceFlags) check(r *refusals) {
 	if len(s.opencode.items) > 0 {
 		if strings.TrimSpace(s.scratch) == "" {
 			r.required("scratch", "", wantsScratch)
-		} else if fi, err := os.Stat(s.scratch); err != nil || !fi.IsDir() {
+		} else if fi, err := os.Stat(s.io(s.scratch)); err != nil || !fi.IsDir() {
 			if err != nil && os.IsNotExist(err) {
 				r.add("--scratch does not exist: " + s.scratch + "; it wants " + wantsScratch)
 			} else if err != nil {
@@ -480,11 +507,11 @@ func (s *sourceFlags) check(r *refusals) {
 // is named in the returned notes.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(s.io(it.value)), rules))
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
-		dir, err := os.MkdirTemp(s.scratch, ".nova-tokens-dry-run-")
+		dir, err := os.MkdirTemp(s.io(s.scratch), ".nova-tokens-dry-run-")
 		if err != nil {
 			for _, it := range s.opencode.items {
 				src := &tokens.Source{Label: tokens.Label(tokens.KindOpenCode, it.label), Kind: tokens.KindOpenCode, Path: it.value, Basis: tokens.UTC}
@@ -505,17 +532,17 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 		if scratch == "" {
 			break
 		}
-		out = append(out, tokens.ReadOpenCode(it.label, it.value, scratch, time.Duration(s.timeout)*time.Second, rules))
+		out = append(out, tokens.ReadOpenCode(it.label, s.io(it.value), s.io(scratch), time.Duration(s.timeout)*time.Second, rules))
 	}
 	for _, it := range s.swarm.items {
-		out = append(out, tokens.ReadSwarm(it.label, it.value, os.DirFS(it.value), rules))
+		out = append(out, tokens.ReadSwarm(it.label, it.value, os.DirFS(s.io(it.value)), rules))
 	}
 	for _, it := range s.provider.items {
 		kind, name, _ := strings.Cut(it.label, ":")
-		out = append(out, tokens.ReadProvider(kind, name, it.value, rules))
+		out = append(out, tokens.ReadProvider(kind, name, s.io(it.value), rules))
 	}
 	if s.bus != "" {
-		out = append(out, tokens.ReadBus(s.bus, os.DirFS(s.bus), rules, now)...)
+		out = append(out, tokens.ReadBus(s.bus, os.DirFS(s.io(s.bus)), rules, now)...)
 	}
 	for _, src := range out {
 		keys := map[tokens.Key]bool{}

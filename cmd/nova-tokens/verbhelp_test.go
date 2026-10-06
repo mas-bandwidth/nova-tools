@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -82,5 +83,6 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 }
 
 func tokensRun(args []string, stdout, stderr io.Writer) int {
-	return run(args, stdout, stderr, time.Now().UTC())
+	wd, _ := os.Getwd() // ignored: help reads no path; an unknown directory leaves a relative path as typed
+	return run(args, stdout, stderr, time.Now().UTC(), wd)
 }

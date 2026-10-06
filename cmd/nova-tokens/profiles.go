@@ -63,12 +63,12 @@ func parseCardBudget(promptPath string) (int64, bool) {
 // profileSwarmRoot is the `profiles` verb: it walks the card usage files under a root and
 // prints one line per model, then the total. The budget is read from each card's own prompt,
 // so an overshoot is one card's own ceiling, not a guess from the fold.
-func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
+func profileSwarmRoot(root, rootIO string, s *sink, stderr io.Writer, r *refusals) int {
 	if root == "" {
 		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
 		return r.print(stderr)
 	}
-	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(rootIO); err != nil || !fi.IsDir() {
 		if err != nil && os.IsNotExist(err) {
 			r.add("--swarm-root does not exist: " + root + "; it wants the directory the swarm batches live under")
 		} else if err != nil {
@@ -78,7 +78,7 @@ func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
 		}
 		return r.print(stderr)
 	}
-	paths, err := filepath.Glob(filepath.Join(root, "*", "jobs", "*", "usage.tsv"))
+	paths, err := filepath.Glob(filepath.Join(rootIO, "*", "jobs", "*", "usage.tsv"))
 	if err != nil {
 		r.add("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
 		return r.print(stderr)
@@ -134,12 +134,12 @@ func medianOut(outs []int64) string {
 }
 
 // cmdProfiles parses the `profiles` verb's one flag and folds the root.
-func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time, wd string) int {
 	fs := newFlagSet("profiles")
 	swarmRoot := fs.String("swarm-root", "", "root containing the swarm pool profiles")
 	s, code, ok := start(fs, args, "PROFILES", stdout, stderr)
 	if !ok {
 		return code
 	}
-	return profileSwarmRoot(*swarmRoot, s, stderr, &refusals{token: "PROFILES", s: s})
+	return profileSwarmRoot(*swarmRoot, resolveIn(wd, *swarmRoot), s, stderr, &refusals{token: "PROFILES", s: s})
 }

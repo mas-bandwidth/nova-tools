@@ -138,7 +138,7 @@ func avgRate(usdMicro, tokens int64, priced bool) float64 {
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, wd string) int {
 	fs := newFlagSet("report")
 	who := fs.String("who", "", "name to write in each note body row")
 	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
@@ -153,6 +153,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
 	dryRun := fs.Bool("dry-run", false, "print the body and name the --note file, and write no file")
 	var sf sourceFlags
+	sf.wd = wd
 	sf.declare(fs, true)
 	s, code, ok := start(fs, args, "REPORT", stdout, stderr)
 	if !ok {
@@ -187,7 +188,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	rules, err := tokens.LoadRules(sf.repos)
+	rules, err := tokens.LoadRules(resolveIn(wd, sf.repos))
 	if err != nil {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
@@ -271,9 +272,10 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *notePath != "" {
 		// A dry run checks the note's path exactly as the write would (atomicfile.Check)
 		// and refuses what it refuses; only the write itself is skipped.
-		write := func() error { return atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644) }
+		noteIO := filepath.Clean(resolveIn(wd, *notePath))
+		write := func() error { return atomicfile.Write(noteIO, []byte(body), 0o644) }
 		if *dryRun {
-			write = func() error { return atomicfile.Check(filepath.Clean(*notePath), 0o644) }
+			write = func() error { return atomicfile.Check(noteIO, 0o644) }
 		}
 		if err := write(); err != nil {
 			r.add("--note " + *notePath + ": " + err.Error())

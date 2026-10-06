@@ -16,13 +16,14 @@ import (
 // second reader would drift -- prints what each yielded, and writes nothing. It exists so
 // a person can see what a fold would count before it writes, and it exits 0 whenever it
 // ran, because asserting is not its job.
-func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, wd string) int {
 	fs := newFlagSet("sources")
 	day := fs.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
 	all := fs.Bool("all", false, "inspect every day named by the sources")
 	max := fs.Int("max", bounded.Default, "maximum rows to print; 0 prints all")
 	unattributed := fs.Bool("unattributed", false, "list seen paths that matched no repo rule")
 	var sf sourceFlags
+	sf.wd = wd
 	sf.declare(fs, true)
 	s, code, ok := start(fs, args, "SOURCES", stdout, stderr)
 	if !ok {
@@ -35,7 +36,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	rules, err := tokens.LoadRules(sf.repos)
+	rules, err := tokens.LoadRules(resolveIn(wd, sf.repos))
 	if err != nil {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)

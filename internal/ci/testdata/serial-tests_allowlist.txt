@@ -108,10 +108,6 @@ cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedRea
 cmd/nova-tokens/demanded_test.go:TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted serial: t.Setenv
 cmd/nova-tokens/demanded_test.go:TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted serial: t.Setenv
 cmd/nova-tokens/determinism_test.go:TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay serial: t.Setenv
-cmd/nova-tokens/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-tokens/firstrun_test.go:TestTheExampleLinesRun serial: t.Chdir
-cmd/nova-tokens/firstrun_test.go:TestTheTranscriptIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-tokens/gen_transcript_test.go:TestGenerateTranscript serial: t.Chdir
 cmd/nova-tokens/slow_test.go:TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn serial: t.Setenv
 cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly serial: t.Setenv
 cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv

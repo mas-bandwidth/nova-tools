@@ -14,7 +14,7 @@ import (
 
 // cmdSum ASSERTS NOTHING and is never a gate. It exits 0 whenever it ran, including over a
 // month with gaps, because answering is its job and missing=<n> is the answer.
-func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdSum(args []string, stdout, stderr io.Writer, now time.Time, wd string) int {
 	fs := newFlagSet("sum")
 	out := fs.String("out", "", "directory holding daily token files")
 	month := fs.String("month", "", "month to sum as YYYY-MM")
@@ -35,7 +35,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	sm, err := tokens.SumMonth(*out, *month)
+	sm, err := tokens.SumMonth(resolveIn(wd, *out), *month)
 	if err != nil {
 		r.add(err.Error())
 		return r.print(stderr)

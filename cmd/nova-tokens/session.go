@@ -49,7 +49,7 @@ func mkdirAllRefuses(path string) error {
 	return nil
 }
 
-func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdSession(args []string, stdout, stderr io.Writer, now time.Time, wd string) int {
 	fs := newFlagSet("session")
 	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
 	out := fs.String("out", "", "directory for the resulting daily token file")
@@ -74,7 +74,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return r.print(stderr)
 	}
 
-	sum, err := tokens.ReadClaudeSession(*session)
+	sum, err := tokens.ReadClaudeSession(resolveIn(wd, *session))
 	if err != nil {
 		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot read %s: %s", oneline.Field(*session), oneline.Err(err)))
 	}
@@ -107,15 +107,16 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The fold. One day file per day the session's turns fell on, merged by source the way
 	// every other fold merges: this run recomputes the rows its own source wrote and keeps
 	// every other row exactly as it is. A dry run reads the day files and writes nothing.
-	mkdir := func() error { return os.MkdirAll(*out, 0o755) }
+	outIO := resolveIn(wd, *out)
+	mkdir := func() error { return os.MkdirAll(outIO, 0o755) }
 	if *dryRun {
-		mkdir = func() error { return mkdirAllRefuses(*out) }
+		mkdir = func() error { return mkdirAllRefuses(outIO) }
 	}
 	if err := mkdir(); err != nil {
 		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
 	}
 	if !*dryRun {
-		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
+		release, err := tokens.TakeFoldLock(outIO, tokens.LockWait)
 		if err != nil {
 			return refuseVerb(s, "TOKENS", oneline.Err(err))
 		}
@@ -144,7 +145,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		fresh := sum.Rows(d, *role)
 		var old []tokens.DayRow
-		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
+		prior, findings, err := tokens.ReadDayFile(tokens.Path(outIO, d))
 		if err != nil {
 			if !os.IsNotExist(err) {
 				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot read %s: %s\n",
@@ -177,7 +178,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		written := false
 		if !*dryRun {
-			if err := f.Save(*out); err != nil {
+			if err := f.Save(outIO); err != nil {
 				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
 				s.item("refused", "day", d, "why", tool.Text("cannot write "+tokens.Path(*out, d)+": "+err.Error()))
 				exit = 1

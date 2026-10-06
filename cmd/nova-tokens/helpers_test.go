@@ -39,8 +39,10 @@ func invoke(t *testing.T, args ...string) result {
 
 func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
 	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, now)
+	exit := run(args, &out, &errb, now, wd)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
@@ -219,7 +221,8 @@ func TestMain(m *testing.M) {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
 	if os.Getenv(asToolEnv) != "" {
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
+		wd, _ := os.Getwd() // ignored: the re-exec is the tool, and it reads the process directory
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp, wd))
 	}
 	os.Exit(m.Run())
 }

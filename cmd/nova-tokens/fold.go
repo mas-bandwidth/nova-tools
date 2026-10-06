@@ -34,7 +34,7 @@ var foldLists = []struct {
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim. Under
 // --dry-run it reads and decides exactly the same and writes nothing, the lock included.
-func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdFold(args []string, stdout, stderr io.Writer, now time.Time, wd string) int {
 	fs := newFlagSet("fold")
 	out := fs.String("out", "", "directory for daily token files")
 	day := fs.String("day", "", "one UTC day to fold as YYYY-MM-DD")
@@ -43,6 +43,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := fs.Int("max", bounded.Default, "maximum findings or rows to print; 0 prints all")
 	dryRun := fs.Bool("dry-run", false, "read the sources and print what would be written, and write nothing (no day file, no lock)")
 	var sf sourceFlags
+	sf.wd = wd
 	sf.declare(fs, true)
 	s, code, ok := start(fs, args, "TOKENS", stdout, stderr)
 	if !ok {
@@ -56,7 +57,8 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	fi, statErr := os.Stat(*out)
+	outIO := resolveIn(wd, *out)
+	fi, statErr := os.Stat(outIO)
 	if statErr != nil || !fi.IsDir() {
 		if statErr != nil && os.IsNotExist(statErr) {
 			r.add("--out does not exist: " + *out + "; it wants " + wantsOut)
@@ -67,7 +69,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return r.print(stderr)
 	}
-	rules, err := tokens.LoadRules(sf.repos)
+	rules, err := tokens.LoadRules(resolveIn(wd, sf.repos))
 	if err != nil {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
@@ -85,7 +87,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return refuseOverlap(s, folder.Overlaps())
 	}
 	if !*dryRun {
-		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
+		release, err := tokens.TakeFoldLock(outIO, tokens.LockWait)
 		if err != nil {
 			r.add(err.Error())
 			return r.print(stderr)
@@ -161,7 +163,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 			lists["mixed"].Line(s.line("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
 				"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
 		}
-		outPath := tokens.Path(*out, d)
+		outPath := tokens.Path(outIO, d)
 		old, findings, readErr := tokens.ReadDayFile(outPath)
 		if len(rows) == 0 && !conflictDays[d] && readErr != nil && os.IsNotExist(readErr) {
 			continue
@@ -239,7 +241,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				daysWritten++
 				rowsWritten += len(rows)
 			case wouldWrite:
-				if err := file.Save(*out); err != nil {
+				if err := file.Save(outIO); err != nil {
 					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: err.Error()}))
 				} else {
 					written = true
