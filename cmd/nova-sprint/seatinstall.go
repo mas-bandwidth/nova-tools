@@ -58,7 +58,7 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	logf := fs.String("log", "", "the file the loop's lines go to, macOS (default: ~/Library/Logs/nova-sprint-seat-push.log); on Linux they are in the journal")
 	dry := fs.Bool("dry-run", false, "print the unit and where it would go, and write and load nothing")
 	harness := fs.String("harness", "", "the harness the seat's AI runs in (required): the push loop delivers each judgment, and the push proof, into the session through its adapter; a harness with no deliver command (claude) gets the folder adapter, each one a file written into --target")
-	target := fs.String("target", "", "the session's directory, where the harness's adapter delivers (required); for the folder adapter, the directory the session watches with a Monitor, which must be there")
+	target := fs.String("target", "", "the session's directory, where the harness's adapter delivers (required); a relative path is made absolute, and one that does not resolve is refused; for the folder adapter, the directory the session watches, which must be there")
 	session := fs.String("session", "", "the session's id, for a harness that names one (default: the adapter's newest in --target)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {

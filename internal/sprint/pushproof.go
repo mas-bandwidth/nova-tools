@@ -70,14 +70,11 @@ func (r PushRecord) AdapterName() string {
 	return "-"
 }
 
-// FolderWatch is the command a session on the folder adapter runs as a Monitor
-// (a background command whose every line of output is an event): every 5
-// seconds it lists dir and prints the path of each file that was not there
-// the time before, so each PROOF-<nonce> and each judgment the push loop
-// writes is one event. It writes nothing.
+// FolderWatch is the command a session on the folder adapter runs as a Monitor:
+// nova-sprint seat watch <dir>. The verb prints each new file's path as it
+// appears, one flushed line, and runs no shell. It writes nothing.
 func FolderWatch(dir string) string {
-	d := shellQuote(dir)
-	return `d=` + d + `; s=$(ls -1 "$d"); while sleep 5; do n=$(ls -1 "$d"); [ -n "$n" ] && printf '%s\n' "$n" | grep -vxF "$s" | sed "s|^|$d/|"; s=$n; done`
+	return "nova-sprint seat watch " + shellQuote(dir)
 }
 
 // FolderProve is the command that answers the check written as
@@ -87,14 +84,28 @@ func FolderProve(name, nonce string) string {
 }
 
 // FolderSteps is the two commands a session on the folder adapter runs, on one
-// line: the Monitor on the folder, and the answer to the last check written
-// there (<nonce> while none was).
+// line: the Monitor on the folder, and the answer to the check. The nonce on
+// the line is the placeholder <nonce>. The proof nonce is only the file name.
 func FolderSteps(rec PushRecord) string {
-	nonce := "<nonce>"
-	if rec.Nonce != "" && rec.Failed == "" {
-		nonce = rec.Nonce
+	return "from inside the session, watch the folder with a Monitor: " + FolderWatch(rec.Target) + " ; and answer the " + PushProofFilePrefix + "<nonce> file it shows: " + FolderProve(rec.Name, "<nonce>")
+}
+
+// PrintedPush is rec as a command prints it. The proof nonce stays in the
+// store and in the PROOF- file name. A delivered check is nonce pending, and
+// pong_of matches it only once that check was answered, so a reader can tell
+// whether a check is due and cannot read the nonce.
+func PrintedPush(rec PushRecord) PushRecord {
+	if rec.Nonce == "" {
+		return rec
 	}
-	return "from inside the session, watch the folder with a Monitor: " + FolderWatch(rec.Target) + " ; and answer the " + PushProofFilePrefix + nonce + " file it shows: " + FolderProve(rec.Name, nonce)
+	answered := rec.PongOf != "" && rec.PongOf == rec.Nonce
+	rec.Nonce = "pending"
+	if answered {
+		rec.PongOf = "pending"
+	} else if rec.PongOf != "" {
+		rec.PongOf = "stale"
+	}
+	return rec
 }
 
 // shellQuote is s in single quotes for a POSIX shell.
@@ -108,6 +119,16 @@ func PushSetup(name string, rec PushRecord, ok bool) string {
 		h, target = rec.Harness, rec.Target
 	}
 	return "nova-sprint seat install --actor " + orDash(name) + " --harness " + h + " --target " + target
+}
+
+// PushRemedy is the command a down seat is told to run: the setup, and on the
+// folder adapter the two commands the session runs. The proof nonce is not in it.
+func PushRemedy(name string, rec PushRecord, ok bool) string {
+	line := PushSetup(name, rec, ok)
+	if ok && rec.Adapter == AdapterFolder {
+		line += "; then, " + FolderSteps(rec)
+	}
+	return line
 }
 
 // PushLive says the record holds a pong no older than PushProofLive and the
@@ -131,7 +152,7 @@ func PushWhy(name string, rec PushRecord, ok bool, now time.Time) string {
 	case rec.Nonce == "":
 		return "no push check has been delivered into " + name + "'s " + rec.Harness + " session yet: is inbox --wait --push seat running?"
 	case rec.Proven.IsZero() || rec.PongOf == "":
-		return "the push check " + rec.Nonce + " went into " + name + "'s " + rec.Harness + " session and no pong carrying it came back"
+		return "the push check went into " + name + "'s " + rec.Harness + " session and no pong carrying it came back"
 	}
 	return name + "'s last pong is " + now.Sub(rec.Proven).Truncate(time.Second).String() + " old, past " + PushProofLive.String() + ": the push loop has not proven the session again"
 }
@@ -144,11 +165,7 @@ func PushDown(name string, rec PushRecord, ok bool, now time.Time) string {
 	if why == "" {
 		return ""
 	}
-	line := "PUSH DOWN: " + why + "; a coordinator that cannot be reached is not a coordinator, and nothing was changed; run: " + PushSetup(name, rec, ok)
-	if ok && rec.Adapter == AdapterFolder {
-		line += "; then, " + FolderSteps(rec)
-	}
-	return line
+	return "PUSH DOWN: " + why + "; a coordinator that cannot be reached is not a coordinator, and nothing was changed; run: " + PushRemedy(name, rec, ok)
 }
 
 // PushDue says the push loop delivers a new check now: none delivered yet, the
@@ -185,11 +202,11 @@ func PushPong(rec PushRecord, ok bool, nonce string, now time.Time) (PushRecord,
 	case rec.Nonce == "":
 		return rec, "no push check has been delivered to " + rec.Name + ": nothing to answer"
 	case nonce != rec.Nonce:
-		return rec, "the pong carries " + orDash(nonce) + " and the last push check delivered carried " + rec.Nonce + ": only the session's answer to the last check counts"
+		return rec, "the pong does not carry the last push check: only the session's answer to the last check counts"
 	case rec.Failed != "":
-		return rec, "the push check " + rec.Nonce + " was not delivered (" + rec.Failed + "): a pong to it is no proof"
+		return rec, "the last push check was not delivered (" + rec.Failed + "): a pong to it is no proof"
 	case rec.PongOf == nonce:
-		return rec, "the pong to " + nonce + " was counted already"
+		return rec, "the pong was counted already"
 	}
 	rec.Proven, rec.PongOf = now, nonce
 	return rec, ""
