@@ -350,7 +350,7 @@ mixed preview, has status `refused` and exit 1 in text and JSON. `WhoPreference.
 checks the selection and the hard pin; the reversed only witness permits fallback
 and violates `OnlyToItsFriend`. The tick reads the friends' roster before each pump,
 because a queued change can make work ready in the same tick. The tick's deal offers
-ready work, in the deal's stream turns, to a
+ready work, in the deal order (below), to a
 friend up (the friends' rule: not held, with evidence from her own session) below her room,
 and fills no row that cannot work: a friend whose status is not up (her beat alone is
 no evidence), whose control row on the fleet table says down or held, or whom the stall
@@ -360,7 +360,8 @@ whose row read down, her daemon beating, was dealt 18 cards twice;
 `TestTheDealSkipsADownRowAndHonoursTheWhoPin`): in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
-5; the cards on her row, ready and working, count against it; the owner,
+5; the cards on her row, ready and working, her work and her reads together, count
+against it: below; the owner,
 2026-10-04: "Do it just like the fleet, you keep people busy by having 2X width
 queued up in ready per-friend"): on her row the card is `ready`, whatever her
 lanes, until she starts it (a friend's card is working once she starts it,
@@ -379,8 +380,58 @@ the next only after the last one finished
 first, before the machines' deal) offers every ready card to its named friend
 whose tiers hold its tier first, then to the friends up whose tiers hold its
 tier, an idle lane first,
-then the most room free, the first by name among equals, then to the fleet. A
-named pin (`WHO: friend <name>`, not `only`) placed on another row is a judgment
+then the most room free, the first by name among equals, then to the fleet.
+The fleet's cards are hers as much as a machine's (2026-10-06: a friend up, tiers flash, width 32, holding 13 reads, had
+nothing ready for over an hour while the machines were dealt flash cards):
+- The tier a friend's tiers must hold is the tier the deal draws (`sprint.dealTierOf`),
+  the one rule for friends and machines: the tier the card is on once a deal drew one,
+  its pinned tier, and before its first deal its start tier, flash first and pro for a
+  brief whose line 1 says pro. A card with no tier line is flash; a brief whose line 1
+  says `tier: heavy` names its ceiling and starts on flash, so a flash friend takes it.
+  Her deal writes that tier on the primary (`tier_now`), as a machine's deal does, and
+  its reads and its escalation go by it (`TestAFlashFriendWithRoomIsDealtFleetFlashCards`,
+  `TestAnUntieredCardIsFlashForAFriend`).
+- One width bounds her row, her reads and her work together (the owner's rule): her
+  room (DealAhead times her width) and her lanes (her width) count every card on her
+  row, ready and working, work card or read (`sprint.friendLoad`), in the deal, the
+  level, her start and the friends' read ask alike; there is no read room beside it.
+  A friend at width 16 holding 10 work cards and 9 reads has no idle lane, and a
+  one-shot friend holds one card at a time, read or work
+  (`TestOneWidthHoldsHerWorkAndReads`).
+- The deal order is one for friends and machines (`sprint.dealOrder`): the stream
+  turns from the deal's stream index, each stream's cards in work order, the order
+  `tla/SprintTables.tla` and the reference model check; each card then goes to the
+  friend with the most idle lanes (above), or round the fleet. The critical path first
+  (Weight, section 7) is not yet the deal's order: it waits for the model to order by
+  weight.
+- The friends' deal runs before the machines' deal each tick, and after the ready
+  cards it reclaims: a work card the machines' deal placed ready on a machine row
+  ahead of its lanes, which no lane has taken, goes to a friend up with an idle lane
+  and room whose tiers hold the tier it was dealt on, never one it has left, chosen as
+  the deal chooses (the friend its WHO line names first), at its next generation, the
+  fleet route off, `ready` on her row until she starts it, its primary working on it
+  as before (the tier it was dealt on written as `tier_now` when it names none); a
+  machine's take of the old generation is refused. It is bounded each tick: a friend
+  reclaims at most her idle lanes, and a machine gives at most half its dealt-ahead
+  queue (rounded down), the machines taking turns in row order. A held stream, a bench
+  card, a hard pin and a card whose route rests (the same tick withdraws it, and a card
+  moved to two places would refuse the whole tick) are not reclaimed. A reclaimed card
+  she does not start goes as any card of hers does: the start bound's level to another
+  friend, or a take-back, after which the machines' deal places it again, never back
+  on her. The move's line says `reclaimed` (`sprint.friendReclaim`,
+  `TestAFriendReclaimsAnUntakenDealtAheadCard`,
+  `TestTheReclaimIsBoundedAndAnUnstartedReclaimGoesBackToTheMachines`,
+  `TestTheReclaimLeavesACardWhoseRouteRests`).
+- A card dealt to a friend writes the tier the deal drew as `tier_now` when its primary
+  names none, a first deal and a deal again (a take-back's) alike
+  (`TestARedealToAFriendWritesItsTierNow`).
+- `where --json` gives each friend `dealt_fleet`: the work cards on her row, ready and
+  working, whose primary carries no WHO line (`WHO: friend`, named or bare, and a hard
+  pin are friends' cards), the fleet's cards she holds, from the tick's where record:
+  it lags the table by up to one tick, and is 0 before the first tick of the epoch
+  (`TestDealtFleetCountsOnlyCardsWithNoWhoLine`).
+
+A named pin (`WHO: friend <name>`, not `only`) placed on another row is a judgment
 in that step (`a pinned card was dealt away from its friend`): why she did not
 take it (held, not up, the card has left her, her tiers do not hold the tier, or
 she has no room), and whose row and column hold the card now. The pass keeps
@@ -626,7 +677,22 @@ or a rule in `outbox/<read>/REPORT.md` retires that read on her fleet row
 the way a reader's verdict does (`FriendReadClose`: LAND is ok, and a HOLD
 raises `a reader found it broken`). The read card is `<primary>.r<attempt>.<friend>`,
 placed on her fleet row `friend.<name>` in working while she has a lane,
-ready behind her working cards otherwise. The readers table gains no friend
+ready behind her working cards otherwise, at generation 1 (a read asked
+before the ask wrote one is at generation 0, and is read and returned the same
+way). Its job directory is the card id at every epoch and generation
+(`inbox/<read>/`, `outbox/<read>/`, and the `job` of her `QUEUE.json`), and
+`friend reconcile` leaves a read with its report to friend sync. Her packet
+says how it is returned: the outbox report, or
+`nova-sprint read --as friend.<name> (--ok | --broken) <read> --epoch <n> [--finding ...]`,
+which writes the same close as her report (`friendReadVerb`): the verdict
+stored, the read retired off her row, a broken verdict's judgment raised; a
+read on her row has no `--begin` and no `--return`. `queue --as friend.<name>`
+names a read with that verb, never `finish`, and `finish` of a read is refused
+with the outbox form as its remedy (`TestFriendSyncClosesAFriendRowReadFromItsOutboxReport`,
+`TestAFriendRowReadsPacketNamesTheOutboxReturn`, `TestFinishRefusesAReadWithTheOutboxRemedy`).
+Her retired read still stands for the tick: the tick reads it with the
+primaries in review (`tickExtras`), and accept guards it at its revision alone,
+a place being a placed card's. The readers table gains no friend
 row. Her ready and working on the friends table count the read with her work
 cards: the readers table and the friends table are two views of the one pool.
 A friend is asked an attempt once: a read taken back from her with no
@@ -1999,7 +2065,7 @@ and it is the coordinator's decision, receipted.
   a card put on the table makes a new cell, never once a card dealt: the deal
   costs the cards it deals, not those times the member's history
   (`TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut`; the tick gate under
-  load, `TestTheTickGateHoldsUnderLoad`). A card no route serves stays ready: the deal refuses it naming the
+  load, `TestTheTickGateHoldsUnderLoad`). A tier is served by an enabled fleet route or by a friend up (not held, not down) whose row lists it, one check for every verb that validates a tier (`tierServed`; a tier friends alone serve is the friends' deal's, and a rework at it waits ready for them, `TestReworkAcceptsATierAFriendServes`). A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
   (its subject `stream:tier:<tier>`, the primaries listed), never one per
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
@@ -3056,6 +3122,37 @@ reader does, and the card needs the reads its tier needs as any card does. The h
 on the worker's word: the reader ran the program itself. The model is the readers' (`tla/DirtyTick.tla`):
 the script read is a read, placed and counted as one, and adds no state.
 (`TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead`.)
+
+### The tick's ask in small fenced steps
+
+The tick's ask (T2, section 14) writes its reads in small fenced steps, never in one write of
+the whole tick's plan. Each step plans the ask part on a fresh read, as every part does. It then
+writes the first five primaries of that plan that this tick has not yet written or given up
+(`store.AskBatch`), with the plan's judgments until a step has committed them. Each step makes
+at most three tries (`store.AskTries`, against the twelve of a whole step, `store.FenceTries`).
+A step that loses all three is tried again one primary at a time. A primary that loses its own
+three tries is refused alone, `its ask lost <n> tries this tick in a step of its own (another
+writer moved the fence, or the store refused the write as planned); nothing was written for it;
+the next tick asks it again`, and the steps go on with the rest. The steps begin no try past the
+ask's budget (`store.AskBudget`, 2 s, or half of the time the tick's context has left when that
+is less): the ask stops there with what it asked, the primaries it did not reach are due, and
+the next tick reads them. The tick's `TIMES` line prints the ask as `readers/ask=<ms>ms/<trips>t/
+<asked>asked/<refused>refused`. The tick holds the server's line of control through the ask, as
+through every part (section 14, The server): the ask does not give the line up between its
+steps, and its budget is what bounds the wait of the workers' verbs behind it. On 2026-10-06,
+with 297 cards in review, the ask planned forty primaries in one write and lost all twelve tries
+on every tick ("the sprint kept changing under this step (12 attempts)"). No read was asked for
+ten minutes, and each tick held the line for up to 20 s.
+
+The tick plans on a sparse read. Its extras name, for every primary in review at its attempt,
+the retired read cards of each reader row and of each friend's fleet row (`store.tickExtras`). A friend's read that has closed ok or broken is her verdict, so
+`ReadsWanted` counts it, and the friend ask asks no friend an attempt she has already read.
+Before the friends' cards were among the extras, a read a friend had closed was invisible to the
+tick. The friend ask then planned her read card again, which is a create of a record that exists.
+The store refused that create on every try, so no friend was asked a read while 283 of 300 review
+cards had none outstanding.
+(`TestTheAskStepAsksInSmallFencedSteps`, `TestTheAskStepStopsAtItsBudget`,
+`TestAnAskConflictIsOneCardsRefusalNotTheTicks`, `TestTheFriendAskAsksEveryReviewCardAFriendMayRead`.)
 
 ## 7. Merging
 
@@ -4384,7 +4481,9 @@ epoch's record of results; teardown removes those records with the epoch. A
 writer whose operation another writer finished (the tick, another verb,
 repair) reports the recorded result, as a replay, and is never told it was
 cut. A step that loses every attempt to other writers says so and applied
-nothing. `check` shows a pending operation (`where --json` carries it). The model
+nothing. A step may make fewer tries than the twelve (`Step.Tries`) and plan none
+past a time (`Step.Until`): the tick's ask does both (section 6, the tick's ask in small fenced
+steps). `check` shows a pending operation (`where --json` carries it). The model
 includes the cut between every two phases. A multi-table batch in the table
 layer retires this section.
 
@@ -5318,7 +5417,8 @@ that day, and each restart left every worker's verb refused for 15 to 30 s and t
 which run in the process, stopped. While a tick runs, the workers' writes (`take`, `finish`,
 `progress`, `read`, `queue`, `fleet beat`) wait for the line the tick holds (serve.go,
 `serveCtx`, `a.serial.LockCtx`), not for the store's fence; a friend's beat and a read run on
-their lanes and wait for neither. A tick whose fenced read lost the fence to other operations
+their lanes and wait for neither. The tick's ask holds the line for at most its budget, 2 s, and one try begun before it
+(section 6, the tick's ask in small fenced steps). A tick whose fenced read lost the fence to other operations
 (`the sprint is busy: other operations kept the fence moving`, `store.FenceBusyError`) runs its
 parts again within the same tick, up to three times (`store.TickBusyRetries`), before it counts
 as failed on the heartbeat; the loop prints `TICK BUSY ... its parts ran again <n> times within

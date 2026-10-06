@@ -56,6 +56,9 @@ func printPacket(w io.Writer, p sprint.Packet) {
 	}
 	if p.Kind == "work" {
 		fmt.Fprintf(w, "  report it: nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <commit> --report '<what you did>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
+	} else if sprint.IsFriendRow(p.As) {
+		// a read asked of a friend is on her fleet row: her outbox returns it, or the read verb
+		fmt.Fprintf(w, "  report it: %s\n", sprint.FriendReadOutboxLine(p.As, p.Card, p.Epoch))
 	} else {
 		fmt.Fprintf(w, "  report it: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<file:line, and what to change>'\n", p.As, p.Card, p.Epoch)
 	}

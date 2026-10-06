@@ -529,6 +529,10 @@ type PartTime struct {
 	// Mismatch is the tables the twin read whole because its records did
 	// not add up to the store's counts (twin.go): 0 in a correct twin.
 	Mismatch int64 `json:"mismatch,omitempty"`
+	// Asked and Refused are the ask part's (tick_ask.go): the reads it asked
+	// and the primaries it refused in this tick.
+	Asked   int `json:"asked,omitempty"`
+	Refused int `json:"refused,omitempty"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -599,7 +603,23 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 			}
 		}
 	}
-	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads}
+	// and a friend's read of each primary in review at its attempt, on the fleet table
+	// (sprint.FriendReadAsk): retired with her verdict it still stands (friendReadLive),
+	// so her ok counts toward the read rule and the ask does not ask her the attempt again
+	var friendReads []string
+	if s.Fleet != nil {
+		for _, c := range s.Work.Column(sprint.Review) {
+			attempt := max(c.Int("attempt"), 1)
+			for _, row := range s.Fleet.Rows() {
+				if name, ok := sprint.FriendOfRow(row); ok {
+					if id := sprint.ReadCardID(c.ID, attempt, name); s.Fleet.Placed(id) == nil {
+						friendReads = append(friendReads, id)
+					}
+				}
+			}
+		}
+	}
+	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads, sprint.Fleet: friendReads}
 }
 
 // TickPartStep is one part of the tick as a step of the engine: fenced,
@@ -1307,7 +1327,17 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins
 		step.Halts = true
-		r, err := t.st.Run(t.ctx, step)
+		var r Result
+		var err error
+		var asked *askTally
+		if part.Name == "ask" {
+			// the ask writes in small fenced steps within its budget (tick_ask.go)
+			var tally askTally
+			r, tally, err = t.askInSteps(step)
+			asked = &tally
+		} else {
+			r, err = t.st.Run(t.ctx, step)
+		}
 		if err == nil && r.Halted {
 			t.res.State = Stopped
 			t.res.Halted = "the machine was stopped during the tick: the part " + part.Name + " did not begin"
@@ -1332,7 +1362,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				t.res.addRows(sprint.PlanRows(planned))
 			}
 		}
-		t.res.Times = append(t.res.Times, began.part(table, part.Name))
+		pt := began.part(table, part.Name)
+		if asked != nil {
+			pt.Asked, pt.Refused = asked.asked, asked.refused
+		}
+		t.res.Times = append(t.res.Times, pt)
 		t.ran = true
 		var cleared *ClearedError
 		if errors.As(err, &cleared) {
@@ -1350,7 +1384,15 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			t.err = fmt.Errorf("tick %s: %w", part.Name, err)
 			return tickFailed
 		}
-		if !r.Lost && len(r.Moved) > 0 {
+		switch {
+		case asked != nil:
+			// the rows of the ask's steps that committed, not of its last plan
+			t.res.addRows(asked.rows)
+			if asked.unfinished {
+				t.lost = true
+				due += asked.left
+			}
+		case !r.Lost && len(r.Moved) > 0:
 			t.res.addRows(sprint.PlanRows(planned))
 		}
 		if !r.Lost {

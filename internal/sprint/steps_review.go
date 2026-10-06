@@ -437,6 +437,17 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		p.refuse("read", "a broken read names its defect: a finding line naming the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change: read --as <reader> --broken <card> --finding <text>; a read with no verdict is handed back: read --as <reader> --return <card> --reason <text>")
 		return p
 	}
+	// a read asked of a friend is on her fleet row, not the readers table
+	// (FriendReadAsk): the verb her packet prints closes it there
+	for _, rd := range readers {
+		if name, ok := FriendOfRow(rd); ok {
+			if len(readers) > 1 {
+				p.refuse("read", "a friend's reads are reported on their own: read --as "+rd+" (--ok | --broken) <read>")
+				return p
+			}
+			return friendReadVerb(s, r, name)
+		}
+	}
 	from := []string{Asked, Reading}
 	if r.Begin {
 		from = []string{Asked}
@@ -934,7 +945,13 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			if s.Fleet != nil && s.Fleet.Card(o.ID) != nil && (s.Readers == nil || s.Readers.Card(o.ID) == nil) {
 				table = Fleet
 			}
-			u.Changes = append(u.Changes, change(table, guardEntry(o)))
+			e := guardEntry(o)
+			if !o.Placed() {
+				// a friend's read retired with her verdict is on no row: a place is a placed
+				// member's, so it is guarded at its revision alone, or the guard never holds
+				e.Expect.Place = nil
+			}
+			u.Changes = append(u.Changes, change(table, e))
 		}
 		retired := 0
 		for _, rc := range s.Readers.Of(c.ID) {
@@ -1249,7 +1266,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		m := ""
 		_, friend := FriendCard(c)
 		bench := Bench(c)
-		if len(up) > 0 && !friend {
+		// no route serves its tier and a friend up does: the friends' deal's, never a machine's
+		_, _, toFriend, byFriend := s.routeOf(c, nil, nil)
+		if len(up) > 0 && !friend && !byFriend {
 			// a bench card's next attempt goes to a member of its bench alone (bench_deal.go)
 			m = rr.next(onlyBench(up, bench), q, room, reworkAvoid(s, c))
 		}
@@ -1270,6 +1289,8 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			switch {
 			case friend:
 				later = "a friend's card: the tick deals it to a friend up with room"
+			case byFriend:
+				later = toFriend
 			case len(bench) > 0 && len(onlyBench(up, bench)) == 0:
 				later = benchWaits(bench) // no member of its bench is up (bench_deal.go)
 			case len(up) > 0:

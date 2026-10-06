@@ -426,10 +426,12 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 		p.Rows = append(p.Rows, RowAdd{Fleet, row})
 		declared[row] = true
 	}
+	// a read on her row is written at a live generation, from 1, as her work cards
+	// are: queue, finish and her QUEUE.json name it at the one the card holds
 	fields := map[string]string{
 		"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": name,
 		"attempt": itoa(attempt), "head": head, "branch": branch, "start": start,
-		"asked": stamp(s.Now),
+		"asked": stamp(s.Now), "gen": "1",
 	}
 	p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, createEntry(id, row, col, pr.Score, fields)),
@@ -464,6 +466,19 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 		p.refuse(primary, why)
 		return p
 	}
+	p.Units = append(p.Units, friendReadCloseUnit(s, name, pr, rc, verdict, finding))
+	return p
+}
+
+// friendReadCloseUnit is the one close of a friend's read card on her fleet row,
+// whether her outbox report (FriendReadClose) or the read verb (friendReadVerb)
+// carried the verdict: the card retired with its verdict, a broken verdict's
+// judgment, and the primary's review judgment after it.
+func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, finding string) Unit {
+	attempt := rc.Int("attempt")
+	if attempt == 0 {
+		attempt = 1
+	}
 	set := map[string]string{"verdict": verdict, "read": stamp(s.Now), "retired": stamp(s.Now), "retired_by": "read"}
 	var notes []Note
 	if verdict == "broken" {
@@ -477,12 +492,72 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 	if verdict == "broken" {
 		stood = Broken
 	}
-	if j, ok := reviewJudgment(s, pr, reviewStep{moved: map[string]string{id: stood}, writes: notes, who: name}); ok {
+	if j, ok := reviewJudgment(s, pr, reviewStep{moved: map[string]string{rc.ID: stood}, writes: notes, who: name}); ok {
 		notes = append(notes, j)
 	}
-	p.Units = append(p.Units, Unit{Key: primary, Stream: pr.Row, Changes: []Change{
+	return Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, removeEntry(rc, set)),
-	}, Moved: id + " retired " + verdict, Notes: notes})
+	}, Moved: rc.ID + " retired " + verdict, Notes: notes}
+}
+
+// FriendReadOutboxLine is how a read on a friend's row is returned: her
+// outbox report, which friend sync reads (FriendReadClose), or the read verb
+// her packet prints, which writes the same close (friendReadVerb).
+func FriendReadOutboxLine(row, id string, epoch uint64) string {
+	return fmt.Sprintf("write outbox/%s/REPORT.md in your working directory with 'Verdict: LAND', or 'Verdict: HOLD' and a line naming the file:line or rule and what to change (friend sync reads it); or run: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<file:line, and what to change>'", id, row, id, epoch)
+}
+
+// friendReadVerb is the read verb on a friend's row (docs/SPEC-SPRINT.md
+// section 5): her read cards are on her fleet row, not the readers table, and
+// a verdict there is the close her outbox report makes (friendReadCloseUnit).
+// A read named at any generation, 0 included (the reads asked before the ask
+// wrote one), is hers to report. A read on her row has no begin and is handed
+// back by friend take, not by --return.
+func friendReadVerb(s *Snapshot, r ReadReq, name string) Plan {
+	var p Plan
+	row := FriendRow(name)
+	if r.Begin || r.Return {
+		p.refuse("read", "a read on a friend's row has no begin and no return: report it with "+
+			"read --as "+row+" (--ok | --broken) <read> --finding <text>, or write outbox/<read>/REPORT.md")
+		return p
+	}
+	if s.Fleet == nil {
+		p.refuse("read", "the fleet table was not read")
+		return p
+	}
+	sel := r.Sel
+	if len(sel.IDs) == 0 && sel.Only == nil && sel.Limit == 0 {
+		sel.Limit = 1
+	}
+	var all []*Card
+	for _, col := range []string{Working, Ready} {
+		for _, c := range s.Fleet.Cell(row, col) {
+			if c.F("kind") == "read" {
+				all = append(all, c)
+			}
+		}
+	}
+	SortCards(all)
+	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
+		switch {
+		case c.F("kind") != "read":
+			return "not a read (it is " + orDash(c.F("kind")) + "): work is reported with finish"
+		case !c.Placed():
+			return "retired at " + orDash(c.F("retired")) + " by " + orDash(c.F("retired_by")) + ": nothing to report"
+		case c.Row != row:
+			return "not " + r.As + "'s to read (it is " + placeWord(c) + ")"
+		case s.Work.Card(c.F("primary")) == nil:
+			return "its primary " + c.F("primary") + " is not on the table"
+		}
+		return ""
+	}, s.Fleet.Card)
+	namePrimarysReads(&p, all)
+	for _, c := range chosen {
+		pr := s.Work.Card(c.F("primary"))
+		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding)
+		u.Moved = c.ID + " " + c.Col + " -> " + r.Verdict + " (retired: read by " + name + ")"
+		p.Units = append(p.Units, u)
+	}
 	return p
 }
 

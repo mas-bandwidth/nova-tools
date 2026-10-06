@@ -107,6 +107,15 @@ func AskStep(r sprint.AskReq) Step {
 
 // ReadStep is a reader recording its reads.
 func ReadStep(r sprint.ReadReq) Step {
+	// a read asked of a friend is a card on her fleet row (sprint.FriendReadAsk): the
+	// verb reads the fleet table and closes it as her outbox report does, and brings
+	// her row's display cells up to date
+	for _, rd := range sprint.Split(r.As) {
+		if sprint.IsFriendRow(rd) {
+			return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Fleet, sprint.Work, sprint.Readers), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Mirrors: true,
+				Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
+		}
+	}
 	// a read that reports what it spent prices it with the routes alone, the keys a
 	// reader may read (sprint's cost.go; Step.Prices)
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Prices: r.Usage != "",
@@ -121,7 +130,7 @@ func AcceptStep(r sprint.AcceptReq) Step {
 
 // ReworkStep is the coordinator sending work back with a fix.
 func ReworkStep(r sprint.ReworkReq) Step {
-	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
+	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true, Friends: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rework(s, r) }}
 }
 
@@ -133,7 +142,7 @@ func ReturnStep(r sprint.ReturnReq) Step {
 
 // RedoStep is the coordinator atomically returning, reworking and resuming conflicted cards.
 func RedoStep(r sprint.RedoReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "redo", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "redo", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true, Friends: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Redo(s, r) }}
 }
 
