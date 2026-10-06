@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -30,9 +29,9 @@ func livePlist(args ...string) string {
 
 func liveInode(t *testing.T, path string) uint64 {
 	t.Helper()
-	fi, err := os.Stat(path)
+	_, err := os.Stat(path)
 	require.NoError(t, err)
-	return uint64(fi.Sys().(*syscall.Stat_t).Ino)
+	return inodeOf(path)
 }
 
 // TestLiveShowsWhatIsInstalled: live reads a fake host (a home with three

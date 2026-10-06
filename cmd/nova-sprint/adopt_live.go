@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -167,17 +166,6 @@ var (
 	liveTool     = regexp.MustCompile(`^nova-[a-z0-9-]+$`)
 	liveLanes    = regexp.MustCompile(`\blanes=(?:"([^"]*)"|(\S+))`)
 )
-
-func inodeOf(path string) uint64 {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		return uint64(st.Ino)
-	}
-	return 0
-}
 
 // read is the whole manifest. An error is only the agents directory or the
 // installed nova-sprint unreadable; every other gap is said in its field.
