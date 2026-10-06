@@ -32,7 +32,8 @@ func (w world) check(c *tool.Call) *tool.Out {
 
 // deliveryCheckVerb is the delivery check against the live session (friend.Conformance).
 func (w world) deliveryCheckVerb(c *tool.Call) *tool.Out {
-	name, harness, dir, state := c.Str("as"), c.Str("harness"), c.Str("dir"), w.stateDir(c)
+	name, harness, dir := c.Str("as"), c.Str("harness"), c.Str("dir")
+	state := w.stateDir(c, dir)
 	if c.DryRun() {
 		if _, err := friend.NewDeliverer(harness, dir, c.Str("session"), w.exec, nil); err != nil {
 			return tool.Refuse(err.Error())
@@ -176,7 +177,17 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 			}
 			return s
 		}
-		return friend.DefaultStateDir(w.home, name)
+		// her plist's --state-dir, else under her --dir (this verb's, else her plist's) when
+		// her daemon writes there, else the home directory's
+		plist := friend.PlistArgs(w.readPlist(friend.Agent{Friend: name, Home: w.home}.PlistPath()))
+		if s := argAfter(plist, "--state-dir"); s != "" {
+			return s
+		}
+		dir := c.Str("dir")
+		if dir == "" {
+			dir = argAfter(plist, "--dir")
+		}
+		return friend.FindStateDir(w.home, dir, name)
 	}
 
 	return friend.CheckSeams{
@@ -268,4 +279,14 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 			return harness, dir, nil
 		},
 	}
+}
+
+// argAfter is the value after flag in args, empty when it is not there.
+func argAfter(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }

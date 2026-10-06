@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -293,6 +294,73 @@ func Uninstall(ctx context.Context, a Agent, uid int, run Launchctl, remove func
 		return ran, err
 	}
 	return ran, nil
+}
+
+// PlistArgs is the ProgramArguments array of a launchd plist, in order; nil
+// when the plist has none or cannot be read as XML.
+func PlistArgs(plist string) []string {
+	dec := xml.NewDecoder(strings.NewReader(plist))
+	dec.Strict = false
+	var args []string
+	key, inArray, found := "", false, false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		el, ok := tok.(xml.StartElement)
+		if !ok {
+			if end, ok := tok.(xml.EndElement); ok && end.Name.Local == "array" && inArray {
+				return args
+			}
+			continue
+		}
+		switch el.Name.Local {
+		case "key":
+			var k string
+			if dec.DecodeElement(&k, &el) == nil {
+				key = strings.TrimSpace(k)
+			}
+		case "array":
+			inArray = key == "ProgramArguments"
+			found = found || inArray
+		case "string":
+			var v string
+			if dec.DecodeElement(&v, &el) == nil && inArray {
+				args = append(args, v)
+			}
+		}
+	}
+	if !found {
+		return nil
+	}
+	return args
+}
+
+// PlistDriftLine is the line a daemon says on start when its own arguments
+// (running, after the program's name) differ from the installed plist's: a
+// launchctl kickstart restarts the agent launchd loaded, with the arguments
+// it read then, so an edit to the plist is lost until it is booted out and
+// bootstrapped again (the finding of 2026-10-05). The daemon's part of each
+// is compared, from its verb "run" on (the secrets wrap and the binary's path
+// are the plist's own). Empty when there is no plist, it names no run, or
+// the two agree.
+func PlistDriftLine(plist string, running []string) string {
+	installed := daemonPart(PlistArgs(plist))
+	mine := daemonPart(running)
+	if installed == nil || mine == nil || slices.Equal(installed, mine) {
+		return ""
+	}
+	return fmt.Sprintf("plist drift: this daemon's arguments differ from the installed plist (a kickstart keeps the arguments launchd loaded); running: %s; plist: %s; to run the plist's: nova-friend install again (it boots out and bootstraps)",
+		strings.Join(mine, " "), strings.Join(installed, " "))
+}
+
+// daemonPart is args from the verb "run" on; nil when there is no run.
+func daemonPart(args []string) []string {
+	if i := slices.Index(args, "run"); i >= 0 {
+		return args[i:]
+	}
+	return nil
 }
 
 // Said is the command line as a plan says it, with no path in it: the

@@ -18,7 +18,8 @@ import (
 // rig is one daemon over bus's Fake, a fake harness and a clock that moves
 // one second per read: no socket, no real time. The loop runs until
 // stopAfter steps (a step is one beat) or the test cancels it. Pause, which
-// the loop calls while a turn runs, waits for that turn to end (gate), so
+// the loop calls while a turn runs, waits for that turn to end (gate, sent
+// once the turn's result is queued, so the loop's next look finds it), so
 // every run is the same sequence of steps; with hold set the turn runs on
 // until the releaseAt-th pause.
 type rig struct {
@@ -31,6 +32,7 @@ type rig struct {
 	releaseAt int
 	pauses    int
 	gate      chan struct{}
+	owed      int  // turns delivered whose gate token is not yet sent
 	passive   bool // no worker: a pause returns at once
 	exit      int
 	beats     int
@@ -95,6 +97,17 @@ func newRig(t *testing.T) *rig {
 		},
 		Status: func(s Status) error { r.mu.Lock(); r.status = append(r.status, s); r.mu.Unlock(); return nil },
 	}
+	r.d.turnEnded = func() {
+		r.mu.Lock()
+		owed := r.owed > 0
+		if owed {
+			r.owed--
+		}
+		r.mu.Unlock()
+		if owed {
+			r.gate <- struct{}{}
+		}
+	}
 	return r
 }
 
@@ -109,7 +122,9 @@ func (r *rig) Deliver(ctx context.Context, text string) (int, error) {
 		case <-ctx.Done():
 		}
 	}
-	r.gate <- struct{}{}
+	r.mu.Lock()
+	r.owed++ // the token goes once the result is queued (turnEnded), never before
+	r.mu.Unlock()
 	return r.exit, nil
 }
 

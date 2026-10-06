@@ -88,7 +88,8 @@ func (r *presenceRig) present(t *testing.T) (bool, string) {
 // five minutes without the session's answer is down "no session answer", and
 // no beat goes to the sprint server; the session's answer brings it up; ten
 // minutes with no bus message from the session asks again with a new nonce,
-// and the old nonce is no answer to it (docs/SPEC-FRIEND.md, presence).
+// and the old nonce is no answer to it; a message the session writes brings
+// it up as an answer does (docs/SPEC-FRIEND.md, presence).
 func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	t.Parallel()
 	r := newPresenceRig(t)
@@ -149,9 +150,13 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	r.send(t, r.direct, "bob", "status", "hello\n")
 	r.step(t, BeatEvery)
 	up, _ = r.present(t)
-	assert.False(t, up, "while down only the nonce answers: an ordinary message is no proof the check reached the session")
+	assert.True(t, up, "while down, any message the session writes brings it back up: the session is alive (the finding of 2026-10-05)")
 
-	r.send(t, r.direct, "bob", PongSubject, PongLine("n2", 0, 0, 4)+"\n")
+	r.step(t, SessionQuiet)
+	r.step(t, SessionBound)
+	up, _ = r.present(t)
+	require.False(t, up, "quiet again, and the next check unanswered")
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n3", 0, 0, 4)+"\n")
 	r.step(t, BeatEvery)
 	up, _ = r.present(t)
 	assert.True(t, up, "the next answer brings it back up")
