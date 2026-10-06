@@ -331,8 +331,8 @@ func (w *witness) checkToolchainRoots() {
 
 // checkGoAndSbcl: go is the version the tree's go.mod names, and sbcl is on PATH.
 func (w *witness) checkGoAndSbcl() {
-	switch {
-	case w.goWant == "":
+	switch w.goWant {
+	case "":
 		w.drift("go.mod go directive unread; set NOVA_GO or run from a nova-tools checkout")
 	default:
 		if goPath, found := w.which("go"); found {
