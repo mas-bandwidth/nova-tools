@@ -1841,7 +1841,7 @@ can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the ver
 [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ```sh
-nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
+nova-update release cut --repo example/project --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
 ```
 
 `cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
@@ -1910,7 +1910,7 @@ and clears this release's own files out of `--retire`. Run it **on the coordinat
 refuses and says so.
 
 ```sh
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench1:/home/user/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench.example:/home/user/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
 ```
 
 `adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
@@ -2019,7 +2019,7 @@ on a darwin/arm64 bench at 164–571 ms cold against 5 ms warm when idle, and at
 a 7.03 s maximum while a tree compiled beside it, which is the state the
 `go install` one command earlier leaves the machine in. At five seconds that
 refused healthy binaries and named a build repair that would have found nothing
-([#890](https://github.com/mas-bandwidth/nova-tools/issues/890)). Lower it with
+(issue 890). Lower it with
 `--timeout` on a bin whose binaries you have already been running.
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
@@ -2036,7 +2036,7 @@ did not answer (`--max` caps them, with a `MORE` line) — the
 adopted 16, never the 32 `nova-*` executables a directory or `PATH` might hold.
 It writes no file and mirrors `report`'s read, so a recorded version is known
 without running a process; it exits 1 when any adopted tool does not answer
-([#622](https://github.com/mas-bandwidth/nova-tools/issues/622)).
+(issue 622).
 
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
@@ -2316,7 +2316,7 @@ address are named in one refusal at exit 2, before any dial:
 ```
 $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
 nova-ci github receipt REFUSED: --repo wants owner/name, got "nova-tools"; needs --redis <host:port> or NOVA_REDIS_ADDR (or --dry-run, which dials nothing); run: nova-ci github receipt -h
-$ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
+$ nova-ci github receipt --from-runner --repo example/project --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
 nova-ci github receipt REFUSED: --conclusion wants success, failure or cancelled (job.status), got "skipped"; needs --redis <host:port> or NOVA_REDIS_ADDR (or --dry-run, which dials nothing); run: nova-ci github receipt -h
 ```
 
