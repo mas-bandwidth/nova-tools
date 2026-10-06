@@ -1,0 +1,403 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+)
+
+// live is the manifest of a seat host (docs/SPEC-SPRINT.md, "Adopting a
+// build"): what is installed and what runs, read and never changed. The
+// adoption play (fleet/tools.yml, the seat play) reads it before and after
+// each step, and a person reads it to see a half move: a process that runs a
+// binary the install has since replaced (fresh=false), a store whose function
+// library is not the build's (match=false), a dashboard link that names
+// another binary, a friend daemon whose plist names a copy.
+func init() {
+	verbClasses["live"] = classRead
+	notServed = append(notServed, "live")
+	verbExit["live"] = "exit codes: 0 the manifest was read (whatever it says: a stale process or a library mismatch is a line, not a failure), 1 the installed nova-sprint or the agents directory could not be read, 2 usage"
+	verbEffect["live"] = "reads only: the installed nova-sprint's version and inode, the store's function library through nova-redis fn check, the dashboard links, and every com.nova.* launchd agent of this login (its plist, its pid from launchctl print, its running arguments from ps, its executable's inode from lsof); a friend daemon's last beat from nova-friend status"
+}
+
+// liveManifest is what live prints with --json.
+type liveManifest struct {
+	BinDir    string          `json:"bin_dir"`
+	Server    liveBinary      `json:"server"`
+	Library   liveLibrary     `json:"library"`
+	Dashboard []liveDashboard `json:"dashboard"`
+	Agents    []liveAgent     `json:"agents"`
+}
+
+// liveBinary is an installed tool: its path, inode and build.
+type liveBinary struct {
+	Path     string `json:"path"`
+	Inode    uint64 `json:"inode"`
+	Version  string `json:"version"`
+	Revision string `json:"revision"`
+}
+
+// liveLibrary is the store's function library against the build's: nova-redis
+// fn check's word (OK, STALE, MISSING), or UNKNOWN with why.
+type liveLibrary struct {
+	State  string `json:"state"`
+	Loaded string `json:"loaded"`
+	Want   string `json:"want"`
+	Match  bool   `json:"match"`
+	Why    string `json:"why,omitempty"`
+}
+
+// liveDashboard is one dashboard binary link and whether it names the
+// installed nova-sprint.
+type liveDashboard struct {
+	Link    string `json:"link"`
+	Target  string `json:"target"`
+	Current bool   `json:"current"`
+}
+
+// liveAgent is one com.nova.* launchd agent of this login.
+type liveAgent struct {
+	Label   string   `json:"label"`
+	Plist   string   `json:"plist"`
+	Target  string   `json:"target"` // the launchctl service target, gui/<uid>/<label>
+	Program []string `json:"program"`
+	// Tool is the nova tool the agent runs (its last nova-* word that is not
+	// the secrets wrap), Binary the path the plist names for it, Role server
+	// for nova-sprint run, friend for nova-friend run, else agent.
+	Tool   string `json:"tool,omitempty"`
+	Binary string `json:"binary,omitempty"`
+	Role   string `json:"role"`
+	// Listen is a server's --listen addresses, each host:port, a bare or
+	// unspecified host read as the loopback.
+	Listen      []string `json:"listen"`
+	PID         int      `json:"pid"`
+	Running     string   `json:"running,omitempty"` // ps's arguments of the pid
+	BinaryInode uint64   `json:"binary_inode,omitempty"`
+	RunInode    uint64   `json:"running_inode,omitempty"`
+	// Fresh: the pid runs the bytes now at Binary (the inodes agree).
+	// Installed: Binary is the bin directory's own tool, not a copy.
+	// ArgsTook: the running arguments are the plist's, from the tool on.
+	// Stale: a loaded nova agent that is not all three.
+	Fresh     bool `json:"fresh"`
+	Installed bool `json:"installed"`
+	ArgsTook  bool `json:"args_took"`
+	Stale     bool `json:"stale"`
+	// Friend daemons only: the friend, its last beat and its age in seconds
+	// (-1: none read), and the nova-friend install arguments that reinstall it
+	// with the flags its plist records.
+	Friend  string   `json:"friend,omitempty"`
+	Beat    string   `json:"beat,omitempty"`
+	BeatAge int      `json:"beat_age_s"`
+	Install []string `json:"install,omitempty"`
+}
+
+// liveProbe reads the host; run is exec in production, a fake in a test.
+type liveProbe struct {
+	home, binDir string
+	uid          int
+	redis        string // the store fn check reads, "" for none
+	user, pwEnv  string // its login
+	dashboards   []string
+	run          adoptRunner
+	now          func() time.Time
+}
+
+var (
+	livePID      = regexp.MustCompile(`(?m)^\s*pid = (\d+)\s*$`)
+	liveRevision = regexp.MustCompile(`[-.]([0-9a-f]{7,40})(?:\+dirty)?$`)
+	liveBeat     = regexp.MustCompile(`\blast_beat=(\S+)`)
+	liveTool     = regexp.MustCompile(`^nova-[a-z0-9-]+$`)
+)
+
+func inodeOf(path string) uint64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return uint64(st.Ino)
+	}
+	return 0
+}
+
+// read is the whole manifest. An error is only the agents directory or the
+// installed nova-sprint unreadable; every other gap is said in its field.
+func (p liveProbe) read(ctx context.Context) (liveManifest, error) {
+	m := liveManifest{BinDir: p.binDir, Dashboard: []liveDashboard{}, Agents: []liveAgent{}}
+	server := filepath.Join(p.binDir, "nova-sprint")
+	m.Server = liveBinary{Path: server, Inode: inodeOf(server)}
+	out, err := p.run(ctx, server, "version")
+	if err != nil {
+		return m, err
+	}
+	if f, ok := buildinfo.Parse(out); ok {
+		m.Server.Version = f.Version
+		if src, ok := f.FindSource(); ok {
+			m.Server.Revision = src.Revision
+		} else if r := liveRevision.FindStringSubmatch(f.Version); r != nil {
+			m.Server.Revision = r[1]
+		}
+	}
+	m.Library = p.library(ctx)
+	for _, link := range p.dashboards {
+		target, err := os.Readlink(link)
+		if err != nil {
+			target = "not a link: " + oneline.Err(err)
+		}
+		m.Dashboard = append(m.Dashboard, liveDashboard{Link: link, Target: target, Current: target == server})
+	}
+	plists, err := filepath.Glob(filepath.Join(p.home, "Library", "LaunchAgents", "com.nova.*.plist"))
+	if err != nil {
+		return m, err
+	}
+	sort.Strings(plists)
+	for _, pl := range plists {
+		m.Agents = append(m.Agents, p.agent(ctx, pl))
+	}
+	return m, nil
+}
+
+// library is nova-redis fn check of the installed build against the store.
+func (p liveProbe) library(ctx context.Context) liveLibrary {
+	if p.redis == "" {
+		return liveLibrary{State: "UNKNOWN", Why: "no store named (--redis or NOVA_SPRINT_REDIS)"}
+	}
+	args := []string{"fn", "check", "--addr", p.redis}
+	if p.user != "" {
+		args = append(args, "--user", p.user)
+	}
+	if p.pwEnv != "" {
+		args = append(args, "--password-env", p.pwEnv)
+	}
+	// fn check exits 1 on STALE or MISSING: the line is the answer
+	out, err := p.run(ctx, filepath.Join(p.binDir, "nova-redis"), args...)
+	l := liveLibrary{State: "UNKNOWN"}
+	for _, line := range strings.Split(out, "\n") {
+		w := strings.Fields(line)
+		if len(w) < 2 || (w[0] != "OK" && w[0] != "STALE" && w[0] != "MISSING") {
+			continue
+		}
+		l.State = w[0]
+		for _, kv := range w[2:] {
+			k, v, _ := strings.Cut(kv, "=")
+			switch k {
+			case "loaded":
+				l.Loaded = v
+			case "want":
+				l.Want = v
+			}
+		}
+	}
+	if l.State == "UNKNOWN" && err != nil {
+		l.Why = oneline.Err(err)
+	}
+	l.Match = l.State == "OK" && l.Loaded != "" && l.Loaded == l.Want
+	return l
+}
+
+// toolAt is the index of the nova tool an agent's program runs: the last
+// nova-* word that is not the secrets wrap; -1 for none.
+func toolAt(program []string) int {
+	at := -1
+	for i, w := range program {
+		if b := filepath.Base(w); liveTool.MatchString(b) && b != "nova-secrets" && !strings.Contains(w, "=") {
+			at = i
+		}
+	}
+	return at
+}
+
+// liveRunnerOf is a test's runner for one app (*app to adoptRunner).
+var liveRunnerOf sync.Map
+
+// listenOf is the --listen addresses of a server's arguments.
+func listenOf(args []string) []string {
+	out := []string{}
+	for i, w := range args {
+		v, ok := strings.CutPrefix(w, "--listen=")
+		if !ok && w == "--listen" && i+1 < len(args) {
+			v, ok = args[i+1], true
+		}
+		if !ok {
+			continue
+		}
+		for _, addr := range strings.Split(v, ",") {
+			host, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+			if err != nil || port == "" {
+				continue
+			}
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				host = "127.0.0.1"
+			}
+			out = append(out, net.JoinHostPort(host, port))
+		}
+	}
+	return out
+}
+
+// agent reads one plist and the process launchd holds for it.
+func (p liveProbe) agent(ctx context.Context, plist string) liveAgent {
+	label := strings.TrimSuffix(filepath.Base(plist), ".plist")
+	a := liveAgent{Label: label, Plist: plist, Target: fmt.Sprintf("gui/%d/%s", p.uid, label), Role: "agent", BeatAge: -1, Listen: []string{}}
+	if b, err := os.ReadFile(plist); err == nil {
+		a.Program = friend.PlistArgs(string(b))
+	}
+	at := toolAt(a.Program)
+	if at >= 0 {
+		a.Binary = a.Program[at]
+		a.Tool = filepath.Base(a.Binary)
+		a.BinaryInode = inodeOf(a.Binary)
+		a.Installed = a.Binary == filepath.Join(p.binDir, a.Tool)
+		verb := ""
+		if at+1 < len(a.Program) {
+			verb = a.Program[at+1]
+		}
+		switch {
+		case a.Tool == "nova-sprint" && verb == "run":
+			a.Role = "server"
+			a.Listen = listenOf(a.Program[at:])
+		case a.Tool == "nova-friend" && verb == "run":
+			a.Role = "friend"
+		}
+	}
+	if out, err := p.run(ctx, "launchctl", "print", a.Target); err == nil {
+		if m := livePID.FindStringSubmatch(out); m != nil {
+			a.PID, _ = strconv.Atoi(m[1]) // ignored: the pattern holds digits only
+		}
+	}
+	if a.PID > 0 {
+		if out, err := p.run(ctx, "ps", "-o", "args=", "-p", strconv.Itoa(a.PID)); err == nil {
+			a.Running = strings.TrimSpace(out)
+		}
+		if out, err := p.run(ctx, "lsof", "-a", "-p", strconv.Itoa(a.PID), "-d", "txt", "-F", "i"); err == nil {
+			for _, l := range strings.Split(out, "\n") {
+				if strings.HasPrefix(l, "i") {
+					a.RunInode, _ = strconv.ParseUint(l[1:], 10, 64) // ignored: a field that is no number leaves 0, never fresh
+					break
+				}
+			}
+		}
+	}
+	if at >= 0 {
+		a.Fresh = a.RunInode != 0 && a.RunInode == a.BinaryInode
+		a.ArgsTook = a.Running != "" && strings.HasSuffix(a.Running, strings.Join(a.Program[at:], " "))
+		a.Stale = a.PID > 0 && !(a.Fresh && a.Installed && a.ArgsTook)
+	}
+	if a.Role == "friend" {
+		p.friendOf(ctx, &a, at)
+	}
+	return a
+}
+
+// friendOf reads a friend daemon's run flags from its plist: the install
+// arguments that write the same agent from the installed nova-friend, and its
+// last beat from nova-friend status.
+func (p liveProbe) friendOf(ctx context.Context, a *liveAgent, at int) {
+	flags := a.Program[at+2:]
+	a.Install = append([]string{"install"}, flags...)
+	status := []string{"status"}
+	for i := 0; i+1 < len(flags); i++ {
+		switch flags[i] {
+		case "--as":
+			a.Friend = flags[i+1]
+			status = append(status, flags[i], flags[i+1])
+		case "--dir", "--state-dir":
+			status = append(status, flags[i], flags[i+1])
+		}
+	}
+	// the secrets wrap: nova-secrets exec --as <seat> ... --only <names> ... --
+	if at > 0 && filepath.Base(a.Program[0]) == "nova-secrets" {
+		for i := 0; i+1 < at; i++ {
+			switch a.Program[i] {
+			case "--as":
+				a.Install = append(a.Install, "--seat", a.Program[i+1])
+			case "--only":
+				a.Install = append(a.Install, "--secrets", a.Program[i+1])
+			}
+		}
+	}
+	out, _ := p.run(ctx, filepath.Join(p.binDir, "nova-friend"), status...) // ignored: status exits 1 for a daemon it finds down; its line still says the beat
+	if m := liveBeat.FindStringSubmatch(out); m != nil {
+		a.Beat = m[1]
+		if t, err := time.Parse(time.RFC3339, m[1]); err == nil {
+			a.BeatAge = int(p.now().Sub(t).Seconds())
+		}
+	}
+}
+
+// lines is the manifest as the lines live prints.
+func (m liveManifest) lines() []string {
+	var out []string
+	out = append(out, fmt.Sprintf("LIVE SERVER binary=%s inode=%d version=%s revision=%s", m.Server.Path, m.Server.Inode, dashed(m.Server.Version), dashed(m.Server.Revision)))
+	l := fmt.Sprintf("LIVE LIBRARY state=%s loaded=%s want=%s match=%t", m.Library.State, dashed(m.Library.Loaded), dashed(m.Library.Want), m.Library.Match)
+	if m.Library.Why != "" {
+		l += " why=" + strconv.Quote(m.Library.Why)
+	}
+	out = append(out, l)
+	for _, d := range m.Dashboard {
+		out = append(out, fmt.Sprintf("LIVE DASHBOARD link=%s target=%s current=%t", d.Link, strconv.Quote(d.Target), d.Current))
+	}
+	for _, a := range m.Agents {
+		head := "LIVE AGENT"
+		if a.Role == "server" || a.Role == "friend" {
+			head = "LIVE " + strings.ToUpper(a.Role)
+		}
+		line := fmt.Sprintf("%s label=%s pid=%d", head, a.Label, a.PID)
+		if a.Tool != "" {
+			line += fmt.Sprintf(" stale=%t fresh=%t installed=%t args_took=%t binary=%s", a.Stale, a.Fresh, a.Installed, a.ArgsTook, a.Binary)
+		}
+		if a.Role == "friend" {
+			line += fmt.Sprintf(" friend=%s beat=%s beat_age_s=%d", a.Friend, dashed(a.Beat), a.BeatAge)
+		}
+		line += " program=" + strconv.Quote(strings.Join(a.Program, " "))
+		out = append(out, line)
+	}
+	return out
+}
+
+func (a *app) cmdLive(args []string, stdout, stderr io.Writer) int {
+	const name = "live"
+	fs, c := a.verbSetup(name)
+	home := a.getenv("HOME")
+	binDir := fs.String("bin-dir", filepath.Join(home, ".local", "bin"), "the bin directory the build is installed in")
+	var dash stringList
+	fs.Var(&dash, "dashboard", "a dashboard binary link that should name the installed nova-sprint (repeatable)")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) > 0 {
+		return refuse(stderr, name, argErr("takes no words ", err, pos...))
+	}
+	p := liveProbe{home: home, binDir: *binDir, uid: os.Getuid(), redis: c.redis, user: a.getenv("NOVA_SPRINT_REDIS_USER"),
+		pwEnv: a.getenv("NOVA_SPRINT_REDIS_PASSWORD_ENV"), dashboards: dash, run: execAdoptRunner, now: a.now}
+	if fake, ok := liveRunnerOf.Load(a); ok {
+		p.run = fake.(adoptRunner)
+	}
+	m, err := p.read(context.Background())
+	if err != nil {
+		fmt.Fprintf(stderr, "%s live: %s; run: nova-sprint live -h\n", prog, oneline.Err(err))
+		return 1
+	}
+	if c.json {
+		b, _ := json.Marshal(m) // ignored: a struct of strings, numbers and bools always encodes
+		fmt.Fprintln(stdout, string(b))
+		return 0
+	}
+	for _, l := range m.lines() {
+		fmt.Fprintln(stdout, oneline.Escape(l))
+	}
+	return 0
+}

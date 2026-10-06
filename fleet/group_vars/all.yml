@@ -107,3 +107,17 @@ nova_tla_dir: /opt/tla
 nova_tla_jar: "{{ nova_tla_dir }}/tla2tools.jar"
 nova_tla_sha256_file: "{{ playbook_dir }}/../tla/tla2tools.sha256"
 nova_tla_java_candidates: ["{{ nova_home }}/sdk/bin/java", /usr/bin/java, /usr/local/bin/java]
+
+# The seat play of tools.yml (the coordinator machine adopts the build): the
+# dashboard binary links that name the installed nova-sprint (empty: none),
+# the URL whose answer is the dashboard's summary ("" skips the check), extra
+# host:port addresses the server must answer on besides its --listen ones,
+# the deadline of the build's shadow tick before any restart, how long each
+# reinstalled friend daemon has to beat (seconds), and the launchd labels the
+# play never restarts.
+nova_seat_dashboard_links: []
+nova_seat_dashboard_url: ""
+nova_seat_server_ports: []
+nova_seat_tick_deadline: 60s
+nova_seat_beat_within: 60
+nova_seat_hold: []
