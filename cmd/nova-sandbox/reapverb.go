@@ -93,6 +93,24 @@ var (
 	reapGraceSleep = func() { time.Sleep(reapGrace) }
 )
 
+// reapSeams is what one reap reaches the machine through. A test builds its own, so no two
+// share a seam and every one opens with t.Parallel(), as the ledger in
+// internal/ci/testdata/serial-tests_allowlist.txt asks; the vars above are the production
+// defaults prodReapSeams reads.
+type reapSeams struct {
+	Volumes    volumeManager
+	Procs      func(mount string) ([]int, error)
+	Signal     func(pid int, sig syscall.Signal) error
+	Alive      func(pid int) bool
+	ProcStart  func(pid int) (string, error)
+	GraceSleep func()
+}
+
+// prodReapSeams is the production wiring.
+func prodReapSeams() *reapSeams {
+	return &reapSeams{Volumes: runVolumes, Procs: reapProcs, Signal: reapSignal, Alive: reapAlive, ProcStart: reapProcStart, GraceSleep: reapGraceSleep}
+}
+
 // reapFlags is the verb's argv: one flag, parsed by hand like every other verb's.
 type reapFlags struct {
 	dryRun bool
@@ -137,14 +155,14 @@ func reapVerb(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitRefused
 	}
-	return reapAll(f.dryRun, stderr)
+	return prodReapSeams().reapAll(f.dryRun, stderr)
 }
 
 // reapAll is the whole of the work, with the platform already known. It is separate from
 // the verb so the logic is tested on every platform with the disk, the process table, the
 // signals and the grace all replaced.
-func reapAll(dryRun bool, stderr io.Writer) int {
-	vols, err := step(stderr, "list", func() ([]diskVolume, error) { return runVolumes.List() })
+func (rs *reapSeams) reapAll(dryRun bool, stderr io.Writer) int {
+	vols, err := step(time.Now, stderr, "list", func() ([]diskVolume, error) { return rs.Volumes.List() })
 	if err != nil {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=volume_failed: the volumes on this machine could not be listed: %s\n%s\n",
 			oneline.Err(err), reapRemedy)
@@ -152,7 +170,7 @@ func reapAll(dryRun bool, stderr io.Writer) int {
 	}
 	remained := false
 	for _, vol := range vols {
-		if reapOne(dryRun, stderr, vol) {
+		if rs.reapOne(dryRun, stderr, vol) {
 			remained = true
 		}
 	}
@@ -166,11 +184,11 @@ func reapAll(dryRun bool, stderr io.Writer) int {
 // reapOne is one volume: whose it is, what holds it, and whether it goes. It answers
 // whether anything REMAINED — a live run's volume does not count, because a card that is
 // working is not a debt.
-func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
+func (rs *reapSeams) reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 	name := oneline.Field(vol.Name)
 	var procs []int
 	if vol.Mount != "" {
-		found, err := reapProcs(vol.Mount)
+		found, err := rs.Procs(vol.Mount)
 		if err != nil {
 			fmt.Fprintf(stderr, "SANDBOX NOTE the processes holding %s open could not be listed: %s; the volume is left alone rather than deleted out from under something\n",
 				oneline.Field(vol.Mount), oneline.Err(err))
@@ -179,7 +197,7 @@ func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 		}
 		procs = found
 	}
-	if pid, live := volumeIsLive(vol.Mount); live {
+	if pid, live := rs.volumeIsLive(vol.Mount); live {
 		fmt.Fprintf(stderr, "SANDBOX REAP volume=%s procs=%d deleted=no\n", name, len(procs))
 		fmt.Fprintf(stderr, "SANDBOX NOTE %s belongs to a live run (pid=%d); a reap never takes a volume out from under a working card\n", name, pid)
 		return false
@@ -190,10 +208,10 @@ func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 		// on a dirty machine.
 		return true
 	}
-	if left := killProcesses(procs); left > 0 {
+	if left := rs.killProcesses(procs); left > 0 {
 		fmt.Fprintf(stderr, "SANDBOX NOTE %d process(es) still hold %s open after SIGKILL; the volume cannot be unmounted while they do; run: lsof +D %s to name them, then nova-sandbox reap again\n", left, oneline.Field(vol.Mount), oneline.Field(vol.Mount))
 	}
-	if err := runVolumes.Delete(vol.Disk); err != nil {
+	if err := rs.Volumes.Delete(vol.Disk); err != nil {
 		fmt.Fprintf(stderr, "SANDBOX REAP volume=%s procs=%d deleted=no\n", name, len(procs))
 		fmt.Fprintf(stderr, "SANDBOX LEAK name=%s volume=%s remedy=\"diskutil apfs deleteVolume %s\"\n",
 			name, oneline.Field(vol.Disk), oneline.Field(vol.Disk))
@@ -208,32 +226,32 @@ func reapOne(dryRun bool, stderr io.Writer, vol diskVolume) (remained bool) {
 // the grace, then SIGKILL to whatever is left. It answers how many are STILL there after
 // that, because those are the ones that will make the unmount fail, and a reader who is
 // told the delete failed and not why has to go and find out.
-func killProcesses(pids []int) int {
+func (rs *reapSeams) killProcesses(pids []int) int {
 	if len(pids) == 0 {
 		return 0
 	}
 	for _, pid := range pids {
 		// ignored: the process may already be gone; reapAlive below is the check
-		_ = reapSignal(pid, syscall.SIGTERM)
+		_ = rs.Signal(pid, syscall.SIGTERM)
 	}
-	reapGraceSleep()
+	rs.GraceSleep()
 	var left []int
 	for _, pid := range pids {
-		if reapAlive(pid) {
+		if rs.Alive(pid) {
 			left = append(left, pid)
 		}
 	}
 	for _, pid := range left {
 		// ignored: the process may already be gone; the survivors are counted and named after the grace
-		_ = reapSignal(pid, syscall.SIGKILL)
+		_ = rs.Signal(pid, syscall.SIGKILL)
 	}
 	if len(left) == 0 {
 		return 0
 	}
-	reapGraceSleep()
+	rs.GraceSleep()
 	still := 0
 	for _, pid := range left {
-		if reapAlive(pid) {
+		if rs.Alive(pid) {
 			still++
 		}
 	}
@@ -251,15 +269,15 @@ func killProcesses(pids []int) int {
 // that is kept forever, which is the leak this verb exists to end. The exception is a pid
 // that IS alive whose start time cannot be read at all — there the process is real and
 // only the evidence is missing, and a reap that killed it would be guessing.
-func volumeIsLive(mount string) (int, bool) {
+func (rs *reapSeams) volumeIsLive(mount string) (int, bool) {
 	if mount == "" {
 		return 0, false
 	}
 	pid, start, ok := readOwnerMarker(mount)
-	if !ok || !reapAlive(pid) {
+	if !ok || !rs.Alive(pid) {
 		return pid, false
 	}
-	now, err := reapProcStart(pid)
+	now, err := rs.ProcStart(pid)
 	if err != nil || strings.TrimSpace(now) == "" || start == "-" {
 		return pid, true
 	}
