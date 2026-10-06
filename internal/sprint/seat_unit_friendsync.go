@@ -1,16 +1,13 @@
 package sprint
 
 import (
-	"bytes"
-	"encoding/xml"
 	"errors"
-	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
 // friend sync install (docs/SPEC-SPRINT.md, "The friend sync loop as a service"; the
@@ -22,10 +19,10 @@ import (
 // each pass, so the unit names none. Its installer is SeatInstaller with its own file.
 
 // FriendSyncLabel is the friend sync loop's launchd label; its plist is FriendSyncLabel.plist.
-const FriendSyncLabel = "nova-sprint.friend-sync"
+const FriendSyncLabel = units.FriendSyncLabel
 
 // FriendSyncService is the friend sync loop's systemd user unit.
-const FriendSyncService = "nova-sprint-friend-sync.service"
+const FriendSyncService = units.FriendSyncService
 
 // FriendSyncEnv is the environment a friend sync unit carries as it was typed: the
 // names of the variables that hold the store's passwords and the bus's address and
@@ -107,60 +104,15 @@ func (u FriendSyncUnit) Text() (string, error) {
 	return launchdPlist(FriendSyncLabel, u.Args(), u.Env, u.Log), nil
 }
 
-// launchdPlist is a launchd agent kept alive that runs args with env, its lines to log.
+// launchdPlist is a launchd agent kept alive that runs args with env, its lines to log,
+// started again no sooner than every 10 s (internal/units).
 func launchdPlist(label string, args []string, env [][2]string, log string) string {
-	var b strings.Builder
-	str := func(indent, s string) {
-		b.WriteString(indent + "<string>")
-		// ignored: a strings.Builder never fails a write
-		_ = xml.EscapeText(&b, []byte(s))
-		b.WriteString("</string>\n")
-	}
-	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-`)
-	str("\t", label)
-	b.WriteString("\t<key>ProgramArguments</key>\n\t<array>\n")
-	for _, a := range args {
-		str("\t\t", a)
-	}
-	b.WriteString("\t</array>\n")
-	if len(env) > 0 {
-		b.WriteString("\t<key>EnvironmentVariables</key>\n\t<dict>\n")
-		for _, kv := range env {
-			b.WriteString("\t\t<key>" + kv[0] + "</key>\n")
-			str("\t\t", kv[1])
-		}
-		b.WriteString("\t</dict>\n")
-	}
-	b.WriteString("\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>ThrottleInterval</key>\n\t<integer>10</integer>\n")
-	if log != "" {
-		b.WriteString("\t<key>Standard" + "OutPath</key>\n")
-		str("\t", log)
-		b.WriteString("\t<key>Standard" + "ErrorPath</key>\n")
-		str("\t", log)
-	}
-	b.WriteString("</dict>\n</plist>\n")
-	return b.String()
+	return units.LaunchdPlist(label, args, env, log, 10)
 }
 
-// systemdUnit is a systemd user unit restarted always that runs args with env.
+// systemdUnit is a systemd user unit restarted always, 10 s apart, that runs args with env.
 func systemdUnit(description string, args []string, env [][2]string) string {
-	var words []string
-	for _, a := range args {
-		words = append(words, sdQuote(a))
-	}
-	var b strings.Builder
-	b.WriteString("[Unit]\nDescription=" + description + "\n\n[Service]\n")
-	b.WriteString("ExecStart=" + strings.Join(words, " ") + "\n")
-	for _, kv := range env {
-		b.WriteString("Environment=" + sdQuote(kv[0]+"="+kv[1]) + "\n")
-	}
-	b.WriteString("Restart=always\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n")
-	return b.String()
+	return units.SystemdUnit(description, args, env, 10)
 }
 
 // InstallFriendSync writes the friend sync loop's unit into the installer's directory
@@ -171,28 +123,7 @@ func (in SeatInstaller) InstallFriendSync(u FriendSyncUnit) (SeatResult, error) 
 	if err != nil {
 		return SeatResult{}, err
 	}
-	r := SeatResult{Path: filepath.Join(in.Dir, FriendSyncUnitFile(u.OS))}
-	old, err := os.ReadFile(r.Path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return r, err
-	}
-	if !bytes.Equal(old, []byte(text)) {
-		if err := os.MkdirAll(in.Dir, 0o755); err != nil {
-			return r, err
-		}
-		tmp := r.Path + ".tmp"
-		if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
-			return r, err
-		}
-		if err := os.Rename(tmp, r.Path); err != nil {
-			return r, err
-		}
-		r.Changed = true
-	}
-	if err := in.Load(r.Path); err != nil {
-		return r, fmt.Errorf("the unit is written at %s and did not load: %w", r.Path, err)
-	}
-	return r, nil
+	return in.writeUnit(filepath.Join(in.Dir, FriendSyncUnitFile(u.OS)), text)
 }
 
 // UninstallFriendSync unloads the friend sync loop's unit and removes its file; with
@@ -202,18 +133,5 @@ func (in SeatInstaller) UninstallFriendSync(goos string) (SeatResult, error) {
 	if name == "" {
 		return SeatResult{}, errors.New("friend sync uninstall removes a launchd agent (macOS) or a systemd user unit (Linux), and " + orDash(goos) + " has neither")
 	}
-	r := SeatResult{Path: filepath.Join(in.Dir, name)}
-	if _, err := os.Stat(r.Path); errors.Is(err, fs.ErrNotExist) {
-		return r, nil
-	} else if err != nil {
-		return r, err
-	}
-	if err := in.Unload(r.Path); err != nil {
-		return r, fmt.Errorf("the unit at %s did not unload, and is kept: %w", r.Path, err)
-	}
-	if err := os.Remove(r.Path); err != nil {
-		return r, err
-	}
-	r.Changed = true
-	return r, nil
+	return in.removeUnit(filepath.Join(in.Dir, name))
 }
