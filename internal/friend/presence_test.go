@@ -86,7 +86,8 @@ func (r *presenceRig) present(t *testing.T) (bool, string) {
 // with a fresh nonce through the adapter; the daemon's own pong, a pong the
 // daemon writes, another friend's pong and a wrong nonce all leave it down;
 // five minutes without the session's answer is down "no session answer", and
-// no beat goes to the sprint server; the session's answer brings it up; ten
+// the beat still goes to the sprint server, carrying no session evidence; the
+// session's answer brings it up, and the beat carries when; ten
 // minutes with no bus message from the session asks again with a new nonce,
 // and the old nonce is no answer to it; a message the session writes brings
 // it up as an answer does (docs/SPEC-FRIEND.md, presence).
@@ -101,7 +102,8 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason := r.present(t)
 	assert.False(t, up, "a daemon that started proves nothing about the session")
 	assert.Equal(t, NotYetAnswered, reason)
-	assert.Equal(t, 0, r.beats, "no beat to the sprint server before the session answers")
+	assert.Equal(t, 1, r.beats, "the beat goes before the session answers: it is the daemon's liveness")
+	assert.True(t, r.sc.Evidence().IsZero(), "and carries no session evidence")
 
 	r.send(t, r.daemon, "bob", DaemonPongSubject, "daemon-pong n1\n")
 	r.send(t, r.daemon, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
@@ -115,8 +117,9 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason = r.present(t)
 	assert.False(t, up)
 	assert.Equal(t, NoSessionAnswer, reason, "five minutes with no session answer")
-	assert.Error(t, r.beat(ctx), "the beat is held back while the session is down")
-	assert.Equal(t, 0, r.beats)
+	assert.NoError(t, r.beat(ctx), "the beat is never held back for the session")
+	assert.Equal(t, 4, r.beats)
+	assert.True(t, r.sc.Evidence().IsZero(), "the beats carry no session evidence: the sprint reads the session deaf")
 	assert.Len(t, r.app.got(), 1, "one check per nonce")
 
 	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
@@ -124,7 +127,8 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason = r.present(t)
 	assert.True(t, up, "the session's answer to the nonce brings it back up")
 	assert.Empty(t, reason)
-	assert.Equal(t, 1, r.beats, "and the beat flows again")
+	assert.Equal(t, 5, r.beats, "the beat went every step")
+	assert.Equal(t, r.now, r.sc.Evidence(), "and now carries the session's answer")
 
 	for range 5 { // a session that talks on the bus needs no check
 		r.send(t, r.direct, "bob", "status", "working on it\n")

@@ -424,3 +424,6 @@ MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	
 MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
+MCPresence.cfg	MCPresence.tla	pass	-	ignore-terminal	presence	required	-
+MCPresenceBrokenHeldBeat.cfg	MCPresence.tla	invariant	BeatFresh	ignore-terminal	presence	required	-
+MCPresenceBrokenBeatUp.cfg	MCPresence.tla	invariant	UpHasSessionEvidence	ignore-terminal	presence	required	-

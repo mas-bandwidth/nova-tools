@@ -133,17 +133,38 @@ machine's load, `--working <n>`, `--queue <n>`, `--width <n>` and `--load
 the next beat and carried on `where --json`'s `friends` beside the table's
 counts, which stay the sprint's (her row's cards) and her width the roster's; a
 value of the wrong shape is refused, exit 2; a friend not in the record is
-refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). Her status is the friends' rule (`sprint.FriendStatus`):
-`held` while the coordinator holds her (`hold <friend> --reason <text>`,
-section 11, and `friend down`; `unhold <friend>` and `friend up` release the
-hold), whatever she beats or the coordinator observes; else `up` only on
-evidence from her own session (docs/SPEC-FRIEND.md, "Presence is her
-session's evidence"): a wake ping her session answered (`friend health --state
-up`, below) under `FriendPongWindow` (10 minutes) old, or a card of hers
-finished under `FriendFinishWindow` (30 minutes) old; else `down` (`friend
-down` holds her and shows `held`, never `down`). Her beat is recorded and
-never evidence, whoever sends it; `where --json` names the evidence and its
-age (`friends[].evidence`). `friend up` is no evidence: a friend released with
+refused, exit 1; a beat is never refused for want of a session proof;
+`TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). Her status is the friends' rule,
+below.
+
+**Friend presence: the up rule** (`sprint.FriendStatus`, `sprint.FriendEvidence`, in
+internal/sprint/presence.go, the one place it is written; every other reader of a
+friend's status, the table, `where`, the deal and a take, calls it). A friend is:
+
+- `held` while the coordinator holds her (`hold <friend> --reason <text>`, section 11,
+  and `friend down`; `unhold <friend>` and `friend up` release the hold), whatever she
+  beats or the coordinator observes;
+- else `down` while her last beat says so (`friend beat --until --reason`: her harness
+  at its limit; a beat can say down, never up alone);
+- else `up` when both facts hold, and `down` when either is missing:
+  - **her daemon beats** (`sprint.FriendDaemon`): her last beat is at most
+    `FriendBeatLive` (10 seconds) old. Her daemon beats every second, unconditionally,
+    while it runs (docs/SPEC-FRIEND.md, "The beat"; the owner, 2026-10-06: "All friends
+    should have beats!!!");
+  - **her session has given evidence within its window** (`sprint.FriendSessionHeard`;
+    docs/SPEC-FRIEND.md, "Presence is her session's evidence"): a wake ping her session
+    answered (`friend health --state up`, below) under `FriendPongWindow` (10 minutes)
+    old, or a card of hers finished under `FriendFinishWindow` (30 minutes) old.
+
+The beat alone is never up, whoever sends it, and the session proof it carries
+(`--pong`) is shown and never evidence; session evidence with no daemon beating is
+never up either (a session with no daemon is delivered nothing). `friend down` holds
+her and shows `held`, never `down`. `where --json` names both facts and their ages
+(`friends[].evidence`): `daemon up, session pong 3m0s ago`; down, which is missing,
+`daemon up, session deaf 14m0s: no wake ping answered by her session within 10m0s, no
+card finished within 30m0s` or `daemon not beating (last beat 2m0s ago), session pong
+1m0s ago`. `TestFriendEvidenceRule`, `TestFriendIsUpOnlyOnEvidenceFromHerSession`; the
+model is `tla/Presence.tla` (`UpIsBothFacts`, `BeatFresh`). `friend up` is no evidence: a friend released with
 none in its window is `down` until her session gives some. `friend up
 <friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
 sets a machine's, until `friend sync` sets her nova-config row's again (a
@@ -285,8 +306,10 @@ minutes) old (docs/SPEC-FRIEND.md, "Presence is her session's evidence"),
 under any other generation (an old seat's proof never looks up under
 a new seat, and no fallback to her beat once observed), and for every finer
 word the row keeps (`asleep` is the daemon's, shown as `down`). The first
-valid observation makes her `up` at once. Her own `friend beat` stays what it
-is, the friend's own beat, and it decides nothing, observed or not. No observation holds a friend: `held` is `friend
+valid observation gives her the session's half of up at once (she is `up` when her
+daemon beats too, "Friend presence: the up rule" above). Her own `friend beat` stays
+what it is, her daemon's liveness: it decides the daemon's half and never the
+session's, observed or not. No observation holds a friend: `held` is `friend
 down` by the seat alone, lifted by `friend up`. The model is
 `tla/SeatHealth.tla` (six reversed witnesses); the tests
 `TestAProofDatedAfterTheServersClockIsRefused`,
@@ -1056,10 +1079,11 @@ showed both friends up; `sprint.takeSeat`, `sprint.FriendDownWhy`). A friend's
 fleet row has no control card status: only a machine's has one, written by the
 tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
 (`take --as friend.<f>`, her own or her daemon's through the server) is
-admitted by `FriendStatus`, the friends table's word: up only on evidence from
-her own session (a wake ping her session answered within `FriendPongWindow`, or
-a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
-"Presence is her session's evidence"), never on her beat. `TakeStep` reads the friends' seats when it names a friend's row.
+admitted by `FriendStatus`, the friends table's word ("Friend presence: the up
+rule", section 1): up only while her daemon beats and her own session has given
+evidence (a wake ping her session answered within `FriendPongWindow`, or a card
+of hers finished within `FriendFinishWindow`), never on her beat alone; a refusal
+names which of the two is missing. `TakeStep` reads the friends' seats when it names a friend's row.
 Her take is held to her width (1 in one-shot mode), as a machine's is to its
 own. It is refused only when she is not up, and the refusal names why: "friend
 <f> is held: held by the coordinator (friend down)[: <reason>]", "friend <f>
@@ -3672,7 +3696,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | friend delivery | the friend's daemon into her session | delivery into a session | each batch as one turn; the tmux adapter looks at the pane every TmuxPoll (500 ms) until its prompt is free | the pane has no idle event; the wait is for the pane, never for a message |
 | friend card reconcile | sprint to the friend's daemon (the cards she holds) | timer poll | Held asked once an InboxEvery (1 s), on the daemon's step | card friend-cards-pushed-on-the-bus |
 | friend reader ask | sprint to the friend's reader row (reader-<friend>; a bud's reader is this row) | timer poll | queue --as reader-<friend> once a ReadAskEvery (10 s) | card friend-reads-pushed-on-the-bus |
-| friend beat | the friend's daemon to the sprint | beat | BeatEvery (1 s) | liveness is the beat's absence (FriendBeatEvery; down after fifteen without one) |
+| friend beat | the friend's daemon to the sprint | beat | BeatEvery (1 s), unconditionally while the daemon runs | the daemon's liveness is the beat's absence (FriendBeatEvery; not beating after FriendBeatLive, 10 s, without one); her session's is its evidence, a separate fact ("Friend presence: the up rule") |
 | member pass | sprint server to a fleet member and a reader (queue, take, report) | timer poll | --every 3 s (at most 5 s); woken at once by its own push's end, a child's exit or SIGTERM | card member-waits-on-the-servers-bus-message |
 | member beat | the member to the sprint | beat | --every 3 s, apart from the pass | liveness is the beat's absence; BeatStall stops it when the pass stalls |
 | coordinator inbox push, through the server | sprint to the coordinator's inbox (inbox --wait --push) | timer poll | log --json every tickEndPoll (1 s), the inbox read on each new tick-end, at most waitLook (15 s) between reads | card inbox-wait-blocks-on-the-server |

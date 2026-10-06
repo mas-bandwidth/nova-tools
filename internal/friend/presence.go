@@ -146,11 +146,12 @@ func ReadPresence(stateDir string) (s PresenceStatus, found bool, err error) {
 }
 
 // SessionCheck is the daemon's side of presence: it reads the bus log for the
-// session's messages, steps the Presence, puts the check into the session
+// session's messages, steps the Presence, and puts the check into the session
 // through the adapter (Gate) or, for a harness with no deliver command, on
-// the friend's own stream, and holds the beat back while the session is down
-// (Beat). The daemon's own sends go through DaemonStore, so a message the
-// daemon wrote never passes for the session's.
+// the friend's own stream. The beat never waits on it (Beat): the session's
+// evidence rides on the beat as a fact of its own (Evidence). The daemon's own
+// sends go through DaemonStore, so a message the daemon wrote never passes for
+// the session's.
 type SessionCheck struct {
 	Friend string
 	Store  bus.Store // the store itself; the daemon is handed DaemonStore
@@ -246,15 +247,29 @@ func (s *SessionCheck) Present() (bool, string) {
 	return s.m.Up, s.m.Reason
 }
 
-// Beat is beat held back while the session is down: the sprint server's
-// friend is up only while her session answers. Each call steps the check
-// first.
+// Evidence is the session's last evidence: its last bus message or its last
+// answer to a check, zero while it has given none. It goes on every beat (friend
+// beat --pong), and its age is what the sprint reads a deaf session by.
+func (s *SessionCheck) Evidence() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m == nil {
+		return time.Time{}
+	}
+	return s.m.LastHeard
+}
+
+// Beat is beat with the check stepped first, and sent whatever the session
+// says (every-friend-daemon-beats-every-second, 2026-10-06): the beat is the
+// daemon's liveness and nothing else, so a session that has not answered, or
+// is past its bound, still has a daemon beating for it, and her row says the
+// session is deaf rather than that nothing is there. Whether she is up is the
+// sprint's rule over both facts (docs/SPEC-SPRINT.md, friend presence). The
+// model is tla/Presence.tla (BeatFresh; its witness MCPresenceBrokenHeldBeat is
+// the hold this replaced).
 func (s *SessionCheck) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		s.Step(ctx)
-		if up, reason := s.Present(); !up {
-			return fmt.Errorf("not beating: the session is down (%s); the daemon answering is not the session", reason)
-		}
 		return beat(ctx)
 	}
 }

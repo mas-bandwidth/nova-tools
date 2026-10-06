@@ -92,7 +92,8 @@ func TestFirstProofIsUpAndTenSecondsWithoutOneIsDown(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2}})
 	require.NoError(t, err)
-	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "never observed, never beaten")
+	h.daemon("amy") // her daemon beats every step: the half of up these tests do not vary
+	assert.Equal(t, sprint.Down, h.friendStatus("amy"), "never observed: her daemon beating alone is not up")
 
 	rec, status, replayed, err := h.health("amy", "tester", sprint.Up, h.now, 1)
 	require.NoError(t, err)
@@ -121,6 +122,7 @@ func TestAProofDatedAfterTheServersClockIsRefused(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2}})
 	require.NoError(t, err)
+	h.daemon("amy") // her daemon beats every step: the half of up these tests do not vary
 	_, _, _, err = h.health("amy", "tester", sprint.Up, h.now.Add(time.Hour), 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "after the server's clock")
@@ -147,6 +149,7 @@ func TestHealthReplayOrderBeatAndHold(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2}})
 	require.NoError(t, err)
+	h.daemon("amy") // her daemon beats every step: the half of up these tests do not vary
 	seen := h.now
 	_, _, _, err = h.health("amy", "tester", sprint.Up, seen, 1)
 	require.NoError(t, err)
@@ -211,6 +214,7 @@ func TestHealthIsFencedBySeatHolderAndGeneration(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2}})
 	require.NoError(t, err)
+	h.daemon("amy") // her daemon beats every step: the half of up these tests do not vary
 	_, _, _, err = h.health("amy", "tester", sprint.Up, h.now, 1)
 	require.NoError(t, err)
 
