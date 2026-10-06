@@ -217,6 +217,8 @@ type lane struct {
 	openFrom time.Time // when the open under way started
 	card     *Card
 	attempts int
+	tier     string        // the card's tier as her row said it when the lane took it
+	cap      time.Duration // the card's wall cap by its tier (lane_cap.go)
 	t        *turn
 }
 
@@ -423,6 +425,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue // messages wait: they ride only with a card
 			}
 			ln.card, ln.attempts = &c, 0
+			ln.tier = d.cardTier(c)
+			ln.cap = d.laneCap(ln.tier)
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
 		}
@@ -487,7 +491,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	var rate RateLimited
 	var funds OutOfFunds
 	var usage UsageLimited
-	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage)) && !t.stopped
+	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage)) && !t.stopped && !t.capped
 	if limited && exists(ln.card.Result()) {
 		r.err, limited = nil, false // the card is done: the words were the card's, not the provider's answer
 	}
@@ -495,16 +499,19 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		l.limitedTurn(r, now)
 		return
 	}
-	if !t.stopped {
+	if !t.stopped && !t.capped {
 		s.gov.Clean(now)
 	}
-	ok := r.err == nil && r.turn.Exit == 0 && !t.stopped
+	ok := r.err == nil && r.turn.Exit == 0 && !t.stopped && !t.capped
 	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", at, ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	if r.err != nil {
 		line += fmt.Sprintf(" error=%q", r.err.Error())
 	}
 	if t.stopped {
 		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
+	}
+	if t.capped {
+		line += fmt.Sprintf(" capped=%q", ln.cap.String()+" tier "+dash(ln.tier))
 	}
 	if r.turn.Rejected != "" {
 		line += fmt.Sprintf(" rejected=%q", r.turn.Rejected)
@@ -529,6 +536,20 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		line += " card=done " + l.endCard(ln.n, card, end, now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
+		return
+	}
+	// the card's wall at or past its cap, the turn ended by the cap or by itself: the card
+	// ends now, a HOLD naming the cap, never handed again in the lane (lane_cap.go)
+	if wall := now.Sub(end.Started); ln.cap > 0 && !end.Started.IsZero() && (t.capped || wall >= ln.cap) {
+		end.Capped, end.Tier, end.Overrun, end.Tail = ln.cap, ln.tier, wall-ln.cap, LastLines(t.tail.String(), CapTailLines)
+		end.Cap = ""
+		ln.attempts++
+		job := filepath.Base(card.Outbox)
+		d.Record(line + fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)) + l.endCard(ln.n, card, end, now))
+		s.given[job] = true
+		s.state.GivenUp = append(s.state.GivenUp, job)
+		l.saveLanes(now)
+		ln.card, ln.attempts = nil, 0
 		return
 	}
 	ln.attempts++

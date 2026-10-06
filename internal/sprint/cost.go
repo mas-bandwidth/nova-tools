@@ -187,12 +187,19 @@ type Consumer struct {
 	At      string         `json:"at"`  // when it ended
 	Key     string         `json:"key"` // the card and its run: one record per key, set once
 	Usage   cardcost.Usage `json:"usage"`
+	// Cap and Overrun are a capped take's lane cap and its wall past it (lane_cap.go), ""
+	// for a take no cap ended.
+	Cap     string `json:"cap,omitempty"`
+	Overrun string `json:"overrun,omitempty"`
 }
 
 // line is the record as the primary keeps it: the consumer's words, then its usage.
 func (c Consumer) line() string {
 	w := []string{"kind=" + c.Kind, "card=" + c.Card, "attempt=" + itoa(c.Attempt), "take=" + itoa(c.Take), "gen=" + itoa(c.Gen),
 		"who=" + orDash(c.Who), "on_route=" + orDash(c.Route), "on_model=" + orDash(c.Model), "on_tier=" + orDash(c.Tier), "end=" + orDash(strings.ReplaceAll(c.End, " ", "-")), "at=" + orDash(c.At)}
+	if c.Cap != "" {
+		w = append(w, "lane_cap="+c.Cap, "lane_overrun="+orDash(c.Overrun))
+	}
 	return strings.Join(w, " ") + " " + c.Usage.String()
 }
 
@@ -231,6 +238,10 @@ func parseConsumer(key, line string) Consumer {
 			c.End = strings.ReplaceAll(undash(v), "-", " ")
 		case "at":
 			c.At = undash(v)
+		case "lane_cap":
+			c.Cap = undash(v)
+		case "lane_overrun":
+			c.Overrun = undash(v)
 		default:
 			rest = append(rest, w)
 		}

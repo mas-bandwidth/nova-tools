@@ -2,6 +2,7 @@ package friend
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
@@ -45,6 +46,13 @@ type LaneEnd struct {
 	Restart  time.Time     // not zero: the run was found gone by a daemon starting up at this time
 	Started  time.Time     // when the lane began the card
 	NoReport bool          // the run wrote RESULT.md and no REPORT.md
+	// Capped is the card's wall cap by its tier when the lane ended the card at it
+	// (lane_cap.go), Tier that tier, Overrun the card's wall past the cap at its end, and
+	// Tail the last CapTailLines lines of the lane's output.
+	Capped  time.Duration
+	Tier    string
+	Overrun time.Duration
+	Tail    string
 }
 
 // How is the run's end on one line: the restart that found it gone, else the cap, the
@@ -56,6 +64,8 @@ func (e LaneEnd) How() string {
 		fmt.Fprintf(&b, "the run is gone: the lane daemon started up at %s and found the card begun at %s with no REPORT.md (the daemon that ran it exited, was killed or crashed)",
 			e.Restart.UTC().Format(time.RFC3339), e.Started.UTC().Format(time.RFC3339))
 		return b.String()
+	case e.Capped > 0:
+		fmt.Fprintf(&b, "%s: the card's wall reached its tier's cap and the daemon ended the lane, exit %d", CappedWords(e.Capped, e.Tier, e.Overrun), e.Exit)
 	case e.Cap != "":
 		fmt.Fprintf(&b, "the run was stopped at the cap (%s), exit %d", e.Cap, e.Exit)
 	case e.Rejected != "":
@@ -77,11 +87,16 @@ func (e LaneEnd) How() string {
 // EndReport is the REPORT.md a lane writes for a card whose run ended without one: HOLD
 // with the pushed head when the friend's branch has one (friend sync keeps a HOLD's head
 // when it is origin's tip), else FAIL; one paragraph naming the lane, how the run ended and
-// the head.
+// the head. A card the lane ended at its cap is a HOLD, head or none, and its report quotes
+// the last lines of the lane's output after the paragraph, each indented four spaces
+// (lane_cap.go).
 func EndReport(friend string, lane int, c Card, end LaneEnd, head, branch string) string {
 	verdict, pushed := "FAIL", "no pushed head found"
 	if head != "" {
 		verdict, pushed = "HOLD", "pushed head "+head+" on "+branch
+	}
+	if end.Capped > 0 {
+		verdict = "HOLD"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Verdict: %s\n", verdict)
@@ -89,6 +104,13 @@ func EndReport(friend string, lane int, c Card, end LaneEnd, head, branch string
 		fmt.Fprintf(&b, "Head: %s\n", head)
 	}
 	fmt.Fprintf(&b, "\nnova-friend lane %d of %s finished card %s: %s; %s.\n", lane, friend, c.ID, oneLine(end.How(), 600), pushed)
+	if end.Capped > 0 {
+		fmt.Fprintf(&b, "\nThe last %d lines of the lane's output:\n\n", CapTailLines)
+		tail := cmp.Or(end.Tail, "(the lane printed nothing)")
+		for l := range strings.SplitSeq(tail, "\n") {
+			b.WriteString("    " + l + "\n")
+		}
+	}
 	return b.String()
 }
 

@@ -1776,6 +1776,22 @@ and it is the coordinator's decision, receipted.
   (`tier=<t> ceiling=<t>`; `--json` `tier`, `ceiling`). One function decides
   the next tier for every bound that escalates (`Snapshot.NextTier`,
   `internal/sprint/route.go`): the take bound and the attempt bound.
+  **A capped lane** (a-lane-is-capped-by-its-tier.w1; docs/SPEC-FRIEND.md). A
+  friend's lane whose card reached its tier's wall cap is ended by her daemon,
+  whose failed finish names `capped at <cap> (tier <t>, overrun <d>)`
+  (`ParseLaneCap`, `internal/sprint/lane_cap.go`). The first such finish of a
+  primary is no failure: its work card goes done failed with `lane_cap` and
+  `lane_overrun` on it, and the primary goes back to ready on the next tier up
+  (`capLadder`: flash, pro, heavy, frontier; its ceiling does not stop it, for
+  the cap is the evidence the tier was too small), `tier_now` that tier, `why`
+  `capped at <cap> on <t> (overrun <d>): re-dealt once at the next tier up,
+  <next>`, `cap_redealt` `<t> -> <next>`, its `failed` count untouched; the
+  tick's deal cuts its next attempt on that tier, and the friend takes her next
+  card in the same step. A second cap (`cap_redealt` set), a card at the top
+  of the ladder, or one whose tier is pinned is failed work as any other. Either
+  way the take's record on the primary (`cost_record:<card>#g<gen>`) ends
+  `capped` and carries `lane_cap=<cap> lane_overrun=<d>`
+  (`TestACappedLaneIsReDealtOnceAtTheNextTierUp`).
   **The grade** (nova-decide's layer 2; the owner, 2026-10-02, the agreed plan:
   "convergence grade and route choice before the deal"; docs/SPEC-NOVA-DECIDE.md
   section 11). Before a card's first deal the server's decide lane (`run

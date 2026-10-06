@@ -132,6 +132,10 @@ type Daemon struct {
 	// beat): the fraction of each subscription window the lanes may spend, read
 	// every step; nil, or out of (0, 1], is DefaultPacing (pacing.go).
 	Pacing func() float64
+	// LaneCaps is the row's wall cap of a lane's card by its tier as the daemon last read
+	// it (ParseLaneCaps off its beat), read every step; nil, or a tier it names none for,
+	// is DefaultLaneCaps (lane_cap.go).
+	LaneCaps func() map[string]time.Duration
 	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,
 	// WriteLanes over the state files); nil keeps it in memory only.
 	LoadLanes func() (LaneState, error)
@@ -210,6 +214,8 @@ type turn struct {
 	seenN    int64
 	lastOut  time.Time // when the daemon last saw the turn print, or its start
 	stopped  bool      // the daemon stopped it: silent past SilentStop
+	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
+	tail     *outputTail
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 }
@@ -356,6 +362,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		for _, t := range l.turns() {
 			l.watch(t, now)
 		}
+		l.capWatch(now)
 		l.stampProgress(now)
 		select {
 		case r := <-l.results:
@@ -708,7 +715,9 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	tctx, cancel := context.WithCancel(l.ctx)
 	seen := &atomic.Int64{}
 	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
-	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
+	tail := &outputTail{}
+	tctx = WithOutputTail(tctx, tail.add)
+	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped, t.capped, t.tail = now, true, cancel, seen, 0, now, false, false, tail
 	switch f := deliver.(type) {
 	case func(context.Context) result:
 		go func() { r := f(tctx); cancel(); l.results <- r; l.turnEnded() }()
@@ -752,7 +761,7 @@ func (l *loop) watch(t *turn, now time.Time) {
 	if n := t.seen.Load(); n != t.seenN {
 		t.seenN, t.lastOut = n, now
 	}
-	if !t.stopped && now.Sub(t.lastOut) >= l.silentStop {
+	if !t.stopped && !t.capped && now.Sub(t.lastOut) >= l.silentStop {
 		t.stopped = true
 		t.cancel()
 		l.d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
