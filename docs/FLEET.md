@@ -131,10 +131,10 @@ The public page is served from files on one fleet machine: Caddy's `file_server`
 serves `/var/www/sprint/site` with no reverse proxy, and one puller refreshes those files
 from the dashboard server about once a second, so the number of viewers never reaches that
 server. Whether the page holds a front-page load (2,000 requests per second for ten minutes
-from a distant bench machine, p99 under 200 ms, zero errors, the dashboard server seeing
-only the puller) is v1.0.0's acceptance record
-[acceptance/v1.0.0/public-dashboard-load.md](acceptance/v1.0.0/public-dashboard-load.md),
-with the raw numbers.
+from a distant bench machine with zero errors, the server's own p99 under 50 ms, the dashboard
+server seeing only the puller, the far vantage's p99 recorded beside it) is v1.0.0's acceptance
+record [acceptance/v1.0.0/public-dashboard-load.md](acceptance/v1.0.0/public-dashboard-load.md),
+with the raw numbers and the kernel settings it was measured under.
 
 A friend's working directory, how her jobs arrive and are reported, and how
 their clones are removed once done, is docs/FRIENDS.md. The friends are

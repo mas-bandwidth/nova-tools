@@ -24,10 +24,14 @@ import (
 //   - Raw holds at least one non-empty fenced block: the tool's own output.
 //
 // The v1.0.0 records the release requires are named in acceptanceRequired, so
-// a record that was never written is red here rather than missing quietly.
+// a record that was never written is red here rather than missing quietly. A
+// required record may name fields of its own, beyond the common ones: the
+// public-dashboard load is gated on the server's latency, and the far
+// vantage's latency is recorded beside it, with the kernel settings in force,
+// because a 166 ms path decides the far number and the server does not.
 
-var acceptanceRequired = map[string][]string{
-	"v1.0.0": {"public-dashboard-load.md"},
+var acceptanceRequired = map[string]map[string][]string{
+	"v1.0.0": {"public-dashboard-load.md": {"Server latency", "Far latency", "Kernel"}},
 }
 
 var (
@@ -41,10 +45,14 @@ func TestAcceptanceRecordsAreWellFormed(t *testing.T) {
 	t.Parallel()
 
 	root := filepath.Join(repoRoot(t), "docs", "acceptance")
-	for release, names := range acceptanceRequired {
-		for _, name := range names {
-			_, err := os.Stat(filepath.Join(root, release, name))
+	for release, records := range acceptanceRequired {
+		for name, fields := range records {
+			data, err := os.ReadFile(filepath.Join(root, release, name))
 			require.NoError(t, err, "%s requires the acceptance record %s", release, name)
+			got := acceptanceRecordFields(string(data))
+			for _, field := range fields {
+				assert.NotEmpty(t, got[field], "%s/%s carries the field %q", release, name, field)
+			}
 		}
 	}
 
@@ -72,15 +80,7 @@ func checkAcceptanceRecord(t *testing.T, release, text string) {
 	require.True(t, strings.HasPrefix(lines[0], prefix) && len(lines[0]) > len(prefix),
 		"line 1 is %q followed by the requirement, got %q", prefix, lines[0])
 
-	fields := map[string]string{}
-	for _, line := range lines[1:] {
-		if strings.HasPrefix(line, "## ") {
-			break
-		}
-		if m := acceptanceField.FindStringSubmatch(line); m != nil {
-			fields[m[1]] = strings.TrimSpace(m[2])
-		}
-	}
+	fields := acceptanceRecordFields(text)
 	for _, name := range acceptanceFields {
 		assert.NotEmpty(t, fields[name], "the field list carries %q", name)
 	}
@@ -121,4 +121,20 @@ func checkAcceptanceRecord(t *testing.T, release, text string) {
 		}
 	}
 	t.Fatalf("## Raw holds no closed, non-empty fenced block")
+}
+
+// acceptanceRecordFields reads the field list: every "- Name: value" line
+// before the first section.
+func acceptanceRecordFields(text string) map[string]string {
+	fields := map[string]string{}
+	lines := strings.Split(text, "\n")
+	for _, line := range lines[min(1, len(lines)):] {
+		if strings.HasPrefix(line, "## ") {
+			break
+		}
+		if m := acceptanceField.FindStringSubmatch(line); m != nil {
+			fields[m[1]] = strings.TrimSpace(m[2])
+		}
+	}
+	return fields
 }
