@@ -757,7 +757,7 @@ func TestTheExampleBusInTestdataIsWhatTheREADMESays(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	root := t.TempDir()
-	copyTree(t, filepath.Join("testdata", "example-bus"), root)
+	copyFS(t, filepath.Join("testdata", "example-bus"), root)
 	gitIn(t, root, "init", "--quiet", "-b", "main")
 	gitIn(t, root, "add", "-A")
 	gitIn(t, root, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "the bus")
@@ -800,26 +800,11 @@ func TestTheExampleBusInTestdataIsWhatTheREADMESays(t *testing.T) {
 	}
 }
 
-func copyTree(t *testing.T, from, to string) {
+// copyFS copies a tree using os.CopyFS (Go 1.23+).
+func copyFS(t *testing.T, from, to string) {
 	t.Helper()
-	err := filepath.WalkDir(from, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(from, path)
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(to, rel), 0o755)
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(filepath.Join(to, rel), raw, 0o644)
-	})
-	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(to, 0o755))
+	require.NoError(t, os.CopyFS(to, os.DirFS(from)))
 }
 
 // A reader's very first --advance with an EMPTY inbox. There is no OPEN file to commit,
