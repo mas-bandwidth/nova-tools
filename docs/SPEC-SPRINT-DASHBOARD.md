@@ -157,7 +157,7 @@ from the owner edits one line here and nothing else moves.
   the column; then the "n / width" figure right after the track. Gaps: Ready to track and track to figure equal and
   wide (double the first attempt, ~64 px); every column gutter ~56 px.
 - Cells: no steady pulse; a cell flashes once when it lights or unlights. No numeric column in Fleet ever flashes.
-- OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready and Done and OK% numbers, no cells.
+- OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready and Done and OK% numbers, no cells. OK% is landed-or-ok over attempts a worker actually ran to an end, excluding launch refusals, withdrawn attempts, coordinator take-backs, and provider failures.
 
 ## Friends (title "Friends"): same shape as Fleet without load (ready, working, done, ok%, status; headers lowercase); honest empty
   state until the JSON carries tables.friends.
