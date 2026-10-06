@@ -514,7 +514,9 @@ func mapInput(p string) bool { return p == diffcheck.CatalogFile || diffcheck.Ag
 // run regenerates the maps, and what it wrote is amended into the merge commit. note is the
 // card's note ("map regenerated ..."), "" when nothing changed. A run that fails, or writes
 // a file outside the map family and the catalog, is undone and leaves the merge as git made
-// it, for the tree gate to judge; env is a git failure that is not the card's.
+// it, for the tree gate to judge; env is a git failure that is not the card's, and a failure
+// after the catalog's fix or the run wrote (listing, staging or amending) undoes what was
+// written too, so the clone is left clean as the merge left it (restore).
 func (l *lander) remap(ctx context.Context, dir string, c landCard) (note, env string) {
 	i := slices.IndexFunc(l.ledgers(), func(f landLedger) bool { return f.owns("AGENTS.md") })
 	if i < 0 {
@@ -533,6 +535,11 @@ func (l *lander) remap(ctx context.Context, dir string, c landCard) (note, env s
 	if err != nil {
 		return "", "the clone's untracked files could not be listed: " + firstLine("", err)
 	}
+	// undo leaves the clone as the merge made it: the checkout reset, and what the
+	// regeneration added removed (restore); env, "" for a run the tree gate judges, is kept
+	undo := func(env string) (string, string) {
+		return "", l.restore(ctx, dir, strings.Split(known, "\x00"), env)
+	}
 	var dropped []string
 	if tip, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", "HEAD^1:"+diffcheck.CatalogFile); err == nil {
 		path := filepath.Join(dir, filepath.FromSlash(diffcheck.CatalogFile))
@@ -540,35 +547,32 @@ func (l *lander) remap(ctx context.Context, dir string, c landCard) (note, env s
 			var fixed []byte
 			if fixed, dropped = dropRepeatedRows(tip.Stdout, merged); len(dropped) > 0 {
 				if err := os.WriteFile(path, fixed, 0o644); err != nil {
-					return "", "the catalog " + diffcheck.CatalogFile + " could not be written: " + err.Error()
+					return undo("the catalog " + diffcheck.CatalogFile + " could not be written: " + err.Error())
 				}
 			}
 		}
 	}
-	undo := func() (string, string) {
-		return "", l.restore(ctx, dir, strings.Split(known, "\x00"), "")
-	}
 	if _, err := l.regen(ctx, dir, family.run); err != nil {
-		return undo()
+		return undo("")
 	}
 	status, err := l.git(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
-		return "", "what the map's regeneration changed could not be listed: " + firstLine("", err)
+		return undo("what the map's regeneration changed could not be listed: " + firstLine("", err))
 	}
 	written := updateWrote(status)
 	for _, p := range written {
 		if !family.owns(p) && p != diffcheck.CatalogFile {
-			return undo()
+			return undo("")
 		}
 	}
 	if len(written) == 0 {
 		return "", ""
 	}
 	if _, err := l.git(ctx, dir, append([]string{"add", "--"}, written...)...); err != nil {
-		return "", "the regenerated map could not be staged: " + firstLine("", err)
+		return undo("the regenerated map could not be staged: " + firstLine("", err))
 	}
 	if _, err := l.git(ctx, dir, "commit", "-q", "--amend", "--no-edit"); err != nil {
-		return "", "the merge of " + c.id + " could not be amended with its regenerated map: " + firstLine("", err)
+		return undo("the merge of " + c.id + " could not be amended with its regenerated map: " + firstLine("", err))
 	}
 	note = "map regenerated at the merge by " + family.tests + ": " + sprint.Preview(written, ", ")
 	if len(dropped) > 0 {

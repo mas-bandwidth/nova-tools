@@ -60,7 +60,9 @@ const NStreamPrioritySet = "stream priority set"
 const priorityLine = "PRIORITY:"
 
 // PriorityOfBrief is the level the brief's header line `PRIORITY: <level>` names, "" when its
-// header names none; why says a line that names no settable level.
+// header names none; why says a line that names no settable level, with the level found and
+// the six of the ladder (reader is a read card's alone). Add and Recut refuse a brief with why
+// set, so a misspelled level is never admitted at normal or the stream's default.
 func PriorityOfBrief(brief string) (level, why string) {
 	started := false
 	for _, l := range strings.Split(brief, "\n") {
@@ -78,7 +80,7 @@ func PriorityOfBrief(brief string) (level, why string) {
 		}
 		v := strings.ToLower(strings.TrimSpace(rest))
 		if !slices.Contains(PrioritySettable, v) {
-			return "", "PRIORITY: wants one of " + strings.Join(PrioritySettable, ", ") + "; found " + strings.TrimSpace(rest)
+			return "", "PRIORITY: wants one of " + strings.Join(PrioritySettable, ", ") + " (the ladder is " + strings.Join(PriorityLadder, ", ") + "; reader is a read card's alone, never set); found " + strings.TrimSpace(rest)
 		}
 		return v, ""
 	}
@@ -224,6 +226,7 @@ func (s *Snapshot) StreamPriority(stream string) string {
 // brief's PRIORITY line, else its stream's default (ctl, the stream's control card, nil for a
 // new stream) when it is not normal; "" leaves the card normal.
 func seedPriority(ctl *Card, brief string) string {
+	// a line that names no level is refused before this (Add), so why is never set here
 	if v, _ := PriorityOfBrief(brief); v != "" {
 		return v
 	}

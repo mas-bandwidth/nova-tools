@@ -27,17 +27,24 @@ const shardWallCap = 60.0
 // run, @<bench> (lower case) for a named machine.
 var shardWallSource = regexp.MustCompile(`^@(run[0-9]+|[a-z][a-z0-9-]*)$`)
 
+// shardWallRunner is the runner class that measured a row, from the run's job
+// that logged the package (self-hosted, macos-latest, ubuntu-latest), or - where
+// it is not known.
+var shardWallRunner = regexp.MustCompile(`^([a-z][a-z0-9.-]*|-)$`)
+
 // shardWallRow is one ledger row.
 type shardWallRow struct {
 	pkg     string
 	seconds float64
 	source  string
+	runner  string
 	line    int
 }
 
 // parseShardWalls reads the ledger's text into its rows, and a sentence for
 // each line that is not a row: the wrong number of fields, a wall that is not
-// a non-negative number, a source that names no run or bench, a package twice.
+// a non-negative number, a source that names no run or bench, a runner class
+// that is no label, a package twice.
 func parseShardWalls(text string) (rows []shardWallRow, problems []string) {
 	seen := map[string]int{}
 	for i, line := range strings.Split(text, "\n") {
@@ -46,8 +53,8 @@ func parseShardWalls(text string) (rows []shardWallRow, problems []string) {
 			continue
 		}
 		fields := strings.Split(line, "\t")
-		if len(fields) != 3 {
-			problems = append(problems, fmt.Sprintf("%s:%d has %d tab-separated fields, want three: package, seconds, @run<id> or @<bench>", shardWallsPath, n, len(fields)))
+		if len(fields) != 4 {
+			problems = append(problems, fmt.Sprintf("%s:%d has %d tab-separated fields, want four: package, seconds, @run<id> or @<bench>, runner class or -", shardWallsPath, n, len(fields)))
 			continue
 		}
 		secs, err := strconv.ParseFloat(fields[1], 64)
@@ -59,12 +66,16 @@ func parseShardWalls(text string) (rows []shardWallRow, problems []string) {
 			problems = append(problems, fmt.Sprintf("%s:%d: %q names no measurement, want @run<id> or @<bench>", shardWallsPath, n, fields[2]))
 			continue
 		}
+		if !shardWallRunner.MatchString(fields[3]) {
+			problems = append(problems, fmt.Sprintf("%s:%d: %q names no runner class, want the job's class (self-hosted, macos-latest) or -", shardWallsPath, n, fields[3]))
+			continue
+		}
 		if first, ok := seen[fields[0]]; ok {
 			problems = append(problems, fmt.Sprintf("%s:%d names %s again (first at line %d)", shardWallsPath, n, fields[0], first))
 			continue
 		}
 		seen[fields[0]] = n
-		rows = append(rows, shardWallRow{pkg: fields[0], seconds: secs, source: fields[2], line: n})
+		rows = append(rows, shardWallRow{pkg: fields[0], seconds: secs, source: fields[2], runner: fields[3], line: n})
 	}
 	return rows, problems
 }
@@ -167,12 +178,14 @@ func TestEveryCLPackageFitsItsShardWall(t *testing.T) {
 func TestTheShardWallRuleRefusesGrowthAndGaps(t *testing.T) {
 	t.Parallel()
 
-	rows, problems := parseShardWalls("# header\ncmd/a\t60.0\t@run123\ncmd/b\t61.2\t@local\ncmd/gone\t1.0\t@run9\ncmd/c\tfast\t@run1\ncmd/d\t1.0\tyesterday\ncmd/a\t1.0\t@run1\ncmd/e 1.0 @run1\n")
+	rows, problems := parseShardWalls("# header\ncmd/a\t60.0\t@run123\tself-hosted\ncmd/b\t61.2\t@local\t-\ncmd/gone\t1.0\t@run9\tmacos-latest\ncmd/c\tfast\t@run1\tself-hosted\ncmd/d\t1.0\tyesterday\tself-hosted\ncmd/a\t1.0\t@run1\tself-hosted\ncmd/e 1.0 @run1\ncmd/f\t1.0\t@run1\ncmd/g\t1.0\t@run1\tSelf Hosted\n")
 	require.Equal(t, []string{
 		shardWallsPath + `:5: "fast" is not a wall in seconds`,
 		shardWallsPath + `:6: "yesterday" names no measurement, want @run<id> or @<bench>`,
 		shardWallsPath + ":7 names cmd/a again (first at line 2)",
-		shardWallsPath + ":8 has 1 tab-separated fields, want three: package, seconds, @run<id> or @<bench>",
+		shardWallsPath + ":8 has 1 tab-separated fields, want four: package, seconds, @run<id> or @<bench>, runner class or -",
+		shardWallsPath + ":9 has 3 tab-separated fields, want four: package, seconds, @run<id> or @<bench>, runner class or -",
+		shardWallsPath + `:10: "Self Hosted" names no runner class, want the job's class (self-hosted, macos-latest) or -`,
 	}, problems)
 	got := shardWallProblems(rows, map[string]bool{"cmd/a": true, "cmd/b": true, "cmd/untested": false, "cmd/new": true})
 	require.Equal(t, []string{

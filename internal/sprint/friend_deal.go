@@ -207,6 +207,25 @@ func friendsLeft(wc *Card) []string {
 	return left
 }
 
+// friendsFor is the friends up (friendDealable) whose tiers hold the tier who may still be
+// dealt the primary c: never one its withdrawn attempt was withdrawn or taken back from
+// (withdrawnFrom), as the friends' deal places it (friendDealPass). None, while friends
+// alone serve the tier (tierServed), is a card no worker is left for: the tick's judgment
+// of the tier names it (TickDeal).
+func (s *Snapshot) friendsFor(c *Card, tier string) []FriendSeat {
+	var gone []string
+	if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+		gone = withdrawnFrom(wc)
+	}
+	var out []FriendSeat
+	for _, f := range s.Friends {
+		if friendDealable(s, f) && friendTakes(f, tier) && !slices.Contains(gone, f.Name) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // withdrawnFrom is the friends a withdrawn work card must never go back to: the friend
 // whose row it was withdrawn on, and the one the coordinator took it back from
 // (FieldTakenFrom), never the friends the level moved it off.

@@ -257,3 +257,52 @@ func TestTheLanderRegeneratesTheMapWhenStale(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(string(got), "run"), "the map is regenerated once, at the merge both sides changed it")
 	})
 }
+
+// A remap that fails after the map family wrote (its listing, its staging or its amend
+// into the merge commit) undoes what it wrote, as a failed run does: the clone is left as
+// the merge left it, clean, so a --repo-dir clone is not refused as dirty by the next land
+// (docs/SPEC-SPRINT.md section 7, the generated ledgers). Here a pre-commit hook refuses
+// the amend.
+func TestAFailedRemapLeavesTheCloneClean(t *testing.T) {
+	t.Parallel()
+	count := filepath.Join(t.TempDir(), "runs")
+	r := catalogRig(t, count)
+	r.a.ledgers[0].run = []string{"sh", "-c", fakeStrictMapRun(count)}
+	head := "package docs\n\nvar DefaultCatalog = []Entry{\n"
+	rows := purposeRow("internal/docs", "docs") + purposeRow("internal/x1", "x1") + purposeRow("internal/x2", "x2") + purposeRow("internal/x3", "x3")
+	mrows := []string{"internal/docs docs", "internal/x1 x1", "internal/x2 x2", "internal/x3 x3"}
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the spread catalog", map[string]string{"internal/docs/catalog.go": head + rows + "}\n", "AGENTS.md": mapRows(mrows...)})
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	dir := t.TempDir()
+	b1 := writeNeedsBrief(t, dir, "s1-1", "Fix s1-1. tier: flash\nPATHS: docs/dogfood/a.md", "")
+	b2 := writeNeedsBrief(t, dir, "s1-2", "Fix s1-2. tier: flash\nPATHS: docs/dogfood/b.md", "")
+	r.ok("add --stream s1 --brief-file " + b1 + " --brief-file " + b2)
+	cards := map[string][2]string{
+		"s1-1": {head + purposeRow("docs/dogfood", "first") + rows + "}\n", mapRows(append([]string{"docs/dogfood first"}, mrows...)...)},
+		"s1-2": {head + rows + purposeRow("docs/dogfood", "second") + "}\n", mapRows(append(mrows, "docs/dogfood second")...)},
+	}
+	heads := map[string]string{}
+	for id, f := range map[string]string{"s1-1": "a", "s1-2": "b"} {
+		heads[id] = r.card(id, map[string]string{
+			"docs/dogfood/" + f + ".md": "# " + f + "\n",
+			"internal/docs/catalog.go":  cards[id][0],
+			"AGENTS.md":                 cards[id][1],
+		})
+	}
+	r.queued(heads, "s1-1", "s1-2")
+	hook := filepath.Join(r.clone, ".git", "hooks", "pre-commit")
+	require.NoError(t, os.MkdirAll(filepath.Dir(hook), 0o755))
+	require.NoError(t, os.WriteFile(hook, []byte("#!/bin/sh\necho the amend is refused by the test >&2\nexit 1\n"), 0o755))
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	require.NotEqual(t, 0, code, out+errs)
+	assert.Contains(t, out+errs, "could not be amended with its regenerated map")
+	assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the clone is clean after the failed remap")
+
+	require.NoError(t, os.Remove(hook))
+	code, out, errs = r.do("land --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main", "the next land is not refused as dirty")
+	assert.Contains(t, out, "map regenerated")
+}
