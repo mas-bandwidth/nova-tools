@@ -787,6 +787,25 @@ or WAIT-PONG NONE at exit 1.`,
 				Run: w.waitPong,
 			},
 			{
+				Name:    "whoami",
+				Usage:   "whoami --as <me> --dir <d> [--state-dir <d>]",
+				Example: "", // it reads a live queue file; -h carries the usage
+				Effect:  tool.Inspection,
+				Detail: `Prints your nova-config friend row as friend sync last wrote it into your queue file
+(<dir>/inbox/QUEUE.json): WHOAMI friend= tiers= models=<tier>=<model>,... how=<lane|child|session> mode= width=
+lanes= children= child_model= dir= session=, then a WHOAMI WARN line for each tier you serve with no model
+and a WHOAMI REFUSED line for what your row asks of your harness that it cannot do. models is the answer to
+the one question you answer when you take a card: which model the child that runs it runs on (a lane is
+launched on it; a session runs it in a child on it, or on the session's model when your children cannot
+choose one). Run it at session start. WHOAMI NONE at exit 1 when the queue file carries no row yet.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name")
+					f.Required("dir", "your working directory, where the queue file lives")
+					stateDir(f)
+				},
+				Run: w.whoami,
+			},
+			{
 				Name:    "status",
 				Usage:   "status --as <me> --dir <d> [--state-dir <d>]",
 				Example: "status --as bob --dir ./bob",
@@ -1754,6 +1773,24 @@ func (w world) resume(c *tool.Call) *tool.Out {
 		return tool.Refuse("the pause marker cannot be removed: " + err.Error())
 	}
 	return tool.Done().Fact("cleared", "yes").Fact("pause", msg)
+}
+
+// whoami prints her row from her queue file (friend.WhoAmILines): her tiers, the model per
+// tier, her directory and her delivery session (the daemon's status file names it).
+func (w world) whoami(c *tool.Call) *tool.Out {
+	dir, name := c.Str("dir"), c.Str("as")
+	row, found, err := friend.ReadQueueRow(dir)
+	if err != nil {
+		return tool.Refuse("the queue file cannot be read: " + err.Error())
+	}
+	if !found {
+		return tool.Fail("the queue file in " + dir + " carries no row yet; friend sync writes it with your next card").As("NONE")
+	}
+	s, _, _ := friend.ReadStatus(w.stateDir(c, dir))
+	for _, l := range friend.WhoAmILines(name, dir, s.SessionID, row, s.Harness) {
+		fmt.Fprintln(c.Stdout, l)
+	}
+	return tool.Exit(0)
 }
 
 func (w world) status(c *tool.Call) *tool.Out {

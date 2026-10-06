@@ -231,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", FieldFriendModel, FieldFriendChildren, FieldFriendChildModel)
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -257,6 +257,10 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"mode":  str(d, 3),
 			// her claude lanes' CLAUDE_CONFIG_DIR, "" when unset
 			"config_dir": str(d, 4),
+			// her models and her harness's abilities, plain fields beside mode
+			FieldFriendModel:      str(d, 5),
+			FieldFriendChildren:   str(d, 6),
+			FieldFriendChildModel: str(d, 7),
 		}
 	}
 	return views, revValue(rev), nil
@@ -436,7 +440,13 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
 	writeConfigDir := prev == nil || prev["config_dir"] != row.Fields["config_dir"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeRoles {
+	var plain []string // her models and abilities: plain fields beside mode, each written when it differs
+	for _, k := range []string{FieldFriendModel, FieldFriendChildren, FieldFriendChildModel} {
+		if prev == nil || prev[k] != row.Fields[k] {
+			plain = append(plain, k)
+		}
+	}
+	if !writeWidth && !writeMode && !writeConfigDir && !writeRoles && len(plain) == 0 {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -449,6 +459,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writeConfigDir { // her claude lanes' CLAUDE_CONFIG_DIR, a plain field beside mode; "" when unset
 		pipe.HSet(ctx, "friend:"+f+":desired", "config_dir", row.Fields["config_dir"])
+	}
+	for _, k := range plain {
+		pipe.HSet(ctx, "friend:"+f+":desired", k, row.Fields[k])
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

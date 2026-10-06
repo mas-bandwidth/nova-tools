@@ -86,6 +86,9 @@ type FriendCheck struct {
 	Bus     BusFacts     `json:"bus"`
 	Work    WorkFacts    `json:"work"`
 	Verdict VerdictFacts `json:"verdict"`
+	// Models is her row's tiers and models against her harness, when her queue file
+	// carries her row (models.go); nil when it carries none.
+	Models *ModelFacts `json:"models,omitempty"`
 }
 
 // CheckSummary is the counts across all checked friends.
@@ -488,7 +491,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	// Verdict
 	vf := DecideVerdict(df, hf, bf, wf, shown, since)
 
-	return FriendCheck{
+	fc := FriendCheck{
 		Friend:  friendName,
 		Daemon:  df,
 		Harness: hf,
@@ -496,6 +499,47 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		Work:    wf,
 		Verdict: vf,
 	}
+	if dir != "" {
+		if row, found, _ := ReadQueueRow(dir); found {
+			fc.Models = CheckModels(friendName, row, harness)
+		}
+	}
+	return fc
+}
+
+// ModelFacts is the CHECK MODELS line: her tiers, the model per tier, how she runs a card on
+// it, her abilities and lanes, and what her harness cannot run.
+type ModelFacts struct {
+	Friend     string   `json:"friend"`
+	Tiers      string   `json:"tiers"`
+	Models     string   `json:"models"`
+	How        string   `json:"how"`
+	Children   string   `json:"children"`
+	ChildModel string   `json:"child_model"`
+	Lanes      int      `json:"lanes"`
+	Harness    string   `json:"harness"`
+	Warnings   []string `json:"warnings,omitempty"`
+	Refused    []string `json:"refused,omitempty"`
+}
+
+// CheckModels is her row's facts against her harness (ModelProblems).
+func CheckModels(friendName string, r QueueRow, harness string) *ModelFacts {
+	mf := &ModelFacts{Friend: friendName, Tiers: dash(strings.Join(r.Tiers, ",")), Models: r.ModelsWord(), How: r.How(),
+		Children: dash(r.Children), ChildModel: dash(r.ChildModel), Lanes: r.Lanes(), Harness: dash(harness)}
+	for _, p := range ModelProblems(r, harness) {
+		if p.Refuse {
+			mf.Refused = append(mf.Refused, p.Why)
+		} else {
+			mf.Warnings = append(mf.Warnings, p.Why)
+		}
+	}
+	return mf
+}
+
+// Line renders the CHECK MODELS line.
+func (mf ModelFacts) Line() string {
+	return fmt.Sprintf("CHECK MODELS friend=%s tiers=%s models=%s how=%s children=%s child_model=%s lanes=%d harness=%s warn=%s refused=%s",
+		mf.Friend, mf.Tiers, mf.Models, mf.How, mf.Children, mf.ChildModel, mf.Lanes, mf.Harness, QuoteWhy(strings.Join(mf.Warnings, "; ")), QuoteWhy(strings.Join(mf.Refused, "; ")))
 }
 
 // ComputeSummary aggregates verdicts across friends (docs/SPEC-FRIEND.md "Check": the summary).
@@ -594,13 +638,18 @@ func (vf VerdictFacts) Line() string {
 
 // Lines renders the five CHECK lines for one friend.
 func (fc FriendCheck) Lines() []string {
-	return []string{
+	lines := []string{
 		fc.Daemon.Line(),
 		fc.Harness.Line(),
 		fc.Bus.Line(),
 		fc.Work.Line(),
 		fc.Verdict.Line(),
 	}
+	if fc.Models != nil {
+		verdict := lines[4]
+		lines = append(lines[:4], fc.Models.Line(), verdict) // before the verdict, the last of her lines
+	}
+	return lines
 }
 
 // Line renders the CHECK OK summary line.

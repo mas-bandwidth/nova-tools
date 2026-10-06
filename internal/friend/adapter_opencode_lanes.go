@@ -205,14 +205,15 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 	return rows, nil
 }
 
-// DeliverTo is one card's turn in a lane's session: `opencode run --session
-// <id> <text>` in Dir, its output read for a refused permission, and its
+// DeliverTo is one card's turn in a lane's session: `opencode run [--model
+// <m>] --session <id> <text>` in Dir, the model the one ctx carries (WithModel: her
+// row's model for the card's tier), its output read for a refused permission, and its
 // tail for a rate limit or out of funds (ProviderLimit, whatever the exit:
 // the lanes heed it only when the card has no RESULT.md) before a provider's
 // refusal of the session.
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), modelArgs(ctx, "opencode", []string{"run", "--session", id, text}), "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}

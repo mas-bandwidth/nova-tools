@@ -131,7 +131,28 @@ normally do friend work."). It arrives as a job like any other:
 STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
 ```
 
-then the working-directory line below, a later attempt's start (the current tip
+then, when her nova-config row names a model for the card's tier, the tier line and what to
+run it on (docs/SPEC-FRIEND.md, a friend's models):
+
+```
+tier: heavy model: claude-opus-5-5
+Run this card on claude-opus-5-5: in a child agent on claude-opus-5-5 when your harness can choose a child's model, else in a session on claude-opus-5-5; your REPORT.md names it in a line Model: claude-opus-5-5, which the finish checks against this line.
+```
+
+Her REPORT.md then carries `Model: <model>`, the model this line names (the finish checks the
+delivered brief's line, so a row changed while the card is in flight does not refuse it). The
+model is always her row's: a card moved to her from another friend's row comes with her model,
+never the giver's, and a card carrying a model is never moved to a friend whose row names none
+for its tier. `nova-friend whoami --as <me> --dir <d>` prints her
+row (tiers, the model per tier, her directory, her delivery session); run it at session start.
+
+Before her first card of a tier her row maps to a model, friend sync puts a probe in her inbox,
+`inbox/probe-<tier>-<model>/BRIEF.md`: run it in a child on that model and write
+`outbox/probe-<tier>-<model>/REPORT.md` with `Model:` (the model the child really runs on) and
+`Harness:`, and a one-line RESULT.md. No real card of the tier reaches her until the probe
+reports her row's model; a probe naming another model keeps the tier closed until she reports
+again (docs/SPEC-FRIEND.md, a friend's models, 5).
+Then the working-directory line below, a later attempt's start (the current tip
 of the card's base branch on origin, never an older base, with the work of the
 last attempt that pushed carried onto it by her, redone where it does not
 apply, and the Head she reports on that tip; nothing checks that descent, and
