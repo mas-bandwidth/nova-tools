@@ -1,4 +1,4 @@
-package main
+package functionalrun
 
 import (
 	"context"
@@ -11,7 +11,10 @@ import (
 )
 
 // runTier is the run verb: reap, image, caches, the networked module step,
-// the test container, the leftover check, one receipt line.
+// the test container, the leftover check, one receipt line. The container's
+// life is the model tla/ContainerRun.tla: Start, the runtime's bound, the
+// client's own removal at the end, the reaper, and the invariants the leftover
+// check reads (no container of the run is left; no cache volume is removed).
 func runTier(ctx context.Context, eng engine, c runConfig, stdout, stderr io.Writer) int {
 	t0 := time.Now()
 	runID := newRunID(t0)
@@ -65,8 +68,8 @@ func runTier(ctx context.Context, eng engine, c runConfig, stdout, stderr io.Wri
 	// 5. The run itself.
 	start := time.Now()
 	deadline := start.Add(c.deadline)
-	logf("run=%s image=%s packages=%q deadline=%s (%s) cpus=%d memory=%s",
-		runID, short(strings.TrimPrefix(image, "sha256:")), strings.Join(c.packages, " "), c.deadline, deadline.Format(time.RFC3339), c.cpus, c.memory)
+	logf("run=%s runtime=%s image=%s packages=%q deadline=%s (%s) cpus=%d memory=%s",
+		runID, eng.Kind(), short(strings.TrimPrefix(image, "sha256:")), strings.Join(c.packages, " "), c.deadline, deadline.Format(time.RFC3339), c.cpus, c.memory)
 	code, ended = runContainer(ctx, eng, testArgs(c, image, runID, start), containerName(runID), deadline.Add(clientGrace), stdout, stderr)
 	ended, exit := classify(code, ended, time.Since(start), c.deadline)
 
@@ -76,8 +79,8 @@ func runTier(ctx context.Context, eng engine, c runConfig, stdout, stderr io.Wri
 	if left != 0 {
 		exit = exitCannotRun
 	}
-	fmt.Fprintf(stderr, "FUNCTIONAL RUN run=%s ended=%s exit=%d wall=%.1fs build=%.1fs modcache=%.1fs total=%.1fs containers_left=%s\n",
-		runID, ended, exit, wall, buildSecs, modSecs, time.Since(t0).Seconds(), leftText(left))
+	fmt.Fprintf(stderr, "FUNCTIONAL RUN run=%s runtime=%s ended=%s exit=%d wall=%.1fs build=%.1fs modcache=%.1fs total=%.1fs containers_left=%s\n",
+		runID, eng.Kind(), ended, exit, wall, buildSecs, modSecs, time.Since(t0).Seconds(), leftText(left))
 	return exit
 }
 
@@ -131,7 +134,7 @@ func setupExit(ctx context.Context) int {
 	return exitCannotRun
 }
 
-// runContainer starts one container attached, streams its output, and ends it
+// runContainer (tla/ContainerRun.tla: ClientRemove, Interrupt) starts one container attached, streams its output, and ends it
 // by the first of: its own exit; the client deadline (removed by this process;
 // the runtime's own --timeout has already fired by then); an interrupt of this
 // process (removed at once). ended is "finished", "deadline" or "interrupted";
@@ -187,7 +190,7 @@ func runContainer(ctx context.Context, eng engine, args []string, name string, c
 func removeContainer(eng engine, name string, stderr io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if _, err := eng.Output(ctx, removeArgs(name)...); err != nil {
+	if _, err := eng.Output(ctx, removeArgsFor(eng.Kind(), name)...); err != nil && !isGone(err) {
 		fmt.Fprintf(stderr, "functionalrun: removing %s: %v\n", name, err)
 	}
 }
@@ -222,7 +225,7 @@ func leftovers(eng engine, runID string, budget time.Duration) int {
 	}
 	for _, id := range ids {
 		// ignored: a removal of leftover containers; the next run's leftover pass lists and removes them again
-		_, _ = eng.Output(ctx, removeArgs(id)...)
+		_, _ = eng.Output(ctx, removeArgsFor(eng.Kind(), id)...)
 	}
 	n, _ = count()
 	return n

@@ -427,3 +427,10 @@ MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	fr
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
+MCContainerRun.cfg	MCContainerRun.tla	pass	-	ignore-terminal	containerrun	required	-
+MCContainerRunBrokenNoReaper.cfg	MCContainerRun.tla	invariant	NoOutlive	ignore-terminal	containerrun	required	-
+MCContainerRunBrokenByName.cfg	MCContainerRun.tla	invariant	NoForeignTouched	ignore-terminal	containerrun	required	-
+MCContainerRunBrokenYoung.cfg	MCContainerRun.tla	invariant	NoYoungTouched	ignore-terminal	containerrun	required	-
+MCContainerRunBrokenPrune.cfg	MCContainerRun.tla	invariant	CachesKept	ignore-terminal	containerrun	required	-
+MCContainerRunBrokenKeepVol.cfg	MCContainerRun.tla	invariant	RemovedHoldsNothing	ignore-terminal	containerrun	required	-
+MCContainerRunBrokenKeepExited.cfg	MCContainerRun.tla	temporal	RemovedEventually	ignore-terminal	containerrun	required	-

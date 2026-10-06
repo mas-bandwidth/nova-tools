@@ -1,4 +1,4 @@
-package main
+package functionalrun
 
 import (
 	"crypto/rand"
@@ -70,6 +70,54 @@ func timeoutSeconds(d time.Duration) int {
 
 func containerName(runID string) string { return namePrefix + runID }
 
+// isDocker is whether the config's runtime is docker; anything else is podman.
+func (c runConfig) isDocker() bool { return c.kind == kindDocker }
+
+// boundArgs is how the runtime holds the deadline of a container
+// (docs/SPEC-CI.md, "functional-container"; tla/ContainerRun.tla, RuntimeBound).
+// podman: `run --timeout`, enforced by the runtime's monitor outside the
+// container, which holds when this process is killed. docker has no `run
+// --timeout`, so nothing is passed for it here: the bound there is the
+// in-container `timeout -k` under --init (innerCommand, in the argv of both
+// engines), this process's own removal at the deadline plus clientGrace
+// (runContainer), and the reaper by the deadline label (reap).
+func boundArgs(c runConfig, d time.Duration) []string {
+	if c.isDocker() {
+		return nil
+	}
+	return []string{"--timeout", strconv.Itoa(timeoutSeconds(d))}
+}
+
+// isolationArgs is every isolation and resource bound of a container, spelled
+// out and never left to a default (docs/SPEC-CI.md, "functional-container"):
+// no capability and no privilege gained through a setuid binary, memory with
+// no swap, pids and cpus, and private IPC and PID namespaces. net is the
+// network mode: none for the tests. docker's --pid takes no "private" (its
+// private namespace is the default, and it refuses the word), so for docker
+// the flag is left out and the test asserts that no --pid host is there.
+func isolationArgs(c runConfig, net string, cpus bool) []string {
+	args := []string{
+		"--security-opt", "no-new-privileges",
+		"--cap-drop", "all",
+	}
+	if net != "" {
+		args = append(args, "--network", net)
+	}
+	args = append(args, "--ipc", "private")
+	if !c.isDocker() {
+		args = append(args, "--pid", "private")
+	}
+	args = append(args,
+		"--pids-limit", strconv.Itoa(c.pids),
+		"--memory", c.memory,
+		"--memory-swap", c.memory,
+	)
+	if cpus {
+		args = append(args, "--cpus", strconv.Itoa(c.cpus))
+	}
+	return args
+}
+
 // testArgs is the argv of the test container: the functional tier of the
 // packages through the Makefile's own target, so the selection and the go test
 // flags are the ones make test-functional runs anywhere.
@@ -86,18 +134,10 @@ func testArgs(c runConfig, image, runID string, start time.Time) []string {
 		// container, so nothing this run writes to its build cache outlives it.
 		gocacheMount = "/gocache"
 	}
+	args = append(args, boundArgs(c, c.deadline)...)
+	// The tests run as the image's non-root user and need no capability.
+	args = append(args, isolationArgs(c, "none", true)...)
 	args = append(args,
-		"--timeout", strconv.Itoa(timeoutSeconds(c.deadline)),
-		// No capability and no privilege gained through a setuid binary of
-		// the image: the tests run as the image's non-root user and need none.
-		"--security-opt", "no-new-privileges",
-		"--cap-drop", "all",
-		"--network", "none",
-		"--ipc", "private",
-		"--pids-limit", strconv.Itoa(c.pids),
-		"--memory", c.memory,
-		"--memory-swap", c.memory,
-		"--cpus", strconv.Itoa(c.cpus),
 		"--read-only",
 		"--tmpfs", "/tmp:rw,exec,size="+c.scratch,
 		"--tmpfs", benchHome+":rw,size=1g,mode=1777",
@@ -129,13 +169,10 @@ func prefillArgs(c runConfig, image, runID, stamp, proxy string, start time.Time
 	id := runID + "-mod"
 	args := []string{"run", "--rm", "--init", "--name", containerName(id)}
 	args = append(args, runLabels(id, start, start.Add(prefillDeadline), c.ownerID)...)
+	args = append(args, boundArgs(c, prefillDeadline)...)
+	// The one networked step: the default network, every other bound kept.
+	args = append(args, isolationArgs(c, "", false)...)
 	args = append(args,
-		"--timeout", strconv.Itoa(timeoutSeconds(prefillDeadline)),
-		"--security-opt", "no-new-privileges",
-		"--cap-drop", "all",
-		"--pids-limit", strconv.Itoa(c.pids),
-		"--memory", c.memory,
-		"--memory-swap", c.memory,
 		"--read-only",
 		"--tmpfs", "/tmp:rw,exec,size=1g",
 		"--tmpfs", benchHome+":rw,size=256m,mode=1777",
@@ -144,8 +181,12 @@ func prefillArgs(c runConfig, image, runID, stamp, proxy string, start time.Time
 		"-e", "GOPROXY="+proxy,
 		"-w", "/src",
 		image,
-		"sh", "-c", prefillScript, "functionalrun", stamp,
 	)
+	if c.isDocker() {
+		// No `run --timeout` on docker: the step's own bound, inside.
+		args = append(args, "timeout", "-k", strconv.Itoa(timeoutSeconds(killAfter)), strconv.Itoa(timeoutSeconds(prefillDeadline-innerMargin)))
+	}
+	args = append(args, "sh", "-c", prefillScript, "functionalrun", stamp)
 	return args
 }
 
@@ -165,6 +206,22 @@ func removeArgs(nameOrID string) []string {
 	return []string{"rm", "--force", "--ignore", "--volumes", "--time", "0", nameOrID}
 }
 
+// removeArgsFor is removeArgs for one runtime: docker's rm has neither --ignore
+// nor --time (rm --force kills at once), and says "No such container" for one
+// already gone, which isGone reads as removed.
+func removeArgsFor(kind, nameOrID string) []string {
+	if kind == kindDocker {
+		return []string{"rm", "--force", "--volumes", nameOrID}
+	}
+	return removeArgs(nameOrID)
+}
+
+// isGone is whether a removal's error says the container did not exist: the
+// state the removal was after.
+func isGone(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "No such container")
+}
+
 // leftoverArgs lists every container, in any state, of one run: by its label.
 func leftoverArgs(runID string) []string {
 	return []string{"ps", "--all", "--filter", "label=" + labelRun + "=" + runID, "--format", "{{.ID}}"}
@@ -174,6 +231,21 @@ func leftoverArgs(runID string) []string {
 // presence of the run label, never by a name.
 func reapListArgs() []string {
 	return []string{"ps", "--all", "--filter", "label=" + labelRun, "--format", "json"}
+}
+
+// dockerListFormat is docker's listing: one container a line, tab-separated
+// (docker prints a container's labels as one string, not a map): id, state,
+// then the four labels this tool writes.
+const dockerListFormat = `{{.ID}}` + "\t" + `{{.State}}` + "\t" +
+	`{{.Label "` + labelRun + `"}}` + "\t" + `{{.Label "` + labelStart + `"}}` + "\t" +
+	`{{.Label "` + labelDeadline + `"}}` + "\t" + `{{.Label "` + labelOwner + `"}}`
+
+// reapListArgsFor is reapListArgs for one runtime.
+func reapListArgsFor(kind string) []string {
+	if kind == kindDocker {
+		return []string{"ps", "--all", "--filter", "label=" + labelRun, "--format", dockerListFormat}
+	}
+	return reapListArgs()
 }
 
 func volumeInspectArgs(name string) []string {
@@ -243,12 +315,15 @@ func modHash(src string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// defaultProxy is the public module proxy, for a caller whose GOPROXY names none.
+const defaultProxy = "https://proxy.golang.org,direct"
+
 // moduleProxy is the proxy the networked step uses: the caller's GOPROXY when
 // it names one, the public default otherwise (the image's own is off).
 func moduleProxy(getenv func(string) string) string {
 	p := strings.TrimSpace(getenv("GOPROXY"))
 	if p == "" || p == "off" {
-		return "https://proxy.golang.org,direct"
+		return defaultProxy
 	}
 	return p
 }
