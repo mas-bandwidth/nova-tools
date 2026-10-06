@@ -1153,6 +1153,10 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		sel.Limit = 1
 	}
 	width, why := takeSeat(s, r.As)
+	worker := "member"
+	if IsFriendRow(r.As) {
+		worker = "friend"
+	}
 	if why != "" {
 		for _, id := range sel.IDs {
 			p.refuse(id, why)
@@ -1192,14 +1196,18 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		}
 		if byID {
 			if room == 0 {
-				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), width)
+				return fmt.Sprintf("%s %s is at its width (%d working of %d): a card is taken when one is reported", worker, r.As, len(s.Fleet.Cell(r.As, Working)), width)
 			}
 			room--
 		}
 		return ""
 	}, s.Fleet.Card)
 	for _, c := range chosen {
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, takenStamps(c, s.Now), "untaken_since"))},
+		set, unset := takenStamps(c, s.Now), []string{"untaken_since"}
+		if friend, ok := FriendOfRow(r.As); ok {
+			set, unset = friendTaken(s, c, friend) // her deadline, as her deal and her next set it
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, set, unset...))},
 			Moved: fmt.Sprintf("%s fleet ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
 	return p
