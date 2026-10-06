@@ -13,8 +13,9 @@ import (
 
 // A friend's daemon beats down through the sprint's server while her harness is at its
 // limit (friend beat <me> --until <RFC3339> --reason <text>, limits-mean-down-w-r7.w1~15):
-// the server runs it, her row reads down with the pair, and a beat without --until has her
-// up again. An --until that is no time and a --reason that is empty or more than one line
+// the server runs it, her row reads down with the pair, and a beat without --until ends
+// that word: her row reads down then only for want of her session's evidence, a beat being
+// none (presence-from-session-only-wb-t-r5.w1~15). An --until that is no time and a --reason that is empty or more than one line
 // are refused, exit 2, and change nothing.
 func TestTheServerTakesAFriendsDownBeat(t *testing.T) {
 	t.Parallel()
@@ -49,7 +50,10 @@ func TestTheServerTakesAFriendsDownBeat(t *testing.T) {
 	res = r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.NotContains(t, res.Stdout, "down=true")
-	assert.Equal(t, "up", r.friendRow("amy").Status, "a beat without --until is up again")
+	f = r.friendRow("amy")
+	assert.Equal(t, "down", f.Status, "a beat is no evidence: she is up only on her session's")
+	assert.Contains(t, f.Evidence, "no session evidence", "a beat without --until ends the down word")
+	assert.NotContains(t, f.Evidence, "her beat says down")
 }
 
 // friendRow is the named friend's row as where --json gives it, read on the server's line.
