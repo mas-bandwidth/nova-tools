@@ -1242,6 +1242,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		c := friendCards[f.Name]
 		friends[i].Ready = c.Ready
 		friends[i].Working = c.Working
+		friends[i].DealtFleet = facts.DealtFleet[f.Name]
 		friends[i].OK = c.OK
 		friends[i].Failed = c.Failed
 		if f.Status == sprint.Down {

@@ -350,7 +350,7 @@ mixed preview, has status `refused` and exit 1 in text and JSON. `WhoPreference.
 checks the selection and the hard pin; the reversed only witness permits fallback
 and violates `OnlyToItsFriend`. The tick reads the friends' roster before each pump,
 because a queued change can make work ready in the same tick. The tick's deal offers
-ready work, in the deal's stream turns, to a
+ready work, in the deal order (below), to a
 friend up (the friends' rule: not held, with evidence from her own session) below her room,
 and fills no row that cannot work: a friend whose status is not up (her beat alone is
 no evidence), whose control row on the fleet table says down or held, or whom the stall
@@ -360,7 +360,8 @@ whose row read down, her daemon beating, was dealt 18 cards twice;
 `TestTheDealSkipsADownRowAndHonoursTheWhoPin`): in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
-5; the cards on her row, ready and working, count against it; the owner,
+5; the cards on her row, ready and working, her work and her reads together, count
+against it: below; the owner,
 2026-10-04: "Do it just like the fleet, you keep people busy by having 2X width
 queued up in ready per-friend"): on her row the card is `ready`, whatever her
 lanes, until she starts it (a friend's card is working once she starts it,
@@ -379,8 +380,58 @@ the next only after the last one finished
 first, before the machines' deal) offers every ready card to its named friend
 whose tiers hold its tier first, then to the friends up whose tiers hold its
 tier, an idle lane first,
-then the most room free, the first by name among equals, then to the fleet. A
-named pin (`WHO: friend <name>`, not `only`) placed on another row is a judgment
+then the most room free, the first by name among equals, then to the fleet.
+The fleet's cards are hers as much as a machine's (2026-10-06: a friend up, tiers flash, width 32, holding 13 reads, had
+nothing ready for over an hour while the machines were dealt flash cards):
+- The tier a friend's tiers must hold is the tier the deal draws (`sprint.dealTierOf`),
+  the one rule for friends and machines: the tier the card is on once a deal drew one,
+  its pinned tier, and before its first deal its start tier, flash first and pro for a
+  brief whose line 1 says pro. A card with no tier line is flash; a brief whose line 1
+  says `tier: heavy` names its ceiling and starts on flash, so a flash friend takes it.
+  Her deal writes that tier on the primary (`tier_now`), as a machine's deal does, and
+  its reads and its escalation go by it (`TestAFlashFriendWithRoomIsDealtFleetFlashCards`,
+  `TestAnUntieredCardIsFlashForAFriend`).
+- One width bounds her row, her reads and her work together (the owner's rule): her
+  room (DealAhead times her width) and her lanes (her width) count every card on her
+  row, ready and working, work card or read (`sprint.friendLoad`), in the deal, the
+  level, her start and the friends' read ask alike; there is no read room beside it.
+  A friend at width 16 holding 10 work cards and 9 reads has no idle lane, and a
+  one-shot friend holds one card at a time, read or work
+  (`TestOneWidthHoldsHerWorkAndReads`).
+- The deal order is one for friends and machines (`sprint.dealOrder`): the stream
+  turns from the deal's stream index, each stream's cards in work order, the order
+  `tla/SprintTables.tla` and the reference model check; each card then goes to the
+  friend with the most idle lanes (above), or round the fleet. The critical path first
+  (Weight, section 7) is not yet the deal's order: it waits for the model to order by
+  weight.
+- The friends' deal runs before the machines' deal each tick, and after the ready
+  cards it reclaims: a work card the machines' deal placed ready on a machine row
+  ahead of its lanes, which no lane has taken, goes to a friend up with an idle lane
+  and room whose tiers hold the tier it was dealt on, never one it has left, chosen as
+  the deal chooses (the friend its WHO line names first), at its next generation, the
+  fleet route off, `ready` on her row until she starts it, its primary working on it
+  as before (the tier it was dealt on written as `tier_now` when it names none); a
+  machine's take of the old generation is refused. It is bounded each tick: a friend
+  reclaims at most her idle lanes, and a machine gives at most half its dealt-ahead
+  queue (rounded down), the machines taking turns in row order. A held stream, a bench
+  card, a hard pin and a card whose route rests (the same tick withdraws it, and a card
+  moved to two places would refuse the whole tick) are not reclaimed. A reclaimed card
+  she does not start goes as any card of hers does: the start bound's level to another
+  friend, or a take-back, after which the machines' deal places it again, never back
+  on her. The move's line says `reclaimed` (`sprint.friendReclaim`,
+  `TestAFriendReclaimsAnUntakenDealtAheadCard`,
+  `TestTheReclaimIsBoundedAndAnUnstartedReclaimGoesBackToTheMachines`,
+  `TestTheReclaimLeavesACardWhoseRouteRests`).
+- A card dealt to a friend writes the tier the deal drew as `tier_now` when its primary
+  names none, a first deal and a deal again (a take-back's) alike
+  (`TestARedealToAFriendWritesItsTierNow`).
+- `where --json` gives each friend `dealt_fleet`: the work cards on her row, ready and
+  working, whose primary carries no WHO line (`WHO: friend`, named or bare, and a hard
+  pin are friends' cards), the fleet's cards she holds, from the tick's where record:
+  it lags the table by up to one tick, and is 0 before the first tick of the epoch
+  (`TestDealtFleetCountsOnlyCardsWithNoWhoLine`).
+
+A named pin (`WHO: friend <name>`, not `only`) placed on another row is a judgment
 in that step (`a pinned card was dealt away from its friend`): why she did not
 take it (held, not up, the card has left her, her tiers do not hold the tier, or
 she has no room), and whose row and column hold the card now. The pass keeps
