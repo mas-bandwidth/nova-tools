@@ -15,6 +15,7 @@ run would do.
 | `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source` in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
 | `fleet/redis.yml` | the store's ACL users, rendered from the library and the key families | the render on the machine running the play; check and apply on `store_deployer` |
 | `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
+| `fleet/container-runtime.yml` | rootless podman, the fleet's container runtime, and its version recorded in `~/.config/nova/podman` | every bench: Linux (apt on Ubuntu and Debian, dnf on Fedora) and macOS (brew, and a podman machine) |
 
 ## An adopter's path
 
@@ -278,6 +279,37 @@ then `nova-redis acl apply`s the users that differ. A user keeps the password
 it has; a user the store lacks is created only with the password in the seat's
 secret `nova_redis_user_password_keys` names, and the run refuses when it
 names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
+
+## Containers are podman
+
+The fleet's container runtime is podman, rootless and daemonless, on every
+bench; `tools/functionalrun` runs the functional tier in it and takes podman
+when it is on `PATH`, docker only when podman is not (it names the one it used
+on stderr: `functionalrun: container runtime: podman (<path>)`). Docker is
+never installed by a play. `fleet/container-runtime.yml` is the mechanism
+(`fleet/roles/container-runtime/README.md`):
+
+- Linux: the distribution's `podman`, `uidmap` (`shadow-utils` on Fedora) and
+  `slirp4netns`, with the other rootless helpers, through apt or dnf; a
+  `/etc/subuid` and `/etc/subgid` row, linger and cgroup v2 delegation for the
+  bench's login; then a probe container proves the limits a run relies on.
+- macOS: `brew install podman` and `podman machine init --now`, sized from the
+  row's `slots` (two CPUs and 4 GiB per slot, at least 2 and 4 GiB); an
+  existing machine is started, never resized. A bench with no brew stops the
+  play with that said: the play does not install brew.
+- Every bench: `podman --version` is written to `~/.config/nova/podman` and
+  printed as `PODMAN host=<m> podman version <v> recorded=<path>`.
+
+A hand-installed podman is a stopgap: run the play, which finds the packages
+present and changes nothing but what is missing. `--check --diff` after a real
+run reads no change.
+
+```
+ansible-playbook -i ./nova-inventory fleet/container-runtime.yml --check --diff </dev/null 2>&1 | cat
+ansible-playbook -i ./nova-inventory fleet/container-runtime.yml </dev/null 2>&1 | cat
+```
+
+The inventory's group is `functional_runners` (`fleet/inventory.container-runtime.example.ini`).
 
 ## loops.yml
 

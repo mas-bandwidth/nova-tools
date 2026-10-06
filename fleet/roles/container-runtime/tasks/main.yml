@@ -1,11 +1,12 @@
 ---
 # Rootless, daemonless podman for the runner user, from the distribution's
-# packages, and a probe that proves the limits a functional run relies on.
+# packages (apt on Debian family, dnf on Red Hat family; a macOS bench is
+# tasks/darwin.yml, which the play reaches instead), and a probe that proves the limits a functional run relies on.
 # Idempotent. `--check --diff` is meaningful: it names the packages that would
 # be installed and the subuid, subgid, linger and delegation changes that would
 # be made, and touches nothing; the probe runs on a real run only.
 
-- name: the host is Debian family Linux with cgroups v2
+- name: the host is Linux with cgroups v2
   ansible.builtin.stat:
     path: /sys/fs/cgroup/cgroup.controllers
   register: container_runtime_cgroup2
@@ -14,12 +15,12 @@
   ansible.builtin.assert:
     quiet: true
     that:
-      - ansible_facts["os_family"] == "Debian"
+      - ansible_facts["os_family"] in ["Debian", "RedHat"]
       - ansible_facts["system"] == "Linux"
       - container_runtime_cgroup2.stat.exists
     fail_msg: >-
-      container-runtime role: Debian-family Linux with cgroup v2 only (apt, and
-      the unified hierarchy for the limits); this host is
+      container-runtime role: Debian-family (apt) or Red Hat-family (dnf) Linux
+      with cgroup v2 only (the unified hierarchy for the limits); this host is
       {{ ansible_facts["distribution"] }}, cgroup v2 present:
       {{ container_runtime_cgroup2.stat.exists }}
 
@@ -53,7 +54,7 @@
       runner user or set container_runtime_user; container_runtime_min_uid
       lowers the floor for a runner that is a system account.
 
-- name: podman and its rootless helpers
+- name: podman and its rootless helpers (apt)
   become: true
   ansible.builtin.apt:
     name: "{{ container_runtime_packages }}"
@@ -61,6 +62,14 @@
     install_recommends: "{{ container_runtime_install_recommends }}"
     update_cache: true
     cache_valid_time: 3600
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: podman and its rootless helpers (dnf)
+  become: true
+  ansible.builtin.dnf:
+    name: "{{ container_runtime_packages_redhat }}"
+    state: present
+  when: ansible_facts["os_family"] == "RedHat"
 
 # A rootless user namespace maps a range of subordinate ids; without a row the
 # user has none. tasks/subid.yml reads the whole of /etc/subuid and /etc/subgid,

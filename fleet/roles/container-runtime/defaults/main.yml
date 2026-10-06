@@ -12,6 +12,7 @@ container_runtime_min_uid: 1000
 container_runtime_packages:
   - podman
   - uidmap
+  - slirp4netns
   - passt
   - crun
   - conmon
@@ -20,6 +21,22 @@ container_runtime_packages:
   - catatonit
   - dbus-user-session
 container_runtime_install_recommends: true
+# The same on a Red Hat-family bench (Fedora): newuidmap and newgidmap come from
+# shadow-utils there, which is what uidmap is on Debian.
+container_runtime_packages_redhat:
+  - podman
+  - shadow-utils
+  - slirp4netns
+  - passt
+  - crun
+  - conmon
+  - netavark
+  - aardvark-dns
+  - catatonit
+
+# Where the bench records the podman it has (one line, `podman --version`),
+# under the runner user's home.
+container_runtime_record_file: "{{ ansible_facts['user_dir'] }}/.config/nova/podman"
 
 # Subordinate id range for the user when /etc/subuid or /etc/subgid has no row
 # for it. The range starts at container_runtime_subid_start or, when another
@@ -53,3 +70,14 @@ container_runtime_probe_cpus: 2
 container_runtime_probe_timeout: 60
 container_runtime_probe_kill_after: 3
 container_runtime_probe_grace: 20
+
+# A macOS bench: podman from brew, and a podman machine (the Linux VM podman
+# needs on macOS) sized from the bench's row: two CPUs and 4 GiB per slot, never
+# less than 2 CPUs and 4 GiB. An existing machine is never resized.
+container_runtime_machine_slots: "{{ slots | default(1) | int }}"
+container_runtime_machine_cpus: "{{ [2, (container_runtime_machine_slots | int) * 2] | max }}"
+container_runtime_machine_memory_mib: "{{ [4096, (container_runtime_machine_slots | int) * 4096] | max }}"
+container_runtime_machine_disk_gib: 60
+container_runtime_brew_candidates:
+  - /opt/homebrew/bin/brew
+  - /usr/local/bin/brew
