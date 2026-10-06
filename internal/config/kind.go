@@ -223,6 +223,26 @@ func FriendMode(r Row) string {
 	return DefaultFriendMode
 }
 
+// DefaultFriendTokenCap is a friend's per-card token cap when her row names
+// none: input, cached input, output and reasoning summed, 6000000, the
+// stopgap's cap. 0 on the row is no cap, and is not this default.
+const DefaultFriendTokenCap int64 = 6_000_000
+
+// FriendTokenCap is a friend row's per-card token cap: its token_cap field,
+// DefaultFriendTokenCap when the row has none or the field is not a
+// non-negative integer. 0 is no cap.
+func FriendTokenCap(r Row) int64 {
+	s := r.Fields["token_cap"]
+	if s == "" {
+		return DefaultFriendTokenCap
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return DefaultFriendTokenCap
+	}
+	return n
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
 // instead), and her config_dir, when set, is an absolute path. A width that
@@ -409,7 +429,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, and the config directory her claude lanes run with",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, and the per-card token cap her one-shot lanes hold a card at",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
@@ -417,6 +437,7 @@ var Kinds = []*Kind{
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
+			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
