@@ -135,6 +135,20 @@ func (r *rig) answer(nonce string) {
 	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
 }
 
+// stopAfter cancels the run once the rig's clock is d past the start: an
+// adapter's daemon parks on the stream, which the fake answers at once, so
+// no pause counts the loop's steps; the clock does.
+func stopAfter(w *world, cancel *context.CancelFunc, d time.Duration) {
+	now := w.now
+	w.now = func() time.Time {
+		t := now()
+		if t.Sub(start) > d && *cancel != nil {
+			(*cancel)()
+		}
+		return t
+	}
+}
+
 func (r *rig) cli() testkit.Main {
 	w := r.world()
 	return testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -339,7 +353,7 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 	assert.NoFileExists(t, plist)
 }
 
-// run over the fake store, a stub harness and a cancelled context: the
+// run over the fake store, the fake opencode session and a cancelled context: the
 // daemon's own tests are internal/friend's; here, that the verb wires it.
 func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	t.Parallel()
@@ -351,16 +365,16 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
 		}
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2", nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=2", nil
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
 	assert.NoDirExists(t, filepath.Join(dir, ".nova-friend"), "nothing of the daemon's on the friend's volume")
 	s, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
@@ -370,8 +384,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
-	assert.Equal(t, "batch", s.Mode, "the row says one-shot; claude opens no session per lane")
-	assert.Contains(t, out.String(), "cannot open a session per lane; delivering in batch")
+	assert.Equal(t, "batch", s.Mode, "the row's mode, read from the beat's answer")
 }
 
 // A store that is down when the daemon starts is no reason to exit: under launchd's
@@ -398,7 +411,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -406,7 +419,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 		return "", nil
 	}
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
 	require.GreaterOrEqual(t, len(slept), 3)
 	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, slept[:3], "longer each time; the rest are the loop's own pauses")
@@ -424,7 +437,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 		}
 	}
 	out.Reset()
-	code = run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	code = run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code)
 	assert.Equal(t, OpenRetryMax, slept[len(slept)-1], "the wait is capped")
 	assert.Contains(t, out.String(), "opening again in "+OpenRetryMax.String())
@@ -540,17 +553,17 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		var mu sync.Mutex
 		var runs []string
 		lists := 0
-		checked := false
+		checks := 0
 		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			if !checked { // the session check goes into her newest session first; her answer brings her up, and the beat with the row
+			if checks < 2 { // the push proof, then the daemon's check, go into her newest session first; her answers bring her up, and the beat with the row
 				if args[0] == "session" {
 					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
 				}
 				text := args[len(args)-1]
 				if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
-					checked = true
+					checks++
 					r.answer(nonce)
 					return "answered\n", 0, nil
 				}
@@ -566,7 +579,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()
@@ -600,33 +613,53 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	r.answered = map[string]bool{"r4nd0m": true} // bob's session never answers the check
 	w := r.world()
 	var cancel context.CancelFunc
 	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
 		ctx, cancel = context.WithCancel(ctx)
 		return ctx, cancel
 	}
-	beats, sleeps := 0, 0
-	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
-	w.sleep = func(context.Context, time.Duration) {
-		r.now = r.now.Add(time.Minute)
-		if sleeps++; sleeps == 8 {
-			cancel()
+	nonces := []string{"pr00f1"} // the push proof's nonce; every later check's is r4nd0m
+	w.random = func() string {
+		if len(nonces) == 0 {
+			return "r4nd0m"
 		}
+		n := nonces[0]
+		nonces = nonces[1:]
+		return n
 	}
+	var mu sync.Mutex
+	var checks []string
+	w.exec = func(_ context.Context, dir, _ string, args []string, _ string) (string, int, error) {
+		if args[0] == "session" {
+			return `[{"id":"ses_1","directory":"` + dir + `","updated":1}]`, 0, nil
+		}
+		text := args[len(args)-1]
+		if nonce, ok := strings.CutPrefix(strings.SplitN(text, "\n", 2)[0], friend.SessionCheckPrefix); ok {
+			mu.Lock()
+			checks = append(checks, text)
+			mu.Unlock()
+			if nonce == "pr00f1" {
+				r.answer(nonce) // the session answers the push proof, and never again
+			}
+		}
+		return "", 0, nil
+	}
+	beats := 0
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	stopAfter(&w, &cancel, 8*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Zero(t, beats, "no beat reaches the sprint server while no session answers")
-	assert.Contains(t, out.String(), "presence: session check r4nd0m on the stream")
+	assert.Contains(t, out.String(), "push proof: CHECK OK harness=opencode")
 	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
-	got, err := r.store.Range(context.Background(), bus.StreamOf("bob"), "-", "+", 0)
-	require.NoError(t, err)
-	require.NotEmpty(t, got)
-	assert.Contains(t, got[0].Fields["body"], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
-	assert.Contains(t, got[0].Fields["body"], "--to ada")
+	mu.Lock()
+	require.Len(t, checks, 2, "the push proof, then the daemon's own check")
+	assert.Contains(t, checks[1], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
+	assert.Contains(t, checks[1], "--to ada")
+	mu.Unlock()
 	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
 	require.NoError(t, err)
 	r.now = st.At // read as the daemon last wrote it: up
@@ -664,7 +697,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		}
 	}
 	var beats []time.Time
-	w.beat = func(context.Context, string, string, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
@@ -770,17 +803,12 @@ func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
 		ctx, cancel = context.WithCancel(ctx)
 		return ctx, cancel
 	}
-	beats, sleeps := 0, 0
-	w.beat = func(context.Context, string, string, time.Time) (string, error) { beats++; return "", nil }
-	w.sleep = func(context.Context, time.Duration) {
-		r.now = r.now.Add(time.Minute)
-		if sleeps++; sleeps == 5 {
-			cancel()
-		}
-	}
+	beats := 0
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	stopAfter(&w, &cancel, 5*time.Minute)
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Zero(t, beats, "no beat reaches the sprint server while harness is not running")
 	assert.Contains(t, out.String(), "down: harness not running: the harness app is closed")
@@ -812,9 +840,9 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
 		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
 	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
-		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude yet`)
+		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude: nothing the bus holds`, "CHECK NOTE remedy: the adapter card: give internal/friend a deliver command for claude")
 	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
-		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor: not installed here`)
+		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor (not installed here`)
 
 	// the plan, from the same pong line, with nothing delivered and no store opened
 	r.store.Fail = errors.New("store down")
