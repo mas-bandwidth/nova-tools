@@ -18,8 +18,8 @@ var lookPath = exec.LookPath
 // now is the clock; a test fixes it.
 var now = time.Now
 
-// importFlags declares import's flags: the shared ones, --org, --out, and the
-// rules that tie --out to --dry-run and --repo to --org. It declares Prints
+// importFlags declares import's flags: the shared ones, --org, --out, --fixture,
+// and the rules that tie --out to --dry-run and --repo to --org. It declares Prints
 // because runImport writes its own lines (GH, PLAN, REPO, IMPORT) and answers
 // tool.Exit, so the skeleton renders nothing for it and offers no --json
 // (internal/tool, Flags.Prints).
@@ -28,6 +28,7 @@ func importFlags(f *tool.Flags) {
 	commonFlags(f)
 	f.Required("org", "the organization")
 	f.String("out", "", "the tree file to write (created or replaced; its directory must exist). Required unless --dry-run.")
+	f.String("fixture", "", "fixture directory with call-NN.json recordings (test use: gh login not needed)")
 	f.Check(func(c *tool.Call) {
 		if c.Str("out") == "" && !c.Bool("dry-run") {
 			c.Problem("--out is required unless --dry-run")
@@ -74,11 +75,23 @@ func runImport(c *tool.Call, q workgh.Query) *tool.Out {
 	out := c.Str("out")
 	dry := c.DryRun()
 	named := repos(c)
+	fixtureDir := c.Str("fixture")
 
-	q, err := resolveGH(c, q)
-	if err != nil {
-		return tool.Refuse(err.Error())
+	var err error
+	if fixtureDir != "" {
+		// Use fixture directory for testing (recorded GraphQL conversations)
+		q, err = workgh.Replay(fixtureDir)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		fmt.Fprintf(c.Stdout, "GH OK fixture=%s\n", oneline.Field(fixtureDir))
+	} else {
+		q, err = resolveGH(c, q)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), c.Dur("timeout"))
 	defer cancel()
 	start := now()
