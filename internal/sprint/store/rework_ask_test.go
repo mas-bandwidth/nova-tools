@@ -28,10 +28,10 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	// attempt 1 of s1-1 is read by reader-a and reader-b: one ok, one broken, reworked
 	first := ask("s1-1")
 	require.Len(t, first, 1, "the first read alone")
-	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
 	first = ask("s1-1") // the second, the first ok
 	require.Len(t, first, 2)
-	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	pair := []string{first[0].Row, first[1].Row}
 	require.ElementsMatch(t, []string{"reader-a", "reader-b"}, pair)
@@ -44,7 +44,7 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 			case rc.Row == "reader-a":
 				h.must(ReadStep(sprint.ReadReq{As: rc.Row, Begin: true, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 			default:
-				h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+				h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 			}
 		}
 	}

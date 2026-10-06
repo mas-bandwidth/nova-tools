@@ -203,8 +203,8 @@ func TestAudit2ClosedAckedReadsExhaustedIsSilentForEver(t *testing.T) {
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
 	rc := h.pairAsked("s1-1")
-	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 	h.a2AckRefused(sprint.NReadBroken)
 	h.readInbox()
 	h.startMachine()
@@ -512,11 +512,11 @@ func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
 	rc := h.pairAsked("s1-1")
-	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	for _, c := range h.snap().Readers.Of("s1-1") {
 		if c.Col == sprint.Asked && c.ID != rc[1].ID {
-			h.must(ReadStep(sprint.ReadReq{As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}}))
+			h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}}))
 		}
 	}
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))

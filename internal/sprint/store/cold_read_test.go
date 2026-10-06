@@ -102,7 +102,7 @@ func (p *probe) toReview(head string, xs ...string) {
 }
 
 func (p *probe) read(reader, card, verdict string) Result {
-	return p.do("read "+card+" "+verdict, ReadStep(sprint.ReadReq{As: reader, Verdict: verdict, Finding: "f:1", Sel: ids(card)}))
+	return p.do("read "+card+" "+verdict, ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reader, Verdict: verdict, Finding: "f:1", Sel: ids(card)}))
 }
 
 // A member goes down, its work card is redealt and taken by another, the
@@ -268,7 +268,7 @@ func everyVerb() map[string]Step {
 		"take":     TakeStep(sprint.TakeReq{As: "m1"}),
 		"finish":   FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{Limit: 5}}),
 		"ask":      AskStep(sprint.AskReq{}),
-		"read":     ReadStep(sprint.ReadReq{As: "reader-a", Verdict: "ok"}),
+		"read":     ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: "reader-a", Verdict: "ok"}),
 		"accept":   AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: "s1"}}),
 		"rework":   ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{Stream: "s1"}, Fix: "x"}),
 		"return":   ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{Stream: "s1"}}),
@@ -399,7 +399,7 @@ func TestReworkTwice(t *testing.T) {
 	}
 	require.Len(t, who, 1, "not asked its first read at h2")
 	// a second finding, not the first again: the same finding twice is the brief's bound (brief_bound.go)
-	p.do("read broken f:2", ReadStep(sprint.ReadReq{As: who[0], Verdict: "broken", Finding: "f:2", Sel: ids(sprint.ReadCardID("s1-1", 2, who[0]))}))
+	p.do("read broken f:2", ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: who[0], Verdict: "broken", Finding: "f:2", Sel: ids(sprint.ReadCardID("s1-1", 2, who[0]))}))
 	for _, o := range p.openOn("s1-1") {
 		t.Logf("second broken: marked=%v before=%d decisions=%v", o.Note.Marked, o.Note.Before, o.Note.Decisions)
 		assert.True(t, o.Note.Marked, "the second broken read for the same cause is not marked")

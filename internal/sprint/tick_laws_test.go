@@ -256,7 +256,7 @@ func readBothOK(w *world, id string) {
 		}
 		for _, rc := range readsAt(w.s, pr, pr.Int("attempt")) {
 			if rc.Col == Asked || rc.Col == Reading {
-				w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+				w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
 			}
 		}
 	}

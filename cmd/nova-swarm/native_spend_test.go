@@ -54,6 +54,9 @@ func TestTheMemberReportsTheSpendInTheUsageRecord(t *testing.T) {
 		name, log, usage string
 	}{
 		{name: "the older line: wall and budget only", log: line + "\n", usage: "wall=49.49s budget=20303/400000 cost=none"},
+		// the harness reported nothing and no receipt is there: the usage still says so,
+		// so a routed read's verdict carries --usage and is kept unpriced=no-tokens
+		{name: "no line and no receipt", log: "the child printed nothing native reads\n", usage: "usage_source=none cost=none"},
 		{name: "a line with the job's spend", log: line + " spend=input:19541,cache_read:36336,cache_write:0,output:692,reasoning:70,requests:6,max_prompt:9861,cost:0.04219614,model:opencode/deepseek-v4-pro\n",
 			usage: "wall=49.49s budget=20303/400000 input=19541 cache_read=36336 cache_write=0 output=692 reasoning=70 requests=6 max_prompt=9861 model=opencode/deepseek-v4-pro actual_usd=0.04219614 actual_by=harness cost=actual"},
 	}
