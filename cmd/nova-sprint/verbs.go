@@ -234,7 +234,8 @@ ids, a stream, a column, --max n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
-line: landed/all percent -> ETA <estimate> (every card left, held ones too, at
+line: landed/all percent -> ETA <estimate> (the streams on the table: an
+archived stream's cards leave it; every card left, held ones too, at
 the cards landed an hour: where's over the last hour of running time, the
 whole sprint's average with fewer than five there and on this line; in minutes
 rounded up, days and hours from a day; where shows the largest
@@ -934,12 +935,12 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 	}
 	machine := st.MachineLine(ctx)
 	landed, all := counts(shapes[0])
-	full := all > 0 && landed == all
+	full := sprintDone(shapes[0])
 	state := strings.TrimPrefix(machine, "machine: ")
 	switch {
 	case state == store.DoneState:
 		if full {
-			return store.Stopped + "  " + progress(shapes[0]) + " done"
+			return store.Stopped + "  " + doneLine(shapes[0])
 		}
 		return store.Stopped + "  " + progress(shapes[0])
 	case strings.HasPrefix(state, "STOPPED"):
@@ -948,10 +949,12 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 		}
 		return state + "  " + progress(shapes[0])
 	case full:
-		return strings.TrimSpace(progress(shapes[0]) + " done" + tookSince(ctx, st) + "  " + machine)
+		return strings.TrimSpace(doneLine(shapes[0]) + tookSince(ctx, st) + "  " + machine)
 	}
-	// reads no cards: the rate is the whole sprint's average
-	return strings.TrimSpace(summary(shapes[0], 0, etaMinutes(shapes[0], st.LandingRate(ctx, nil, landed))) + "  " + machine)
+	// reads no cards: the rate is the whole sprint's average, over the epoch's
+	// landings, an archived stream's too (archiving lands nothing)
+	gone, _ := archivedCounts(shapes[0])
+	return strings.TrimSpace(summary(shapes[0], 0, etaMinutes(shapes[0], st.LandingRate(ctx, nil, landed+gone))) + "  " + machine)
 }
 
 // tookSince is " in <duration>": the wall time from the machine's first start
@@ -3000,8 +3003,11 @@ for the streams named. A clear does not bring a removed stream back; an add
 under its name does, in this epoch or the next (a NOTE line says it came
 back). stream archive takes streams
 whose every card has landed off both tables, on a running machine too: their
-rows are hidden and every landed card, its cost and its landing stay, counted
-by the footers, the summary and where --json --archived; refused while a
+rows are hidden and every landed card, its cost and its landing stay, in
+where --json's archived (streams, cards, landed, cost), stream_costs and
+where --json --archived; the summary line and the drawn footers count only
+the streams on the table, and where --json carries archived_cards and
+archived_landed beside them; refused while a
 stream holds a card not landed, naming it, all or none. stream unarchive
 draws them again. The tick archives a stream itself when its last card lands
 and nothing waits behind it (one note names it), and draws an archived stream
