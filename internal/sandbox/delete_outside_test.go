@@ -20,13 +20,12 @@ import (
 // this binary and never in the test process itself.
 const deleteHelperEnv = "NOVA_TEST_DELETES_ONLY_IN_THE_JOB"
 
-// DEMANDED (docs/SPEC-SANDBOX.md, "deletes-only-in-the-job-dir-p.w1"). Two children ran
-// rm -rf on a variable path and the wall let it through, because every --write carried
-// the remove rights. The outside directory here is itself a --write, the shape of a shared
-// cache or a config dir: writing there must still work, and rm -rf of it, an rm of a file
-// in it and a rename of a file out of it must each be refused with the file left in place.
-// A delete in the job dir succeeds. A mutation that hands every write the whole handled
-// set again (the bug) turns this red at rmrf=0.
+// A directory that is not a --write cannot be deleted, even when the command is
+// handed its path (docs/SPEC-SANDBOX.md, "deletes-in-every-write-root"). Deletes
+// under a --write are the other test, TestTheWallAllowsDeletesInEveryWriteRoot.
+// Here the outside directory is not a --write: rm -rf of it, an rm of a file in
+// it, a rename out of it and a write into it are each refused and the files stay.
+// A delete in the job dir succeeds.
 func TestTheWallRefusesDeletesOutsideTheJob(t *testing.T) {
 	t.Parallel()
 	if os.Getenv(deleteHelperEnv) == "1" {
@@ -61,21 +60,20 @@ func TestTheWallRefusesDeletesOutsideTheJob(t *testing.T) {
 	// Inside the job: the delete succeeds.
 	assert.Contains(t, got, "inside=0", "rm of a file in the job dir was refused")
 	assert.NoFileExists(t, inside, "the file in the job dir was not deleted")
-	// Outside the job, in a write that is not the job's: refused, and nothing is gone.
-	assert.Contains(t, got, "rmrf=1", "rm -rf of a directory outside the job was not refused")
-	assert.Contains(t, got, "rm=1", "rm of a file outside the job was not refused")
-	assert.Contains(t, got, "mv=1", "rename of a file out of a directory outside the job was not refused")
+	// Outside every --write: refused, and nothing is gone.
+	assert.Contains(t, got, "rmrf=1", "rm -rf of a directory outside every --write was not refused")
+	assert.Contains(t, got, "rm=1", "rm of a file outside every --write was not refused")
+	assert.Contains(t, got, "mv=1", "rename of a file out of a directory outside every --write was not refused")
 	assert.Contains(t, got+errb.String(), "Permission denied", "the refusal was not the kernel's")
-	assert.FileExists(t, keep, "the wall let a file outside the job be deleted")
-	assert.FileExists(t, deep, "the wall let rm -rf delete beneath a directory outside the job")
-	assert.NoFileExists(t, filepath.Join(job, "stolen"), "a file was renamed out of a directory outside the job")
-	// Writing there is still allowed: the wall refuses the delete, not the write.
-	assert.Contains(t, got, "write=0", "a write in the outside --write was refused, and only deletes should be")
-	assert.FileExists(t, filepath.Join(outside, "written"))
+	assert.FileExists(t, keep, "the wall let a file outside every --write be deleted")
+	assert.FileExists(t, deep, "the wall let rm -rf delete beneath a directory outside every --write")
+	assert.NoFileExists(t, filepath.Join(job, "stolen"), "a file was renamed out of a directory outside every --write")
+	assert.Contains(t, got, "write=1", "a write outside every --write was allowed")
+	assert.NoFileExists(t, filepath.Join(outside, "written"))
 }
 
-// runDeleteHelper is the walled child: it builds the policy with the outside directory
-// as a second --write and runs one shell that tries each delete and prints each status.
+// runDeleteHelper is the walled child: the outside directory is not a --write, and
+// one shell tries each delete and prints each status.
 func runDeleteHelper() int {
 	job, outside := os.Getenv("DELETE_JOB"), os.Getenv("DELETE_OUTSIDE")
 	script := strings.Join([]string{
@@ -83,10 +81,10 @@ func runDeleteHelper() int {
 		`rm -f "$2/keep"; [ $? -eq 0 ] && echo rm=0 || echo rm=1`,
 		`rm -rf "$2"; [ $? -eq 0 ] && echo rmrf=0 || echo rmrf=1`,
 		`mv "$2/keep" "$1/stolen"; [ $? -eq 0 ] && echo mv=0 || echo mv=1`,
-		`echo new > "$2/written"; echo write=$?`,
+		`echo new > "$2/written"; [ $? -eq 0 ] && echo write=0 || echo write=1`,
 	}, "\n")
 	p, bad := Build(Input{
-		Writes: []string{job, outside},
+		Writes: []string{job},
 		Home:   filepath.Join(job, "home"),
 		Argv:   []string{"sh", "-c", script, "sh", job, outside},
 	})
@@ -107,11 +105,10 @@ const gitStepEnv = "NOVA_TEST_A_STEPS_GIT_COMMIT"
 
 // A step's wall (internal/cardtree, Wall.Argv): its private tmp is the first --write and
 // the --tmp, its checkout the second --write and the --cwd. git commits by renaming a new
-// index over .git/index, a delete in the checkout, so the checkout is one of the step's
-// own write roots and the commit must succeed under the wall; a third --write, a shared
-// directory the step may write, still refuses a delete (docs/SPEC-SANDBOX.md,
-// "deletes-only-in-the-job-dir-p.w1"). A wall that withholds the remove rights from the
-// cwd fails here at commit=128 ("unable to write new index file").
+// index over .git/index, a delete in the checkout, so the commit must succeed under the
+// wall. A third --write is a write root too, so a delete there also succeeds
+// (docs/SPEC-SANDBOX.md, "deletes-in-every-write-root"). A wall that withholds the remove
+// rights from the cwd fails here at commit=128 ("unable to write new index file").
 func TestAStepsGitCommitInsideItsWallSucceeds(t *testing.T) {
 	t.Parallel()
 	if os.Getenv(gitStepEnv) == "1" {
@@ -159,9 +156,9 @@ func TestAStepsGitCommitInsideItsWallSucceeds(t *testing.T) {
 	subject, err := log.Output()
 	require.NoError(t, err)
 	assert.Equal(t, "walled\n", string(subject), "the commit made under the wall is the checkout's head")
-	assert.Contains(t, got, "rm=1", "rm of a file in a shared --write outside every write root of the step was not refused")
-	assert.FileExists(t, keep, "the wall let a file outside the step's write roots be deleted")
-	assert.Contains(t, got, "write=0", "a write in the shared --write was refused, and only deletes should be")
+	assert.Contains(t, got, "rm=0", "rm of a file in a further --write was refused")
+	assert.NoFileExists(t, keep, "a file in a --write was not deleted")
+	assert.Contains(t, got, "write=0", "a write in the further --write was refused")
 }
 
 // runGitStepHelper is the walled child: the step's wall around one shell that commits in
@@ -194,10 +191,10 @@ func runGitStepHelper() int {
 	return code
 }
 
-// The masks, without a wall: the job dir, its tmp and the cwd keep REMOVE_FILE and REMOVE_DIR, any
-// other write loses exactly those two and keeps every write right, and the printed
-// ruleset and the darwin profile say the same thing.
-func TestWritesOutsideTheJobCarryNoRemoveRights(t *testing.T) {
+// Every --write carries REMOVE_FILE and REMOVE_DIR, a second root included, and the
+// printed ruleset and the darwin profile say the same thing: write=, and no
+// file-write-unlink deny (docs/SPEC-SANDBOX.md, "deletes-in-every-write-root").
+func TestEveryWriteRootCarriesRemoveRights(t *testing.T) {
 	t.Parallel()
 	job := realDir(t, t.TempDir())
 	outside := realDir(t, t.TempDir())
@@ -207,50 +204,40 @@ func TestWritesOutsideTheJobCarryNoRemoveRights(t *testing.T) {
 	abi := maxKnownABI
 	assert.Equal(t, writeSubset(abi), writeRuleMask(p, job, abi))
 	assert.Equal(t, writeSubset(abi), writeRuleMask(p, tmp, abi))
-	assert.Equal(t, writeSubset(abi)&^uint64(fsRemoveFile|fsRemoveDir), writeRuleMask(p, outside, abi))
-	assert.NotZero(t, writeRuleMask(p, outside, abi)&fsWriteFile, "an outside write lost its write right")
-	assert.NotZero(t, writeRuleMask(p, outside, abi)&fsMakeReg, "an outside write lost its create right")
+	assert.Equal(t, writeSubset(abi), writeRuleMask(p, outside, abi), "a --write lost its remove rights")
+	assert.NotZero(t, writeRuleMask(p, outside, abi)&fsRemoveFile, "a --write lost REMOVE_FILE")
+	assert.NotZero(t, writeRuleMask(p, outside, abi)&fsRemoveDir, "a --write lost REMOVE_DIR")
 
 	text, err := LandlockPolicyText(p)
 	require.NoError(t, err)
 	assert.Contains(t, text, "write="+job+"\n")
-	assert.Contains(t, text, "write-nodelete="+outside+"\n")
+	assert.Contains(t, text, "write="+outside+"\n")
+	assert.NotContains(t, text, "write-nodelete=")
 
 	profile, params, err := DarwinProfile(p)
 	require.NoError(t, err)
-	assert.Contains(t, profile, `(deny file-write-unlink (subpath (param "WRITE1")))`)
-	assert.NotContains(t, profile, `(deny file-write-unlink (subpath (param "WRITE0")))`)
-	deny := strings.Index(profile, `(deny file-write-unlink`)
-	allow := strings.Index(profile, `(allow file-write-unlink (subpath (param "WRITE0")))`)
-	assert.Greater(t, allow, deny, "the job dir's unlink must be given back after the denies (last match wins)")
-	assert.Greater(t, deny, strings.Index(profile, `(subpath (param "HOME"))`), "the denies must come after every write grant")
+	assert.NotContains(t, profile, "file-write-unlink", "a --write must not have its unlink taken back")
 	assert.NotContains(t, strings.Join(params, " "), "JOBTMP=", "a tmp inside the job dir needs no param of its own")
 
-	// A tmp outside the job dir is the second place deletes are allowed.
-	p.Tmp = outside
-	assert.Equal(t, writeSubset(abi), writeRuleMask(p, outside, abi))
-	// A step's wall: its tmp first, its checkout the cwd, a shared directory beside them.
-	// The checkout keeps its remove rights (git commit renames over .git/index), the shared
-	// directory does not.
+	// A step's wall: its tmp first, its checkout the cwd, another --write beside them.
+	// The checkout and the other root both keep their remove rights.
 	repo := realDir(t, t.TempDir())
 	step := &Policy{Writes: []string{tmp, repo, outside}, Tmp: tmp, Cwd: repo, Home: tmp}
 	assert.Equal(t, writeSubset(abi), writeRuleMask(step, repo, abi), "the step's checkout lost its remove rights")
-	assert.Equal(t, writeSubset(abi)&^uint64(fsRemoveFile|fsRemoveDir), writeRuleMask(step, outside, abi))
+	assert.Equal(t, writeSubset(abi), writeRuleMask(step, outside, abi), "a further --write lost its remove rights")
 	stepText, err := LandlockPolicyText(step)
 	require.NoError(t, err)
 	assert.Contains(t, stepText, "write="+repo+"\n")
-	assert.Contains(t, stepText, "write-nodelete="+outside+"\n")
-	stepProfile, stepParams, err := DarwinProfile(step)
+	assert.Contains(t, stepText, "write="+outside+"\n")
+	assert.NotContains(t, stepText, "write-nodelete=")
+	stepProfile, _, err := DarwinProfile(step)
 	require.NoError(t, err)
-	assert.Contains(t, stepProfile, `(deny file-write-unlink (subpath (param "WRITE2")))`)
-	assert.NotContains(t, stepProfile, `(deny file-write-unlink (subpath (param "WRITE1")))`, "the step's checkout is no denied write")
-	assert.Contains(t, stepProfile, `(allow file-write-unlink (subpath (param "JOBCWD")))`)
-	assert.Contains(t, strings.Join(stepParams, " "), "JOBCWD="+repo)
+	assert.NotContains(t, stepProfile, "deny file-write-unlink")
 
 	only := &Policy{Writes: []string{job}, Tmp: tmp, Cwd: job, Home: job}
 	plain, _, err := DarwinProfile(only)
 	require.NoError(t, err)
-	assert.NotContains(t, plain, "file-write-unlink", "a wall with only the job dir writable needs no delete rule")
+	assert.NotContains(t, plain, "file-write-unlink", "a wall whose only --write is the job dir needs no delete deny")
 }
 
 func realDir(t *testing.T, dir string) string {
