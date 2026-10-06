@@ -70,3 +70,33 @@ nova-doctor --check self --json
 Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
 nova tools on PATH and fails when they are not one release, naming the odd one. The
 contract is [SPEC-DOCTOR.md](SPEC-DOCTOR.md).
+
+### dep-providers-b.w2: the model providers and their routes
+
+Every nova-config route names a provider and a model, and the sprint's friends and native
+runs spend through them: the deal draws a route per card, the harness launches with that
+provider's key, and the balance poll rests a provider whose funds reach zero
+([SPEC-SPRINT.md](SPEC-SPRINT.md), `internal/sprint/provider_funds.go`). A route whose
+provider has no key, or whose provider is out of funds, is a hidden dependency: the tool
+runs until a take is refused, and the refusal is a mystery to a person who did not set the
+route up.
+
+Who needs it: any machine that runs cards on metered routes (a fleet member, a
+coordinator's own runs). `nova-up --local` writes a first sprint's store and seat but makes
+no nova-config and seals no provider key, so it does not provide this dependency; a person
+adds the routes and seals each provider's key by hand:
+
+```sh
+nova-config route add pro-a --tier pro --provider deepseek --model deepseek-v4 --tokens 400000 --deadline 1800
+nova-config apply
+nova-secrets seal --store <store> --as <seat> --name DEEPSEEK_API_KEY
+```
+
+The doctor check `providers` (`internal/doctor/check_providers.go`) reads every route
+(`nova-config route list --json`) and the seat's secrets names, and for each enabled route
+holds three facts: the provider's key is in the secrets store by name, the provider answers
+a no-cost call (its models list), and the funds it reports, where it reports them, are over
+zero. A disabled route is listed with its note and never checked; a route that would fail
+is named in the evidence, with the one fix line (seal the key, or `nova-sprint funded
+<provider> --reason '<the payment>'`). The check is one only a fleet needs, so
+`nova-doctor --local` skips it and a fleet run includes it.
