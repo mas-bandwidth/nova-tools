@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // oneMinuteLoad is the machine's 1-minute load average: /proc/loadavg where there is one,
@@ -14,7 +17,9 @@ func oneMinuteLoad() float64 {
 	if raw, err := os.ReadFile("/proc/loadavg"); err == nil {
 		return firstLoad(string(raw))
 	}
-	out, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+	cmd, cancel := subproc.CommandFor(context.Background(), 2*time.Second, "sysctl", "-n", "vm.loadavg")
+	defer cancel()
+	out, err := cmd.Output()
 	if err != nil {
 		return 0
 	}
