@@ -46,6 +46,7 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	want := sprint.Route{Name: "flash-a", Tier: "flash", Provider: "deepseek", Model: "v4-flash", Enabled: true}
 	want.Deadline = 900                  // seconds, as the route row holds it
 	want.Prices.ReasoningAsOutput = true // an absent price flag uses PricesOf's default
+	want.Applies = config.AllClasses     // a hash with no applies field is used by every class
 	assert.Equal(t, want, rs[0])
 	assert.Equal(t, "x-ai/grok-4", rs[1].Model)
 

@@ -963,7 +963,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	route, _, why := s.routeOf(c, nil, ri)
+	route, _, why := s.routeOf(c, nil, s.executorClass(m), ri)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -1030,7 +1030,7 @@ func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int,
 // (tla/DirtyTick.tla DealOne). Its route is the next at its tier's index that the
 // card was not dealt on (ri, moved past it and the entries skipped: route.go).
 func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexes) (Unit, string) {
-	route, _, why := s.routeOf(c, wc, ri)
+	route, _, why := s.routeOf(c, wc, s.executorClass(m), ri)
 	if why != "" {
 		return Unit{}, why
 	}
