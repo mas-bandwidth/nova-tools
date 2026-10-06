@@ -147,7 +147,8 @@ func TestRoadmapFormReadsBack(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, rm, got)
 	assert.Error(t, rm.Append([]sprint.RoadmapCard{{ID: "a", Stream: "s"}}), "a card twice")
-	for _, bad := range []string{"", "(:roadmap", "(:other)", "(:roadmap :product)", "(:roadmap) ()", `(:roadmap :product "p`} {
+	for _, bad := range []string{"", "(:roadmap", "(:other)", "(:roadmap :product)", "(:roadmap) ()", `(:roadmap :product "p`,
+		`(:roadmap :product "p" :cards ())`, `(:roadmap :streams ((:name "s" :other 1)))`, `(:roadmap :streams ((:name "s" :cards ((:id "a" :owner "x")))))`} {
 		_, err := sprint.ParseRoadmap([]byte(bad))
 		assert.Error(t, err, bad)
 	}
