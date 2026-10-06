@@ -28,17 +28,19 @@ import (
 // moves it as far as it can go. --answer is the coordinator's answer to the
 // one judgment it raises.
 //
-// This file does not register the verb and the tick does not call the pass.
-// verbs.go's init assigns the verb table and runs after this file (adopt.go
-// sorts first), so an append here is replaced. run.go's tick and the store
-// tick call no adoption hook; the tick's end parts are planners, and the
-// shadow tick calls the same functions, so a pass there would write during a
-// read-only plan and hold the tick. verbClasses is not set: a class with no
-// verb fails TestEveryVerbHasAClass.
+// The verb's row is in verbs.go's table (its init assigns the table and runs
+// after this file, so an append here would be replaced); its class is the
+// machine's, as server switch's is: it switches the same binaries and runs where
+// it is scheduled with no actor, so the cold-read card it adds is the machine's.
+// The tick does not call the pass: run.go's tick and
+// the store tick's end parts are planners, and the shadow tick calls the same
+// functions, so a pass there would write during a read-only plan and hold the
+// tick. The pass runs where it is typed or scheduled.
 func init() {
 	// it builds over ssh, switches binaries on disk and pushes to the fleet:
 	// it runs where it is typed or scheduled, never on the server
 	notServed = append(notServed, "adopt")
+	verbClasses["adopt"] = classMachine
 	verbExit["adopt"] = "exit codes: 0 the pass ran (whatever stage it left: CURRENT, WAIT, JUDGMENT, BLOCKED, ROLLED BACK are all lines, not failures) or the answer was recorded, 1 a step it could not read (the base, the live build, the record) or an answer refused, 2 usage"
 	verbEffect["adopt"] = "local and remote writes: on a base past the live build, builds on --bench, runs the candidate's canary and shadow tick, adds the cold-read card, and on a yes copies the server and daemon binaries aside, switches them, and runs nova-update release adopt to every --machines row; --answer writes only the record"
 }

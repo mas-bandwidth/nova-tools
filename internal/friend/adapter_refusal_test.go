@@ -68,12 +68,11 @@ func TestEveryWriteOfTheCommandIsSaidToTheWatch(t *testing.T) {
 	t.Parallel()
 	n := 0
 	ctx := WithOutputSeen(context.Background(), func() { n++ })
-	seen, _ := ctx.Value(outputKey{}).(func())
-	w := &seenWriter{seen: seen}
+	w := &seenWriter{ctx: ctx}
 	_, _ = w.Write([]byte("a"))
 	_, _ = w.Write(nil)
 	_, _ = w.Write([]byte("b"))
 	assert.Equal(t, 2, n, "an empty write is no output")
 	assert.Equal(t, "ab", w.b.String())
-	_, _ = (&seenWriter{}).Write([]byte("no watch")) // a context without one is fine
+	_, _ = (&seenWriter{ctx: context.Background()}).Write([]byte("no watch")) // a context without one is fine
 }

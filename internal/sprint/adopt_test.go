@@ -14,6 +14,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
+// memAdoptStore is the in-memory sprint.AdoptStore.
+type memAdoptStore struct{ R sprint.AdoptRecord }
+
+func (m *memAdoptStore) Load(context.Context) (sprint.AdoptRecord, error) { return m.R, nil }
+func (m *memAdoptStore) Save(_ context.Context, r sprint.AdoptRecord) error {
+	m.R = r
+	return nil
+}
+
 // fakeAdopt is every stage of an adoption, faked: the base tip and the live
 // build are fields, every call is logged in order, and a stage fails when its
 // name is in fail.
@@ -101,13 +110,13 @@ type adoptRig struct {
 	t   *testing.T
 	ctx context.Context
 	f   *fakeAdopt
-	st  *sprint.MemAdoptStore
+	st  *memAdoptStore
 	now time.Time
 	a   *sprint.Adoption
 }
 
 func newAdoptRig(t *testing.T) *adoptRig {
-	r := &adoptRig{t: t, ctx: context.Background(), f: newFakeAdopt(), st: &sprint.MemAdoptStore{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
+	r := &adoptRig{t: t, ctx: context.Background(), f: newFakeAdopt(), st: &memAdoptStore{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	r.a = &sprint.Adoption{Steps: r.f, Store: r.st, Now: func() time.Time { return r.now }, TickEvery: time.Minute, Missed: 3, Watch: 5}
 	return r
 }

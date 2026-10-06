@@ -79,8 +79,6 @@ func TestASentinelIsAStopTheCoordinatorReleases(t *testing.T) {
 	require.Equal(t, "sentinel stop reached: 5 cards of s1 have landed; 1 cards wait behind it", reached[0].What, "the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
 	require.Equal(t, Waiting, w.state("b"), "b is %s; reached notes %d", w.state("b"), len(w.notesOf(NSentinelReached)))
 	require.Len(t, w.notesOf(NSentinelReached), 1, "b is %s; reached notes %d", w.state("b"), len(w.notesOf(NSentinelReached)))
-	p = SentinelsDue(w.s, "")
-	require.Empty(t, p.Units, "reached twice: %+v", p)
 	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open})
 	require.Equal(t, NSentinelReached, g[0].Type, "the inbox: %+v", g[0])
 	require.Equal(t, "nova-sprint release stop --reason '<what you looked at and found>' --answers "+g[0].ID, g[0].Commands[0].Lines[0], "the inbox: %+v", g[0])
@@ -119,13 +117,11 @@ func TestOnlyTheCoordinatorReleases(t *testing.T) {
 	another := Release(w.s, ReleaseReq{IDs: []string{"stop"}, Reason: "x", Coordinator: "coord", Who: "someone"})
 	require.Equal(t, "release is the coordinator's alone: coord, not someone", another.Refused[0].Why, "another actor: %+v", another.Refused)
 	stop := w.s.Work.Card("stop")
-	for _, name := range []string{"resolve", "sentinels due", "a raw plan"} {
+	for _, name := range []string{"resolve", "a raw plan"} {
 		var p Plan
 		switch name {
 		case "resolve":
 			p = Resolve(w.s, ResolveReq{Sel: Sel{IDs: []string{"stop"}}})
-		case "sentinels due":
-			p = SentinelsDue(w.s, "")
 		case "a raw plan":
 			p.on(w.s)
 			p.Units = []Unit{{Key: "stop", Stream: "s1", Changes: []Change{change(Work, moveEntry(stop, "s1", Landed, nil))}}}

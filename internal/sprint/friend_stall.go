@@ -26,7 +26,7 @@ import (
 //       first activity after it. The release clears the stall props and removes the
 //       coordinator's observation of her (Plan.HealthClear), writing none: an observation
 //       written by the tick would stand for FriendPongWindow and read as evidence her
-//       session never gave (ObservedStatus); with it
+//       session never gave (FriendEvidence); with it
 //       removed her status is her session's evidence alone (FriendStatus).
 //
 // Every rung emits a happened note (Kind: Happened), which says what the rung did: the

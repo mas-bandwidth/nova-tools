@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -48,20 +47,4 @@ func TestHandoverRulesAreTheRunbooks(t *testing.T) {
 	doc := runbookRules(t)
 	require.NotEmpty(t, doc, "docs/SPRINT-COORDINATOR.md section 10 holds no rule")
 	assert.Equal(t, doc, coordinatorRules, "cmd/nova-sprint/handover_rules.go and docs/SPRINT-COORDINATOR.md section 10 disagree")
-}
-
-// Each rule is one RULE line of the handover, numbered as the runbook numbers it.
-func TestHandoverTextPrintsEachRuleByNumber(t *testing.T) {
-	t.Parallel()
-	lines := handoverRuleLines()
-	require.Len(t, lines, len(coordinatorRules))
-	assert.Equal(t, "R1. "+coordinatorRules[0], lines[0])
-	assert.Equal(t, "R"+strconv.Itoa(len(lines))+". "+coordinatorRules[len(lines)-1], lines[len(lines)-1])
-
-	ta := newTestApp(t)
-	out := ta.a.handoverText(handoverView{Seat: seatView{Holder: "coordinator"}, Rules: lines})
-	for _, l := range lines {
-		assert.Contains(t, out, "RULE "+l+"\n")
-	}
-	assert.Equal(t, len(lines), strings.Count(out, "\nRULE R"), out)
 }

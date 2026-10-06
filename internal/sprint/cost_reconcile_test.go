@@ -50,9 +50,9 @@ func TestTheRecordsOfADayAreThatDaysOnly(t *testing.T) {
 	t.Parallel()
 	w := reconcileWorld(t)
 	day := w.s.Now.UTC().Format(time.DateOnly)
-	assert.InDelta(t, 10.0, InternalSpendOn(w.s, "openrouter", day), 1e-9)
-	assert.InDelta(t, 40.0, InternalSpendOn(w.s, "openrouter", w.s.Now.Add(-24*time.Hour).UTC().Format(time.DateOnly)), 1e-9)
-	assert.InDelta(t, 5.0, InternalSpendOn(w.s, "opencode", day), 1e-9)
+	assert.InDelta(t, 10.0, internalSpendAll(w.s, "openrouter", day), 1e-9)
+	assert.InDelta(t, 40.0, internalSpendAll(w.s, "openrouter", w.s.Now.Add(-24*time.Hour).UTC().Format(time.DateOnly)), 1e-9)
+	assert.InDelta(t, 5.0, internalSpendAll(w.s, "opencode", day), 1e-9)
 }
 
 // A gap of 10% between the provider's count of today and the sprint's records of today opens
@@ -171,8 +171,8 @@ func TestTheReconcileJudgmentNamesTheReadShareOfTheGap(t *testing.T) {
 	t.Parallel()
 	w := reconcileWorld(t)
 	day := w.s.Now.UTC().Format(time.DateOnly)
-	assert.InDelta(t, 4.0, InternalReadSpendOn(w.s, "openrouter", day), 1e-9, "today's one read, never a take")
-	assert.InDelta(t, 0.0, InternalReadSpendOn(w.s, "opencode", day), 1e-9)
+	assert.InDelta(t, 4.0, internalSpendReads(w.s, "openrouter", day), 1e-9, "today's one read, never a take")
+	assert.InDelta(t, 0.0, internalSpendReads(w.s, "opencode", day), 1e-9)
 
 	p := w.must(CostReconcile(w.s, openrouterRead(w, 20))) // $20 against $10: a gap of $10
 	require.Len(t, p.Notes, 1)
@@ -187,4 +187,15 @@ func TestTheReconcileJudgmentNamesTheReadShareOfTheGap(t *testing.T) {
 	// a day with no record names no read share
 	assert.Equal(t, "the records hold nothing of the day, so no part of the gap is set against reads",
 		readShareOfGap(CostReconcileRecord{Used: 3}))
+}
+
+// internalSpendAll and internalSpendReads are internalSpendSplit's two sums.
+func internalSpendAll(s *Snapshot, provider, day string) float64 {
+	all, _ := internalSpendSplit(s, provider, day)
+	return all
+}
+
+func internalSpendReads(s *Snapshot, provider, day string) float64 {
+	_, reads := internalSpendSplit(s, provider, day)
+	return reads
 }

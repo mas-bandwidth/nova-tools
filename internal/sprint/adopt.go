@@ -198,15 +198,6 @@ type AdoptStore interface {
 	Save(ctx context.Context, r AdoptRecord) error
 }
 
-// MemAdoptStore is the in-memory AdoptStore, for tests and the twin.
-type MemAdoptStore struct{ R AdoptRecord }
-
-func (m *MemAdoptStore) Load(context.Context) (AdoptRecord, error) { return m.R, nil }
-func (m *MemAdoptStore) Save(_ context.Context, r AdoptRecord) error {
-	m.R = r
-	return nil
-}
-
 // FileAdoptStore keeps the record as one JSON file, written whole and renamed
 // into place, so a pass that dies mid-write leaves the last record.
 type FileAdoptStore struct{ Path string }

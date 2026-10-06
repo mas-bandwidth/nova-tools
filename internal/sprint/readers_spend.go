@@ -139,8 +139,3 @@ func ReaderSpendTotal(spends map[string]ReaderSpend) ReaderSpend {
 	}
 	return all
 }
-
-// ReaderSpends is each reader's spend over every primary of the work table, all streams.
-func ReaderSpends(s *Snapshot) map[string]ReaderSpend {
-	return ReaderSpendsOf(StreamTierCosts(s))
-}

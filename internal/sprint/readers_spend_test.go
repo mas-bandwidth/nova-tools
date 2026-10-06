@@ -71,7 +71,7 @@ func TestTheReadersTableCarriesEachReadersSpend(t *testing.T) {
 
 	all := ReaderSpendTotal(spends)
 	assert.Equal(t, ReaderSpend{Reads: 7, Priced: 4, USD: "2.875", HourPriced: 2, HourUSD: "0.625", Tokens: 1500}, all, "the one row sums every reader")
-	assert.Equal(t, spends, ReaderSpends(w.s), "the snapshot's sum is the records' sum")
+	assert.Equal(t, spends, ReaderSpendsOf(StreamTierCosts(w.s)), "the snapshot's sum is the records' sum")
 
 	// the readers' spend is the read cost each stream already splits out: no read lost
 	// between the two, and no take in either

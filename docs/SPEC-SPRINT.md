@@ -276,7 +276,7 @@ the word, `seen`, `generation`, the counts, the reason and the until; `where
 [replayed=true]`, `--json` `{friend, state, seen, generation, queue, working,
 width, status, replayed}`.
 
-The table's word from an observation (`sprint.ObservedStatus`): `up` only when
+The table's word from an observation alone (`sprint.FriendEvidence` with no hold, beat or finish): `up` only when
 the observation says `up` (her session answered a wake ping), under the seat's
 generation now, with its proof under `FriendPongWindow` (10 minutes) old and
 not dated after now (a negative age is no proof); `down` otherwise, at exactly
@@ -348,7 +348,7 @@ that one judgment, and raises it when the card is already sitting off her row,
 until it is back on her row or leaves ready and working. A hard pin is not
 rotated and is not this judgment. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
-no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
+no-stall rule as waiting for her (`sprint.TickDeal`, its friend deal,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
 route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
 The tick reads the friends' records every tick while the roster has a friend.
@@ -559,7 +559,7 @@ does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 A card whose read tier, before a frontier card is collapsed onto the tier a
 route serves (`readTierOf`), is frontier — a frontier card, or a heavy card
 whose read tier is the one above — is asked of a friend of frontier class,
-not drawn on a reader machine (`FriendReadAsk`, `FriendReadClose`). The friend
+not drawn on a reader machine (`friendReadAsk`, `FriendReadClose`). The friend
 is up, below her room (the same free width a friend's card is dealt within,
 `TickDeal`), and her tiers include frontier: the one with the most free
 width, the first by name among equals. Each ask takes one of that free width.

@@ -279,11 +279,6 @@ func authored(seat string, m bus.Message) string {
 	return Quoted(m)
 }
 
-// Batch is BatchFor with the seat unknown: every message quoted.
-func Batch(msgs []bus.Message, notice, pongCommand string) string {
-	return BatchFor("", msgs, notice, pongCommand)
-}
-
 // BatchFor is one turn's text: the pong line to run first while a challenge
 // is open, the daemon's word about the coordinator, then every message,
 // oldest first, each as nova-bus recv prints it under a numbered rule, and

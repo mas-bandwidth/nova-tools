@@ -197,7 +197,7 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 	return fallback
 }
 
-// FriendReadAsk asks each frontier read in review of a friend of frontier
+// friendReadAsk asks each frontier read in review of a friend of frontier
 // class, the same chooser as friendDeal (up, below her free width, most room,
 // first by name), and decrements that free width as friendDeal does. dir is a
 // working directory used when the seat names none; empty writes no brief (friend
@@ -205,14 +205,8 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 // asked it again; another friend is. With no friend of frontier class up who
 // may read it, it asks no one and raises the one judgment a read with no
 // reader up already raises (NFewReaders); with one up at her room the read
-// waits for her room, as a machine read waits for a reader's (friendReadAsk).
-func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
-	p, _, _, err := friendReadAsk(s, seats, dir)
-	return p, err
-}
-
-// friendReadAsk is FriendReadAsk with the frontier primaries it left waiting
-// for a friend's room (a friend of frontier class is up who may read the
+// waits for her room, as a machine read waits for a reader's. It also returns the
+// frontier primaries it left waiting for a friend's room (a friend of frontier class is up who may read the
 // attempt, and every such friend is at her room), which the tick's ask records
 // as waiting for a reader and counts due (friendAskPart), and few: a primary
 // has no friend up who may read it, the readers' judgment's condition.
