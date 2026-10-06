@@ -581,7 +581,7 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 		switch {
 		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
 			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
-		case o.Status == OK:
+		case o.Status == OK && !hasFact(o, "dry_run"):
 			o.Fact("dry_run", true)
 		}
 	}
@@ -762,7 +762,7 @@ type Call struct {
 // DryRun reports whether --dry-run was given (only a Verb with DryRun takes
 // it). A verb reads it before it writes and, when it is set, returns the plan
 // the real run would carry out, from the same code path, and writes nothing;
-// the skeleton adds dry_run=true to the OK line.
+// the skeleton adds dry_run=true to the OK line unless the verb set it.
 func (c *Call) DryRun() bool {
 	c.dryRead = true
 	return c.given["dry-run"] && c.Bool("dry-run")
@@ -819,4 +819,17 @@ func (c *Call) Refused() *Out {
 		}
 	}
 	return o
+}
+
+// hasFact reports whether o carries a fact of that name.
+func hasFact(o *Out, k string) bool {
+	if o == nil {
+		return false
+	}
+	for _, f := range o.Facts {
+		if f.K == k {
+			return true
+		}
+	}
+	return false
 }
