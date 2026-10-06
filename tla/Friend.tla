@@ -19,6 +19,16 @@
 \* (the "coordinator silent" pushes) beside outages (the times the
 \* connection went silent).
 \*
+\* A harness at its usage limit or out of credits is down until the reset
+\* (limits-mean-down-w-r3.w1~15; internal/friend/limits.go, limit.go Limits.Gate):
+\* lim is "up" or "limited", limUntil the reset the text named (or the rest). A
+\* turn that hits the limit ends at once and the friend is limited (HitLimit);
+\* while limited no turn starts, message or wake check, so every message stays
+\* pending, but pings are still answered by the daemon (Ping is not a turn);
+\* once the reset has passed one wake turn is tried (Wake): it answers and the
+\* friend is up again, or it still says limited and the next reset is taken
+\* from its text.
+\*
 \* Broken = "none" is the design. Every other value is a reversed witness,
 \* each caught by one property below:
 \*   "upwithoutpong"  the daemon's own beat makes the friend up: UpOnlyAfterPong
@@ -29,15 +39,18 @@
 \*   "stalepong"      any nonce the session ever saw answers: OnlyCurrentNonceAnswers
 \*   "daemonpongends" the daemon's pong ends a wake challenge (session-pong.w1):
 \*                    OnlySessionPongEnds
+\*   "deliverlimited" a turn starts while the harness is limited: NoTurnWhileLimited
+\*   "neverwake"      no wake turn is tried after the reset: LimitedEnds
 
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Window, MaxTime, MaxPings, Broken
 
 VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, busy, owed
+          daemonPongs, busy, owed, lim, limUntil
 vars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, busy, owed>>
+          daemonPongs, busy, owed, lim, limUntil>>
+limvars == <<lim, limUntil>>
 
 NoNonce == 0
 
@@ -57,6 +70,8 @@ TypeOK ==
   /\ daemonPongs \in 0..MaxPings
   /\ busy \in BOOLEAN
   /\ owed \in BOOLEAN
+  /\ lim \in {"up", "limited"}
+  /\ limUntil \in 0..MaxTime
 
 \* Up is what the daemon reports: the session answered the current challenge
 \* and has answered at least once (machine.go Up). The witness lets the
@@ -71,6 +86,7 @@ Init ==
   /\ silentSaid = 0 /\ outages = 0
   /\ answered = NoNonce
   /\ daemonPongs = 0 /\ busy = FALSE /\ owed = FALSE
+  /\ lim = "up" /\ limUntil = 0
 
 \* The clock (machine.go Tick): a window without a ping makes the
 \* coordinator silent, said once at that moment; a window challenged with
@@ -85,7 +101,7 @@ Tick ==
        ELSE /\ UNCHANGED <<conn, silentFrom, outages>>
             /\ silentSaid' = IF Broken = "silenttwice" /\ conn = "silent" THEN silentSaid + 1 ELSE silentSaid
   /\ chal' = IF chal = "challenged" /\ now + 1 - asked >= Window /\ Broken # "neverdeaf" THEN "deaf" ELSE chal
-  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, busy, owed>>
+  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, busy, owed, limvars>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping;
 \* daemon.go loop.ping): the daemon answers it at once (daemonPongs), the
@@ -104,31 +120,54 @@ Ping(wake) ==
             ELSE IF chal = "deaf" THEN "deaf" ELSE "challenged"
   /\ asked' = now
   /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
-  /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, busy>>
+  /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, busy, limvars>>
 
 \* A turn carrying messages starts in the free session (daemon.go
 \* startBatch): while a challenge is open the pong line for the current nonce
 \* rides at its head (loop.head), and an owed wake check is paid by it.
 Turn ==
   /\ ~busy
+  /\ (lim = "up" \/ Broken = "deliverlimited")
   /\ busy' = TRUE
   /\ IF chal # "quiet"
        THEN seen' = seen \cup {nonce} /\ owed' = FALSE
        ELSE UNCHANGED <<seen, owed>>
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, limvars>>
 
 \* A wake check owed to a free session with no message waiting is pushed
 \* in as its own turn holding only the pong line (daemon.go startWake).
 WakeTurn ==
   /\ ~busy /\ owed /\ chal # "quiet"
+  /\ (lim = "up" \/ Broken = "deliverlimited")
   /\ busy' = TRUE /\ owed' = FALSE
   /\ seen' = seen \cup {nonce}
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, limvars>>
 
 TurnEnds ==
   /\ busy
   /\ busy' = FALSE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed, limvars>>
+
+\* The turn in the session hits the harness's usage limit or empty balance
+\* (limit.go Limits.see): it ends at once, deferred, its messages kept
+\* pending, and the friend is down until a reset after now (the text's own,
+\* else the rest).
+HitLimit ==
+  /\ busy /\ lim = "up" /\ now < MaxTime
+  /\ busy' = FALSE
+  /\ lim' = "limited"
+  /\ \E u \in (now + 1)..MaxTime : limUntil' = u
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
+
+\* After the reset one wake turn is tried (limit.go Limits.Gate, a nonce the
+\* session must answer): answered, the friend is up again; still limited, the
+\* next reset is taken from the text. The try is no message turn: a message
+\* goes in only after it answered.
+Wake ==
+  /\ lim = "limited" /\ ~busy /\ now >= limUntil /\ Broken # "neverwake"
+  /\ \/ lim' = "up" /\ UNCHANGED limUntil
+     \/ /\ now < MaxTime /\ lim' = "limited" /\ \E u \in (now + 1)..MaxTime : limUntil' = u
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed>>
 
 \* The session answers with a nonce it has seen (machine.go Pong): the
 \* current one ends the challenge; any other changes nothing. The witness
@@ -138,7 +177,7 @@ Pong(n) ==
   /\ chal # "quiet"
   /\ (n = nonce \/ Broken = "stalepong")
   /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs, busy>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs, busy, limvars>>
 
 Next ==
   \/ Tick
@@ -146,9 +185,11 @@ Next ==
   \/ Turn
   \/ WakeTurn
   \/ TurnEnds
+  \/ HitLimit
+  \/ Wake
   \/ \E n \in 1..MaxPings : Pong(n)
 
-Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
+Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Wake)
 
 \* ---------------------------------------------------------------- the rules
 
@@ -180,8 +221,18 @@ OnlySessionPongEnds ==
 \* pays it, so a wake turn never carries an answered nonce.
 OwedOnlyWhileAsked == owed => chal # "quiet"
 
-\* No liveness is claimed: the clock is finite here, and DeafAfterWindow
-\* already says an open challenge is younger than a window at every state,
-\* so once the clock moves a window it is answered or deaf.
+\* No turn starts while the harness is limited (limits-mean-down-w-r3.w1~15):
+\* a message or a wake check never goes into a session that cannot answer, so
+\* every message stays pending, counted toward nothing. Pings are no turn.
+NoTurnWhileLimited == [][(~busy /\ busy') => lim = "up"]_vars
+
+\* Limited ends: once limited, the friend is up again (one wake turn after the
+\* reset answered); WF(Wake) and the finite clock (a reset is always after
+\* now, and no later than MaxTime) make it so.
+LimitedEnds == (lim = "limited") ~> (lim = "up")
+
+\* The one liveness claimed beyond that: the clock is finite here, and
+\* DeafAfterWindow already says an open challenge is younger than a window at
+\* every state, so once the clock moves a window it is answered or deaf.
 
 =============================================================================
