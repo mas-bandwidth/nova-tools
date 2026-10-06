@@ -13,7 +13,7 @@ func tables(ts ...string) []string { return ts }
 
 // AddStep admits primaries; it reads the named needs as well, placed or not,
 // and the stream's control card, kept unplaced when the stream was removed in
-// this epoch (sprint.RemovedStream). With Replaces (add --replaces) it is the
+// this epoch (sprint.RemovedStream), which the add places again (sprint.ComeBack). With Replaces (add --replaces) it is the
 // twin's step (sprint.Replace): it reads every table, as the drop of the old
 // cards does, and the old cards' records, placed or not.
 func AddStep(r sprint.AddReq) Step {
