@@ -22,7 +22,7 @@ import (
 
 // fakeGit puts a git on PATH that records every invocation, so a test can assert that this
 // tool ran none. A fold that fetched would be a fold whose numbers depend on a network call.
-func fakeGit(t *testing.T) (logPath string) {
+func fakeGit(t *testing.T) (logPath string, env toolenv) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake git is a shell script")
@@ -34,8 +34,14 @@ func fakeGit(t *testing.T) (logPath string) {
 		err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755)
 		require.NoError(t, err, err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return logPath
+	pathVal := bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	env = toolenv{getenv: func(k string) string {
+		if k == "PATH" {
+			return pathVal
+		}
+		return ""
+	}}
+	return logPath, env
 }
 
 // reversedHistory makes dir a git repository whose commits land in the order given, using
@@ -68,10 +74,12 @@ func reversedHistory(t *testing.T, git, dir string, files ...string) {
 }
 
 func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
+	t.Parallel()
+
 	// The real git, resolved before the fake one goes on PATH: the fixture's history is
 	// built with it, and the tool must still never run git.
 	realGit, _ := exec.LookPath("git")
-	gitLog := fakeGit(t)
+	gitLog, env := fakeGit(t)
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -85,7 +93,7 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 
 	fold := func(t *testing.T, out string) string {
 		t.Helper()
-		r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
+		r := invokeEnv(t, env, foldStamp, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
 		wantExit(t, r, 0)
 		wantContains(t, r.stdout, "TOKENS SUPERSEDED")
 		return read(t, filepath.Join(out, "2026-09-11.tsv"))

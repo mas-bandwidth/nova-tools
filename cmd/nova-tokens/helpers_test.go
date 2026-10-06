@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,17 +30,64 @@ type result struct {
 
 func (r result) all() string { return r.stdout + r.stderr }
 
-// invoke runs the binary in process, with the clock injected.
+// noEnv is the environment a test hands run() by default: no variable at all, so the
+// two Redis verbs resolve their seat to no login and every test dials its own store the
+// same way, whatever the machine's environment holds (docs/STANDARD.md section 8).
+func noEnv(string) string { return "" }
+
+// testEnv is the environment invoke runs under: no variables, and an empty working
+// directory, which resolves a relative path against the process cwd like every os call.
+func testEnv() toolenv { return toolenv{getenv: noEnv} }
+
+// processEnv is the environment the tool re-entered through TestMain runs under: the
+// process's own, exactly what main() passes.
+func processEnv() toolenv {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = ""
+	}
+	return toolenv{getenv: os.Getenv, wd: wd}
+}
+
+// envOf is a test's own environment: the variables it would have set with t.Setenv, as
+// a map the test mutates between invocations, read through the injected getenv.
+func envOf(vars map[string]string) toolenv {
+	return toolenv{getenv: func(k string) string { return vars[k] }}
+}
+
+// invoke runs the binary in process, with the clock and the environment injected.
 func invoke(t *testing.T, args ...string) result {
 	t.Helper()
-	return invokeAt(t, foldStamp, args...)
+	return invokeEnv(t, testEnv(), foldStamp, args...)
 }
 
 func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	t.Helper()
+	return invokeEnv(t, testEnv(), now, args...)
+}
+
+// opensGate coordinates invocations so tests that assert on the process-wide tokens.Opens()
+// counter can do so without interference from concurrent folds.
+var opensGate sync.RWMutex
+
+func invokeEnvDirect(args []string, now time.Time, env toolenv) result {
 	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, now)
+	exit := run(args, &out, &errb, now, env)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
+}
+
+// invokeEnv runs the binary in process under the test's own environment.
+func invokeEnv(t *testing.T, env toolenv, now time.Time, args ...string) result {
+	t.Helper()
+	opensGate.RLock()
+	defer opensGate.RUnlock()
+	return invokeEnvDirect(args, now, env)
+}
+
+// invokeEnvLocked runs the binary under opensGate.Lock, so tokens.Opens() is isolated.
+func invokeEnvLocked(t *testing.T, env toolenv, now time.Time, args ...string) result {
+	t.Helper()
+	return invokeEnvDirect(args, now, env)
 }
 
 func wantExit(t *testing.T, r result, want int) {
@@ -192,19 +240,8 @@ var fakeModes = map[string]func() int{}
 // first on PATH, and hands the placed program its mode through the environment.
 func fakeSqlite3OnPath(t *testing.T, mode string) {
 	t.Helper()
-	self, err := os.Executable()
-	require.NoError(t, err)
-	bin := mkdir(t, filepath.Join(t.TempDir(), "bin"))
-	name := "sqlite3"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	{
-		err := testbin.Place(self, filepath.Join(bin, name))
-		require.NoError(t, err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv(fakeSqlite3Env, mode)
+	testRoot := filepath.Dir(t.TempDir())
+	_ = os.WriteFile(filepath.Join(testRoot, "fake_sqlite3_mode"), []byte(mode), 0o644)
 }
 
 // TestMain is the fake's other half: with the mode set in the environment this binary is
@@ -216,14 +253,42 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
+	if self, err := os.Executable(); err == nil {
+		base := filepath.Base(self)
+		if base == "sqlite3" || base == "sqlite3.exe" {
+			os.Exit(fakeSqlite3Main("", os.Args[1:], os.Stdout))
+		}
+	}
 	if os.Getenv(asToolEnv) != "" {
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp, processEnv()))
+	}
+	self, err := os.Executable()
+	if err == nil {
+		binDir := filepath.Join(os.TempDir(), fmt.Sprintf("nova-tokens-bin-%d", os.Getpid()))
+		if err := os.MkdirAll(binDir, 0o755); err == nil {
+			name := "sqlite3"
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			if err := testbin.Place(self, filepath.Join(binDir, name)); err == nil {
+				os.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			}
+		}
 	}
 	os.Exit(m.Run())
 }
 
 // fakeSqlite3Main records the invocation and answers the last argument, which is the SQL.
 func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
+	if mode == "" && len(args) >= 3 {
+		dbArg := args[len(args)-2]
+		for d := filepath.Dir(dbArg); d != "" && d != "." && d != string(filepath.Separator); d = filepath.Dir(d) {
+			if b, err := os.ReadFile(filepath.Join(d, "fake_sqlite3_mode")); err == nil {
+				mode = strings.TrimSpace(string(b))
+				break
+			}
+		}
+	}
 	if m, ok := fakeModes[mode]; ok {
 		return m()
 	}

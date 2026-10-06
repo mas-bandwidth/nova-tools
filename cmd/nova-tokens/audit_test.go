@@ -45,6 +45,11 @@ var tokensAudit = audit.Config{
 		// oneline.Field at the print site below.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
+		// errors holds the text of an operation's error re-rooted onto the path as the
+		// caller typed it (the injected working directory, main.go's reroot): it holds no
+		// writer of its own, and the text it carries is printed through this package's own
+		// error sites.
+		`"errors"`,
 		// maps and slices hold no writer: they return keys, sorted copies and membership,
 		// which this package renders through oneline at its own print sites.
 		`"maps"`, `"slices"`,
@@ -58,9 +63,10 @@ var tokensAudit = audit.Config{
 		// at the print site; record prints nothing itself.
 		`"context"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/record"`,
-		// ledger.go's seat (#3461): redisauth.Auth (a leaf: no net, no os/exec) resolves the ACL user and the password from
-		// the environment, the one config nova-sprint dials with; it holds no writer and
-		// returns strings and an error this package prints through oneline.Err.
+		// the seat (#3461): redisauth's three variable names, the one config nova-sprint
+		// dials with, read through the injected environment by report.go's seatAuth; the
+		// package is a leaf (no net, no os/exec), holds no writer and its names reach the
+		// output through this package's own error sites.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		// atomicfile writes one FILE whole (the report note and the ledger): it takes a path

@@ -17,10 +17,17 @@ import (
 // *XaiUsageMissingError, and a directory is not walked. A session store
 // planted under HOME is never opened.
 func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
+	t.Parallel()
+
+	opensGate.Lock()
+	defer opensGate.Unlock()
+
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	env := envOf(map[string]string{
+		"HOME":        home,
+		"USERPROFILE": home,
+	})
 	const bait = "424242"
 	write(t, filepath.Join(home, ".grok", "sessions", "encoded-cwd", "session-id", "usage.json"), `{
   "sessionId": "bait-session",
@@ -64,7 +71,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 }`)
 	repos := reposFile(t, dir)
 	before := tokens.Opens()
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
+	r := invokeEnvLocked(t, env, foldStamp, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
 	wantExit(t, r, 0)
 	{
 		opened := tokens.Opens() - before
@@ -88,7 +95,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	missing := filepath.Join(dir, "no-such-usage.json")
 	outMiss := mkdir(t, filepath.Join(dir, "out-missing"))
 	before = tokens.Opens()
-	miss := invoke(t, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+missing)
+	miss := invokeEnvLocked(t, env, foldStamp, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+missing)
 	wantExit(t, miss, 1)
 	{
 		opened := tokens.Opens() - before
@@ -115,7 +122,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	}
 	outDir := mkdir(t, filepath.Join(dir, "out-dir"))
 	before = tokens.Opens()
-	dirFold := invoke(t, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+sessions)
+	dirFold := invokeEnvLocked(t, env, foldStamp, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+sessions)
 	wantExit(t, dirFold, 1)
 	{
 		opened := tokens.Opens() - before
