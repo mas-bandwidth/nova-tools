@@ -414,3 +414,7 @@ MCCoordinatorPassPin.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinato
 MCCoordinatorPassBrokenPinRekey.cfg	MCCoordinatorPass.tla	invariant	OneJudgmentAnEpisode	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
+MCLandingIssues.cfg	MCLandingIssues.tla	pass	-	ignore-terminal	landingissues	required	-
+MCLandingIssuesBrokenErrDone.cfg	MCLandingIssues.tla	invariant	RecordedIsClosed	ignore-terminal	landingissues	required	-
+MCLandingIssuesBrokenNoCheck.cfg	MCLandingIssues.tla	invariant	OneComment	ignore-terminal	landingissues	required	-
+MCLandingIssuesBrokenNoRetry.cfg	MCLandingIssues.tla	temporal	AllClose	ignore-terminal	landingissues	required	-
