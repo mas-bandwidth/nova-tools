@@ -10,7 +10,8 @@ import (
 // needs prints one stream's waiting cards as a dependency graph: the chain
 // order from the roots down (a card after every card it needs; the work order
 // within a depth), each card with its unmet needs and their states, the roots
-// marked, each card's depth, the width at each depth, and a closing count of
+// marked with its own column (card <id> column <c>) and each need labelled
+// apart (need <id> column <c>), each card's depth, the width at each depth, and a closing count of
 // the cards whose needs name a dropped or absent id (one card once, however
 // many of its needs name one). A card whose need is off the table (dropped)
 // is a root at depth 0 with no tick run.
@@ -34,10 +35,10 @@ func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	ta.ok("drop y --reason obsolete")
 
 	out := ta.ok("needs --stream s2")
-	rootAt := strings.Index(out, "depth=0 ROOT a needs s1-1 dropped")
-	bAt := strings.Index(out, "depth=1 b needs a waiting")
-	cAt := strings.Index(out, "depth=2 c needs b waiting")
-	dAt := strings.Index(out, "depth=3 d needs c waiting")
+	rootAt := strings.Index(out, "depth=0 ROOT card a column waiting needs need s1-1 column dropped")
+	bAt := strings.Index(out, "depth=1 card b column waiting needs need a column waiting")
+	cAt := strings.Index(out, "depth=2 card c column waiting needs need b column waiting")
+	dAt := strings.Index(out, "depth=3 card d column waiting needs need c column waiting")
 	require.Greater(t, rootAt, -1, "a is the root at depth 0, on the dropped need")
 	require.Greater(t, bAt, rootAt, "b needs the waiting a, at depth 1, after it in chain order")
 	require.Greater(t, cAt, bAt, "c at depth 2, after b in chain order")
@@ -46,12 +47,12 @@ func TestNeedsPrintsRootsDepthAndWidthOfAWaitingChain(t *testing.T) {
 	require.Contains(t, out, "NEEDS stream=s2 cards=4 dropped-or-absent=1", "a's one dropped need counts a once")
 
 	s1 := ta.ok("needs --stream s1")
-	require.Contains(t, s1, "depth=0 ROOT m needs x dropped, y dropped", "m names both its dropped needs")
+	require.Contains(t, s1, "depth=0 ROOT card m column waiting needs need x column dropped, need y column dropped", "m names both its dropped needs")
 	require.Contains(t, s1, "NEEDS stream=s1 cards=1 dropped-or-absent=1", "m's two dropped needs count the one card once")
 
 	roots := ta.ok("needs --stream s2 --roots")
-	require.Contains(t, roots, "depth=0 ROOT a", "--roots keeps the roots")
-	require.NotContains(t, roots, "depth=1 b", "--roots drops the cards below the roots")
+	require.Contains(t, roots, "depth=0 ROOT card a", "--roots keeps the roots")
+	require.NotContains(t, roots, "depth=1 card b", "--roots drops the cards below the roots")
 	require.Contains(t, roots, "depth 0: 1, depth 1: 1, depth 2: 1, depth 3: 1", "--roots keeps the widths")
 
 	var v struct {
