@@ -57,6 +57,52 @@ func (r Redis) Unmark(ctx context.Context, key string, fields ...string) (int64,
 	return r.C.HDel(ctx, key, fields...).Result()
 }
 
+// stampTries bounds the optimistic retries of a stamp that other writers keep
+// racing: a receipt is a word on the record, never worth a loop.
+const stampTries = 8
+
+func (r Redis) Stamp(ctx context.Context, key, state string, fields ...string) (int64, error) {
+	var moved int64
+	txn := func(tx *redis.Tx) error {
+		cur, err := tx.HMGet(ctx, key, fields...).Result()
+		if err != nil {
+			return err
+		}
+		now, err := tx.Time(ctx).Result()
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for i, f := range fields {
+			v, _ := cur[i].(string) // a field that is not there is nil: none
+			if Advances(v, state) {
+				ids = append(ids, f)
+			}
+		}
+		moved = int64(len(ids))
+		if len(ids) == 0 {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			for _, f := range ids {
+				pipe.HSet(ctx, key, f, StampValue(state, now))
+			}
+			return nil
+		})
+		return err
+	}
+	var err error
+	for range stampTries {
+		if err = r.C.Watch(ctx, txn, key); !errors.Is(err, redis.TxFailedErr) {
+			break
+		}
+	}
+	if err != nil {
+		return 0, err
+	}
+	return moved, nil
+}
+
 func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, error) {
 	pipe := r.C.Pipeline()
 	cmds := make([]*redis.MapStringStringCmd, len(keys))

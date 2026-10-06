@@ -210,6 +210,46 @@ The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
 store with users: a sender marks the recipients' hashes, as it writes their
 streams.
 
+### message-receipts-r2.w1: delivered, read, acted
+
+A message is pending or acked on the stream; that cannot say whether the
+daemon took it, the session read it, or anything came of it. Each message has
+a receipt per recipient that only moves forward: `sent` (on the stream),
+`delivered` (the recipient's reader took it off the stream: `recv`'s
+`Bus.RecvKinds`), `read` (the session's turn carrying it started: the daemon
+stamps it when it hands the turn to the harness adapter), `acted` (the turn
+ended at exit 0, or the recipient sent a message whose `re` is the id). The
+receipts are the hash `bus2:receipt:<recipient>`, one field per message id, the
+value `<state> <unix seconds>`, the time the store's `TIME`. `send` writes
+`sent` for every recipient in its own transaction (a plain `HSET`: the id is new);
+every later state is `Bus.Stamp`, which both stores write only to a state beyond
+the one a message holds (the Redis store inside `WATCH`/`MULTI`, retried when
+another writer races it), so a redelivery, a second stamp or a late one never
+moves a message back and never rewrites its time. A stamp is a round trip after
+the work it records, and a store that refuses it (an ACL without the hash, a store
+down) is told to `Bus.OnReceiptError` and the recv, the send or the delivery goes
+on; the message is then one `overdue` shows. An entry of a stream is still never
+deleted, and the hash is never trimmed.
+
+`nova-bus receipts --as <name> [--id <id,...>]` prints each message's state and
+how long it has been in it. `nova-bus overdue --older <d>` (default 10m) lists
+every message on every stream still `sent` after `d`, oldest first, and exits 1
+when any is (`OVERDUE`); it is the alarm the coordinator's loop and the seat check
+run. A message sent before this section has no receipt and is never listed.
+
+Delivery stays at-least-once: a claim after `ClaimAfter` hands a message in
+again. The daemon's take is idempotent: it remembers the ids of the turns that
+ended at exit 0 (the last `friend.ActedMemory`) and drops a second delivery of
+one with the record line `duplicate dropped id=<id>`, acking it, never pushing it
+in twice. The memory lives in the daemon, so a message whose ack was lost and
+whose daemon restarted is pushed in again: once, as before.
+
+The model is `tla/Bus2.tla` (cases `MCBus2Receipts`, with `ReceiptNeverMovesBack`,
+`ActedImpliesDelivered` and `NeverActedTwice`; reversed witnesses
+`MCBus2BrokenPushDup`, a take that pushes a redelivered id, and
+`MCBus2BrokenBackStamp`, a stamp that writes whatever the receipt is). The ACL
+line below gains `~bus2:receipt:*` and `+watch +unwatch +hmget`.
+
 ## The identity
 
 Who a verb acts as is the user the connection logged in as, never a word on
@@ -235,6 +275,7 @@ INFO` on Redis 8 answers):
 | send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re) |
 | recv | `SMEMBERS`, `TIME`, `HGETALL`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
+| receipts, overdue; a stamp (recv, the daemon, a send that answers) | `HGETALL`, `TIME`; `WATCH`, `HMGET`, `HSET` | `bus2:receipt:<name>` (every name for overdue; the stamper's own for the rest); a send writes `bus2:receipt:<every recipient>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
 | names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
@@ -253,9 +294,10 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:push ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
   +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall
+  +watch +unwatch +hmget
 ```
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
@@ -287,4 +329,4 @@ its machine rows; no new kind or field was needed.
 
 send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
 four (the roster, the group, the claim, the read). ack: five (group, pending,
-the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+the entries, `XACK`, the receipt's `HDEL`). A stamp is one `WATCH`ed transaction on Redis (`WATCH`, `HMGET`, `TIME`, `MULTI`/`HSET`/`EXEC`: two trips when it moves nothing, three when it does); a recv adds one, a send adds none (its `sent` receipts ride in the transaction) and one when it answers (re: the `acted` stamp). receipts: two; overdue: two. peek: up to four. log: one. names: one.

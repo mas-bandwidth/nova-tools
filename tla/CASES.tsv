@@ -401,3 +401,6 @@ MCCoordinatorPassBehind.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordin
 MCCoordinatorPassBrokenDoublePush.cfg	MCCoordinatorPass.tla	invariant	OnePushATick	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
+MCBus2Receipts.cfg	MCBus2.tla	pass	-	ignore-terminal	bus2	required	-
+MCBus2BrokenPushDup.cfg	MCBus2.tla	invariant	NeverActedTwice	ignore-terminal	bus2	required	-
+MCBus2BrokenBackStamp.cfg	MCBus2.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-

@@ -3,7 +3,7 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are send, peek, recv, ack, log and names; the dispatch, the banner, the
+// are send, peek, recv, ack, receipts, overdue, log and names; the dispatch, the banner, the
 // help, the version verb, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/bus's.
 package main
@@ -162,7 +162,7 @@ ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push 
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
-		Words:     []string{"NONE"},
+		Words:     []string{"NONE", "OVERDUE"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "send",
@@ -281,6 +281,42 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.ack,
+			},
+			{
+				Name:   "receipts",
+				Usage:  "receipts [--as <me>] [--id <id,...>] [--redis <addr>]",
+				Effect: tool.Inspection,
+				Detail: `Prints RECEIPTS OK count=<n>, then one RECEIPTS MESSAGE id=<id> state=<sent|delivered|read|acted>
+age=<duration> line per message on your stream, oldest first: sent (on your stream), delivered (your
+reader took it off the stream), read (the session's turn carrying it started), acted (the turn ended
+at exit 0, or you sent a message whose re is its id). A message only moves forward; age is how long
+it has been in its state, by the store's clock. --id lists only those ids; one with no receipt is left out.`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("id", "", "only these message ids, comma-separated (default: every message)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.receipts,
+			},
+			{
+				Name:   "overdue",
+				Usage:  "overdue [--older <duration>] [--redis <addr>]",
+				Effect: tool.Inspection,
+				Detail: `Prints OVERDUE OK count=0 older=<duration> when every message on every stream has been delivered
+within the age, else OVERDUE count=<n> older=<duration> and exits 1, then one OVERDUE MESSAGE name=<name>
+id=<id> age=<duration> line per message still short of delivered (sent, its reader never took it off the
+stream) after that long, oldest first. It is the alarm the coordinator's loop and the seat check run;
+a message sent before receipts existed has none and is never listed.`,
+				Flags: func(f *tool.Flags) {
+					f.Duration("older", 10*time.Minute, "how long a message may wait to be delivered before it is listed")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Check(func(c *tool.Call) {
+						if c.Dur("older") <= 0 {
+							c.Problem("--older wants a duration above zero, such as 10m")
+						}
+					})
+				},
+				Run: w.overdue,
 			},
 			{
 				Name:    "log",
@@ -619,6 +655,48 @@ func (w world) ack(c *tool.Call) *tool.Out {
 	o := loginFact(tool.Done().Fact("acked", n).Fact("asked", len(ids)), login)
 	for _, id := range ids {
 		o.Item("id", "id", id, "acked", acked[id])
+	}
+	return o
+}
+
+func (w world) receipts(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	got, now, err := b.Stages(context.Background(), as, names(c.Str("id"))...)
+	if err != nil {
+		return answer(err)
+	}
+	o := loginFact(tool.Done().Fact("count", len(got)), login)
+	for _, s := range got {
+		o.Item("message", "id", s.ID, "state", s.State, "age", now.Sub(s.At).Round(time.Second))
+	}
+	return o
+}
+
+func (w world) overdue(c *tool.Call) *tool.Out {
+	b, _, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	older := c.Dur("older")
+	late, _, err := b.Overdue(context.Background(), older)
+	if err != nil {
+		return answer(err)
+	}
+	if len(late) == 0 {
+		return tool.Done().Fact("count", 0).Fact("older", older)
+	}
+	o := tool.Fail().As("OVERDUE").Fact("count", len(late)).Fact("older", older)
+	for _, l := range late {
+		o.Item("message", "name", l.Name, "id", l.ID, "age", l.Age.Round(time.Second))
 	}
 	return o
 }

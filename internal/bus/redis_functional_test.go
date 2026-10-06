@@ -174,3 +174,46 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	_, err = gated.Send(ctx, Message{From: "ada", To: []string{"m1"}, Subject: "s", Body: "x"})
 	assert.ErrorContains(t, err, "deaf: m1")
 }
+
+// A receipt on the real store moves sent, delivered, read, acted by the
+// server's TIME and never back, and overdue lists a message still sent
+// (docs/SPEC-BUS.md, message-receipts-r2.w1).
+func TestRedisReceiptsMoveForwardOnlyAndOverdueListsTheSent(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	m, err := b.Send(ctx, Message{From: "ada", To: []string{"bob", "m1"}, Subject: "s", Body: "x"})
+	require.NoError(t, err)
+
+	got, _, err := b.Stages(ctx, "bob")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, StateSent, got[0].State)
+	late, _, err := b.Overdue(ctx, time.Hour)
+	require.NoError(t, err)
+	assert.Empty(t, late)
+	late, _, err = b.Overdue(ctx, -time.Second) // older than a second before now: whatever is still sent, the server's clock being in seconds
+	require.NoError(t, err)
+	assert.Len(t, late, 2, "bob's and the machine's, both still sent")
+
+	_, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	for _, step := range []struct {
+		state string
+		moved int
+	}{{StateRead, 1}, {StateDelivered, 0}, {StateActed, 1}, {StateRead, 0}, {StateActed, 0}} {
+		n, err := b.Stamp(ctx, "bob", step.state, m.ID)
+		require.NoError(t, err)
+		assert.Equal(t, step.moved, n, step.state)
+	}
+	v, err := c.HGet(ctx, ReceiptsOf("bob"), m.ID).Result()
+	require.NoError(t, err)
+	state, at, ok := ParseStamp(v)
+	require.True(t, ok, v)
+	assert.Equal(t, StateActed, state)
+	assert.WithinDuration(t, time.Now(), at, time.Minute, "the time is the server's")
+	late, _, err = b.Overdue(ctx, -time.Second)
+	require.NoError(t, err)
+	require.Len(t, late, 1)
+	assert.Equal(t, "m1", late[0].Name)
+}
