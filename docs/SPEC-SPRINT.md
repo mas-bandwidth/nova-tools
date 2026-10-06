@@ -1855,7 +1855,19 @@ and it is the coordinator's decision, receipted.
   <n>|unmetered` and `deadline: <seconds>|<duration>` lines (a pin without
   either is refused: a member with no override could not launch it);
   `cardhdr.ReadModel` is the one parser, and `add` refuses a brief whose model
-  lines it cannot read. A card admitted before (an unknown tier, a pin short
+  lines it cannot read. **A card that writes a TLA+ model is tiered frontier**
+  (v11-tla-paths-frontier-b.w1; the owner, 2026-10-04: "When we do TLA+ modeling work,
+  I would like that to go to frontier models."): a card whose PATHS name model work (a
+  `.tla` module anywhere, an MC config or the directory itself under a `tla/` directory,
+  or a glob that matches one: `sprint.ModelPaths`) is admitted by `add` with `tier:
+  frontier` written on its line 1 when line 1 names no tier (its unit says `tiered
+  frontier: PATHS name TLA+ model work (<entries>)`), as written when it names frontier,
+  and refused, with that reason and what to write, when it names a lower tier
+  (`sprint.ModelTier`); `nova-card generate` tiers its cards the same, the source's tier
+  giving way, and a `--tier` below frontier on such a card is its red line
+  `check=model-tier`. The TLC run records (`tla/RUNS.tsv`, `tla/CASES.tsv`) alone are no
+  model: running the checker is mechanical (`TestACardThatWritesAModelIsTieredFrontier`,
+  `TestAGeneratedCardThatWritesAModelIsTieredFrontier`). A card admitted before (an unknown tier, a pin short
   of a line) is not dealt and is judged under the tier its line 1 names. The routes are nova-config's `route` kind, applied to
   the store (`routes`, `route:<name>`): each a tier, a provider and model, a
   budget, a deadline and enabled; each tier's route array is nova-config's

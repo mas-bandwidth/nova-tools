@@ -20,9 +20,11 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -59,7 +61,10 @@ need no checkout. A card's PATHS are computed from its START line, never typed: 
 a START file lives in, as its Go files and its tests (<dir>/*.go, <dir>/*_test.go), and the docs
 the card names. With a checkout every PATHS entry is checked to exist at it, so a card never
 names a path the add would reject. The ledgers: ` + "`nova-card generate -h`" + ` lists them.
-A ledger card is flash and a findings or help card is pro unless --tier says otherwise.
+A ledger card is flash and a findings or help card is pro unless --tier says otherwise; a card
+whose PATHS name TLA+ model work (a .tla module, an MC config under tla/) is frontier, as
+nova-sprint add tiers it, and --tier flash or pro on such a card is a red line
+(check=model-tier). The TLC run records tla/RUNS.tsv and tla/CASES.tsv alone are no model.
 Cards of one ordinary ledger alternate waves (odd rows wave 1, even rows wave 2 depending on
 their neighbours) because adjacent deletions conflict at land; a generated ledger
 (docs/SPEC-SPRINT.md section 7) gets one wave and no dependency. Wave 1 cards of one ledger
@@ -73,7 +78,7 @@ writes. A sprint initialised with --rules holds a brief to that file at
 the add. template prints nova-swarm's card template, the shape every generated brief has.
 
 what it prints:
-  CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)
+  CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [frontier=<n>] [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)
   CARDS NOTE <what was skipped: a row the ledger did not read, a tool with no help>
   LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>              and nothing is written
   LINT OK file=<file>
@@ -319,14 +324,26 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	// render, lint, and check the paths against the checkout: nothing is written while
 	// one brief is red
 	briefs := make([]string, len(plan.Cards))
-	red := 0
+	red, frontier := 0, 0
 	for i := range plan.Cards {
 		c := &plan.Cards[i]
 		c.Paths = card.Paths(h, *c) // computed from the START line, never typed (docs/SPEC-CARD-CONTRACT.md section 6)
 		if *repoDir != "" {
 			cardgen.NewTestFile(c, func(glob string) bool { return existsAt(*repoDir, glob) })
 		}
+		// a card whose PATHS name TLA+ model work is tiered frontier, as nova-sprint add
+		// tiers it (sprint.ModelTier; docs/SPEC-SPRINT.md, the card decides its model): the
+		// source's tier gives way, and a --tier below it is a red line with the add's reason
+		model := len(sprint.ModelPaths(c.Paths)) > 0
+		if model && *tier == "" {
+			c.Tier = cardhdr.RouteFrontier
+			frontier++
+		}
 		briefs[i] = cardgen.Render(h, *c)
+		if _, _, why := sprint.ModelTier(briefs[i]); model && why != "" {
+			fmt.Fprintln(stdout, oneline.Escape(cardgen.LintFinding{ID: c.ID, Check: "model-tier", Line: 1, Excerpt: why + "; or generate without --tier " + *tier}.String()))
+			red++
+		}
 		for _, f := range card.Lint(c.ID, briefs[i], opts()) {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 			red++
@@ -350,7 +367,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "CARDS NOTE skipped %s\n", oneline.Escape(n))
 		}
 		fmt.Fprint(stdout, cardgen.Manifest(plan))
-		fmt.Fprintln(stdout, cardgen.OKLine(*out, plan)+" dry-run=yes (nothing written)")
+		fmt.Fprintln(stdout, cardgen.OKLine(*out, plan)+frontierWord(frontier)+" dry-run=yes (nothing written)")
 		return 0
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
@@ -370,7 +387,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	for _, n := range notes {
 		fmt.Fprintf(stdout, "CARDS NOTE skipped %s\n", oneline.Escape(n))
 	}
-	line := cardgen.OKLine(*out, plan)
+	line := cardgen.OKLine(*out, plan) + frontierWord(frontier)
 	if plan.Shared {
 		line += " shared-paths=yes (add with --allow-shared-paths)"
 	}
@@ -379,6 +396,15 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 }
 
 var shaRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// frontierWord is the CARDS OK line's count of the cards generate tiered frontier because
+// their PATHS name TLA+ model work; "" when none.
+func frontierWord(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" frontier=%d", n)
+}
 
 // readCheckout fills the header's empty fields from a checkout: the repository from
 // origin's URL, the branch from HEAD's name, the sha from HEAD.

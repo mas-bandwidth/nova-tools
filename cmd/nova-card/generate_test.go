@@ -202,3 +202,37 @@ func TestGenerateRefusesABriefWithTheCardChecksFinding(t *testing.T) {
 	assert.Equal(t, 1, exit)
 	assert.Contains(t, stdout, "check=dropped-card")
 }
+
+// A card whose PATHS name TLA+ model work is generated frontier, as nova-sprint add tiers it
+// (sprint.ModelTier; docs/SPEC-SPRINT.md, the card decides its model): the source's own tier
+// gives way, a card on the run records alone keeps it, and an explicit --tier below frontier
+// is a red line naming the reason, nothing written.
+func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	findings := filepath.Join(dir, "f.tsv")
+	require.NoError(t, os.WriteFile(findings, []byte(
+		"tla/Lease.tla:3\tthe lease can be held twice\tadd the invariant\tinternal/x TestX\n"+
+			"tla/RUNS.tsv:1\tthe run record has no date\tadd the date\tinternal/x TestY\n"), 0o644))
+	out := filepath.Join(dir, "cards")
+	args := []string{"generate", "--from", "findings", "--file", findings, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out}
+	exit, stdout, stderr := runCard(args...)
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+	assert.Contains(t, stdout, "cards=2 waves=1 tier=pro frontier=1")
+	raw, err := os.ReadFile(filepath.Join(out, "finding-tla-lease-tla.md"))
+	require.NoError(t, err)
+	line1, _, _ := strings.Cut(string(raw), "\n")
+	assert.True(t, strings.HasSuffix(line1, " tier: frontier"), line1)
+	raw, err = os.ReadFile(filepath.Join(out, "finding-tla-runs-tsv.md"))
+	require.NoError(t, err)
+	line1, _, _ = strings.Cut(string(raw), "\n")
+	assert.True(t, strings.HasSuffix(line1, " tier: pro"), "run records alone are no model: %s", line1)
+
+	out2 := filepath.Join(dir, "cards2")
+	exit, stdout, _ = runCard(append(args[:len(args)-1], out2, "--tier", "pro")...)
+	assert.Equal(t, 1, exit, stdout)
+	assert.Contains(t, stdout, "LINT DRIFT card=finding-tla-lease-tla check=model-tier line=1: PATHS name TLA+ model work (tla/Lease.tla)")
+	assert.Contains(t, stdout, "line 1 names tier pro")
+	assert.NotContains(t, stdout, "card=finding-tla-runs-tsv check=model-tier")
+	assert.NoDirExists(t, out2)
+}

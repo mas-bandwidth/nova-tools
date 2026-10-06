@@ -234,6 +234,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		score  float64
 		needs  []string
 		brief  string
+		model  string // the words of a card add tiered frontier (ModelTier)
 		rules  string // FieldRules
 		bench  string // FieldBench: the members its brief's BENCH line names (bench_deal.go)
 		behind string // the sentinel it waits behind by position
@@ -261,6 +262,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 			bench, benchWhy = nil, BenchRefused(s, bench, unknown)
 		}
 		devWhy := SprintBranchWhy(s, r.Stream, baseOf(i), id)
+		// a card whose PATHS name TLA+ model work is tiered frontier (tier_model.go)
+		brief, modelSaid, modelWhy := ModelTier(briefOf(i))
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -284,9 +287,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		case benchWhy != "":
 			p.refuse(id, benchWhy)
 			continue
+		case modelWhy != "":
+			p.refuse(id, modelWhy)
+			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: brief, model: modelSaid, rules: rulesOf(i), bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -449,6 +455,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if gateSaid != "" {
 			u.Moved += "; " + gateSaid
+		}
+		if a.model != "" {
+			u.Moved += "; " + a.model
 		}
 		if r.Sentinel {
 			u.Moved = "sentinel " + u.Moved
