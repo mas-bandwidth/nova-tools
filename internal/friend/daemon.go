@@ -206,6 +206,13 @@ type Daemon struct {
 	// it names another friend running, and a lane whose card left her row names its friend
 	// on the job's lane mark (one_lane.go). Nil says none; the lane marks still hold.
 	Running func() map[string]string
+	// Mailbox is the adapter under Deliver when her harness's session queues what is
+	// delivered (Antigravity: a mailbox): a delivery goes in at once, whatever turn runs, so
+	// nothing is ever deferred for a turn under way; each step the daemon hands it the
+	// clock and the session's last pong, and it follows the conversation that reads
+	// (Antigravity.Follow), which the status says (session_live). Nil for every other
+	// harness.
+	Mailbox Mailbox
 	// Seat is the coordinator seat holder as the sprint server says it. An
 	// error, an empty name or a nil Seat is the seat unknown, and while it is
 	// unknown no message is delivered as an instruction (BatchFor).
@@ -245,6 +252,14 @@ type Daemon struct {
 	stageDone   []stageResult // the stages that ended, for the loop
 	stageWG     sync.WaitGroup
 	pruneSaid   string // the prune failure last said, said once while it stands
+}
+
+// Mailbox is a harness whose session queues what is delivered: Follow reads who read
+// the deliveries and moves delivery to the conversation that reads, given the clock and
+// the session's last pong; Live is the conversation deliveries go to.
+type Mailbox interface {
+	Follow(ctx context.Context, now, answered time.Time)
+	Live() string
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
@@ -465,6 +480,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case r := <-l.reads.results:
 			l.readDone(r, now)
 		default:
+		}
+		if d.Mailbox != nil {
+			d.Mailbox.Follow(ctx, now, d.m.LastPong)
+			d.status.SessionLive = d.Mailbox.Live()
 		}
 		// a change of mode waits for the other mode's turns to end
 		if mode != l.mode && l.busy == nil && !l.lanes.running() && len(l.reads.running) == 0 {

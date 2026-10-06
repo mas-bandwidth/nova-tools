@@ -819,33 +819,76 @@ again: the server's pid and CSRF token off `ps -axo user=,pid=,args=` for the da
 `language_server` with `--override_ide_name antigravity` and its
 `--csrf_token`), its listening ports from `lsof -Fn`, and the port that
 answers `get-conversation-metadata` for the conversation (the other is TLS).
-Without `--session`, the conversation is the newest root conversation whose
-workspace is the friend's directory (or its real path), from the harness's
-`conversation_summaries.db`, read immutable through `sqlite3 -json`; that
-table is written when a turn ends, so it names the session and never the
-turn. The command runs through `/usr/bin/env` with
-`ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` set, the text an
-argument; the token is already on the server's own command line, readable
-by every process of the login, so the delivery exposes nothing the harness
-does not. The app needs no special launch (no wrapper, no custom flags).
-When the app is not running (no language server in `ps` for the daemon's
-user), the delivery returns `Deferred` (`no antigravity language server is
-running: is Antigravity open?`), so the message stays pending in the daemon's
-hand, retried every ten seconds (`RecheckEvery`) and never counted toward
-failure attempts or acked.
+The conversation is the live one (below), else the one `--session` names,
+else the newest root conversation whose workspace is the friend's directory
+(or its real path), from the harness's `conversation_summaries.db`, read
+immutable through `sqlite3 -json`; that table is written when a turn ends, so
+it names the session and never the turn. The command runs through
+`/usr/bin/env` with `ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` set,
+the text an argument; the token is already on the server's own command line,
+readable by every process of the login, so the delivery exposes nothing the
+harness does not. The app needs no special launch (no wrapper, no custom
+flags).
 
-The ack: `agentapi` exits 0 on an error too (a wrong conversation, a missing
-token print `"error"` in its JSON), so the JSON is read and its exit code is
-not. The delivery is exit 0 once a new message titled exactly `nova-friend` has appeared in the mailbox
-and `read.json` marks it read, polled every half second for two minutes; past
-that it is exit 1 with the message id, the message still in the mailbox for
-the session's next turn, and the daemon redelivers (a duplicate, never a
-loss). The turn the message starts runs on after the ack: a second message
-queues in the mailbox rather than waiting for the turn, which is the
-harness's own order for its agents. The mailbox and `agentapi` are the
-harness's internals for its subagents and scheduled tasks, not a documented
-API; a release that moves them breaks this adapter, and the functional test
-(`NOVA_FRIEND_ANTIGRAVITY_DIR`) says so.
+The Antigravity row: **mailbox delivery, no deferral, the live conversation
+follows the reader, the outbox finished by the daemon.**
+
+- **Mailbox delivery, no deferral.** The mailbox queues: a turn the message
+  starts runs on, and a second message waits in the mailbox for it, the
+  harness's own order for its agents. So the delivery is exit 0 once a new
+  message titled exactly `nova-friend` has appeared in the conversation's
+  mailbox (polled every half second for thirty seconds,
+  `AntigravityLandBudget`; past that agentapi said yes and no message came,
+  exit 1), and the read is never waited for: the daemon delivers at once,
+  every time, whatever turn is under way, and never defers for one (the
+  finding of 2026-10-05 and 06: a delivery that waited two minutes for the
+  read held every other message and the session check behind it while the friend
+  worked through long tool sequences, and three such waits gave up a message
+  already in her mailbox). `agentapi` exits 0 on an error too (a wrong
+  conversation, a missing token print `"error"` in its JSON), so the JSON is
+  read and its exit code is not. What the harness refuses (no language
+  server for the daemon's user, `no antigravity language server is running:
+  is Antigravity open?`; a server without a token; no conversation with the
+  directory open; no port that answers for the conversation; no mailbox; an
+  `"error"` from `send-message`) is a `SessionRefused` naming why, and never a
+  `Deferred`: the daemon marks the session broken with the reason, said once
+  on the record and once to the seat, every message pending and tried again
+  every ten seconds (`RecheckEvery`), and the first delivery taken clears it
+  ("A turn the session cannot take"). So `nova-friend check` reads
+  `route=mailbox` for her and counts no deferral for her harness: the
+  `deferred=` it counts is only the limit gate's (`Limits.Gate`).
+  `TestAntigravityDeliversIntoTheMailboxWithoutDeferring`.
+- **The live conversation follows the reader.** The adapter keeps each
+  delivery (the message id, its conversation, when) and the daemon hands it
+  the clock and the session's last pong each step (`Daemon.Mailbox`,
+  `Antigravity.Follow`, at most every ten seconds): each read is said once
+  (`antigravity: message <id> read by conversation <id>`, from the
+  conversation's `read.json`). A conversation in a long turn writes its
+  transcript (`brain/<conversation>/.system_generated/logs/transcript.jsonl`)
+  and keeps delivery however many messages wait in its mailbox. One that has
+  left three deliveries unread past the session check's bound
+  (`AntigravityStopped`, `AntigravityReadBound`) and written nothing since
+  the oldest of them has stopped reading: delivery moves to the newest root
+  conversation of the workspace that has written since, said once
+  (`antigravity: live conversation is now <id> (the named one stopped
+  reading)`), on the status (`session_live`) and on the check's harness line
+  (`session_live=<id>`). A session answer (a pong) after a delivery the live
+  conversation has not read came from another conversation: it is still an
+  answer, the session is alive, and delivery moves to that conversation at
+  once by the same rule. The finding of 2026-10-06: deliveries went to the
+  conversation `--session` named while a second conversation had taken 161
+  of them earlier in the day, and nothing said which one was live. The
+  messages left unread in the old mailbox stay there.
+  `TestTheLiveConversationFollowsWhoReads`.
+- **The outbox finished by the daemon.** Her `outbox/<job>/REPORT.md` is
+  finished by the daemon's outbox pass ("the daemon reads every outbox job"),
+  which runs each reconcile beside whatever turn is under way and never
+  inside one, so a session that is never free still has its reports
+  finished. `TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy`.
+
+The mailbox and `agentapi` are the harness's internals for its subagents and
+scheduled tasks, not a documented API; a release that moves them breaks this
+adapter, and the functional test (`NOVA_FRIEND_ANTIGRAVITY_DIR`) says so.
 
 Grok, the Grok Build TUI (xAI's `grok`), is another real adapter, by the
 only door the open window has. The harness has no deliver verb, no leader
@@ -2024,13 +2067,14 @@ the log file, the bus store, the directory listing) so the verdict is a function
 1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
    (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
    and its seen age.
-2. Harness: the route (`push`, or `passive` for a harness nothing pushes into; dsh is `push`, each
+2. Harness: the route (`push`, `mailbox` for antigravity, or `passive` for a harness nothing pushes into; dsh is `push`, each
    delivery a headless turn) and, from the daemon's log, the deliveries (`exit=`
    lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
    window. `last` and `last_exit` are the newest delivery in the window, `failed_of_last20` the failures
    among the newest twenty in the window. `delivered` and `failed` (JSON only) are the window's whole
    counts: the verdict reads them. And the session mark: `broken` and its `reason` when the status says
-   the session is broken.
+   the session is broken; and `session_live`, the conversation a mailbox harness delivers into as the
+   status says it (`-` for every other harness).
 3. Bus: `real_since`, the messages from the friend in the window that are real (not ping, pong,
    daemon-pong or keepalive), and `last_real`.
 4. Work: the entries in the friend's `inbox/` (not dotfiles or `QUEUE.json`) and `outbox/`, and the

@@ -124,9 +124,9 @@ func findTranscriptTurn(transcriptPath, nonce string) (int, string) {
 	return 0, ""
 }
 
-// TestAntigravityDefersWhenNoServerForUser verifies that against real ps execution,
-// an absent language server returns Deferred rather than a failure count.
-func TestAntigravityDefersWhenNoServerForUser(t *testing.T) {
+// TestAntigravityRefusesWhenNoServerForUser verifies that against real ps execution,
+// an absent language server is the harness's refusal (SessionRefused), never a deferral.
+func TestAntigravityRefusesWhenNoServerForUser(t *testing.T) {
 	t.Parallel()
 	dir := os.Getenv("NOVA_FRIEND_ANTIGRAVITY_DIR")
 	if dir == "" {
@@ -136,8 +136,8 @@ func TestAntigravityDefersWhenNoServerForUser(t *testing.T) {
 	defer cancel()
 	a := &Antigravity{Dir: dir, User: "nonexistent-user-12345", Run: RealExec}
 	exit, err := a.Deliver(ctx, "text")
-	require.Equal(t, 0, exit)
-	var deferred Deferred
-	require.ErrorAs(t, err, &deferred)
-	require.Contains(t, deferred.Reason, "no antigravity language server is running: is Antigravity open?")
+	require.Equal(t, 1, exit)
+	var refused SessionRefused
+	require.ErrorAs(t, err, &refused)
+	require.Contains(t, refused.Reason, "no antigravity language server is running: is Antigravity open?")
 }

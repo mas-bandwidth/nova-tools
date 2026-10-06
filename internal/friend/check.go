@@ -48,15 +48,16 @@ type DaemonFacts struct {
 type HarnessFacts struct {
 	Friend         string `json:"friend"`
 	Harness        string `json:"harness"`
-	Route          string `json:"route"` // push or passive
+	Route          string `json:"route"` // push, mailbox or passive
 	Last           string `json:"last"`  // RFC3339 or "-"
 	LastExit       string `json:"last_exit"`
 	FailedOfLast20 int    `json:"failed_of_last20"`
 	Deferred       int    `json:"deferred"`
-	Delivered      int    `json:"delivered"` // deliveries in the window (JSON only)
-	Failed         int    `json:"failed"`    // of those, the ones that failed (JSON only)
-	Broken         string `json:"broken"`    // RFC3339 or "-"
-	Reason         string `json:"reason"`    // one line or "-"
+	Delivered      int    `json:"delivered"`    // deliveries in the window (JSON only)
+	Failed         int    `json:"failed"`       // of those, the ones that failed (JSON only)
+	Broken         string `json:"broken"`       // RFC3339 or "-"
+	Reason         string `json:"reason"`       // one line or "-"
+	SessionLive    string `json:"session_live"` // the conversation a mailbox harness delivers into, or "-"
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -439,16 +440,19 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	route := "push" // dsh included: each delivery is a headless turn into her session, never a deferral
 	if harness == "claude" || slices.Contains(RefusedHarnesses, harness) {
 		route = "passive"
+	} else if harness == "antigravity" {
+		route = "mailbox" // delivered into the conversation's mailbox at once, never deferred for a turn
 	}
 
 	hf := HarnessFacts{
-		Friend:   friendName,
-		Harness:  harness,
-		Route:    route,
-		Last:     "-",
-		LastExit: "-",
-		Broken:   "-",
-		Reason:   "-",
+		Friend:      friendName,
+		Harness:     harness,
+		Route:       route,
+		Last:        "-",
+		LastExit:    "-",
+		Broken:      "-",
+		Reason:      "-",
+		SessionLive: dash(st.SessionLive),
 	}
 
 	if seams.ReadLog != nil {
@@ -588,8 +592,8 @@ func (df DaemonFacts) Line() string {
 
 // Line renders the CHECK HARNESS line.
 func (hf HarnessFacts) Line() string {
-	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s",
-		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason))
+	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s session_live=%s",
+		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason), dash(hf.SessionLive))
 }
 
 // Line renders the CHECK BUS line.

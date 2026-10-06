@@ -581,7 +581,7 @@ state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything 
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
 CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
-CHECK HARNESS friend=<f> harness=<h> route=<push|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|-> session_live=<conversation|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
 CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
@@ -1028,6 +1028,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if friend.RunsCards(c.Str("harness")) {
 		deliver = friend.NewClaude(name, dir, fl.Watch(walled), c.Stdout) // a card a process: the adapter with a lane
 	}
+	// a harness whose session queues what is delivered (Antigravity's mailbox): every delivery
+	// goes in at once, and the daemon follows the conversation that reads it (friend.Mailbox)
+	var mailbox friend.Mailbox
+	if ag, ok := deliver.(*friend.Antigravity); ok {
+		ag.Now = w.now
+		mailbox = ag
+	}
 	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike
 	dry := c.DryRun()
 	// a harness that runs each card as a process of its own (friend.CardRunner) has no session to
@@ -1203,6 +1210,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fl.Kind(), until, limited
 		},
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
+		Mailbox: mailbox,
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},

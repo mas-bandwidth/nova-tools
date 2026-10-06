@@ -3,6 +3,8 @@ package friend
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -34,6 +36,7 @@ type agExec struct {
 	rows     string
 	waits    int
 	maxWaits int
+	sends    int // each send-message lands as m-2, m-3, ...
 }
 
 func (e *agExec) run(_ context.Context, dir, name string, args []string, _ string) (string, int, error) {
@@ -56,7 +59,9 @@ func (e *agExec) run(_ context.Context, dir, name string, args []string, _ strin
 		if e.sendOut != "" {
 			return e.sendOut, 0, nil
 		}
-		e.fsys[agMailbox+"/m-2.json"] = &fstest.MapFile{Data: []byte(`{"id":"m-2","renderDetails":{"messageTitle":"nova-friend"},"content":"` + args[5] + `"}`)}
+		e.sends++
+		id := fmt.Sprintf("m-%d", e.sends+1)
+		e.fsys[agMailbox+"/"+id+".json"] = &fstest.MapFile{Data: []byte(`{"id":"` + id + `","renderDetails":{"messageTitle":"nova-friend"},"content":"` + args[5] + `"}`)}
 		return `{"response": {"sendMessage": {"recipientId": "root-new"}}}`, 0, nil
 	}
 	return "", 1, nil
@@ -78,7 +83,7 @@ func newAgExec() *agExec {
 	}}
 }
 
-func TestAntigravityDeliversIntoTheNewestRootConversationAndAcksOnceRead(t *testing.T) {
+func TestAntigravityDeliversIntoTheNewestRootConversationAndAcksOnceInTheMailbox(t *testing.T) {
 	t.Parallel()
 	e := newAgExec()
 	var record strings.Builder
@@ -99,8 +104,8 @@ func TestAntigravityDeliversIntoTheNewestRootConversationAndAcksOnceRead(t *test
 	env[2] = "ANTIGRAVITY_LS_ADDRESS=localhost:52570"
 	assert.Equal(t, env, e.calls[4], "then the next, which answers")
 	assert.Equal(t, []string{"/w/emma", "/usr/bin/env", "ANTIGRAVITY_LS_ADDRESS=localhost:52570", "ANTIGRAVITY_CSRF_TOKEN=tok-1", "/home/.gemini/antigravity/bin/agentapi", "send-message", "--title=nova-friend", "root-new", "hello there"}, e.calls[5], "the text is an argument, never a shell line")
-	assert.Equal(t, 1, e.waits, "read one poll after it landed")
-	assert.Equal(t, "antigravity: message m-2 read by conversation root-new\n", record.String())
+	assert.Zero(t, e.waits, "acked once in the mailbox: the read is never waited for")
+	assert.Equal(t, "antigravity: message m-2 in the mailbox of conversation root-new\n", record.String())
 
 	e = newAgExec()
 	a = &Antigravity{User: "emma", Dir: "/w/emma", Session: "named", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
@@ -121,34 +126,46 @@ func TestAntigravityRefusesWhatItCannotProve(t *testing.T) {
 		assert.Equal(t, 1, exit)
 		return err
 	}
+	// refused is the harness's refusal: a SessionRefused with its reason, never a Deferred
+	refused := func(t *testing.T, err error) string {
+		t.Helper()
+		var r SessionRefused
+		require.ErrorAs(t, err, &r)
+		assert.False(t, errors.As(err, new(Deferred)), "a refusal is never counted as a deferral")
+		assert.Equal(t, AntigravityOpen, r.Detail)
+		return r.Reason
+	}
 	t.Run("no conversation has the directory open", func(t *testing.T) {
 		t.Parallel()
 		e := newAgExec()
 		e.rows = `[{"conversation_id":"other","workspace_uris":"[\"file:///w/ada\"]"}]`
-		assert.EqualError(t, deliver(e), "no antigravity conversation has /w/emma open; open one there, or name one with --session")
+		assert.Equal(t, "no antigravity conversation has /w/emma open; open one there, or name one with --session", refused(t, deliver(e)))
 		e.rows = ""
-		assert.ErrorContains(t, deliver(e), "no antigravity conversation has /w/emma open")
+		assert.Contains(t, refused(t, deliver(e)), "no antigravity conversation has /w/emma open")
 	})
 	t.Run("agentapi says no at exit 0", func(t *testing.T) {
 		t.Parallel()
 		e := newAgExec()
 		e.sendOut = `{"response": {}, "error": "rpc error: code = Unknown desc = trajectory not found: root-new"}`
-		assert.EqualError(t, deliver(e), "agentapi: rpc error: code = Unknown desc = trajectory not found: root-new")
+		assert.Equal(t, "conversation root-new: agentapi: rpc error: code = Unknown desc = trajectory not found: root-new", refused(t, deliver(e)))
 		e.sendOut = "panic: boom"
-		assert.EqualError(t, deliver(e), "agentapi printed no JSON: panic: boom")
+		assert.EqualError(t, deliver(e), "agentapi printed no JSON: panic: boom", "an agentapi that printed nothing it can read is a failure, not the harness's no")
 	})
-	t.Run("the message is not read before the wait ends", func(t *testing.T) {
+	t.Run("a message in the mailbox unread is delivered", func(t *testing.T) {
 		t.Parallel()
 		e := newAgExec()
 		e.maxWaits = 0
-		assert.EqualError(t, deliver(e), "message m-2 is in the mailbox of conversation root-new but was not read within 2m0s; the session takes it at its next turn")
+		a := &Antigravity{User: "emma", Dir: "/w/emma", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
+		exit, err := a.Deliver(context.Background(), "x")
+		require.NoError(t, err)
+		assert.Zero(t, exit, "the mailbox holds it for the session's next look")
 	})
 	t.Run("no message appears", func(t *testing.T) {
 		t.Parallel()
 		e := newAgExec()
 		e.sendOut = `{"response": {"sendMessage": {}}}`
 		e.maxWaits = 0
-		assert.EqualError(t, deliver(e), "agentapi accepted the message for conversation root-new but none appeared in its mailbox within 2m0s")
+		assert.EqualError(t, deliver(e), "agentapi accepted the message for conversation root-new but none appeared in its mailbox within 30s")
 	})
 	t.Run("no mailbox", func(t *testing.T) {
 		t.Parallel()
@@ -156,7 +173,7 @@ func TestAntigravityRefusesWhatItCannotProve(t *testing.T) {
 		delete(e.fsys, agMailbox+"/m-1.json")
 		delete(e.fsys, agMailbox+"/read.json")
 		delete(e.fsys, agMailbox+"/undelivered")
-		assert.ErrorContains(t, deliver(e), "conversation root-new has no mailbox")
+		assert.Contains(t, refused(t, deliver(e)), "conversation root-new has no mailbox")
 	})
 }
 
@@ -215,16 +232,12 @@ func TestAntigravityIgnoresAnUnrelatedNewMailboxMessage(t *testing.T) {
 		}
 		return out, exit, err
 	}
-	waits := 0
-	a := &Antigravity{User: "emma", Dir: "/w/emma", Run: run, Home: "/home", FS: e.fsys, Wait: func(context.Context) bool {
-		waits++
-		e.fsys[agMailbox+"/read.json"] = &fstest.MapFile{Data: []byte(`{"a-other":true,"m-2":true}`)}
-		return waits <= 1
-	}}
+	var record strings.Builder
+	a := &Antigravity{User: "emma", Dir: "/w/emma", Run: run, Home: "/home", FS: e.fsys, Out: &record, Wait: func(context.Context) bool { return false }}
 	exit, err := a.Deliver(context.Background(), "hello")
 	require.NoError(t, err)
 	assert.Zero(t, exit)
-	assert.Equal(t, 1, waits, "an unrelated read entry cannot acknowledge our unread message")
+	assert.Equal(t, "antigravity: message m-2 in the mailbox of conversation root-new\n", record.String(), "the delivery is our titled message, never an unrelated one")
 }
 
 func TestAntigravityMatchesDecodedLocalWorkspaceURIs(t *testing.T) {
@@ -261,7 +274,7 @@ func TestAntigravityMatchesDecodedLocalWorkspaceURIs(t *testing.T) {
 
 func TestAntigravityDeliveryIsATurnInTheOpenConversation(t *testing.T) {
 	t.Parallel()
-	t.Run("an app not running defers without failure count", func(t *testing.T) {
+	t.Run("an app not running is the harness's refusal, never a deferral", func(t *testing.T) {
 		t.Parallel()
 		run := func(_ context.Context, dir, name string, args []string, _ string) (string, int, error) {
 			if name == "ps" {
@@ -272,10 +285,11 @@ func TestAntigravityDeliveryIsATurnInTheOpenConversation(t *testing.T) {
 		}
 		a := &Antigravity{User: "emma", Dir: "/w/emma", Run: run, Home: "/home"}
 		exit, err := a.Deliver(context.Background(), "hello")
-		assert.Equal(t, 0, exit)
-		var deferred Deferred
-		require.ErrorAs(t, err, &deferred)
-		assert.Equal(t, "no antigravity language server is running: is Antigravity open?", deferred.Reason)
+		assert.Equal(t, 1, exit)
+		var r SessionRefused
+		require.ErrorAs(t, err, &r)
+		assert.Equal(t, "no antigravity language server is running: is Antigravity open?", r.Reason)
+		assert.False(t, errors.As(err, new(Deferred)))
 	})
 
 	t.Run("an app restarted mid-run is found again on next delivery", func(t *testing.T) {
