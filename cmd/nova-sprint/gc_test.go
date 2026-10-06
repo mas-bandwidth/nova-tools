@@ -112,7 +112,7 @@ func TestGcMachineRunsTheVerbThroughTheFleetRunner(t *testing.T) {
 		return answer, nil
 	}
 	var out, errs bytes.Buffer
-	code := gcOn(context.Background(), run, "bench-a", true, "36h", &out, &errs)
+	code := gcOn(context.Background(), run, "bench-a", true, "36h", "", &out, &errs)
 	require.Equal(t, 0, code, errs.String())
 	assert.Equal(t, "bench-a", host)
 	assert.Equal(t, gcRemoteBin+" gc --max-age '36h' --dry-run", line)
@@ -120,8 +120,40 @@ func TestGcMachineRunsTheVerbThroughTheFleetRunner(t *testing.T) {
 
 	answer = bench.NoAnswer
 	errs.Reset()
-	code = gcOn(context.Background(), run, "bench-a", false, "2d", io.Discard, &errs)
+	code = gcOn(context.Background(), run, "bench-a", false, "2d", "", io.Discard, &errs)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs.String(), "GC FAILED machine=bench-a: did not answer")
 	assert.True(t, strings.HasSuffix(line, " gc --max-age '2d'"), line)
+}
+
+// The Studio exports no NOVA_AI_ROOT and has no ~/ai: the verb finds the AI root through
+// the home's <name>-working links (to <ai-root>/<name>/working and
+// <ai-root>/buds/<name>/working) and reclaims the finished jobs there. --ai-root names it
+// outright and is carried to another machine.
+func TestGcVerbFindsTheAIRootWithoutNovaAIRoot(t *testing.T) {
+	t.Parallel()
+	a, home, ai, now := gcApp(t)
+	env := map[string]string{"HOME": home}
+	a.getenv = func(k string) string { return env[k] }
+	var dones []string
+	for _, w := range []string{filepath.Join(ai, "rowan", "working"), filepath.Join(ai, "buds", "b1", "working")} {
+		name := filepath.Base(filepath.Dir(w))
+		require.NoError(t, os.MkdirAll(w, 0o755))
+		require.NoError(t, os.Symlink(w, filepath.Join(home, name+"-working")))
+		done := filepath.Join(w, "jobs", "done")
+		gcFile(t, filepath.Join(done, "JOB.md"), now, 5*time.Hour)
+		gcFile(t, filepath.Join(w, "outbox", "done", "REPORT.md"), now, 4*time.Hour)
+		dones = append(dones, done)
+	}
+	code, out, errs := gcRun(a)
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "GC jobs count=2 ")
+	assert.NotContains(t, out, "GC REFUSED")
+	for _, d := range dones {
+		assert.NoDirExists(t, d)
+	}
+
+	assert.Equal(t, gcRemoteBin+" gc --max-age '2d' --ai-root '/v/ai'", gcLine(false, "2d", "/v/ai"))
+	code, _, errs = gcRun(a, "--ai-root", "relative")
+	assert.Equal(t, 2, code, errs)
 }
