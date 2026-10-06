@@ -12,8 +12,6 @@
 
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
-internal/tokens/message.go SPEC-TOKENS' plan: the message record
-
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
 .github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
