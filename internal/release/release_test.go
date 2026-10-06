@@ -1039,7 +1039,7 @@ func TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside(t *testing.
 			return "", fmt.Errorf("absent")
 		}})
 	require.NotZero(t, code, "install must fail when tool path is a directory: out=%s errs=%s", o.String(), e.String())
-	require.Contains(t, e.String(), "INSTALL FAIL")
+	require.Contains(t, e.String(), "INSTALL FAILED")
 	require.Contains(t, e.String(), "not a regular file")
 
 	info, err := os.Lstat(target)

@@ -179,7 +179,7 @@ const verbNames = "cut, build, install, adopt, pull, cycle"
 
 // ExitCodes is the release verbs' exit-code line, which each verb's -h prints.
 const ExitCodes = "exit codes: 0 the verb did what its line says (a --dry-run printed its plan and changed nothing); " +
-	"1 it ran and a step failed partway, the FAIL or REFUSED line naming what was done and what to do next; " +
+	"1 it ran and a step failed partway, the FAILED or REFUSED line naming what was done and what to do next; " +
 	"2 it refused before acting, naming the command to run."
 
 // progress is the stderr voice. A program says what it is doing for any step

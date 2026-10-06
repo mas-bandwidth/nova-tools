@@ -147,7 +147,7 @@ func TestCycleStopsOnAFailedBench(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Len(t, play.runs, 1)
 	assert.Contains(t, e.String(), "fatal: [vision]: UNREACHABLE!")
-	assert.Contains(t, e.String(), "CYCLE FAIL step=check version=v1.1.0-dev.c2 reason=exit\\x20status\\x202 ")
+	assert.Contains(t, e.String(), "CYCLE FAILED step=check version=v1.1.0-dev.c2 reason=exit\\x20status\\x202 ")
 
 	// A bench the apply has no receipt for is a failure too.
 	args, deps, _ = cycleRig(t, playOutput("WOULD-INSTALL", "", "batman", "vision"), playOutput("INSTALLED", "", "batman"))
@@ -155,7 +155,7 @@ func TestCycleStopsOnAFailedBench(t *testing.T) {
 	e.Reset()
 	code = Run("nova-update", args, &o, &e, deps)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, e.String(), "CYCLE FAIL step=apply ")
+	assert.Contains(t, e.String(), "CYCLE FAILED step=apply ")
 	assert.Contains(t, o.String(), "CYCLE BENCH host=vision platform=- version=- was=- state=- ")
 }
 
