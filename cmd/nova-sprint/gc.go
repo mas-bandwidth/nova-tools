@@ -50,6 +50,7 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	machine := fs.String("machine", "", "run gc on this machine (a host name ssh reaches) through the fleet runner, rather than on this one")
 	dry := fs.Bool("dry-run", false, "print every removal with the bytes it would free, and remove nothing")
+	aiRoot := fs.String("ai-root", "", "the AI root the working directories are under (else NOVA_AI_ROOT, else ~/ai, else the one the home's <name>-working links name); an absolute path")
 	maxAge := fs.String("max-age", "2d", "how old a bench directory, a lander worktree or a job no runner names is before it goes: days (2d) or a Go duration (36h)")
 	pos, err := parse(fs, args)
 	switch {
@@ -62,13 +63,16 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
+	if *aiRoot != "" && !filepath.IsAbs(*aiRoot) {
+		return refuse(stderr, name, "--ai-root wants an absolute path, got "+oneline.Escape(*aiRoot))
+	}
 	if m := *machine; m != "" && !gcIsLocal(m) {
 		if err := bench.CheckHost(m); err != nil {
 			return refuse(stderr, name, "--machine: "+err.Error())
 		}
-		return gcOn(context.Background(), gcRemote, m, *dry, *maxAge, stdout, stderr)
+		return gcOn(context.Background(), gcRemote, m, *dry, *maxAge, *aiRoot, stdout, stderr)
 	}
-	res := a.gcLocal(*dry, age)
+	res := a.gcLocal(*dry, age, *aiRoot)
 	if c.json {
 		facts := map[string]any{"freed": res.Freed, "volume": res.Volume, "failed": res.Failed, "dry_run": res.Dry, "classes": res.Classes, "lines": orEmpty(res.Detail)}
 		line := res.Lines()[len(res.Lines())-1]
@@ -117,9 +121,13 @@ func gcIsLocal(m string) bool {
 	return m == h || m == short
 }
 
-// gcLine is the remote line of gc on another machine: the same verb, its flags carried.
-func gcLine(dry bool, maxAge string) string {
+// gcLine is the remote line of gc on another machine: the same verb, its flags carried
+// (--ai-root when given; without it the machine finds its own, as gcLocal does).
+func gcLine(dry bool, maxAge, aiRoot string) string {
 	line := gcRemoteBin + " gc --max-age " + bench.Quote(maxAge)
+	if aiRoot != "" {
+		line += " --ai-root " + bench.Quote(aiRoot)
+	}
 	if dry {
 		line += " --dry-run"
 	}
@@ -127,8 +135,8 @@ func gcLine(dry bool, maxAge string) string {
 }
 
 // gcOn runs gc on machine through run; its lines are the remote verb's.
-func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge string, stdout, stderr io.Writer) int {
-	code, err := run(ctx, machine, gcLine(dry, maxAge), stdout, stderr)
+func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge, aiRoot string, stdout, stderr io.Writer) int {
+	code, err := run(ctx, machine, gcLine(dry, maxAge, aiRoot), stdout, stderr)
 	switch {
 	case err != nil:
 		fmt.Fprintf(stderr, "%s gc: GC FAILED machine=%s: the fleet runner did not start: %s\n", prog, oneline.Escape(machine), oneline.Err(err))
@@ -142,17 +150,11 @@ func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge st
 	return 0
 }
 
-// gcLocal is one pass on this machine: the home, the AI root (NOVA_AI_ROOT, else ~/ai),
-// the bench root (~/nova-bench) and land's clones.
-func (a *app) gcLocal(dry bool, age time.Duration) sprint.GCResult {
-	home := a.getenv("HOME")
-	if home == "" {
-		home, _ = os.UserHomeDir() // ignored: no home is no root, and the pass finds nothing
-	}
-	ai := a.getenv("NOVA_AI_ROOT")
-	if ai == "" && home != "" {
-		ai = filepath.Join(home, "ai")
-	}
+// gcLocal is one pass on this machine: the home, the AI root (aiRoot, else NOVA_AI_ROOT,
+// else ~/ai, else the one the home's <name>-working links name: sprint.GCAIRoot), the
+// bench root (~/nova-bench) and land's clones.
+func (a *app) gcLocal(dry bool, age time.Duration, aiRoot string) sprint.GCResult {
+	home, ai := a.gcRoots(aiRoot)
 	benchRoot := ""
 	if home != "" {
 		benchRoot = filepath.Join(home, "nova-bench")
@@ -169,6 +171,23 @@ func (a *app) gcLocal(dry bool, age time.Duration) sprint.GCResult {
 		Worktrees: func(clone string) []string { return gcWorktrees(clone, dry) },
 		Volume:    sprint.GCVolumeUse,
 	})
+}
+
+// gcRoots is this machine's home and the AI root as given (aiRoot, else NOVA_AI_ROOT,
+// else ~/ai); sprint.GC falls back to the home's links when that is no directory.
+func (a *app) gcRoots(aiRoot string) (home, ai string) {
+	home = a.getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir() // ignored: no home is no root, and the pass finds nothing
+	}
+	ai = aiRoot
+	if ai == "" {
+		ai = a.getenv("NOVA_AI_ROOT")
+	}
+	if ai == "" && home != "" {
+		ai = filepath.Join(home, "ai")
+	}
+	return home, ai
 }
 
 // gcWorktrees is a clone's linked worktrees (git worktree list, the main one left out),
@@ -271,12 +290,12 @@ func (a *app) gcLoop(ctx context.Context, stdout io.Writer) {
 		for _, run := range sprint.GCDue(ms, a.now()) {
 			var out bytes.Buffer
 			if run.Machine == local {
-				for _, l := range a.gcLocal(false, sprint.GCMaxAge).Lines() {
+				for _, l := range a.gcLocal(false, sprint.GCMaxAge, "").Lines() {
 					fmt.Fprintln(&out, l)
 				}
 			} else {
 				// ignored: the remote verb's lines say its failure; ssh's own is its exit
-				_, _ = gcRemote(ctx, run.Machine, gcLine(false, "2d"), &out, &out)
+				_, _ = gcRemote(ctx, run.Machine, gcLine(false, "2d", ""), &out, &out)
 			}
 			k := known[run.Machine]
 			k.Last = a.now()
@@ -309,9 +328,9 @@ func gcDetail(l string) bool {
 
 // gcLocalVolume is this machine's fullest volume as a summary line ParseGCVolume reads.
 func (a *app) gcLocalVolume() string {
-	home := a.getenv("HOME")
+	home, ai := a.gcRoots("")
 	use := -1
-	for _, d := range []string{home, filepath.Join(home, "nova-bench"), a.getenv("NOVA_AI_ROOT")} {
+	for _, d := range []string{home, filepath.Join(home, "nova-bench"), sprint.GCAIRoot(home, ai)} {
 		if d == "" {
 			continue
 		}

@@ -22,8 +22,9 @@ import (
 // verbs", and a cold AI coordinating with nova alone had no way to reclaim the disk. GC
 // removes exactly the scratch the machinery made and no longer needs, class by class:
 //
-//   - jobs: <w>/jobs/<job> of every working directory <w> (a <home>/<name>-working link or
-//     directory, <ai-root>/<name>/working, <ai-root>/buds/<name>/working) whose lane is
+//   - jobs: <w>/jobs/<job> of every working directory <w> (a <home>/<name>-working link,
+//     <ai-root>/<name>/working, <ai-root>/buds/<name>/working, or a plain <home>/<name>-working
+//     directory, as a bench keeps them) whose lane is
 //     finished or absent: its runner's log (runner.log in <w> or beside it) ended the job
 //     (END) and no START, RESUME or LIMIT came after; with no log, its outbox REPORT.md is
 //     at least GCReportGrace old; and a job the log never names whose directory is older
@@ -39,8 +40,11 @@ import (
 //
 // Every removal is safepath.RemoveUnderRoots under its class's own directory, and that
 // directory must resolve strictly under a known scratch root (the AI root, the bench root,
-// the land root); a path under none is REFUSED and never removed, so a working directory
-// linked from outside the AI root is never walked. A clone (a directory holding .git)
+// the land root, a plain <home>/<name>-working directory); a path under none is REFUSED and
+// never removed, so a working directory linked from outside the AI root is never walked.
+// The AI root is GCReq.AIRoot when it is a directory, else the one the home's links name
+// (GCAIRoot): the Studio exports no NOVA_AI_ROOT and has no ~/ai, and its working
+// directories are links to /Volumes/nova/ai/<name>/working and .../buds/<name>/working. A clone (a directory holding .git)
 // inside a removal with uncommitted work, a stash or commits on no remote (Dirty) keeps the
 // whole removal: KEPT with why. A dry run reads all of it and removes nothing.
 
@@ -126,6 +130,54 @@ type gcPass struct {
 	res   GCResult
 	class *GCClass
 	roots []string // the known scratch roots that exist, resolved
+	aiWhy string   // why the home's links name no AI root, when none was given
+}
+
+// GCAIRoot is the AI root a pass works under: aiRoot when it is a directory, else the one
+// the home's <name>-working links name (resolved); "" none.
+func GCAIRoot(home, aiRoot string) string {
+	if fi, err := os.Stat(aiRoot); aiRoot != "" && err == nil && fi.IsDir() {
+		return aiRoot
+	}
+	root, _ := gcLinkedAIRoot(home) // ignored: why there is none is the pass's to say
+	return root
+}
+
+// gcLinkedAIRoot is the AI root the home's links name, as the machinery lays them out: a
+// link <home>/<name>-working that resolves to <root>/<name>/working or
+// <root>/buds/<name>/working names <root>. Every link that names one must name the same,
+// else there is none and why says so; a link to anything else names nothing (the pass
+// refuses it).
+func gcLinkedAIRoot(home string) (root, why string) {
+	es, err := os.ReadDir(home)
+	if err != nil {
+		return "", ""
+	}
+	var named []string
+	for _, e := range es {
+		name, ok := strings.CutSuffix(e.Name(), "-working")
+		if !ok || name == "" || e.Type()&fs.ModeSymlink == 0 || !safepath.NameOK(e.Name()) {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(filepath.Join(home, e.Name()))
+		if err != nil || filepath.Base(real) != "working" || filepath.Base(filepath.Dir(real)) != name {
+			continue
+		}
+		r := filepath.Dir(filepath.Dir(real))
+		if filepath.Base(r) == "buds" {
+			r = filepath.Dir(r)
+		}
+		if !slices.Contains(named, r) {
+			named = append(named, r)
+		}
+	}
+	switch len(named) {
+	case 0:
+		return "", ""
+	case 1:
+		return named[0], ""
+	}
+	return "", "the home's working links name more than one AI root (" + strings.Join(named, ", ") + ")"
 }
 
 // GC runs one pass: the rule is the comment at the top of this file.
@@ -137,7 +189,10 @@ func GC(r GCReq) GCResult {
 		r.Cache = gocache.Bounds{Limit: gocache.Limit, Slack: gocache.Slack, Remove: 1 << 30}
 	}
 	p := &gcPass{r: r, res: GCResult{Volume: -1, Dry: r.Dry}}
-	for _, root := range []string{r.AIRoot, r.BenchRoot, r.LandRoot} {
+	if real, why := p.knownRoot(r.AIRoot); real == "" && why == "" {
+		p.r.AIRoot, p.aiWhy = gcLinkedAIRoot(r.Home)
+	}
+	for _, root := range []string{p.r.AIRoot, r.BenchRoot, r.LandRoot} {
 		if real, _ := p.knownRoot(root); real != "" {
 			p.roots = append(p.roots, real)
 		}
@@ -229,10 +284,16 @@ func (p *gcPass) placed(dir string) (string, string) {
 // home's <name>-working entries and the AI root's <name>/working and buds/<name>/working.
 // A home entry that resolves outside the AI root is refused (said in the jobs class).
 func (p *gcPass) workDirs() []string {
-	var cands, refused []string
+	var cands, refused, plain []string
 	if es, err := os.ReadDir(p.r.Home); err == nil {
 		for _, e := range es {
-			if strings.HasSuffix(e.Name(), "-working") && safepath.NameOK(e.Name()) {
+			if !strings.HasSuffix(e.Name(), "-working") || !safepath.NameOK(e.Name()) {
+				continue
+			}
+			if e.IsDir() {
+				// a plain directory, as a bench keeps a friend's: its own scratch root
+				plain = append(plain, filepath.Join(p.r.Home, e.Name()))
+			} else {
 				cands = append(cands, filepath.Join(p.r.Home, e.Name()))
 			}
 		}
@@ -249,6 +310,15 @@ func (p *gcPass) workDirs() []string {
 	}
 	seen := map[string]bool{}
 	var out []string
+	for _, c := range plain {
+		if real, why := p.knownRoot(c); real != "" && !seen[real] {
+			seen[real] = true
+			p.roots = append(p.roots, real)
+			out = append(out, real)
+		} else if why != "" {
+			p.refuse(c, why)
+		}
+	}
 	for _, c := range cands {
 		real, err := filepath.EvalSymlinks(c)
 		if err != nil {
@@ -266,8 +336,15 @@ func (p *gcPass) workDirs() []string {
 			out = append(out, real)
 		}
 	}
+	root := "the AI root " + p.r.AIRoot
+	switch {
+	case p.aiWhy != "":
+		root = p.aiWhy
+	case ai == "":
+		root = "no AI root: NOVA_AI_ROOT, --ai-root, ~/ai and the home's working links name none"
+	}
 	for _, c := range refused {
-		p.refuse(c, "a working directory not under a known scratch root (the AI root "+p.r.AIRoot+")")
+		p.refuse(c, "a working directory not under a known scratch root ("+root+")")
 	}
 	return out
 }

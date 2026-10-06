@@ -218,3 +218,70 @@ func TestGcRefusesARootThatIsTheHome(t *testing.T) {
 	assert.True(t, exists(filepath.Join(g.home, "runs", "run.OLD00001", "x")))
 	assert.Contains(t, strings.Join(res.Lines(), "\n"), "GC REFUSED class=bench path="+g.home)
 }
+
+// A machine that exports no AI root still reaches it: the Studio sets no NOVA_AI_ROOT and
+// has no ~/ai, and its working directories are the home's <name>-working links to
+// <ai-root>/<name>/working and <ai-root>/buds/<name>/working, so the links name the AI root
+// and its finished jobs and reads are reclaimed. A bench (vision) keeps them as plain
+// <name>-working directories in the home, each its own scratch root. A link to a directory
+// outside that layout is still refused, and links that name two AI roots name none.
+func TestGcFindsTheAIRootThroughTheHomesWorkingLinks(t *testing.T) {
+	t.Parallel()
+	h := time.Hour
+	for _, given := range []string{"", "missing"} {
+		g := newGCTree(t)
+		kin := filepath.Join(g.ai, "kin", "working")
+		require.NoError(t, os.MkdirAll(kin, 0o755))
+		require.NoError(t, os.Symlink(kin, filepath.Join(g.home, "kin-working")))
+		plain := filepath.Join(g.home, "v-working")
+		for _, w := range []string{g.w, kin, plain} {
+			g.clone(filepath.Join(w, "jobs", "done", "repo"), 5*h)
+			g.file(filepath.Join(w, "outbox", "done", "REPORT.md"), "Verdict: LAND\n", 4*h)
+			g.file(filepath.Join(w, "reads", "r-done", "RESULT.md"), "Verdict: broken\n", 2*h)
+		}
+		g.file(filepath.Join(g.other, "jobs", "x", "JOB.md"), "# JOB\n", 30*24*h)
+
+		r := g.req(false)
+		r.AIRoot = ""
+		if given != "" {
+			r.AIRoot = filepath.Join(g.home, "ai") // the ~/ai fallback, absent on the Studio
+		}
+		assert.Equal(t, mustReal(t, g.ai), GCAIRoot(g.home, r.AIRoot), "given %q", given)
+		res := GC(r)
+		for _, w := range []string{g.w, kin, plain} {
+			assert.NoDirExists(t, filepath.Join(w, "jobs", "done"), "given %q", given)
+			assert.NoDirExists(t, filepath.Join(w, "reads", "r-done"), "given %q", given)
+			assert.FileExists(t, filepath.Join(w, "outbox", "done", "REPORT.md"))
+		}
+		assert.FileExists(t, filepath.Join(g.other, "jobs", "x", "JOB.md"), "a link outside the layout is never walked")
+		text := strings.Join(res.Lines(), "\n")
+		assert.Contains(t, text, "GC jobs count=3 ")
+		assert.Contains(t, text, "GC reads count=3 ")
+		assert.Contains(t, text, "GC REFUSED class=jobs path="+filepath.Join(g.home, "stray-working"))
+		assert.Zero(t, res.Failed)
+	}
+
+	// two links naming two AI roots name none: every link is refused, the plain one is not
+	g := newGCTree(t)
+	other := filepath.Join(filepath.Dir(g.ai), "ai2", "kin", "working")
+	require.NoError(t, os.MkdirAll(other, 0o755))
+	require.NoError(t, os.Symlink(other, filepath.Join(g.home, "kin-working")))
+	g.clone(filepath.Join(g.w, "jobs", "done", "repo"), 5*h)
+	g.file(filepath.Join(g.w, "outbox", "done", "REPORT.md"), "Verdict: LAND\n", 4*h)
+	r := g.req(false)
+	r.AIRoot = ""
+	assert.Empty(t, GCAIRoot(g.home, ""))
+	res := GC(r)
+	assert.DirExists(t, filepath.Join(g.w, "jobs", "done"))
+	text := strings.Join(res.Lines(), "\n")
+	assert.Contains(t, text, "GC REFUSED class=jobs path="+filepath.Join(g.home, "b1-working"))
+	assert.Contains(t, text, "GC REFUSED class=jobs path="+filepath.Join(g.home, "kin-working"))
+	assert.Contains(t, text, "name more than one AI root")
+}
+
+func mustReal(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	require.NoError(t, err)
+	return r
+}

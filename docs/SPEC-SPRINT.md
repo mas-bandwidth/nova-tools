@@ -1191,14 +1191,14 @@ go through the steps above) has no sample for the stages that need it.
 On 2026-10-06 the coordinator freed 314 GiB with a hand-written `clean-jobs.py` (job
 directories whose lane is dead and whose report is written), run from a shell loop every ten
 minutes; the owner, 2026-10-04: no bash scripts, ship verbs, every coordinator need is a nova
-verb. `nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]` is that verb
+verb. `nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]` is that verb
 (`sprint.GC`, `cmd/nova-sprint/gc.go`). On the machine it runs on, or with `--machine` on that
 machine through the fleet runner (`internal/bench`'s ssh, which runs the same verb there), it
 removes exactly the scratch the machinery made and no longer needs, class by class:
 
-- `jobs`: `<w>/jobs/<job>` of every working directory `<w>` under the AI root (a
-  `<home>/<name>-working` entry, `<ai-root>/<name>/working`, `<ai-root>/buds/<name>/working`,
-  each once) whose lane is finished or absent: its runner's log (`runner.log` in `<w>` or
+- `jobs`: `<w>/jobs/<job>` of every working directory `<w>` (a `<home>/<name>-working` link
+  resolving under the AI root, `<ai-root>/<name>/working`, `<ai-root>/buds/<name>/working`, or
+  a plain `<home>/<name>-working` directory as a bench keeps a friend's; each once) whose lane is finished or absent: its runner's log (`runner.log` in `<w>` or
   beside it, the lines `collect` reads) has the job's last event an `END`; or no runner names
   the lane and `outbox/<job>/REPORT.md` is at least an hour old; or no runner names it and the
   directory is older than `--max-age`. A lane the log last STARTed, RESUMEd or LIMITed is
@@ -1214,9 +1214,16 @@ removes exactly the scratch the machinery made and no longer needs, class by cla
   and of each working directory (`.cache/go-build`), held under its cap (`internal/gocache`,
   20 GiB).
 
-The known scratch roots are the AI root (`NOVA_AI_ROOT`, else `~/ai`), the bench root
-(`~/nova-bench`) and land's clone root; one that is the disk, the home or a directory above
-the home is refused. Every removal must resolve strictly under a known root and is
+The known scratch roots are the AI root, the bench root (`~/nova-bench`), land's clone root
+and each plain `<home>/<name>-working` directory; one that is the disk, the home or a
+directory above the home is refused. The AI root is `--ai-root`, else `NOVA_AI_ROOT`, else
+`~/ai`; when that is no directory, it is the one the home's links name as the machinery lays
+them out (`sprint.GCAIRoot`): a link `<home>/<name>-working` resolving to
+`<root>/<name>/working` or `<root>/buds/<name>/working` names `<root>`. The Studio exports no
+`NOVA_AI_ROOT` and has no `~/ai`; its working directories are such links into
+`/Volumes/nova/ai`, which is its AI root. Links naming two roots name none (each is refused,
+`why=` naming both), and a link to anything else stays refused. `--machine` carries
+`--ai-root` when given; without it the machine finds its own the same way. Every removal must resolve strictly under a known root and is
 `safepath.RemoveUnderRoots` under its class's own directory; a path under none is refused
 (`GC REFUSED class= path= why=`) and never removed, so a working directory linked from
 outside the AI root is never walked. A clone inside a removal (a directory holding `.git`)
@@ -1233,6 +1240,7 @@ at 80% or above (read every five minutes with `df -P`, and from each run's `volu
 soon as the loop sees it, at most once every ten minutes while it stays there
 (`sprint.GCDue`). Each run says its class lines and summary, `<time> GC machine=<m> why=first|hourly|volume
 <p>% >= 80%: <line>`. (`TestGcRemovesOnlyFinishedScratchUnderKnownRoots`,
+`TestGcFindsTheAIRootThroughTheHomesWorkingLinks`, `TestGcVerbFindsTheAIRootWithoutNovaAIRoot`,
 `TestTheTickRunsGcHourlyAndOnAFullVolume`, `TestGcVerbReclaimsThisMachinesFinishedScratch`,
 `TestGcMachineRunsTheVerbThroughTheFleetRunner`.)
 
@@ -4378,7 +4386,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1); `--every <d>` loops as the seat each pass, and `friend sync install --every <d>` / `friend sync uninstall` put that loop in place as this machine's service ("Handing over the seat") |
 | collect | every friend's outbox report of a card working on a friend's row finished as her row, a LAND only at origin's tip, and with `--dead-lanes` a lane her runner ENDed with no report finished failed (section 1, collect): `collect [<friend>...] [--dead-lanes] [--root <dir>] [--dry-run]`; never run by the server |
-| gc | the machinery's scratch reclaimed on the machine it runs on, or on `--machine`'s through the fleet runner (section 1, gc): `gc [--machine <m>] [--dry-run] [--max-age <d>]`; job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past `--max-age`, the go caches trimmed to their cap, never a path under no known scratch root or a clone with work that is nowhere else; one line per class and `GC OK freed=<bytes> volume=<use%>`; run by `run` on every machine hourly and on a volume at 80%; never run by the server |
+| gc | the machinery's scratch reclaimed on the machine it runs on, or on `--machine`'s through the fleet runner (section 1, gc): `gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]`; job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past `--max-age`, the go caches trimmed to their cap, never a path under no known scratch root or a clone with work that is nowhere else; one line per class and `GC OK freed=<bytes> volume=<use%>`; run by `run` on every machine hourly and on a volume at 80%; never run by the server |
 | friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |

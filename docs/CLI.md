@@ -1147,7 +1147,7 @@ nova-sprint install seat-push|friend-sync (seat install's and friend sync instal
 nova-sprint install table --out <file> [--every <duration>] [--redis <addr>] [--dir <dir>] [--log <file>] [--dry-run]
 nova-sprint uninstall server|member|seat-push|friend-sync|table [--dir <dir>] [--dry-run]
 nova-sprint units --check [--dir <dir>]
-nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]
+nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
@@ -1236,7 +1236,7 @@ A running sprint needs nine units on its coordinator's machine: the store and th
 
 ### The machinery's scratch
 
-`nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]` reclaims, on the machine it runs on (or, with `--machine`, on that machine through the fleet runner, which runs the same verb there), exactly the scratch the machinery made and no longer needs: the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees, bench directories under `~/nova-bench` older than `--max-age` (default `2d`; days or a Go duration), and the go caches trimmed to their cap. It refuses a path under no known scratch root (the AI root, `NOVA_AI_ROOT` else `~/ai`; the bench root; land's clone root), and keeps a clone with uncommitted work, a stash or unpushed commits. It prints one line per class, `GC jobs|reads|landers|bench|cache count=<n> bytes=<b> kept=<n> refused=<n> failed=<n>`, and `GC OK freed=<bytes> volume=<use%>`; `--dry-run` says `GC WOULD-REMOVE` and removes nothing. `nova-sprint run` runs it on every machine once an hour and as soon as a machine's volume is at 80%. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 1, "gc".
+`nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]` reclaims, on the machine it runs on (or, with `--machine`, on that machine through the fleet runner, which runs the same verb there), exactly the scratch the machinery made and no longer needs: the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees, bench directories under `~/nova-bench` older than `--max-age` (default `2d`; days or a Go duration), and the go caches trimmed to their cap. It refuses a path under no known scratch root (the AI root: `--ai-root`, else `NOVA_AI_ROOT`, else `~/ai`, else the one the home's `<name>-working` links name, `<root>/<name>/working` or `<root>/buds/<name>/working`, as on the Studio; the bench root; land's clone root; a plain `<home>/<name>-working` directory, as a bench keeps one), and keeps a clone with uncommitted work, a stash or unpushed commits. It prints one line per class, `GC jobs|reads|landers|bench|cache count=<n> bytes=<b> kept=<n> refused=<n> failed=<n>`, and `GC OK freed=<bytes> volume=<use%>`; `--dry-run` says `GC WOULD-REMOVE` and removes nothing. `nova-sprint run` runs it on every machine once an hour and as soon as a machine's volume is at 80%. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 1, "gc".
 
 ### A card re-cut as its twin
 
