@@ -1352,12 +1352,19 @@ card that leaves the work table.
 properly calculated yet in nova sprint?"; the store then held 3,939 read records and none
 priced). A read card drawn a route at its ask is priced by that route's row, as a work card
 is by its own (`readCostRecord`). Its verdict (`read --ok`, `read --broken`) carries the
-run's usage with its tokens, or the harness's own cost, or it is refused and changes
-nothing, the remedy printed (`sprint.ReadUsageMissing`: `read --as <r> --ok <card> ...
---usage '<the harness's own token report>'`), so no routed read is left unpriced; a return
-(`read --return`) is taken without one, for a read that never ran (a staging or launch
-refusal) has no tokens, and the fleet reader passes its harness's report on every verdict
-and return it ran (internal/member `usageArgs`). A subscription reader (a bud's `claude -p`
+run's `--usage`, or it is refused and changes nothing, the remedy printed
+(`sprint.ReadUsageMissing`: `read --as <r> --ok <card> ... --usage '<the harness's own
+token report>'`), so no routed reader leaves its read unpriced by saying nothing. A usage
+that reports no token (a fleet harness that printed none and left no receipt) is permissive
+in what we read: the verdict is kept, never lost for its accounting, its record says
+`unpriced=no-tokens`, and the where record counts it (`reads_no_tokens`, one of
+`unpriced_runs`), so a harness that stops reporting is seen
+(`TestAFleetReadWithNoTokensKeepsItsVerdict`). A return (`read --return`) is taken without
+a usage, for a read that never ran (a staging or launch refusal) has no tokens. The fleet
+reader passes `--usage` on every verdict and every return it ran (internal/member
+`usageArgs`): its harness's own report, from native's `spend=` word or the job's
+`usage.tsv` receipt, and when the harness reported nothing, `usage_source=none` (cmd/nova-swarm
+`noUsageReported`), so its usage is never absent. A subscription reader (a bud's `claude -p`
 on its own plan, which bills no dollar per token) adds `billing=subscription` to its usage:
 its tokens are kept, the harness's notional cost dropped, `unpriced=subscription`, and its
 COST line says `cost=tokens`. A read with no route at all (a store with no routes) is taken
