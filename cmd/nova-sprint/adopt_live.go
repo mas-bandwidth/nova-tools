@@ -8,8 +8,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +48,10 @@ type liveManifest struct {
 	Library   liveLibrary     `json:"library"`
 	Dashboard []liveDashboard `json:"dashboard"`
 	Agents    []liveAgent     `json:"agents"`
+	// Processes is every process of this host that runs a nova tool (its
+	// first argument's name, or the name of the file a link there names),
+	// this one aside: what the seat's window waits on before it migrates.
+	Processes []liveProcess `json:"processes"`
 }
 
 // liveBinary is an installed tool: its path, inode and build.
@@ -126,6 +132,19 @@ type liveAgent struct {
 	// Lanes is a friend daemon's lanes with a card in hand (nova-friend
 	// status's lanes, n:session:card), the work a reinstall would cut.
 	Lanes int `json:"lanes"`
+	// Holds: its process is one the seat's window stops (a nova-sprint, or a
+	// nova-swarm member), whatever its plist runs first (a shell that execs it).
+	Holds bool `json:"holds"`
+}
+
+// liveProcess is one process running a nova tool: the tool, and whether it
+// is server or member work of this bin directory the seat's window stops (its
+// nova-sprint, or its nova-swarm as a member).
+type liveProcess struct {
+	PID   int    `json:"pid"`
+	Tool  string `json:"tool"`
+	Args  string `json:"args"`
+	Holds bool   `json:"holds"`
 }
 
 // liveProbe reads the host; run is exec in production, a fake in a test.
@@ -179,6 +198,7 @@ func (p liveProbe) read(ctx context.Context) (liveManifest, error) {
 		}
 	}
 	m.Library = p.library(ctx)
+	m.Processes = p.processes(ctx)
 	for _, link := range p.dashboards {
 		target, err := os.Readlink(link)
 		if err != nil {
@@ -198,7 +218,60 @@ func (p liveProbe) read(ctx context.Context) (liveManifest, error) {
 	for _, pl := range plists {
 		m.Agents = append(m.Agents, p.agent(ctx, pl))
 	}
+	holding := map[int]bool{}
+	for _, pr := range m.Processes {
+		if pr.Holds {
+			holding[pr.PID] = true
+		}
+	}
+	for i := range m.Agents {
+		m.Agents[i].Holds = m.Agents[i].PID > 0 && holding[m.Agents[i].PID]
+	}
 	return m, nil
+}
+
+// processes is ps's every process that runs a nova tool, this one aside. A
+// process holds the seat's window when it runs this bin directory's
+// nova-sprint, or its nova-swarm as a member: its first argument, a bare name
+// found on PATH and a link followed, is in the bin directory.
+func (p liveProbe) processes(ctx context.Context) []liveProcess {
+	out := []liveProcess{}
+	text, err := p.run(ctx, "ps", "-A", "-o", "pid=,args=")
+	if err != nil {
+		return out
+	}
+	self := os.Getpid()
+	bin := p.binDir
+	if b, err := filepath.EvalSymlinks(bin); err == nil {
+		bin = b
+	}
+	for _, l := range strings.Split(text, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(f[0])
+		if err != nil || pid == self {
+			continue
+		}
+		path := f[1]
+		if !strings.Contains(path, "/") {
+			if found, err := exec.LookPath(path); err == nil {
+				path = found
+			}
+		}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = resolved
+		}
+		tool := filepath.Base(path)
+		if !liveTool.MatchString(tool) {
+			continue
+		}
+		mine := filepath.Dir(path) == bin
+		holds := mine && (tool == "nova-sprint" || (tool == "nova-swarm" && slices.Contains(f[2:], "member")))
+		out = append(out, liveProcess{PID: pid, Tool: tool, Args: strings.Join(f[1:], " "), Holds: holds})
+	}
+	return out
 }
 
 // library is nova-redis fn check of the installed build against the store.

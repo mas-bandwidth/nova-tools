@@ -127,6 +127,9 @@ nova_seat_hold: []
 nova_seat_agents_dir: "{{ nova_home }}/Library/LaunchAgents"
 nova_launchctl: launchctl
 nova_seat_friend_drain: 180
-# Where the seat play keeps the nova-redis installed before an adoption, so a
-# refusal can load that build's function library again.
+# Where the seat play keeps the tools an adoption replaces (bin/), so a
+# refusal inside its window can put them back, load their library again and
+# start the old server on them; and how long the window waits for every old
+# nova-sprint and nova-swarm member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
+nova_seat_quiet: 60

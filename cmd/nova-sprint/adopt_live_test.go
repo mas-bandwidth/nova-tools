@@ -78,6 +78,14 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 		bin + "/nova-sprint version": "nova-sprint v1.2.0-dev.abcdef1 darwin/arm64 go1.27.1",
 		fmt.Sprintf("launchctl print gui/%d/com.nova.loop.sprint-server-a", uid): "state = running\n\tpid = 11\n",
 		fmt.Sprintf("launchctl print gui/%d/com.nova.friend-a", uid):             "\tpid = 12\n",
+		"ps -A -o pid=,args=": strings.Join([]string{
+			"    1 /sbin/launchd",
+			"   11 " + strings.Join(server, " "),
+			"   12 " + filepath.Join(copyDir, "nova-friend") + " run --as friend-a",
+			"   13 " + filepath.Join(bin, "nova-swarm") + " member --as m1",
+			"   14 " + filepath.Join(bin, "nova-swarm") + " disk-guard",
+			"   15 /elsewhere/nova-sprint run",
+		}, "\n"),
 		"ps -o args= -p 11":                                            strings.Join(server, " "),
 		"lsof -a -p 11 -d txt -F i":                                    "p11\nftxt\ni1\n",
 		"ps -o args= -p 12":                                            filepath.Join(copyDir, "nova-friend") + " run --as friend-a --harness opencode --dir /d --width 2",
@@ -164,6 +172,15 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 	assert.True(t, off.Disabled)
 	assert.False(t, off.Stale, "a disabled agent is meant not to run")
 	assert.Equal(t, 180, off.ExitTimeout)
+
+	// the processes the seat's window waits on: this bin directory's nova-sprint and nova-swarm members
+	holds := map[int]bool{}
+	for _, pr := range m.Processes {
+		holds[pr.PID] = pr.Holds
+	}
+	assert.Equal(t, map[int]bool{11: true, 12: false, 13: true, 14: false, 15: false}, holds, "launchd is no nova tool; another directory's nova-sprint is not this build's")
+	assert.True(t, srv.Holds, "the server agent's process holds the window")
+	assert.False(t, fa.Holds)
 
 	redis := byLabel["com.nova.redis"]
 	assert.Empty(t, redis.Tool, "a .conf named nova-* is no nova tool")

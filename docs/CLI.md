@@ -1407,16 +1407,21 @@ current=` per `--dashboard`, and one line per `com.nova.*` launchd agent of `--a
 `NOVA_LAUNCH_AGENTS`, else `~/Library/LaunchAgents`): `LIVE SERVER` for `nova-sprint run`,
 `LIVE FRIEND` for `nova-friend run` with its last beat and its lanes with a card in hand, else
 `LIVE AGENT`, each with its pid and, for a nova tool, `loaded= stale= fresh= installed=
-args_took= binary=` and the `why=` of a stale one. Exit 0 whatever it finds, 1 when the
+args_took= binary=` and the `why=` of a stale one; `--json` also lists the host's nova
+processes, `holds` on this bin directory's nova-sprint and nova-swarm members. Exit 0 whatever it finds, 1 when the
 installed nova-sprint or the agents directory cannot be read, 2 usage.
 
 `nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text>
 [--limit <host>] [--receipts <dir>] [--dry-run]` runs `<checkout>/fleet/tools.yml` for the
-seat: the new build's checks first (its shadow tick on the store, its `nova-friend install
---dry-run` against every friend daemon's flags), then the install, the library, every stale
-nova agent booted out and bootstrapped, the dashboard links pointed at the installed
-nova-sprint and each stale friend daemon reinstalled after its lanes put their cards down, each
-step checked by `live` before the next; the configuration store is migrated before anything restarts. It prints
+seat, as a window: the new build's checks first (its shadow tick on the store, its `nova-friend
+install --dry-run` against every friend daemon's flags); then, when the build replaces a tool or
+the library, the old server, member and every nova agent but the friends are booted out and ps
+is waited on to show no old nova-sprint or member; the configuration store is migrated, the
+library loaded and the tools installed; every agent the window stopped and every stale one is
+bootstrapped and proved; the dashboard links point at the installed nova-sprint; and each stale
+friend daemon is reinstalled after its lanes put their cards down. A refusal once the window
+opened puts the tools of before back, loads and reads back their library and starts the stopped
+agents on them before it is said. It prints
 one `ADOPT step=<store|server|dashboard|friends> host= before= after=` line per step and `ADOPT
 ADOPTED version= hosts= steps=`; with `--dry-run` (the play's `--check`) `ADOPT WOULD-ADOPT`, and
 a machine with neither the candidate staged nor built prints `ADOPT step=seat host=<h>

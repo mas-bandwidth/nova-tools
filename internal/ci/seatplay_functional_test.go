@@ -29,27 +29,31 @@ import (
 // bootout, logs every verb but print, and refuses a bootstrap of a label
 // with a <label>.fail file. It never reaches launchd.
 const seatLaunchctl = `#!/bin/sh
-S=%s
+S=%s; L=%s
 case "$1" in
 print) l=${2##*/}; [ -f "$S/$l.pid" ] && kill -0 "$(cat "$S/$l.pid")" 2>/dev/null || exit 113
   printf '\tstate = running\n\tpid = %%s\n' "$(cat "$S/$l.pid")"; exit 0;;
-bootout) l=${2##*/}; echo "bootout $l" >> "$S/log"; [ -f "$S/$l.pid" ] || exit 3; kill "$(cat "$S/$l.pid")" 2>/dev/null; rm -f "$S/$l.pid"; exit 0;;
-bootstrap) l=$(basename "$3" .plist); echo "bootstrap $l" >> "$S/log"; [ -f "$S/$l.fail" ] && exit 5; [ -f "$S/$l.pid" ] && exit 5
+bootout) l=${2##*/}; echo "bootout $l" >> "$L"; [ -f "$S/$l.pid" ] || exit 3; kill "$(cat "$S/$l.pid")" 2>/dev/null; rm -f "$S/$l.pid"; exit 0;;
+bootstrap) l=$(basename "$3" .plist); echo "bootstrap $l" >> "$L"; [ -f "$S/$l.fail" ] && exit 5; [ -f "$S/$l.pid" ] && exit 5
   set -- $(/usr/bin/plutil -extract ProgramArguments xml1 -o - "$3" | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')
   nohup "$@" >/dev/null 2>&1 & echo $! > "$S/$l.pid"; exit 0;;
-*) echo "unexpected $*" >> "$S/log"; exit 64;;
+*) echo "unexpected $*" >> "$L"; exit 64;;
 esac
 `
 
 // seatTool is the agents' binary and the fake nova-friend, one program built
 // here with its directories and its build word stamped in (-X), so each
 // build's bytes differ and a copy runs anywhere:
+//   - named nova-sprint: run is the old server's stand-in, logging "server
+//     up <build>" and running until it is stopped; every other verb is the
+//     real nova-sprint's (exec);
+//   - member <n>: a member's stand-in, sleeping n seconds;
 //   - a last argument that is a number: sleep that long (a loop agent);
 //   - run --as <f>: a friend daemon, beating into <dir>/<f>.beat every
 //     second unless <dir>/<f>.nobeat was there when it started; while
 //     <dir>/<f>.busy is there its lanes hold a card, and it puts the card
 //     down 8 s after the launchctl log says the server step bootstrapped
-//     com.nova.loop.t1, logging "drained <f>";
+//     com.nova.loop.srv, logging "drained <f>";
 //   - status --as <f>: its last beat and its lanes;
 //   - install --as <f> ... [--dry-run]: logs "install <f>", writes the
 //     friend's plist naming this binary (or, with <dir>/<f>.noplist,
@@ -62,10 +66,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
-var dir, agents, launchctl, build string
+var dir, agents, launchctl, build, realBin string
 
 func flag(args []string, name string) string {
 	for i := 0; i+1 < len(args); i++ {
@@ -88,7 +93,17 @@ func logLine(s string) {
 
 func main() {
 	args := os.Args[1:]
-	if n, err := strconv.Atoi(args[len(args)-1]); err == nil && len(args) == 1 {
+	if filepath.Base(os.Args[0]) == "nova-sprint" {
+		if len(args) > 0 && args[0] == "run" {
+			logLine("server up " + build)
+			for {
+				time.Sleep(time.Hour)
+			}
+		}
+		syscall.Exec(realBin, append([]string{realBin}, args...), os.Environ())
+		return
+	}
+	if n, err := strconv.Atoi(args[len(args)-1]); err == nil && (len(args) == 1 || args[0] == "member") {
 		time.Sleep(time.Duration(n) * time.Second)
 		return
 	}
@@ -102,8 +117,8 @@ func main() {
 				os.WriteFile(filepath.Join(dir, who+".beat"), []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
 			}
 			if exists(filepath.Join(dir, who+".busy")) {
-				b, _ := os.ReadFile(filepath.Join(filepath.Dir(launchctl), "launchd", "log"))
-				if sawRestart.IsZero() && strings.Contains(string(b), "bootstrap com.nova.loop.t1") {
+				b, _ := os.ReadFile(filepath.Join(dir, "log"))
+				if sawRestart.IsZero() && strings.Contains(string(b), "bootstrap com.nova.loop.srv") {
 					sawRestart = time.Now()
 				}
 				if !sawRestart.IsZero() && time.Since(sawRestart) > 8*time.Second { // wall-ok: the fake daemon holding its card, not a test bound
@@ -166,7 +181,7 @@ const seatUpdate = `#!/bin/sh
 stage=$(dirname "$0"); bin=""; v=""
 while [ "$#" -gt 0 ]; do case "$1" in --bin) bin=$2; shift;; --version) v=$2; shift;; esac; shift; done
 n=0; k=0
-for f in "$stage"/*; do b=$(basename "$f"); [ "$b" = nova-update ] && continue
+for f in "$stage"/*; do b=$(basename "$f")
   if cmp -s "$f" "$bin/$b"; then k=$((k+1)); else cp "$f" "$bin/$b.tmp" && mv "$bin/$b.tmp" "$bin/$b"; n=$((n+1)); fi
 done
 echo "RELEASE INSTALLED version=$v tools=$n skipped=$k"
@@ -210,7 +225,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 		require.NoError(t, os.Rename(path+".tmp", path)) // a fresh inode, as release install makes one
 	}
 	launchctl := filepath.Join(r.dir, "launchctl")
-	write(launchctl, fmt.Sprintf(seatLaunchctl, state), 0o755)
+	write(launchctl, fmt.Sprintf(seatLaunchctl, state, filepath.Join(fdir, "log")), 0o755)
 	t.Cleanup(func() {
 		pids, _ := filepath.Glob(filepath.Join(state, "*.pid")) // ignored: a pattern that is always valid
 		for _, f := range pids {
@@ -221,13 +236,15 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 		}
 	})
 
-	r.build(t, bin+string(filepath.Separator), "", "./cmd/nova-sprint")
-	sprint, err := os.ReadFile(filepath.Join(bin, "nova-sprint"))
-	require.NoError(t, err)
-	write(filepath.Join(stage, "nova-sprint"), string(sprint), 0o755)
+	// the real nova-sprint, which the stand-in named nova-sprint execs for every verb but run
+	realDir := filepath.Join(r.dir, "real")
+	require.NoError(t, os.MkdirAll(realDir, 0o755))
+	r.build(t, realDir+string(filepath.Separator), "", "./cmd/nova-sprint")
+	realSprint := filepath.Join(realDir, "nova-sprint")
 	write(filepath.Join(bin, "nova-secrets"), "#!/bin/sh\nwhile [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done; shift; exec \"$@\"\n", 0o755)
 	write(filepath.Join(stage, "nova-secrets"), "#!/bin/sh\nwhile [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done; shift; exec \"$@\"\n", 0o755)
-	config := "#!/bin/sh\necho \"MIGRATE OK applied=0\"\n"
+	// the migration logs how many old servers and members still run while it does
+	config := fmt.Sprintf("#!/bin/sh\nn=$(pgrep -f '%s/nova-sprint run|%s/nova-swarm member' | wc -l | tr -d ' ')\necho \"migrate holds=$n\" >> %s\necho \"MIGRATE OK applied=0\"\n", bin, bin, filepath.Join(fdir, "log"))
 	write(filepath.Join(bin, "nova-config"), config, 0o755)
 	write(filepath.Join(stage, "nova-config"), config, 0o755)
 	write(filepath.Join(stage, "nova-update"), seatUpdate, 0o755)
@@ -243,7 +260,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	tool := func(word, dst string) {
 		t.Helper()
 		out := filepath.Join(r.dir, "tool-"+word)
-		build := exec.Command("go", "build", "-o", out, "-ldflags", fmt.Sprintf("-X main.dir=%s -X main.agents=%s -X main.launchctl=%s -X main.build=%s", fdir, agents, launchctl, word), ".")
+		build := exec.Command("go", "build", "-o", out, "-ldflags", fmt.Sprintf("-X main.dir=%s -X main.agents=%s -X main.launchctl=%s -X main.build=%s -X main.realBin=%s", fdir, agents, launchctl, word, realSprint), ".")
 		build.Dir = src
 		build.Env = append(goenv.Clean(os.Environ()), "GOFLAGS=")
 		b, err := build.CombinedOutput()
@@ -251,6 +268,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 		b, err = os.ReadFile(out)
 		require.NoError(t, err)
 		write(filepath.Join(dst, "nova-swarm"), string(b), 0o755)
+		write(filepath.Join(dst, "nova-sprint"), string(b), 0o755)
 		write(filepath.Join(dst, "nova-friend"), string(b), 0o755)
 		write(filepath.Join(dst, "nova-redis"), fmt.Sprintf(seatRedis, "lib-"+word, redisState), 0o755)
 	}
@@ -268,7 +286,8 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	}
 	friendArgs := []string{"--as", "fa", "--harness", "opencode", "--dir", filepath.Join(r.dir, "dir-a"), "--width", "1"}
 	start := []string{
-		plist("com.nova.loop.t1", filepath.Join(bin, "nova-swarm"), "1001"),
+		plist("com.nova.loop.srv", filepath.Join(bin, "nova-sprint"), "run", "--stand-in"),
+		plist("com.nova.loop.mem", filepath.Join(bin, "nova-swarm"), "member", "100000"),
 		plist("com.nova.friend-fa", append([]string{filepath.Join(bin, "nova-friend"), "run"}, friendArgs...)...),
 	}
 	plist("com.nova.loop.t4", filepath.Join(bin, "nova-swarm"), "1004") // never loaded: see Disabled below
@@ -315,8 +334,10 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 			t.Fatalf("the agents never ran fresh before the play: %v", manifest())
 		case <-tick.C:
 			m := manifest()
-			ready = m != nil && m["com.nova.loop.t1"]["fresh"] == true && m["com.nova.friend-fa"]["fresh"] == true &&
-				m["com.nova.loop.t1"]["stale"] == false && m["com.nova.friend-fa"]["stale"] == false && m["com.nova.friend-fa"]["beat"] != ""
+			ready = m != nil && m["com.nova.friend-fa"]["beat"] != ""
+			for _, l := range []string{"com.nova.loop.srv", "com.nova.loop.mem", "com.nova.friend-fa"} {
+				ready = ready && m[l]["fresh"] == true && m[l]["stale"] == false
+			}
 		}
 	}
 	write(filepath.Join(fdir, "fa.busy"), "", 0o644) // the old daemon holds a card when the play starts
@@ -326,7 +347,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 		"-e", "nova_member_stop_timeout=5", "-e", "nova_seat_beat_within=15", "-e", "nova_seat_friend_drain=60"}
 	logs := func() string {
 		var all string
-		for _, f := range []string{filepath.Join(state, "log"), filepath.Join(fdir, "log")} {
+		for _, f := range []string{filepath.Join(fdir, "log")} {
 			b, _ := os.ReadFile(f) // ignored: no log is nothing logged
 			all += string(b)
 			require.NoError(t, os.WriteFile(f, nil, 0o644))
@@ -338,17 +359,26 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	// 1. the whole sequence
 	first := r.play(t, "tools.yml", vars...)
 	assert.Contains(t, first, "ADOPT step=store host=localhost before=lib-old after=lib-new CHANGED")
-	assert.Contains(t, first, `"RESTART com.nova.loop.t1 on localhost: runs a binary the install replaced"`)
-	assert.Regexp(t, `ADOPT step=server host=localhost before=\S+ after=\S+ restarted=com.nova.loop.t1 CHANGED`, first)
+	assert.Contains(t, first, "WINDOW host=localhost replaces=")
+	assert.Contains(t, first, `"RESTART com.nova.loop.srv on localhost: the window stopped it"`)
+	assert.Regexp(t, `ADOPT step=server host=localhost before=\S+ after=\S+ restarted=com.nova.loop.mem,com.nova.loop.srv CHANGED`, first)
 	assert.Contains(t, first, "ADOPT step=friends host=localhost before=")
 	assert.Contains(t, first, "reinstalled=fa CHANGED")
 	assert.Contains(t, first, "FAILED - RETRYING: [localhost]: friends: fa's lanes have no card in hand", "the drain waited")
 	ran := logs()
 	assert.NotContains(t, ran, "kickstart")
+	// the window: the old server and member stopped before the migration, nothing old running during it
+	migrate := strings.Index(ran, "migrate holds=")
+	require.Positive(t, migrate, ran)
+	assert.Contains(t, ran, "migrate holds=0\n", "no old server or member ran while it migrated:\n%s", ran)
+	assert.Less(t, strings.Index(ran, "bootout com.nova.loop.srv"), migrate)
+	assert.Less(t, strings.Index(ran, "bootout com.nova.loop.mem"), migrate)
+	assert.Less(t, migrate, strings.Index(ran, "bootstrap com.nova.loop.srv"))
+	assert.Less(t, migrate, strings.Index(ran, "server up new\n"), "the new server starts after the migration")
 	assert.Less(t, strings.Index(ran, "drained fa"), strings.Index(ran, "install fa"), "the reinstall waits for the card:\n%s", ran)
 	assert.NotContains(t, ran, "com.nova.loop.t4", "a disabled agent is left alone")
 	m := manifest()
-	for _, l := range []string{"com.nova.loop.t1", "com.nova.friend-fa", "com.nova.loop.t4"} {
+	for _, l := range []string{"com.nova.loop.srv", "com.nova.loop.mem", "com.nova.friend-fa", "com.nova.loop.t4"} {
 		assert.Equal(t, false, m[l]["stale"], l)
 	}
 	assert.Equal(t, "lib-new", strings.TrimSpace(string(must(os.ReadFile(redisState)))))
@@ -361,16 +391,22 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	assert.Regexp(t, `localhost\s+: ok=\d+\s+changed=0\s`, second, "nothing installed, loaded, restarted or written")
 	assert.Empty(t, logs(), "no bootout, bootstrap or install")
 
-	// 3. a new build refused at the dashboard: the library of before is loaded again
+	// 3. a new build refused at the dashboard, after the migration: the tools of before
+	// are put back, their library loaded and read back, and the old server started again
 	dash := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
 	defer dash.Close()
 	tool("new3", stage)
 	third, err := r.playResult(t, "tools.yml", append(vars, "-e", "nova_seat_dashboard_url="+dash.URL)...)
 	require.Error(t, err, third)
 	assert.Contains(t, third, "ADOPT REFUSED step=dashboard host=localhost: "+dash.URL+" answered 500 with no summary;")
-	assert.Contains(t, third, "the store library was lib-new3, and lib-new of before was loaded again")
+	assert.Contains(t, third, "library lib-new read back, the one of before")
+	assert.Contains(t, third, "started again: com.nova.loop.mem,com.nova.loop.srv")
 	assert.Equal(t, "lib-new", strings.TrimSpace(string(must(os.ReadFile(redisState)))), "the restore loaded the old library")
-	logs()
+	ran = logs()
+	assert.Less(t, strings.Index(ran, "migrate holds=0"), strings.Index(ran, "server up new3\n"), ran)
+	assert.True(t, strings.HasPrefix(ran[strings.LastIndex(ran, "server up"):], "server up new\n"), "the server last started is the old one:\n%s", ran)
+	m = manifest()
+	assert.Equal(t, false, m["com.nova.loop.srv"]["stale"], "the old server runs the old binary, put back")
 
 	// 4. the new daemon never beats; the old one beat through the drain
 	write(filepath.Join(fdir, "fa.nobeat"), "", 0o644)
@@ -390,13 +426,15 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(fdir, "fa.noplist")))
 	logs()
 
-	// 6. t1's bootstrap fails: each is bootstrapped again, the step refused naming it
-	write(filepath.Join(state, "com.nova.loop.t1.fail"), "", 0o644)
+	// 6. the member's bootstrap fails: each is bootstrapped again, the step refused naming
+	// it, and the rollback says it could not start it on the tools of before either
+	write(filepath.Join(state, "com.nova.loop.mem.fail"), "", 0o644)
 	tool("new6", stage)
 	sixth, err := r.playResult(t, "tools.yml", vars...)
 	require.Error(t, err, sixth)
-	assert.Contains(t, sixth, "ADOPT REFUSED step=server host=localhost: server: bootstrap each from its plist failed for com.nova.loop.t1;")
-	assert.Equal(t, 2, strings.Count(logs(), "bootstrap com.nova.loop.t1\n"), "bootstrapped, then bootstrapped again")
+	assert.Contains(t, sixth, "ADOPT REFUSED step=server host=localhost: server: bootstrap each from its plist failed for com.nova.loop.mem;")
+	assert.Contains(t, sixth, "not started: com.nova.loop.mem")
+	assert.Equal(t, 3, strings.Count(logs(), "bootstrap com.nova.loop.mem\n"), "bootstrapped, again, and by the rollback")
 }
 
 func must[T any](v T, err error) T {
