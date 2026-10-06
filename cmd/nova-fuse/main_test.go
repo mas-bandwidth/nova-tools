@@ -1235,7 +1235,7 @@ var fuseAudit = audit.Config{
 	// would accept. The usage constant needs no entry: a package constant is a literal.
 	Exempt: map[string]string{
 		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
-		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
+		"lift.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
 		"main.go|parseBoxWith|name":     "the verb's own name, chosen by this file at every call site",
 	},
 	Shadows: []string{"fuse", "Fold", "why", "since"},
