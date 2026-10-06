@@ -97,9 +97,12 @@ neither series. The lander is not the worker: the `:ok` row is. `totals` and `la
 the same landings; the hour is the clock's last 3600 seconds. The series is read from the
 store `--redis` names and the epoch `--at-epoch` names, in any order with where's other flags
 (`where --json --cards --redis <addr>` is the dashboard's call), at the frame's `at`; a frame
-the sprint's server drew already carries it. An unknown flag with `--json` is refused, never
-read as a series of another store (`TestWhereLandedSeriesReadsTheNamedStoreAndEpoch`,
-`TestWhereSeriesFlagsAreWheresFlags`).
+the sprint's server drew already carries it. The text frame does not carry the series.
+An unknown flag with `--json` is refused, never read as a series of another store
+(`TestWhereLandedSeriesReadsTheNamedStoreAndEpoch`, `TestWhereSeriesFlagsAreWheresFlags`).
+The series is a fold of the epoch's log on each JSON frame: it is not a card read, and it does
+not keep a counter on the where record; an incremental record, so `where` never rescans the
+day, is owed outside this.
 
 The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
 below merge. friends | status for now. up/down/held"; "friends should be

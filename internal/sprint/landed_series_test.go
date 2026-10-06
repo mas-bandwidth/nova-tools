@@ -110,6 +110,11 @@ func TestTheLandedSeriesCountsEachCardOnceByItsWorker(t *testing.T) {
 		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Work, Card: "set-a", From: "s:merging", To: "s:landed"},
 		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Work, Card: "set-b", From: "s:merging", To: "s:landed"},
 	)
+	// A landing with no :ok line is unknown: it counts in totals.unknown
+	// and not in workers, so workers never carries a "-" key.
+	lines = append(lines,
+		sprint.Line{Kind: sprint.LineMove, At: r.now, Table: sprint.Work, Card: "unknown-card", From: "s:merging", To: "s:landed"},
+	)
 
 	got := sprint.LandedSeriesOf(lines, r.now)
 	require.Equal(t, 600, got.BucketSeconds)
@@ -124,8 +129,9 @@ func TestTheLandedSeriesCountsEachCardOnceByItsWorker(t *testing.T) {
 	}
 	require.Equal(t, 2, got.Friends[143], "amy and bea, once each")
 	require.Equal(t, 4, got.Fleet[143], "m1, m2 and m3's two, once each; the second mach-1 landing does not count")
-	require.Equal(t, sprint.SeriesTotals{Friends: 2, Fleet: 4, Unknown: 0}, got.Totals)
+	require.Equal(t, sprint.SeriesTotals{Friends: 2, Fleet: 4, Unknown: 1}, got.Totals)
 	require.Equal(t, sprint.SeriesLastHour{Friends: 2, Fleet: 4}, got.LastHour)
+	require.NotContains(t, got.Workers, "-", "an unknown landing is not a worker")
 	require.Equal(t, map[string]int{"friend.amy": 1, "friend.bea": 1, "m1": 1, "m2": 1, "m3": 2}, got.Workers)
 }
 

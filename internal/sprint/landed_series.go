@@ -146,9 +146,11 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 		case "friends":
 			friends[b]++
 			totals.Friends++
+			workers[worker]++
 		case "fleet":
 			fleet[b]++
 			totals.Fleet++
+			workers[worker]++
 		case "unknown":
 			totals.Unknown++
 		}
@@ -161,8 +163,6 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 				lastHour.Fleet++
 			}
 		}
-
-		workers[worker]++
 	}
 
 	return LandedSeries{
