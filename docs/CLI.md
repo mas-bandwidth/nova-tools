@@ -1104,6 +1104,7 @@ nova-sprint fleet level
 nova-sprint friend sync [--pg <dsn>] [--root <dir>] [--every <duration>]
 nova-sprint friend sync install --every <duration> [--redis <addr>] [--pg <dsn>] [--root <dir>] [--dir <dir>] [--log <file>] [--dry-run]
 nova-sprint friend sync uninstall [--dir <dir>] [--dry-run]
+nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]

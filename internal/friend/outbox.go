@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // The daemon reads every outbox job (the night of 2026-10-05: a friend held eight
@@ -186,6 +189,12 @@ func (l *loop) outboxStep(now time.Time) {
 			running[filepath.Base(ln.card.Outbox)] = true
 		}
 	}
+	if l.deadLanes(outbox, running, at) {
+		if entries, err = os.ReadDir(outbox); err != nil {
+			note("*", "the outbox cannot be read: "+oneLine(err.Error(), 300))
+			return
+		}
+	}
 	for _, e := range entries {
 		job := e.Name()
 		id, epoch, gen, ok := ParseJob(job)
@@ -231,6 +240,11 @@ func (l *loop) outboxStep(now time.Time) {
 		if branch == "" {
 			_, branch = PushedHead(d.Dir, card)
 		}
+		if why := l.offTip(*h, verdict, head, branch); why != "" {
+			o.tried[job] = now
+			note(job, why+"; read again in "+OutboxRetry.String())
+			continue
+		}
 		argv := OutboxFinishArgv(d.Friend, card, verdict, head, branch, report)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
 		err = d.Finish(ctx, argv)
@@ -251,4 +265,145 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, verdict, h.Col, words))
 	}
+}
+
+// offTip is why a LAND with a full sha Head is not finished at it: its Head is not origin's
+// tip of the card's branch, origin has no such branch, or the tip cannot be read (Daemon.Tip,
+// one ls-remote; the rule nova-sprint collect and friend sync keep). "" finishes it: any
+// other verdict, a daemon with no Tip, or a card whose brief names no REPO.
+func (l *loop) offTip(h HeldCard, verdict, head, branch string) string {
+	d := l.d
+	if d.Tip == nil || verdict != "LAND" || !fullSha.MatchString(head) {
+		return ""
+	}
+	p, ok := PacketOf(h)
+	if !ok {
+		return ""
+	}
+	branch = cmp.Or(branch, p.Branch)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TipBudget)
+	defer cancel()
+	tip, err := d.Tip(ctx, p.Repo, branch)
+	switch {
+	case err != nil:
+		return "origin's tip of " + branch + " in " + p.Repo + " cannot be read: " + oneLine(err.Error(), 300)
+	case tip == "":
+		return "Head " + head + ", and origin has no branch " + branch
+	case !strings.EqualFold(tip, head):
+		return "Head " + head + " is not origin's tip of " + branch + ", " + strings.ToLower(tip)
+	}
+	return ""
+}
+
+// A dead lane (the coordinator's finish-loop.py, the night of 2026-10-05: a run its runner
+// ENDed with no REPORT.md left its card working on her row until a person looked). A bud's
+// runner, which runs her cards beside the daemon, logs `<time> START|LIMIT|END <job> ...`
+// lines to runner.log in her working directory or beside it, its END's last word
+// report=no when the run wrote none. A working card on her row that no lane of the daemon is
+// running, with no REPORT.md, whose job's last event in that log is such an END (with no
+// LIMIT after its START: a run stopped at a usage limit is run again), is a dead lane: the
+// daemon writes its REPORT.md, Verdict FAIL naming the END line, and the outbox pass finishes
+// it --failed, so the card is dealt again. nova-sprint collect --dead-lanes keeps the same
+// rule (sprint.RunnerEnded) from the coordinator's side.
+
+// RunnerLogCap bounds the runner log the daemon reads: its last RunnerLogCap bytes.
+const RunnerLogCap = 4 << 20
+
+// RunnerLog is the log of the runner beside her working directory dir, its last
+// RunnerLogCap bytes: dir's runner.log, else the one in the directory her working
+// directory (its links resolved) is in; "" when there is none.
+func RunnerLog(dir string) string {
+	paths := []string{filepath.Join(dir, "runner.log")}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		paths = append(paths, filepath.Join(filepath.Dir(real), "runner.log"))
+	}
+	for _, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		fi, err := f.Stat()
+		if err != nil || !fi.Mode().IsRegular() {
+			_ = f.Close() // ignored: only read
+			continue
+		}
+		off := max(fi.Size()-RunnerLogCap, 0)
+		b := make([]byte, fi.Size()-off)
+		n, _ := f.ReadAt(b, off) // ignored: a short read is a shorter log
+		_ = f.Close()            // ignored: only read
+		return string(b[:n])
+	}
+	return ""
+}
+
+// RunnerEnded reads a runner's log for the job: dead is true when the job's last event is an
+// END whose last word is report=no and no LIMIT came after the START before it; end is that
+// END line.
+func RunnerEnded(log, job string) (end string, dead bool) {
+	limited := false
+	for _, line := range strings.Split(log, "\n") {
+		f := strings.Fields(line)
+		for i := 0; i+1 < len(f); i++ {
+			if f[i+1] != job {
+				continue
+			}
+			switch f[i] {
+			case "START", "RESUME":
+				end, dead, limited = "", false, false
+			case "LIMIT":
+				end, dead, limited = "", false, true
+			case "END":
+				end, dead = strings.TrimSpace(line), !limited && f[len(f)-1] == "report=no"
+			default:
+				continue
+			}
+			break
+		}
+	}
+	return end, dead
+}
+
+// DeadLaneReport is the REPORT.md the daemon writes for a dead lane: Verdict FAIL, and the
+// runner's END line.
+func DeadLaneReport(friend, job, end string) string {
+	return fmt.Sprintf("Verdict: FAIL\n\nnova-friend of %s: the runner ended job %s with no report, and no run of it is live: %s\n", friend, job, oneLine(end, 600))
+}
+
+// deadLanes writes the REPORT.md of every dead lane on her row (DeadLaneReport) and says
+// whether it wrote one; the outbox pass that follows finishes it. The runner's log is read
+// only when a working card has no report and no lane.
+func (l *loop) deadLanes(outbox string, running map[string]bool, at string) bool {
+	d := l.d
+	log, read, wrote := "", false, false
+	for _, h := range d.heldCards {
+		job := h.Job
+		if h.Col != "working" || h.Kind == "read" || !validJob(job) || running[job] || d.outbox.finished[job] {
+			continue
+		}
+		if _, ok, _ := readReport(outbox, job); ok {
+			continue
+		}
+		if _, _, _, ok := ParseJob(job); !ok {
+			continue
+		}
+		if !read {
+			log, read = RunnerLog(d.Dir), true
+		}
+		end, dead := RunnerEnded(log, job)
+		if !dead {
+			continue
+		}
+		path := filepath.Join(outbox, job, "REPORT.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			d.Record(fmt.Sprintf("%s outbox: dead lane %s: its REPORT.md cannot be written: %s", at, job, oneLine(err.Error(), 300)))
+			continue
+		}
+		if err := atomicfile.WriteFile(path, []byte(DeadLaneReport(d.Friend, job, end)), 0o644, atomicfile.NoReplace()); err != nil {
+			d.Record(fmt.Sprintf("%s outbox: dead lane %s: its REPORT.md cannot be written: %s", at, job, oneLine(err.Error(), 300)))
+			continue
+		}
+		wrote = true
+		d.Record(fmt.Sprintf("%s outbox: dead lane %s: the runner ended it with no report (%s); wrote outbox/%s/REPORT.md Verdict FAIL", at, job, oneLine(end, 300), job))
+	}
+	return wrote
 }

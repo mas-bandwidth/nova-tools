@@ -1382,6 +1382,37 @@ it staged, breaks `Finished` in 5 states: the other hand's card is dealt, she
 writes a verdict, the daemon asks, and nothing finishes it. The test is
 `TestTheDaemonFinishesAReportItDidNotStage`.
 
+### collect-is-a-verb-and-the-daemons-duty.w1 — the daemon's collect: origin's tip and dead lanes (internal/friend/outbox.go)
+
+The coordinator's stopgap `finish-loop.py` (92 finishes on the night of 2026-10-05)
+became `nova-sprint collect` (docs/SPEC-SPRINT.md section 1, collect), and the daemon's
+outbox pass keeps the same rule for her own tree on every sync:
+
+- A `LAND` with a full sha head finishes only at origin's tip of the card's branch:
+  `Daemon.Tip` (nova-friend's is `Stager.Tip`, one `git ls-remote` of the REPO line's
+  repository, bounded by `TipBudget`, 10 s) is asked first, and a head that is not the
+  tip, a branch origin does not hold, or a tip that cannot be read is said once
+  (`outbox: left outbox/<job>/REPORT.md: Head <sha> is not origin's tip of <branch>,
+  <tip>; read again in 1m0s`) and read again after `OutboxRetry`. A daemon with no
+  `Tip`, or a card whose brief names no REPO, finishes at the head as before.
+- A dead lane: a working work card on her row that no lane of the daemon runs, with no
+  `REPORT.md`, whose job's last event in her runner's log (`runner.log` in her working
+  directory, else in the directory it links into; its last `RunnerLogCap`, 4 MiB) is
+  `END <job> ... report=no` with no `LIMIT` after its `START` (`RunnerEnded`, the rule of
+  `sprint.RunnerEnded`), gets a `REPORT.md` written (`DeadLaneReport`: `Verdict: FAIL`
+  and the END line, never over a file there), said on the record (`outbox: dead lane
+  <job>: ...`), and the same pass finishes it `--failed`, so the card is dealt again.
+
+The model is `internal/friend/tla/Collect.tla`, both hands (the coordinator's verb over
+every tree, the daemon over hers) finishing from their snapshots against a server that
+takes a finish only while the card is working (TLC on a Linux bench, two cards: 53,651
+distinct states; `FinishedOnce`, `LandOnTip`, `DeadOnlyEnded` and `Collected` hold). Its
+reversed witnesses: `MCCollectBrokenOwnTree.cfg`, the coordinator reading her own tree
+alone (friend sync before collect), breaks `Collected` (a report written in another
+friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at its
+Head unread, breaks `LandOnTip` in 6 states. The test is
+`TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should

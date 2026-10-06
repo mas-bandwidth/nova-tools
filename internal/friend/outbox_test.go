@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,5 +101,82 @@ func TestReportVerdictReadsTheFriendsWords(t *testing.T) {
 	} {
 		v, h := reportVerdict(report)
 		assert.Equal(t, want, [2]string{v, h}, report)
+	}
+}
+
+// The daemon's duty is nova-sprint collect's for her own tree: a LAND finishes only at
+// origin's tip of the card's branch (refused naming the branch otherwise), and a lane her
+// runner ENDed with no report (and no LIMIT) is a dead lane, its REPORT.md written FAIL and
+// its card finished --failed so it is dealt again.
+func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := r.d.Dir
+	row := &twinRow{}
+	r.d.Held = row.held
+	f := &finishes{}
+	r.d.Finish = f.finish
+	const head, other = "0123456789abcdef0123456789abcdef01234567", "fedcba9876543210fedcba9876543210fedcba98"
+	r.d.Tip = func(_ context.Context, repo, branch string) (string, error) {
+		assert.Equal(t, "mas-bandwidth/nova-tools", repo)
+		if branch == "sprint/off.w1.g1.e15" {
+			return other, nil
+		}
+		return head, nil
+	}
+	on, off, dead, limit := workCard("on.w1", "working"), workCard("off.w1", "working"), workCard("dead.w1", "working"), workCard("limit.w1", "working")
+	for _, c := range []*HeldCard{&on, &off, &dead, &limit} {
+		c.Repo = "mas-bandwidth/nova-tools"
+		inboxJob(t, dir, c.Job, c.Brief)
+	}
+	outboxReport(t, dir, on.Job, "Verdict: LAND\nHead: "+head+"\n\nOn the tip.\n")
+	outboxReport(t, dir, off.Job, "Verdict: LAND\nHead: "+head+"\n\nNot pushed.\n")
+	// the runner's runs wrote RESULT.md and no REPORT.md: no lane of the daemon takes them
+	for _, job := range []string{dead.Job, limit.Job} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "outbox", job), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "outbox", job, "RESULT.md"), []byte("done\n"), 0o644))
+	}
+	end := "2026-10-06 07:10:00 AM END dead.w1~15 model=m exit=1 wall=600s report=no"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "runner.log"), []byte(strings.Join([]string{
+		"2026-10-06 07:00:00 AM START dead.w1~15 tier=heavy model=m", end,
+		"2026-10-06 07:00:00 AM START limit.w1~15 tier=heavy model=m",
+		"2026-10-06 07:01:00 AM LIMIT limit.w1~15 model=m until=later: limit",
+		"2026-10-06 07:01:00 AM END limit.w1~15 model=m exit=1 wall=60s report=no",
+	}, "\n")+"\n"), 0o644))
+	row.set(on, off, dead, limit)
+
+	r.run(t, 3)
+
+	got := map[string][]string{}
+	for _, argv := range f.got() {
+		got[argv[3]] = argv
+	}
+	require.Len(t, got, 2, "the LAND on origin's tip and the dead lane, once each: %v", f.got())
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "on.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/on.w1.g1.e15", "--report", "friend bob LAND: On the tip."}, got["on.w1@1"])
+	d := got["dead.w1@1"]
+	require.Len(t, d, 11)
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "dead.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/dead.w1.g1.e15", "--report"}, d[:10])
+	assert.Contains(t, d[10], "friend bob FAIL: Verdict: FAIL nova-friend of bob: the runner ended job dead.w1~15 with no report, and no run of it is live: "+end)
+	report, err := os.ReadFile(filepath.Join(dir, "outbox", dead.Job, "REPORT.md"))
+	require.NoError(t, err)
+	assert.Equal(t, DeadLaneReport("bob", dead.Job, end), string(report))
+	_, err = os.Stat(filepath.Join(dir, "outbox", limit.Job, "REPORT.md"))
+	assert.True(t, os.IsNotExist(err), "a run stopped at its usage limit is run again, never dead")
+	said := strings.Join(r.records, "\n")
+	assert.Contains(t, said, "outbox: left outbox/off.w1~15/REPORT.md: Head "+head+" is not origin's tip of sprint/off.w1.g1.e15, "+other)
+}
+
+func TestRunnerEndedReadsTheJobsLastEventAsCollectDoes(t *testing.T) {
+	t.Parallel()
+	for log, want := range map[string]bool{
+		"": false,
+		"t START j~1 x\nt END j~1 exit=0 report=Verdict: LAND":     false,
+		"t START j~1 x\nt END j~1 exit=0 report=no":                true,
+		"t START j~1 x\nt END j~1 exit=0 report=no\nt START j~1 x": false,
+		"t START j~1 x\nt LIMIT j~1 x\nt END j~1 exit=1 report=no": false,
+		"t START j~10 x\nt END j~10 exit=1 report=no":              false,
+	} {
+		_, dead := RunnerEnded(log, "j~1")
+		assert.Equal(t, want, dead, "%q", log)
 	}
 }
