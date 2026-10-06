@@ -516,9 +516,14 @@ func ListAtCommit(root, commit, rel string) (string, bool, error) {
 }
 
 func gitOut(root string, args ...string) (string, error) {
+	return gitOutInput(root, "", args...)
+}
+
+func gitOutInput(root, input string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := subproc.Context(ctx, "git", append([]string{"-C", root}, args...)...)
+	cmd.Stdin = strings.NewReader(input)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

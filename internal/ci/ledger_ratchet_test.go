@@ -1,7 +1,9 @@
 package ci
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -176,6 +179,14 @@ func sleepLedgerGrowth(base, head string) (added []string) {
 // carries a "# ceiling:" line (fixtures without a ceiling stay out). A brand-new
 // shard with a ceiling is kept so the ratchet reports it as all growth.
 func ledgerRatchetShards(root, base string) ([]string, error) {
+	texts, err := readLedgerBase(root, base, []string{"internal/ci/testdata"}, ledgerGit)
+	if err != nil {
+		return nil, err
+	}
+	return ledgerRatchetShardsAtBase(root, texts)
+}
+
+func ledgerRatchetShardsAtBase(root string, texts map[string]string) ([]string, error) {
 	var shards []string
 	testdata := filepath.Join(root, "internal", "ci", "testdata")
 	err := filepath.WalkDir(testdata, func(path string, d os.DirEntry, err error) error {
@@ -196,10 +207,8 @@ func ledgerRatchetShards(root, base string) ([]string, error) {
 		}
 		_, headCeil := parseLedgerRows(string(headBytes))
 		baseCeil := -1
-		if base != "" {
-			if baseText, ok, err := ListAtCommit(root, base, relShard); err == nil && ok {
-				_, baseCeil = parseLedgerRows(baseText)
-			}
+		if baseText, ok := texts[relShard]; ok {
+			_, baseCeil = parseLedgerRows(baseText)
 		}
 		if headCeil < 0 && baseCeil < 0 {
 			return nil
@@ -214,33 +223,112 @@ func ledgerRatchetShards(root, base string) ([]string, error) {
 	return shards, nil
 }
 
+// ledgerGitOut is the injectable Git seam for the card's command-count proof.
+type ledgerGitOut func(root, input string, args ...string) (string, error)
+
+func ledgerGit(root, input string, args ...string) (string, error) {
+	return gitOutInput(root, input, args...)
+}
+
 // checkCountedShards checks every counted shard against its merge base version.
 func checkCountedShards(root, base string, shards []string) ([]string, error) {
+	return checkCountedShardsWithGit(root, base, shards, ledgerGit)
+}
+
+// readLedgerBase implements the card's one tree read and one blob batch.
+// Libraries considered: bufio.Reader and io.ReadFull preserve blob bytes,
+// including embedded newlines; no line scanner parses blob bodies.
+func readLedgerBase(root, base string, paths []string, git ledgerGitOut) (map[string]string, error) {
+	texts := map[string]string{}
+	if base == "" {
+		return texts, nil
+	}
+	args := append([]string{"ls-tree", "-r", "-z", base, "--"}, paths...)
+	tree, err := git(root, "", args...)
+	if err != nil {
+		return nil, err
+	}
+	var names, objects []string
+	for _, entry := range strings.Split(tree, "\x00") {
+		if entry == "" {
+			continue
+		}
+		header, name, ok := strings.Cut(entry, "\t")
+		fields := strings.Fields(header)
+		if !ok || len(fields) != 3 {
+			return nil, fmt.Errorf("malformed ledger tree entry %q", entry)
+		}
+		if fields[1] != "blob" || !strings.HasSuffix(name, ".txt") {
+			continue
+		}
+		names = append(names, name)
+		objects = append(objects, fields[2])
+	}
+	if len(objects) == 0 {
+		return texts, nil
+	}
+	batch, err := git(root, strings.Join(objects, "\n")+"\n", "cat-file", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(strings.NewReader(batch))
+	for n, name := range names {
+		header, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("%s batch header: %w", name, err)
+		}
+		fields := strings.Fields(header)
+		if len(fields) != 3 || fields[0] != objects[n] || fields[1] != "blob" {
+			return nil, fmt.Errorf("%s invalid batch header %q", name, header)
+		}
+		size, err := strconv.Atoi(fields[2])
+		if err != nil || size < 0 || size > len(batch) {
+			return nil, fmt.Errorf("%s invalid batch size %q", name, fields[2])
+		}
+		body := make([]byte, size)
+		if _, err := io.ReadFull(reader, body); err != nil {
+			return nil, fmt.Errorf("%s batch body: %w", name, err)
+		}
+		end, err := reader.ReadByte()
+		if err != nil || end != '\n' {
+			return nil, fmt.Errorf("%s batch lacks body terminator", name)
+		}
+		texts[name] = string(body)
+	}
+	if _, err := reader.ReadByte(); err != io.EOF {
+		return nil, fmt.Errorf("ledger batch has trailing data")
+	}
+	return texts, nil
+}
+
+func checkCountedShardsWithGit(root, base string, shards []string, git ledgerGitOut) ([]string, error) {
+	texts, err := readLedgerBase(root, base, shards, git)
+	if err != nil {
+		return nil, err
+	}
+	return checkCountedShardsAtBase(root, base, shards, texts)
+}
+
+func checkCountedShardsAtBase(root, base string, shards []string, texts map[string]string) ([]string, error) {
 	var problems []string
 	for _, rel := range shards {
 		headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", rel, err)
 		}
-		baseText, ok, err := ListAtCommit(root, base, rel)
-		if err != nil {
-			return nil, fmt.Errorf("%s at %s: %w", rel, base, err)
-		}
+		baseText, ok := texts[rel]
 		problems = append(problems, shardProblems(rel, base, baseText, ok, headBytes)...)
 	}
 	return problems, nil
 }
 
 // checkSlowTestsLedger checks slow-tests_allowlist.txt against the merge base.
-func checkSlowTestsLedger(t testing.TB, root, base string) ([]string, error) {
+func checkSlowTestsLedger(t testing.TB, root, base string, texts map[string]string) ([]string, error) {
 	headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(slowTestsAllowlistPath)))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", slowTestsAllowlistPath, err)
 	}
-	baseText, ok, err := ListAtCommit(root, base, slowTestsAllowlistPath)
-	if err != nil {
-		return nil, fmt.Errorf("%s at %s: %w", slowTestsAllowlistPath, base, err)
-	}
+	baseText, ok := texts[slowTestsAllowlistPath]
 	if !ok {
 		if t != nil {
 			t.Logf("%s is not in the merge base %s: this change is the allowlist seed", slowTestsAllowlistPath, base[:9])
@@ -259,15 +347,12 @@ func checkSlowTestsLedger(t testing.TB, root, base string) ([]string, error) {
 }
 
 // checkSleepsLedger checks sleeps-skips_allowlist.txt against the merge base.
-func checkSleepsLedger(t testing.TB, root, base string) ([]string, error) {
+func checkSleepsLedger(t testing.TB, root, base string, texts map[string]string) ([]string, error) {
 	headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(sleepsSkipsAllowlistPath)))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", sleepsSkipsAllowlistPath, err)
 	}
-	baseText, ok, err := ListAtCommit(root, base, sleepsSkipsAllowlistPath)
-	if err != nil {
-		return nil, fmt.Errorf("%s at %s: %w", sleepsSkipsAllowlistPath, base, err)
-	}
+	baseText, ok := texts[sleepsSkipsAllowlistPath]
 	if !ok {
 		if t != nil {
 			t.Logf("%s is not in the merge base %s: this change is the allowlist seed", sleepsSkipsAllowlistPath, base[:9])
@@ -290,22 +375,30 @@ func ledgerRatchetProblems(t testing.TB, root string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the ledger ratchet needs the same base the deprecated-imports ratchet resolves: %w", err)
 	}
-	shards, err := ledgerRatchetShards(root, base)
+	return ledgerRatchetProblemsWithGit(t, root, base, ledgerGit)
+}
+
+func ledgerRatchetProblemsWithGit(t testing.TB, root, base string, git ledgerGitOut) ([]string, error) {
+	texts, err := readLedgerBase(root, base, []string{"internal/ci/testdata", slowTestsAllowlistPath, sleepsSkipsAllowlistPath}, git)
+	if err != nil {
+		return nil, err
+	}
+	shards, err := ledgerRatchetShardsAtBase(root, texts)
 	if err != nil {
 		return nil, err
 	}
 	if len(shards) == 0 {
 		return nil, fmt.Errorf("no counted shards under internal/ci/testdata: the walk is broken, not the tree")
 	}
-	shardProbs, err := checkCountedShards(root, base, shards)
+	shardProbs, err := checkCountedShardsAtBase(root, base, shards, texts)
 	if err != nil {
 		return nil, err
 	}
-	slowProbs, err := checkSlowTestsLedger(t, root, base)
+	slowProbs, err := checkSlowTestsLedger(t, root, base, texts)
 	if err != nil {
 		return nil, err
 	}
-	sleepProbs, err := checkSleepsLedger(t, root, base)
+	sleepProbs, err := checkSleepsLedger(t, root, base, texts)
 	if err != nil {
 		return nil, err
 	}
@@ -477,4 +570,94 @@ func TestCountedShardsRatchetInGitRepo(t *testing.T) {
 	fixtureProblems, err := checkCountedShards(dir, baseCommit, []string{fixtureRel, newFixtureRel})
 	require.NoError(t, err, "checkCountedShards on fixtures")
 	require.Empty(t, fixtureProblems, "ceiling-less fixtures produce no ratchet problems")
+}
+
+// TestTheLedgerTestReadsTheBaseOnce pins the card's two-command base read,
+// independent of the number of counted shards.
+func TestTheLedgerTestReadsTheBaseOnce(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	shards := []string{"a.txt", "b.txt", "new.txt"}
+	for _, rel := range shards {
+		require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("row-a reason\n# ceiling: 1\n"), 0600))
+	}
+	var calls []string
+	full := false
+	fake := func(root, input string, args ...string) (string, error) {
+		calls = append(calls, args[0])
+		switch args[0] {
+		case "ls-tree":
+			prefix := ""
+			if full {
+				prefix = "internal/ci/testdata/rule/"
+			}
+			return "100644 blob aaaa\t" + prefix + "a.txt\x00100644 blob bbbb\t" + prefix + "b.txt\x00", nil
+		case "show":
+			return "row-a reason\n# ceiling: 1\n", nil
+		case "cat-file":
+			var out strings.Builder
+			for _, oid := range strings.Fields(input) {
+				body := "row-a reason\n# ceiling: 1\n"
+				fmt.Fprintf(&out, "%s blob %d\n%s\n", oid, len(body), body)
+			}
+			return out.String(), nil
+		}
+		return "", fmt.Errorf("unexpected git command %v", args)
+	}
+	problems, err := checkCountedShardsWithGit(root, "0123456789abcdef", shards, fake)
+	require.NoError(t, err)
+	assert.Len(t, problems, 1, "new shard remains growth")
+	assert.Equal(t, []string{"ls-tree", "cat-file"}, calls)
+	// Exercise the actual discovery plus counted and slow-ledger path too.
+	full = true
+	calls = nil
+	dir := filepath.Join(root, "internal/ci/testdata/rule")
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	for _, rel := range shards {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte("row-a reason\n# ceiling: 1\n"), 0600))
+	}
+	for _, rel := range []string{slowTestsAllowlistPath, sleepsSkipsAllowlistPath} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("# no rows\n"), 0600))
+	}
+	problems, err = ledgerRatchetProblemsWithGit(t, root, "0123456789abcdef", fake)
+	require.NoError(t, err)
+	assert.Len(t, problems, 1)
+	assert.Equal(t, []string{"ls-tree", "cat-file"}, calls)
+}
+
+// TestLedgerBaseBatchPreservesBlobBytes pins byte framing and fails closed on
+// missing, mismatched and truncated objects rather than excusing ledger growth.
+func TestLedgerBaseBatchPreservesBlobBytes(t *testing.T) {
+	t.Parallel()
+	body := "# ceiling: 1\nrow-a café\n\x00\n"
+	for _, row := range []struct {
+		name, batch string
+		bad         bool
+	}{
+		{"bytes", fmt.Sprintf("aaaa blob %d\n%s\n", len(body), body), false},
+		{"missing", "aaaa missing\n", true},
+		{"wrong object", "bbbb blob 0\n\n", true},
+		{"truncated", "aaaa blob 1000\nshort\n", true},
+		{"missing terminator", "aaaa blob 1\nx", true},
+		{"trailing data", "aaaa blob 0\n\nextra", true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			fake := func(root, input string, args ...string) (string, error) {
+				if args[0] == "ls-tree" {
+					return "100644 blob aaaa\tledger.txt\x00", nil
+				}
+				assert.Equal(t, "aaaa\n", input)
+				assert.Equal(t, []string{"cat-file", "--batch"}, args)
+				return row.batch, nil
+			}
+			texts, err := readLedgerBase("unused", "0123456789abcdef", []string{"ledger.txt"}, fake)
+			if row.bad {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, body, texts["ledger.txt"])
+		})
+	}
 }

@@ -798,6 +798,7 @@ jobs:
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
+          NOVA_CI_SHARD_WALLS_JSON="$RUNNER_TEMP/test.json" go test -count=1 -timeout 600s ./internal/ci -run '^TestEveryCLPackageFitsItsShardWall$'
 
   functional:
     # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,

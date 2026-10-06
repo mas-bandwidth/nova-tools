@@ -1268,3 +1268,15 @@ the lane rig on its fake clock (synctest, no socket, no wall-clock sleep), the t
 coordinator verb as the real one does; `TestResumeClearsTheLanesPauseAPersonBringsUp` and
 `TestRefuseGoRefusesWithTheWayToABench` run the two new verbs, and `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`
 the daemon's down beat while the pause stands.
+
+The CL shard cap is two minutes. The counted-ledger ratchet reads its merge
+base with one recursive `git ls-tree` and one `git cat-file --batch`; shard
+discovery and growth checks share those bytes.
+
+`internal/ci/testdata/shard-walls.tsv` records package pass elapsed seconds,
+the successful CI run, and its head for each measured CL package. After a
+shard completes, `TestEveryCLPackageFitsItsShardWall` reads its `go test -json`
+stream. A missing package measurement fails; a package over 60 seconds fails
+unless that package's ledger row changes against the merge base. Local gates
+validate the ledger's format and provenance. Updating a measurement carries
+review evidence; it does not increase the two-minute shard cap.
