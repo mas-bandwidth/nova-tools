@@ -64,6 +64,23 @@
 \*                   her row never carries (only a machine's does): her
 \*                   ready card is never taken while she is up,
 \*                   ReadyTakenWhileUp
+\*   "pertick"       the transitions raise a judgment at every look, changed
+\*                   or not: EveryTransitionRaisesExactlyOneJudgment
+\*   "replay"        a restart of the server loses the record of what was
+\*                   seen and starts it at down, so a transition already
+\*                   judged is judged again: EveryTransitionRaisesExactlyOneJudgment
+\*
+\* The status transitions (internal/sprint judgments_status.go,
+\* StatusTransitions; docs/SPEC-SPRINT.md, "Status transitions"; the owner,
+\* 2026-10-06: "make the machine prompt you when a friend changes their
+\* status"). The tick looks at each friend's table word (Observe) and keeps
+\* what it last saw in a record the server persists (seen, the fleet
+\* table's status_seen): the first look records it and raises nothing
+\* (Baseline); a look that finds the word changed raises one judgment
+\* (judged flips) and moves the record. A restart of the server (Restart)
+\* keeps the record. Ghosts: last, the word at the last look, which no
+\* restart touches, and judged, flipped once a judgment. One friend is
+\* looked at (Looked), to keep the run in budget.
 \*
 \* The take (internal/sprint/steps_work.go takeSeat; the card
 \* take-by-id-reads-the-friends-presence.w1): a card on a friend's row is
@@ -81,10 +98,21 @@ CONSTANTS Friends, Cards, Bound, MaxEvents, Broken, Watched
 ASSUME Bound >= 1 /\ MaxEvents \in Nat /\ Watched \subseteq Friends
 
 VARIABLES harness, closedAge, session, limit, daemon, app,
-          held, answered, answerAge, pending, holder, takenFrom, taken, events
+          held, answered, answerAge, pending, holder, takenFrom, taken, events,
+          seen, last, judged
+table == <<harness, closedAge, session, limit, daemon, app,
+           held, answered, answerAge, pending, holder, takenFrom, taken, events>>
+detector == <<seen, last, judged>>
 vars == <<harness, closedAge, session, limit, daemon, app,
-          held, answered, answerAge, pending, holder, takenFrom, taken, events>>
+          held, answered, answerAge, pending, holder, takenFrom, taken, events,
+          seen, last, judged>>
 world == <<harness, closedAge, session, limit, daemon, app>>
+
+Unseen == "unseen"
+Words == {"held", "up", "down"}
+\* The friend the transitions are checked on: one, to keep the run in budget
+\* (every friend is looked at alike; the others stay unseen).
+Looked == {CHOOSE f \in Friends : TRUE}
 
 Pool == "pool"
 NoOne == "none"
@@ -104,6 +132,9 @@ TypeOK ==
   /\ takenFrom \in [Cards -> Friends \cup {NoOne}]
   /\ taken \in [Cards -> BOOLEAN]
   /\ events \in 0..MaxEvents
+  /\ seen \in [Friends -> Words \cup {Unseen}]
+  /\ last \in [Friends -> Words \cup {Unseen}]
+  /\ judged \in [Friends -> BOOLEAN]
 
 \* The table's word over any held/answered/answerAge, so a step can read the
 \* word its own result shows. The witnesses let the beat or a stale answer
@@ -149,6 +180,9 @@ Init ==
   /\ takenFrom = [c \in Cards |-> NoOne]
   /\ taken = [c \in Cards |-> FALSE]
   /\ events = 0
+  /\ seen = [f \in Friends |-> Unseen]
+  /\ last = [f \in Friends |-> Unseen]
+  /\ judged = [f \in Friends |-> FALSE]
 
 Up1(n) == IF n < Bound THEN n + 1 ELSE Bound
 
@@ -278,13 +312,45 @@ Withdraw(f) ==
   /\ taken' = [c \in Cards |-> IF holder[c] = f THEN FALSE ELSE taken[c]]
   /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, events>>
 
-Next ==
+\* ------------------------------------------------------- the transitions
+
+\* The first look at a friend records her word and raises nothing.
+Baseline(f) ==
+  /\ seen[f] = Unseen
+  /\ seen' = [seen EXCEPT ![f] = Status(f)]
+  /\ last' = [last EXCEPT ![f] = Status(f)]
+  /\ UNCHANGED <<judged>> /\ UNCHANGED table
+
+\* A look that finds her word changed raises one judgment and moves the
+\* record. The witness "pertick" raises at every look, changed or not.
+Observe(f) ==
+  /\ seen[f] # Unseen
+  /\ Status(f) # seen[f] \/ Broken = "pertick"
+  /\ seen' = [seen EXCEPT ![f] = Status(f)]
+  /\ last' = [last EXCEPT ![f] = Status(f)]
+  /\ judged' = [judged EXCEPT ![f] = ~judged[f]]
+  /\ UNCHANGED table
+
+\* The server restarts: the record is read back. The witness "replay" loses
+\* it and starts every recorded friend at down.
+Restart ==
+  /\ seen' = IF Broken = "replay"
+               THEN [f \in Friends |-> IF seen[f] = Unseen THEN Unseen ELSE "down"]
+               ELSE seen
+  /\ UNCHANGED <<last, judged>> /\ UNCHANGED table
+
+TableNext ==
   \/ Tick
   \/ \E f \in Friends :
        \/ Close(f) \/ Open(f) \/ AppMoves(f) \/ Silence(f) \/ Resume(f) \/ LimitHit(f) \/ LimitReset(f)
        \/ Ping(f) \/ Answer(f) \/ Hold(f) \/ Release(f) \/ Withdraw(f)
   \/ \E c \in Cards, g \in Friends : Deal(c, g)
   \/ \E c \in Cards : Take(c)
+
+Next ==
+  \/ TableNext /\ UNCHANGED detector
+  \/ \E f \in Looked : Baseline(f) \/ Observe(f)
+  \/ Restart
 
 \* The safety specification: no fairness.
 Spec == Init /\ [][Next]_vars
@@ -347,6 +413,16 @@ TakeOnlyWhenUp ==
 \* row (SpecLive): never left ready on a friend up for ever.
 ReadyTakenWhileUp ==
   \A c \in Cards : (holder[c] \in Friends /\ ~taken[c]) ~> (taken[c] \/ holder[c] = Pool)
+
+\* Every transition raises exactly one judgment: a judgment is raised only at
+\* a look that finds the word changed since the last look (never twice for
+\* one transition, never once a tick, never again after a restart), and a
+\* recorded word that moves to the word the table shows moves with a
+\* judgment.
+EveryTransitionRaisesExactlyOneJudgment ==
+  [][\A f \in Friends :
+       /\ judged'[f] # judged[f] => Status(f) # last[f]
+       /\ (seen[f] # Unseen /\ seen'[f] # seen[f] /\ seen'[f] = Status(f)) => judged'[f] # judged[f]]_vars
 
 \* A card taken back from a friend (held, or down at a tick) is dealt to
 \* another friend (SpecLive).

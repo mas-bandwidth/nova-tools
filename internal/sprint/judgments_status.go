@@ -29,7 +29,8 @@ import (
 // replays none; the first sight of a row records its status and raises nothing. The next
 // transition of a row closes the judgment of the one before, answered or not. A judgment
 // whose every step is already done is answered by rule (RuleStatus, run --answer-rules): at
-// once when it is raised, or at the first tick that finds its steps done.
+// once when it is raised, or at the first tick that finds its steps done. The model is
+// tla/FriendPresence.tla (Observe, EveryTransitionRaisesExactlyOneJudgment).
 
 const (
 	// NStatus is the status transition's judgment type.

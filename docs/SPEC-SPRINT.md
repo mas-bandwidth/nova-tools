@@ -3982,7 +3982,10 @@ are raised (an acknowledgement, `answered by rule status: every step is done; ` 
 text); a friend come up, at the first tick that finds all four steps done (closed, with a
 decided note naming them). A friend's down is never answered by rule. Her
 daemon's facts come on her beat: `friend beat <f> --build <build> --started <RFC3339>
---present <RFC3339>`, carried on her report (`build`, `started`, `present`). Pinned by
+--present <RFC3339>`, carried on her report (`build`, `started`, `present`). The model is
+tla/FriendPresence.tla (`Baseline`, `Observe`, `Restart`, and the action property
+`EveryTransitionRaisesExactlyOneJudgment`, with the reversed witnesses `pertick` and
+`replay`); its TLC records are owed on a bench. Pinned by
 `TestAFriendComingUpPushesTheFourStepsToTheSeat`,
 `TestATransitionRaisesExactlyOneJudgment`, `TestAFleetMemberGoingDownNamesItsLastBeat`,
 `TestARestartDoesNotReplayTransitions` and
