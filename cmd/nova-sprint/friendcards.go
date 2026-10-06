@@ -559,9 +559,9 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 	return err
 }
 
-// friendReadText is the BRIEF.md of a friend's frontier read, as friend sync and friend cards
+// friendReadText is the BRIEF.md of a friend's read, as friend sync and friend cards
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
-// else the card's), and a deadline two hours on the sprint clock.
+// else the card's), and a deadline of thirty minutes on the sprint clock.
 func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
 	branch, head, start := p.WorkBranch, p.Head, ""
 	if c != nil {
@@ -575,10 +575,10 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 	return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
 }
 
-// friendReadOf delivers one frontier read and closes it from the friend's
+// friendReadOf delivers one friend's read and closes it from the friend's
 // report. The brief is the read's (sprint.FriendReadBrief: the AS A READ
-// section, the attempt's branch, start commit and head, deadline two hours
-// on the sprint clock), and the close retires the fleet card
+// section, the attempt's branch, start commit and head, deadline thirty
+// minutes on the sprint clock), and the close retires the fleet card
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
 func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string)) (delivered, finished int, err error) {

@@ -366,6 +366,19 @@ func (c *held) actor(pr *Card) string {
 				return fmt.Sprintf("reader %s holds %s (%s), %s of %s running", rc.Row, rc.ID, rc.Col, d.Round(time.Second), limit)
 			}
 		}
+		// a friend holds the read she was asked, on her fleet row, the same
+		// window a reader holds one not yet begun (docs/SPEC-SPRINT.md, a read
+		// asked of any unit with room at or above the read tier)
+		if fp, _, _ := friendReadLive(s, pr); len(fp) > 0 {
+			for _, rc := range fp {
+				if !friendReadAgrees(rc) {
+					continue
+				}
+				if d, ok := c.running(rc.F("asked")); ok && d <= DeadlineUnbegun {
+					return fmt.Sprintf("friend %s holds %s (%s), %s of %s running", rc.F("reader"), rc.ID, rc.Col, d.Round(time.Second), DeadlineUnbegun)
+				}
+			}
+		}
 	case Merging:
 		m := s.Merge.Placed(pr.ID)
 		ctl := s.StreamCtl(pr.Row)

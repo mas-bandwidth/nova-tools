@@ -3,7 +3,6 @@ package sprint
 import (
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -116,7 +115,8 @@ func cannotAskWhy(s *Snapshot, pr *Card, attempt, want, free, full int) string {
 
 // NWaitingForReader is the tick's note on a primary in review whose read it
 // could not ask for want of a reader with room (a machine reader of its tier
-// at its width, or a friend of frontier class at her room): a happened note,
+// at its width, or a friend at or above its read tier at her room when no paid
+// reader has room): a happened note,
 // no decision, written once an attempt (FieldWaitingReader), and the read is
 // asked the tick a reader frees. Review never holds a card with no read asked
 // and no note: an ask refused for a reason the coordinator decides is a
@@ -188,9 +188,9 @@ const FieldLeveled = "leveled"
 // ReadsNeeded is how many different readers' ok reads at its head make the
 // primary acceptable, and so how many readers the ask asks at an attempt: one
 // when the tier the card is on (cardTier) is flash, and two at any stronger tier
-// (pro, or frontier). A frontier card is not asked of a machine: friend_read.go asks
-// a friend whose tiers include frontier. Each machine read is drawn on a route of the card's
-// read tier (readTierOf) (the owner,
+// (pro, or frontier). A friend whose class is at or above the read tier is asked
+// first when she has room (friend_read.go); a machine read is drawn on a route of
+// the card's read tier (readTierOf) only when no such friend has room (the owner,
 // 2026-10-02, cost rule 4, nova-tools#5174: "Reads: one cold read per flash
 // card on a flash route; two per pro card; readers still equal workers per
 // machine"). The tier is the card's own, the tier it is on (cardTier: flash first,
@@ -208,17 +208,9 @@ func ReadsNeeded(pr *Card) int {
 // (ReadsNeeded). A reader counts only when it reads that tier (readerReadsTier;
 // an empty tiers cell reads every tier). A snapshot with no reader states and
 // no tiers cell set holds every reader up, as it did before the column: the
-// ask may ask it (TickAsk); else it waits, judged NFewReaders. A frontier
-// read not asked of a machine reader at its attempt is a friend's
-// (friendReadAsk): its reader is a friend of frontier class up with no read
-// card of the attempt (the snapshot's seats, Friends), and with none it waits,
-// judged NFewReaders.
+// ask may ask it (TickAsk); else it waits, judged NFewReaders. A friend is asked
+// before this (friendReadAsk), and a read she holds is not one this counts.
 func enoughReadersUp(s *Snapshot, pr *Card) bool {
-	if attempt := pr.Int("attempt"); s.Fleet != nil && friendReadCard(s, pr) && len(readsAt(s, pr, attempt)) == 0 {
-		return slices.ContainsFunc(s.Friends, func(f FriendSeat) bool {
-			return f.Status == Up && slices.Contains(f.Tiers, cardhdr.RouteFrontier) && s.Fleet.Card(ReadCardID(pr.ID, max(attempt, 1), f.Name)) == nil
-		})
-	}
 	if s.ReaderStates == nil && !s.readersCarryTiers() {
 		return true
 	}
@@ -285,10 +277,17 @@ func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 // does not stand and is asked again whatever stands: it was wanted when it
 // was placed (a pair's second read by --another too). Each read wanted goes
 // to a reader with room (askPicks): how many are wanted is this rule, where
-// they go is the readers' room.
+// they go is the readers' room. A friend's read of the attempt stands with
+// them (friendReadLive): placed, it is outstanding, so the next is not asked
+// until it comes back; ok, it counts toward ReadsNeeded; broken, no second
+// read is asked (docs/SPEC-SPRINT.md, a read asked of any unit with room at
+// or above the read tier).
 func ReadsWanted(s *Snapshot, pr *Card) int {
 	placed := readsAt(s, pr, pr.Int("attempt"))
 	live := liveReadsAt(s, pr, pr.Int("attempt"))
+	fp, fok, fbr := friendReadLive(s, pr)
+	placed = append(placed, fp...)
+	live = append(append(append(live, fp...), fok...), fbr...)
 	return max(readsWantedOf(pr, live), len(placed)-len(live))
 }
 
