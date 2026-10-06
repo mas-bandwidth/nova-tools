@@ -29,18 +29,24 @@ inventory `nova-config inventory` prints. Bootstrap runs once per new host and
 may be run again at any time: a second run changes nothing, and `--check
 --diff` shows what a drifted host would get back.
 
+Both phases run from the owner's machine with ansible-core 2.19 or later
+(`tools.yml`'s `find` takes `checksum_algorithm`, which 2.18 does not;
+Ubuntu 24.04's own `ansible-core` is 2.16, so `pipx install ansible-core`
+there), on the tailnet, with ssh to every host.
+
 ### The setup contract
 
 What a bootstrapped host has, each part a task file of
 `fleet/roles/bootstrap/tasks/` and a tag of the play (`--tags <tag>` runs it
-alone):
+alone: each play gathers its own facts, and the store's Redis reads the
+tailnet address itself, so a limited run renders what a whole run does):
 
 | part | tag | on | what is converged |
 |---|---|---|---|
-| the base and the harness dependencies | `base`, `harness` | every host | Debian or Ubuntu with systemd (any other is refused by name); `nova_bootstrap_packages` (git, tmux, Node.js and npm, sqlite3, the build tools); each `name@version` of `nova_bootstrap_harness_npm` installed globally; the login's directories; linger for its user units |
+| the base and the harness dependencies | `base`, `harness` | every host | Debian or Ubuntu with systemd (any other is refused by name); `nova_bootstrap_packages` (git, tmux, Node.js and npm, sqlite3, the build tools); each `name@version` of `nova_bootstrap_harness_npm` installed globally; the login's directories; linger, `libpam-systemd` and the login's user manager (`user@<uid>`) running, for its user units |
 | tool versions | `base`, `tools` | every host | sops at `nova_bootstrap_sops_version` and age at `nova_bootstrap_age_version` in `~/.local/bin`, sops checked against its release's checksums file and age against the SHA-256 `nova_bootstrap_age_sha256` pins (the distro's are older than nova-secrets takes); the nova build `nova_version` by `tools.yml` itself, its build fact written |
 | Tailscale connectivity | `tailscale` | every host | tailscale from Tailscale's apt repository, `tailscaled` enabled, `tailscale up --hostname=<inventory name>` only when the host is not already `Running`; its tailnet address recorded |
-| the seat | `seat` | every host | the host's `<nova_seat>.key` (0600) and the sealed secrets store at `nova_secrets_store` |
+| the seat | `seat` | every host | the host's `<nova_seat>.key` (0600) and the sealed secrets store at `nova_secrets_store`; on `fleet_store`, before the stores are made, the seat is read by name (`nova-secrets names`) and a run whose seat lacks one of the store's secrets (below) is refused naming it |
 | PostgreSQL | `postgres` | `fleet_store` | the distro's server enabled; the role `nova_bootstrap_pg_user` (made once, keeping its password after) and database `nova_bootstrap_pg_db`; the schema migrated (`nova-config migrate`) |
 | Redis persistence | `redis`, `services` | `fleet_store` | `nova-store-redis`, a system unit run as the login, supervising `nova-redis serve` on loopback and the tailnet at `nova_bootstrap_redis_port`, its store in `nova_bootstrap_redis_dir`: AOF every second, an RDB a minute after a write, no eviction, the ACL file beside them ([SPEC-REDIS.md](SPEC-REDIS.md)); the distro's own `redis-server` stopped and masked |
 | supervised services | `services` | `fleet_store` | the units above enabled, and restarted when their file changes; every host's loops are the steady state's (`loops.yml`), under the linger the base gives |
@@ -62,7 +68,7 @@ environment of the machine running the play, so the play runs under
 | the hosts | the inventory: `fleet_store` (exactly one) and `fleet_members` (a host may be in both) | each reachable by ssh as `ansible_user`, a login with sudo |
 | `nova_seat` | each host | the seat the host opens its secrets as |
 | `nova_bootstrap_seat_keys` | the inventory or `-e` | the directory, on the machine running the play, holding `<seat>.key` for each seat |
-| `nova_bootstrap_secrets_store` | the inventory or `-e` | the sealed secrets store directory, on the machine running the play; the store host's seat must hold `NOVA_PG_CONFIG_PASSWORD` and `NOVA_REDIS_PASSWORD` |
+| `nova_bootstrap_secrets_store` | the inventory or `-e` | the sealed secrets store directory, on the machine running the play; the store host's seat must hold `NOVA_PG_CONFIG_PASSWORD`, `NOVA_REDIS_PASSWORD` (the store's `default` user) and the password of each ACL user the steady state's first `redis.yml` creates, `nova_bootstrap_redis_user_password_keys`: `NOVA_REDIS_COORDINATOR_PASSWORD`, `NOVA_REDIS_BENCH_PASSWORD`, `NOVA_REDIS_TABLE_PASSWORD`, `NOVA_REDIS_FRIEND_PASSWORD` |
 | `nova_bootstrap_backup_dir` | the inventory or `-e` | the absolute directory on the store host the backups go to (a mounted volume when they must outlive the disk) |
 | `TS_AUTHKEY` (`nova_bootstrap_tailscale_authkey_env` names another) | the environment | a Tailscale auth key of the owner's tailnet; it reaches each host in a 0600 file removed in the same task block |
 | `NOVA_PG_CONFIG_PASSWORD` (`nova_pg_password_key`) | the environment | the configuration role's password, the same secret the seat holds |
@@ -84,12 +90,47 @@ The store host now has the schema and a Redis whose `default` user holds
 in the adopter's path below, with the bootstrap's values: `fleet set --store
 <the fleet_store host> --redis_port <nova_bootstrap_redis_port> --pg_dsn
 postgres://<nova_bootstrap_pg_user>@localhost:5432/<nova_bootstrap_pg_db>`, and
-one `machine add` per host. Until `redis.yml` has made the ACL users, the
-store's admin is its `default` user, so a `group_vars/store_deployer.yml`
-beside the inventory wrapper says so: `nova_redis_admin_user: default` and
-`nova_redis_admin_password_key: NOVA_REDIS_PASSWORD`. Then the steady-state
-plays run in this order the first time: `redis.yml` (the users `tools.yml`'s
-`fn load` logs in as), `tools.yml`, `loops.yml`.
+one `machine add` per host, then `apply`. The store's admin is its `default`
+user, and the steady state's first `redis.yml` creates every ACL user
+`nova-redis acl render` names (a store that lacks one is refused without its
+password), so a `group_vars/store_deployer.yml` beside the inventory wrapper
+says so:
+
+```
+nova_redis_admin_user: default
+nova_redis_admin_password_key: NOVA_REDIS_PASSWORD
+nova_redis_user_password_keys: "{{ nova_bootstrap_redis_user_password_keys }}"
+```
+
+Then the steady-state plays run in this order the first time: `redis.yml`
+(the users `tools.yml`'s `fn load` logs in as), `tools.yml`, `loops.yml`. A
+friend on the bus needs her own Redis user, named as she is, which the owner
+makes ([SPEC-BUS.md](SPEC-BUS.md), "The ACL per friend"; the acceptance below
+makes two), and her daemon is a loop record like any other (on Linux,
+`/usr/bin/env NOVA_BUS_REDIS=<store> NOVA_SPRINT_REDIS_USER=<her>
+NOVA_SPRINT_REDIS_PASSWORD_ENV=<its secret> nova-friend run --as <her>
+--harness <h> --dir <d>` with the secret in the record's `--keys`).
+
+### The acceptance on a disposable host
+
+`TestFleetPlaysConvergeAFreshHostIdempotently` (`internal/ci`) runs both
+phases on a host that can be thrown away, when the environment names it:
+`NOVA_FLEET_DISPOSABLE_INVENTORY`, a bootstrap inventory of one host that is
+`fleet_store` and a member; `NOVA_FLEET_DISPOSABLE_STORE`, its store as
+`<host>:<port>`; `TS_AUTHKEY`, `NOVA_PG_CONFIG_PASSWORD` and
+`NOVA_REDIS_PASSWORD` in the environment; and the host's seat holding the
+two test friends' `NOVA_BUS_ADA_PASSWORD` and `NOVA_BUS_BOB_PASSWORD` besides
+the store's. In order: provision; a second run with `changed=0`;
+`fleet/testdata/acceptance.yml --tags rows` (the hand-off's rows, the friends'
+users and their sessions, each a scripted stand-in for an AI session hosted
+in tmux); `redis.yml`, `tools.yml` and `loops.yml` from the inventory
+nova-config prints, which start the friends' daemons; `--tags deliver` (a
+test message from one friend to the other, delivered into the recipient's
+session by her daemon and receipted from inside it, nothing left owed);
+`--tags work` (a bounded worker job: `nova-swarm native` on the fake
+harness, one card that finishes and one stopped at its deadline); every play
+again with `changed=0`; then a line added by hand to the store's Redis unit,
+`--check --diff` showing it, the run taking it out, and `--check` clean.
 
 ## An adopter's path
 
@@ -185,7 +226,7 @@ never opens), and the files it wrote are its cursor, so a restart by its
 supervisor pushes nothing twice:
 
 ```
-nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
+nova-config loop add inbox-push --machine bench-a --argv '["/usr/bin/env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
 ```
 
 The sprint dashboard ([SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)), a page
@@ -199,7 +240,7 @@ an every-network or public address is refused, because the page checks no creden
 machine, never in the repository:
 
 ```
-nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--listen","127.0.0.1:7390,<tailnet-address>:7390","--logo","<home>/sprint-logo.webp"]' --keepalive true --as ada
+nova-config loop add sprint-dashboard --machine bench-a --argv '["/usr/bin/env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--listen","127.0.0.1:7390,<tailnet-address>:7390","--logo","<home>/sprint-logo.webp"]' --keepalive true --as ada
 ```
 
 It exits 3 when a new build is installed under it, and its unit starts the new one;
@@ -386,7 +427,7 @@ The inventory's group is `functional_runners` (`fleet/inventory.container-runtim
 
 One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
-tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
+tool, so `env` is spelled `/usr/bin/env`; `~/` is the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
 record's log under the fleet row's `loops_dir` (migration 0033 seeds it to
 `~/nova-bench/loops`), which the play creates (on darwin, launchd agents log under the user's home,
