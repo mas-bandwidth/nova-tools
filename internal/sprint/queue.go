@@ -373,3 +373,22 @@ func LeaveQueued(p Plan, held map[string]bool) Plan {
 	}
 	return p
 }
+
+// KeepUnits is the plan with only the units keep holds. A unit left out is
+// not refused, only not written by this step: the tick's ask writes its plan
+// in small fenced steps, each a few of its primaries (store.askInSteps), and
+// plans the rest again on a fresh read. A unit dropped places nothing, so the
+// plan's rolling index writes are made again from the units kept.
+func KeepUnits(p Plan, keep func(Unit) bool) Plan {
+	var kept []Unit
+	for _, u := range p.Units {
+		if keep(u) {
+			kept = append(kept, u)
+		}
+	}
+	if len(kept) < len(p.Units) {
+		p.Units = kept
+		rewriteRounds(&p)
+	}
+	return p
+}

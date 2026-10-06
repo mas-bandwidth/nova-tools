@@ -134,7 +134,9 @@ func (r TickResult) Cost() PartTime {
 
 // TimesLine is the tick's cost in one line: the whole, then each part as
 // table/name, its time, its round trips (t), whole-table reads (r) and
-// records read (n).
+// records read (n); the ask part (tick_ask.go) as its time, its round trips,
+// the reads it asked and the primaries it refused:
+// readers/ask=<ms>ms/<trips>t/<asked>asked/<refused>refused.
 func (r TickResult) TimesLine() string {
 	c := r.Cost()
 	var b strings.Builder
@@ -143,6 +145,10 @@ func (r TickResult) TimesLine() string {
 		name := p.Name
 		if p.Table != "" {
 			name = p.Table + "/" + p.Name
+		}
+		if p.Name == "ask" {
+			fmt.Fprintf(&b, " %s=%dms/%dt/%dasked/%drefused", strings.ReplaceAll(name, " ", "-"), p.Took.Milliseconds(), p.Trips, p.Asked, p.Refused)
+			continue
 		}
 		fmt.Fprintf(&b, " %s=%dms/%dt/%dr/%dn", strings.ReplaceAll(name, " ", "-"), p.Took.Milliseconds(), p.Trips, p.Reads, p.Rows)
 	}
