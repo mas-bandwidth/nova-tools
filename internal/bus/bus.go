@@ -170,6 +170,10 @@ type Entry struct {
 	Stream string
 	Entry  string
 	Fields map[string]string
+	// Stage is the message's receipt state as recv found it, before its
+	// delivered stamp ("" none; stages.go): acted on a message the claim hands
+	// in again after a turn acted on it. Only recv sets it.
+	Stage string
 }
 
 // Message is the entry's message.
@@ -232,6 +236,11 @@ type Store interface {
 	// Get is the named entries of the stream, in one trip (a pipeline of XRANGE
 	// id id); an id that is not there is left out.
 	Get(ctx context.Context, stream string, entries []string) ([]Entry, error)
+	// Forward moves each id's receipt on the hash at key to state at the
+	// store's time (TIME), by the rule Forward keeps: only forward, and only
+	// delivered starts one; it answers each id's state before, "" for none, in
+	// one atomic step (a script). It is the one writer of a receipt.
+	Forward(ctx context.Context, key, state string, ids ...string) ([]string, error)
 }
 
 // Waiter is the two reads a wait makes over a Store that also holds them: the
@@ -276,6 +285,11 @@ type Bus struct {
 	// store drops the token's record (DefaultTokenCleanup when zero, never
 	// before the life ends). token.go.
 	TokenLife, TokenCleanup time.Duration
+	// OnStampError hears a delivered receipt recv stamps that the store did
+	// not write; the recv goes on, and the message stays in Overdue until a
+	// later stamp lands. Nil drops it, the overdue alarm standing for it
+	// (stages.go).
+	OnStampError func(err error)
 }
 
 // Refusal is a reason a verb could not run as asked: the input, not the store.
@@ -294,6 +308,10 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // transaction marks it on bus2:owed:<friend> for each friend it names but the
 // sender, and a message from a friend naming another (re) is her receipt of
 // that one, cleared in the same transaction.
+//
+// A message naming another (re) is the sender's act on it: its receipt on
+// bus2:receipt:<sender> moves to acted in the same transaction, when the
+// sender was delivered it (stages.go).
 //
 // A message with a Token is sent once under it (token.go): the record of the
 // token is written in the same step, and a send that finds it writes nothing
@@ -394,6 +412,9 @@ func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry
 }
 
 // RecvKinds is Recv for the messages whose kind is one of kinds (none: any).
+// The message it hands out is stamped delivered on the recipient's receipts,
+// one trip more, and carries the receipt it found (Entry.Stage): acted on one
+// the claim hands in again after a turn acted on it (stages.go).
 // A message the filter skips is handed back to the group at once (Store.Release),
 // neither acked nor held, so a reader that asks for all gets it next; the skip
 // costs one round trip per message skipped, and one more to release a run of
@@ -436,7 +457,7 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			break
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
-			return got[0], true, release()
+			return b.delivered(ctx, as, got[0]), true, release()
 		}
 		skipped = append(skipped, got[0].Entry)
 	}
@@ -449,12 +470,19 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			return Entry{}, false, err
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
-			return got[0], true, nil
+			return b.delivered(ctx, as, got[0]), true, nil
 		}
 		if err := b.Store.Release(ctx, stream, as, got[0].Entry); err != nil {
 			return Entry{}, false, err
 		}
 	}
+}
+
+// delivered stamps e delivered for as and answers it with the receipt found.
+// (tla/Bus2Receipts.tla: RRecv)
+func (b *Bus) delivered(ctx context.Context, as string, e Entry) Entry {
+	e.Stage = b.stamp(ctx, as, Delivered, e.Message().ID)
+	return e
 }
 
 // AckEntry acks one entry the recipient was handed (XACK); acking it again

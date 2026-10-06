@@ -3,7 +3,7 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are wait, send, peek, recv, ack, log and names; the dispatch, the banner,
+// are wait, send, peek, recv, ack, receipts, overdue, log and names; the dispatch, the banner,
 // the help, the version verb, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/bus's.
 package main
@@ -177,7 +177,7 @@ ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push 
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
-		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE"},
+		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE", "OVERDUE"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "wait",
@@ -350,6 +350,50 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
 				Run: w.ack,
+			},
+			{
+				Name:   "receipts",
+				Usage:  "receipts [--as <me>] [--id <id,...>] [--max <n>] [--redis <addr>]",
+				Effect: tool.Inspection,
+				Detail: `Prints RECEIPTS OK count=<n>, then one RECEIPTS RECEIPT id=<id> state=<delivered|read|acted|none>
+age=<duration> line per message: how far each message to you has come, and how long it has stood
+there by the store's clock. A receipt moves only forward: delivered when a reader took the message
+off your stream (recv), read when the friend daemon handed the turn carrying it to your session
+and the session took it, acted when that turn ended at exit 0 or you sent a message naming it
+(--re). --id <id,...> names the messages (none: no receipt, age=-); without it, every receipt you
+hold, oldest first. You are the login user, as in send.
+example: nova-bus receipts --as bob`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("id", "", "the message ids, comma-separated, as recv printed them (default: every receipt you hold)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+				},
+				Run: w.receipts,
+			},
+			{
+				Name:      "overdue",
+				Usage:     "overdue [--older <duration>] [--max <n>] [--redis <addr>]",
+				Effect:    tool.Inspection,
+				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more; 2 could not run (a flag, a store that did not answer).",
+				Detail: `The alarm the coordinator's loop and the seat check run. Looks at every known name's stream and
+lists each message still short of delivered (new, never taken by a reader, or pending with no
+delivered receipt) sent longer ago than --older (a Go duration, default 10m), by the store's clock.
+Prints OVERDUE OK count=0 older=<d> at exit 0 when there is none; else OVERDUE OVERDUE count=<n>
+older=<d>, then one OVERDUE MESSAGE name=<recipient> id=<id> state=<new|pending> from=<name>
+age=<duration> subject=<s> line each, oldest first, at exit 1. A message acked is never listed.
+example: nova-bus overdue --older 10m`,
+				Flags: func(f *tool.Flags) {
+					f.Duration("older", 10*time.Minute, "how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.Check(func(c *tool.Call) {
+						if c.Dur("older") < 0 {
+							c.Problem("--older wants a duration of at least 0 (0 lists every message short of delivered)")
+						}
+					})
+				},
+				Run: w.overdue,
 			},
 			{
 				Name:    "log",
@@ -774,6 +818,59 @@ func (w world) names(c *tool.Call) *tool.Out {
 			harness = "-"
 		}
 		o.Item("name", "name", p.Name, "push", p.State(now), "age", p.AgeWord(now), "harness", harness)
+	}
+	return o
+}
+
+// receipts is as's receipts: the named ids', or every one held (SPEC-BUS.md,
+// message-receipts).
+func (w world) receipts(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	got, now, err := b.Stages(context.Background(), as, names(c.Str("id"))...)
+	if err != nil {
+		return answer(err)
+	}
+	o := tool.Done().Fact("count", len(got))
+	for _, s := range got {
+		state, age := s.State, "-"
+		if state == "" {
+			state = "none"
+		} else {
+			age = s.Age(now).Round(time.Second).String()
+		}
+		o.Item("receipt", "id", s.ID, "state", state, "age", age)
+	}
+	return loginFact(o, login)
+}
+
+// overdue is every message on every stream still short of delivered past
+// --older: OVERDUE at exit 1 when there is one (SPEC-BUS.md, message-receipts).
+func (w world) overdue(c *tool.Call) *tool.Out {
+	b, _, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	older := c.Dur("older")
+	late, _, err := b.Overdue(context.Background(), older)
+	if err != nil {
+		return answer(err)
+	}
+	o := tool.Done()
+	if len(late) > 0 {
+		o = tool.Fail().As("OVERDUE")
+	}
+	o.Fact("count", len(late)).Fact("older", older.String())
+	for _, l := range late {
+		o.Item("message", "name", l.Name, "id", l.ID, "state", l.State, "from", l.From, "age", l.Age.Round(time.Second).String(), "subject", tool.Text(l.Subject))
 	}
 	return o
 }

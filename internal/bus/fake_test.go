@@ -35,6 +35,9 @@ type Fake struct {
 	// lost. It is cleared by the write it answers.
 	Lose    error
 	records map[string]fakeRecord // a token's record, by key
+	// FailForward, when set, is the answer of every receipt stamp (Forward):
+	// a store that refuses the receipts hash alone.
+	FailForward error
 	// Trips counts the commands sent.
 	Trips int
 }
@@ -183,6 +186,13 @@ func (f *Fake) add(streams []string, fields map[string]string, marks []Mark) {
 			delete(f.hashes[m.Key], m.Field)
 			continue
 		}
+		if m.Forward {
+			next, moved := Forward(f.hashes[m.Key][m.Field], m.Value, f.now)
+			if !moved {
+				continue
+			}
+			m.Value = next
+		}
 		if f.hashes == nil {
 			f.hashes = map[string]map[string]string{}
 		}
@@ -223,6 +233,32 @@ func (f *Fake) Marks(_ context.Context, keys ...string) ([]map[string]string, er
 		}
 	}
 	return out, nil
+}
+
+func (f *Fake) Forward(_ context.Context, key, state string, ids ...string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return nil, err
+	}
+	if f.FailForward != nil {
+		return nil, f.FailForward
+	}
+	prior := make([]string, len(ids))
+	for i, id := range ids {
+		cur := f.hashes[key][id]
+		prior[i], _, _ = strings.Cut(cur, " ")
+		if next, moved := Forward(cur, state, f.now); moved {
+			if f.hashes == nil {
+				f.hashes = map[string]map[string]string{}
+			}
+			if f.hashes[key] == nil {
+				f.hashes[key] = map[string]string{}
+			}
+			f.hashes[key][id] = next
+		}
+	}
+	return prior, nil
 }
 
 func (f *Fake) EnsureGroup(_ context.Context, stream, group string) error {
