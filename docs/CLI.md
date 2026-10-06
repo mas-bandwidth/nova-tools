@@ -1096,6 +1096,8 @@ nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--che
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup --file <path>
+nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>]
+nova-sprint demo stop [--dir <dir>]
 nova-sprint fleet beat <member> [--load <percent>]
 nova-sprint fleet up <member> [--width <n>]
 nova-sprint fleet down <member>
@@ -1179,6 +1181,10 @@ The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-
 ### The sprint backup
 
 `nova-sprint backup --file <path>` writes the store to a new file (owner-only; an existing file is refused, never overwritten), reads it back against its SHA-256, restores it into a twin and compares it with the store, and scans it for secret-shaped text. A file that fails any step is removed. On success it prints `BACKUP OK file=<path> sha256=<hex> bytes=<n> keys=<n> cards=<n> restored=twin compared=<document+counts|counts> secrets=none`; a refusal names the failed step and, for a secret, the lines (never the value). It runs on the store's host for a Redis, and on any twin (`--redis mem:<file>`) with no server. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#sprint-backup-verb).
+
+### A backup as a demo
+
+`nova-sprint demo load sprint-store-2026-10-04-2336.redis.txt.xz.part-*` loads a store backup (the RESTORE text dump, xz, split into parts) into a throwaway Redis on a free 127.0.0.1 port, with the function library of this nova-sprint binary (never the installed nova-redis's), and prints `where` against it and the line `DEMO UP --addr 127.0.0.1:<port>`: point any read verb at the demo with `--redis 127.0.0.1:<port>`. The parts are joined in name order and checked against `<file>.sha256` beside them (or `--sha256 <hex>`) when given. The server's directory and the state file (`demo.json`: address, port, pid, directory) are under `--dir`, by default the user cache directory's `nova-sprint/demo`; a second load while one is up is refused. `nova-sprint demo stop` stops that Redis by the pid it recorded, only when the Redis at the recorded address is that pid, and removes the recorded directory and nothing else. The live store is never opened. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#demo-load-verb).
 
 ### A card re-cut as its twin
 

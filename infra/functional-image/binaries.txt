@@ -58,6 +58,7 @@ sudo	absent	edits the darwin packet filter for the sandbox; not something a cont
 sysctl	apt	procps
 taskkill	absent	Windows only; a Linux container has no Windows tasks
 top	absent	macOS only; the process tests that read it are darwin tests
+xz	apt	xz-utils
 
 [unscanned]
 initdb	apt	postgresql-16
