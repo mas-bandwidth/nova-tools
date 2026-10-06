@@ -58,6 +58,7 @@ type Claude struct {
 	Program   string           // "claude" when empty
 	Out       io.Writer        // where the run's output goes, when set: the daemon's record
 	Now       func() time.Time // time.Now when nil: the clock a limit's reset is read against
+	Guard     TokenGuard       // the friend row's token cap on each card's run (tokencap.go)
 
 	mu    sync.Mutex
 	cost  float64 // every run's cost so far, in US dollars
@@ -96,9 +97,18 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 		return LaneTurn{}, fmt.Errorf("the card's brief: %w", err)
 	}
 	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", string(brief), "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
-	out, exit, err := c.Run(ctx, c.Dir, "env", args, "")
+	var out string
+	var exit int
+	usage := &streamUsage{}
+	capped := c.Guard.Watch(teeOutput(ctx, usage.Write), usage, func(ctx context.Context) {
+		out, exit, err = c.Run(ctx, c.Dir, "env", args, "")
+	})
 	if c.Out != nil && out != "" {
 		fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	if capped != nil {
+		_ = c.account(card.ID, out) // ignored: the cap ends the card; the run is priced, and a limit it met is read by Limits under it
+		return LaneTurn{Exit: exit}, c.hold(card, *capped)
 	}
 	if err == nil {
 		if limited := c.account(card.ID, out); limited != nil {
@@ -118,4 +128,18 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 		return LaneTurn{Exit: exit}, fmt.Errorf("claude -p exited %d and %s holds no %s", exit, card.Outbox, strings.Join(missing, " and no "))
 	}
 	return LaneTurn{Exit: exit}, nil
+}
+
+// hold writes a capped card's HOLD into its outbox (HoldAtCap) and says the
+// cap on the record; it answers the cap, or the cap and why the HOLD was not
+// written (docs/SPEC-FRIEND.md, friend-token-cap-b.w3).
+func (c *Claude) hold(card Card, capped TokenCapped) error {
+	err := error(capped)
+	if werr := HoldAtCap(card.Outbox, "claude -p", capped); werr != nil {
+		err = fmt.Errorf("%w; the HOLD was not written: %v", capped, werr)
+	}
+	if c.Out != nil {
+		fmt.Fprintf(c.Out, "claude: run=%s stopped: %v; %s\n", card.ID, err, capped.Tokens)
+	}
+	return err
 }

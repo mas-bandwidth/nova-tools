@@ -266,13 +266,16 @@ func laneLimit(session, out string) error {
 // the run's cost is what the session's assistant messages gained since the
 // last read (each message's cost is opencode's own figure), said on the
 // record as one line per run. The daemon wraps the friend's OpenCode in it;
-// a bare OpenCode runs no export.
+// a bare OpenCode runs no export. A card's turn is capped by its tokens
+// (Guard, tokencap.go): what its session gained since the turn began.
 type OpenCodePriced struct {
 	*OpenCode
+	Guard TokenGuard // the friend row's token cap
 
-	mu   sync.Mutex
-	seen map[string]float64 // each session's cost when last read
-	cost float64
+	mu     sync.Mutex
+	seen   map[string]float64 // each session's cost when last read
+	tokens map[string]Tokens  // each session's tokens when last read
+	cost   float64
 }
 
 // Spent is the cost of every run priced so far, in US dollars.
@@ -291,11 +294,81 @@ func (p *OpenCodePriced) OpenSession(ctx context.Context, seed string) (string, 
 	return id, err
 }
 
-// DeliverTo is OpenCode's, then the run priced, whatever it answered.
+// DeliverTo is OpenCode's under the token cap, then the run priced, whatever
+// it answered. A turn whose card's tokens reach the cap is stopped, the
+// card's outbox (the turn's text names it) gets its HOLD, and the answer is
+// TokenCapped (docs/SPEC-FRIEND.md, friend-token-cap-b.w3).
 func (p *OpenCodePriced) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
-	lt, err := p.OpenCode.DeliverTo(ctx, id, text)
+	var lt LaneTurn
+	var err error
+	run := func(ctx context.Context) { lt, err = p.OpenCode.DeliverTo(ctx, id, text) }
+	var capped *TokenCapped
+	if p.Guard.limit() <= 0 {
+		run(ctx)
+	} else if usage, uerr := p.sessionUsage(ctx, id); uerr != nil {
+		if p.Out != nil {
+			fmt.Fprintf(p.Out, "opencode: session=%s token cap not watched this turn (its record was not read: %v)\n", id, uerr)
+		}
+		run(ctx)
+	} else {
+		capped = p.Guard.Watch(ctx, usage, run)
+	}
 	p.price(ctx, id)
-	return lt, err
+	if capped == nil {
+		return lt, err
+	}
+	return LaneTurn{Exit: lt.Exit}, p.hold(id, cardOutbox(text), *capped)
+}
+
+// hold writes the capped card's HOLD into outbox and says the cap on the
+// record; it answers the cap, or the cap and why the HOLD was not written.
+func (p *OpenCodePriced) hold(id, outbox string, c TokenCapped) error {
+	err := error(c)
+	if outbox == "" {
+		err = fmt.Errorf("%w; the turn names no outbox, so no HOLD was written", c)
+	} else if werr := HoldAtCap(outbox, "opencode", c); werr != nil {
+		err = fmt.Errorf("%w; the HOLD was not written: %v", c, werr)
+	}
+	if p.Out != nil {
+		fmt.Fprintf(p.Out, "opencode: session=%s stopped: %v; %s\n", id, err, c.Tokens)
+	}
+	return err
+}
+
+// sessionUsage is the session's tokens read against the reading its last
+// price made (its export read now when none was made): a card's tokens are
+// what the session gains during its turn.
+func (p *OpenCodePriced) sessionUsage(ctx context.Context, id string) (CardUsage, error) {
+	p.mu.Lock()
+	base, found := p.tokens[id]
+	p.mu.Unlock()
+	if !found {
+		var err error
+		if base, err = p.exportTokens(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	return usageFunc(func(ctx context.Context) (Tokens, error) {
+		now, err := p.exportTokens(ctx, id)
+		return now.Since(base), err
+	}), nil
+}
+
+// usageFunc is a function read as a CardUsage.
+type usageFunc func(context.Context) (Tokens, error)
+
+func (f usageFunc) Tokens(ctx context.Context) (Tokens, error) { return f(ctx) }
+
+// exportTokens is the session's tokens from `opencode export <session>`.
+func (p *OpenCodePriced) exportTokens(ctx context.Context, id string) (Tokens, error) {
+	out, exit, err := p.Run(ctx, p.Dir, p.program(), []string{"export", id}, "")
+	if err == nil && exit != 0 {
+		err = fmt.Errorf("exited %d: %s", exit, oneLine(out, 200))
+	}
+	if err != nil {
+		return Tokens{}, err
+	}
+	return SessionTokens(out)
 }
 
 // openCodeExport is the part of `opencode export <session>` a price reads.
@@ -347,16 +420,28 @@ func (p *OpenCodePriced) price(ctx context.Context, id string) {
 		}
 		return
 	}
+	// the price stands on its own: a token shape this cap does not read does not
+	// drop the cost the lane already reports (the OpenCode lane, above)
+	tokens, tokenErr := SessionTokens(out)
 	p.mu.Lock()
 	if p.seen == nil {
 		p.seen = map[string]float64{}
 	}
 	run := max(now-p.seen[id], 0)
 	p.seen[id] = now
+	if tokenErr == nil {
+		if p.tokens == nil {
+			p.tokens = map[string]Tokens{}
+		}
+		p.tokens[id] = tokens
+	}
 	p.cost += run
 	total := p.cost
 	p.mu.Unlock()
 	if p.Out != nil {
 		fmt.Fprintf(p.Out, "opencode: session=%s cost=$%.4f total=$%.4f\n", id, run, total)
+		if tokenErr != nil {
+			fmt.Fprintf(p.Out, "opencode: session=%s tokens=- (its record's tokens were not read: %v)\n", id, tokenErr)
+		}
 	}
 }

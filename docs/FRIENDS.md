@@ -103,6 +103,20 @@ nova-config apply --kind friend
 A claude row in one-shot mode without `config_dir` runs no lane: her daemon
 says so on its record with the `nova-config friend set` that fixes it.
 
+### friend-token-cap-b.w3 — a one-shot row's token cap
+
+A one-shot row's `token_cap` is the most tokens one card's run may spend
+(input, cached input, output and reasoning, summed from the harness's own
+usage record); at it the lane stops the run and finishes the card `HOLD` with
+`token cap <cap> reached at <n> tokens` (docs/SPEC-FRIEND.md, one-shot lanes).
+It is 6000000 unless the row says, and `0` is no cap; until nova-config's
+friend row carries the field (owed, docs/SPEC-FRIEND.md), every one-shot lane
+runs at the default:
+
+```
+nova-config friend add amy-a --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-a --token_cap 6000000
+```
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
