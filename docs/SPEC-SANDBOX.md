@@ -445,6 +445,13 @@ were written.
   tool removes a file created in `$HOME/opencode`, and `deletes=` names all four
   roots in order; `TestTheDeletesFieldNamesEveryWriteRoot` pins the field's
   rendering.
+  `TestAChildDeletesItsJournalInItsDataHomeOnLinux` and
+  `TestAChildDeletesItsJournalInItsDataHomeOnMacOS` (`cmd/nova-swarm`): under the
+  wall a native run builds (`nativeSandboxArgv`, the real tool, the child's
+  environment), the child unlinks `$HOME/opencode/opencode.db-journal` in its data
+  home and a file in its temp folder, and a `sqlite3` commit in rollback-journal
+  mode there succeeds and leaves no journal: the `unlink(...opencode.db-journal) =
+  -1 EACCES` that stopped every fleet lane from 2026-10-05.
   `TestTheWallRefusesDeletesOutsideTheJob`, linux: a directory that is not a
   `--write` still refuses `rm -rf`, `rm` and `mv`, and the files stay.
   `TestAStepsGitCommitInsideItsWallSucceeds`, linux: a step's wall lets `git
