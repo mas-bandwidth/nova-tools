@@ -17,7 +17,7 @@ but for one unit file in the service manager's own directory (step 6). The layou
 | `secrets/` | a nova-secrets store, a git working copy on `main` | secrets |
 | `secrets.git` | the store's upstream, a bare repository | secrets |
 | `seat.env` | the coordinator's seat, as variables; mode 0600 | seat |
-| `logs/` | the Redis loop's log | redis |
+| `logs/` | the Redis loop's log (Linux; on macOS it is `~/Library/Logs/nova-loop-redis-local.log`) | redis |
 | `smoke/` | the smoke's twin, its throwaway repository and its record `landed` | smoke |
 
 ## Plan, then apply

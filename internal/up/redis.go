@@ -52,6 +52,9 @@ func unit(e *Env) []byte {
 	argv := []string{e.path("nova-redis"), "serve", "--bind", RedisBind, "--port", strconv.Itoa(RedisPort), "--dir", e.Path(RedisDir)}
 	path := filepath.Dir(e.path("nova-redis")) + ":" + filepath.Dir(e.path("redis-server")) + ":/usr/bin:/bin"
 	log := e.Path(LogsDir, RedisLoop+".log")
+	if e.GOOS == "darwin" {
+		log = filepath.Join(e.Home, "Library", "Logs", "nova-loop-"+RedisLoop+".log")
+	}
 	var b strings.Builder
 	if e.GOOS == "darwin" {
 		fmt.Fprintf(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")
