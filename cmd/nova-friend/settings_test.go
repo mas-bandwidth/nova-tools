@@ -60,11 +60,8 @@ func TestInstallNamesTheGrokWakeFileAndTheClaudeConfigDirInTheAgent(t *testing.T
 	_, err := r.fs.ReadFile(wake)
 	require.ErrorIs(t, err, os.ErrNotExist, "a dry run writes nothing")
 
-	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--config-dir", "").Exit(2).
-		Err("harness claude wants --config-dir")
-	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--config-dir", "/w/bob-claude").
-		Out("INSTALL WROTE harness=claude file=/w/bob-claude name=CLAUDE_CONFIG_DIR value=\"directory\"")
-	raw, err := os.ReadFile(plist)
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), "<string>--config-dir</string>\n    <string>/w/bob-claude</string>")
+	// claude has no deliver command: install refuses it before anything is written (the push proof)
+	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--config-dir", "/w/bob-claude").Exit(2).
+		Err("INSTALL REFUSED: no deliver command for claude")
+	assert.NoFileExists(t, plist)
 }
