@@ -3,6 +3,7 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -33,8 +34,10 @@ import (
 //   - one is SHARED: the judgment stays the one judgment, its text the complete add
 //     --replaces command, with the twin's brief written by the machine under the card's job
 //     directory (TwinBriefPath), once; the card is dealt nothing more until a mind answers;
-//   - a proposal that climbs out of the repository, is no glob, or names nothing outside the
-//     PATHS the card has is left to a mind, and the card is not dealt again either.
+//   - a proposal that climbs out of the repository, is no glob, names nothing outside the
+//     PATHS the card has, names a protected or secrets path, or is made by a twin this rule
+//     cut (paths_hold.go: a card is twinned at most once by the rule) is left to a mind, and
+//     the card is not dealt again either.
 
 // PropTwinBriefs (the work table's property) and EnvTwinBriefs (the machine's environment)
 // name the directory the paths rule writes a twin's brief under, one directory a card (its
@@ -67,6 +70,7 @@ type PathsProposal struct {
 	Globs   []string // the proposal, as the report said it
 	New     []string // the globs the card's PATHS do not hold already
 	Head    string   // the attempt's pushed head, "" for none: the twin's CARRY:
+	Branch  string   // the branch the attempt pushed, "" for none: named in the twin's fix
 	Shared  []string // "<glob> (<card>)" for each proposed glob another open card names
 	Brief   string   // the twin's brief
 	Twin    string   // the twin's id, "" when every one is taken
@@ -99,6 +103,7 @@ func heldProposal(s *Snapshot, pr *Card) (p PathsProposal, ok bool) {
 	if h := wc.F("head"); typedrec.IsFullSha(h) {
 		p.Head = h
 	}
+	p.Branch = wc.F("branch")
 	return p, true
 }
 
@@ -121,6 +126,10 @@ func rulePaths(s *Snapshot, a *RuleAnswer) bool {
 	}
 	if why := badGlobs(p.Globs); why != "" {
 		left(a, said+": "+why+"; a mind's, and the same brief is not dealt again")
+		return true
+	}
+	if why := pathsHoldLeft(pr, p.Globs); why != "" {
+		left(a, said+": "+why) // paths_hold.go: twinned once by the rule, never a protected path
 		return true
 	}
 	brief := pr.F("brief")
@@ -389,10 +398,14 @@ func TickRulePaths(s *Snapshot, r TickReq) (Plan, int) {
 			if c := &u.Changes[j]; c.Table == Work && c.Entry.ID == prop.Twin && c.Entry.Create != nil {
 				c.Entry.Set[FieldPathsProposed] = prop.mark()
 				c.Entry.Set[FieldRuleAnswer] = RulePaths + ": " + twin.Act + " at " + stamp(s.Now)
+				maps.Copy(c.Entry.Set, pathsTwinSet(pr, prop))
 				if w := pr.F(FieldWho); w != "" && c.Entry.Set[FieldWho] == "" {
 					c.Entry.Set[FieldWho] = w // whoever held the work keeps the twin
 				}
 				u.Moved += "; " + RuleSaid(RulePaths, prop.Line())
+			} else if c.Table == Work && c.Entry.ID == pr.ID && c.Entry.Set != nil {
+				// the card's drop: the rule recorded on both cards (paths_hold.go)
+				maps.Copy(c.Entry.Set, pathsOldSet(prop, RulePaths+": "+twin.Act+" at "+stamp(s.Now)))
 			}
 		}
 		if slices.ContainsFunc(u.Closes, func(c Open) bool { return c.Note.ID == o.Note.ID }) {

@@ -645,8 +645,9 @@ const Attribution = "ATTRIBUTION: By: your own name, the friend doing this work,
 
 // AsARead is the brief's AS A READ section, the text a reader of the work is given
 // (sprint.FriendReadBrief carries it through the next heading): a By: trailer is judged
-// only for being present and true.
-const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\n"
+// only for being present and true, and a head whose only defect is PATHS is the worker's
+// HOLD with PATHS-PROPOSED, not a broken finding (internal/sprint, paths_hold.go).
+const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS. A head whose only defect is that the work needed a file outside PATHS is not a broken change: it is a HOLD with a PATHS-PROPOSED: line for the worker (docs/SPEC-CARD-CONTRACT.md section 4); say it as that one finding, a PATHS-PROPOSED: line naming the files and the reason, and the tick twins the card with those PATHS and the head carried, by rule.\n"
 
 // Deadline is the minutes a tier gets when the header names none.
 func Deadline(tier string) int {

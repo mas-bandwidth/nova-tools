@@ -356,3 +356,12 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 	assert.NotContains(t, plain, "make tlc")
 	assert.NotContains(t, plain, "tla/RUNS.tsv")
 }
+
+// A reader is told that a head whose only defect is PATHS is the worker's HOLD with
+// PATHS-PROPOSED, which the tick twins by rule, and not a broken finding (internal/sprint,
+// paths_hold.go; the owner, 2026-10-06: "twinning = inefficiency").
+func TestAReaderIsToldAPathsOnlyDefectIsAPathsProposedHold(t *testing.T) {
+	t.Parallel()
+	assert.Contains(t, AsARead, "only defect is that the work needed a file outside PATHS is not a broken change")
+	assert.Contains(t, AsARead, "a PATHS-PROPOSED: line naming the files and the reason")
+}

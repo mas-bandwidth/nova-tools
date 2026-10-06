@@ -388,6 +388,26 @@ line `CARRY: <old id> attempt <n> head=<sha>`, and the member stages the twin's 
 at that head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's
 brief (`TestRecutWidenAppliesPathsProposed`).
 
+### a-paths-hold-widens-the-twin-by-rule: the tick answers that HOLD
+
+A worker that needs a file outside PATHS ends the attempt with `Verdict: HOLD` and a
+`PATHS-PROPOSED:` line (the files, one line, and the reason), its head pushed. That HOLD is the
+tick's, by rule, with no judgment to the coordinator, when every proposed path is inside the
+card's repository, none is a protected or secrets path (`sprint.ProtectedProposed`: under
+`.github/`, `.git/`, `internal/secrets/` or `internal/seatcred/`, `go.mod`, `go.sum`,
+`CODEOWNERS`, a key, certificate, `.env` or `.netrc` file, a name holding `secret` or
+`credential`, or a glob that can name one), and the card is not itself a twin this rule cut:
+the card is dropped and replaced by its twin (`--replaces`, dependents inherited, the tier it
+was on kept), PATHS widened by the proposal, the held head carried on its `CARRY:` line and its
+fix `carry <head> (branch <branch>); the only change is PATHS`, and the rule recorded on both
+cards (`paths_twin` on the card, `paths_twinned` on the twin). A second proposal for the same
+card, or a path outside the repository or protected, is the judgment it is today. A friend's
+HOLD keeps the line too: past the 600-character cut of her report it rides at the end
+(`friend.OutboxFinishArgv`). A reader is told the same (`cardgen.AsARead`): a head whose only
+defect is PATHS is a HOLD with PATHS-PROPOSED for the worker, not a broken finding
+(`TestAPathsHoldIsAnsweredByATwinWithTheProposedPaths`; tla/Lifecycle.tla, `PathsProposed`,
+`TwinnedOnceByRule`).
+
 ## 5. Profiles
 
 A profile is keyed by model family, derived from the model id the member runs the child on:
