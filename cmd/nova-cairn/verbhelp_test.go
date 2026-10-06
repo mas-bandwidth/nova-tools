@@ -28,7 +28,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 	help := cli.OK(t, "help").Stdout
 	for _, want := range []string{
-		"--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish records the entry's own word, and one that differs from the session's is recorded as given, not a conflict (exit 0).",
+		"--publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).",
 		"Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).",
 		"exit codes: 0 done, 2 usage or could not run, for every verb; by verb:",
 		"  open: 0 ",
@@ -40,14 +40,18 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	// open records the policy; append --publish records the entry's own word, even
-	// one that differs from the session's.
+	// open records the policy; append with no --publish carries it, and one that
+	// differs is a conflict naming both.
 	require.Equal(t, 0, cli.Run("open", "--store", dir, "--session", "s1", "--publish", "manual").Code)
-	r := cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w", "--publish", "immediate")
+	r := cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w")
 	require.Equal(t, 0, r.Code)
-	require.Contains(t, r.Stdout, "publish=immediate", "a differing append --publish is recorded as given")
+	require.Contains(t, r.Stdout, "publish=manual", "an append with no --publish printed %q", r.Stdout)
+	r = cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e2", "--text", "w", "--publish", "immediate")
+	require.Equal(t, 1, r.Code)
+	require.Contains(t, r.Stderr, "holds publish=manual", "a differing append --publish did not name the session's: %q", r.Stderr)
+	require.Contains(t, r.Stderr, "--publish immediate", "a differing append --publish did not name its own: %q", r.Stderr)
 	// The same id and words is a duplicate at exit 0; other words a conflict at exit 1.
-	r = cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w", "--publish", "immediate")
+	r = cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "w", "--publish", "manual")
 	require.Equal(t, 0, r.Code)
 	require.Contains(t, r.Stdout, "duplicate=true", "the duplicate the help names prints duplicate=true")
 	require.Equal(t, 1, cli.Run("append", "--store", dir, "--session", "s1", "--entry", "e1", "--text", "other").Code)

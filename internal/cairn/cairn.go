@@ -655,20 +655,27 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	if flat {
 		return appendFlat(store, session, path, id, text, stamp, publish, write)
 	}
-	if source == "" || publish == "" {
-		rec, err := ReadOpen(store, session)
-		if err != nil {
-			return res, err
+	// The session's policy is a fact, read before the write. An empty --publish
+	// carries it. One that names another is a conflict naming both. A session
+	// with no open record still refuses an empty --publish, and a session that
+	// is not open is refused above (docs/SPEC-CAIRN.md, the append verb).
+	opened, err := ReadOpen(store, session)
+	if err != nil {
+		return res, err
+	}
+	if source == "" {
+		source = opened.Source
+	}
+	if publish == "" {
+		if !ValidPublish(opened.Publish) {
+			return res, fmt.Errorf("--publish is required: session %q has no open record naming a policy in %s; name one (%s)",
+				session, filepath.Join(store, "log.jsonl"), strings.Join(Policies, "|"))
 		}
-		if source == "" {
-			source = rec.Source
-		}
-		if publish == "" {
-			if !ValidPublish(rec.Publish) {
-				return res, fmt.Errorf("--publish is required: session %q has no open record naming a policy in %s; name one (%s)",
-					session, filepath.Join(store, "log.jsonl"), strings.Join(Policies, "|"))
-			}
-			publish = rec.Publish
+		publish = opened.Publish
+	} else if opened.Found && ValidPublish(opened.Publish) && publish != opened.Publish {
+		return res, &ConflictError{
+			Msg:    fmt.Sprintf("session %q holds publish=%s; --publish %s names another", session, opened.Publish, publish),
+			Remedy: command("append", "--store", store, "--session", session, "--entry", id, "--publish", opened.Publish),
 		}
 	}
 	final := entryPath(store, session, id)
