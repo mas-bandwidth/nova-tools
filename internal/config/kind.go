@@ -70,6 +70,11 @@ const (
 	// or exponent), stored as text in its one spelling (cardcost.Canonical), ""
 	// when not set: a price, never a float.
 	TypeDecimal Type = "decimal"
+	// TypeMask is a mask over the words of Field.Enum, stored as text: a comma
+	// list of those words, deduplicated and sorted, or the single word `all`
+	// (every word). An empty mask or a word outside Field.Enum is refused. A
+	// route's applies says where the route is used (docs/SPEC-CONFIG.md, route).
+	TypeMask Type = "mask"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -245,6 +250,24 @@ var Tiers = []string{"flash", "frontier", "heavy", "pro"}
 // RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
 // are never drawn from routes and escalate to the coordinator.
 var RouteTiers = []string{"flash", "pro", "heavy"}
+
+// RouteApplies is the route field that says where the route is used: a mask
+// over the executor classes (ExecutorClasses), or AllClasses. The deal draws a
+// work card only from the routes of its tier whose mask holds the executor it
+// is dealt to, and a read only on a reader whose class its route's mask holds
+// (internal/sprint/route.go, appliesTo; docs/SPEC-CONFIG.md, route).
+const RouteApplies = "applies"
+
+// ExecutorClasses are the classes a route's applies mask is over: an executor
+// on a friend row (a friend's deal, friend.<name>, or a friend's reader,
+// reader-<friend>), a machine of the fleet table and its reader reader-<m>,
+// and the coordinator's own machine in a single-machine local sprint
+// (nova-up --local). They are stored sorted, as a comma list, or as AllClasses.
+var ExecutorClasses = []string{"fleet", "friends", "local"}
+
+// AllClasses is the applies mask that holds every executor class: the default,
+// so a route written before the mask is used everywhere as it was.
+const AllClasses = "all"
 
 // The sprint row's two bars on a decide read's p(defect) (internal/decide, Bars;
 // docs/SPEC-SPRINT.md section 6, the decide read): apply writes them to
@@ -489,6 +512,7 @@ var Kinds = []*Kind{
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
 			{Name: "first", Type: TypeBool, Default: "false", Help: "true deals this route before the others of its tier (the walk from the tier's index prefers it); false (the default) leaves the walk as it is"},
+			{Name: RouteApplies, Type: TypeMask, Enum: ExecutorClasses, Default: AllClasses, Help: "where this route is applied: a comma list of " + strings.Join(ExecutorClasses, ", ") + ", or " + AllClasses + " (the default, every class); the deal draws it only for an executor of a class it holds, never outside it (docs/SPEC-CONFIG.md, route)"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens using the pricing configuration saved per route tuple.
 			// Prices are USD per million tokens.
@@ -943,6 +967,23 @@ func (f Field) Canonical(raw string) (string, error) {
 			return "", fmt.Errorf("--%s %v", f.Name, err)
 		}
 		return c, nil
+	case TypeMask:
+		if raw == AllClasses {
+			return AllClasses, nil
+		}
+		words, err := splitList(raw)
+		if err != nil {
+			return "", fmt.Errorf("--%s: %v", f.Name, err)
+		}
+		if len(words) == 0 {
+			return "", fmt.Errorf("--%s is an empty mask; want a comma list of %s, or %s", f.Name, strings.Join(f.Enum, ", "), AllClasses)
+		}
+		for _, w := range words {
+			if !hasWord(strings.Join(f.Enum, ","), w) {
+				return "", fmt.Errorf("--%s %q: want a comma list of %s, or %s", f.Name, raw, strings.Join(f.Enum, ", "), AllClasses)
+			}
+		}
+		return strings.Join(words, ","), nil
 	case TypeSeq:
 		var words []string
 		for _, w := range strings.Split(raw, ",") {

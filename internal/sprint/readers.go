@@ -346,15 +346,18 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 // serving the primary's tier (readerServesTier; an empty tiers cell reads every
 // tier, and a fleet reader serves only a tier it can draw a route of), with no
 // read card of it at the attempt, placed or retired (a reader with one, even
-// retired, has read it). When an away-retired card exists with
-// the plain identity and no second card exists yet, the reader is eligible to
-// be re-asked under second identity .g1. The next attempt is read on new
-// cards, by every reader of the tier.
+// retired, has read it), and of a class one of the tier's routes applies to
+// (readerApplies: a route's mask decides where its read may be placed, so a
+// fleet reader is never asked a pro read whose pro routes hold only friends;
+// docs/SPEC-SPRINT.md, route-applies-to) or bringing its own model. When an
+// away-retired card exists with the plain identity and no second card exists
+// yet, the reader is eligible to be re-asked under second identity .g1. The
+// next attempt is read on new cards, by every reader of the tier.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	tier := s.readTierOf(pr)
 	var out []string
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.readerServesTier(rd, tier) {
+		if s.ReaderIsUp(rd) && s.readerServesTier(rd, tier) && (s.ownModelReader(rd) || s.readerApplies(pr, rd)) {
 			if _, ok := ReadCardForAsk(s, pr.ID, attempt, rd); ok {
 				out = append(out, rd)
 			}
@@ -499,7 +502,7 @@ func sweepReads(s *Snapshot, p *Plan) {
 		}
 		tier := s.readTierOf(pr)
 		for _, rd := range up {
-			if !s.readerServesTier(rd, tier) {
+			if !s.readerServesTier(rd, tier) || !s.readFitsReader(c, rd) {
 				continue
 			}
 			if _, ok := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), rd); ok {
@@ -667,6 +670,10 @@ func levelReads(s *Snapshot, p *Plan) {
 			for _, rd := range up {
 				targetID, ok := ReadCardForAsk(s, q[i].F("primary"), q[i].Int("attempt"), rd)
 				if !ok || planned[targetID] || (tier != "" && !s.readerServesTier(rd, tier)) {
+					avoid = append(avoid, rd)
+				}
+				// a read moves only to a reader its route's mask holds (route.go)
+				if !s.readFitsReader(q[i], rd) {
 					avoid = append(avoid, rd)
 				}
 			}

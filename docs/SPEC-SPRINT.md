@@ -2501,6 +2501,30 @@ by selection without `--as` is refused. A finish that arrives first moves the ca
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
+### route-applies-to: where a route is used
+
+A route also says where it is applied. The `applies` field of nova-config's
+`route` kind is a mask over the executor classes: `friends` (an executor on a
+friend row, `friend.<name>`, and a friend's reader, `reader-<friend>`), `fleet`
+(a machine of the fleet table and its reader, `reader-<m>`), and `local` (the
+coordinator's own machine in a `nova-up --local` single-machine sprint). It is a
+comma list of those words, or `all` (the default, every class); an unknown word
+or an empty mask is refused with the remedy, and migration 0035 adds the column
+and seeds the routes the owner named (`pro-*` friends, `flash-*` fleet, every
+other `all`). The deal draws a work card only from the routes of its tier whose
+mask holds the executor it is dealt to; a route the mask leaves out is skipped
+as a redeal leaves out a route already taken, so the tier's index moves past it
+(tla/RouteIndex.tla, the masked walk; `RouteHonoursMask`). When no route of the
+tier applies to any executor with room the card waits in ready and the deal says
+why ("no pro route applies to the fleet"), never falling back to a route outside
+its mask. A read's route and its reader are chosen together: the ask draws a
+read only on a reader whose class the route's mask holds, and the level and the
+sweep move a read only to such a reader. A friend's or a bud's reader that
+brings its own model (read_route.go) is asked a read of any tier its tiers cell
+names, as before the mask: it runs no fleet route. With the seed, pro-tier reads go to
+friend readers only, never to a fleet reader, and wait with the reason when no
+friend reader is up.
+
 ## 6. The readers
 
 - A reader row has a state, as a fleet member has: up, away or down. The rows

@@ -251,6 +251,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 					full++
 				}
 			}
+			// a route's mask can be why no reader up may be asked: the read waits
+			// with that reason, never on a reader the route does not hold
+			if why := s.noReadClassWhy(c); why != "" {
+				p.refuse(c.ID, why)
+				continue
+			}
 			p.refuse(c.ID, cannotAskWhy(s, c, attempt, want, len(chosenReaders)+len(again), full))
 			continue
 		}
@@ -262,7 +268,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		for _, rc := range inPlace {
 			set := map[string]string{"asked": stamp(s.Now)}
-			maps.Copy(set, s.readRouteOf(ri, c, failed))
+			maps.Copy(set, s.readRouteOf(ri, c, failed, s.readerClass(rc.F("reader"))))
 			takenBack = append(takenBack, change(Readers, setEntry(rc, set, FieldReturned)))
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
@@ -278,7 +284,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			if rd == finder {
 				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
 			}
-			maps.Copy(fields, s.readRouteOf(ri, c, failed))
+			maps.Copy(fields, s.readRouteOf(ri, c, failed, s.readerClass(rd)))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			cardID, _ := ReadCardForAsk(s, c.ID, attempt, rd)
 			u.Changes = append(u.Changes, change(Readers, createEntry(cardID, rd, Asked, c.Score, fields)))
