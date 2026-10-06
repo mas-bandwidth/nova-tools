@@ -740,6 +740,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
 			oc.Allow = append(oc.Allow, alias)
 		}
+		deliver = &friend.OpenCodePriced{OpenCode: oc} // every lane run priced from her own session record
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
 	rowMode, rowWidth := "", 0

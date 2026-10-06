@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -157,8 +158,8 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	if exit != 0 && err == nil {
-		if limit := ProviderLimit("(new)", out); limit != nil {
-			return "", limit // a rate limit or out of funds: the lanes' governor answers it, not the open's retry alone
+		if limit := laneLimit("(new)", out); limit != nil {
+			return "", limit // a limit or out of funds: the lanes' governor answers it, not the open's retry alone
 		}
 	}
 	if exit, err = refused("(new)", out, exit, err); err != nil {
@@ -210,10 +211,126 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	if err == nil {
-		if limit := ProviderLimit(id, out); limit != nil {
+		if limit := laneLimit(id, out); limit != nil {
 			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
 		}
 	}
 	exit, err = refused(id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+}
+
+// laneLimit is a lane turn's limit: a rate limit or out of funds
+// (ProviderLimit), else the harness's own limit with its reset beside it
+// ("Insufficient AI Credits ... will refresh in 3 hours", ReadLimit), which
+// is UsageLimited until that reset, as a Claude lane's rejected
+// rate_limit_event is: the lanes stop taking until it, no guessed time.
+func laneLimit(session, out string) error {
+	if limit := ProviderLimit(session, out); limit != nil {
+		return limit
+	}
+	if lim, found := ReadLimit(stripANSI(out), time.Now()); found && lim.Limited {
+		return UsageLimited{Session: session, Reason: lim.Reason, Until: lim.Until}
+	}
+	return nil
+}
+
+// OpenCodePriced is an OpenCode friend's lanes with every run priced from
+// opencode's own session record (docs/SPEC-FRIEND.md, the Claude lanes, the
+// OpenCode lane): after each turn `opencode export <session>` is read, and
+// the run's cost is what the session's assistant messages gained since the
+// last read (each message's cost is opencode's own figure), said on the
+// record as one line per run. The daemon wraps the friend's OpenCode in it;
+// a bare OpenCode runs no export.
+type OpenCodePriced struct {
+	*OpenCode
+
+	mu   sync.Mutex
+	seen map[string]float64 // each session's cost when last read
+	cost float64
+}
+
+// Spent is the cost of every run priced so far, in US dollars.
+func (p *OpenCodePriced) Spent() float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cost
+}
+
+// OpenSession is OpenCode's, then the first run priced.
+func (p *OpenCodePriced) OpenSession(ctx context.Context, seed string) (string, error) {
+	id, err := p.OpenCode.OpenSession(ctx, seed)
+	if err == nil {
+		p.price(ctx, id)
+	}
+	return id, err
+}
+
+// DeliverTo is OpenCode's, then the run priced, whatever it answered.
+func (p *OpenCodePriced) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
+	lt, err := p.OpenCode.DeliverTo(ctx, id, text)
+	p.price(ctx, id)
+	return lt, err
+}
+
+// openCodeExport is the part of `opencode export <session>` a price reads.
+type openCodeExport struct {
+	Messages []struct {
+		Info struct {
+			Role string  `json:"role"`
+			Cost float64 `json:"cost"`
+		} `json:"info"`
+	} `json:"messages"`
+}
+
+// SessionCost is the cost of a session from its export: the sum of its
+// assistant messages' costs. The export may be preceded by a line of its
+// own (opencode says what it exports on stderr); the JSON starts at the
+// first '{'.
+func SessionCost(export string) (float64, error) {
+	at := strings.IndexByte(export, '{')
+	if at < 0 {
+		return 0, fmt.Errorf("opencode export: no JSON object in %q", oneLine(export, 120))
+	}
+	var e openCodeExport
+	if err := json.NewDecoder(strings.NewReader(export[at:])).Decode(&e); err != nil {
+		return 0, fmt.Errorf("opencode export: %v", err)
+	}
+	cost := 0.0
+	for _, m := range e.Messages {
+		if m.Info.Role == "assistant" {
+			cost += m.Info.Cost
+		}
+	}
+	return cost, nil
+}
+
+// price reads the session's record and says the run's cost on the record;
+// a record that cannot be read is said there, and the turn stands.
+func (p *OpenCodePriced) price(ctx context.Context, id string) {
+	out, exit, err := p.Run(ctx, p.Dir, p.program(), []string{"export", id}, "")
+	if err == nil && exit != 0 {
+		err = fmt.Errorf("exited %d: %s", exit, oneLine(out, 200))
+	}
+	var now float64
+	if err == nil {
+		now, err = SessionCost(out)
+	}
+	if err != nil {
+		if p.Out != nil {
+			fmt.Fprintf(p.Out, "opencode: session=%s cost=- (its record was not read: %v)\n", id, err)
+		}
+		return
+	}
+	p.mu.Lock()
+	if p.seen == nil {
+		p.seen = map[string]float64{}
+	}
+	run := max(now-p.seen[id], 0)
+	p.seen[id] = now
+	p.cost += run
+	total := p.cost
+	p.mu.Unlock()
+	if p.Out != nil {
+		fmt.Fprintf(p.Out, "opencode: session=%s cost=$%.4f total=$%.4f\n", id, run, total)
+	}
 }

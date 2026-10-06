@@ -351,8 +351,8 @@ toward nothing; a turn that hits a limit is `Deferred` the same way; the
 first delivery after the reset is a wake turn (`WakeText`) whose output must
 carry its nonce, six fresh characters each try, so only the session that ran
 this turn answers it; then `Up` with the nonce, and the message goes in. The
-usage is on the beat as `--five-hour <pct> --seven-day <pct>`
-(`Usage.BeatFlags`) for pacing to read.
+usage on the beat for pacing to read is owed: the sprint server's beat takes
+no usage flag yet (the Claude lanes, below).
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
@@ -830,12 +830,38 @@ pauses every new turn and open until the reset itself (`PauseUntil`, one
 record line `usage limit: lanes paused until <t> (its reset): <why>`), with
 no cap lowered and no backoff guessed. The same output is read by `Limits`
 for the beat, so her row reads down until a wake after the reset is answered.
-A bud's reader reads the same record lines and the sprint's cards; no script.
 `TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit`,
-`TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap`. Not here: the
-sprint server's beat carries no cost or utilization field, so they are on the
-record, not on her row; the OpenCode lane's cost from its own session record
-is owed.
+`TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap`.
+
+The OpenCode lane is priced and stopped the same way
+(`internal/friend/adapter_opencode_lanes.go`). The daemon wraps an OpenCode
+friend in `OpenCodePriced`: after every lane run it reads opencode's own
+session record, `opencode export <session>` (the JSON from the first `{`, any
+line before it skipped), and the run's cost is what the session's assistant
+messages' `cost` gained since the last read, one line on the record per run:
+`opencode: session=<id> cost=$<run> total=$<sum>` (or `cost=- (its record was
+not read: <why>)`, and the turn stands). A limited run is priced too. An API
+friend has no five-hour or weekly window to read; her limit is what the run
+says: a rate limit backs off and out of funds holds (`ProviderLimit`, below),
+and a limit line with its reset beside it ("Insufficient AI Credits ... will
+refresh in 3 hours") is `UsageLimited` until that reset, the governor's
+`PauseUntil` as for a Claude lane, while `Limits` sends her down for the
+same reset. `TestAnOpenCodeLanePricesEveryRunFromItsSessionRecordAndPausesAtItsLimit`,
+and the daemon's wiring in
+`TestRunInOneShotModeOpensALaneAndHandsItTheCard`.
+
+Not here, owed: (1) cost and utilization on her beat and row: the sprint
+server's `friend beat` accepts only `--running --working --queue --width
+--load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+refuses any other flag, so a cost or a utilization flag sent from here would
+fail every beat; until the server takes them they are on the daemon's record
+only. (2) A bud's reader (`reader.zsh`: it beats `queue --as reader-<bud>`,
+begins asked reads up to a width, runs each as a trimmed `claude -p` with a
+model by the read's tier, and records `read --ok`, `--broken --finding` or
+`--return`) is not a nova-friend verb yet: its loop drives the sprint's read
+verbs, not cards, and no lane here takes reads. The one call a reader makes
+can be `Claude`'s, so it would be priced and limited the same way; the
+reader's loop is its own card.
 
 ### rate-limit-backs-off-not-down.w1 — a rate limit backs off; out of funds holds
 
