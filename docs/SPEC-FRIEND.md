@@ -921,6 +921,49 @@ internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
 
+### the-daemon-reads-every-outbox-job.w1 — the daemon finishes every report on her row (internal/friend/outbox.go)
+
+The night of 2026-10-05, a friend held eight working cards whose
+`outbox/<job>/REPORT.md` said `Verdict: LAND` with a `Head:`, unread from
+21:09 for two hours: the daemon finished only the cards its own lanes ran,
+and the coordinator's delivery stopgap had written those briefs; the tick
+raised "a friend holds working cards and finishes none". Now each reconcile
+the server answered (the inbox above) is followed by a pass over her outbox,
+whoever wrote the brief:
+
+- Every job in `outbox/` named `<work>~<epoch>[.g<gen>]` (`ParseJob`) with a
+  `REPORT.md` (a regular file, never followed through a symlink, at most
+  `ReportCap`, 64 KiB, friend sync's cap) is matched to her row by its job, or
+  by its card, epoch and generation. A job a lane is running is left to the
+  lane's end.
+- Its card working on her row, a work card: the report's verdict and head are
+  read as friend sync reads them (the first `Verdict:` and `Head:` lines,
+  markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
+  full sha head is `finish --as friend.<name> <card>@<gen> --epoch <n> --head
+  <sha> --branch <b> --report "friend <name> LAND: <first paragraph>"`; `HOLD`,
+  `FAIL` and any other verdict, and a `LAND` with no full sha head, are
+  `--failed`, a full sha head kept, the report `friend <name> <verdict>: ` and
+  the report's first 600 characters on one line. The branch is the row's, else
+  the brief's STATUS line. One line on the record per finish (`outbox: finished
+  card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row):
+  finish=ok|failed head=<sha> sent=server`).
+- A finish is sent once: a job finished is never sent again, nor noted when its
+  card leaves her row. One the server did not answer or refused is said once
+  and sent again after `OutboxRetry` (a minute); friend sync may finish it
+  first, and the server refuses the second.
+- A report with no `Verdict:` line, a report that cannot be read, a card not
+  on her row, ready and not working, or a read, is said once while it stands
+  (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
+  it again, so a verdict she writes later is finished then.
+
+The model is `internal/friend/tla/OutboxFinish.tla` (TLC on a Linux bench, two
+cards, one of them staged by another hand: 324 distinct states,
+`FinishOnlyWorking`, `FinishOnlyVerdict` and `Finished` hold); its reversed
+witness `MCOutboxFinishBrokenOwnOnly.cfg`, a daemon that finishes only the cards
+it staged, breaks `Finished` in 5 states: the other hand's card is dealt, she
+writes a verdict, the daemon asks, and nothing finishes it. The test is
+`TestTheDaemonFinishesAReportItDidNotStage`.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
