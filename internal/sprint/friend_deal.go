@@ -439,7 +439,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 			continue // one live lane per card: no second row while her lane runs it
 		}
 		escalated := wc != nil && redealBound(wc)
-		tier := s.dealTierOf(escalating(s, c))
+		tier := s.DealTier(escalating(s, c))
 		left := friendsLeft(wc)
 		pinned, pinnedCard := FriendCard(c)
 		leftAtPin := slices.Clone(left)
@@ -636,7 +636,7 @@ func friendReclaim(s *Snapshot, seats []FriendSeat, up []string, seat map[string
 // it (friendReclaim), her room, lanes and count taken; false when no friend up may take it.
 func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat, free, lanes, dealt map[string]int, declared map[string]bool, p *Plan) (Unit, bool) {
 	pr := s.Work.Placed(wc.F("primary"))
-	tier, left := s.dealTierOf(pr), friendsLeft(wc)
+	tier, left := s.DealTier(pr), friendsLeft(wc)
 	var may []string
 	for _, f := range up {
 		if lanes[f] > 0 && free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
