@@ -257,6 +257,13 @@ type landCard struct {
 	// protected is why the lander may not land the card on its base, a protected branch in
 	// a stream not marked for its repository (sprint.ProtectedLandWhy), "" when it may
 	protected string
+	// start is the attempt's start commit when an earlier attempt pushed a head
+	// (sprint.BaseOf). Empty on a first attempt: checkCard then uses the merge-base
+	// with the base.
+	start string
+	// result is the finished work card's recorded result (claimText), empty when the
+	// sprint holds none. checkEmptyCommit reads it as the attempt's RESULT.md.
+	result string
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -417,7 +424,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	a.serial.Lock()
-	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
 	a.serial.Unlock()
 	if err != nil {
 		return a.readFailed("land", err, stderr)
@@ -604,6 +611,20 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
+			if s.Fleet != nil {
+				lc.result = claimText(s.Fleet.Card(sprint.WorkCardID(pr.ID, pr.Int("attempt"))))
+				if pr.Int("attempt") > 1 {
+					var earlier []*sprint.Card
+					for k := 1; k < pr.Int("attempt"); k++ {
+						if w := s.Fleet.Card(sprint.WorkCardID(pr.ID, k)); w != nil {
+							earlier = append(earlier, w)
+						}
+					}
+					if b := sprint.BaseOf(earlier); b.Head != "" {
+						lc.start = b.Head
+					}
+				}
+			}
 		}
 		if lc.protected = sprint.ProtectedLandWhy(s, stream, lc.repo, lc.base, c.ID); lc.protected != "" {
 			// the refusal names the promotion flag beside the mark (docs/SPEC-SPRINT.md
@@ -739,6 +760,9 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 				return false, false
 			}
 			if failed.id != "" {
+				if failed.emptyCommit {
+					return l.returnCard(stream, failed)
+				}
 				l.conflict(stream, failed)
 				return false, true
 			}
@@ -757,6 +781,9 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 			return refuse(why)
 		}
 		b.Scope = l.scopeOf(merged)
+	}
+	if failed.emptyCommit {
+		return l.returnCard(stream, failed)
 	}
 	l.conflict(stream, failed)
 	return false, true
@@ -852,8 +879,58 @@ type conflictCard struct {
 	// one is a file no generated ledger owns, "ledger" when every one is a ledger whose
 	// resolution failed, "" when the card failed for any other cause (sprint.MergeReq,
 	// ConflictKind: the conflict rule redoes a file conflict on the tip).
-	kind  string
-	paths []string
+	kind        string
+	paths       []string
+	emptyCommit bool // the refusal is an empty commit that claims changes: return the card to review, do not stop the stream on a conflict
+}
+
+// returnCard returns one card to review when its landing was refused because the
+// head's diff from the attempt's start is empty while the result claims changes
+// (docs/SPEC-SPRINT.md section 7, the lander's checks). The finding is the return
+// reason. A conflict is not recorded and the stream is not stopped: the card goes
+// back to review for the coordinator.
+func (l *lander) returnCard(stream string, f conflictCard) (bool, bool) {
+	b := landBatch{
+		Stream: stream,
+		Status: "refused",
+		Cards:  1,
+		IDs:    []string{f.id},
+		Repo:   f.repo,
+		Base:   f.base,
+		Reason: f.why,
+		DryRun: l.dry,
+	}
+	if l.dry || l.st == nil {
+		l.out = append(l.out, b)
+		return false, true
+	}
+	req := sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{f.id}}, Reason: f.why, Who: l.c.actor}
+	step := store.ReturnStep(req)
+	plan := step.Plan
+	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
+		if why := headWhy(s, stream, []landCard{f.landCard}); why != "" {
+			return sprint.Plan{Refused: []sprint.Refusal{{Key: stream, Why: why}}}
+		}
+		return plan(s)
+	}
+	named := []string{f.pin()}
+	step.Args = store.ArgsOf(struct {
+		Req  sprint.ReturnReq
+		Pins []string
+	}{req, named})
+	epoch := l.epoch
+	step.Epoch = &epoch
+	if l.c.op != "" {
+		step.CallerOp = l.c.op + "." + stream + "." + step.Args
+	}
+	l.a.serial.Lock()
+	res, err := l.st.Run(context.Background(), step)
+	l.a.serial.Unlock()
+	if code := stepExit(res, err); code != 0 || len(res.Moved) == 0 {
+		b.Reason = f.why + "; the return step did not record it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+	}
+	l.out = append(l.out, b)
+	return false, true
 }
 
 // conflict reports the card that ended its batch with the conflict fact: the
@@ -1322,7 +1399,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case card != "":
-			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}, ""
+			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths, emptyCommit: card == emptyCommitFinding}, ""
 		}
 		merged = append(merged, c.id)
 	}
@@ -1517,10 +1594,87 @@ func (l *lander) ledgers() []landLedger {
 	return landLedgers
 }
 
+// emptyCommitFinding is the refusal when a landing's head diff from the attempt's
+// start is empty while the result claims changes. It is the return reason, whole.
+const emptyCommitFinding = "empty commit: the result claims changes the diff does not show"
+
+var (
+	verdictOkRE = regexp.MustCompile(`(?im)^\s*verdict:\s*ok\b`)
+	// nothingRE is a result line that says the child found nothing to do: the verdict
+	// line, or a line that begins with the finish kind (cardhdr.EndNothing,
+	// cardhdr.EndNoCommit), never those words anywhere in prose.
+	nothingRE  = regexp.MustCompile(`(?im)^\s*(?:verdict:\s*nothing\b|(?:report:\s*)?(?:nothing[- ]to[- ]do|no commit)\b)`)
+	stepShaRE  = regexp.MustCompile(`(?im)^\s*step\b[^\n]*`)
+	hexTokenRE = regexp.MustCompile(`\b[0-9a-f]{7,64}\b`)
+	diffStatRE = regexp.MustCompile(`(?im)(\b[1-9]\d*\s+files?\s+changed\b|\b[1-9]\d*\s+insertions?\b|\b[1-9]\d*\s+deletions?\b|\b[1-9]\d*\s+lines?\s+added\b|\b[1-9]\d*\s+lines?\s+removed\b|^\s*[\w./-]+\s+\|\s+[1-9]\d*|\bdiff\s*stat:\s*\+?[1-9])`)
+	stepDashRE = regexp.MustCompile(`(?im)^\s*step[^\n]*?[-–—]\s*$`)
+)
+
+// hasSha says a line holds a token shaped like a commit id: 7 to 64 hex characters
+// with a digit in them, so an all-letter word such as "decade" or "defaced" is not one.
+func hasSha(line string) bool {
+	for _, tok := range hexTokenRE.FindAllString(strings.ToLower(line), -1) {
+		if strings.ContainsAny(tok, "0123456789") {
+			return true
+		}
+	}
+	return false
+}
+
+// claimText is the result the lander holds for a card: what the finished work card
+// claimText returns the text checkEmptyCommit reads from the card as finished and
+// recorded (the store's head and report fields). It tests the claim against the
+// result's own words only, as the card enumerates them (a step line with a commit
+// sha, a non-empty diff stat, or a literal `verdict: ok` line), instead of
+// synthesizing `verdict: ok` from the finish's ok field.
+func claimText(wc *sprint.Card) string {
+	if wc == nil {
+		return ""
+	}
+	report := strings.TrimSpace(wc.F("report"))
+	return "head: " + wc.F("head") + "\n" + report + "\n"
+}
+
+// checkEmptyCommit decides a landing whose head commit's diff from the attempt's start
+// commit is empty (docs/SPEC-SPRINT.md section 7, the lander's checks). resultText is
+// the attempt's recorded result, the RESULT.md the finish carried (claimText). An empty
+// diff with a result that claims changes (a verdict of ok, a step line with a commit sha,
+// or a diff stat that is not empty) is refused with emptyCommitFinding. A result that
+// claims nothing (a nothing-to-do verdict or report line, every step -) passes. A result
+// the lander does not hold cannot be told to claim nothing, so an empty diff with no
+// result text is refused too. A non-empty diff passes.
+func checkEmptyCommit(emptyDiff bool, resultText string) string {
+	if !emptyDiff {
+		return ""
+	}
+	if strings.TrimSpace(resultText) == "" || verdictOkRE.MatchString(resultText) {
+		return emptyCommitFinding
+	}
+	if nothingRE.MatchString(resultText) {
+		return ""
+	}
+	steps := stepShaRE.FindAllString(resultText, -1)
+	allDash := len(steps) > 0
+	for _, st := range steps {
+		if hasSha(st) {
+			return emptyCommitFinding
+		}
+		allDash = allDash && stepDashRE.MatchString(st)
+	}
+	if allDash {
+		return ""
+	}
+	if diffStatRE.MatchString(resultText) {
+		return emptyCommitFinding
+	}
+	return ""
+}
+
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
 // merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
-// sentence fragment or unmatched backquote (E4). A card that adds a directory owns its
+// sentence fragment or unmatched backquote (E4), and makes no empty commit whose
+// result claims changes (checkEmptyCommit). A card that adds a directory owns its
 // catalog row and the AGENTS.md maps (diffcheck.Outside). First the documents the merge
 // writes are repaired on the merge commit (sprint.RepairMerge: a stray backquote, an
 // open fence, trailing whitespace, a final newline, CRLF), as the ledgers are
@@ -1579,6 +1733,28 @@ func (l *lander) checkCard(ctx context.Context, dir, stream string, c landCard, 
 			continue
 		}
 		why = append(why, f.String()+" (E4)")
+	}
+	// The attempt's start: an earlier attempt's pushed head when the card has one,
+	// else where this head left the base. A git error (an unknown sha) leaves the diff
+	// unjudged, so this check skips and the other checks stand (docs/SPEC-SPRINT.md
+	// section 7, the lander's checks). git diff --quiet exits 0 when no file changed.
+	start := c.start
+	if start == "" {
+		if s, err := l.git(ctx, dir, "merge-base", "refs/remotes/origin/"+c.base, c.head); err == nil && s != "" {
+			start = s
+		} else if s, err := l.git(ctx, dir, "merge-base", before, c.head); err == nil && s != "" {
+			start = s
+		} else {
+			start = "refs/remotes/origin/" + c.base
+		}
+	}
+	if _, err := l.git(ctx, dir, "diff", "--quiet", start, c.head); err == nil {
+		if finding := checkEmptyCommit(true, c.result); finding != "" {
+			if _, rerr := l.git(ctx, dir, "reset", "-q", "--hard", before); rerr != nil {
+				return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", rerr), ""
+			}
+			return finding, "", ""
+		}
 	}
 	if len(why) == 0 {
 		l.diffs[c.id] = diff
