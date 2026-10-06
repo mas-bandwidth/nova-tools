@@ -107,6 +107,8 @@ func init() {
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
+		{"stream archive", "<stream>...", "stream archive a b c", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(true, args, o, e) }},
+		{"stream unarchive", "<stream>...", "stream unarchive a", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(false, args, o, e) }},
 		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
@@ -2899,7 +2901,14 @@ a STOPPED machine only (nova-sprint stop first), refused while a stream holds a
 card (a primary or a sentinel in any column of its work row, a merge card in
 its merge row: nova-sprint clear --confirm sprint, or drop) and all or none
 for the streams named. A clear does not bring a removed stream back, and its
-name is added again only after the next clear. stream set <s> --read-tier pro
+name is added again only after the next clear. stream archive takes streams
+whose every card has landed off both tables, on a running machine too: their
+rows are hidden and every landed card, its cost and its landing stay, counted
+by the footers, the summary and where --json --archived; refused while a
+stream holds a card not landed, naming it, all or none. stream unarchive
+draws them again. The tick archives a stream itself when its last card lands
+and nothing waits behind it (one note names it), and draws an archived stream
+again when a card not landed is in it. stream set <s> --read-tier pro
 puts the reads of the stream's cards on pro, over the sprint's read tier (set
 --read-tier); a read tier raises a card's reads and never lowers them below the
 card's own tier, and default takes the stream's off.`) + "\n"
