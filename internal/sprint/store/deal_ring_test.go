@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 	"github.com/stretchr/testify/require"
 )
 
@@ -207,7 +208,7 @@ func workFailing(h *harness, member string, fail func(id string) bool) {
 func attemptsBy(h *harness) (first, again map[string]int) {
 	first, again = map[string]int{}, map[string]int{}
 	for _, c := range h.snap().Fleet.Cards() {
-		p, attempt, ok := sprint.ParseWorkCard(c.ID)
+		p, attempt, ok := refmodel.ParseWorkCard(c.ID)
 		if !ok || p == "" {
 			continue
 		}
@@ -253,7 +254,7 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 	}
 	h.startMachine()
 	failFirst := func(id string) bool {
-		p, attempt, ok := sprint.ParseWorkCard(id)
+		p, attempt, ok := refmodel.ParseWorkCard(id)
 		if !ok || attempt != 1 {
 			return false
 		}

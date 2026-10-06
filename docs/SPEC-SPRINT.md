@@ -339,7 +339,7 @@ that one judgment, and raises it when the card is already sitting off her row,
 until it is back on her row or leaves ready and working. A hard pin is not
 rotated and is not this judgment. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
-no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
+no-stall rule as waiting for her (`sprint.TickDeal` and its friend deal,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
 route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
 The tick reads the friends' records every tick while the roster has a friend.

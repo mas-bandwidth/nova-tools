@@ -170,17 +170,6 @@ func TestSchemaCoverValidCardID(t *testing.T) {
 
 func TestSchemaCoverParseCards(t *testing.T) {
 	t.Parallel()
-	t.Run("a work card's refusals", func(t *testing.T) {
-		t.Parallel()
-		for _, id := range []string{"p", "p.w", "p.w0", "p.wx", ".w1"} {
-			_, _, ok := ParseWorkCard(id)
-			assert.False(t, ok, "ParseWorkCard(%q)", id)
-		}
-		p, n, ok := ParseWorkCard("p.w2")
-		require.True(t, ok)
-		assert.Equal(t, "p", p)
-		assert.Equal(t, 2, n)
-	})
 	t.Run("a read card's refusals", func(t *testing.T) {
 		t.Parallel()
 		for _, id := range []string{"p", "p.r1", "p.x1.reader", "p.r0.reader", "p.r1.reader.extra", "p.rx.reader"} {

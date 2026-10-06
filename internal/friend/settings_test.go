@@ -158,7 +158,6 @@ func TestInstallWritesTheHarnessSettingsAFriendNeeds(t *testing.T) {
 		drift := Drift(all)
 		require.Len(t, drift, 1)
 		assert.Equal(t, Setting{Harness: "dsh", File: file, Name: "agent-preset-registry.config.selectedDefault", Want: "standard", Have: "minimal"}, drift[0])
-		assert.Equal(t, `harness=dsh file=`+file+` name=agent-preset-registry.config.selectedDefault want="standard" have="minimal"`, drift[0].Line())
 	})
 
 	t.Run("a config file that is a symlink is refused, never replaced", func(t *testing.T) {

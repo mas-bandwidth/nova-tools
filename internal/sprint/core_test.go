@@ -32,10 +32,6 @@ func TestLifecycleIsTheSpecTable(t *testing.T) {
 
 func TestIdentitiesRoundTrip(t *testing.T) {
 	t.Parallel()
-	p, n, ok := ParseWorkCard(WorkCardID("s1-7", 3))
-	assert.True(t, ok, "work card: %s %d %v", p, n, ok)
-	assert.Equal(t, "s1-7", p, "work card: %s %d %v", p, n, ok)
-	assert.Equal(t, 3, n, "work card: %s %d %v", p, n, ok)
 	p, n, r, ok := ParseReadCard(ReadCardID("s1-7", 2, "reader-a"))
 	assert.True(t, ok, "read card: %s %d %s %v", p, n, r, ok)
 	assert.Equal(t, "s1-7", p, "read card: %s %d %s %v", p, n, r, ok)
