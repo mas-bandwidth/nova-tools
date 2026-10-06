@@ -23,6 +23,16 @@ import (
 // reading of the machine the test happens to run on.
 var foldStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
+// getenv is the environment seam every test can override. It defaults to os.Getenv.
+var getenv = os.Getenv
+
+// setgetenv overrides the getenv seam; callers must restore it when done.
+func setgetenv(fn func(string) string) func() {
+	old := getenv
+	getenv = fn
+	return func() { getenv = old }
+}
+
 type result struct {
 	exit   int
 	stdout string
