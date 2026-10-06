@@ -24,7 +24,7 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 	require.Equal(t, 1+1+len(friend.Fields), scopedN27, "%d tokens, want %d", scopedN27, 2+len(friend.Fields))
 	machine, _ := Lookup(KindMachine)
 	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0", "width": "32", "tla": "true"}}
-	scopedGot33, scopedWant33 := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0 width=32 tla=true note=-`
+	scopedGot33, scopedWant33 := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0 width=32 tla=true harnesses=- note=-`
 	require.Equal(t, scopedWant33, scopedGot33, "escaped line\n got %s\nwant %s", scopedGot33, scopedWant33)
 }
 
