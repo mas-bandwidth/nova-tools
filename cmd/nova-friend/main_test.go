@@ -520,7 +520,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 								return "", 0, err
 							}
 						}
-						return "ok\n", 0, nil
+						return `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0125,"session_id":"s1","result":"ok"}` + "\n", 0, nil
 					}
 				}
 				beats := 0
@@ -540,6 +540,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				assert.Equal(t, tc.want, walls[0], "the wall's --config-dir")
 				assert.Zero(t, plain, "no child of the lane ran outside the wall")
 				assert.Contains(t, out.String(), "card=done")
+				assert.Equal(t, 1, strings.Count(out.String(), "spend: harness=claude runs=1 cost_usd=0.0125"), "the beat after the run says its cost once, not on every beat\n%s", out.String())
 			})
 		})
 	}

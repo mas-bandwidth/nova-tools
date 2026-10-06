@@ -1295,6 +1295,17 @@ The same output is read by `Limits` under the run, so her row reads down
 until the reset. `TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit`,
 `TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap`.
 
+On the beat (fr-go-runners-b.w2): the lane harness is a `Spender`, and on
+each beat, up or down, the daemon says what its lanes have cost and the
+limit they last read, one record line when it changed since the last one
+said it (none before the first run): `spend: harness=claude runs=<n>
+cost_usd=<sum> five_hour=<f> seven_day=<f> five_hour_resets=<t>
+seven_day_resets=<t>`, and for an OpenCode friend `spend: harness=opencode
+runs=<n> cost_usd=<sum>`, with `limited_until=<t>` when the last run stopped
+at a usage limit. The line is the daemon's (its record and stdout); the
+sprint server's `friend beat` carries no cost field yet.
+`TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir` (cmd/nova-friend).
+
 The OpenCode lane is priced and stopped the same way
 (`internal/friend/adapter_opencode_lanes.go`). The daemon wraps an OpenCode
 friend in `OpenCodePriced`: after every lane run it reads opencode's own

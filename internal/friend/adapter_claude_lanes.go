@@ -60,6 +60,7 @@ type Claude struct {
 	Now       func() time.Time // time.Now when nil: the clock a limit's reset is read against
 
 	mu    sync.Mutex
+	runs  int     // the runs priced so far
 	cost  float64 // every run's cost so far, in US dollars
 	usage Usage   // the last usage a run measured
 }
