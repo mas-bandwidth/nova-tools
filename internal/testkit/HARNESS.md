@@ -49,10 +49,11 @@ Use `Head(repo)` to read the commit a clone's or the remote's HEAD names, for
 asserting where a push or commit left it; it fails the test on a repository
 with no commit.
 
-Use `testing/synctest` for time-dependent tests first. `Waits` is only for a
+Use `testing/synctest` for time-dependent tests first. Where code takes a clock,
+use `Clock` (`Now()` and `Advance()`), safe for concurrent use. `Waits` is only for a
 wait seam around code that must perform real I/O and cannot run in a synctest
 bubble; it records requested durations and lets the test hold or release that
-wait. Do not add a general-purpose fake clock to the kit.
+wait. Do not add another clock implementation.
 
 Keep package-level seam swaps and their cleanup explicit next to the test or
 domain fixture that needs them. A small adapter may bind a tool's injected
