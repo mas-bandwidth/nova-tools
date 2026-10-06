@@ -43,8 +43,8 @@ import (
 // the land root, a plain <home>/<name>-working directory); a path under none is REFUSED and
 // never removed, so a working directory linked from outside the AI root is never walked.
 // The AI root is GCReq.AIRoot when it is a directory, else the one the home's links name
-// (GCAIRoot): the Studio exports no NOVA_AI_ROOT and has no ~/ai, and its working
-// directories are links to /Volumes/nova/ai/<name>/working and .../buds/<name>/working. A clone (a directory holding .git)
+// (GCAIRoot): a machine that exports no NOVA_AI_ROOT and has no ~/ai keeps its working
+// directories as links to /Volumes/nova/ai/<name>/working and .../buds/<name>/working. A clone (a directory holding .git)
 // inside a removal with uncommitted work, a stash or commits on no remote (Dirty) keeps the
 // whole removal: KEPT with why. A dry run reads all of it and removes nothing.
 

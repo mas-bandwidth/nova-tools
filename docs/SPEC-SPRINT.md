@@ -1450,9 +1450,9 @@ and each plain `<home>/<name>-working` directory; one that is the disk, the home
 directory above the home is refused. The AI root is `--ai-root`, else `NOVA_AI_ROOT`, else
 `~/ai`; when that is no directory, it is the one the home's links name as the machinery lays
 them out (`sprint.GCAIRoot`): a link `<home>/<name>-working` resolving to
-`<root>/<name>/working` or `<root>/buds/<name>/working` names `<root>`. The Studio exports no
-`NOVA_AI_ROOT` and has no `~/ai`; its working directories are such links into
-`/Volumes/nova/ai`, which is its AI root. Links naming two roots name none (each is refused,
+`<root>/<name>/working` or `<root>/buds/<name>/working` names `<root>`. A machine that exports
+no `NOVA_AI_ROOT` and has no `~/ai`, with its working directories such links into
+`/Volumes/nova/ai`, has that as its AI root. Links naming two roots name none (each is refused,
 `why=` naming both), and a link to anything else stays refused. `--machine` carries
 `--ai-root` when given; without it the machine finds its own the same way. Every removal must resolve strictly under a known root and is
 `safepath.RemoveUnderRoots` under its class's own directory; a path under none is refused

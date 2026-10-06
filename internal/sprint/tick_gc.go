@@ -62,10 +62,10 @@ func GCDue(ms []GCMachine, now time.Time) []GCRun {
 // gcVolumeRE is the volume a gc's summary line says (GC OK|INCOMPLETE freed=<n> volume=<p>%).
 var gcVolumeRE = regexp.MustCompile(`(?m)^GC (?:OK|INCOMPLETE) freed=\d+ volume=(\d+)%`)
 
-// ParseGCVolume is the fullest use, in percent, that out says: a gc's summary line, else
+// GCVolumeIn is the fullest use, in percent, that out says: a gc's summary line, else
 // the Capacity column of df -P's lines (the probe GCProbeLine runs); ok is false when it
 // says none.
-func ParseGCVolume(out string) (use int, ok bool) {
+func GCVolumeIn(out string) (use int, ok bool) {
 	if m := gcVolumeRE.FindAllStringSubmatch(out, -1); len(m) > 0 {
 		n, err := strconv.Atoi(m[len(m)-1][1])
 		return n, err == nil

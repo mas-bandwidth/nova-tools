@@ -24,12 +24,12 @@ func TestTheTickRunsGcHourlyAndOnAFullVolume(t *testing.T) {
 
 func TestGcVolumeIsReadFromTheSummaryOrDf(t *testing.T) {
 	t.Parallel()
-	n, ok := ParseGCVolume("GC jobs count=1 bytes=2 kept=0 refused=0 failed=0\nGC OK freed=2 volume=83%\n")
+	n, ok := GCVolumeIn("GC jobs count=1 bytes=2 kept=0 refused=0 failed=0\nGC OK freed=2 volume=83%\n")
 	assert.True(t, ok)
 	assert.Equal(t, 83, n)
-	n, ok = ParseGCVolume("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100 61 39 61% /\n/dev/sdb1 100 91 9 91% /home\n")
+	n, ok = GCVolumeIn("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100 61 39 61% /\n/dev/sdb1 100 91 9 91% /home\n")
 	assert.True(t, ok)
 	assert.Equal(t, 91, n)
-	_, ok = ParseGCVolume("ssh: connect to host x: refused\n")
+	_, ok = GCVolumeIn("ssh: connect to host x: refused\n")
 	assert.False(t, ok)
 }

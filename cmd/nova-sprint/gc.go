@@ -281,7 +281,7 @@ func (a *app) gcLoop(ctx context.Context, stdout io.Writer) {
 					// ignored: a machine that does not answer keeps its last reading
 					_, _ = gcRemote(ctx, n, sprint.GCProbeLine, &out, io.Discard)
 				}
-				if v, ok := sprint.ParseGCVolume(out.String()); ok {
+				if v, ok := sprint.GCVolumeIn(out.String()); ok {
 					k.Volume = v
 				}
 			}
@@ -299,7 +299,7 @@ func (a *app) gcLoop(ctx context.Context, stdout io.Writer) {
 			}
 			k := known[run.Machine]
 			k.Last = a.now()
-			if v, ok := sprint.ParseGCVolume(out.String()); ok {
+			if v, ok := sprint.GCVolumeIn(out.String()); ok {
 				k.Volume = v
 			}
 			said := false
@@ -326,7 +326,7 @@ func gcDetail(l string) bool {
 	return false
 }
 
-// gcLocalVolume is this machine's fullest volume as a summary line ParseGCVolume reads.
+// gcLocalVolume is this machine's fullest volume as a summary line GCVolumeIn reads.
 func (a *app) gcLocalVolume() string {
 	home, ai := a.gcRoots("")
 	use := -1

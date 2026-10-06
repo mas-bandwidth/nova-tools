@@ -126,7 +126,7 @@ func TestGcMachineRunsTheVerbThroughTheFleetRunner(t *testing.T) {
 	assert.True(t, strings.HasSuffix(line, " gc --max-age '2d'"), line)
 }
 
-// The Studio exports no NOVA_AI_ROOT and has no ~/ai: the verb finds the AI root through
+// A machine that exports no NOVA_AI_ROOT and has no ~/ai: the verb finds the AI root through
 // the home's <name>-working links (to <ai-root>/<name>/working and
 // <ai-root>/buds/<name>/working) and reclaims the finished jobs there. --ai-root names it
 // outright and is carried to another machine.
