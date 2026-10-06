@@ -66,9 +66,18 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	dir := fs.String("dir", "", "the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)")
 	logf := fs.String("log", "", "the file the loop's lines go to, macOS (default: ~/Library/Logs/nova-sprint-seat-push.log); on Linux they are in the journal")
 	dry := fs.Bool("dry-run", false, "print the unit and where it would go, and write and load nothing")
+	harness := fs.String("harness", "", "the harness the seat's AI runs in (required): the push loop delivers each judgment, and the push proof, into the session through its adapter")
+	target := fs.String("target", "", "the session's directory, where the harness's adapter delivers (required)")
+	session := fs.String("session", "", "the session's id, for a harness that names one (default: the adapter's newest in --target)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
+	}
+	// the push target first: a loop that cannot reach the session is no push (pushproof.go)
+	// (a dry run with no --harness still prints the unit, and says the install wants one)
+	push := sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session}
+	if why := a.pushTargetRefusal(push); why != "" && (!*dry || push.Harness != "") {
+		return refuse(stderr, name, why+"; run: "+sprint.PushSetup(c.actor, push, push.Harness != ""))
 	}
 	goos := a.seatOS()
 	u := sprint.SeatUnit{OS: goos, Log: *logf}
@@ -108,7 +117,13 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		fmt.Fprintf(stdout, "SEAT INSTALL DRY-RUN unit=%s; nothing was written or loaded\n%s", oneline.Field(path), text)
+		if push.Harness == "" {
+			fmt.Fprintf(stdout, "NOTE the install wants the seat's push target: %s\n", sprint.PushSetup(c.actor, push, false))
+		}
 		return 0
+	}
+	if code := a.recordPushTarget(fs, *c, push, stdout, stderr); code != 0 {
+		return code
 	}
 	r, err := a.seatInstaller(goos, *dir).Install(u)
 	if err != nil {
@@ -122,6 +137,36 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "SEAT INSTALL OK unit=%s written=%t loaded=true\n", oneline.Field(r.Path), r.Changed)
 	fmt.Fprintf(stdout, "  runs: %s\n", strings.Join(u.Args(), " "))
+	fmt.Fprintf(stdout, "  push: %s into %s; the seat is live once the session answers the push check with nova-sprint seat pong (seat push shows it)\n", oneline.Field(push.Harness), oneline.Field(push.Target))
+	return 0
+}
+
+// recordPushTarget writes the push record seat install was given, on the sprint's
+// server when there is one, else on the store: the push loop reads it to reach
+// the session.
+func (a *app) recordPushTarget(fs flagSet, c common, push sprint.PushRecord, stdout, stderr io.Writer) int {
+	const name = "seat install"
+	words := []string{"push", "--actor", push.Name, "--harness", push.Harness, "--target", push.Target}
+	if push.Session != "" {
+		words = append(words, "--session", push.Session)
+	}
+	if srv := a.server(fs); srv != "" {
+		res, err := a.ask(context.Background(), srv, []string{"seat"}, words)
+		if err != nil {
+			return a.unanswered(name, srv, err, stderr)
+		}
+		if res.Code == 2 {
+			return refuse(stderr, name, "the server refused the push record: "+strings.TrimSpace(res.Stderr))
+		}
+		return 0
+	}
+	st, err := a.store(c)
+	if err != nil {
+		return refuse(stderr, name, err.Error()+"; nothing was written")
+	}
+	if err := writePush(context.Background(), st, push); err != nil {
+		return a.readFailed(name, err, stderr)
+	}
 	return 0
 }
 

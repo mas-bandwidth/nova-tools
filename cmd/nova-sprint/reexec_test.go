@@ -47,6 +47,8 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	// a test arms the push proof for the names it registers (pushproof.go)
+	pushArmedDefault = false
 	start := testbin.Enter(reexecTool, func(_ []string, getenv func(string) string) bool {
 		return getenv(reexecCLIEnv) == "1"
 	})
