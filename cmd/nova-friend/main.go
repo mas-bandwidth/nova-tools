@@ -67,6 +67,7 @@ type world struct {
 	exec      friend.Exec
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) error      // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
 	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
@@ -134,6 +135,24 @@ func sprintAsk(ctx context.Context, server string, argv []string) (string, error
 	return res[0].Stdout, nil
 }
 
+// sprintBeat sends one friend beat to the sprint server and answers its FRIEND-BEAT line,
+// or its refusal as an error.
+func sprintBeat(ctx context.Context, server string, argv []string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
+	if err != nil {
+		return "", err
+	}
+	if len(res) != 1 {
+		return "", fmt.Errorf("friend beat: the server answered %d results, want 1", len(res))
+	}
+	if res[0].Code != 0 {
+		return "", fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
+	}
+	return res[0].Stdout, nil
+}
+
 // maxView bounds the worker view the daemon reads: her cards and her results not landed.
 const maxView = 4 << 20
 
@@ -181,8 +200,6 @@ func realWorld() world {
 			return string(out), err
 		},
 		beat: func(ctx context.Context, server, name string, active, pong time.Time) (string, error) {
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
 			args := []string{"friend", "beat", name}
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
@@ -190,17 +207,15 @@ func realWorld() world {
 			if !pong.IsZero() {
 				args = append(args, "--pong", pong.UTC().Format(time.RFC3339))
 			}
-			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
-			if err != nil {
-				return "", err
+			return sprintBeat(ctx, server, args)
+		},
+		beatDown: func(ctx context.Context, server, name string, active, until time.Time, reason string) error {
+			args := []string{"friend", "beat", name, "--until", until.UTC().Format(time.RFC3339), "--reason", reason}
+			if !active.IsZero() {
+				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
-			if len(res) != 1 {
-				return "", fmt.Errorf("friend beat: the server answered %d results, want 1", len(res))
-			}
-			if res[0].Code != 0 {
-				return "", fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
-			}
-			return res[0].Stdout, nil
+			_, err := sprintBeat(ctx, server, args)
+			return err
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
@@ -367,7 +382,8 @@ stays pending, status says session=broken, and the seat (else --coordinator) is 
 bus; a restart clears it. A turn whose harness says it is out of credits or at a usage limit (a Claude
 Code rate_limit_event rejected, "Insufficient AI Credits ... will refresh 6:52 PM", "usage limit ...
 try again at") makes the friend down until the reset: the presence file says down with the limit,
-no beat goes to the sprint server (her row reads down), nothing is delivered, and the seat (else
+her beat says down with the reset and the reason (nova-sprint friend beat --until --reason; her row reads
+down), nothing is delivered, and the seat (else
 --coordinator) is told once with the line that shows it on her row (nova-sprint friend down <me>
 --reason <its words> --until <the reset>); after the reset a wake turn must be answered with its
 nonce from inside the session before she beats again, and the seat is told she is back. Each harness's own
@@ -991,7 +1007,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if perCard {
 				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
 			}
-			return held(fl.Beat(func(ctx context.Context) error {
+			up := func(ctx context.Context) error {
 				var pong time.Time
 				if at := proved.Load(); at != nil {
 					pong = *at
@@ -1012,7 +1028,23 @@ func (w world) run(c *tool.Call) *tool.Out {
 					rowProfile.Store(&p)
 				}
 				return err
-			}))(ctx)
+			}
+			if w.beatDown == nil {
+				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
+			}
+			// while her harness is at its limit her beat says down with the until and the
+			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before; the
+			// inner check is the last before the up beat, so a limit seen during the step is
+			// never beaten up
+			down := func(ctx context.Context, until time.Time, reason string) error {
+				return w.beatDown(ctx, server, name, active, until, reason)
+			}
+			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), func(ctx context.Context, until time.Time, reason string) error {
+				if !perCard {
+					sc.Step(ctx)
+				}
+				return down(ctx, until, reason)
+			})(ctx)
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {

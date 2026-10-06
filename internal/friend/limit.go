@@ -348,12 +348,33 @@ func (l *Limits) Beat(beat func(ctx context.Context) error) func(ctx context.Con
 	}
 }
 
+// BeatOrDown is beat while the harness answers, and down while it is at its limit
+// (limits-mean-down-w-r5.w1~15): her beat says down with the until and the reason
+// (nova-sprint friend beat --until --reason), so her row reads down and why rather
+// than going silent, until a wake after the reset is answered. A nil down holds the
+// beat back as Beat does; a down the sprint server refuses is an error, and her row
+// reads down by the lapse as before.
+func (l *Limits) BeatOrDown(beat func(ctx context.Context) error, down func(ctx context.Context, until time.Time, reason string) error) func(ctx context.Context) error {
+	if down == nil {
+		return l.Beat(beat)
+	}
+	return func(ctx context.Context) error {
+		if until, reason, limited := l.Limited(); limited {
+			if err := down(ctx, until, "harness limit: "+reason); err != nil {
+				return fmt.Errorf("beating down until %s: %w", until.UTC().Format(time.RFC3339), err)
+			}
+			return nil
+		}
+		return beat(ctx)
+	}
+}
+
 // LimitDownText is what the seat is told when friend's harness hits its
 // limit: the subject, and a body with the line that shows why and until when
 // on her row (nova-sprint friend down --reason --until).
 func LimitDownText(friend string, until time.Time, reason string) (subject, body string) {
 	subject = fmt.Sprintf("friend %s down: her harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
-	body = fmt.Sprintf("%s: %s\nHer daemon has stopped beating and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
+	body = fmt.Sprintf("%s: %s\nHer daemon beats down with that reset and reason and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
 		subject, reason, friend, shellQuote("harness limit: "+reason), until.UTC().Format(time.RFC3339))
 	return subject, body
 }

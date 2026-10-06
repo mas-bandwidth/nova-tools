@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -142,6 +143,21 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		}
 		r.d.Deliver = l.Gate(&OpenCode{Dir: "/w/bob", Session: "s1", Run: l.Watch(h.run)})
 		r.d.Limited = func() (string, time.Time, bool) { until, _, limited := l.Limited(); return l.Kind(), until, limited }
+		// her beat as the sprint server would take it: up, or down with the until and the
+		// reason while limited (limits-mean-down-w-r5.w1~15); the rig's own beat is its step
+		var beats []string
+		step := r.d.Beat
+		r.d.Beat = func(ctx context.Context, active time.Time) error {
+			err := step(ctx, active)
+			say := func(b string) { r.mu.Lock(); beats = append(beats, b); r.mu.Unlock() }
+			if e := l.BeatOrDown(func(context.Context) error { say("up"); return nil }, func(_ context.Context, until time.Time, reason string) error {
+				say("down until=" + until.UTC().Format(time.RFC3339) + " reason=" + reason)
+				return nil
+			})(ctx); e != nil {
+				return e
+			}
+			return err
+		}
 		r.passive = true
 		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
 		hello := r.send(t, "ada", "hello", "run the card")
@@ -177,6 +193,12 @@ func TestUsageLimitMarksDownUntilReset(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, pending, "acked after the wake")
 		assert.Empty(t, fresh)
+
+		r.mu.Lock()
+		sent := slices.Compact(slices.Clone(beats))
+		r.mu.Unlock()
+		assert.Equal(t, []string{"up", "down until=2026-10-04T03:03:00Z reason=harness limit: ERROR: You've hit your usage limit. Try again at 3:03 AM.", "up"}, sent,
+			"the beat says up, then down with the until and the reason while limited, then up after the wake")
 
 		assert.Equal(t, []string{reset.UTC().Format(time.RFC3339)}, downs, "the coordinator is told once of the limit")
 		assert.Equal(t, []string{"up"}, ups, "and once of the wake")
