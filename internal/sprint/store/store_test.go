@@ -164,7 +164,7 @@ func (h *harness) readAllOK(id string) {
 		s := h.snap()
 		for _, rc := range s.Readers.Of(id) {
 			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				h.must(ReadStep(sprint.ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+				h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 			}
 		}
 		s = h.snap()

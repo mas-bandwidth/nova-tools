@@ -588,10 +588,10 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	h.machine()
 	first := h.snap().Readers.Of("s1-1")
 	require.Len(t, first, 1, "attempt 1 asked its first read")
-	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
 	h.machine() // the second read, the first ok
 	second := h.askedRead("s1-1")
-	h.must(ReadStep(sprint.ReadReq{As: second.Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{second.ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: second.Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{second.ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	h.finishAttempt("s1-1", false, pushedB)
 	pr := h.snap().Work.Card("s1-1")
@@ -600,7 +600,7 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	h.machine()
 	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
 	require.Len(t, reads, 1, "attempt 2 asked its first read by the machine's ask")
-	h.must(ReadStep(sprint.ReadReq{As: reads[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{reads[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reads[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{reads[0].ID}}}))
 	h.machine() // and the second, the first ok
 	reads = readsAt(h.snap(), h.snap().Work.Card("s1-1"))
 	require.Len(t, reads, 2, "attempt 2 asked of two readers, one at a time")

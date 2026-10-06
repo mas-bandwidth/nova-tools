@@ -41,7 +41,7 @@ func TestACriticalRootIsDealtReadAndJudgedFirst(t *testing.T) {
 	h.machine()
 	rc := h.snap().Readers.Of("root")
 	require.NotEmpty(t, rc)
-	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	v, err := h.st.Inbox(h.ctx, sprint.DeadlineJudgment, 0, 1000)
 	require.NoError(t, err)
 	var types []string

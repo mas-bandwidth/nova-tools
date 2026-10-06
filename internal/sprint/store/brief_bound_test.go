@@ -28,7 +28,7 @@ func (h *harness) readBrokenAt(id, finding string) {
 		if i == len(rc)-1 {
 			verdict, f = "broken", finding
 		}
-		h.must(ReadStep(sprint.ReadReq{As: c.Row, Verdict: verdict, Finding: f, Sel: sprint.Sel{IDs: []string{c.ID}}}))
+		h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: c.Row, Verdict: verdict, Finding: f, Sel: sprint.Sel{IDs: []string{c.ID}}}))
 	}
 }
 
