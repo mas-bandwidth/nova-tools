@@ -243,14 +243,25 @@ func refuseWith(stderr io.Writer, where, what, remedy string) int {
 	return 2
 }
 
+// verbHelp is the lines run adds to a verb's -h: its effect, and for verbs that
+// need extra context (eval's gold file format), that context.
+func verbHelp(verb string) string {
+	extra := ""
+	switch verb {
+	case "eval":
+		extra = "gold file format: query<TAB>expected[,expected]\n" +
+			"  how often should the lantern glazing be washed\tnotes/lantern.md\n" +
+			"  washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md\n"
+	}
+	return extra + "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
-	defer verbflag.RecoverWith(stdout, "nova-memory", usage, &code, func(string) string {
-		return "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
-	})
+	defer verbflag.RecoverWith(stdout, "nova-memory", usage, &code, verbHelp)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+", and quickstart is the first run")
 	}
