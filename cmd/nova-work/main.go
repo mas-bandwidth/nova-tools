@@ -163,6 +163,41 @@ An issue in :issues is (issue <number> :url "..." ...) with every one of these
 keys, in any order: url node-id title state state-reason origin author
 author-association created updated closed locked lock-reason labels assignees
 milestone body comments references linked-prs. import writes them all.
+
+Each key's value shape:
+
+  :source               string
+  :org                  string
+  :fetched              string
+  :url                  string
+  :node-id              string
+  :title                string
+  :author               string
+  :created              string
+  :updated              string
+  :closed               string
+  :body                 string
+  :kind                 string
+  :repo                 string
+  :actor                string
+  :at                   string
+  :state                keyword
+  :state-reason         keyword or ()
+  :origin               :internal or :external
+  :author-association   keyword or ()
+  :lock-reason          keyword or ()
+  :archived             true or false
+  :locked               true or false
+  :will-close           true or false
+  :labels               list of strings
+  :assignees            list of strings
+  :repos                list of repo
+  :issues               list of issue
+  :comments             list of comment
+  :references           list of ref
+  :linked-prs           list of pr
+  :milestone            () or (:number <positive integer> :title <string>)
+  :number               positive integer, or 0 when a reference has no source
 `
 
 // minimalTree is the smallest tree the reader accepts, as verify -h prints
