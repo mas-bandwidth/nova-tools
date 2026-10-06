@@ -48,7 +48,7 @@ type DaemonFacts struct {
 type HarnessFacts struct {
 	Friend         string `json:"friend"`
 	Harness        string `json:"harness"`
-	Route          string `json:"route"` // push, defer, passive
+	Route          string `json:"route"` // push or passive
 	Last           string `json:"last"`  // RFC3339 or "-"
 	LastExit       string `json:"last_exit"`
 	FailedOfLast20 int    `json:"failed_of_last20"`

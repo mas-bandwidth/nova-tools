@@ -72,7 +72,7 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 		}
 	}
 	var ups []time.Time
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		mu.Lock()
 		ups = append(ups, clock)
 		mu.Unlock()
@@ -83,7 +83,7 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 		reason    string
 	}
 	var downs []downBeat
-	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) error {
+	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string, _ friend.BeatWords) error {
 		mu.Lock()
 		downs = append(downs, downBeat{clock, until, reason})
 		mu.Unlock()

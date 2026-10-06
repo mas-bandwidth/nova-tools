@@ -422,7 +422,9 @@ var friendBeatFlags = map[string]func(string) bool{
 		return err == nil && f >= 0
 	},
 	"--active": rfc3339,
-	"--pong":   rfc3339,
+	"--pong":   oneLineText, // any word: the server's proof step says a beat with no proof
+	"--check":  sprint.ValidID,
+	"--run":    sprint.ValidID,
 	"--until":  rfc3339,
 	"--reason": oneLineText,
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,10 +53,13 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+			beats++
+			return "", nil
+		}
 		remedy := "run: start a session in /w/bob with no agent preset and name it with --session <id>"
 		var downs []string
-		w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string) error {
+		w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string, _ friend.BeatWords) error {
 			downs = append(downs, reason)
 			return nil
 		}
@@ -90,9 +94,12 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+			beats++
+			return "", nil
+		}
 		var downs []string
-		w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string) error {
+		w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string, _ friend.BeatWords) error {
 			downs = append(downs, reason)
 			return nil
 		}
@@ -116,19 +123,68 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			return ctx, cancel
 		}
-		var pongs []time.Time
-		w.beat = func(_ context.Context, _, _ string, _, pong time.Time) (string, error) {
-			if pongs = append(pongs, pong); len(pongs) == 3 {
+		var said []friend.BeatWords
+		w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, _ string, words friend.BeatWords) error {
+			said = append(said, words)
+			return nil
+		}
+		ups := 0
+		w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+			said = append(said, words)
+			if ups++; ups == 3 {
 				cancel()
 			}
-			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
+			answer := "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1"
+			if words.Pong != "" {
+				answer += " proved=" + words.Pong
+			}
+			return answer, nil
 		}
 		var out, errb strings.Builder
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		assert.Contains(t, out.String(), "push proof: proved: the session answered")
-		require.Len(t, pongs, 3)
-		assert.False(t, pongs[2].IsZero(), "the beat carries the session's last proof")
-		assert.False(t, pongs[2].After(r.now), "a proof is never in the future")
+		var checks, pongs []string
+		for _, w := range said {
+			if w.Check != "" {
+				checks = append(checks, w.Check)
+				assert.NotEmpty(t, w.Run, "a check is said with the daemon's run")
+			}
+			if w.Pong != "" {
+				pongs = append(pongs, w.Pong)
+				assert.NotEmpty(t, w.Run, "an answer is said with the daemon's run")
+			}
+		}
+		assert.Equal(t, []string{"r4nd0m"}, checks, "the check her daemon asked is said once")
+		assert.Equal(t, []string{"r4nd0m"}, pongs, "her session's answer names it, once")
 	})
+}
+
+// A per-card harness (claude: each card a process of its own) has no session for its
+// daemon to check, so its beat never proves her: no check and no answer on any beat,
+// whatever the daemon does (the owner, 2026-10-05: "there is no value in things that
+// are answered just by the daemon"); a card of hers finished stays her evidence.
+func TestAPerCardHarnessNeverProvesByTheDaemonAlone(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	var said []friend.BeatWords
+	w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+		if said = append(said, words); len(said) == 5 {
+			cancel()
+		}
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	require.Equal(t, 0, code, errb.String())
+	require.Len(t, said, 5, "the daemon beats")
+	for _, words := range said {
+		assert.Equal(t, friend.BeatWords{}, words, "no proof word on a per-card harness's beat")
+	}
 }

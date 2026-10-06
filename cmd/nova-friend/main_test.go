@@ -379,7 +379,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -421,7 +421,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 				return ctx, cancel
 			}
 			beats := 0
-			w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+			w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 				beats++
 				if beats == 3 {
 					cancel()
@@ -454,7 +454,7 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -524,7 +524,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 					}
 				}
 				beats := 0
-				w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+				w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 					beats++
 					if beats == 12 {
 						cancel()
@@ -570,7 +570,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -766,7 +766,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()
@@ -834,15 +834,17 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 		}
 		return "", 0, nil
 	}
-	var proofs []time.Time
-	w.beat = func(_ context.Context, _, _ string, _, pong time.Time) (string, error) {
+	var proofs []string
+	w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
 		mu.Lock()
-		proofs = append(proofs, pong)
+		if words.Pong != "" {
+			proofs = append(proofs, words.Pong)
+		}
 		mu.Unlock()
 		return "", nil
 	}
 	var downs []string
-	w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string) error {
+	w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string, _ friend.BeatWords) error {
 		mu.Lock()
 		downs = append(downs, reason)
 		mu.Unlock()
@@ -856,10 +858,7 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 	assert.Contains(t, out.String(), "push proof: proved: the session answered")
 	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
 	mu.Lock()
-	require.NotEmpty(t, proofs, "up beats while the session answered")
-	for _, p := range proofs {
-		assert.False(t, p.IsZero(), "every up beat carries the session's proof")
-	}
+	assert.Equal(t, []string{"pr00f1"}, proofs, "her up beat names the check her session answered, once; the unanswered one never")
 	require.NotEmpty(t, downs)
 	assert.Contains(t, downs[0], "push unproven: session check pr00f1", "down until the first answer")
 	assert.Contains(t, downs[len(downs)-1], "no session answer to session check r4nd0m within 5m0s", "down with the check's nonce once it stops answering")
@@ -905,7 +904,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		}
 	}
 	var beats []time.Time
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
@@ -916,7 +915,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		reason    string
 	}
 	var downBeats []downBeat
-	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) error {
+	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string, _ friend.BeatWords) error {
 		mu.Lock()
 		downBeats = append(downBeats, downBeat{clock, until, reason})
 		mu.Unlock()
@@ -1036,7 +1035,10 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		beats++
+		return "", nil
+	}
 	stopAfter(&w, &cancel, 5*time.Minute)
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -1071,7 +1073,7 @@ func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			return ctx, cancel
 		}
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) { return "", nil }
 		stopAfter(&w, &cancel, 3*time.Minute)
 		var out, errb strings.Builder
 		code := run(append([]string{"run", "--as", "bob", "--harness", "opencode", "--coordinator", "ada"}, args...), strings.NewReader(""), &out, &errb, w)
@@ -1139,7 +1141,7 @@ func TestADaemonWhosePlistChangedSaysSoOnStart(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			return ctx, cancel
 		}
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) { return "", nil }
 		stopAfter(&w, &cancel, time.Minute)
 		var out, errb strings.Builder
 		require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, w), errb.String())

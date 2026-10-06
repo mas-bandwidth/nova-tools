@@ -172,16 +172,33 @@ Presence is therefore the session's, never the daemon's:
   the harness check reads it by its own turns, never by an app (The harness
   check, below).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
-  once: coming up proves nothing about the session. Until the session answers
+  once: coming up proves nothing about the session. A check the session has not
+  read is never asked again before `ReaskAfter` (an hour): a queueing harness
+  (codex's queue, a tmux prompt) keeps every copy, so a closed night would pile
+  them up. A check is read when the adapter's delivery returns only once the
+  session took it (`ReadOnReturn`: a headless turn that ran, dsh, gemini,
+  opencode run; antigravity's read.json marking it read); a read check
+  unanswered is asked again on the cadence (`SessionQuiet` while down). With
+  one unanswered while the session spoke, silence for `SessionQuiet` plus
+  `SessionBound` is down all the same. Until the session answers
   a check (or writes on the bus) the push is unproven and the daemon delivers
   nothing into the session (The push proof, below).
-- The daemon is the one that proves its session to the sprint server: every up
-  beat carries the session's last proof, `friend beat --pong <t>`
-  (`SessionCheck.Proved`, the presence file's `last_heard`), so the beat the
-  second after an answer carries it, and the server reads it as her session's
-  evidence ("Presence is her session's evidence" below); the status file's
-  `proof_sent` is the last proof the server took, and `check` prints it
-  (`proof=sent proof_age=`). While down, her beat says so:
+- The daemon is the one that proves its session to the sprint server, by
+  nonces only: the beat after a check goes in says it, `friend beat --check
+  <nonce> --run <run>`, and the beat after the session answers it names it,
+  `--pong <nonce> --run <run>` (`SessionCheck.Words`, said once each, `Said`
+  once the server took the beat; `--run` is this daemon's run, its
+  generation). The server counts the answer only when it names a check that
+  run asked, once, within fifteen minutes of the ask, and only while her beats
+  go on ("Presence is her session's evidence" below); a bus message from the
+  session keeps the daemon's presence up and proves nothing to the server. So
+  while she is up a check goes in `ProveEvery` (eight minutes) after the last
+  check or answer, whatever she says on the bus, and the server's ten-minute
+  window never lapses while she answers within two. A per-card harness (claude:
+  a process per card) has no session for its daemon to check: its beat says no
+  check and no answer, ever, and her evidence is a card of hers finished. The
+  status file's `proof_sent` is when the server last took an answer as proof,
+  and `check` prints it (`proof=sent proof_age=`). While down, her beat says so:
   `friend beat --until <t> --reason <why>` (`SessionCheck.BeatOr`), the until
   the open check's bound or the next check's, the reason `push unproven:
   session check <nonce> ...` before the first answer and `no session answer to
@@ -190,11 +207,13 @@ Presence is therefore the session's, never the daemon's:
   row's mode and width arrive with an up beat's answer, so while down the
   daemon delivers by the row it last read (batch at `--width` before any).
 - On a headless harness (dsh, gemini: each turn a one-shot process into the
-  session) the check goes in as a turn of its own as soon as the adapter's own
-  turn record (`TurnRecord`: a turn begun and not ended) says no turn runs. The
+  session) the check goes in as a turn of its own as soon as no turn runs. A
+  turn runs from the moment it comes to the gate (`SessionCheck.Gate`), before
+  any wait under it (the limit gate's), to its end, and while the adapter's own
+  turn record (`TurnRecord`: a process begun and not ended) says one runs; the
   turn lock is a second word, never the judge: held for `StaleTurnLock` (one
-  minute) while the record says no turn runs, it is no turn, and the check goes
-  in by the record (`presence: session check <nonce> into the session, owed
+  minute) with nothing at the gate and the record saying no turn runs, it is no
+  turn, and the check goes in by the record (`presence: session check <nonce> into the session, owed
   since <t> as a turn of its own ...`). The log says when the check went in and
   when it was answered (`presence: up: the session answered <nonce>`). A check
   owed one check period (`SessionQuiet`) that has not gone in, on any harness, is
@@ -248,6 +267,15 @@ seen holds the beat back and no check goes in); a card taken back is dealt
 to another friend, assuming disruptions are finite, every recovery comes
 (the app reopens, the session answers again, the limit resets, the hold is
 released) and the checks keep going in.
+
+The proof (the cold reader's hold of 2026-10-06): the server counts an answer
+only to a check her daemon's run asked (`asked`), once, while her daemon beats
+(`beats`); a daemon that starts again has its push unproven and delivers
+nothing until its session answers (`pushProven`, `delivered`). The rules
+`UpOnAnAskedAnswer` (a row is up only on an answered check it asked while her
+beats go on) and `DeliveredOnlyProven`, each with reversed witnesses
+(`forged`, `replay`, `deadproof`, `unproven`). Owed: TLC on a Linux bench; the
+group `friendpresence` is stale in `tla/RUNS.tsv` until it runs there.
 
 "A friend shown up has a running harness", read at every state, cannot hold:
 the table cannot see the app close, only the answers stop, so for up to the
@@ -532,7 +560,7 @@ beats sent: plain, then down with the reset and the reason, then plain again; `T
 The sprint server's beat lane takes the down beat: `friendBeatFlags`
 (`cmd/nova-sprint/serve.go`) names `--until` (an RFC3339 time) and `--reason` (not
 empty, one line, no control character) beside `--running --working --queue --width
---load --active --pong`, each once with its value; any other shape is refused, exit 2,
+--load --active --pong --check --run`, each once with its value; any other shape is refused, exit 2,
 nothing changed (`TestTheServerTakesAFriendsDownBeat`). Before this (r7.w1) the lane
 refused the down beat and her row read down only by the lapse.
 The table's status cell shows reason and until for a hold and an observation only
@@ -910,12 +938,18 @@ own session, within its window:
   (session-pong.w1), her session runs it, and the coordinator writes what it
   saw as `friend health <friend> --state up --seen <t>`, fenced by the seat's
   generation; or
-- her session's own answer her daemon proves on her beat under
-  `FriendProofLive` (fifteen minutes) old: `friend beat --pong <t>`, the time
-  her session answered her daemon's SESSION CHECK nonce or wrote on the bus
-  (Presence, above; `Beat.Proof`), carried on every up beat, so a session
-  that answers is never proved longer ago than `SessionQuiet` plus
-  `SessionBound`; or
+- her session's answer to a check her daemon asked, under `FriendPongWindow`
+  (ten minutes, the wake ping's own window) old while her beat is fresh
+  (`BeatDeadline`): her daemon's beat says `--check <nonce> --run <run>` when it
+  asks and `--pong <nonce> --run <run>` when her session answers, and the
+  server (`sprint.ProveBeat`) keeps the checks asked on her beat record and
+  takes an answer as proof only when it names a check that run asked, once,
+  within `CheckAnswerWithin` (fifteen minutes) of the ask; the proof is the
+  server's time of that answer (`Beat.Proof`). A bare time, a nonce never
+  asked, another run's, one answered already or one asked too long ago is a
+  beat with no proof, said on the beat's line (`no_proof=`) and never
+  evidence; when her beats stop, her proof stops with them
+  (`TestAForgedPongNeverProvesAFriend`); or
 - a card of hers finished (working to done, ok or failed) under
   `FriendFinishWindow` (thirty minutes) old: friend sync's collect of the
   `REPORT.md` her session wrote records it (`friend-finish:<friend>`,
@@ -976,8 +1010,10 @@ log line:
   `check` says `proof=pending proof_age=<age>`. Unanswered within the bound,
   one line names the nonce: `push proof: unproven: session check <nonce> went
   into the session at <t> and has no answer within 5m0s; ...`. The check is
-  asked again on the check cadence (`SessionQuiet`) with the same nonce, never
-  a new one per try, and a check the last run queued and never saw answered
+  asked again with the same nonce, never a new one per try: on the check
+  cadence (`SessionQuiet`) once the session has read the last, else after
+  `ReaskAfter` (an hour), so a session in a long turn holds one copy, not one
+  every ten minutes; and a check the last run queued and never saw answered
   (the presence file's `nonce`) keeps its nonce across a restart
   (`SessionCheck.Keep`), so the session's late answer to the check already
   queued in it proves the push. Once the session answers, `push proof:
@@ -993,15 +1029,13 @@ log line:
   adapter cannot drive is refused (exit 2, the remedy above) and the agent is
   booted out and its plist removed, since it could never be proved; any other
   failure is a NOTE, and the daemon goes on waiting for its proof.
-- Every up beat carries the session's last proof, `friend beat --pong
-  <RFC3339>`: the presence file's `last_heard`, the session's last answer or its
-  own bus message. The sprint reads it as the beat's `Proof` (the friend beat
-  record's `pong`), and it is her session's evidence while it is under
-  `FriendProofLive` (fifteen minutes: the daemon asks after `SessionQuiet` and
-  waits `SessionBound`), the one evidence her daemon gives ("Presence is her
-  session's evidence" below); the beat without it is none. The coordinator's
-  pass raises one `friend deaf` judgment when the proof is older than that
-  (internal/sprint/coordinator_pass.go).
+- Her beats say the checks her daemon asks and the ones her session answers
+  (`--check`, `--pong`, `--run`, Presence above); the server keeps the proof
+  (the friend beat record's `pong`, the server's time of the last answer to a
+  check asked, `Beat.Proof`), her session's evidence for `FriendPongWindow`
+  while her beats go on ("Presence is her session's evidence" below). The
+  coordinator's pass raises one `friend deaf` judgment when the proof is older
+  than `FriendProofLive` (internal/sprint/coordinator_pass.go).
 
 The proof is the presence model's Ask then Answer within the bound
 (tla/FriendPresence.tla); `install` alone asks it before anything runs, and
@@ -1387,7 +1421,7 @@ and the daemon's wiring in
 
 Not here, owed: (1) cost and utilization on her beat and row: the sprint
 server's `friend beat` accepts only `--running --working --queue --width
---load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+--load --active --pong --check --run --until --reason` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
 refuses any other flag, so a cost or a utilization flag sent from here would
 fail every beat; until the server takes them they are on the daemon's record
 only. (2) No live `claude` or `opencode` run checks these shapes: the tests use
@@ -1970,7 +2004,8 @@ the log file, the bus store, the directory listing) so the verdict is a function
 1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
    (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
    and its seen age.
-2. Harness: the route (`push`, `defer`, `passive`) and, from the daemon's log, the deliveries (`exit=`
+2. Harness: the route (`push`, or `passive` for a harness nothing pushes into; dsh is `push`, each
+   delivery a headless turn) and, from the daemon's log, the deliveries (`exit=`
    lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
    window. `last` and `last_exit` are the newest delivery in the window, `failed_of_last20` the failures
    among the newest twenty in the window. `delivered` and `failed` (JSON only) are the window's whole
@@ -2281,10 +2316,11 @@ exits 1 immediately with `dsh: session "session-e9b0dc0e-b03d-4516-b40e-6a0287ca
 before any write; transcript `session.v4.jsonl.zstd` hash and timestamp are
 unchanged, `deliver.log` records 1339+ consecutive deferred attempts with this
 exact refusal, and DeepSeek Harness exposes no local listening socket or IPC
-into the open session. No push route into the open desktop session exists, so the
-route is defer: `DSH.Route` answers `defer` with the line the session runs
-(`nova-bus wait --as <friend>`), and each refused delivery is a deliver-log
-`deferred=` line. `nova-friend status` prints route only for grok, so presence
+into the open session. No route reaches the open desktop app, and none is
+needed: every delivery goes into her session as a headless turn, so the route is
+push: `DSH.Route` answers `push` with that turn's command (`dsh headless
+--session-id <id> -`), and `check` says `route=push`; a refused delivery is a
+deliver-log `deferred=` line. `nova-friend status` prints route only for grok, so presence
 carries no route for dsh until that wiring (cmd/nova-friend, outside this card's
 paths) lands.
 A session that has selected an agent preset is refused by the one-shot runner

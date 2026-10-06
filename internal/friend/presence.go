@@ -25,6 +25,15 @@ import (
 const (
 	SessionQuiet = 10 * time.Minute
 	SessionBound = 5 * time.Minute
+	// ProveEvery is how long after the last check went in the next goes in while the
+	// session is up, whatever else it says on the bus: the sprint server counts only an
+	// answered check, for its ten-minute window (sprint.FriendPongWindow), so a session
+	// that answers within two minutes is never out of it.
+	ProveEvery = 8 * time.Minute
+	// ReaskAfter is how long an unanswered check waits before it is asked again when the
+	// session has not read it: a queueing harness keeps every copy, so a check is asked
+	// again early only once the session has read the last (Presence.Read).
+	ReaskAfter = time.Hour
 
 	NoSessionAnswer = "no session answer"
 	NotYetAnswered  = "no session answer yet" // the daemon started; nothing has answered
@@ -53,10 +62,15 @@ type Presence struct {
 	LastHeard time.Time // the session's last bus message, or its last answer, while up
 	Nonce     string    // the latest check's nonce, until the session answers it
 	Asked     time.Time // when the latest check went in
+	Answered  time.Time // when the session last answered a check
 	Open      bool      // the latest check is unanswered and within the bound
 	Owed      bool      // a check is due and has not gone in
 	Checks    int
 	Answers   int
+	// Read is the latest check read by the session: its headless turn ended, or the
+	// adapter saw the session take it (ReadOnReturn). Until then it is asked again only
+	// after ReaskAfter, so a session that queues checks never holds a pile of them.
+	Read bool
 	// Proven is the push proved this run: the session answered a check or wrote on
 	// the bus since the daemon started. Until then the daemon delivers nothing
 	// (docs/SPEC-FRIEND.md, The push proof); once proved it stays proved for the run.
@@ -70,19 +84,19 @@ func StartPresence() *Presence {
 }
 
 // Heard is a bus message the session wrote, at now: the session is alive, so
-// the friend is up and the quiet clock starts again (rose: it was down). A
-// check still open is settled by it: the session spoke. The daemon's own
-// messages never reach here (SessionCheck.read).
+// the friend is up (rose: it was down). A check still open stays open, its
+// answer still owed: only an answered check proves her session to the sprint
+// server. The daemon's own messages never reach here (SessionCheck.read).
 func (p *Presence) Heard(now time.Time) (rose bool) {
 	rose = !p.Up
-	p.Up, p.Reason, p.LastHeard, p.Nonce, p.Open, p.Owed, p.Proven = true, "", now, "", false, false, true
+	p.Up, p.Reason, p.LastHeard, p.Proven = true, "", now, true
 	return rose
 }
 
 // Ask is the check with nonce going into the session at now: the bound runs
 // from here.
 func (p *Presence) Ask(now time.Time, nonce string) {
-	p.Nonce, p.Asked, p.Open, p.Owed, p.Checks = nonce, now, true, false, p.Checks+1
+	p.Nonce, p.Asked, p.Open, p.Owed, p.Read, p.Checks = nonce, now, true, false, false, p.Checks+1
 }
 
 // Answer is the session's reply carrying nonce, at now: the latest check's
@@ -92,25 +106,47 @@ func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 	if nonce == "" || nonce != p.Nonce {
 		return false
 	}
-	p.Up, p.Reason, p.LastHeard, p.Nonce, p.Open, p.Owed, p.Answers, p.Proven = true, "", now, "", false, false, p.Answers+1, true
+	p.Up, p.Reason, p.LastHeard, p.Answered, p.Nonce, p.Open, p.Owed, p.Answers, p.Proven = true, "", now, now, "", false, false, p.Answers+1, true
 	return true
 }
 
 // Tick is the clock at now: an open check past the bound makes the friend
-// down, NoSessionAnswer; a check is owed after Quiet from the session's last
-// word while up, and after Quiet from the last check while down.
+// down, NoSessionAnswer, unless the session wrote on the bus since it went in,
+// and so does silence for SessionQuiet plus SessionBound with it unanswered;
+// a check is owed ProveEvery after the last check or answer while up and SessionQuiet after it
+// while down, and an unanswered one the session has not read is asked again
+// only after ReaskAfter.
 func (p *Presence) Tick(now time.Time) {
 	if p.Open && now.Sub(p.Asked) >= p.Bound {
-		p.Open, p.Up, p.Reason = false, false, NoSessionAnswer
+		p.Open = false
+		if !p.Up || p.LastHeard.Before(p.Asked) {
+			p.Up, p.Reason = false, NoSessionAnswer
+		}
+	}
+	// a check left unanswered while the session spoke, then silence: down once the
+	// session has said nothing for SessionQuiet plus SessionBound, the check not asked
+	// again before its time (a queueing harness keeps every copy)
+	last := p.LastHeard
+	if p.Asked.After(last) {
+		last = p.Asked
+	}
+	if p.Up && !p.Open && p.Nonce != "" && now.Sub(last) >= p.Quiet+p.Bound {
+		p.Up, p.Reason = false, NoSessionAnswer
 	}
 	if p.Open || p.Owed {
 		return
 	}
-	from := p.LastHeard
-	if !p.Up {
-		from = p.Asked
+	since, every := now.Sub(p.Asked), ProveEvery
+	if p.Answered.After(p.Asked) {
+		since = now.Sub(p.Answered) // the server's window runs from the answer
 	}
-	if now.Sub(from) >= p.Quiet {
+	if !p.Up {
+		every = p.Quiet
+	}
+	if p.Nonce != "" && !p.Read {
+		every = ReaskAfter
+	}
+	if since >= every {
 		p.Owed = true
 	}
 }
@@ -166,6 +202,9 @@ type SessionCheck struct {
 	Record  func(line string)         // nil records nothing
 	Save    func(PresenceStatus) error
 	Go      func(func()) // runs a check's delivery; nil is a goroutine
+	// Run is this daemon's run, its generation, said with every check and answer
+	// on the beat: the server counts an answer only to a check the same run asked.
+	Run string
 	// Keep is the nonce of a check the daemon's last run put into the session and
 	// never saw answered (its presence file's nonce): every check carries it until
 	// the push is proved, so the session's late answer to the check already queued
@@ -187,6 +226,10 @@ type SessionCheck struct {
 	staleSince time.Time // when the turn lock was first seen held while the adapter's record says no turn runs
 	unproven   string    // the nonce the push-unproven line was said for
 	refused    string    // the delivery refusal last said
+	toCheck    string    // the check asked that no beat has said yet
+	toPong     string    // the check answered that no beat has said yet
+	gated      int       // turns at the gate, from before any wait under it to their end
+	gatedSince time.Time // when the first of them came to the gate
 }
 
 // StaleTurnLock is how long the turn lock may be held while a headless
@@ -206,9 +249,27 @@ type TurnRecord interface {
 // headlessOf is the adapter's turn record under the gates (Gate, Limits.Gate),
 // nil for an adapter that keeps none.
 func headlessOf(d Deliverer) TurnRecord {
+	var rec TurnRecord
+	under(d, func(a Deliverer) bool { rec, _ = a.(TurnRecord); return rec != nil })
+	return rec
+}
+
+// ReadOnReturn is an adapter whose delivery returns exit 0 only once the session
+// has taken the text: a headless turn that ran (dsh, gemini, opencode run), or a
+// message the session marked read (antigravity's read.json). A check it delivered
+// is read, and may be asked again on the check cadence.
+type ReadOnReturn interface{ ReadOnReturn() }
+
+func (*DSH) ReadOnReturn()         {}
+func (*Gemini) ReadOnReturn()      {}
+func (*OpenCode) ReadOnReturn()    {}
+func (*Antigravity) ReadOnReturn() {}
+
+// under calls f on d and each adapter under its gates until f says found.
+func under(d Deliverer, f func(Deliverer) bool) bool {
 	for d != nil {
-		if r, ok := d.(TurnRecord); ok {
-			return r
+		if f(d) {
+			return true
 		}
 		switch g := d.(type) {
 		case turnGated:
@@ -220,10 +281,10 @@ func headlessOf(d Deliverer) TurnRecord {
 		case *gatedLanes:
 			d = g.d
 		default:
-			return nil
+			return false
 		}
 	}
-	return nil
+	return false
 }
 
 // DaemonStore is the store the daemon sends through: each message it adds is
@@ -266,9 +327,27 @@ type turnGated struct {
 }
 
 func (g turnGated) Deliver(ctx context.Context, text string) (int, error) {
+	defer g.s.enter()()
 	g.s.turn.RLock()
 	defer g.s.turn.RUnlock()
 	return g.Deliverer.Deliver(ctx, text)
+}
+
+// enter is a turn at the gate, from before any wait under it (the limit gate's
+// included) until it returns: the record the check reads before it believes no
+// turn runs; the func it answers is the turn's end.
+func (s *SessionCheck) enter() func() {
+	s.mu.Lock()
+	if s.gated == 0 {
+		s.gatedSince = s.Now()
+	}
+	s.gated++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.gated--
+		s.mu.Unlock()
+	}
 }
 
 type turnGatedLanes struct {
@@ -277,12 +356,14 @@ type turnGatedLanes struct {
 }
 
 func (g turnGatedLanes) OpenSession(ctx context.Context, seed string) (string, error) {
+	defer g.s.enter()()
 	g.s.turn.RLock()
 	defer g.s.turn.RUnlock()
 	return g.lh.OpenSession(ctx, seed)
 }
 
 func (g turnGatedLanes) DeliverTo(ctx context.Context, session, text string) (LaneTurn, error) {
+	defer g.s.enter()()
 	g.s.turn.RLock()
 	defer g.s.turn.RUnlock()
 	return g.lh.DeliverTo(ctx, session, text)
@@ -362,17 +443,32 @@ func (s *SessionCheck) downBeat(now time.Time) (until time.Time, reason string) 
 	return until, reason
 }
 
-// Proved is the session's last proof this run, the presence file's last_heard:
-// its last answer to a check or its last bus message; zero before any. Every up
-// beat carries it (friend beat --pong), so the sprint server reads her session's
-// evidence the second after it moves (docs/SPEC-FRIEND.md, presence).
-func (s *SessionCheck) Proved() time.Time {
+// BeatWords are a beat's proof words (nova-sprint friend beat --run, --check,
+// --pong): the daemon's run, the check it put into the session, and the check
+// its session answered, each "" when there is none to say. The sprint server
+// counts an answer only when it names a check this run asked (sprint.ProveBeat).
+type BeatWords struct {
+	Run, Check, Pong string
+}
+
+// Words is what the next beat says: the check asked and the check answered that
+// no beat has carried yet. A beat the server took clears them (Said).
+func (s *SessionCheck) Words() BeatWords {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.m == nil {
-		return time.Time{}
+	return BeatWords{Run: s.Run, Check: s.toCheck, Pong: s.toPong}
+}
+
+// Said is w carried by a beat the server took: each word said is not said again.
+func (s *SessionCheck) Said(w BeatWords) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if w.Check != "" && s.toCheck == w.Check {
+		s.toCheck = ""
 	}
-	return s.m.LastHeard
+	if w.Pong != "" && s.toPong == w.Pong {
+		s.toPong = ""
+	}
 }
 
 // Proof is whether the push is proved this run (the session answered a check,
@@ -488,7 +584,7 @@ func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string
 		}
 		if nonce, _, _, _, ok := ParsePong(strings.TrimSpace(m.Body)); ok {
 			if s.m.Answer(now, nonce) {
-				answered = nonce
+				answered, s.toPong = nonce, nonce
 			}
 			continue // a pong answers by its nonce alone: a stale or wrong one proves nothing
 		}
@@ -518,6 +614,7 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 		}
 		s.mu.Lock()
 		s.m.Ask(now, nonce)
+		s.toCheck = nonce
 		s.mu.Unlock()
 		s.record(now, "presence: session check "+nonce+" on the stream")
 		return
@@ -533,6 +630,7 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 	s.mu.Lock()
 	nonce := s.nextNonce()
 	s.m.Ask(now, nonce)
+	s.toCheck = nonce
 	owed := s.owedSince
 	s.cancel, s.waiting, s.owedSince, s.owedSaid, s.staleSince = cancel, "", time.Time{}, false, time.Time{}
 	s.mu.Unlock()
@@ -554,6 +652,13 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 		}
 		exit, err := s.deliverer().Deliver(cctx, s.Text(nonce))
 		cancel()
+		if err == nil && exit == 0 && under(s.Deliver, func(a Deliverer) bool { _, ok := a.(ReadOnReturn); return ok }) {
+			s.mu.Lock()
+			if s.m.Nonce == nonce {
+				s.m.Read = true // the session took it: asked again on the cadence, never piled up
+			}
+			s.mu.Unlock()
+		}
 		var deferred Deferred
 		switch {
 		case errors.As(err, &deferred) && deferred.Remedy != "":
@@ -570,15 +675,21 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 }
 
 // held is why the owed check waits while the turn lock is held, "" when it goes
-// in all the same: a headless adapter whose own record has said no turn runs
-// for StaleTurnLock.
+// in all the same: no turn at the gate (from before the limit gate's wait to the
+// turn's end) and a headless adapter whose own record has said no turn runs for
+// StaleTurnLock.
 func (s *SessionCheck) held(now time.Time) string {
 	rec := headlessOf(s.Deliver)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gated > 0 {
+		// a turn is between the gate and its end, the limit gate's wait included
+		s.staleSince = time.Time{}
+		return "it waits for the turn under way since " + s.gatedSince.UTC().Format(time.RFC3339)
+	}
 	if rec == nil {
 		return "it waits for the turn under way"
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if running, since := rec.TurnUnderWay(); running {
 		s.staleSince = time.Time{}
 		return "it waits for the turn under way since " + since.UTC().Format(time.RFC3339) + " (the adapter's record)"

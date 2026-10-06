@@ -233,3 +233,46 @@ func TestAFriendsNextCardsDeadlineFollowsHerRunWall(t *testing.T) {
 	assert.Equal(t, map[string]time.Duration{"s1-2.w1": 3 * time.Hour, "s1-3.w1": 3 * time.Hour}, limit, "each started after her ok attempt: three times her one hour, from her start")
 	ta.clean()
 }
+
+// A friend's beat proves her session only by naming a check her daemon asked: anyone can
+// send `friend beat <f> --pong <now>`, and that, a nonce never asked, or the same answer
+// twice proves nothing (recorded as a beat with no proof); the answer to a check her
+// daemon's run asked within fifteen minutes makes her up, and only while her beats go on.
+func TestAForgedPongNeverProvesAFriend(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync")
+	ta.ok("friend beat amy --pong " + ta.now.UTC().Format(time.RFC3339))
+	assert.Equal(t, sprint.Down, whereFriends(ta)["amy"].Status, "a time on her beat from anyone is no proof")
+	out := ta.ok("friend beat amy --pong n1 --run r1")
+	assert.Contains(t, out, "no_proof=")
+	assert.Equal(t, sprint.Down, whereFriends(ta)["amy"].Status, "a nonce never asked is no proof")
+
+	out = ta.ok("friend beat amy --check n1 --run r1")
+	assert.Contains(t, out, "check=n1")
+	ta.step(time.Minute)
+	ta.ok("friend beat amy --pong n1 --run r2")
+	assert.Equal(t, sprint.Down, whereFriends(ta)["amy"].Status, "an answer from another run is no proof")
+	out = ta.ok("friend beat amy --pong n1 --run r1")
+	assert.Contains(t, out, "proved=n1")
+	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "the answer to the check her daemon asked")
+	out = ta.ok("friend beat amy --pong n1 --run r1")
+	assert.Contains(t, out, "no_proof=", "the same answer twice proves once")
+
+	ta.step(sprint.BeatDeadline + time.Second)
+	f := whereFriends(ta)["amy"]
+	assert.Equal(t, sprint.Down, f.Status, "her beats stopped, so her proof stopped with them")
+	assert.Contains(t, f.Evidence, "her beat stopped")
+	ta.ok("friend beat amy")
+	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "beating again, within ten minutes of the answer")
+	ta.step(sprint.FriendPongWindow)
+	ta.ok("friend beat amy")
+	assert.Equal(t, sprint.Down, whereFriends(ta)["amy"].Status, "ten minutes on, the answer is out of its window")
+
+	ta.ok("friend beat amy --check n2 --run r1")
+	ta.step(sprint.CheckAnswerWithin + time.Second)
+	out = ta.ok("friend beat amy --pong n2 --run r1")
+	assert.Contains(t, out, "no_proof=", "an answer later than fifteen minutes after the ask proves nothing")
+	_, _, why := workerVerb([]string{"friend", "beat", "amy", "--check", "n3", "--run", "r1", "--pong", "2026-10-06T17:00:00Z"})
+	assert.Empty(t, why, "the server runs any --pong and its proof step says what it proved")
+}

@@ -140,10 +140,14 @@ hold), whatever she beats or the coordinator observes; else `up` only on
 evidence from her own session (docs/SPEC-FRIEND.md, "Presence is her
 session's evidence"; one definition, `sprint.FriendEvidence`): a wake ping her
 session answered (`friend health --state up`, below) under `FriendPongWindow`
-(10 minutes) old, or her session's own answer her daemon proves on her beat
-(`friend beat --pong <t>`: her session's pong to her daemon's SESSION CHECK
-nonce, or its own bus message; `Beat.Proof`) under `FriendProofLive` (15
-minutes) old, or a card of hers finished under `FriendFinishWindow` (30
+(10 minutes) old, or her session's answer to a check her daemon asked, under
+the same `FriendPongWindow` while her beat is fresh (`BeatDeadline`): her beat
+says `--check <nonce> --run <run>` when her daemon asks and `--pong <nonce>
+--run <run>` when her session answers, and the answer proves only when it
+names a check that run asked, once, within `CheckAnswerWithin` (15 minutes) of
+the ask (`sprint.ProveBeat`; anything else, a bare time included, is a beat
+with no proof, `no_proof=` on the beat's line, never evidence; a stopped beat
+stops the proof), or a card of hers finished under `FriendFinishWindow` (30
 minutes) old; else `down` (`friend down` holds her and shows `held`, never
 `down`); a beat that says down (`--until`, `--reason`) is down with its reason
 whatever else stands. Her beat itself is recorded and never evidence, whoever
@@ -1064,7 +1068,7 @@ tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
 (`take --as friend.<f>`, her own or her daemon's through the server) is
 admitted by `FriendStatus`, the friends table's word: up only on evidence from
 her own session (a wake ping her session answered within `FriendPongWindow`,
-her session's answer her daemon proves on her beat within `FriendProofLive`, or
+her session's answer to a check her daemon asked within `FriendPongWindow` while her beats go on, or
 a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
 "Presence is her session's evidence"), never on her beat itself. `TakeStep` reads the friends' seats when it names a friend's row.
 Her take is held to her width (1 in one-shot mode), as a machine's is to its
@@ -3831,17 +3835,12 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
 `TickCoordinatorPass`). The conditions the tick keeps, each a judgment:
 
 - **a friend's session is deaf** (`a friend's session is deaf`), one on each friend not
-  held whose beat carries a session pong (`friend beat --pong <RFC3339>`, her daemon's
-  `last_pong`) older than 10 minutes of running time (`FriendDeafAfter`); it names her,
+  held whose beat record carries a session proof (the server's time of her session's
+  last answer to a check her daemon asked: `friend beat --check`, then `--pong`) older
+  than `FriendDeafAfter` of running time; it names her,
   her pong age and the remedy: a wake note (`nova-friend ping --to <friend> --wake`),
   then the debug steps of docs/SPEC-FRIEND.md (Presence, The harness check). A beat that
-  carries no pong judges nothing: deafness is read only from the session's own answer.
-  **Not yet live:** the nova-friend daemon's beat (cmd/nova-friend main.go, `beat`)
-  sends only `--active` and not `--pong` yet, and nothing else in the tree sends a
-  pong, so on the running machine no beat carries one and this judgment stays silent
-  until the daemon passes `--pong <status last_pong>` (a follow-up card, PATHS
-  cmd/nova-friend/**). Until then a deaf session shows only as the idle judgment below,
-  30 minutes on, and only if she holds working cards.
+  carries no proof judges nothing: deafness is read only from the session's own answer.
 - **a friend holds working cards and finishes none** (`a friend holds working cards and
   finishes none`), one on each friend not held holding working cards on her row when
   neither her last working-to-done finish (`finished` of her done cards, ok or failed) nor

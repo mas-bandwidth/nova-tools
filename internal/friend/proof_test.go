@@ -73,10 +73,11 @@ func (h headlessHarness) TurnUnderWay() (bool, time.Time) {
 }
 
 // proofRig is bob's daemon with its SessionCheck wired as nova-friend run wires them
-// (the beat through SessionCheck.BeatOr carrying Proved, down with the check's reason;
-// Proof gating the deliveries; Sent the proof the server took), over bus's Fake and a
-// fake harness, and a sprint server that keeps his last beat and reads his status by
-// its own rule (sprint.FriendEvidence). The clock moves one BeatEvery per step, in a
+// (the beat through SessionCheck.BeatOr saying the check asked and the check answered,
+// down with the check's reason; Proof gating the deliveries; Sent the proof the server
+// took), over bus's Fake and a fake harness, and a sprint server that keeps his last
+// beat, steps its proof by its own rule (sprint.ProveBeat: only an answer to a check
+// asked) and reads his status by its own rule (sprint.FriendEvidence). The clock moves one BeatEvery per step, in a
 // synctest bubble; script runs each step's look at its offset from t0.
 type proofRig struct {
 	t        *testing.T
@@ -89,6 +90,9 @@ type proofRig struct {
 	sc       *SessionCheck
 	d        *Daemon
 	beat     sprint.Beat // the server's record of bob's last beat
+	asked    []sprint.AskedCheck
+	proof    time.Time
+	noProof  []string
 	sent     time.Time
 	records  []string
 	status   Status
@@ -124,20 +128,17 @@ func newProofRig(t *testing.T, headless bool) *proofRig {
 		Go:   func(f func()) { f() },
 	}
 	r.sc.Deliver = r.sc.Gate(adapter)
+	r.sc.Run = "run1"
 	up := func(context.Context) error {
-		proof := r.sc.Proved()
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		r.beat = sprint.Beat{At: r.now, Proof: proof}
-		if !proof.IsZero() {
-			r.sent = proof
+		if r.serve(r.sc.Words(), nil) {
+			r.mu.Lock()
+			r.sent = r.now
+			r.mu.Unlock()
 		}
 		return nil
 	}
 	down := func(_ context.Context, until time.Time, reason string) error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		r.beat = sprint.Beat{At: r.now, Friend: &sprint.FriendReport{Until: until, Reason: reason}}
+		r.serve(r.sc.Words(), &sprint.FriendReport{Until: until, Reason: reason})
 		return nil
 	}
 	beat := r.sc.BeatOr(up, down)
@@ -164,6 +165,24 @@ func (r *proofRig) step() time.Time {
 	defer r.mu.Unlock()
 	r.now = r.now.Add(BeatEvery)
 	return r.now
+}
+
+// serve is the server taking one beat with its proof words (sprint.ProveBeat at its
+// clock) and the report a down beat carries; it answers whether the beat proved.
+func (r *proofRig) serve(w BeatWords, rep *sprint.FriendReport) bool {
+	r.mu.Lock()
+	asked, proved, why := sprint.ProveBeat(r.asked, sprint.BeatWords{Run: w.Run, Check: w.Check, Pong: w.Pong}, r.now)
+	r.asked = asked
+	if proved {
+		r.proof = r.now
+	}
+	if why != "" {
+		r.noProof = append(r.noProof, why)
+	}
+	r.beat = sprint.Beat{At: r.now, Proof: r.proof, Friend: rep}
+	r.mu.Unlock()
+	r.sc.Said(w)
+	return proved
 }
 
 func (r *proofRig) clock() time.Time {
@@ -240,16 +259,19 @@ func checks(texts []string) []string {
 }
 
 // TestAnAnsweredCheckIsProvedToTheServerByTheDaemon: the daemon is the one that proves
-// its session. The second the session answers its check, the daemon's next beat carries
-// the answer's time (the presence file's last_heard) and the sprint server reads her up
-// on it, by its own rule; the status says the proof the server took. When the session
-// stops answering past the bound, her beat says down with the reason and the check's
-// nonce, and the server reads her down with it; her next answer is proved again.
+// its session. Its beat says each check it asks (--check) and, the second the session
+// answers, the check answered (--pong), and the sprint server, by its own rule
+// (sprint.ProveBeat), reads her up on that answer, once; the status says the proof the
+// server took. While she is up a check goes in every ProveEvery, so the server's
+// ten-minute window never lapses while she answers. When the session stops answering
+// past the bound, her beat says down with the reason and the check's nonce; her next
+// answer is proved again. A forged answer (a time, a nonce never asked, one answered
+// twice) proves nothing.
 func TestAnAnsweredCheckIsProvedToTheServerByTheDaemon(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		r := newProofRig(t, false)
-		var before, after, quiet, fell, back [2]string
+		var before, after, kept, fell, back [2]string
 		var proof time.Time
 		var presence PresenceStatus
 		var sent time.Time
@@ -257,39 +279,54 @@ func TestAnAnsweredCheckIsProvedToTheServerByTheDaemon(t *testing.T) {
 		r.at(5*BeatEvery, func() {
 			after[0], after[1] = r.server()
 			r.mu.Lock()
-			proof, presence, sent = r.beat.Proof, r.presence, r.status.ProofSent
+			proof, presence, sent = r.proof, r.presence, r.status.ProofSent
 			r.mu.Unlock()
-			r.h.set(false) // the session goes quiet and answers nothing more
 		})
-		r.at(SessionQuiet+SessionBound-time.Minute, func() { quiet[0], quiet[1] = r.server() })
-		r.at(SessionQuiet+SessionBound+10*BeatEvery, func() {
+		// the session answers the check every ProveEvery: proved all along
+		r.at(ProveEvery+time.Minute, func() { kept[0], kept[1] = r.server(); r.h.set(false) })
+		// quiet from here: the check at 2*ProveEvery goes unanswered past its bound
+		r.at(2*ProveEvery+SessionBound+10*BeatEvery, func() {
 			fell[0], fell[1] = r.server()
-			r.pong("n2") // its late answer to the latest check
+			r.pong("n3") // its late answer to the latest check
 		})
-		r.at(SessionQuiet+SessionBound+20*BeatEvery, func() { back[0], back[1] = r.server() })
-		r.run(SessionQuiet + SessionBound + 21*BeatEvery)
+		r.at(2*ProveEvery+SessionBound+20*BeatEvery, func() { back[0], back[1] = r.server() })
+		r.run(2*ProveEvery + SessionBound + 21*BeatEvery)
 
 		assert.Equal(t, sprint.Down, before[0], "a daemon that started has proved nothing")
 		assert.Contains(t, before[1], "push unproven: session check n1")
 		assert.Equal(t, sprint.Up, after[0], "the session's answer is on the server within the step: %s", after[1])
 		assert.Contains(t, after[1], "session proof")
-		require.False(t, proof.IsZero(), "the beat carries the session's proof")
-		assert.True(t, proof.Equal(presence.LastHeard), "the proof is the presence file's last_heard: %s, %s", proof, presence.LastHeard)
+		require.False(t, proof.IsZero(), "the server took the answer as its proof")
+		assert.LessOrEqual(t, proof.Sub(presence.LastHeard), 2*BeatEvery, "within a step of the presence file's last_heard: %s, %s", proof, presence.LastHeard)
 		assert.True(t, sent.Equal(proof), "the status says the proof the server took")
-		assert.Equal(t, sprint.Up, quiet[0], "a quiet session is proved until its check's bound: %s", quiet[1])
+		assert.Equal(t, sprint.Up, kept[0], "a session that answers every ProveEvery stays proved: %s", kept[1])
 		assert.Equal(t, sprint.Down, fell[0])
 		assert.Contains(t, fell[1], "her beat says down until")
-		assert.Contains(t, fell[1], NoSessionAnswer+" to session check n2 within 5m0s", "down with the reason and the nonce")
+		assert.Contains(t, fell[1], NoSessionAnswer+" to session check n3 within 5m0s", "down with the reason and the nonce")
 		assert.Equal(t, sprint.Up, back[0], "the next answer is proved again: %s", back[1])
-		assert.Equal(t, []string{"n1", "n2"}, checks(r.h.got()))
+		assert.Equal(t, []string{"n1", "n2", "n3"}, checks(r.h.got()))
+		assert.Empty(t, r.noProof, "every answer the daemon said named a check it asked")
+
+		// the server's rule against a forged answer
+		asked, _, _ := sprint.ProveBeat(nil, sprint.BeatWords{Run: "run1", Check: "n9"}, t0)
+		_, proved, why := sprint.ProveBeat(asked, sprint.BeatWords{Run: "run1", Pong: t0.Format(time.RFC3339)}, t0)
+		assert.False(t, proved, "a time proves nothing")
+		assert.Contains(t, why, sprint.NoProof)
+		_, proved, _ = sprint.ProveBeat(asked, sprint.BeatWords{Run: "run1", Pong: "n8"}, t0)
+		assert.False(t, proved, "a nonce never asked proves nothing")
+		asked, proved, _ = sprint.ProveBeat(asked, sprint.BeatWords{Run: "run1", Pong: "n9"}, t0)
+		assert.True(t, proved, "the asked nonce answered proves")
+		_, proved, _ = sprint.ProveBeat(asked, sprint.BeatWords{Run: "run1", Pong: "n9"}, t0)
+		assert.False(t, proved, "the same nonce twice proves once")
 	})
 }
 
 // TestADaemonWaitsForItsProofInsteadOfExiting: a session in a long turn answers no
 // check inside five minutes. The daemon starts all the same with its push unproven, in
 // status.json and in its beat, keeps the check the last run queued (its nonce, never a
-// new one per try), asks again on the check cadence, delivers nothing until the pong
-// arrives, says the refusal naming the nonce once, and turns live without a restart.
+// new one per try), asks again only after ReaskAfter while the session has not read the
+// last (a queueing harness keeps every copy), delivers nothing until the pong arrives,
+// says the refusal naming the nonce once, and turns live without a restart.
 func TestADaemonWaitsForItsProofInsteadOfExiting(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -300,27 +337,32 @@ func TestADaemonWaitsForItsProofInsteadOfExiting(t *testing.T) {
 		require.NoError(t, err)
 		var waiting Status
 		var server [2]string
-		var delivered []string
+		var once, twice []string
 		r.at(SessionQuiet+SessionBound+time.Minute, func() {
 			r.mu.Lock()
 			waiting = r.status
 			r.mu.Unlock()
 			server[0], server[1] = r.server()
-			delivered = r.h.got()
+			once = r.h.got()
+		})
+		r.at(ReaskAfter+time.Minute, func() {
+			twice = r.h.got()
 			r.pong("k1") // the long turn ends and the session answers the check queued in it
 		})
 		var live Status
 		var up string
-		r.at(SessionQuiet+SessionBound+time.Minute+5*BeatEvery, func() {
+		r.at(ReaskAfter+time.Minute+5*BeatEvery, func() {
 			r.mu.Lock()
 			live = r.status
 			r.mu.Unlock()
 			up, _ = r.server()
 		})
-		r.run(SessionQuiet + SessionBound + time.Minute + 6*BeatEvery)
+		r.run(ReaskAfter + time.Minute + 6*BeatEvery)
 
-		assert.Equal(t, []string{"k1", "k1"}, checks(delivered), "the queued check's nonce, asked again on the cadence, never a new one")
-		assert.Len(t, delivered, 2, "nothing but the checks went into the session while the push was unproven: %q", delivered)
+		assert.Equal(t, []string{"k1"}, checks(once), "one copy while the session has not read it")
+		assert.Len(t, once, 1, "nothing but the check went into the session while the push was unproven: %q", once)
+		assert.Equal(t, []string{"k1", "k1"}, checks(twice), "asked again after ReaskAfter, with the queued check's nonce, never a new one")
+		assert.Len(t, twice, 2)
 		assert.Equal(t, PushUnproven, waiting.Push)
 		assert.Equal(t, "k1", waiting.PushNonce)
 		assert.True(t, !waiting.PushSince.After(t0.Add(2*BeatEvery)) && waiting.PushSince.After(t0), "unproven since the start: %s", waiting.PushSince)
@@ -329,7 +371,7 @@ func TestADaemonWaitsForItsProofInsteadOfExiting(t *testing.T) {
 		assert.Len(t, r.lines("push proof: unproven: session check k1"), 1, "the refusal names the nonce once")
 
 		assert.Equal(t, PushProved, live.Push, "the session answered: live without a restart")
-		assert.Equal(t, sprint.Up, up)
+		assert.Equal(t, sprint.Up, up, "the re-ask was said again, so the server takes its answer")
 		require.Len(t, r.lines("push proof: proved"), 1)
 		got := r.h.got()
 		require.Len(t, got, 3, "the waiting message went in once the push was proved")
@@ -436,5 +478,53 @@ func TestAQuietDshSessionStillGetsTheNextDelivery(t *testing.T) {
 		l := s.alive("dsh")
 		assert.True(t, l.Running)
 		assert.Equal(t, "a turn is running in the dsh session since "+t0.Format(time.RFC3339), l.Why)
+	})
+}
+
+// gateWait is a turn held between the gate and the adapter, as the limit gate holds
+// one through its wait: the adapter's own record has not begun it.
+type gateWait struct {
+	headlessHarness
+	entered, release chan struct{}
+}
+
+func (g gateWait) Deliver(ctx context.Context, text string) (int, error) {
+	if !strings.HasPrefix(text, SessionCheckPrefix) { // the daemon's turn waits; the check, which holds the gate itself, does not
+		close(g.entered)
+		<-g.release
+	}
+	return g.headlessHarness.Deliver(ctx, text)
+}
+
+// TestACheckNeverGoesInBesideATurnHeldAtTheGate: a turn at the gate is a turn from
+// before any wait under it (the limit gate's) to its end, so a check never runs into a
+// dsh session beside one: the adapter's record saying no turn runs is believed only
+// while nothing is between the gate and the turn's end, however long the lock is held.
+func TestACheckNeverGoesInBesideATurnHeldAtTheGate(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		now := t0
+		var records []string
+		h := &proofHarness{}
+		g := gateWait{headlessHarness{h}, make(chan struct{}), make(chan struct{})}
+		sc := &SessionCheck{Friend: "bob", Store: bustest.NewFake(t0, "coord", "bob"), Now: func() time.Time { return now },
+			Nonce: func() string { return "n1" }, Text: func(nonce string) string { return SessionCheckPrefix + nonce },
+			Record: func(l string) { records = append(records, l) }, Go: func(f func()) { f() }}
+		sc.Deliver = sc.Gate(g)
+		go func() { _, _ = sc.Deliver.Deliver(context.Background(), "the daemon's turn") }()
+		<-g.entered
+		for range int((StaleTurnLock + 2*time.Minute) / BeatEvery) {
+			sc.Step(context.Background())
+			now = now.Add(BeatEvery)
+		}
+		assert.Empty(t, checks(h.got()), "no check beside a turn held at the gate, however long")
+		all := strings.Join(records, "\n")
+		assert.Contains(t, all, "presence: a session check is owed; it waits for the turn under way since "+t0.Format(time.RFC3339))
+		assert.NotContains(t, all, "goes in by the record")
+
+		close(g.release)
+		synctest.Wait()
+		sc.Step(context.Background())
+		assert.Equal(t, []string{"n1"}, checks(h.got()), "the check goes in once the turn ends")
 	})
 }

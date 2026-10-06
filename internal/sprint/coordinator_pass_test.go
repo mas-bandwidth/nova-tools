@@ -1,6 +1,7 @@
 package sprint_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,8 @@ type passRig struct {
 	// answered is each friend's last wake ping answer the rig recorded (friend health):
 	// the store renews only on a newer one.
 	answered map[string]time.Time
+	// proved is each friend's last session proof the rig put on her beat.
+	proved map[string]time.Time
 }
 
 // passPongBefore is how long before the rig starts each friend's session last answered.
@@ -33,7 +36,7 @@ const passPongBefore = 5 * time.Minute
 
 func newPassRig(t *testing.T) *passRig {
 	t.Helper()
-	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}, answered: map[string]time.Time{}}
+	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}, answered: map[string]time.Time{}, proved: map[string]time.Time{}}
 	rows, err := r.st.FriendRows(r.ctx, r.clock())
 	require.NoError(t, err)
 	for _, row := range rows {
@@ -81,7 +84,21 @@ func (r *passRig) tick(d time.Duration) {
 		require.NoError(r.t, err)
 	}
 	for f, pong := range r.pongs {
-		_, err := r.st.FriendBeatPong(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil, pong)
+		if pong.After(r.proved[f]) {
+			// her daemon asked a check and her session answered it at pong (sprint.ProveBeat)
+			r.mu.Lock()
+			now := r.now
+			r.now = pong
+			r.mu.Unlock()
+			nonce := fmt.Sprintf("n%d", pong.Unix())
+			_, _, err := r.st.FriendBeatProof(r.ctx, f, sprint.FriendReport{Active: pong}, nil, sprint.BeatWords{Run: "run1", Check: nonce, Pong: nonce})
+			require.NoError(r.t, err)
+			r.mu.Lock()
+			r.now = now
+			r.mu.Unlock()
+			r.proved[f] = pong
+		}
+		_, err := r.st.FriendBeatReport(r.ctx, f, sprint.FriendReport{Active: r.clock()}, nil)
 		require.NoError(r.t, err)
 		if pong.After(r.answered[f]) {
 			_, _, _, err = r.st.FriendHealth(r.ctx, f, "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: pong, Generation: sprint.FirstSeatGeneration}, "")

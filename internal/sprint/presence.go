@@ -190,10 +190,10 @@ func PresenceStatus(held bool, b Beat, now time.Time) string {
 // never up); else up only on evidence from her own session within its window
 // (FriendEvidence): a wake ping her session answered
 // (the coordinator's friend health --state up, under the current seat
-// generation) under FriendPongWindow old, or her session's own answer her
-// daemon proves on her beat (friend beat --pong: the session's pong to her
-// daemon's SESSION CHECK nonce, or its own bus message; Beat.Proof) under
-// FriendProofLive old, or a card of hers finished under FriendFinishWindow old;
+// generation) under FriendPongWindow old, or her session's answer to a check her
+// daemon asked, proved on her beat (friend beat --check, then --pong naming its
+// nonce; ProveBeat; Beat.Proof) under FriendPongWindow old while her beat is
+// fresh, or a card of hers finished under FriendFinishWindow old;
 // else down. Her beat itself, whoever sends it, is never evidence: a daemon or a
 // loop beating for her says an app is open, not that her session can work; only
 // the session's answer it carries is. Releasing a hold (friend up) is no
@@ -220,8 +220,10 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if age := now.Sub(f.Health.Seen); pong && age >= 0 && age < FriendPongWindow {
 		return Up, "session pong " + ago(age)
 	}
+	// the proof her beat record keeps is an answer to a check her daemon asked (ProveBeat),
+	// and it counts only while her beat is fresh: a daemon that stopped proves nothing more
 	proof := !f.Beat.Proof.IsZero()
-	if age := now.Sub(f.Beat.Proof); proof && age >= 0 && age < FriendProofLive {
+	if age := now.Sub(f.Beat.Proof); proof && age >= 0 && age < FriendPongWindow && f.Beat.Fresh(now) {
 		return Up, "session proof " + ago(age)
 	}
 	if age := now.Sub(f.Finished); !f.Finished.IsZero() && age >= 0 && age < FriendFinishWindow {
@@ -231,9 +233,13 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if pong {
 		why += " (last " + ago(now.Sub(f.Health.Seen)) + ")"
 	}
-	why += ", no session proof on her beat within " + FriendProofLive.String()
+	why += ", no session proof on her beat within " + FriendPongWindow.String()
 	if proof {
-		why += " (last " + ago(now.Sub(f.Beat.Proof)) + ")"
+		why += " (last " + ago(now.Sub(f.Beat.Proof))
+		if !f.Beat.Fresh(now) {
+			why += ", her beat stopped " + ago(now.Sub(f.Beat.At))
+		}
+		why += ")"
 	}
 	why += ", no card finished within " + FriendFinishWindow.String()
 	if !f.Finished.IsZero() {
