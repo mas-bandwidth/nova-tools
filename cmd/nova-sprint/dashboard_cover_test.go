@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,8 +21,11 @@ import (
 // cannot start closes the others. The addresses are loopback's ephemeral ports: the only
 // sockets are the ones the test and the function itself open, and each is closed again
 // before its test returns.
+//
+// Not parallel: the second case releases an ephemeral port and asks about it again, and a
+// parallel test's listener could take it between; the parallel tests start only after the
+// sequential ones end.
 func TestDashboardCoverServesEachListenerAndRefusesWhenOneCannotStart(t *testing.T) {
-	t.Parallel()
 	t.Run("each listener starts and says the address it bound", func(t *testing.T) {
 		var out bytes.Buffer
 		servers, err := (&app{}).serveDashboard([]listener{
@@ -64,11 +68,16 @@ func TestDashboardCoverServesEachListenerAndRefusesWhenOneCannotStart(t *testing
 		assert.Empty(t, out.String(), "a listener that cannot start is refused before anything is said")
 		assert.Contains(t, err.Error(), "--pull "+held.Addr().String(), err.Error())
 		assert.Contains(t, err.Error(), "address already in use", err.Error())
-		// the listener already open was closed again: its address is free to take
-		again, err := net.Listen("tcp", first)
-		require.NoError(t, err, "the listener opened before the failed one is closed again")
-		// ignored: the test's own listener at its end
-		_ = again.Close()
+		// the listener already open was closed again: a dial to its address is refused.
+		// (Not a second Listen on it: the port is back in the ephemeral range, and any
+		// socket the package's parallel tests open meanwhile may take it.)
+		conn, err := net.DialTimeout("tcp", first, time.Second)
+		if err == nil {
+			// ignored: the test's own connection at its end
+			_ = conn.Close()
+		}
+		require.Error(t, err, "the listener opened before the failed one is closed again")
+		assert.Contains(t, err.Error(), "connection refused", err.Error())
 	})
 }
 
