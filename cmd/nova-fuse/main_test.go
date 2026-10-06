@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,6 +28,51 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// reexecArg turns this test binary back into the tool itself: TestMain reads it
+// before package testing parses a flag and answers the child with run(). It is how a
+// test that needs a real process-wide resource gets one -- a CHILD with cmd.Dir or
+// cmd.Env, the serial allowlist's per-test seam -- instead of t.Chdir or t.Setenv,
+// which would change this test process under every parallel test beside it. The
+// frozen instant follows the sentinel, so the child reads the same clock the
+// in-process runner would have passed.
+const reexecArg = "-nova-fuse-reexec"
+
+func TestMain(m *testing.M) {
+	if len(os.Args) > 2 && os.Args[1] == reexecArg {
+		at, err := time.Parse(time.RFC3339, os.Args[2])
+		if err != nil {
+			os.Exit(2)
+		}
+		os.Exit(run(os.Args[3:], os.Stdout, os.Stderr, at.UTC()))
+	}
+	os.Exit(m.Run())
+}
+
+// runInChild runs the tool as a child of this test binary, at the fixed instant the
+// tests share. dir and env are the per-test resources: an empty dir leaves the child's
+// working directory alone and a nil env leaves its environment alone. The test's own
+// process is never touched, so the test opens with t.Parallel() like every other.
+func runInChild(t *testing.T, dir string, env []string, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(exe, append([]string{reexecArg, nowish().Format(time.RFC3339)}, args...)...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	if err := cmd.Run(); err != nil {
+		ee, ok := err.(*exec.ExitError)
+		require.True(t, ok, "run %v in child: %v", args, err)
+		code = ee.ExitCode()
+	}
+	return code, out.String(), errOut.String()
+}
 
 // capture runs the tool and returns the exit code plus both streams.
 func capture(t *testing.T, args []string, now time.Time) (int, string, string) {
@@ -134,6 +180,8 @@ func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
 // takes it from --box; a missing flag is a refusal, never a fallback -- and NOVA_FUSE_BOX
 // or any other environment variable is NOT honoured as a substitute.
 func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
+	t.Parallel()
+
 	decoy := boxIn(t) // a clear, readable box the env var points at
 	mustRunnable := [][]string{
 		{"status"},
@@ -144,9 +192,11 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 		{"lift", "quarantine", "discord"},
 		{"path"},
 	}
-	t.Setenv("NOVA_FUSE_BOX", decoy)
+	// The decoy rides in the CHILD's environment, so this process is untouched and
+	// the test runs beside every other: an env lever that could stand in for --box
+	// would show up here as an invocation that did not refuse.
 	for _, args := range mustRunnable {
-		code, out, errOut := capture(t, args, nowish())
+		code, out, errOut := runInChild(t, "", []string{"NOVA_FUSE_BOX=" + decoy}, args...)
 		assert.Equal(t, 2, code, "%v: exit = %d, want 2 -- no flag and no env is a refusal", args, code)
 		assert.Contains(t, errOut, "refusing to guess", "%v: stderr = %q, want it to contain %q", args, errOut, "refusing to guess")
 		assert.Empty(t, out, "%v: a refusal must not print an OK line, got %q", args, out)
@@ -158,12 +208,14 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 // the caller's statement, not the environment's -- an env lever that could redirect the
 // check to a decoy would be a lift by another name.
 func TestEnvironmentCannotRedirectOrLiftAnything(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
 
-	t.Setenv("NOVA_FUSE_BOX", boxIn(t)) // absent, i.e. clear
-	code, _, errOut := capture(t, []string{"check", "--box", box}, now)
+	// The decoy rides in the CHILD's environment; the setup above does not need it.
+	code, _, errOut := runInChild(t, "", []string{"NOVA_FUSE_BOX=" + boxIn(t)}, "check", "--box", box)
 	require.Equal(t, 1, code, "exit = %d, want 1 -- the env var must not redirect the check to a clear box", code)
 	assert.Contains(t, errOut, "FUSE FAILED lockdown", "stderr = %q, want the lockdown failure", errOut)
 }

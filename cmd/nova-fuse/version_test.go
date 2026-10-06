@@ -24,7 +24,7 @@ import (
 func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
-	require.Equal(t, 0, cmdVersion(nil, &out, &errOut), "stderr: %s", errOut.String())
+	require.Equal(t, 0, cmdVersion(version, nil, &out, &errOut), "stderr: %s", errOut.String())
 	assert.Empty(t, errOut.String(), "wrote to stderr: %q", errOut.String())
 	line := out.String()
 	require.True(t, strings.HasSuffix(line, "\n"), "want exactly one terminated line, got %q", line)
@@ -42,12 +42,11 @@ func TestVersionLineShape(t *testing.T) {
 // The stamp is the ONE field of this line that comes from outside the toolchain, and a
 // release workflow's ${TAG} is a shell variable.
 func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v1.2.3\nnova-fuse v9.9.9 linux/amd64 go1.0 extra"
+	t.Parallel()
 
+	const stamp = "v1.2.3\nnova-fuse v9.9.9 linux/amd64 go1.0 extra"
 	var out, errOut bytes.Buffer
-	require.Equal(t, 0, cmdVersion(nil, &out, &errOut), "stderr: %s", errOut.String())
+	require.Equal(t, 0, cmdVersion(stamp, nil, &out, &errOut), "stderr: %s", errOut.String())
 	line := out.String()
 	require.Equal(t, 1, strings.Count(line, "\n"), "a stamped newline broke the line in two: %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
@@ -58,11 +57,10 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 // A stamped build says the tag and an unstamped one says what the toolchain recorded:
 // either way field two is an identity, never a dotted number this file made up.
 func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
-	saved := version
-	t.Cleanup(func() { version = saved })
-	version = "v9.9.9"
+	t.Parallel()
+
 	var out, errOut bytes.Buffer
-	require.Equal(t, 0, cmdVersion(nil, &out, &errOut), "stderr: %s", errOut.String())
+	require.Equal(t, 0, cmdVersion("v9.9.9", nil, &out, &errOut), "stderr: %s", errOut.String())
 	got := strings.Fields(out.String())[1]
 	assert.Equal(t, "v9.9.9", got, "field 2 is the stamp: got %q", got)
 }
@@ -71,7 +69,7 @@ func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"--short"}, {"extra"}, {"--box", "."}} {
 		var out, errOut bytes.Buffer
-		code := cmdVersion(args, &out, &errOut)
+		code := cmdVersion(version, args, &out, &errOut)
 		assert.Equal(t, 2, code, "%v: exit %d, want 2", args, code)
 		assert.Empty(t, out.String(), "%v: a refusal printed a version line anyway: %q", args, out.String())
 		assert.Contains(t, errOut.String(), "takes no flags and no arguments", "%v: refusal does not say why: %q", args, errOut.String())

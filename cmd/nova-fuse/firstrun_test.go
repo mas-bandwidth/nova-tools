@@ -223,6 +223,8 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // fixture is copied to that name in a directory of the test's own rather than
 // the path being rewritten.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	fixture, err := os.ReadFile(exampleBox)
@@ -245,19 +247,21 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "fuse-box.json"), fixture, 0o644))
-	t.Chdir(dir)
-	require.Empty(t, onboarding.Execute(steps, documented(t)))
+	// The transcript types `./fuse-box.json`, so each step runs in a CHILD whose
+	// cmd.Dir is the directory the fixture lives in: the seam is the working
+	// directory, and this test no longer chdirs the whole process.
+	require.Empty(t, onboarding.Execute(steps, documented(t, dir)))
 }
 
 // documented runs one line of the transcript with the clock the document was
-// recorded at.
-func documented(t *testing.T) onboarding.Runner {
+// recorded at, in a child working where the fixture is.
+func documented(t *testing.T, dir string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, errReadsNothing
 		}
-		code, stdout, stderr := runFuse(t, s.Args...)
+		code, stdout, stderr := runInChild(t, dir, nil, s.Args...)
 		return onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}, nil
 	}
 }

@@ -155,7 +155,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "help", "-h", "--help":
 		return cmdHelp(rest, stdout, stderr)
 	case "version", "--version":
-		return cmdVersion(rest, stdout, stderr)
+		return cmdVersion(version, rest, stdout, stderr)
 	}
 
 	// lift is dispatched before any flag is parsed, because its hard half must not depend
