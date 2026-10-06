@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +70,7 @@ func addCLILabViolations(t *testing.T, dir string) {
 }
 
 // TestCLIExamplesMatchWhatTheToolPrints reads the rewritten examples in docs/CLI.md
-// through onboarding.Transcript and onboarding.Compare, following the pattern
+// through onboarding.Transcript and onboarding.CompareTranscript, following the pattern
 // in hygiene_test.go. All four rewritten CLI examples are executed and compared.
 func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
@@ -142,18 +141,22 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 	require.NotNil(t, stepHygieneOK, "hygiene OK step missing from transcript")
 	require.NotNil(t, stepHygieneMax, "hygiene max step missing from transcript")
 
+	one := func(s onboarding.Step, r onboarding.Result, volatile ...onboarding.Field) []onboarding.Problem {
+		return onboarding.CompareTranscript([]onboarding.Step{s}, []onboarding.Result{r}, volatile)
+	}
+
 	t.Run("dogfood record", func(t *testing.T) {
 		seams := dogfoodSeams{clock: func() time.Time { return time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC) }}
 
-		t.Cleanup(func() { _ = os.RemoveAll("./dogfood-receipts") })
-		_ = os.RemoveAll("./dogfood-receipts")
-
+		receipts := filepath.Join(t.TempDir(), "dogfood-receipts")
 		args := append([]string(nil), stepDogfood.Args...)
 		hasSource := false
-		for _, a := range args {
+		for i, a := range args {
 			if a == "--cli" || a == "--tools" {
 				hasSource = true
-				break
+			}
+			if a == "./dogfood-receipts" {
+				args[i] = receipts
 			}
 		}
 		if !hasSource {
@@ -162,14 +165,12 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 
 		code, stdout, stderr := dogfoodRunWith(seams, args[1:]...)
 		require.Equal(t, 0, code, "exit %d, stderr: %s", code, stderr)
+		// The receipts directory is this run's and is named from the table. The
+		// sum ending the receipt's name is a hash of the receipt's content, which
+		// the pinned instant makes the document's, so it is compared as written.
 		res := onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}
-		normFilePrefix, err := onboarding.Elide("receipt path prefix", `file=\./`, "file=")
-		require.NoError(t, err)
-		normReceiptSum, err := onboarding.Elide("receipt hash", `ada-[0-9a-f]{8}\.json`, "ada-<hash>.json")
-		require.NoError(t, err)
-
-		for _, p := range onboarding.Compare(*stepDogfood, res, []onboarding.Norm{normFilePrefix, normReceiptSum}) {
-			assert.Fail(t, "check failed", p.Message)
+		for _, p := range one(*stepDogfood, res, onboarding.Field{Name: "tmpdir", Doc: "./dogfood-receipts", Run: receipts}) {
+			assert.Fail(t, "check failed", p.Error())
 		}
 	})
 
@@ -178,8 +179,8 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 		code := run(stepRefusal.Args, &out, &errb)
 		require.Equal(t, 2, code)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
-		for _, p := range onboarding.Compare(*stepRefusal, res, nil) {
-			assert.Fail(t, "check failed", p.Message)
+		for _, p := range one(*stepRefusal, res) {
+			assert.Fail(t, "check failed", p.Error())
 		}
 	})
 
@@ -195,8 +196,8 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 		code := run(args, &out, &errb)
 		require.Equal(t, 0, code, "exit %d, stderr: %s", code, errb.String())
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
-		for _, p := range onboarding.Compare(*stepHygieneOK, res, nil) {
-			assert.Fail(t, "check failed", p.Message)
+		for _, p := range one(*stepHygieneOK, res) {
+			assert.Fail(t, "check failed", p.Error())
 		}
 	})
 
@@ -214,14 +215,14 @@ func TestCLIExamplesMatchWhatTheToolPrints(t *testing.T) {
 		code := run(args, &out, &errb)
 		require.Equal(t, 1, code, "exit %d, stderr: %s", code, errb.String())
 		res := onboarding.Result{Code: code, Stdout: out.String() + errb.String(), Stderr: ""}
-
-		normRepo, err := onboarding.Elide("lab dir", regexp.QuoteMeta(labDir), ".")
-		require.NoError(t, err)
-		normSha, err := onboarding.Elide("commit sha", `at=[0-9a-f]{12}`, "at=0a19082d2973")
-		require.NoError(t, err)
-
-		for _, p := range onboarding.Compare(*stepHygieneMax, res, []onboarding.Norm{normRepo, normSha}) {
-			assert.Fail(t, "check failed", p.Message)
+		// The lab is this run's directory, which the MORE line quotes back as
+		// `--repo "<lab>"` where the document quotes the `.` the reader typed;
+		// the foreign commit a finding names is the lab's, made at this run's
+		// instant. Both are named from the table.
+		for _, p := range one(*stepHygieneMax, res,
+			onboarding.Field{Name: "tmpdir", Doc: `"."`, Run: `"` + labDir + `"`},
+			onboarding.Field{Name: "commit"}) {
+			assert.Fail(t, "check failed", p.Error())
 		}
 	})
 }

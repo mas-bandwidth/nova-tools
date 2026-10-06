@@ -150,7 +150,10 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	// reader's $ORG and $REPO where the recording's names are printed.
 	// `id` joined on 2026-10-03 with nova-bus's first run: a message's id is
 	// a ULID made from the store's time, so it belongs to the run.
-	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch"}
+	// `commit` joined on 2026-10-06 with nova-check's CLI examples: a hygiene
+	// finding names a commit of the repository the reader builds at their own
+	// instant.
+	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch", "commit"}
 	got := VolatileNames()
 	require.Equal(t, len(want), len(got), "onboarding.Volatile holds %v, want %v", got, want)
 	for i := range want {
@@ -252,6 +255,7 @@ func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
 		{name: "took", field: "took", docValue: "5ms", runValue: "9h", mine: "8ms"},
 		{name: "created", field: "created", docValue: "2026-09-16T08:22:37Z", runValue: "2026-09-16T09:00:00Z", mine: "2026-09-16T08:22:37Z"},
 		{name: "sha", field: "sha", docValue: "abc1234", runValue: "0000000", mine: "def5678"},
+		{name: "commit", field: "at", docValue: "0a19082d2973:", runValue: "5be0c1d2e3f4:", mine: "7c1e2d3f4a5b:"},
 		{name: "branch", field: "branch", docValue: "seal/air-GH_TOKEN-20260927-013000", runValue: "seal/air-GH_TOKEN-20260927-020000", mine: "seal/air-GH_TOKEN-20260926-120000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
