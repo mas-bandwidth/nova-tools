@@ -351,8 +351,8 @@ func TestTheMoveOfEachNoteAndCloseOfTodaysPlansHasEveryFieldOfIt(t *testing.T) {
 			var notes []sprint.Note
 			var closes []sprint.Open
 			for _, u := range plan.Units {
-				notes = append(notes, u.Notes...)
-				closes = append(closes, u.Closes...)
+				notes = append(notes[:len(notes):len(notes)], u.Notes...)
+				closes = append(closes[:len(closes):len(closes)], u.Closes...)
 				for _, o := range u.Closes {
 					one(t, i, duty, tabs, sprint.Plan{Units: []sprint.Unit{{Closes: []sprint.Open{o}}}}, o, seen, "close in a unit")
 				}
