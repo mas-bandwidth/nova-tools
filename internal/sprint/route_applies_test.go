@@ -71,6 +71,39 @@ func TestARouteIsUsedOnlyWhereItApplies(t *testing.T) {
 		}
 	})
 
+	t.Run("a flash card is never dealt to a friend unless its route's mask holds friends", func(t *testing.T) {
+		t.Parallel()
+		w := friendWorld(t, "tier: flash\n\nThe task.")
+		// the seed: flash-a is applied to the fleet, never to a friend, and amy's
+		// tiers hold flash, so only the mask can keep the card off her row
+		w.s.Routes = []Route{flashRoute(ClassFleet)}
+		amy := FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash"}
+		p := FriendDeal(w.s, []*Card{w.s.Primary("s1-1")}, []FriendSeat{amy})
+		require.Empty(t, p.Refused)
+		assert.Empty(t, p.Units, "no flash route applies to a friend: the friend deal leaves the card")
+		assert.Nil(t, w.s.Fleet.Card("s1-1.w1"), "a flash card is never dealt to friend.amy while its route's mask holds fleet only")
+
+		// the mask leaves it to the fleet: the machines' deal takes it
+		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+		wc := w.s.Fleet.Card("s1-1.w1")
+		require.NotNil(t, wc, "the mask leaves the card to the fleet: the machines' deal takes it")
+		assert.Contains(t, []string{"m1", "m2"}, wc.Row, "dealt to a fleet machine, never a friend")
+		assert.Equal(t, "flash-a", wc.F(FieldRoute), "the fleet machine draws the masked route")
+	})
+
+	t.Run("an only-friend pin waits ready with the mask's reason", func(t *testing.T) {
+		t.Parallel()
+		w := friendWorld(t, friendBrief("only friend amy"))
+		w.s.Routes = []Route{flashRoute(ClassFleet)}
+		amy := FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash"}
+		p := FriendDeal(w.s, []*Card{w.s.Primary("s1-1")}, []FriendSeat{amy})
+		require.Empty(t, p.Refused)
+		assert.Empty(t, p.Units, "the mask leaves the tier to the fleet: the pin waits ready")
+		assert.Equal(t, Ready, w.s.StateOf("s1-1"), "the hard pin waits ready, never dealt to a machine")
+		h := Holder(HeldState{Snap: w.s, Running: true}, w.s.Now, "s1-1")
+		assert.Contains(t, h.Why, "no flash route applies to a friend", "where says the mask's reason: %s", h.Why)
+	})
+
 	t.Run("pro reads go only to friend readers", func(t *testing.T) {
 		t.Parallel()
 		w := newWorld(t, "reader-rowan", "reader-a")

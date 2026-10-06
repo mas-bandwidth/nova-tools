@@ -541,6 +541,12 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 					return "waits for only friend " + name + ", and it was taken back from her: unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
 				}
 			}
+			// the route's mask can leave the pin's tier to the fleet (friendApplies): it
+			// waits ready for her, and where says the mask's reason, never falling back to
+			// a route outside its mask (docs/SPEC-SPRINT.md, route-applies-to)
+			if tier := cardTierOf(escalating(s, pr)); !s.friendApplies(tier) {
+				return "waits for only friend " + name + ", and no " + tier + " route applies to a friend (its routes' applies mask): unpin it (nova-sprint unpin), or nova-config route set <name> --applies friends, then nova-config apply", "", true
+			}
 			return "waits for only friend " + name, "", true
 		}
 		up := s.UpMembers()

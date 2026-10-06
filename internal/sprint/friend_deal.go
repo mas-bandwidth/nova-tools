@@ -190,6 +190,28 @@ func friendTakes(f FriendSeat, tier string) bool {
 	return slices.Contains(friendTiers(f), tier)
 }
 
+// friendApplies says a friend may be dealt a card of the tier: the store holds no
+// route at all, or some enabled route of the tier (in its array, as the deal
+// draws it) applies to the friends' class (ClassFriends) — the same check the
+// reads' ask makes of a reader's class (readerApplies). A tier no enabled route
+// of which applies to a friend is dealt to no friend: its cards stay ready for
+// the machines' deal, and an OnlyFriend pin waits ready with the mask's reason
+// (Holder), never falling back to a route outside its mask (docs/SPEC-SPRINT.md,
+// route-applies-to; tla/RouteIndex.tla, RouteHonoursMask).
+func (s *Snapshot) friendApplies(tier string) bool {
+	if len(s.Routes) == 0 {
+		return true
+	}
+	for _, name := range s.tierArray(tier) {
+		for _, r := range s.Routes {
+			if r.Name == name && r.Enabled && r.AppliesTo(ClassFriends) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // friendsLeft is the friends the work card has left (FieldFriendsLeft), with the one it
 // was taken back from while it is withdrawn.
 func friendsLeft(wc *Card) []string {
@@ -335,14 +357,18 @@ func friendLoad(s *Snapshot, name string) int {
 // machines' deal fills a member (the owner, 2026-10-04: "Do it just like the fleet, you keep
 // people busy by having 2X width queued up in ready per-friend"). A card whose WHO line
 // names a friend goes to her first while she is up, below her room, not one it has left,
-// and her tiers hold its tier; else (or with no WHO line, or WHO: friend) it goes to a
+// her tiers hold its tier, and some enabled route of its tier applies to the friends'
+// class (friendApplies); else (or with no WHO line, or WHO: friend) it goes to a
 // friend up whose tiers hold its tier (friendTakes, every friend deal's gate; a card with
-// no tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
+// no tier is the dealer's default, flash: cardTierOf) and whose class a route of the
+// tier is applied to (friendApplies), below her room, and never one it has
 // left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
 // then the most room, then by name (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
 // unless it says WHO: only friend <name> (OnlyFriend), the one hard pin: it waits ready for
-// her, and so does one whose friend's tiers do not hold its tier. A card a friend's beat
+// her, and so does one whose friend's tiers do not hold its tier or whose tier no route
+// applies to a friend — that one waits with the mask's reason (Holder), never falling back
+// to a route outside its mask (docs/SPEC-SPRINT.md, route-applies-to). A card a friend's beat
 // names running (laneRunsIt) is placed on no row while it does. A withdrawn attempt at its
 // redeal bound at its ceiling or its attempt cap (AtRedealBound), or refused at staging by
 // every member up, stays with the machines' deal and its judgment; one at its redeal bound
@@ -415,6 +441,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		}
 		escalated := wc != nil && redealBound(wc)
 		tier := cardTierOf(escalating(s, c))
+		applies := s.friendApplies(tier) // some enabled route of the tier holds the friends' class
 		left := friendsLeft(wc)
 		pinned, pinnedCard := FriendCard(c)
 		leftAtPin := slices.Clone(left)
@@ -422,10 +449,10 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		if !pinnedCard {
 			name = ""
 		}
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
-			name = "" // the friend it names is not up with room, it has left her, or not her tier
+		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier) || !applies) {
+			name = "" // the friend it names is not up with room, it has left her, not her tier, or the mask leaves the tier to the fleet
 		}
-		if name == "" && !OnlyFriend(c) {
+		if name == "" && !OnlyFriend(c) && applies {
 			var may []string
 			for _, f := range up {
 				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
