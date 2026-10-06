@@ -2805,12 +2805,22 @@ fault of the base's is left. It makes a line the change ends in CRLF LF (not in 
 whose own lines are CRLF), trims trailing whitespace outside a code block (not a Markdown
 hard break, two spaces before more of the paragraph), adds a missing final newline, and
 closes at the end of the file a fence the change leaves open when no blank line and text
-follow it. A paragraph with an odd count of backquotes and a run on a changed line loses
-the one run whose loss leaves every other run closed in a span that reads as one: an
-opening run is not after a word and before a blank, a closing run is not after a blank
-and before a word. When no run or more than one does, there are two ways to read it, and
-the head is refused with the line, `<file>:<line> leaves a code span unmatched and the
-repair is ambiguous: ... (E4)`, and nothing is written. A repaired file is written and the
+follow it. A code span is judged on the result, the paragraph the change leaves, not on
+the backquotes it adds: `sprint.DocChanged` carries the runs of lines a change deletes as
+well as the lines it writes, and a deletion that takes an odd count of backquotes from a
+paragraph (the line that closed a span, or the closing backquote cut from a line) makes
+that paragraph the change's as a run on a line it writes does (a cold read of
+2026-10-06: a deletion-only change passed with a span left open). A paragraph with an odd
+count of backquotes that is the change's loses the one run, on a line the change writes
+or beside one of its deletions, whose loss leaves every other run closed in a span that
+reads as one: an opening run is not after a word and before a blank, a closing run is
+not after a blank and before a word. When no run or more than one does, there are two
+ways to read it, and the head is refused with the line, `<file>:<line> leaves a code span
+unmatched and the repair is ambiguous: ... (E4)`, and nothing is written; a deletion with
+no run beside it to drop is refused at the line beside it, `<file>:<line> leaves a code
+span unmatched: the lines it deletes take an odd count of backquotes and no line beside
+them holds one to drop: ... (E4)`. A deletion that balances a span, or takes an even
+count from a paragraph the base left odd, is no fault of the change's. A repaired file is written and the
 merge commit amended, its parents and subject kept and the repair in its body. Each repair
 is named in the landing note: the card's record (the merge's `resolved` note, beside a
 ledger's) and a `NOTE <card>: the documents were repaired at the merge: <file>:<line>
@@ -2823,8 +2833,8 @@ A stream's prose globs (`stream set <s> --prose <glob,...>`, the control card's 
 are their own: on them the code-span check does not run at all, neither the repair's nor
 E4's (`sprint.DocProse`). The private record's `security/**` and `ratings/**` are prose,
 set on its stream by the coordinator. The tests are internal/sprint/land_repair_test.go,
-internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`,
-on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
+internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`
+and `TestE4CatchesADeletionThatUnbalancesASpan`, on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
 
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
