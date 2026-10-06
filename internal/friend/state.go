@@ -68,6 +68,18 @@ type Status struct {
 	// one-shot lanes as n:session:card/turn, empty in batch.
 	Mode  string `json:"mode,omitempty"`
 	Lanes string `json:"lanes,omitempty"`
+	// Held, InboxJobs and Missing are the last inbox reconcile's counts (SyncInbox): the
+	// cards on her row, the sprint jobs in her inbox, and the held cards with no BRIEF.md
+	// after it; HeldKnown is false until the server has answered once, and InboxError is
+	// why the last reconcile did not finish, empty when it did.
+	HeldKnown  bool   `json:"held_known,omitempty"`
+	Held       int    `json:"held"`
+	InboxJobs  int    `json:"inbox"`
+	Missing    int    `json:"missing"`
+	InboxError string `json:"inbox_error,omitempty"`
+	// HeldFrom is where the last answer came from: friend cards, or the worker view while the
+	// server does not serve it (no brief is written from the view).
+	HeldFrom string `json:"held_from,omitempty"`
 }
 
 // Pong is the session's last answer, as the pong verb records it beside

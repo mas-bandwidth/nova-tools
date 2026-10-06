@@ -502,7 +502,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken mode=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
+		Out(`delivered=0 session=broken mode=- held=- inbox=- missing=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
