@@ -84,20 +84,22 @@ Drawing those four cells after the readers table's counts, and on each reader's 
 `readersAll`), outside card reader-spend-on-the-table-b's paths.
 
 `where --json` carries `landedSeries` for the Landings panel (cards landed per 10-minute
-bucket over 24 hours, split between friends and fleet; `where-landed-series.w1`):
-`generated` (RFC 3339), `generatedEpoch`, `bucketSeconds` (600), `start` (Unix epoch seconds of
-the first bucket), `buckets` (144), `friends` (144 counts), `fleet` (144 counts), `totals`
-(`friends`, `fleet`, `unknown`), `lastHour` (`friends`, `fleet`), and `workers` (each worker's
-landed count with `friend.` stripped). A landing is a work-table move to `<stream>:landed`
-from any state but waiting (a sentinel's release is not work), counted once per card at that
-move's time; the worker is the last `<who>:ok` move of the card's work attempt (`<card>.wN`),
-where `friend.<name>` is friends, any fleet member is fleet, and none found is unknown.
-The series is read from the store `--redis` names and the epoch `--at-epoch` names, in any
-order with where's other flags (`where --json --cards --redis <addr>` is the dashboard's
-call), at the frame's `at`; a frame the sprint's server drew already carries it. An unknown
-flag with `--json` is refused, never read as a series of another store
-(`TestWhereLandedSeriesReadsTheNamedStoreAndEpoch`, `TestWhereSeriesFlagsAreWheresFlags`,
-`where-landed-series.w3`).
+bucket over 24 hours, split between friends and fleet): `generated` (RFC 3339),
+`generatedEpoch`, `bucketSeconds` (600), `start` (Unix epoch seconds of the first bucket),
+`buckets` (144), `friends` (144 counts), `fleet` (144 counts), `totals` (`friends`, `fleet`,
+`unknown`), `lastHour` (`friends`, `fleet`), and `workers` (each worker's landed count, keyed
+by its full row name). A landing is a work-table move to `<stream>:landed` from any state but
+waiting (a sentinel's release is not work): each card counts once, its first landing in the
+log. A set move counts every card on the line. The worker is the last `<who>:ok` move of the
+card's work attempt (`<card>.wN`), by the line's time; `friend.<name>` is friends, any other
+row is a fleet machine, and a missing worker is unknown, counted in `totals.unknown` and in
+neither series. The lander is not the worker: the `:ok` row is. `totals` and `lastHour` split
+the same landings; the hour is the clock's last 3600 seconds. The series is read from the
+store `--redis` names and the epoch `--at-epoch` names, in any order with where's other flags
+(`where --json --cards --redis <addr>` is the dashboard's call), at the frame's `at`; a frame
+the sprint's server drew already carries it. An unknown flag with `--json` is refused, never
+read as a series of another store (`TestWhereLandedSeriesReadsTheNamedStoreAndEpoch`,
+`TestWhereSeriesFlagsAreWheresFlags`).
 
 The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
 below merge. friends | status for now. up/down/held"; "friends should be

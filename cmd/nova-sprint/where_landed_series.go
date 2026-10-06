@@ -15,7 +15,7 @@ import (
 func init() {
 	for i := range verbs {
 		if verbs[i].name == "where" {
-			verbs[i].syntax = "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows]: includes landedSeries] [--release [<name>]]"
+			verbs[i].syntax = "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived] [--stale <duration>] [--at-epoch <n>]: includes landedSeries] [--release [<name>]]"
 			orig := verbs[i].run
 			verbs[i].run = func(a *app, args []string, stdout, stderr io.Writer) int {
 				// where's own flags are parsed here once, every one of them, so --redis

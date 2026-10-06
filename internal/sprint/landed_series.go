@@ -58,8 +58,14 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 		if l.Kind != LineMove && l.Kind != "move" {
 			continue
 		}
-		if strings.HasSuffix(l.To, ":ok") && reWorkCard.MatchString(l.Card) {
-			base := reWorkCard.ReplaceAllString(l.Card, "")
+		if !strings.HasSuffix(l.To, ":ok") {
+			continue
+		}
+		for _, card := range l.Names() {
+			if !reWorkCard.MatchString(card) {
+				continue
+			}
+			base := reWorkCard.ReplaceAllString(card, "")
 			worker := strings.TrimSuffix(l.To, ":ok")
 			if at, ok := workerAt[base]; !ok || !l.At.Before(at) {
 				latestWorker[base] = worker
@@ -156,8 +162,7 @@ func LandedSeriesOf(lines []Line, now time.Time) LandedSeries {
 			}
 		}
 
-		workerKey := strings.TrimPrefix(worker, "friend.")
-		workers[workerKey]++
+		workers[worker]++
 	}
 
 	return LandedSeries{

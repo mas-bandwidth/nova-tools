@@ -13,7 +13,7 @@ import (
 )
 
 // where --json carries landedSeries (cards landed per 10-minute bucket over 24 hours,
-// split between friends and fleet, where-landed-series.w1).
+// split between friends and fleet).
 func TestWhereCarriesLandedSeries(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -41,7 +41,7 @@ func TestWhereHelpNamesLandedSeries(t *testing.T) {
 
 // where --json --cards --redis <addr> is the dashboard's call (dashboard.go): the series
 // comes from the store --redis names and the epoch --at-epoch names, whatever flag of
-// where comes before them (where-landed-series.w3, the reader's finding 1).
+// where comes before them.
 func TestWhereLandedSeriesReadsTheNamedStoreAndEpoch(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
