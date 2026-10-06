@@ -9,8 +9,9 @@ import (
 )
 
 // releaseHoldWords tells release apart from the holds on a member, a reader,
-// and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
-const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
+// and a friend (docs/SPEC-ISA.md: release resolves the one wait whose operand
+// is the release; a sentinel's release and a held card are the same wait).
+const releaseHoldWords = `release resolves a wait on a release: a sentinel or a held card. It does not release a held member, reader, friend or stream:
   unhold <name>... releases any of them (one verb for the four)
   fleet up <member> releases a held member
   reader up <reader> releases a held reader

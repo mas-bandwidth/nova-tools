@@ -6,30 +6,24 @@ import (
 	"strings"
 )
 
-// Sentinel cards (docs/SPEC-SPRINT.md, sentinel cards): a sentinel is a
-// primary of kind sentinel, a stop in its stream. It waits for every primary
-// of its stream that sorts before it (and for the needs it names in other
-// streams); what sorts after it waits for it. It is never dealt, read or
-// merged. When everything it needs has landed, the step that landed the last
-// of them marks it reached and tells the coordinator; only the coordinator's
+// The one wait (docs/SPEC-ISA.md, "the one wait kind"): a sentinel, a held card
+// and the wave behind it are one wait, read by WaitOf in held.go. A sentinel is
+// a stop in its stream: it waits for the line before it, only the coordinator's
 // release lands it, and the same step moves what waited behind it to ready.
 
 // IsSentinel says the primary is a sentinel.
 func IsSentinel(c *Card) bool { return c.F("kind") == "sentinel" }
 
-// IsHeld says the primary was admitted held (add --held): it stays waiting,
-// never reached and never dealt, until the coordinator's release, so a wave
-// can be loaded behind a sentinel with nothing before it and nothing fires
-// (nova-tools#5096 item 15).
+// IsHeld says the primary was admitted held (add --held): it stays waiting
+// until the coordinator's release (nova-tools#5096 item 15).
 func IsHeld(c *Card) bool { return c.F(FieldHeld) != "" }
 
 // FieldHeld is the stamp of a primary admitted held.
 const FieldHeld = "held"
 
-// heldWave is the first held sentinel waiting that waits for nothing itself (a wave loads
-// behind a held sentinel with nothing before it), in work order: the wave behind it is what
-// the tick offers when the fleet is starving (NStarving), since its release is what lets the
-// wave through; nil when no such sentinel is held.
+// heldWave is the first held sentinel waiting for nothing itself: what the
+// tick offers when the fleet starves (NStarving), since its release lets the
+// wave through; nil when none is held.
 func heldWave(s *Snapshot) *Card {
 	for _, c := range s.Work.Column(Waiting) {
 		if IsSentinel(c) && IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
@@ -40,12 +34,9 @@ func heldWave(s *Snapshot) *Card {
 }
 
 // HeldBack is how many primaries no tick moves on its own: every sentinel not
-// released, every card admitted held, and every waiting card that waits,
-// through a need or its place in line, on one of those. where shows them as
-// held=N (nova-tools#5096 item 16), and its ETA counts every card not landed,
-// held ones included (docs/SPEC-SPRINT.md section 1, 2026-10-02). Everything
-// it counts is waiting, so a snapshot of the work table's waiting column is
-// enough.
+// released, every held card, and every waiting card that waits on one of them
+// through a need or its place in line (nova-tools#5096 item 16; where shows
+// held=N, its ETA over every card not landed).
 func HeldBack(s *Snapshot) int {
 	memo := map[string]bool{}
 	var back func(c *Card) bool
@@ -238,17 +229,15 @@ func reachedNote(s *Snapshot, c *Card, landing map[string]bool, extra int, who s
 	return n
 }
 
-// Reachable says a sentinel whose waits are met is reached now: something came before it
-// (HasBefore), or, with nothing before it, no other work of the sprint is in flight
-// (landing: what the step lands, which is in flight no more). A stop with nothing before it
-// while other work moves is simply next: no judgment, and release lands it all the same
-// (docs/SPEC-SPRINT.md section 16).
+// Reachable says a sentinel whose waits are met is reached now: something came
+// before it (HasBefore), or, with nothing before it, no other work of the
+// sprint is in flight (docs/SPEC-SPRINT.md section 16).
 func Reachable(s *Snapshot, c *Card, landing map[string]bool) bool {
 	return HasBefore(s, c) || workInFlight(s, landing) == ""
 }
 
-// workInFlight is a primary of the sprint that is ready, working, in review or merging and
-// not landing in this step: work that moves, "" when there is none.
+// workInFlight is a primary ready, working, in review or merging and not
+// landing in this step: work that moves, "" when there is none.
 func workInFlight(s *Snapshot, landing map[string]bool) string {
 	for _, st := range []State{Ready, Working, Review, Merging} {
 		for _, c := range s.Work.Column(st) {
@@ -260,9 +249,8 @@ func workInFlight(s *Snapshot, landing map[string]bool) string {
 	return ""
 }
 
-// HasBefore says a sentinel has something to be reached after: a need it names, or a
-// primary of its stream on the table (in any state, landed too) that sorts before it. One
-// with nothing before it is reached only when no other work is in flight (Reachable).
+// HasBefore says a sentinel has something to be reached after: a need it names,
+// or a primary of its stream that sorts before it.
 func HasBefore(s *Snapshot, c *Card) bool {
 	if len(Split(c.F("needs"))) > 0 {
 		return true
@@ -280,21 +268,20 @@ func anyBefore(s *Snapshot, stream, id string, score float64) bool {
 	return false
 }
 
-// reachUnit marks a sentinel reached, with the time, and tells the
-// coordinator once.
+// reachUnit marks a sentinel reached, with the time, and tells the coordinator once.
 func reachUnit(s *Snapshot, c *Card, landing map[string]bool, who string) Unit {
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, map[string]string{"reached": stamp(s.Now)}))},
 		Notes: []Note{reachedNote(s, c, landing, 0, who)}, Moved: "sentinel " + c.ID + " reached"}
 }
 
-// SentinelsDue marks reached every sentinel whose needs have all landed (or
+// SentinelsDue marks reached every sentinel whose waits have all landed (or
 // were waived) and that is not reached yet: the backstop of the steps that
 // land. It never lands a sentinel; only release does.
 func SentinelsDue(s *Snapshot, who string) Plan {
 	var p Plan
 	p.on(s)
 	for _, c := range s.Work.Column(Waiting) {
-		if IsSentinel(c) && !IsHeld(c) && c.F("reached") == "" && len(WaitsFor(s, c, nil)) == 0 && Reachable(s, c, nil) {
+		if w := WaitOf(s, c); w.Operand == WaitOnLine && c.F("reached") == "" && len(w.On) == 0 && Reachable(s, c, nil) {
 			p.Units = append(p.Units, reachUnit(s, c, nil, who))
 		}
 	}
@@ -312,18 +299,13 @@ type ReleaseReq struct {
 	Who         string
 }
 
-// Release lands reached sentinels, and those with nothing before them (HasBefore),
-// and those not yet reached whose waits are each under way (notUnderWay: landed,
-// dropped, or in flight), so a starving fleet frees the cards behind work in flight
-// (nova-tools#5096 item c13); what such a one still waited for is waived on it.
-// (waiting -> landed, the only step that may)
-// and, in the same step, moves every waiting primary whose needs have all now
-// landed to ready, and marks reached every sentinel that is now due. It
-// closes the judgments open on each sentinel and always writes that it
-// landed, by whom, why, and how many cards are now ready. A held sentinel
-// (add --held) with nothing left to wait for is released as a reached one; a
-// held primary has its hold cleared, and goes to ready when it waits for
-// nothing else.
+// Release is the coordinator resolving a wait whose operand is the release: a
+// sentinel lands (waiting -> landed, the only step that may), a held card has
+// its hold cleared and moves to ready when it waits for nothing else, and
+// every waiting primary whose needs have now landed moves to ready in the same
+// step. A sentinel with nothing before it (HasBefore), or whose waits are each
+// under way (notUnderWay), is released past them, waived on it
+// (nova-tools#5096 item c13).
 func Release(s *Snapshot, r ReleaseReq) Plan {
 	var p Plan
 	p.on(s)
@@ -350,6 +332,7 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	var chosen []*Card
 	for _, id := range r.IDs {
 		c := s.Work.Card(id)
+		w := WaitOf(s, c)
 		switch {
 		case landing[id] || unheld[id]:
 			p.refuse(id, "named twice")
@@ -357,25 +340,25 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 		case !c.Placed():
 			p.refuse(id, "not on the table")
 			continue
-		case !IsSentinel(c) && !IsHeld(c):
+		case w.Operand != WaitOnLine && w.Operand != WaitOnRelease:
 			p.refuse(id, "not a sentinel or a held card: a primary lands by merging")
 			continue
 		case c.Col != Waiting:
 			p.refuse(id, "is "+c.Col+", not a sentinel waiting to be released")
 			continue
-		case !IsSentinel(c):
+		case w.Operand == WaitOnRelease:
 			unheld[id] = true
 			p.Units = append(p.Units, releaseHeld(s, c, r))
 			continue
 		}
-		w := WaitsFor(s, c, nil)
-		if n, why := notUnderWay(s, w); n != "" {
+		waits := WaitsFor(s, c, nil)
+		if n, why := notUnderWay(s, waits); n != "" {
 			p.refuse(id, "not reached: it waits for "+n+" ("+why+"); release lands a sentinel whose waits have each landed, been dropped, or are in flight (taken, in review or merging)")
 			continue
 		}
 		landing[id] = true
 		chosen = append(chosen, c)
-		past[id] = w
+		past[id] = waits
 	}
 	after := resolveAfter(s, landing, r.Who)
 	moving := map[string]bool{}
@@ -431,12 +414,17 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	return Lawful(p)
 }
 
-// notUnderWay is the first of a sentinel's waits that is not under way, with its
-// state in words: waiting, ready, working with its work card dealt and not taken, or
-// not on the table (nova-tools#5096 item c13). A wait under way has landed, was
-// dropped, or is in flight: working with its work card taken by a member, in review,
-// or merging. "" when every wait is under way; for one wait under way, its words.
+// notUnderWay is the first of a sentinel's waits that is not under way, with
+// its state in words (nova-tools#5096 item c13): "" when every wait is under
+// way (landed, dropped, or in flight), else the wait and its state.
 func notUnderWay(s *Snapshot, waits []string) (string, string) {
+	taken := func(c *Card) bool {
+		if s.Fleet == nil {
+			return false
+		}
+		wc := s.Fleet.Placed(c.F("work"))
+		return wc != nil && wc.Col == Working
+	}
 	why := ""
 	for _, id := range waits {
 		c := s.Work.Card(id)
@@ -449,7 +437,7 @@ func notUnderWay(s *Snapshot, waits []string) (string, string) {
 			return id, "off the table (" + orDash(c.F("outcome")) + ")"
 		case c.Col == Review, c.Col == Merging, c.Col == Landed:
 			why = c.Col
-		case c.Col == Working && taken(s, c):
+		case c.Col == Working && taken(c):
 			why = "working, taken"
 		case c.Col == Working:
 			return id, "working, its work card not taken"
@@ -460,18 +448,8 @@ func notUnderWay(s *Snapshot, waits []string) (string, string) {
 	return "", why
 }
 
-// taken says a working primary's work card is taken by its member: in the fleet
-// table's working column, not dealt and waiting in the member's ready queue.
-func taken(s *Snapshot, c *Card) bool {
-	if s.Fleet == nil {
-		return false
-	}
-	wc := s.Fleet.Placed(c.F("work"))
-	return wc != nil && wc.Col == Working
-}
-
-// releaseHeld is release of a held primary (add --held): its hold cleared,
-// with who and why, and waiting -> ready when it waits for nothing else.
+// releaseHeld is release of a held primary (add --held): its hold cleared, with
+// who and why, and waiting -> ready when it waits for nothing else.
 func releaseHeld(s *Snapshot, c *Card, r ReleaseReq) Unit {
 	set := map[string]string{"released": stamp(s.Now), "released_by": r.Who, "release_reason": r.Reason}
 	if w := WaitsFor(s, c, nil); len(w) > 0 {
@@ -482,10 +460,6 @@ func releaseHeld(s *Snapshot, c *Card, r ReleaseReq) Unit {
 		Moved: fmt.Sprintf("%s waiting -> ready (released by %s)", c.ID, r.Who)}
 }
 
-// FieldNeedsSet is a sentinel's record of its needs re-pointed (sentinel set): "<before> ->
-// <after> <stamp> by <who>", the last set.
-const FieldNeedsSet = "needs_set"
-
 // SentinelSetReq replaces a sentinel's needs (sentinel set <id> --needs a,b).
 type SentinelSetReq struct {
 	ID    string
@@ -493,18 +467,11 @@ type SentinelSetReq struct {
 	Who   string
 }
 
-// SentinelSet replaces the needs of a waiting sentinel in one step (docs/SPEC-SPRINT.md
-// section 16; 2026-10-04: the cards a release sentinel waited on were deferred, and the
-// sentinel could only be dropped and added again, which lost its id, its place and its
-// log). The sentinel keeps its id, stream, score and log; one line names its needs before
-// and after. A sentinel the new needs leave waiting for nothing is marked reached, as the
-// step that lands its last need marks it; one reached that waits again is reached no more,
-// and its reached judgment is answered. The blocked or missing judgments on it that named
-// only needs it no longer names are answered. The coordinator's alone. Refused whole,
-// writing nothing, for no needs (a sentinel with nothing to wait on is released, not
-// emptied), an id that is no sentinel waiting on the table, a need named twice, the
-// sentinel itself, needs that are no card on the table (every one named at once), the
-// needs it has already, and a cycle the new needs would close.
+// SentinelSet replaces a waiting sentinel's needs in one step (docs/SPEC-SPRINT.md
+// section 16): the sentinel keeps its id, stream, score and log, one line names
+// its needs before and after, and a set that leaves it waiting for nothing is
+// marked reached (a reached one that waits again is reached no more, its
+// judgment answered). The coordinator's alone; refused whole, writing nothing.
 func SentinelSet(s *Snapshot, r SentinelSetReq) Plan {
 	var p Plan
 	p.on(s)
@@ -568,7 +535,7 @@ func SentinelSet(s *Snapshot, r SentinelSetReq) Plan {
 		return p
 	}
 	after := withField(c, "needs", now)
-	set := map[string]string{"needs": now, FieldNeedsSet: fmt.Sprintf("%s -> %s %s by %s", orDash(old), now, stamp(s.Now), orDash(r.Who))}
+	set := map[string]string{"needs": now, "needs_set": fmt.Sprintf("%s -> %s %s by %s", orDash(old), now, stamp(s.Now), orDash(r.Who))}
 	var unset []string
 	moved := fmt.Sprintf("sentinel %s needs %s -> %s", c.ID, orDash(old), now)
 	u := Unit{Key: c.ID, Stream: c.Row}

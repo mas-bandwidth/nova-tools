@@ -5437,6 +5437,11 @@ score lies between; the line is never renumbered), or many at once: `add
 n cards in each stream named with a sentinel `<s>-gate-<i>` after every k of
 them (none after the last unless `--sentinel-last`), all streams in one step.
 
+A sentinel is the one `wait` kind of [SPEC-ISA.md](SPEC-ISA.md): with a held
+card (`add --held`) and the wave behind a held sentinel it is one wait, read by
+`sprint.WaitOf` (`internal/sprint/held.go`); only the operand differs, a
+sentinel's being its line.
+
 A sentinel's property belongs to its position in its stream's order, and
 nothing about position is stored as a need, on the sentinel or on any card
 behind it: stored needs are only what a card names itself (`--needs`), in its

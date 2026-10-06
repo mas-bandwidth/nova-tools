@@ -47,11 +47,10 @@ The operands and results, field by field, are today's card lines:
 
 ## The one wait kind
 
-Today a card waits for one of several unrelated reasons, each its own mechanism:
-admitted held (`add --held`, `internal/sprint/held.go`), a sentinel (`add
---sentinel`, `internal/sprint/steps_sentinel.go`), a wave loading behind a held
-sentinel, `DEPENDS-ON` between cards, and a proposed external wait. The spec
-defines one `wait` kind whose operand says what it waits for. The operand is the
+The one `wait` kind is one path in the code, `WaitOf`
+(`internal/sprint/held.go`): admitted held (`add --held`), a sentinel (`add
+--sentinel`), the wave behind a held sentinel and `DEPENDS-ON` between cards
+are one wait, read once. The operand is the
 `DEPENDS-ON` line the brief already carries, read in four forms:
 
 - `DEPENDS-ON: <card id>` waits for that card to land. Today's `needs`.
@@ -106,8 +105,11 @@ concepts after: 1
 
 ## Sources
 
-- `internal/sprint/held.go`: `FieldHeld`, `IsHeld`, `heldWave`, `HeldBack`, and the no-stall rule's hold.
-- `internal/sprint/steps_sentinel.go`: `IsSentinel`, `WaitsFor`, `Reachable`, `Release`.
+- `internal/sprint/held.go`: `WaitOf`, `CardWait`, the one wait hold, sentinel
+  and wave read through; `FieldHeld`, `IsHeld`, `heldWave`, `HeldBack`, and the
+  no-stall rule's hold.
+- `internal/sprint/steps_sentinel.go`: `IsSentinel`, `WaitsFor`, `Reachable`,
+  `Release`, the sentinel's release, which is the same wait.
 - `internal/hygiene/kinds.txt`: the one list of work kinds.
 - `internal/cardtree/tree.go`: the script step, which runs with no model.
 - `docs/SPEC-SPRINT.md` section 2 (the cards), section 5 (the fleet, for the wave) and section 16 (sentinel cards).
