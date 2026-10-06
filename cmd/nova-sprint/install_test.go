@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // install writes each of nova-sprint's units for macOS and Linux into a fake home,
@@ -28,6 +30,9 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			a := newApp(func(k string) string { return env[k] })
 			a.goos = goos
 			a.home = func() (string, error) { return home, nil }
+			m := store.NewMem()
+			a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return m, nil }
+			session := t.TempDir()
 			a.executable = func() (string, error) { return "/opt/nova/bin/nova-sprint", nil }
 			var calls []string
 			a.seatLoad = func(goos, op, path string) error { calls = append(calls, op+" "+filepath.Base(path)); return nil }
@@ -59,7 +64,7 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			for _, line := range [][]string{
 				{"server", "--listen", "127.0.0.1:6390", "--land", "--decide", "/srv/decide"},
 				{"member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"},
-				{"seat-push"},
+				{"seat-push", "--harness", "opencode", "--target", session},
 				{"friend-sync", "--every", "15s"},
 				{"table", "--out", "/srv/table.txt"},
 			} {
