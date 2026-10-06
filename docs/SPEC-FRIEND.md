@@ -289,16 +289,50 @@ in `internal/sprint` and `cmd/nova-sprint`.
 
 ## The loop (internal/friend/daemon.go)
 
-Each second: the clock is stepped; when the session is free, every message
-waiting is read off the stream (a ping is answered by the daemon at once and
-acked, never pushed in), and one turn is started with all of them, oldest
-first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
-the next turn): one envelope listing each message's id, from and subject, with
-the message as `nova-bus recv` prints it, the pong line first while a challenge
-is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
-turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is the
-command accepting the input, not the turn ending). Any other exit leaves
+Each second: the clock is stepped; when the session is free (a turn has
+ended, or none ran), every message waiting is read off the stream, up to 32
+(`MaxBatch`), and one turn is started with all of them: a message never waits
+behind a turn per older message (the finding of 2026-10-04: one message per
+turn, with turns of 2 to 10 minutes, delivered a notice 30 minutes stale while
+newer messages queued behind it). The turn is one envelope (`Envelope`, a
+function of the pending list and a clock): the pong line first while a
+challenge is open, the daemon's latest word about the coordinator, the count,
+then each message oldest first as
+
+    [1/3] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>
+    <body>
+
+where `age` is how long it has waited when the turn starts. The text is capped
+at the adapter's text limit (`TextLimit`: its own when it names one, else 256
+KiB, `BatchBytes`; the first message always goes in); the messages that do not
+fit are named under `and <n> more: nova-bus recv --as <me> --all`, one line
+each, stay pending, and are the next turn. A single message with nothing else
+is its `recv` text alone.
+
+Two kinds of message are never a turn. A ping is the daemon's: answered at once
+with `daemon-pong` and acked, never pushed in, so the session's turns are spent
+on work; a session proves itself by any bus line it sends after the ping (a
+real message counts; `nova-friend pong --nonce` still counts when a session
+runs it), which ends the challenge and with it the pong line at the head of its
+turns, while the daemon's own sends (`daemon-pong`, its notices, a session
+check) prove nothing. And the supersede rule (`SupersededNotices`): of the
+daemon's own notices about the coordinator pending on the friend's stream
+(`coordinator silent`, `coordinator back`), only the newest is delivered;
+each older one is dropped and acked, its record line naming
+`superseded=<newer id>`.
+
+The adapter blocks for the whole turn; exit 0 acks every message the envelope
+carried, together, and a failure acks none of them (for Codex queue, exit 0 is
+the command accepting the input, not the turn ending). The model is
+`internal/friend/tla/Delivery.tla` (TLC on a Linux bench, four messages, a cap
+of two, two failures): a turn takes the whole pending set up to the cap
+(`EnvelopeTakesAll`), no message is acked in a later turn than a younger one
+(`NoYoungerFirst`), only an accepted turn acks, and every message is acked in
+the end; a turn that takes the youngest first and one message per turn are its
+reversed witnesses. Its known gap, `MCDeliveryFailureReorders`: a failed
+turn's messages wait out their claim (`ClaimAfter`) and a younger message can
+go in and be acked first, so `NoYoungerFirst` holds only for messages no failed
+turn carried. Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
