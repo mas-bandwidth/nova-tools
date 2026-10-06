@@ -23,7 +23,7 @@ func fullWorld(t *testing.T, who, line1 string, n int) *world {
 		briefs[i] = friendBrief(who)
 	}
 	w := friendWorld(t, briefs...)
-	dealWith(w, FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro"})
+	dealStarted(w, FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro"})
 	require.Equal(t, 8, w.s.Fleet.Count(FriendRow("amy"), Working))
 	require.Equal(t, 8, w.s.Fleet.Count(FriendRow("amy"), Ready))
 	var cards []CardAdd
@@ -44,7 +44,7 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 	t.Run("five new cards go to the two idle friends, none to the full one", func(t *testing.T) {
 		t.Parallel()
 		w := fullWorld(t, "only friend amy", "c: a friend's card", 5) // hard pins: the level never moves them
-		dealWith(w, full, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"}, FriendSeat{Name: "cat", Width: 2, Status: Up, Class: "flash,pro"})
+		dealStarted(w, full, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"}, FriendSeat{Name: "cat", Width: 2, Status: Up, Class: "flash,pro"})
 		// idle lanes first (bob 2, cat 2: bob by name), then the most idle lanes, then by
 		// room when neither has a lane (bob 2, cat 2: bob by name)
 		for i, want := range []string{bob, cat, bob, cat, bob} {
@@ -71,14 +71,14 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 			hers = append(hers, CardAdd{ID: "s3-" + itoa(i+1), Brief: friendBrief("only friend mas")})
 		}
 		w.must(Add(w.s, AddReq{Stream: "s3", Cards: hers}))
-		dealWith(w, full, mas)
+		dealStarted(w, full, mas)
 		require.Equal(t, 8, w.s.Fleet.Count(FriendRow("mas"), Working))
 		require.Equal(t, 3, w.s.Fleet.Count(FriendRow("mas"), Ready))
 		w.must(Add(w.s, AddReq{Stream: "s2", Cards: []CardAdd{
 			{ID: "s2-1", Brief: friendBrief("friend")},
 			{ID: "s2-2", Brief: strings.Replace(friendBrief("friend"), "c: a friend's card", "c: a friend's card tier: pro", 1)},
 		}}))
-		dealWith(w, full, mas, stella)
+		dealStarted(w, full, mas, stella)
 		assert.Equal(t, FriendRow("stella"), w.s.Fleet.Card("s2-1.w1").Row, "an idle lane first, though mas has more room")
 		assert.Equal(t, FriendRow("mas"), w.s.Fleet.Card("s2-2.w1").Row, "a pro card goes to a friend whose tiers hold pro")
 		assert.Equal(t, 16, friendLoad(w.s, "amy"))
@@ -91,10 +91,10 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 		w := fullWorld(t, "friend", "", 0)
 		running := FriendSeat{Name: "amy", Width: 8, Status: Up, Class: "flash,pro", Running: []string{"s1-16.w1"}}
 		bobUp := FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash"}
-		dealWith(w, running, FriendSeat{Name: "bob", Width: 2, Status: Down, Class: "flash"})
+		dealStarted(w, running, FriendSeat{Name: "bob", Width: 2, Status: Down, Class: "flash"})
 		require.Equal(t, 16, friendLoad(w.s, "amy"), "bob down: nothing moves")
 
-		p := dealWith(w, running, bobUp)
+		p := dealStarted(w, running, bobUp)
 		assert.Equal(t, 2, w.s.Fleet.Count(bob, Working), "his idle lanes first")
 		assert.Equal(t, 2, w.s.Fleet.Count(bob, Ready), "then evened to his room")
 		assert.Equal(t, 12, friendLoad(w.s, "amy"))
@@ -106,18 +106,18 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 			}
 		}
 		assert.Equal(t, 4, moved, "each move is one line")
-		assert.Empty(t, dealWith(w, running, bobUp).Units, "level: the next tick moves nothing")
+		assert.Empty(t, dealStarted(w, running, bobUp).Units, "level: the next tick moves nothing")
 
 		// a card moved off amy never goes back to her: bob's ready cards stay with him
 		// while amy's lanes open and cat, idle, takes them
 		w2 := fullWorld(t, "friend", "", 0)
-		dealWith(w2, running, bobUp)
+		dealStarted(w2, running, bobUp)
 		left := w2.s.Fleet.Cell(bob, Ready)
 		require.Len(t, left, 2)
 		for _, c := range left {
 			assert.Equal(t, "amy", c.F(FieldFriendsLeft))
 		}
-		dealWith(w2, FriendSeat{Name: "amy", Width: 16, Status: Up, Class: "flash,pro"}, FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash"})
+		dealStarted(w2, FriendSeat{Name: "amy", Width: 16, Status: Up, Class: "flash,pro"}, FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash"})
 		for _, c := range left {
 			assert.Equal(t, bob, w2.s.Fleet.Card(c.ID).Row, "%s was taken from amy: not levelled back to her", c.ID)
 		}
@@ -128,7 +128,7 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 	t.Run("the tick's level is bounded", func(t *testing.T) {
 		t.Parallel()
 		w := fullWorld(t, "friend", "", 0)
-		p := dealWith(w, full, FriendSeat{Name: "cat", Width: 16, Status: Up, Class: "flash"})
+		p := dealStarted(w, full, FriendSeat{Name: "cat", Width: 16, Status: Up, Class: "flash"})
 		assert.Equal(t, FriendLevelPerTick, w.s.Fleet.Count(cat, Working), "no more than FriendLevelPerTick moves a tick")
 		assert.Len(t, p.Units, FriendLevelPerTick)
 	})
@@ -148,7 +148,7 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 	// levelled: four of amy's cards go to bob, each carrying friends_left=amy
 	levelled := func(t *testing.T) (*world, []string) {
 		w := fullWorld(t, "friend", "", 0)
-		dealWith(w, running, bobUp)
+		dealStarted(w, running, bobUp)
 		var his []string
 		for _, col := range []string{Ready, Working} {
 			for _, c := range w.s.Fleet.Cell(bob, col) {
@@ -167,7 +167,7 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 	t.Run("the only friend up with room is one the level moved them off", func(t *testing.T) {
 		t.Parallel()
 		w, his := levelled(t)
-		dealWith(w, roomy, bobHeld)
+		dealStarted(w, roomy, bobHeld)
 		for _, id := range his {
 			wc := w.s.Fleet.Card(id)
 			assert.Equal(t, amy, wc.Row, "%s off held bob is dealt back to amy, not stranded ready", id)
@@ -180,7 +180,7 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 	t.Run("a friend up it never left is preferred", func(t *testing.T) {
 		t.Parallel()
 		w, his := levelled(t)
-		dealWith(w, roomy, bobHeld, FriendSeat{Name: "cat", Width: 4, Status: Up, Class: "flash"})
+		dealStarted(w, roomy, bobHeld, FriendSeat{Name: "cat", Width: 4, Status: Up, Class: "flash"})
 		for _, id := range his {
 			assert.Equal(t, cat, w.s.Fleet.Card(id).Row, "%s goes to cat, whom it never left, before amy", id)
 		}
@@ -193,7 +193,7 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 		// is dealt one; WHO is a preference, so each is the fleet's (docs/SPEC-SPRINT.md,
 		// WHO preference)
 		w := fullWorld(t, "friend", "", 0)
-		dealWith(w, running, bobUp)
+		dealStarted(w, running, bobUp)
 		taken := w.must(FriendTake(w.s, FriendTakeReq{Friend: "bob", All: true, Reason: "slow", Who: "coordinator"}))
 		require.NotEmpty(t, taken.Units)
 		var his []string
@@ -201,7 +201,7 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 			his = append(his, c.ID)
 		}
 		require.NotEmpty(t, his)
-		dealWith(w, bobUp, FriendSeat{Name: "amy", Width: 16, Status: Held, Class: "flash,pro"})
+		dealStarted(w, bobUp, FriendSeat{Name: "amy", Width: 16, Status: Held, Class: "flash,pro"})
 		for _, id := range his {
 			wc := w.s.Fleet.Card(id)
 			assert.False(t, IsFriendRow(wc.Row), "%s: taken back from bob, and amy is held: no friend, the fleet's (on %s)", id, wc.Row)

@@ -86,11 +86,12 @@ refused (exit 3) and changes nothing.
 
 A friend's counts are her sprint cards' (a friend's card, below), read by
 `where` from her fleet row `friend.<name>`, never from her working directory: a
-card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
+card dealt to her is `ready` until she starts it and `working` from her start
+(a friend's card is working once she starts it, section 1), so `working` counts
+started cards only; a `Verdict: LAND` report (with its `Head:` the
 tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
 report done failed, and a report with no verdict word is done failed too,
-never ok. `ready` is never a friend's card's state: the tick deals a card
-straight into `working` (`sprint.TickDeal`). A hand-written inbox job that is
+never ok. A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
 is its pointer. `ready` and `working` count her cards in those states; `width`
@@ -305,16 +306,16 @@ batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, count against it; the owner,
 2026-10-04: "Do it just like the fleet, you keep people busy by having 2X width
-queued up in ready per-friend"): on her row the card is `working` while she has a
-lane free (her width less her working cards; dealt and taken at once) and `ready`
-behind her working cards otherwise, so her inbox holds her width working and as
-many again ready; her finish of a card takes the oldest ready card on her row
+queued up in ready per-friend"): on her row the card is `ready`, whatever her
+lanes, until she starts it (a friend's card is working once she starts it,
+below), a lane of hers idle while no card on her row holds it, so her inbox
+holds her width to start and as many again behind; her finish of a card takes the oldest ready card on her row
 into working in the same step (`sprint.Finish`, `friendNext`), no tick between,
 as a machine's lane that frees takes its next; the next tick fills her room
 again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`: width 8 with 30
 waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
-(`mode: one-shot`), the machine deals one card at a time, straight into
-`working` (room 1, lane 1), and the next only after the last one finished
+(`mode: one-shot`), the machine deals one card at a time (room 1, lane 1), and
+the next only after the last one finished
 (item 22 of tmp/manual-to-verbs-2026-10-04.md;
 `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
 first, before the machines' deal) offers every ready card to its named friend
@@ -335,8 +336,8 @@ route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`)
 The tick reads the friends' records every tick while the roster has a friend.
 Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
-holds, so it is no machine's and no fleet verb names it), straight into
-`working` at generation 1, dealt and taken at once (nothing takes it), member
+holds, so it is no machine's and no fleet verb names it), `ready` at
+generation 1 until she starts it, member
 `friend.<name>`, with the primary's fix, finding and why as a machine's deal
 carries them; its primary moves ready -> working. The fleet's members are its
 rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
@@ -357,6 +358,35 @@ dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
 offer again.
 
+**A friend's card is working once she starts it** (the owner, 2026-10-05: "They
+are not working unless work turns from working to done."; the friends table had
+shown a friend working 8 of 8 for half an hour while she had started none, and
+the deadline clock running on cards nobody had begun). The deal places a
+friend's card `ready` on her row whatever her lanes, with no `taken` stamp and
+no deadline running (`sprint.friendDealUnit`, `friendRedealUnit`, and the
+level's moves). It goes to `working` on a start receipt naming its job, its
+`taken` stamp and her deadline (`friend_deadline`) set then
+(`sprint.friendTaken`): her beat naming it running (`friend beat --running`,
+`FriendSeat.Running`, `friendStarted`), which the tick reads before its deal
+(`sprint.friendStartUnits`), or friend sync seeing her job begun, a
+`REPORT.md` in `outbox/<job>` or a write under `jobs/<job>` after its staging
+(`JOB.md`), which it records as her own take (`take --as friend.<name>`, a
+`FRIEND-CARD STARTED` line; `friendStartsOf`, `friendJobBegun`). A card dealt
+and not started within the start bound (`friend_start_max`, a duration on the
+work table, default 20 minutes, `Snapshot.FriendStartMax`) of running time
+since its deal onto her row, while her beat names no job running, is moved
+by the tick, before the level, to an up friend with an idle lane (her width
+less the cards on her row, ready and working), below her room, whose tiers
+hold its tier, that it has not left and who is not herself stuck so, ready on
+that row at its next generation, the friend it left added to `friends_left`
+so it never goes back to her, one line each (`... (not started 20m0s after its
+deal, and friend <name> names no job running)`; `sprint.friendUnstartedLevel`;
+a hard pin stays). A card no friend may take stays, and the deadline rule
+judges it once `friend_start_max` plus `FriendReadyMax` has run
+(`TickDeadlines`). The level's own evening leaves the oldest unstarted cards
+that hold her free lanes to her start
+(`TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt`).
+
 **A friend takes her own ready cards** (2026-10-05, 11:20 PM: a friend held
 fourteen cards, six of them ready, and could not take one: `take --as
 friend.<name>` was refused as `member friend.<name> is -`, the server refused
@@ -376,14 +406,12 @@ friend.<name> ready`), a friend not on the roster is refused (`no friend
 why on a NOTE line. The server runs her verbs as `friend.<name>` (the HTTP form,
 her bus login, no store address of hers: `workerVerb` takes `friend.<name>` as a
 worker's name beside a member's). A card on her row never sits ready with no one
-to take it: in batch mode the tick's deal takes her oldest ready cards into her
-free lanes before it deals her anything new (a width raised, a level or a
-take-back can leave a lane free with no finish to fill it; `friendDeal`), and
-the level does not move a card the deal took that tick; in one-shot mode her
-daemon or her session takes it. A work card ready on a friend's row while she
-has a lane free for `FriendReadyMax` (ten minutes) of running time is a
+to take it: her start takes it into working (a friend's card is working once
+she starts it, above), and a card she has not started within the start bound
+is moved to a friend with an idle lane. A work card ready on a friend's row while she
+has a lane free for `friend_start_max` plus `FriendReadyMax` (ten minutes) of running time is a
 judgment, a work card past its deadline (`dealt, never taken, at
-friend.<name>:ready (... ready over 10m0s while friend <name> has a lane
+friend.<name>:ready (... ready over 30m0s while friend <name> has a lane
 free)`), answered by `friend take <name> <card>` (the deal places it again on a
 friend who takes) or a wait; a card ready behind her lanes, all of them
 working, is her queue, held to the dealt bound as a member's is

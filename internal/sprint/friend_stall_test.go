@@ -21,7 +21,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}}
-	dealWith(w, seats...)
+	dealStarted(w, seats...)
 
 	wc1 := w.s.Fleet.Card("s1-1.w1")
 	wc2 := w.s.Fleet.Card("s1-2.w1")
@@ -129,7 +129,7 @@ func TestFriendStallLadderResetsOnProgress(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash"}}
-	dealWith(w, seats...)
+	dealStarted(w, seats...)
 
 	t0 := w.s.Now
 	// Advance to rung 2 (26m)
@@ -151,7 +151,7 @@ func TestFriendStallLadderProgressDoesNotReleaseDownFriend(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash"}}
-	dealWith(w, seats...)
+	dealStarted(w, seats...)
 
 	// Started card stays through stall ladder
 	w.s.Fleet.Card("s1-1.w1").Fields[FieldProgress] = stamp(w.s.Now)
@@ -195,7 +195,7 @@ func TestFriendStallLadderBeatNamingRunningCardsIsActivity(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}}
-	dealWith(w, seats...)
+	dealStarted(w, seats...)
 	t0 := w.s.Now
 
 	running := func(at time.Time) map[string]Beat {
@@ -245,7 +245,7 @@ func TestFriendStallLadderFinishIsActivity(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 3, Status: Up, Class: "flash,pro"}}
-	dealWith(w, seats...)
+	dealStarted(w, seats...)
 	t0 := w.s.Now
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 

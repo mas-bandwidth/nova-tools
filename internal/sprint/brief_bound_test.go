@@ -136,7 +136,7 @@ func TestTheAttemptCapJudgmentsDefaultAnswerDealsAFriendCard(t *testing.T) {
 	wc := w.s.Fleet.Card("s1-1.w5")
 	require.NotNil(t, wc)
 	assert.Equal(t, FriendRow("gus"), wc.Row)
-	assert.Equal(t, Working, wc.Col, "nothing takes a friend's card: it is working once dealt")
+	assert.Equal(t, Ready, wc.Col, "a friend's card is ready on her row until she starts it")
 	assert.Equal(t, "5", wc.F("attempt"))
 	assert.Equal(t, "1", wc.F("gen"))
 	_, atCap := AtBriefBound(pr, "", w.s.AttemptsCap("s1"))
@@ -181,8 +181,8 @@ func TestTwoCappedCardsDoNotExceedAFriendsWidth(t *testing.T) {
 	takeEndedAtTheBound(w, "s1-1.w4") // at the redeal bound, a card that does not fit her is dealt to no machine
 	takeEndedAtTheBound(w, "s1-2.w4")
 	capDeal(w, FriendSeat{Name: "gus", Width: 1, Status: Up, Class: cardhdr.RouteFrontier})
-	n := w.s.Fleet.Count(FriendRow("gus"), Working)
-	require.Equalf(t, 1, n, "friend.gus holds %d working cards; her width is 1", n)
+	n := w.s.Fleet.Count(FriendRow("gus"), Working) + w.s.Fleet.Count(FriendRow("gus"), Ready)
+	require.Equalf(t, 1, n, "friend.gus holds %d cards; her width is 1", n)
 	var dealt, waiting string
 	for _, id := range []string{"s1-1", "s1-2"} {
 		switch w.s.StateOf(id) {

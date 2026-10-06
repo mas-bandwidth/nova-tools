@@ -722,7 +722,23 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
 		// FriendLevelPerTick cards a tick (docs/SPEC-SPRINT.md section 1,
 		// friend-deal-idle-lanes-first.w1)
-		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units}, dealt, dealtWorking)
+		// a card dealt to a friend and not started within the start bound, while her beat
+		// names no job running, goes first to a friend with an idle lane, never back to
+		// her (friendUnstartedLevel; docs/SPEC-SPRINT.md section 1, a friend's card is
+		// working once she starts it); the level then neither moves it again nor counts it
+		// on her row
+		up := friendUnstartedLevel(s, r.Friends, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
+		moved := map[string]bool{}
+		for _, u := range up.Units {
+			c := s.Fleet.Card(u.Key)
+			moved[c.ID] = true
+			from, _ := FriendOfRow(c.Row)
+			to, _ := FriendOfRow(u.Changes[0].Entry.Move.Row)
+			dealt[from]--
+			dealt[to]++
+		}
+		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units, Moved: moved}, dealt, dealtWorking)
+		lp.Rows, lp.Units = append(up.Rows, lp.Rows...), append(up.Units, lp.Units...)
 		for _, row := range lp.Rows {
 			if !slices.Contains(p.Rows, row) {
 				p.Rows = append(p.Rows, row)
@@ -1067,7 +1083,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		field, limit, word, own := WorkDeadline(s, c)
 		friend, idle := friendLaneIdle(s, r.Friends, c)
 		if idle {
-			limit = FriendReadyMax // ready on her row while she has a lane free: no one is taking it
+			// ready on her row while she has a lane free and not started: the start bound
+			// is the level's to move it (friendUnstartedLevel), and FriendReadyMax past it
+			// no one has
+			limit = s.FriendStartMax() + FriendReadyMax
 		}
 		at, ok := late(field, c, limit)
 		if !ok {

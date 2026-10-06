@@ -21,7 +21,7 @@ import (
 // ready on her row, which a take at her raised width 3 can take.
 func readyForAmy(t *testing.T) *world {
 	w := friendWorld(t, friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"))
-	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
+	dealStarted(w, FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"})
 	wc := w.s.Fleet.Card("s1-3.w1")
 	require.NotNil(t, wc)
 	require.Equal(t, Ready, wc.Col)

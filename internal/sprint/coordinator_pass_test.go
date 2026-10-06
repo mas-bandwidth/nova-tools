@@ -42,7 +42,22 @@ func newPassRig(t *testing.T) *passRig {
 		}
 	}
 	r.tick(0)
+	r.startFriends()
 	return r
+}
+
+// startFriends is each friend's start of every card dealt ready on her row: her own take
+// (take --as friend.<name>), as her daemon starts a card, so it is working only once she
+// starts it (docs/SPEC-SPRINT.md section 1, a friend's card is working once she starts it).
+func (r *holdRig) startFriends() {
+	r.t.Helper()
+	for _, row := range r.snap().Fleet.Rows() {
+		if _, ok := sprint.FriendOfRow(row); ok {
+			if n := len(r.snap().Fleet.Cell(row, sprint.Ready)); n > 0 {
+				r.must(store.TakeStep(sprint.TakeReq{As: row, Sel: sprint.Sel{Limit: n}, Who: row}))
+			}
+		}
+	}
 }
 
 // tick moves the clock by d, beats everyone (each friend with her pong, and her session
@@ -119,7 +134,7 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	amy, bob := sprint.FriendRow("amy"), sprint.FriendRow("bob")
 	behind := sprint.StreamSubject("")
 
-	// the friend's card is dealt to a friend (working at once), and the machine card is
+	// the friend's card is dealt to a friend (working once she starts it), and the machine card is
 	// taken by m1 and comes back failed: a judgment that waits on the coordinator
 	s := r.snap()
 	fc := s.Fleet.Card(s.Work.Card("f1-1").F("work"))
@@ -417,6 +432,7 @@ func TestAPinnedCardRotatedOffItsFriendIsJudgedOnce(t *testing.T) {
 	require.NotNil(t, again)
 	assert.Equal(t, 1, again.Before)
 
+	r.startFriends()
 	s = r.snap()
 	wc = s.Fleet.Card(wc.ID)
 	require.NotNil(t, wc)
