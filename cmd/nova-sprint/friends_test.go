@@ -506,9 +506,11 @@ func TestAFriendsBeatAnswersHerRowsModeAndWidth(t *testing.T) {
 	res := r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, " row_mode=batch row_width=8")
+	assert.Contains(t, res.Stdout, " row_token_cap=6000000")
 	mode, width = "one-shot", "1"
 	r.boss("nova-sprint friend sync --root " + root)
 	res = r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, " row_mode=one-shot row_width=1")
+	assert.Contains(t, res.Stdout, " row_token_cap=6000000")
 }

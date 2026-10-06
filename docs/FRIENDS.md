@@ -116,6 +116,16 @@ person bringing her up. A dealt card outside her tiers is never run, and the coo
 `nova-sprint friend beat` carry the `row_*` words, set them with `run`'s flags (docs/SPEC-FRIEND.md,
 opencode-lanes-parity-b.w1).
 
+### friend-token-cap-bb.w2
+
+The per-card token cap is the friend row's `token_cap`, 6000000 by default and 0 none. `nova-sprint friend beat` answers it as `row_token_cap=`, including 0. Every one-shot lane (a claude lane and an opencode lane) counts the card's tokens as it runs — input, cache read, cache write, output and reasoning, summed from the harness's own usage record — and when the sum reaches the cap the lane stops its own child and holds the card with the reason `token cap <cap> reached at <n> tokens` plus the usage so far. The friend's next card proceeds. The row example, one heavy row with the cap halved and one with none:
+
+```
+nova-config friend add amy-a --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-a --token_cap 3000000
+nova-config friend add amy-b --slots 1 --tiers heavy --mode one-shot --config_dir /Users/<user>/.claude-b --token_cap 0
+nova-config apply --kind friend
+```
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
