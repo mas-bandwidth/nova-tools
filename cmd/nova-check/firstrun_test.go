@@ -242,7 +242,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.NotEmpty(t, steps, "the `### First run` block holds no nova-check command; this test would pass by running nothing")
 
 	dir := t.TempDir()
-	copyTree(t, fixture, filepath.Join(dir, "self"))
+	require.NoError(t, os.CopyFS(filepath.Join(dir, "self"), os.DirFS(fixture)))
 	// The transcript's `./self` resolves against the directory the document was
 	// written for, so that directory is the invocation's own and the process
 	// never moves (docs/STANDARD.md section 8: no Chdir).
@@ -286,23 +286,6 @@ func (readsNothing) Error() string {
 }
 
 var errReadsNothing = readsNothing{}
-
-// copyTree copies the fixture to where the transcript says it is.
-func copyTree(t *testing.T, from, to string) {
-	t.Helper()
-	entries, err := os.ReadDir(from)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(to, 0o755))
-	for _, e := range entries {
-		if e.IsDir() {
-			copyTree(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(from, e.Name()))
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(to, e.Name()), body, 0o644))
-	}
-}
 
 // THE OK WORD IS A CLAIM THAT EVERY CHECK PASSED (a cold rating of the tools, 2026-09-30:
 // `QUICKSTART OK ... worst-exit=1` over two failed checks). With one failing check the run
