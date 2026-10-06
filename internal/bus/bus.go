@@ -82,6 +82,10 @@ type Message struct {
 	Kind    string // one of Kinds; "" is status
 	At      time.Time
 	Body    string
+	// Token is the caller's word for this one logical send, the same on
+	// every retry of it (token.go); it is the sender's, never on the entry.
+	// Empty is a send with none: every call a new message.
+	Token string
 }
 
 // The kinds of a message (SPEC-BUS.md, the kind of a message): the bus's own
@@ -172,7 +176,8 @@ type Entry struct {
 func (e Entry) Message() Message { return Parse(e.Fields) }
 
 // Store is the few Redis commands the bus uses, each one round trip. The
-// bus never deletes: no command here removes an entry, a group or a key.
+// bus never deletes: no command here removes an entry, a group or a key
+// (a token's record expires: AddOnce).
 type Store interface {
 	// Roster is the known names (nova-config's friend and machine rows, the
 	// sets `friends` and `machines`) and the server's time (TIME), in one trip.
@@ -185,6 +190,14 @@ type Store interface {
 	// mark (HSET, or HDEL when it clears), in one MULTI/EXEC: the entry and its
 	// marks are on all of them or on none.
 	AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error
+	// AddOnce is AddAll under a send's token, in one atomic step (a script):
+	// when key holds a record it writes nothing and answers that record and
+	// found; else it sets key to record, expiring after keep, and appends
+	// the entry and makes the marks as AddAll does. The record's key is the
+	// one key the bus writes that the store removes, by its expiry.
+	AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (prior string, found bool, err error)
+	// Sent is the record at key (GET), and whether there is one.
+	Sent(ctx context.Context, key string) (record string, found bool, err error)
 	// Unmark clears fields of the hash at key (HDEL) and says how many were there.
 	Unmark(ctx context.Context, key string, fields ...string) (int64, error)
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
@@ -258,6 +271,11 @@ type Bus struct {
 	Store Store
 	// Rand fills a ULID's random half; crypto/rand when nil.
 	Rand func([]byte) (int, error)
+	// TokenLife is how long a retry under a send's token answers the
+	// original message (DefaultTokenLife when zero); TokenCleanup is when the
+	// store drops the token's record (DefaultTokenCleanup when zero, never
+	// before the life ends). token.go.
+	TokenLife, TokenCleanup time.Duration
 }
 
 // Refusal is a reason a verb could not run as asked: the input, not the store.
@@ -276,6 +294,14 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // transaction marks it on bus2:owed:<friend> for each friend it names but the
 // sender, and a message from a friend naming another (re) is her receipt of
 // that one, cleared in the same transaction.
+//
+// A message with a Token is sent once under it (token.go): the record of the
+// token is written in the same step, and a send that finds it writes nothing
+// and answers the message it names, id and at, so a caller whose response was
+// lost after the write committed retries with the same token and the same
+// arguments and gets the original. The same token with other arguments, or
+// past its life, is refused. Without a token a lost response retried is a
+// second message.
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -289,6 +315,9 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
+	if m.Token != "" {
+		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
+	}
 	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
 		return Message{}, err
 	}
@@ -329,6 +358,9 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 	}
 	if strings.TrimSpace(m.Subject) == "" {
 		problems = append(problems, "the subject is empty; it wants one line saying what the message is")
+	}
+	if p := CheckToken(m.Token); p != "" {
+		problems = append(problems, p)
 	}
 	if len(problems) > 0 {
 		return Message{}, time.Time{}, nil, &Refusal{problems}

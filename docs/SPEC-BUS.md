@@ -29,7 +29,12 @@ nova-bus on 2026-10-04, when the git bus was removed.
   JSON (`harness`, `nonce`, `proven`, `up`, `reason`, `at`), written by the
   friend daemon and read by `send`, `recv` and `names` (below,
   bus-requires-inbox-push-proof).
-- Nothing is ever deleted by the tool. Trimming is a later decision.
+- One string key per sender and send token, `bus2:sent:<from>:<token>`, holding
+  the token's record as JSON (`fingerprint`, `id`, `at`), written in the
+  send's own atomic step and expiring at the token's cleanup (below,
+  a-lost-send-response-is-safe-to-retry.w1).
+- Nothing is ever deleted by the tool. Trimming is a later decision. The one
+  key the store removes is a token's record, by its own expiry.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
@@ -39,7 +44,13 @@ nova-bus on 2026-10-04, when the git bus was removed.
 
 ## The semantics
 
-At-least-once delivery. A message delivered to a recipient is pending until
+At-least-once delivery, said plainly: a reader may be handed one message
+more than once (a reader that died before its ack, a skipped kind handed
+back), and tells a second delivery by the message's `id`; the bus never
+promises exactly once to a consumer. What it does promise since
+a-lost-send-response-is-safe-to-retry.w1 is the other end: a send carrying a
+token makes one logical message however often it is retried (below).
+A message delivered to a recipient is pending until
 that recipient acks it, and its reader keeps it for fifteen minutes (`ClaimAfter`,
 the budget one `--exec` delivery gets: longer than the longest delivery any
 reader makes, nova-friend's ten minute turn and the kill that ends it, so a
@@ -77,6 +88,8 @@ takes `--json`; `log` takes `--max`.
   MiB, an empty subject, a body from both or neither source. Then, the message
   being whole, a sender or recipient with no proven inbox push, one `deaf:`
   line each, writing nothing (bus-requires-inbox-push-proof, below).
+  `--token <t> [--token-life <d>] [--token-cleanup <d>]` makes the send safe
+  to retry (a-lost-send-response-is-safe-to-retry.w1, below).
 - `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
   <command>]` prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
   line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
@@ -133,6 +146,64 @@ takes `--json`; `log` takes `--max`.
 Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
 `--exec`: the command failed; wait: nothing came before `--timeout`); 2 could
 not run (a flag, an input, a store that did not answer).
+
+### a-lost-send-response-is-safe-to-retry.w1: a send under a token is one message
+
+The finding (a review of the bus, item 4): a send made a fresh id and appended with
+`XADD *` on every call, and answered nothing useful when the transaction's
+response failed, so a sender whose write committed and whose answer was lost
+(a cut connection, a deadline on the way home) could only send again, and
+that made a second logical message on every stream.
+
+So a send may carry a **token**: the caller's word for one logical send, the
+same on every retry of it (`send --token <t>`, `Message.Token`; letters,
+digits, `.`, `_`, `:` and `-`, at most 128 bytes; the token is the sender's
+and is not on the entry). The send's **fingerprint** is the SHA-256 of its
+arguments as the check normalised them: from, to and cc (sorted, each once),
+subject, re, kind (spelled out) and body, each length-prefixed. The send
+writes, in one atomic step (`AddOnce`: a script, which Redis runs alone), the
+token's record at `bus2:sent:<from>:<token>` (`SET ... PX <cleanup>`) with the
+entries on every stream and the receipt marks, unless the record is already
+there, when it writes nothing and answers the record. Then:
+
+- **the same arguments within the token's life**: the answer is the original
+  message, its `id` and `at`, so `SEND OK` prints the first send's line again,
+  byte for byte. One logical message per recipient, one owed receipt per
+  friend: a retry after the recipient's session gave its receipt marks
+  nothing owed again.
+- **other arguments under the same token**: refused, naming the message that
+  went (`the token "<t>" already sent <id> at <at> with other arguments`),
+  writing nothing.
+- **past the token's life, before its cleanup**: refused the same way
+  (`past its life of <d>: the message went, and is not sent again`), never
+  sent again.
+- **after the cleanup**: the store has dropped the record, and the token is
+  new: a send under it is a new message.
+
+The settings: the life, `Bus.TokenLife` (`--token-life`, default
+`DefaultTokenLife`, 24 h), and the cleanup, `Bus.TokenCleanup`
+(`--token-cleanup`, default `DefaultTokenCleanup`, 7 days, never before the
+life ends: a record is kept as long as a retry under it is honoured). The
+cleanup is the key's expiry; nothing sweeps.
+
+The record lives in the store, never in the process: a sender that restarts
+retries and gets the original. A token's record is its sender's: another
+sender's same word is another key. The push gate (below) refuses a message
+to a deaf name, but a retry whose record is there writes nothing and answers
+the original whoever is deaf now (one `GET` more, only when the gate refuses).
+A send without a token is the send as before: every call a new message, and a
+lost response retried is a second one. A write that failed before it
+committed left no record, and its retry is the first send.
+
+The machine is `tla/BusSendOnce.tla`: a sender that retries after lost
+answers, a store that writes record and message in one step, the life and
+the cleanup; its invariants say one message per token while the record
+lives, a retry's answer is the original, and a changed argument is never
+written. Its TLC instances (the passing one, and reversed witnesses for a
+check apart from the write, a retry that makes a new id, a store that drops
+the record inside the life, and an answer without the fingerprint) were
+measured on a bench and land with their rows in the TLC catalog in a change
+of their own; until then the module is the spec and is not run by the gate.
 
 ### bus-message-kinds.w1: the kind of a message
 
@@ -261,7 +332,7 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re) |
+| send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`; with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL`, and `GET` when the push gate refuses a retry | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:sent:<f>:*` with a token |
 | recv | `SMEMBERS`, `TIME`, `HGETALL`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
@@ -283,10 +354,18 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:push ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
   +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hgetall
+  +eval +evalsha (~bus2:sent:<f>:* +get +set)
 ```
+
+The selector in parentheses is there because a root `+set` would reach every
+key the user has (a friend could `SET friends x` and wipe the roster, or
+`SET bus2:log x` and destroy the log), and the token's record is the only key
+a send ever gets or sets: Redis 7 checks each command a script runs, so the
+script's `GET` and `SET` pass on the selector, on the sender's own records
+only, while `EVAL`'s declared keys pass on the root.
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
 caller, which Redis runs under the caller's own ACL, so it buys nothing; or a
@@ -315,7 +394,9 @@ its machine rows; no new kind or field was needed.
 
 ## Round trips
 
-send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
+send: two (the roster and `TIME` in one pipeline, then the transaction, or
+with a token the script; a third, `EVAL`, the first time a connection's server
+has not the script, and a `GET` when the push gate refuses a retry). recv:
 four (the roster, the group, the claim, the read). wait: two to arm (the
 roster, the stream's tail), then one `XREAD` per block (one parked read when
 nothing else is watched). ack: five (group, pending,

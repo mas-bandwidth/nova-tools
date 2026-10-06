@@ -4,6 +4,7 @@ package bus
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,4 +192,115 @@ func TestRedisEnrollMakesAFriendRowAKnownName(t *testing.T) {
 	assert.ElementsMatch(t, []string{"ada", "bob", "bud-a"}, friends)
 	_, err = b.Send(ctx, Message{From: "ada", To: []string{"bud-a"}, Subject: "s", Body: "x"})
 	require.NoError(t, err)
+}
+
+// The send-once script on the real server: the record and the message in one
+// step, a retry that finds the record writing nothing and answering the
+// original, the same token with another body refused, the record's expiry
+// set to the cleanup, and the receipt marks made as AddAll makes them.
+func TestRedisStoreSendsOnceUnderAToken(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	b.TokenCleanup = 48 * time.Hour
+	m := Message{From: "ada", To: []string{"bob"}, CC: []string{"m1"}, Subject: "once", Body: "one body\n", Token: "t-live"}
+	first, err := b.Send(ctx, m)
+	require.NoError(t, err)
+
+	reborn := &Bus{Store: Redis{C: c}} // a process started again
+	got, err := reborn.Send(ctx, m)
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, got.ID)
+	assert.Equal(t, first.At, got.At)
+	for _, k := range []string{StreamOf("bob"), StreamOf("m1"), LogKey} {
+		n, err := c.XLen(ctx, k).Result()
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, n, k)
+	}
+	log, err := b.Log(ctx, "-")
+	require.NoError(t, err)
+	require.Len(t, log, 1)
+	assert.Equal(t, Message{ID: first.ID, From: "ada", To: []string{"bob"}, CC: []string{"m1"}, Subject: "once", Kind: KindStatus, At: first.At, Body: "one body\n"}, log[0].Message())
+	owed, err := c.HGetAll(ctx, OwedOf("bob")).Result()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{first.ID: first.At.Format(time.RFC3339)}, owed, "bob is a friend: the script marked the receipt owed")
+
+	ttl, err := c.PTTL(ctx, SentOf("ada", "t-live")).Result()
+	require.NoError(t, err)
+	assert.InDelta(t, (48 * time.Hour).Seconds(), ttl.Seconds(), 60, "the record expires at the cleanup")
+
+	m.Body = "another body\n"
+	_, err = b.Send(ctx, m)
+	var r *Refusal
+	require.ErrorAs(t, err, &r)
+	assert.Contains(t, err.Error(), "already sent "+first.ID)
+	n, err := c.XLen(ctx, LogKey).Result()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n)
+
+	// a reply under a token clears the sender's own receipt in the script, as AddAll does
+	_, err = b.Send(ctx, Message{From: "bob", To: []string{"ada"}, Subject: "re", Body: "got it\n", Re: first.ID, Token: "t-reply"})
+	require.NoError(t, err)
+	owed, err = c.HGetAll(ctx, OwedOf("bob")).Result()
+	require.NoError(t, err)
+	assert.Empty(t, owed)
+}
+
+// The friend's ACL line from SPEC-BUS.md on the real server, as ada: a send
+// under a token goes and its retry answers the original, while SET and GET on
+// the roster, the log, a stream and another sender's record are refused. The
+// reversed witness is the same line with +get +set on the root, which lets
+// SET friends through.
+func TestRedisFriendACLSetsOnlyItsOwnTokenRecords(t *testing.T) {
+	t.Parallel()
+	_, admin, ctx := live(t)
+	line := strings.ReplaceAll(friendACL(t), "<f>", "ada")
+	apply := func(user, line string) *redis.Client {
+		args := []any{"ACL", "SETUSER", user}
+		for _, w := range strings.Fields(strings.TrimPrefix(line, "ACL SETUSER ada ")) {
+			if w == ">(password)" {
+				w = ">pw"
+			}
+			args = append(args, w)
+		}
+		// a selector is one argument to ACL SETUSER
+		var joined []any
+		for i := 0; i < len(args); i++ {
+			w, _ := args[i].(string)
+			if strings.HasPrefix(w, "(") {
+				sel := w
+				for !strings.HasSuffix(sel, ")") {
+					i++
+					sel += " " + args[i].(string)
+				}
+				joined = append(joined, sel)
+				continue
+			}
+			joined = append(joined, args[i])
+		}
+		require.NoError(t, admin.Do(ctx, joined...).Err())
+		c := redis.NewClient(&redis.Options{Addr: admin.Options().Addr, Username: user, Password: "pw"})
+		t.Cleanup(func() { _ = c.Close() })
+		return c
+	}
+
+	ada := apply("ada", line)
+	b := &Bus{Store: Redis{C: ada}}
+	m := Message{From: "ada", To: []string{"bob"}, Subject: "acl", Body: "x\n", Token: "t-acl"}
+	first, err := b.Send(ctx, m)
+	require.NoError(t, err)
+	again, err := b.Send(ctx, m)
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, again.ID)
+
+	for _, k := range []string{friendsKey, machinesKey, LogKey, StreamOf("bob"), OwedOf("bob"), PushKey, SentOf("bob", "t")} {
+		assert.ErrorContains(t, ada.Set(ctx, k, "x", 0).Err(), "NOPERM", "SET %s", k)
+		assert.ErrorContains(t, ada.Get(ctx, k).Err(), "NOPERM", "GET %s", k)
+	}
+	require.NoError(t, ada.Set(ctx, SentOf("ada", "own"), "x", 0).Err())
+	friends, err := admin.SMembers(ctx, friendsKey).Result()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"ada", "bob"}, friends, "the roster is untouched")
+
+	wide := apply("wide", strings.Replace(line, " (~bus2:sent:ada:* +get +set)", " +get +set", 1))
+	require.NoError(t, wide.Set(ctx, "machines", "x", 0).Err(), "reversed: +set on the root overwrites a roster key")
 }
