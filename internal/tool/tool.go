@@ -366,6 +366,9 @@ func (t *Tool) writeHelp(name string, fs *flag.FlagSet, stdout io.Writer) {
 		usage, rest, _ := strings.Cut(text, "\n")
 		text = usage + "\n" + t.Stage + "\n" + rest
 	}
+	if n, ok := NeedOf(t.Name, name); ok && needsLine(n) != "" {
+		effect += Effect("; " + needsLine(n)) // the declared needs ride the effect line (needs.go)
+	}
 	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(text, detail), effect)
 }
 
@@ -510,6 +513,9 @@ func (t *Tool) Banner() string {
 		why = t.NoJSON
 	}
 	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
+	if n, ok := NeedOf(t.Name, ""); ok && needsLine(n) != "" {
+		b.WriteString(needsLine(n) + "\n") // the declared needs, read and never restated (needs.go)
+	}
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	b.WriteString("example:\n")
 	for _, v := range t.shown() {

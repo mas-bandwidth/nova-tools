@@ -163,9 +163,9 @@ each result and the evidence behind it.
 **Limits and side effects.** It runs other programs, writes job directories, and
 spends real tokens once workers start. A worker exiting `0` means the process
 succeeded, **not** that the requested work is complete — read the evidence. A
-free worker helps only if its capabilities fit the task. The development branch
-adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
-refuses. On macOS, starting it from inside an existing sandbox may fail while
+free worker helps only if its capabilities fit the task. `nova-sandbox run`
+gives each worker a disposable place on macOS and Windows; its Linux form
+refuses, since a card there already runs inside its image. On macOS, starting it from inside an existing sandbox may fail while
 creating its APFS volume because the outer wall does not permit the mount. Start
 the disposable volume from outside the existing wall; retrying the same nested
 command does not grant the missing mount access.
