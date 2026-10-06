@@ -679,6 +679,14 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 				if whyOf[tier] == "" {
 					whyOf[tier] = why
 				}
+			} else if s.refusedNoRoute(c) {
+				// the readers of its tier refused its read for want of a route (readers.go,
+				// RetiredByRefused): the tier's one judgment, the card in review, the readers up
+				tier := s.readTierOf(c)
+				unserved[tier] = append(unserved[tier], c.ID)
+				if whyOf[tier] == "" {
+					whyOf[tier] = "every reader of tier " + tier + " free to read it refused its read for want of a route, so its reads have no reader: run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply, or start a friend's or a bud's reader of tier " + tier
+				}
 			}
 		}
 	}
@@ -971,6 +979,9 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		case !enoughReadersUp(s, c):
 			// an absent reader is never asked: the sprint's one judgment says so
 			few = true
+		case s.refusedNoRoute(c):
+			// every reader free for it refused it for want of a route: the tier's judgment
+			// holds it (TickDeal, NNoRoute), never a cannot-ask judgment of its own
 		case len(ids) >= TickMaxMoves:
 			due++
 		case len(free)+returned < need:

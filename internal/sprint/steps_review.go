@@ -459,6 +459,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			if c.F("retired_by") == RetiredByCoordinator {
 				return "retired at " + c.F("retired") + ": the coordinator took the read back and asked another reader instead"
 			}
+			if c.F("retired_by") == RetiredByRefused {
+				return "retired at " + c.F("retired") + ": its reader refused to launch it (" + c.F(FieldRefused) + "); it is asked of another reader"
+			}
 			if c.F("retired_by") == "returned" {
 				return "retired at " + c.F("retired") + ": the read was returned; it was asked of another reader, or judged"
 			}
@@ -537,6 +540,18 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			returns := c.Int(FieldReasked) + 1
 			run := nextTake(c, FieldReadTake)
 			rec := readCostRecord(s, c, r.Usage, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
+			if RefusedReturn(r.Reason) {
+				// a read refused is not a read (RetiredByRefused): it never ran, so it counts
+				// toward no bound and marks nothing against its reader; it is retired off the
+				// reader and the ask asks it of another reader of its tier
+				set := map[string]string{FieldReadTake + itoa(run): rec, "retired": stamp(s.Now), "retired_by": RetiredByRefused, FieldRefused: cutText(r.Reason, MaxCardTextBytes)}
+				record(pr, readConsumer(s, c, run, "returned", rec))
+				n.What += "; refused, not a read: asked of another reader of its tier"
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+					Changes: []Change{change(Readers, removeEntry(c, set))},
+					Moved:   c.ID + " " + c.Col + " -> refused (retired: not a read, asked again elsewhere)", Notes: []Note{n}})
+				continue
+			}
 			set := map[string]string{FieldReadTake + itoa(run): rec, FieldReasked: itoa(returns)}
 			record(pr, readConsumer(s, c, run, "returned", rec))
 			if returns > MaxReadReasks {

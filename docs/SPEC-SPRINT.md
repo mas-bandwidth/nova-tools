@@ -317,7 +317,13 @@ checks the selection and the hard pin; the reversed only witness permits fallbac
 and violates `OnlyToItsFriend`. The tick reads the friends' roster before each pump,
 because a queued change can make work ready in the same tick. The tick's deal offers
 ready work, in the deal's stream turns, to a
-friend up (the friends' rule: not held, with evidence from her own session) below her room: in
+friend up (the friends' rule: not held, with evidence from her own session) below her room,
+and fills no row that cannot work: a friend whose status is not up (her beat alone is
+no evidence), whose control row on the fleet table says down or held, or whom the stall
+ladder marked down until her activity releases her is dealt nothing, by the deal, the
+level and the attempt cap's deal alike (`sprint.friendDealable`; 2026-10-06: a friend
+whose row read down, her daemon beating, was dealt 18 cards twice;
+`TestTheDealSkipsADownRowAndHonoursTheWhoPin`): in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, count against it; the owner,
@@ -2665,6 +2671,20 @@ id (`--op`) returns the original result, with no second counter or notification.
   left to read is the ask's `cannot ask` judgment (or, with fewer than two
   readers up, `fewer than two readers up`), for the coordinator (reader add,
   rework, drop; tla/DirtyTick.tla, ReasksBounded and StrandingIsJudged). A
+  read refused is not a read: a return whose reason is a launch refusal
+  (`launch refused`, the member could not start it: no route, a slot it cannot
+  make) never ran, so it counts toward no bound and marks nothing against its
+  reader. It is retired off the reader (`retired_by` refused, its reason in
+  `refused_why`) and asked of another reader of its tier; the reader that refused
+  it may be asked it once more at the attempt, under the second identity, as a
+  reader whose read was taken back away may. When fewer readers are free for it
+  than the reads it still needs and a reader refused it for want of a route, the
+  tier's one judgment holds it (`no route serves the tier`, one per tier, the
+  deal's, its text naming the refusals), the card stays in review, no `cannot ask`
+  is raised for it, and the readers stay up and are asked their next reads
+  (2026-10-06: every fleet reader was asked heavy reads with no route on the card,
+  each refusal was counted toward the bound as a read, and the readers were spent
+  at the attempt; `TestAReaderRefusedForNoRouteIsNotSweptAway`). A
   reader is asked an attempt once: its read card at the attempt is one read
   per reader per attempt (`<primary>.r<attempt>.<reader>`), so a reader whose
   read was taken back (levelled, returned) holds the card retired and is
@@ -5372,7 +5392,17 @@ friend whose cards run in child agents move no session while they work; and a fi
 card on her row (`DoneOK` or `DoneFailed`, its `finished` stamp), so a finish within
 `friend_stall_after` holds her at rung 0 (2026-10-05: working friends were stalled and
 marked down on session activity alone). A running beat is activity only while it is her
-beat: nothing remembers it once her beat names nothing running.
+beat: nothing remembers it once her beat names nothing running. Her activity is also her
+session's proof as her beat carries it (`Beat.Proof`: a SESSION CHECK it answered, or a bus
+message of its own), her session's answer to the coordinator's wake ping (her `friend
+health` observation, up), the store's record of her last finish (`friend-finish`, whatever
+row the card is on now), and a report of hers on a card of her row (`reported`). The ladder
+reads the newest of all of them (`sprint.FriendWorked`), never one field: on 2026-10-06
+her daemon's walk of her working directory read three days old while her outbox held
+reports from that hour and her bus notes came every few minutes, and the ladder took two of
+her working cards back (`TestAFriendWithAReportInTheWindowIsNeverStalled`). The view's
+`friend idle` item measures the same evidence and her cards' moves (a take, a progress
+stamp), never her daemon's walk alone.
 
 While stalled, the ladder climbs one rung per `friend_stall_step` (default 5 minutes,
 configurable via `nova-sprint set --friend-stall-step`):
@@ -5390,8 +5420,8 @@ configurable via `nova-sprint set --friend-stall-step`):
    `"friend <f> stalled <d>: two wakes unanswered"`).
 4. **Unstarted cards taken back**: unstarted cards on her row are taken back (`FriendTake`
    with `All: true`), each withdrawn on her row with its primary back to `Ready` for the next
-   deal; any started card (one her beat names running or with `FieldProgress` stamped) stays
-   with her and finishes.
+   deal; any started card (one her beat names running, with `FieldProgress` stamped, or with
+   a report of hers on it) stays with her and finishes.
 5. **Friend marked down**: she is marked down with reason `"stalled"` (`p.Health` with
    `State: Down`, `Reason: "stalled"`, and status `down` on her fleet row). She is released to
    `up` by the tick itself at her first activity after it (session, running beat or
@@ -5410,8 +5440,9 @@ The TLA+ specification `tla/StallLadder.tla` verifies five invariants:
   (`friend_stall_after + 4 * friend_stall_step`).
 - `NoStartedRedealt`: no started card is taken back or redealt; started cards stay and finish.
 - `ReleasedOnlyByActivity`: a friend marked down for stall is released to `up` only by her
-  activity (session activity, a beat naming running cards, or a finish on her row), never by
-  card progress alone. Its one activity action (`FriendActivity`) stands for all three.
+  activity (session activity, a beat naming running cards, her session's proof or answer, a
+  finish or a report of hers), never by card progress alone. Its one activity action
+  (`FriendActivity`) stands for all of them.
 - `WokenAtEveryWakeRung`: a friend past wake rung n (n = 1, 2) was sent wake n (reversed
   witness `nowake`: the wake planned and never sent, as `friend-stall-ladder-r` left it).
 - `NoWakeWithoutRung`: a wake is sent only at a rung the ladder climbed, and once

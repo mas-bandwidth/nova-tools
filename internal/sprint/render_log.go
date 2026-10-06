@@ -169,6 +169,10 @@ func renderRead(l Line, toRow, toCol string, moved bool, by string) string {
 		// read --return: not a read, the card back in asked on its row; the
 		// reason is the inbox note's
 		return fmt.Sprintf("%s returned its read of attempt %s with no verdict", reader, a)
+	case l.Removed && l.Set["retired_by"] == RetiredByRefused:
+		// a read its reader could not launch: not a read, asked of another reader
+		id := strings.TrimSuffix(l.Card, ".g1")
+		return fmt.Sprintf("%s refused to launch its read of attempt %s (not a read)", id[strings.LastIndex(id, ".")+1:], a)
 	case l.Removed && l.Set["retired_by"] == "returned":
 		// a returned read another reader took: the retirement's words, as a
 		// work card taken back says them

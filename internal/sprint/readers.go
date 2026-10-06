@@ -170,6 +170,58 @@ func ReaderMachine(reader string) (machine string, ok bool) {
 	return m, true
 }
 
+// A read refused (docs/SPEC-SPRINT.md section 6, a read refused is not a read): a read its
+// reader hands back because it could not launch it (cardhdr.EndLaunch: no route, a slot it
+// cannot make) never ran, so it is no read, no re-ask and no mark against its reader. The
+// return retires it off that reader (RetiredByRefused, the reason in FieldRefused) and the
+// ask asks the read of another reader of its tier; the reader that refused may be asked it
+// once more at the attempt (ReadCardForAsk's second identity), as a reader taken back away
+// may. When no reader is left free at the attempt and one refused it for no route
+// (refusedNoRoute), the tier's one judgment says so (NNoRoute, TickDeal) and the card stays
+// in review: the readers stay up and are asked their next reads. On 2026-10-06 every fleet
+// reader was asked heavy reads it had no route for, each return was counted toward the
+// re-ask bound as a read, and the readers were spent at the attempt.
+const (
+	// RetiredByRefused is the retired_by of a read its reader refused to launch.
+	RetiredByRefused = "refused"
+	// FieldRefused is why the reader refused it, as its return said.
+	FieldRefused = "refused_why"
+)
+
+// RefusedReturn says a return's reason is a launch refusal: the read never ran.
+func RefusedReturn(reason string) bool {
+	return strings.Contains(reason, cardhdr.EndLaunch) || NoRouteRefusal(reason)
+}
+
+// NoRouteRefusal says a refusal is for want of a route: the reader had no model, budget
+// or deadline to run the read on.
+func NoRouteRefusal(reason string) bool {
+	return strings.Contains(reason, "has no route") || strings.Contains(reason, "no route serves")
+}
+
+// refusedNoRoute says the primary waits in review for reads no reader can launch: its
+// work did not fail, it wants a read, fewer readers are free to be asked it (freeReaders,
+// and its returned reads asked again in place) than the reads it still needs, which the
+// ask would refuse as "cannot ask", and a reader refused it at the attempt for want of a
+// route. Its tier's judgment holds it (TickDeal), and the ask leaves it (TickAsk).
+func (s *Snapshot) refusedNoRoute(pr *Card) bool {
+	if s.Readers == nil || pr.Col != Review || pr.F("result") == "failed" || ReadsWanted(s, pr) == 0 {
+		return false
+	}
+	attempt := pr.Int("attempt")
+	if len(s.freeReaders(pr, attempt))+len(returnedInTier(s, pr, attempt)) >= ReadsNeeded(pr)-len(liveReadsAt(s, pr, attempt)) {
+		return false
+	}
+	for _, rd := range s.Readers.Rows() {
+		for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
+			if c := s.Readers.Card(id); c != nil && c.F("retired_by") == RetiredByRefused && NoRouteRefusal(c.F(FieldRefused)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // FieldReasked is how many times a read card's reader returned it and it went
 // back to asked on the reader's row, counted by Read itself at each return, so
 // the bound holds whatever the tick does and however many readers are up (the
@@ -272,7 +324,8 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 
 // ReadCardForAsk returns the read card ID to use when asking a reader of a primary
 // at an attempt: plain identity if no card exists yet, or second identity if an
-// away-retired card exists with the plain identity and no second card exists yet.
+// away-retired or refused card (RetiredByRefused) exists with the plain identity and no
+// second card exists yet.
 // ok is true if the reader is eligible to be asked.
 func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
 	plain := ReadCardID(primary, attempt, reader)
@@ -280,7 +333,7 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 	if existing == nil {
 		return plain, true
 	}
-	if existing.F("retired_by") == "away" {
+	if by := existing.F("retired_by"); by == "away" || by == RetiredByRefused {
 		second := ReadCardSecondID(primary, attempt, reader)
 		if s.Readers.Card(second) == nil {
 			return second, true

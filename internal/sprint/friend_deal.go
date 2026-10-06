@@ -128,6 +128,15 @@ type FriendSeat struct {
 	// start bound is at work, and the tick moves none of her cards for want of a start
 	// (friendUnstartedLevel).
 	Active time.Time
+	// Proof is her session's last proof as her beat carries it (Beat.Proof: a SESSION CHECK
+	// it answered, or a bus message of its own), and Finished the store's record of her
+	// last finish, working to done; each zero when there is none. The stall ladder reads
+	// them as evidence of her work (FriendWorked).
+	Proof    time.Time
+	Finished time.Time
+	// Answered is when her session last answered the coordinator's wake ping (her
+	// FriendHealth observation, up), zero when it has not.
+	Answered time.Time
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -145,6 +154,32 @@ func friendTiers(f FriendSeat) []string {
 		return f.Tiers
 	}
 	return Split(f.Class)
+}
+
+// friendDealable says the deal may fill the friend's row (docs/SPEC-SPRINT.md section 1, a
+// friend's card): her status is up by the friends' rule (FriendStatus: her session's
+// evidence, never a beat alone; not held, not down), the coordinator's row of
+// her (her fleet control card) says neither down nor held, and the stall ladder has not
+// marked her down (PropFriendStallDown: released only by her activity). On 2026-10-06 a
+// friend whose row read down, her lanes paused and her daemon beating, was dealt 18 cards
+// twice; a row that cannot work is filled by no deal.
+func friendDealable(s *Snapshot, f FriendSeat) bool {
+	if f.Status != Up {
+		return false
+	}
+	if s == nil || s.Fleet == nil {
+		return true
+	}
+	row := FriendRow(f.Name)
+	if ctl := s.MemberCtl(row); ctl != nil {
+		if st := ctl.F("status"); st == Down || st == Held || ctl.F("held") != "" {
+			return false
+		}
+	}
+	if down, _ := s.Fleet.Prop(PropFriendStallDown(f.Name)); down != "" {
+		return false
+	}
+	return true
 }
 
 // friendTakes says the friend may be given a card of the tier: it is one of her tiers
@@ -336,7 +371,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
 	var up []string
 	for _, f := range seats {
-		if f.Status == Up {
+		if friendDealable(s, f) {
 			room, width := friendRoom(f)
 			free[f.Name] = room - friendLoad(s, f.Name)
 			// a lane is idle while no card on her row holds it, started or not

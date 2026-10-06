@@ -83,3 +83,67 @@ func TestAHeavyCardIsReadByAFriendReaderWithNoHeavyRoute(t *testing.T) {
 	assert.Empty(t, readsAt(c.s, c.s.Work.Card("s1-1"), 1), "the fleet reader is not asked a heavy read with no heavy route")
 	assert.True(t, held(c), "no reader and no route serve heavy: the tier's judgment")
 }
+
+// A read its reader refused to launch for want of a route is not a read (docs/SPEC-SPRINT.md
+// section 6, a read refused is not a read; 2026-10-06: every fleet reader was asked heavy
+// reads with no route on the card, each refusal "launch refused: card X has no route (model
+// "" tokens "" deadline 0s)" was counted toward the re-ask bound as a read, and the readers
+// were spent at the attempt). Each refusal is retired off its reader, counted toward no
+// bound, and asked of another reader; once too few readers are free for it, the tier's
+// one judgment holds it in review, no cannot-ask judgment is raised, and the readers stay up.
+func TestAReaderRefusedForNoRouteIsNotSweptAway(t *testing.T) {
+	t.Parallel()
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	w := newWorld(t, "reader-m1", "reader-m2")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
+	w.s.ReaderStates = map[string]string{"reader-m1": ReaderUp, "reader-m2": ReaderUp}
+	// the store holds no route, so the sprint believes every reader runs its own: the
+	// read cards carry none, and the fleet readers' members have no override
+	putReview(w, "s1-1", "s1-1: heavy work tier: heavy\n\nThe task.", 1, 1, head)
+	w.s.Work.Card("s1-1").Fields[FieldTierNow] = cardhdr.RouteHeavy
+	tick := func() {
+		w.t.Helper()
+		p, _ := TickAsk(w.s, TickReq{})
+		w.must(p)
+		p, _ = TickDeal(w.s, TickReq{})
+		w.must(p)
+	}
+
+	refused := 0
+	for range 10 {
+		tick()
+		reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+		if len(reads) == 0 {
+			break
+		}
+		for _, rc := range reads {
+			why := `no verdict (ran=false verdict=""): launch refused: card ` + rc.ID + ` has no route (model "" tokens "" deadline 0s) and this member no override for what is missing`
+			w.must(Read(w.s, ReadReq{As: rc.Row, Return: true, Reason: why, Sel: Sel{IDs: []string{rc.ID}}}))
+			c := w.s.Readers.Card(rc.ID)
+			require.NotNil(t, c)
+			assert.Equal(t, RetiredByRefused, c.F("retired_by"), "a refused read is retired off its reader")
+			assert.Empty(t, c.F(FieldReasked), "a refusal counts toward no re-ask bound")
+			refused++
+		}
+	}
+	assert.Equal(t, 3, refused, "a heavy card needs two readers: once fewer than two are free for it, it is asked no more")
+
+	tick()
+	tick()
+	pr := w.s.Work.Card("s1-1")
+	assert.Equal(t, Review, pr.Col, "the card stays in review")
+	assert.Empty(t, readsAt(w.s, pr, 1), "nothing is asked again at the attempt")
+	assert.True(t, w.s.refusedNoRoute(pr))
+	var held []Note
+	for _, n := range w.notesOf(NNoRoute) {
+		if n.Stream == TierSubject(cardhdr.RouteHeavy) && contains(n.Primaries, "s1-1") {
+			held = append(held, n)
+		}
+	}
+	require.Len(t, held, 1, "one judgment for the tier, written once")
+	assert.Contains(t, held[0].What, "refused its read for want of a route")
+	assert.Empty(t, w.notesOf(NCannotAsk), "a refusal is no read: no cannot-ask judgment")
+	assert.Equal(t, map[string]string{"reader-m1": ReaderUp, "reader-m2": ReaderUp}, w.s.ReaderStates, "the readers stay up")
+	assert.ElementsMatch(t, []string{"reader-m1", "reader-m2"}, w.s.UpReaders())
+}
