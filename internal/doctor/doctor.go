@@ -277,8 +277,8 @@ func (OSEnv) Exec(ctx context.Context, name string, args ...string) (string, err
 }
 func (OSEnv) Dial(ctx context.Context, network, addr string) error {
 	c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
-	if err == nil {
-		_ = c.Close()
+	if err != nil {
+		return err
 	}
-	return err
+	return c.Close()
 }
