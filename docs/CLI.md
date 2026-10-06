@@ -1151,6 +1151,8 @@ nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
 
+`streams [--repo <owner/name>] [--release <name>] [--cards] [--json]` reads the work table and the merge table once and lists every stream: the repositories and bases its cards' briefs name (`REPO:` and `BASE:`), the release `stream set --release` recorded, how many cards are open and how many have landed, and with `--cards` each placed card's id, state, tier, the first sentence of `THE TASK`, and its needs. A stream whose cards name more than one repository or base keeps every one and the listing says so. `--repo` and `--release` keep streams; `--max` does not cap the listing. The handler is `(*app).cmdStreams`. The verb table is one literal, so the binary does not dispatch `streams` until that literal names it. `drop` and `hold` do not take `--repo`.
+
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
 variable named by `NOVA_BUS_REDIS_PASSWORD_ENV`, separately from the sprint

@@ -224,7 +224,18 @@ func verbProse(name string) string {
 		return holdWords()
 	case "fleet down", "reader away", "reader up":
 		return oldHoldWords(name)
+	case "streams":
+		return streamsWords
 	default:
 		return ""
 	}
 }
+
+// streamsWords is the explanation streams -h carries past its flags
+// (docs/SPEC-SPRINT.md section 11).
+const streamsWords = `streams lists every stream from one read of the work and merge tables.
+Each line names the repositories and bases the stream's cards' briefs name (REPO: and BASE:), the release on its control card, and how many cards are open and how many have landed.
+A stream whose cards name more than one repository or base keeps every name and prints that as a finding.
+--cards adds every placed card: id, state, tier, the first sentence of THE TASK, and its needs.
+--repo and --release keep streams. The listing prints every match; --max does not cap it.
+`
