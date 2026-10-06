@@ -20,6 +20,7 @@ func printPacket(w io.Writer, p sprint.Packet) {
 		}
 	}
 	fmt.Fprintf(w, "PACKET %s attempt=%d gen=%d epoch=%d\n", oneline.Escape(p.Card), p.Attempt, p.Gen, p.Epoch)
+	kv("tier", p.Tier) // every packet names its tier (sprint.DealtTier), in text as in --json
 	if p.Kind == "work" {
 		kv("branch", p.Branch)
 		kv("base", orDashStr(p.Base, "the stream's base"))

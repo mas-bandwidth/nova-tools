@@ -1568,7 +1568,20 @@ and it is the coordinator's decision, receipted.
   (ExcludedNeverDrawn), and an entry that names no enabled route of the tier is
   skipped the same way. The work card keeps `route`, `model`, `tokens`, `usd` (the route's dollar budget, empty for none) and `deadline` (its
   packet hands them to the member) and the primary `routes`, every route taken
-  for it. **The deadline is by machine** (the owner, 2026-10-04: the route's
+  for it. **Every dealt packet names its tier** (dealt-packet-carries-the-tier.w1;
+  on 2026-10-05 the audit cards were dealt with no tier in the packet, a flash
+  friend's runner read `tier -` and handed back its own pinned cards for an hour,
+  and the dealer rotated them to subscription friends): the packet's `tier`, in
+  every verb that hands one (`take`, `queue`, `friend cards`), is the tier the
+  card's route was drawn from, else the tier its primary is on (`tier_now`, or the
+  tier pinned, or its brief's line 1), else the stream's default, flash; never
+  empty (`sprint.DealtTier`, filled by `store.Packets`;
+  `TestADealtPacketAlwaysNamesItsTier`); the text form prints it as the packet's
+  `tier:` line, as `--json` names it (.w2, `TestEveryPacketAVerbHandsNamesItsTier`).
+  It is the tier every friend deal gates on, so a friend row with a class holds only
+  cards whose tier her class covers, unless the card is pinned to her by its WHO
+  line (the attempt cap's friend card; `TestAFriendRowHoldsItsTiersUnlessTheCardIsPinnedToHer`):
+  a runner that hands back a tier it does not do accepts a card whose WHO names it. **The deadline is by machine** (the owner, 2026-10-04: the route's
   deadline was one number for the fleet, and a machine whose median run wall
   was twice the others' timed out twice as often, every timeout a whole
   attempt's spend lost): the deadline a dealt card gets is the larger of the
