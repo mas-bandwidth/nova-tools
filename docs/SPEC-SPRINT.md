@@ -3118,6 +3118,37 @@ on the worker's word: the reader ran the program itself. The model is the reader
 the script read is a read, placed and counted as one, and adds no state.
 (`TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead`.)
 
+### The tick's ask in small fenced steps
+
+The tick's ask (T2, section 14) writes its reads in small fenced steps, never in one write of
+the whole tick's plan. Each step plans the ask part on a fresh read, as every part does. It then
+writes the first five primaries of that plan that this tick has not yet written or given up
+(`store.AskBatch`), with the plan's judgments until a step has committed them. Each step makes
+at most three tries (`store.AskTries`, against the twelve of a whole step, `store.FenceTries`).
+A step that loses all three is tried again one primary at a time. A primary that loses its own
+three tries is refused alone, `its ask lost <n> tries this tick in a step of its own (another
+writer moved the fence, or the store refused the write as planned); nothing was written for it;
+the next tick asks it again`, and the steps go on with the rest. The steps begin no try past the
+ask's budget (`store.AskBudget`, 2 s, or half of the time the tick's context has left when that
+is less): the ask stops there with what it asked, the primaries it did not reach are due, and
+the next tick reads them. The tick's `TIMES` line prints the ask as `readers/ask=<ms>ms/<trips>t/
+<asked>asked/<refused>refused`. The tick holds the server's line of control through the ask, as
+through every part (section 14, The server): the ask does not give the line up between its
+steps, and its budget is what bounds the wait of the workers' verbs behind it. On 2026-10-06,
+with 297 cards in review, the ask planned forty primaries in one write and lost all twelve tries
+on every tick ("the sprint kept changing under this step (12 attempts)"). No read was asked for
+ten minutes, and each tick held the line for up to 20 s.
+
+The tick plans on a sparse read. Its extras name, for every primary in review at its attempt,
+the retired read cards of each reader row and of each friend's fleet row (`store.tickExtras`). A friend's read that has closed ok or broken is her verdict, so
+`ReadsWanted` counts it, and the friend ask asks no friend an attempt she has already read.
+Before the friends' cards were among the extras, a read a friend had closed was invisible to the
+tick. The friend ask then planned her read card again, which is a create of a record that exists.
+The store refused that create on every try, so no friend was asked a read while 283 of 300 review
+cards had none outstanding.
+(`TestTheAskStepAsksInSmallFencedSteps`, `TestTheAskStepStopsAtItsBudget`,
+`TestAnAskConflictIsOneCardsRefusalNotTheTicks`, `TestTheFriendAskAsksEveryReviewCardAFriendMayRead`.)
+
 ## 7. Merging
 
 1. In work order, never random: the head of the stream's queued cell first.
@@ -4445,7 +4476,9 @@ epoch's record of results; teardown removes those records with the epoch. A
 writer whose operation another writer finished (the tick, another verb,
 repair) reports the recorded result, as a replay, and is never told it was
 cut. A step that loses every attempt to other writers says so and applied
-nothing. `check` shows a pending operation (`where --json` carries it). The model
+nothing. A step may make fewer tries than the twelve (`Step.Tries`) and plan none
+past a time (`Step.Until`): the tick's ask does both (section 6, the tick's ask in small fenced
+steps). `check` shows a pending operation (`where --json` carries it). The model
 includes the cut between every two phases. A multi-table batch in the table
 layer retires this section.
 
@@ -5379,7 +5412,8 @@ that day, and each restart left every worker's verb refused for 15 to 30 s and t
 which run in the process, stopped. While a tick runs, the workers' writes (`take`, `finish`,
 `progress`, `read`, `queue`, `fleet beat`) wait for the line the tick holds (serve.go,
 `serveCtx`, `a.serial.LockCtx`), not for the store's fence; a friend's beat and a read run on
-their lanes and wait for neither. A tick whose fenced read lost the fence to other operations
+their lanes and wait for neither. The tick's ask holds the line for at most its budget, 2 s, and one try begun before it
+(section 6, the tick's ask in small fenced steps). A tick whose fenced read lost the fence to other operations
 (`the sprint is busy: other operations kept the fence moving`, `store.FenceBusyError`) runs its
 parts again within the same tick, up to three times (`store.TickBusyRetries`), before it counts
 as failed on the heartbeat; the loop prints `TICK BUSY ... its parts ran again <n> times within

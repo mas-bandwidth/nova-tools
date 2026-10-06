@@ -186,6 +186,14 @@ type Step struct {
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
+	// Tries, above zero and below the store's Attempts, is the plans this step
+	// makes before it gives up on a fence other writers keep moving: the tick's
+	// ask writes in small steps of AskTries each (tick_ask.go).
+	Tries int
+	// Until, when set, is the time past which the step plans no further try:
+	// a try begun before it finishes, and a step past it gives up as a step
+	// whose tries are spent does (the tick's ask's budget, tick_ask.go).
+	Until time.Time
 }
 
 // ArgsOf is a request's arguments in one canonical form: a digest of its JSON
@@ -489,7 +497,14 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 	}
-	for res.Attempts < st.attempts() {
+	tries := st.attempts()
+	if step.Tries > 0 && step.Tries < tries {
+		tries = step.Tries
+	}
+	for res.Attempts < tries {
+		if res.Attempts > 0 && !step.Until.IsZero() && !st.now().Before(step.Until) {
+			break
+		}
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
 			if lock, err = st.takeLock(ctx, step, family); err != nil {

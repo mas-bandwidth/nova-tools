@@ -237,7 +237,11 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	// its acquire, one apply for each table it writes, its release; the ask
 	// also catches the readers table up from its change stream; the readers'
 	// beats and holds are read once by the tick, before its parts (first read)
-	want := map[string]int64{"work/drain": 9, "readers/ask": 10} // one more each since 2026-10-04: the seat record (the seat's generation), read with the coordinator
+	// one more each since 2026-10-04: the seat record (the seat's generation),
+	// read with the coordinator. The ask writes its forty primaries in steps of
+	// AskBatch (tick_ask.go), each a fenced step of its own: the first step's
+	// 10 trips, and 9 for each step after it (its readers caught up already)
+	want := map[string]int64{"work/drain": 9, "readers/ask": 10 + 9*(40/AskBatch-1)}
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 }
 
