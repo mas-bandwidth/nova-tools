@@ -242,33 +242,33 @@ func TestALoopWhoseVerbIsGoneIsRefusedAndNamed(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t, "m1")
-	code, _, errs := h.run(t, "loop", "add", "table-live", "--machine", "m1", "--argv", `["nova-sprint","table","--loop","1"]`, "--keepalive", "true")
-	require.Equal(t, 0, code, "added while nova-sprint still has table: %s", errs)
+	code, _, errs := h.run(t, "loop", "add", "table-live", "--machine", "m1", "--argv", `["nova-swarm","gone-verb","--loop","1"]`, "--keepalive", "true")
+	require.Equal(t, 0, code, "added while nova-swarm still has gone-verb: %s", errs)
 
 	h.verbs = func(_ context.Context, program, verb string) (bool, error) {
-		if program != "nova-sprint" {
+		if program != "nova-swarm" {
 			return false, errors.New(program + ": not installed here")
 		}
-		return !slices.Contains([]string{"where", "run"}, verb), nil
+		return !slices.Contains([]string{"member", "disk-guard"}, verb), nil
 	}
 	code, out, _ := h.run(t, "status")
-	assert.Contains(t, out, "\nNOTE loop table-live runs nova-sprint table, and nova-sprint has no verb table: its unit exits at every start; run: nova-config loop remove table-live\n",
+	assert.Contains(t, out, "\nNOTE loop table-live runs nova-swarm gone-verb, and nova-swarm has no verb gone-verb: its unit exits at every start; run: nova-config loop remove table-live\n",
 		"status names the loop whose verb is gone, and its remove (exit %d)", code)
 
-	code, _, errs = h.run(t, "loop", "add", "table-2", "--machine", "m1", "--argv", `["nova-sprint","table"]`, "--keepalive", "true")
+	code, _, errs = h.run(t, "loop", "add", "table-2", "--machine", "m1", "--argv", `["nova-swarm","gone-verb"]`, "--keepalive", "true")
 	require.Equal(t, 2, code, errs)
-	assert.Contains(t, errs, "loop table-2 runs nova-sprint table, and nova-sprint has no verb table: its unit exits at every start; run nova-sprint help for its verbs, or --enabled false")
+	assert.Contains(t, errs, "loop table-2 runs nova-swarm gone-verb, and nova-swarm has no verb gone-verb: its unit exits at every start; run nova-swarm help for its verbs, or --enabled false")
 	code, _, _ = h.run(t, "loop", "show", "table-2")
 	assert.NotEqual(t, 0, code, "the refused add wrote a row")
 
 	code, _, errs = h.run(t, "loop", "set", "table-live", "--every", "0")
 	require.Equal(t, 2, code, "a set leaving the loop enabled on a gone verb is refused: %s", errs)
-	assert.Contains(t, errs, "nova-sprint has no verb table")
+	assert.Contains(t, errs, "nova-swarm has no verb gone-verb")
 	code, _, errs = h.run(t, "loop", "set", "table-live", "--enabled", "false")
 	require.Equal(t, 0, code, "--enabled false is a way out: %s", errs)
-	code, _, errs = h.run(t, "loop", "set", "table-live", "--argv", `["nova-sprint","where","--watch"]`, "--enabled", "true")
+	code, _, errs = h.run(t, "loop", "set", "table-live", "--argv", `["nova-swarm","member","--watch"]`, "--enabled", "true")
 	require.Equal(t, 0, code, "a verb the program has passes: %s", errs)
-	code, _, errs = h.run(t, "loop", "add", "other", "--machine", "m1", "--argv", `["nova-work","gone"]`, "--every", "60")
+	code, _, errs = h.run(t, "loop", "add", "other", "--machine", "m1", "--argv", `["nova-tokens","gone"]`, "--every", "60")
 	require.Equal(t, 0, code, "a program the probe cannot answer for judges nothing: %s", errs)
 
 	_, out, _ = h.run(t, "status")
