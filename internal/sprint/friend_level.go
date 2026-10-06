@@ -3,6 +3,7 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -105,7 +106,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	// to is where the card goes, "" when nowhere: below her room, of its tier, not a
 	// friend it left, and an idle lane for a giver with none or an even smaller backlog
 	to := func(giver string, c *Card) string {
-		tier, left := cardTierOf(s.Work.Placed(c.F("primary"))), friendsLeft(c)
+		tier, left := DealTier(s.Work.Placed(c.F("primary"))), friendsLeft(c)
 		free, idle := map[string]int{}, map[string]int{}
 		var may []string
 		for _, f := range seats {
@@ -164,6 +165,18 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	if len(p.Units) > 0 {
 		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))
 	}
+	// then a card re-tiered to a tier its holder does not serve is taken back, to be dealt
+	// again to a friend that serves it (retierTakeBacks; docs/SPEC-SPRINT.md section 1, "One
+	// tier for every friend decision"); none the level or the tick moved or started
+	skip := maps.Clone(r.Moved)
+	if skip == nil {
+		skip = map[string]bool{}
+	}
+	for _, u := range append(slices.Clone(p.Units), r.Taken...) {
+		skip[u.Key] = true
+	}
+	tp := retierTakeBacks(s, seats, r.Who, r.Started, skip)
+	p.Units, p.Refused = append(p.Units, tp.Units...), append(p.Refused, tp.Refused...)
 	return p
 }
 
