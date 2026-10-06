@@ -417,13 +417,35 @@ starts while limited (`NoTurnWhileLimited`, reversed witness
 `MCFriendBrokenDeliverLimited`) and limited ends (`LimitedEnds`, reversed witness
 `MCFriendBrokenNeverWake`, which holds the friend limited for ever).
 
-Owed: the beat still goes **missing** while limited (`Limits.Beat` holds it back, so
-her row reads down by the lapse), and does not carry down with the reason and the
-until. That needs `friend beat` to take `--down --reason --until` (the pair
-`friend down --until` carries), in `cmd/nova-sprint/friends.go` and
-`internal/sprint`, outside this card's paths. `install` does not pass
+Owed: the beat carrying down with the reason and the until is the next
+subsection's. `install` does not pass
 `--limit-rest` into the launchd plist yet (`launchd.go`), so a daemon so installed
 uses the 1h default.
+
+### limits-mean-down-w-r5.w1~15: the beat says down with the until and the reason
+
+While limited the daemon's beat says so instead of going missing:
+`Limits.BeatOrDown` sends `nova-sprint friend beat <friend> --until <RFC3339>
+--reason 'harness limit: <text>'` (the pair `friend down --until` carries) from the
+daemon's existing beat client in `cmd/nova-friend/main.go`, and the plain beat
+again once the wake after the reset is answered. `friend beat` keeps the pair on her
+report (`sprint.FriendReport.Until`, `Reason`; `--reason` without `--until` is
+refused, and a down beat reports working 0), and `sprint.FriendStatus` reads her down
+while her last beat says so (`Beat.SaysDown`), after a hold and before an
+observation, however fresh the beat; `FriendDownWhy` says `her beat says down until
+<t>: <reason>`. A beat without `--until` has her up again by the ordinary rule.
+`TestUsageLimitMarksDownUntilReset` asserts the beats go up, down with the reset and
+the reason, then up; `TestFriendBeatDownUntilCarriesTheReasonAndTheUntil`
+(cmd/nova-sprint) the row.
+
+Owed, outside this card's paths: the sprint server's beat lane takes only the flags
+`friendBeatFlags` names (`cmd/nova-sprint/serve.go`: `--running --working --queue
+--width --load --active --pong`), so until `--until` (an RFC3339 time) and
+`--reason` are added there, a down beat sent to the server is refused, and the
+daemon reads that refusal as no beat: her row reads down by the lapse, as before.
+The table's status cell shows reason and until for a hold and an observation only
+(`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
+report and in why she is down.
 
 ### The harness check (internal/friend/alive.go)
 
