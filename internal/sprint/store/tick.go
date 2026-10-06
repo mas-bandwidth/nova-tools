@@ -585,7 +585,8 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 			if due != nil {
 				*due = d
 			}
-			return unchangedNotWritten(s, p)
+			// no judgment on a stream the tables lack: its next step would be refused
+			return unchangedNotWritten(s, sprint.WithoutStreamsOff(s, p))
 		}}
 }
 
@@ -691,6 +692,11 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		return res, fmt.Errorf("back: %w", err)
 	}
 	res.State = m.StateWord()
+	// the open notes of a stream the tables lack retire, RUNNING or STOPPED: a
+	// stream is removed only from a STOPPED machine
+	if err := st.retirePart(ctx, &res); err != nil {
+		return res, err
+	}
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick shows the fleet as its
 		// beats say and says it looked, so start can tell a run loop is
@@ -803,6 +809,57 @@ func (st *Store) archivePart(ctx context.Context, running bool, res *TickResult)
 		res.Archive = &a
 	}
 	return nil
+}
+
+// retirePart runs the tick's retire part (sprint.TickRetire) at the tick's
+// epoch, and puts what it wrote on the result: a clear since writes nothing.
+func (st *Store) retirePart(ctx context.Context, res *TickResult) error {
+	// what is open and the tables' rows first, so a tick with no stream off
+	// the tables reads no card for it
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil || len(open) == 0 {
+		return err
+	}
+	shapes, err := st.shapes(ctx, []string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Merge)})
+	if err != nil {
+		return err
+	}
+	rows := &sprint.Snapshot{Work: sprint.NewTable(sprint.Work), Merge: sprint.NewTable(sprint.Merge)}
+	for i, t := range []*sprint.Table{rows.Work, rows.Merge} {
+		for _, r := range shapes[i].Rows {
+			t.SetRows(append(t.Rows(), r.Key))
+		}
+	}
+	rows.Open, rows.Acked = sprint.SplitOpen(open)
+	if len(sprint.StreamsOff(rows)) == 0 {
+		return nil
+	}
+	at := res.Epoch
+	r, err := st.Run(ctx, Step{Verb: "tick retire", Actor: sprint.MachineActor, Load: tables(sprint.Work, sprint.Merge), Epoch: &at,
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			p, _ := sprint.TickRetire(s, sprint.TickReq{Who: sprint.MachineActor})
+			return p
+		}})
+	if err != nil {
+		if st.clearedUnder(ctx, res) {
+			return nil
+		}
+		return fmt.Errorf("retire: %w", err)
+	}
+	if r.Notes > 0 {
+		res.Parts = append(res.Parts, PartResult{Name: "retire", Result: r})
+	}
+	return nil
+}
+
+// RetireStreams retires the open notes of streams the verb took off the
+// tables, how in words ("removed", "archived"): every open judgment,
+// acknowledgement and overdue hold of each, closed in one step
+// (sprint.RetireStreams). What it retired is its NOTE lines, one a stream.
+func (st *Store) RetireStreams(ctx context.Context, verb string, names []string, how string) ([]string, error) {
+	r, err := st.Run(ctx, Step{Verb: verb, Load: tables(sprint.Work, sprint.Merge),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RetireStreams(s, names, how, st.Actor) }})
+	return r.Said, err
 }
 
 // tellTick writes one happened note addressed to the coordinator about the
