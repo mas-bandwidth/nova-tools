@@ -90,3 +90,46 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-harnesses-b.w2: the friends' harnesses
+
+A friend is an AI that works cards, and each friend row names the harness her daemon runs
+(`opencode`, the default, or a headless `claude`, `codex` or `grok`; `internal/harness`),
+and a claude friend in `one-shot` mode names her account's `config_dir`, the
+`CLAUDE_CONFIG_DIR` each of her lanes runs with ([FRIENDS.md](FRIENDS.md), "Claude friends:
+one account each"). The harness binary must be on the machine that runs the friend, at a
+version the adapter supports, and a claude one-shot friend's config directory must be
+there. A harness that is missing or wrong is a hidden dependency: her daemon installs and
+starts, and every card she is handed fails at the launch with a refusal a person who did
+not set the harness up cannot read.
+
+Who needs it: any machine that runs a friend's daemon (a bench or a person's machine), and
+each friend row that machine hosts. The coordinator's machine with no friends needs none.
+
+`nova-up --local` sets up the coordinator's machine and installs no harness, so it does not
+provide this dependency; a person installs each harness the friends name and logs it in:
+
+```sh
+npm install -g opencode-ai          # opencode: the providers table's default
+claude --version                    # claude, codex and grok: the vendor's own install,
+codex --version                     # then the login its harness check reads
+grok --version
+```
+
+For a claude account friend, make her config directory and name it on her row:
+
+```sh
+mkdir -p <the account's absolute config directory>
+nova-config friend set <friend> --config_dir <the account's absolute config directory>
+nova-config apply --kind friend
+```
+
+The doctor check `harness` (`internal/doctor/check_harness.go`) reads every friend row
+(`nova-config friend list --json`) and, for each, holds two facts: the harness her row
+names (or the claude of a one-shot friend with a `config_dir`, else opencode) is on PATH
+and answers a version line the adapter supports, and a claude one-shot friend's config
+directory is there. It never runs a harness against a model: the one probe is
+`<binary> --version`. Every friend that would fail is named in the evidence with the one
+fix line (install the harness, or `nova-config friend set <friend> --config_dir <dir>`);
+the check is one only a fleet needs, so `nova-doctor --local` skips it and a fleet run
+includes it.
