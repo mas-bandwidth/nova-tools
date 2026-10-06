@@ -38,6 +38,17 @@ var startedCases = []struct {
 	{"landed", Landed, "1"},
 }
 
+// briefKeptCases is a primary in each state that keeps its brief: working, merging and
+// landed. A card waiting, ready or in review takes one in place (briefInPlace).
+var briefKeptCases = []struct {
+	name, col string
+	attempt   string
+}{
+	{"working", Working, "1"},
+	{"merging", Merging, "1"},
+	{"landed", Landed, "1"},
+}
+
 func TestBriefReplacesTheBriefOfAnUnstartedPrimary(t *testing.T) {
 	t.Parallel()
 	for _, id := range []string{"a-1", "a-2"} {
@@ -59,9 +70,9 @@ func briefOne(id, brief string) BriefReq {
 }
 
 // A waiting or ready primary with no work card dealt takes a new brief while
-// the machine runs: only a card dealt or in flight keeps its brief, so the
-// briefs of cards in line are replaced without a stop window
-// (docs/SPEC-SPRINT.md, the brief verb). A dealt card is still refused.
+// the machine runs: only a card working, merging or landed keeps its brief, so
+// the briefs of cards in line are replaced without a stop window
+// (docs/SPEC-SPRINT.md, the brief verb). A card working is still refused.
 func TestBriefReplacesAWaitingCardWhileRunning(t *testing.T) {
 	t.Parallel()
 	for _, id := range []string{"a-1", "a-2"} {
@@ -75,7 +86,7 @@ func TestBriefReplacesAWaitingCardWhileRunning(t *testing.T) {
 		assert.Equal(t, before.Score, c.Score, id)
 		assert.Equal(t, before.Fields["needs"], c.F("needs"), id)
 	}
-	for _, tc := range startedCases {
+	for _, tc := range briefKeptCases {
 		w := editWorld(t)
 		w.s.Running = true
 		w.place(w.s.Work, "a-1", "a", tc.col)
@@ -104,36 +115,50 @@ func TestBriefReplacesSeveralBriefsInOneRequest(t *testing.T) {
 	w.clean("after the briefs")
 }
 
-func TestBriefIsRefusedForAStartedCard(t *testing.T) {
+// A card working, merging or landed keeps its brief (the owner, 2026-10-06: a brief
+// correction edits the card in place, never a twin, but never under a running attempt):
+// refused, nothing planned, naming its state; a card in review and one ready with an
+// attempt dealt take one in place (TestBriefEditsACardInReviewInPlace).
+func TestBriefRefusesAWorkingOrMergingCard(t *testing.T) {
 	t.Parallel()
-	for _, tc := range startedCases {
+	for _, tc := range briefKeptCases {
 		w := editWorld(t)
 		w.place(w.s.Work, "a-1", "a", tc.col)
 		w.s.Work.Placed("a-1").Fields["attempt"] = tc.attempt
 		p := Brief(w.s, briefOne("a-1", "new"))
 		require.Len(t, p.Refused, 1, tc.name)
 		assert.Empty(t, p.Units, tc.name)
-		assert.Contains(t, p.Refused[0].Why, "a-1 is "+tc.col, tc.name)
-		assert.Contains(t, p.Refused[0].Why, "keeps its brief", tc.name)
+		assert.Contains(t, p.Refused[0].Why, "a-1 is "+tc.col+": a card working, merging or landed keeps its brief", tc.name)
+	}
+	for _, col := range []string{Review, Ready, Waiting} {
+		w := editWorld(t)
+		w.place(w.s.Work, "a-1", "a", col)
+		w.s.Work.Placed("a-1").Fields["attempt"] = "1"
+		p := Brief(w.s, briefOne("a-1", "new"))
+		assert.Empty(t, p.Refused, col)
+		require.Len(t, p.Units, 1, col)
+		assert.Contains(t, p.Units[0].Moved, "a-1 brief edited in place by coordinator at attempt 1: - old one | + new", col)
+		// the same brief again would reset the bound with nothing changed: refused
+		p = Brief(w.s, briefOne("a-1", "old one"))
+		require.Len(t, p.Refused, 1, col)
+		assert.Contains(t, p.Refused[0].Why, "the bound counts attempts under one brief", col)
 	}
 }
 
-// A brief refused for a card dealt names what changes it instead, by the
-// lifecycle's moves, and does so on a RUNNING machine too, where stopping it
-// would not help: rework --fix from review (after a return from merging), drop
-// and a new card from any open state, a new card after landing.
+// A brief refused for a card working, merging or landed names what changes it
+// instead, by the lifecycle's moves, and does so on a RUNNING machine too, where
+// stopping it would not help: brief in place once in review (after a return from
+// merging), drop and a new card from any open state, a new card after landing.
 func TestABriefRefusedForAStartedCardNamesItsRemedy(t *testing.T) {
 	t.Parallel()
 	drop := "nova-sprint drop a-1 --reason '<why>', then nova-sprint add --stream a <new id> --brief-file <path>"
-	rework := "nova-sprint rework a-1 --fix '<what changes>'"
+	brief := "nova-sprint brief a-1 --brief-file <path> (in place, its next attempt)"
 	want := map[string][]string{
-		"ready with an attempt dealt": {"run: " + drop},
-		"working":                     {"run: " + drop, "once it finishes (review), " + rework},
-		"review":                      {"run: " + rework, drop},
-		"merging":                     {"run: nova-sprint return a-1 --reason '<why>', then " + rework, drop},
-		"landed":                      {"run: nova-sprint add --stream a <new id> --brief-file <path> for the change"},
+		"working": {"run: " + drop, "once it finishes (review), " + brief},
+		"merging": {"run: nova-sprint return a-1 --reason '<why>', then " + brief, drop},
+		"landed":  {"run: nova-sprint add --stream a <new id> --brief-file <path> for the change"},
 	}
-	for _, tc := range startedCases {
+	for _, tc := range briefKeptCases {
 		require.NotEmpty(t, want[tc.name], tc.name)
 		for _, running := range []bool{false, true} {
 			w := editWorld(t)

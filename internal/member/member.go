@@ -1697,7 +1697,10 @@ func finishReport(r Result, pu Push, branch string) (fin Finish, why, report str
 const ProposedKey = "PATHS-PROPOSED:"
 
 // PathsProposed is the globs of the first PATHS-PROPOSED line in text, read to the end of its
-// line or a ";", each trimmed, empty ones left out; ok is false when text has no such line.
+// line or a ";", empty ones left out: the paths alone, read before any prose on that line.
+// Each comma-separated item is its first word, trimmed of quotes, emphasis and a closing
+// full stop; an item with words after its first ends the paths ("b.go, c.go because the
+// test needs it" is b.go and c.go). ok is false when text has no such line.
 func PathsProposed(text string) (globs []string, ok bool) {
 	_, rest, ok := strings.Cut(text, ProposedKey)
 	if !ok {
@@ -1705,16 +1708,23 @@ func PathsProposed(text string) (globs []string, ok bool) {
 	}
 	rest, _, _ = strings.Cut(rest, "\n")
 	rest, _, _ = strings.Cut(rest, ";")
-	for _, g := range strings.Split(rest, ",") {
-		if g = strings.Trim(g, " \t`*"); g != "" {
+	for _, item := range strings.Split(rest, ",") {
+		words := strings.Fields(item)
+		if len(words) == 0 {
+			continue
+		}
+		if g := strings.TrimRight(strings.Trim(words[0], "`*\"'"), "."); g != "" {
 			globs = append(globs, g)
+		}
+		if len(words) > 1 {
+			break // prose follows the paths
 		}
 	}
 	return globs, true
 }
 
 // CarryProposed is a finish's report with the child's PATHS-PROPOSED line, read from its
-// report and else its body, kept at the report's end within the 500-byte cut, so recut
+// report and else its body, kept at the report's end within the 500-byte cut, so brief
 // --widen reads it off the card (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1"); the
 // report as it is when the child proposed nothing or the report holds the line already.
 func CarryProposed(report string, r Result) string {
@@ -1729,9 +1739,9 @@ func CarryProposed(report string, r Result) string {
 	return report[:min(len(report), 500-len(line))] + line
 }
 
-// Carry is where a twin re-cut by recut --widen starts: the held card, its attempt and the
-// head that attempt pushed, written into the twin's brief header as its CARRY: line, since
-// the twin's own attempts start from the first (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1").
+// Carry is where a card's next attempt starts when brief --widen widens it in place, or a
+// rule's twin's first: the held card, its attempt and the head that attempt pushed, written
+// into the brief header as its CARRY: line (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1").
 type Carry struct {
 	Card    string
 	Attempt int
@@ -1769,7 +1779,7 @@ func CarryOf(brief string) (c Carry, ok bool) {
 // Carried is a work packet as the member stages it: one with no pushed head of its own
 // (sprint.BaseOf found none) whose brief carries a CARRY: line starts from that head, as a
 // rework starts from its last pushed head (docs/SPEC-CARD-CONTRACT.md, "Where a rework
-// starts"), so the twin recut --widen makes keeps the held attempt's work; any other as it is.
+// starts"), so a card brief --widen widens keeps the held attempt's work; any other as it is.
 func Carried(p Packet) Packet {
 	if p.Kind == "read" || p.BaseHead != "" {
 		return p

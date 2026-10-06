@@ -117,10 +117,11 @@ func (b BriefBound) String() string {
 	return line
 }
 
-// Remedy is what changes the brief: replaced in place while the card waits, else dropped and
-// added again corrected. A rework's --fix changes the brief not at all, so it is never offered.
+// Remedy is what changes the brief: corrected in place, the card's next attempt staged from
+// its last pushed head, or the card dropped. A rework's --fix changes the brief not at all, so
+// it is never offered.
 func (b BriefBound) Remedy() string {
-	return "run: nova-sprint brief " + b.ID + " --brief-file <path> (a waiting card) or drop " + b.ID + " and add it again with the brief corrected"
+	return "run: nova-sprint brief " + b.ID + " --brief-file <path> (the brief corrected in place, its next attempt from its last pushed head), or nova-sprint drop " + b.ID + " --reason '<why>'"
 }
 
 // Why is the rework's refusal of a card at the bound: the line, and the remedy.
