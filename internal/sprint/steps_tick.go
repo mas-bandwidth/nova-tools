@@ -191,7 +191,7 @@ type TickReq struct {
 	// coordinator holds her, read by the binding with every tick (coordinator_pass.go);
 	// nil is none read, and no friend is deaf.
 	Sessions map[string]FriendSession
-	// Drift is the repository's drift facts, read by the binding (ReadDrift, with the last
+	// Drift is the repository's drift facts, read by the binding (with the last
 	// whole-tree gate at the base; drift.go, docs/SPEC-SPRINT.md section 8, "Drift alarms"):
 	// the deadlines part keeps a judgment for each drift. nil is none read, and no drift
 	// judgment is raised or closed.

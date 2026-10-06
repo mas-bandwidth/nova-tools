@@ -57,7 +57,7 @@ func TestPreferencePreservesTheRetryBound(t *testing.T) {
 				change(Fleet, moveEntry(wc, wc.Row, Withdrawn, map[string]string{"redeals": itoa(n), FieldTakeEnded: stamp(w.s.Now)})),
 				change(Work, moveEntry(pr, pr.Row, Ready, nil)),
 			}}}})
-			p := FriendDeal(w.s, []*Card{w.s.Primary(pr.ID)}, []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "pro"}})
+			p, _, _ := friendDeal(w.s, []*Card{w.s.Primary(pr.ID)}, []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "pro"}})
 			if n == MaxRedeals {
 				assert.Empty(t, p.Units)
 				return

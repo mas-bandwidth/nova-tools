@@ -53,11 +53,7 @@ const (
 // second generation (a card taken back and dealt again, sprint.FriendTake) .g<gen> after it, so
 // a card dealt again to the same friend is a new job whose brief names its own branch.
 func friendJobOf(p sprint.Packet) string {
-	job := sprint.StoredID(p.Card, p.Epoch)
-	if p.Gen > 1 {
-		job += ".g" + strconv.Itoa(p.Gen)
-	}
-	return job
+	return friend.JobName(p.Card, p.Epoch, p.Gen)
 }
 
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its

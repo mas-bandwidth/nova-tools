@@ -1,11 +1,11 @@
 package sprint_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,10 +84,41 @@ func (r *driftRig) at() time.Time {
 // tick reads the drift facts from the twin repository and applies the drift part.
 func (r *driftRig) tick() {
 	r.t.Helper()
-	facts, err := sprint.ReadDrift(context.Background(), sprint.RunGit, r.repo.dir, "sprint/base", "dev", r.server)
+	facts, err := readDriftForTest(r.repo, "sprint/base", "dev", r.server)
 	require.NoError(r.t, err)
 	facts.Gate = r.gate
 	r.tickOn(&facts)
+}
+
+// readDriftForTest gives TickDrift facts from a twin repository. Production does not yet
+// bind this reader to the store tick; that integration is tracked in SPEC-SPRINT.
+func readDriftForTest(repo *twinRepo, base, dev, server string) (sprint.DriftFacts, error) {
+	facts := sprint.DriftFacts{Base: base, Dev: dev}
+	tip := repo.gitAt(time.Time{}, "rev-parse", "--verify", "--end-of-options", base+"^{commit}")
+	stamps := repo.gitAt(time.Time{}, "log", "--format=%ct", "--end-of-options", dev+".."+base)
+	ahead := sprint.DriftAhead{Tip: tip}
+	for _, stamp := range strings.Fields(stamps) {
+		sec, err := strconv.ParseInt(stamp, 10, 64)
+		if err != nil { return facts, err }
+		ahead.Commits++
+		if at := time.Unix(sec, 0).UTC(); ahead.Oldest.IsZero() || at.Before(ahead.Oldest) { ahead.Oldest = at }
+	}
+	facts.Ahead = &ahead
+	if server == "" { return facts, nil }
+	cmd := exec.Command("git", "-C", repo.dir, "rev-parse", "--verify", "--quiet", "--end-of-options", server+"^{commit}")
+	cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	full, err := cmd.Output()
+	if err != nil {
+		facts.Server = &sprint.DriftServer{Commit: server, Why: "a commit in no branch fetched"}
+		return facts, nil
+	}
+	sv := sprint.DriftServer{Commit: strings.TrimSpace(string(full))}
+	cmd = exec.Command("git", "-C", repo.dir, "merge-base", "--is-ancestor", "--end-of-options", sv.Commit, tip)
+	cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	err = cmd.Run()
+	if err == nil { sv.On = true } else if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 { sv.Why = "not an ancestor of " + base } else { return facts, err }
+	facts.Server = &sv
+	return facts, nil
 }
 
 // tickOn applies the drift part on the facts given (nil: none read this tick).

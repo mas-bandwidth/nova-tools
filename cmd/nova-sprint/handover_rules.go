@@ -1,9 +1,8 @@
 package main
 
-import "strconv"
-
-// The coordinator's numbered rules (docs/SPRINT-COORDINATOR.md, section 10), as
-// handover prints them: the number and the sentence. The runbook carries each
+// The coordinator's numbered rules (docs/SPRINT-COORDINATOR.md, section 10): the
+// number and the sentence. handover does not print them: its text is one screen
+// (TestHandoverPrintsWhatTheNextSeatNeeds) and the 97 rules are not. The runbook carries each
 // rule's why and the verbs that do it; TestHandoverRulesAreTheRunbooks keeps the
 // two equal, so a rule changes in both or the test fails.
 
@@ -106,13 +105,4 @@ var coordinatorRules = []string{
 	"Outcomes are reported first, in plain words, with numbers only where they change a decision.",
 	"A friend's or machine's state is reported only from its own beat or output, never from expectation.",
 	"No text, caveat or column the owner did not ask for goes on the owner's dashboard; the coordinator reads its own role view.",
-}
-
-// handoverRuleLines is each rule as its RULE line carries it: "R<n>. <sentence>".
-func handoverRuleLines() []string {
-	lines := make([]string, len(coordinatorRules))
-	for i, r := range coordinatorRules {
-		lines[i] = "R" + strconv.Itoa(i+1) + ". " + r
-	}
-	return lines
 }

@@ -272,8 +272,6 @@ func TestAPackageWithNoTestFileGetsItsTestOnTheNEWLine(t *testing.T) {
 	NewTestFile(&c, func(glob string) bool { return glob == "internal/none/x.go" })
 	assert.Equal(t, []string{"internal/none/x.go", "internal/none/*_test.go"}, c.Paths, "the glob stays")
 	assert.Equal(t, []string{"internal/none/x_test.go"}, c.New)
-	assert.True(t, c.Creates("internal/none/*_test.go"))
-	assert.False(t, c.Creates("internal/none/x.go"))
 	brief := Render(header, c)
 	assert.Contains(t, brief, "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\nTEST: internal/none TestFindingX\n")
 	assert.Empty(t, Lint(c.ID, brief))

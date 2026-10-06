@@ -95,8 +95,6 @@ const (
 	LaneTake                    // outside her tiers: taken back for the dealer (friend take)
 )
 
-func (v LaneVerdict) String() string { return [...]string{"run", "skip", "take"}[v] }
-
 // Judge is the card filter: a card of a tier outside Tiers (an unknown tier is outside) is
 // taken back; a card whose stream and id match none of Streams is skipped; any other runs.
 // The reason is a sentence for the record and for friend take.

@@ -308,6 +308,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	repoDir := fs.String("repo-dir", "", "the clone to land in, its origin the remote pushed to (default: a clone per repository under the directory each line names)")
 	base := fs.String("base", "", "the base branch of a card whose brief names no BASE: line")
 	check := fs.String("check", "", "a command run once per batch, by sh -c in the clone on the batch branch, before the push (bounded to 30m); non-zero reports the batch red and pushes nothing")
+	devSync := fs.Bool("dev-sync", false, "sync the development branch into the explicit base before the first batch when due (requires --repo-dir, --base and --check; off by default)")
 	dry := fs.Bool("dry-run", false, "print the batches it would land and change nothing: reads the store only (no git, no push, no report)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -319,6 +320,20 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(*base, "-") {
 		bad = append(bad, "--base wants a branch name, not "+*base)
+	}
+	if *devSync {
+		if *repoDir == "" {
+			bad = append(bad, "--dev-sync requires --repo-dir <clone>")
+		}
+		if *base == "" {
+			bad = append(bad, "--dev-sync requires --base <branch>")
+		}
+		if *check == "" {
+			bad = append(bad, "--dev-sync requires --check <command>")
+		}
+		if *dry {
+			bad = append(bad, "--dev-sync cannot be used with --dry-run because it may push the base")
+		}
 	}
 	if *repoDir != "" {
 		if fi, err := os.Stat(*repoDir); err != nil || !fi.IsDir() {
@@ -370,20 +385,29 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	// the streams in stream order: the named ones (a name that is no stream
 	// last, to be refused), else every one with cards queued and not stopped
-	var order []string
-	for _, name := range s.Streams() {
-		named := slices.Contains(streams, name)
-		if named || len(streams) == 0 && s.StreamCtl(name) != nil && s.StreamCtl(name).F("state") != sprint.StreamStopped && len(landQueue(s, name)) > 0 {
-			order = append(order, name)
+	order := landOrder(s, streams, *devSync)
+	if *devSync && slices.ContainsFunc(order, func(name string) bool { return len(landQueue(s, name)) > 0 }) {
+		if why := l.syncDevBeforeLanding(ctx, s, order); why != "" {
+			fmt.Fprintf(stderr, "%s land: %s; no landing batch was started\n", prog, oneline.Escape(why))
+			return 1
 		}
-	}
-	for _, name := range streams {
-		if !slices.Contains(order, name) {
-			order = append(order, name)
+		// DevSynced may close a conflict and resume only the streams it stopped.
+		// Land against that recorded snapshot, not the one read before the sync.
+		a.serial.Lock()
+		s, err = st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+		a.serial.Unlock()
+		if err != nil {
+			return a.readFailed("land after dev sync", err, stderr)
 		}
+		order = landOrder(s, streams, false)
 	}
 	failed := false
 	for _, name := range order {
+		if *devSync && s.StreamCtl(name) != nil && !sprint.CanLand(s, name) {
+			fmt.Fprintf(stderr, "%s land: stream %s is stopped or a dev sync conflict is open; no batch was started\n", prog, oneline.Escape(name))
+			failed = true
+			continue
+		}
 		if !l.stream(ctx, s, name) {
 			failed = true
 		}
@@ -402,6 +426,26 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	l.scoreAll(sctx)
 	return l.report(failed, pruned, stdout, stderr)
+}
+
+func landOrder(s *sprint.Snapshot, streams []string, retryStopped bool) []string {
+	var order []string
+	for _, name := range s.Streams() {
+		ctl := s.StreamCtl(name)
+		eligible := ctl != nil && ctl.F("state") != sprint.StreamStopped
+		if retryStopped && ctl != nil && ctl.F("state") == sprint.StreamStopped && ctl.F("cause") == sprint.DevSyncCause {
+			eligible = true
+		}
+		if slices.Contains(streams, name) || len(streams) == 0 && eligible && len(landQueue(s, name)) > 0 {
+			order = append(order, name)
+		}
+	}
+	for _, name := range streams {
+		if !slices.Contains(order, name) {
+			order = append(order, name)
+		}
+	}
+	return order
 }
 
 // report prints the batches, the cleanup and the summary: exit 0 when every batch
@@ -527,6 +571,25 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	if len(queue) == 0 {
 		return refused("nothing queued to merge in stream " + stream + "; run: nova-sprint queue --stream " + stream)
 	}
+	cards := l.landCards(s, stream, queue)
+	for len(cards) > 0 {
+		n := 1
+		for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
+			n++
+		}
+		landed, ok := l.batch(ctx, s, stream, cards[:n])
+		if !ok {
+			return false
+		}
+		if !landed {
+			return true
+		}
+		cards = cards[n:]
+	}
+	return true
+}
+
+func (l *lander) landCards(s *sprint.Snapshot, stream string, queue []*sprint.Card) []landCard {
 	var cards []landCard
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
@@ -545,21 +608,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		}
 		cards = append(cards, lc)
 	}
-	for len(cards) > 0 {
-		n := 1
-		for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
-			n++
-		}
-		landed, ok := l.batch(ctx, s, stream, cards[:n])
-		if !ok {
-			return false
-		}
-		if !landed {
-			return true
-		}
-		cards = cards[n:]
-	}
-	return true
+	return cards
 }
 
 // shaRE is a commit id as a head names it: hex, abbreviated or whole.

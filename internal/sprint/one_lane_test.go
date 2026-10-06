@@ -31,7 +31,7 @@ func TestTheDealPlacesNoCardOnASecondRowWhileALaneRunsIt(t *testing.T) {
 			t.Parallel()
 			w := handedBack(t)
 			amyRunning := FriendSeat{Name: "amy", Width: 2, Status: Held, Class: "flash", Running: []string{running}}
-			p := FriendDeal(w.s, []*Card{w.s.Primary("s1-1")}, []FriendSeat{amyRunning, bobUp})
+			p, _, _ := friendDeal(w.s, []*Card{w.s.Primary("s1-1")}, []FriendSeat{amyRunning, bobUp})
 			assert.Empty(t, p.Units, "her lane still runs it: it waits ready")
 			assert.Equal(t, Withdrawn, w.s.Fleet.Card("s1-1.w1").Col)
 		})
@@ -39,7 +39,8 @@ func TestTheDealPlacesNoCardOnASecondRowWhileALaneRunsIt(t *testing.T) {
 	t.Run("once her beat stops naming it, it is dealt", func(t *testing.T) {
 		t.Parallel()
 		w := handedBack(t)
-		w.must(FriendDeal(w.s, []*Card{w.s.Primary("s1-1")}, []FriendSeat{{Name: "amy", Width: 2, Status: Held, Class: "flash"}, bobUp}))
+		dealt, _, _ := friendDeal(w.s, []*Card{w.s.Primary("s1-1")}, []FriendSeat{{Name: "amy", Width: 2, Status: Held, Class: "flash"}, bobUp})
+		w.must(dealt)
 		assert.Equal(t, bob, w.s.Fleet.Card("s1-1.w1").Row)
 		assert.Equal(t, Working, w.s.StateOf("s1-1"))
 		assert.Empty(t, Check(w.s, nil))

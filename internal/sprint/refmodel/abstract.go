@@ -2,6 +2,7 @@ package refmodel
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -155,10 +156,19 @@ func headAttempt(h string) int {
 	if h == "" {
 		return 0
 	}
-	if _, n, ok := sprint.ParseWorkCard(h); ok {
+	if _, n, ok := parseWorkCard(h); ok {
 		return n
 	}
 	return -1
+}
+
+func parseWorkCard(id string) (string, int, bool) {
+	i := strings.LastIndex(id, ".w")
+	if i <= 0 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(id[i+2:])
+	return id[:i], n, err == nil && n > 0
 }
 
 // judgment is one open key as the model's judgment: its type, and its

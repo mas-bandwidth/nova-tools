@@ -202,12 +202,21 @@ func workFailing(h *harness, member string, fail func(id string) bool) {
 	}
 }
 
+func parseWorkCardForTest(id string) (string, int, bool) {
+	i := strings.LastIndex(id, ".w")
+	if i <= 0 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(id[i+2:])
+	return id[:i], n, err == nil && n > 0
+}
+
 // attemptsBy is the members each attempt's work cards were placed on: the
 // count of first attempts (.w1) and of redeals (every later attempt) by member.
 func attemptsBy(h *harness) (first, again map[string]int) {
 	first, again = map[string]int{}, map[string]int{}
 	for _, c := range h.snap().Fleet.Cards() {
-		p, attempt, ok := sprint.ParseWorkCard(c.ID)
+		p, attempt, ok := parseWorkCardForTest(c.ID)
 		if !ok || p == "" {
 			continue
 		}
@@ -253,7 +262,7 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 	}
 	h.startMachine()
 	failFirst := func(id string) bool {
-		p, attempt, ok := sprint.ParseWorkCard(id)
+		p, attempt, ok := parseWorkCardForTest(id)
 		if !ok || attempt != 1 {
 			return false
 		}

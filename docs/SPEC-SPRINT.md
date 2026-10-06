@@ -3744,8 +3744,8 @@ dev. The owner, 2026-10-05: "How can we ensure that you ALWAYS do the merging pr
 now on, vs. drifting and forgetting?" and "Prevention is better than cure". So every drift is
 a fact the machine raises (internal/sprint drift.go, `TickDrift`, in the deadlines part with
 the backlog alarms). Four judgments, judged on the facts the binding reads for the tick
-(`TickReq.Drift`, `sprint.DriftFacts`: `ReadDrift` over a clone with dev and the base
-fetched, through the tree's git runner, and the last gate run at the base):
+(`TickReq.Drift`, `sprint.DriftFacts`: the base and development refs fetched in a clone,
+the running server's build commit, and the last gate run at the base):
 
 - **the base is ahead of dev past its drift** (`the base is ahead of dev past its drift`),
   one for the sprint: origin's base holds more than `drift_commits` commits dev does not
@@ -3787,8 +3787,8 @@ and a fake clock), the wait included.
 **Not yet live:** the store's tick (internal/sprint/store tick.go) does not yet set
 `TickReq.Drift`, and no `set` flag reaches `drift_commits` or `drift_hours` from the command
 line (cmd/nova-sprint), so on the running machine no drift judgment is raised until a
-follow-up card has the binding read `ReadDrift` beside the ticks (never in one: a fetch never
-holds a tick) and record the whole-tree gate's last run at the base.
+follow-up card reads these facts beside the ticks (never in one: a fetch never holds a tick)
+and records the whole-tree gate's last run at the base.
 
 ### Open files
 

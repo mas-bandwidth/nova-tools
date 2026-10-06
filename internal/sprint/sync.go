@@ -194,6 +194,8 @@ type DevSyncReq struct {
 	// push: a dev sync lands like a batch, through the same gate, never a second one. It is
 	// required: a sync with no gate refuses.
 	Check func(ctx context.Context, dir string) error
+	// BeforePush rechecks landing authorization and pause policy after the tree gate.
+	BeforePush func(context.Context) error
 	// Streams are the streams a conflict stops; empty is every stream.
 	Streams []string
 }
@@ -238,6 +240,20 @@ func RunDevSync(ctx context.Context, req DevSyncReq) (DevSyncFacts, error) {
 		}
 		return strings.TrimSpace(string(res.Stdout)), nil
 	}
+	// RunDevSync may reset the detached checkout after a red gate. An explicit
+	// clone is caller-owned, so refuse any dirty or in-progress operation before
+	// fetching or checking out anything.
+	mergeHead, err := git("rev-parse", "--verify", "-q", "MERGE_HEAD")
+	if err == nil && mergeHead != "" {
+		return f, errors.New("dev sync: the explicit clone has an in-progress merge; finish or abort it before syncing")
+	}
+	status, err := git("status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return f, fmt.Errorf("dev sync: %w", err)
+	}
+	if status != "" {
+		return f, errors.New("dev sync: the explicit clone is not clean; commit or discard its changes before syncing")
+	}
 	count := func(rng string) (int, error) {
 		out, err := git("rev-list", "--count", rng)
 		if err != nil {
@@ -250,7 +266,6 @@ func RunDevSync(ctx context.Context, req DevSyncReq) (DevSyncFacts, error) {
 		return f, fmt.Errorf("dev sync: %w", err)
 	}
 	baseRef, devRef := req.Remote+"/"+req.Base, req.Remote+"/"+req.Dev
-	var err error
 	if f.Drift.BaseLacks, err = count(baseRef + ".." + devRef); err != nil {
 		return f, fmt.Errorf("dev sync: %w", err)
 	}
@@ -287,6 +302,15 @@ func RunDevSync(ctx context.Context, req DevSyncReq) (DevSyncFacts, error) {
 			return f, errors.Join(fmt.Errorf("dev sync: the tree gate: %w", gateErr), fmt.Errorf("dev sync: the detached HEAD still holds the ungated merge: %w", err))
 		}
 		return f, fmt.Errorf("dev sync: the tree gate: %w", gateErr)
+	}
+	if req.BeforePush != nil {
+		if err := req.BeforePush(ctx); err != nil {
+			_, resetErr := git("reset", "-q", "--hard", baseRef)
+			if resetErr != nil {
+				return f, errors.Join(fmt.Errorf("dev sync: push refused: %w", err), fmt.Errorf("dev sync: could not restore clone: %w", resetErr))
+			}
+			return f, fmt.Errorf("dev sync: push refused: %w", err)
+		}
 	}
 	sha, err := git("rev-parse", "HEAD")
 	if err != nil {

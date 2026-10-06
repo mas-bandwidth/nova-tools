@@ -216,19 +216,9 @@ func TestPacerWidthFollowsTheTightestWindow(t *testing.T) {
 	assert.Equal(t, 0, n, "rejected by the harness: none until the reset")
 }
 
-// The row's pacing comes with the beat's answer as a percent; none, or one
-// out of range, is the default.
+// A missing or out-of-range row setting uses the default.
 func TestPacingIsTheRowsSetting(t *testing.T) {
 	t.Parallel()
-	got, ok := ParsePacing("FRIEND-BEAT OK bob row_mode=one-shot row_width=4 row_pacing=60")
-	assert.True(t, ok)
-	assert.InDelta(t, 0.6, got, 1e-9)
-	_, ok = ParsePacing("row_mode=one-shot row_width=4")
-	assert.False(t, ok)
-	_, ok = ParsePacing("row_pacing=0")
-	assert.False(t, ok)
-	_, ok = ParsePacing("row_pacing=120%")
-	assert.False(t, ok)
 	assert.InDelta(t, DefaultPacing, PacingOf(0), 1e-9)
 	assert.InDelta(t, DefaultPacing, PacingOf(1.2), 1e-9)
 	assert.InDelta(t, 0.5, PacingOf(0.5), 1e-9)

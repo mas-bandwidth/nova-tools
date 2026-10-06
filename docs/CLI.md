@@ -1126,7 +1126,7 @@ nova-sprint sentinel set <id> --needs <a,b>
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
-nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dev-sync] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
@@ -1399,7 +1399,7 @@ at `<target>.shadow.json`, beside the switch record. The contract is
 
 ### adoption-is-a-pipeline-b.w2: nova-sprint adopt
 
-The pass is `(*app).cmdAdopt` (`cmd/nova-sprint/adopt.go`). It is not dispatched: the verb table is assigned in `cmd/nova-sprint/verbs.go`'s `init`, which runs after `adopt.go`, and `cmd/nova-sprint/run.go`'s tick does not call the pass. The command below is the pass's usage once that table names it.
+The pass is `(*app).cmdAdopt` (`cmd/nova-sprint/adopt.go`). It is dispatched as a manual machine verb; the server tick does not call the pass.
 
 `nova-sprint adopt [--state <file>] --repo-dir <clone> --base <branch> --server-bin <path> [--daemon <path>...]
 --bench <host> --bench-src <dir> --bench-out <dir> --out <dir> --release <vX.Y.Z> --machines <file>
@@ -1412,6 +1412,16 @@ yes|no --judgment <tip12> --reason <text>` answers the judgment and runs nothing
 Exit 0 for any pass that ran (its lines say the stage), 1 when the base, the live build or the record does not
 read or an answer is refused, 2 usage. The runbook is
 [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
+
+### Development sync during land
+
+`nova-sprint land --dev-sync` opts into one development-branch sync before any
+landing batch in that invocation. It is off by default. The option requires
+`--repo-dir <clone>`, `--base <branch>`, and `--check <command>` so the sync
+uses one explicit repository, base, and the same tree gate as the land round.
+The sync runs only when due. A conflict records one judgment and stops the
+streams; a failed git operation or a red tree gate starts no landing batch.
+Without `--dev-sync`, land has its ordinary batch behavior.
 
 ### Exit codes
 
