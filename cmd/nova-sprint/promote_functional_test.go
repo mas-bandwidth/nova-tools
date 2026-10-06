@@ -19,7 +19,8 @@ import (
 // funcGH records gh and answers a pull request that is admitted and not yet
 // merged, so the pass cuts the branch and stops at the queue.
 type funcGH struct {
-	calls [][]string
+	calls    [][]string
+	enqueued bool
 }
 
 func (f *funcGH) call(_ context.Context, _ string, args ...string) (string, error) {
@@ -30,9 +31,15 @@ func (f *funcGH) call(_ context.Context, _ string, args ...string) (string, erro
 		return "https://example.invalid/nova/pull/7", nil
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view":
 		return `{"id":"PR_func","state":"OPEN"}`, nil
+	case len(args) >= 2 && args[0] == "pr" && args[1] == "checks":
+		return `[{"name":"ci","bucket":"pass"}]`, nil
 	case strings.Contains(joined, "enqueuePullRequest"):
+		f.enqueued = true
 		return `{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"id":"MQ_func"}}}}`, nil
 	case len(args) > 0 && args[0] == "api":
+		if !f.enqueued {
+			return `{"data":{"node":{"mergeQueueEntry":null}}}`, nil
+		}
 		return `{"data":{"node":{"mergeQueueEntry":{"id":"MQ_func","state":"AWAITING_CHECKS"}}}}`, nil
 	case len(args) >= 2 && args[0] == "run" && args[1] == "list":
 		return `[]`, nil
@@ -118,14 +125,14 @@ func TestPromoteFunctionalCutsABranchFromTheTip(t *testing.T) {
 	}
 	out, code := p.step(context.Background(), io.Discard, io.Discard)
 	require.Zero(t, code, "pass: %+v", out)
-	require.Equal(t, "promo/2026-10-04-1", out.Branch)
-	require.Equal(t, "promo/2026-10-04-1", out.Head)
+	require.Equal(t, "promote/2026-10-04-1", out.Branch)
+	require.Equal(t, "promote/2026-10-04-1", out.Head)
 	require.NotEqual(t, "sprint/live", out.Head)
 	require.Equal(t, []string{"card-a", "card-b"}, out.Cards)
-	require.Equal(t, tip, git(dir, "rev-parse", "refs/heads/promo/2026-10-04-1"), "the promo branch is the sprint tip")
-	require.Equal(t, tip, git(bare, "rev-parse", "refs/heads/promo/2026-10-04-1"), "the frozen branch is what was pushed")
+	require.Equal(t, tip, git(dir, "rev-parse", "refs/heads/promote/2026-10-04-1"), "the promo branch is the sprint tip")
+	require.Equal(t, tip, git(bare, "rev-parse", "refs/heads/promote/2026-10-04-1"), "the frozen branch is what was pushed")
 	require.Equal(t, "sprint/live", git(dir, "symbolic-ref", "--short", "HEAD"), "the live branch stays checked out")
-	require.Equal(t, "promo/2026-10-04-1", gh.head())
+	require.Equal(t, "promote/2026-10-04-1", gh.head())
 	body := gh.body()
 	require.Contains(t, body, "card-a")
 	require.Contains(t, body, "card-b")

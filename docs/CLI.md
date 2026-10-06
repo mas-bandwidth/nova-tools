@@ -1395,6 +1395,15 @@ Exit 0 for any pass that ran (its lines say the stage), 1 when the base, the liv
 read or an answer is refused, 2 usage. The runbook is
 [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
 
+### nova-sprint promote
+
+`nova-sprint promote [--once] [--poll <duration>] [--every <duration>] [--landings <n>] [--dry-run] [--branch <branch>] [--repo-dir <dir>] [--base <branch>] [--check <cmd>]`
+carries a sprint promotion to its target development branch (`dev` by default): cuts a throwaway frozen branch (`promote/<YYYY-MM-DD>-<n>`, `git branch --no-track` at the sprint tip), gates the base tip before pushing (`--check`), pushes the throwaway branch to `origin`, opens the pull request to `--base`, and admits it to the merge queue. The pull request head is always the throwaway branch, never the live sprint branch, ensuring the live branch remains intact when the merged PR head is deleted on the forge.
+`--once` carries one promotion from cut to recorded merge (or stops on a judgment or refusal) and exits.
+`--poll <duration>` configures how often to inspect in-flight checks and merge-queue status (default 1m).
+`--dry-run` prints the branch and landed cards and changes nothing.
+On merge, records `promoted --sha <sha>` in the sprint store (`PromotedOnce`) and advances `refs/promoted/last`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 11.
+
 ### Exit codes
 
 | exit | meaning |
