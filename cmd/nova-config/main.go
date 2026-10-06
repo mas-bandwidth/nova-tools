@@ -107,7 +107,9 @@ The store is --pg <dsn> (or NOVA_PG_DSN; the password is never on the line:
 NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password,
 NOVA_PG_PASSWORD when it is unset, and never the password itself), or --file
 <path>, or --seat <name> (or NOVA_SEAT) which supplies the DSN and password
-variable name from the seat profile, or the login nova-config login records
+variable name from the seat profile (nova-sprint seat install writes it; the
+password, when its variable is unset, is read in this process from the
+nova-secrets seat nova-sprint seat login names), or the login nova-config login records
 (the DSN and friend; the password is read in this process from nova-secrets,
 never recorded and never put in an environment). --pg, NOVA_PG_DSN and
 NOVA_PG_PASSWORD_ENV still win when given. --redis is host:port
@@ -455,8 +457,9 @@ func storeFlags(fs *stdflag.FlagSet) conn {
 	}
 }
 
-// writeStoreFlags adds --pg, --file and --seat to a write verb's flag set.
-func writeStoreFlags(fs *stdflag.FlagSet) conn {
+// seatStoreFlags adds --pg, --file and --seat to a verb's flag set: every verb
+// that opens the store but machine add and loop add, whose rows have a seat field.
+func seatStoreFlags(fs *stdflag.FlagSet) conn {
 	c := storeFlags(fs)
 	c.seat = fs.String("seat", "", "the `seat` profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file")
 	return c
@@ -489,14 +492,21 @@ func (c conn) dsn(getenv func(string) string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if getenv == nil {
+			getenv = func(string) string { return "" }
+		}
+		pw, read, err := seatPassword(prof, getenv) // the variable unset: from the store login's seat (seat_secret.go)
+		if err != nil {
+			return "", err
+		}
 		lookup := func(k string) string {
-			if k == config.EnvPGPassEnv && (getenv == nil || getenv(config.EnvPGPassEnv) == "") {
+			if k == config.EnvPGPassEnv && getenv(config.EnvPGPassEnv) == "" {
 				return prof.PasswordEnv
 			}
-			if getenv != nil {
-				return getenv(k)
+			if read && k == prof.PasswordEnv {
+				return pw
 			}
-			return ""
+			return getenv(k)
 		}
 		dsn := ""
 		if c.pg != nil && *c.pg != "" {

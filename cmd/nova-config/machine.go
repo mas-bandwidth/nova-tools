@@ -30,7 +30,7 @@ const exitCannotRead = 3
 func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "machine self"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	check := fs.Bool("check", false, "read the machine rows and exit 2 when this machine's name is none of them (exit 3 when the rows cannot be read); without it no store is opened")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
@@ -103,7 +103,7 @@ func machineLoops(ctx context.Context, st config.Store, machine string) ([]strin
 func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "machine width"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	asJSON := jsonFlag(fs)
 	name, rest := nameAndRest(mustMachine(), args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
