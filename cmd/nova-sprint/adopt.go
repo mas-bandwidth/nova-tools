@@ -22,25 +22,22 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// adopt is the adoption pipeline's verb (internal/sprint/adopt.go;
+// cmdAdopt is the adoption pipeline (internal/sprint/adopt.go;
 // docs/SPRINT-COORDINATOR.md, "Adoption is a pipeline"). One run is one pass:
 // it starts an adoption when the base tip is not the live build's commit and
 // moves it as far as it can go. --answer is the coordinator's answer to the
 // one judgment it raises.
 //
-// This file does not register the verb and the tick does not call the pass.
-// verbs.go's init assigns the verb table and runs after this file (adopt.go
-// sorts first), so an append here is replaced. run.go's tick and the store
+// The verb `adopt` is the seat's adoption through the fleet play
+// (adopt_play.go, cmdAdoptPlay); this pipeline, cmdAdopt, is in no verb
+// table and the tick does not call its pass. run.go's tick and the store
 // tick call no adoption hook; the tick's end parts are planners, and the
 // shadow tick calls the same functions, so a pass there would write during a
-// read-only plan and hold the tick. verbClasses is not set: a class with no
-// verb fails TestEveryVerbHasAClass.
+// read-only plan and hold the tick.
 func init() {
 	// it builds over ssh, switches binaries on disk and pushes to the fleet:
 	// it runs where it is typed or scheduled, never on the server
 	notServed = append(notServed, "adopt")
-	verbExit["adopt"] = "exit codes: 0 the pass ran (whatever stage it left: CURRENT, WAIT, JUDGMENT, BLOCKED, ROLLED BACK are all lines, not failures) or the answer was recorded, 1 a step it could not read (the base, the live build, the record) or an answer refused, 2 usage"
-	verbEffect["adopt"] = "local and remote writes: on a base past the live build, builds on --bench, runs the candidate's canary and shadow tick, adds the cold-read card, and on a yes copies the server and daemon binaries aside, switches them, and runs nova-update release adopt to every --machines row; --answer writes only the record"
 }
 
 // adoptRunner runs one command and returns its combined output: exec in
