@@ -122,6 +122,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
 	example := fs.Bool("example", false, "read the built-in six-event example stream instead of stdin: a first run with no Go module")
+	allowEmpty := fs.Bool("allow-empty", false, "answer OK when the count of packages read is 0; without it an empty stream is FAILED")
 	asJSON := fs.Bool("json", false, "print the verdict, or the refusal, as one JSON object {result, facts, items} on stdout instead of lines")
 	maxFlag := fs.Int("max", bounded.Default, "finding lines to print before one MORE line stands for the rest; 0 prints all")
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -184,8 +185,28 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		ledger = "the SLEEPS ledger (no --sleeps given)"
 	}
 	lines, code := slowtests.Verdict(report, load, *enforce, ledger)
+	// The count of packages read (Verb.Looks is not on this tree; the verb
+	// applies the same rule): an empty stream is FAILED, and --allow-empty is
+	// the way out. The built-in --example stream is not this check
+	// (docs/STANDARD.md section 2, exit codes tell the truth).
+	empty := report.Packages == 0 && !*example && !*allowEmpty
+	if empty {
+		code = 1
+		for i, line := range lines {
+			if strings.HasPrefix(line, "CI-SLOW OK ") {
+				lines[i] = "CI-SLOW FAILED packages=0 slowest=none: looked at nothing; run: nova-ci slowtests --allow-empty"
+			}
+		}
+	}
 	if *asJSON {
-		return verdictJSON(report, load, *enforce, code, *maxFlag).Render(stdout, true)
+		o := verdictJSON(report, load, *enforce, code, *maxFlag)
+		if empty {
+			o.Status = tool.Failed
+			o.Exit = 1
+			o.Why = append(o.Why, "looked at nothing: packages=0")
+			o.Remedy = "nova-ci slowtests --allow-empty"
+		}
+		return o.Render(stdout, true)
 	}
 	for _, line := range capSlowLines(lines, *maxFlag) {
 		fmt.Fprintln(stdout, line)
