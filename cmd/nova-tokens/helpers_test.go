@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"io"
 	"os"
 	"path/filepath"
@@ -350,7 +352,7 @@ func busDir(t *testing.T, dir string, names ...string) string {
 	t.Helper()
 	var ps []string
 	for _, n := range names {
-		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, strings.Title(n), n, n))
+		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, cases.Title(language.Und, cases.NoLower).String(n), n, n))
 	}
 	write(t, filepath.Join(dir, "participants.json"), "{\"participants\":["+strings.Join(ps, ",")+"]}\n")
 	return dir
@@ -359,7 +361,7 @@ func busDir(t *testing.T, dir string, names ...string) string {
 // busNote writes one note into a lane and returns its id.
 func busNote(t *testing.T, bus, lane, file, id, subject, date, body string) string {
 	t.Helper()
-	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", strings.Title(lane), date, id, subject)
+	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", cases.Title(language.Und, cases.NoLower).String(lane), date, id, subject)
 	write(t, filepath.Join(bus, "from-"+lane, file), header+body)
 	return id
 }
