@@ -12,7 +12,6 @@
 
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
-internal/tokens/message.go SPEC-TOKENS' plan: the message record
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 

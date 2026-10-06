@@ -1314,13 +1314,12 @@ pin all three by executing them.
    `<out>/fold.lock` (the same flock the earlier binaries took; tla/FileLock.tla),
    elsewhere an exclusive create of a sibling file; a bounded jittered wait,
    exit 2 naming the holder's pid. Tests: demanded test 8's lock half.
-3. **`internal/tokens/message.go`**: the one message shape every source
-   produces, with each of the five types either a count or absent, the
-   source's `reports` set and the day basis, and the fold function over a
-   stream of them: dedup by id, day from stamp, attribution, each type
-   added into the row over the sources that reported it and `-` otherwise,
-   rough carried, `TOKENS MIXED` on two bases. Tests: demanded tests 4, 15,
-   17.
+3. The one message shape every source produces, with each of the five
+   types either a count or absent, the source's `reports` set and the day
+   basis, and the fold over a stream of them: dedup by id, day from stamp,
+   attribution, each type added into the row over the sources that reported
+   it and `-` otherwise, rough carried, `TOKENS MIXED` on two bases. Tests:
+   demanded tests 4, 15, 17.
 4. **`internal/tokens/repo.go`**: the rules file parser and the one
    attribution function. Tests: a malformed rules line is exit 2 naming it;
    demanded test 5; a source test asserts the function is called from every
