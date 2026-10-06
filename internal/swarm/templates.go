@@ -94,6 +94,13 @@ const templateFixCard = `fix-card — take one card and land the fix
    pick it up with no other context.
 `
 
+// GoCacheLine is the one sentence every card carries about the build cache: the
+// machine's shared, warm GOCACHE is already set (JOB.md names it), so the child keeps
+// it and never exports or chooses one of its own (docs/SPEC-CARD-CONTRACT.md section 2,
+// the staged environment). templateCard and cardgen.Render share it, so the two
+// generators cannot drift.
+const GoCacheLine = "GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it."
+
 // GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
 // the card's steps): a red gate line names its file and says whether the file is the child's own
 // (yours) or is unchanged from BASE, so the child neither fixes a file it may not touch nor
@@ -119,7 +126,7 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, and every file you may touch.>\n" +
 	"Libraries considered: <what the standard library and the adopted modules offer for this work, and why each is used or not; the search comes before any helper of more than about thirty lines is written>\n" +
 	"\n" +
-	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
+	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; " + GoCacheLine + "\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
 	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each. " + GateNamesWhoseFile + "\n" +
