@@ -190,8 +190,10 @@ within thirty (friend sync's collect of the report her session wrote). Her
 nova-friend daemon still runs `friend beat` once a second: the sprint records
 it and shows its age, and it never makes her up, nor does any other beat sent
 for her. Otherwise she reads down, her row naming the evidence missing and the
-age of the last of each (`where --json`, `friends[].evidence`), and her
-unstarted cards go back to the pool.
+age of the last of each (`where --json`, `friends[].evidence`). Going down
+takes nothing back: her cards stay on her row and the deadline judges them, and
+the tick deals her nothing more; only `friend down` (the coordinator's hold)
+returns her unstarted cards to ready.
 
 ## Where a job's work lives
 

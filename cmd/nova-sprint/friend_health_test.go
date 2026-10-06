@@ -226,21 +226,21 @@ func TestFriendSyncSaysTheBusStoresAlarmAndTheNextSendClearsIt(t *testing.T) {
 	assert.Equal(t, []string{"bus.test:6379 as sprint", "bus.test:6379 as sprint", "bus.test:6379 as sprint"}, dialed, "one connection per send")
 }
 
-// friend health --clear removes the coordinator's observation of a friend, so her status
-// falls back to her beat rule: an observed friend her own beat never brings up is up on her
-// next beat once the observation is gone. --dry-run says what stood and writes nothing; the
-// seat's holder alone clears; an observation's flag beside --clear is refused.
-func TestFriendHealthClearFallsBackToHerBeat(t *testing.T) {
+// friend health --clear removes the coordinator's observation of a friend, and with it the
+// wake ping her session answered: a friend up on that pong is down once it is gone, her beat
+// being no evidence (docs/SPEC-FRIEND.md, "Presence is her session's evidence"). --dry-run says
+// what stood and writes nothing; the seat's holder alone clears; an observation's flag beside
+// --clear is refused.
+func TestFriendHealthClearRemovesHerPong(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "amy")
 	ta.ok("friend sync --root " + t.TempDir())
 	ta.ok("friend health amy --state up --seen " + ta.now.UTC().Format(time.RFC3339) + " --generation 1")
-	ta.a.sleep(sprint.FriendObservedDownAfter + time.Second)
 	ta.ok("friend beat amy")
-	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "observed: her own beat never brings her up")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up", "her session answered a wake ping")
 
 	assert.Equal(t, "FRIEND-HEALTH DRY-RUN amy clear was=up; nothing was changed\n", ta.dry("friend health amy --clear --dry-run"))
-	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "a dry run removes nothing")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up", "a dry run removes nothing")
 
 	code, _, errs := ta.do("friend health amy --clear --actor stella")
 	assert.Equal(t, 2, code, errs)
@@ -249,15 +249,14 @@ func TestFriendHealthClearFallsBackToHerBeat(t *testing.T) {
 	assert.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "--clear removes her observation and takes no observation's flag")
 
-	assert.Equal(t, "FRIEND-HEALTH OK amy cleared=true was=up status=up\n", ta.ok("friend health amy --clear"))
-	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up", "her beat rule decides again")
+	assert.Equal(t, "FRIEND-HEALTH OK amy cleared=true was=up status=down\n", ta.ok("friend health amy --clear"))
+	ta.ok("friend beat amy")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "her beat is no evidence once the pong is gone")
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, sprint.Up, w.Tables[sprint.Friends]["amy"]["status"])
+	assert.Equal(t, sprint.Down, w.Tables[sprint.Friends]["amy"]["status"])
 
-	assert.Equal(t, "FRIEND-HEALTH OK amy cleared=true was=none status=up\n", ta.ok("friend health amy --clear"), "a friend with no observation clears all the same")
-	ta.a.sleep(sprint.FriendDownAfter + time.Second)
-	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "and her beat rule puts her down when she stops beating")
+	assert.Equal(t, "FRIEND-HEALTH OK amy cleared=true was=none status=down\n", ta.ok("friend health amy --clear"), "a friend with no observation clears all the same")
 
 	code, _, errs = ta.do("friend health nobody --clear")
 	assert.Equal(t, 1, code, errs)

@@ -640,7 +640,9 @@ Else she is `down`. Nothing else is evidence: not her beat, whoever sends it
 coordinator's down. Her row names the evidence and its age (`where --json`,
 `friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
 what is missing and the age of the last of each, with her beat's age said to be
-no evidence. A friend down has her unstarted cards taken back to the pool.
+no evidence. A friend reading down keeps the cards dealt to her (nothing is taken back, the
+deadline judges them) and is dealt no more; only `friend down`, the
+coordinator's hold, returns her unstarted cards to ready.
 
 What stays: the daemon as the mailman (bus messages and dealt cards pushed
 into her session as turns), the session-answered wake ping, `HarnessWatch`

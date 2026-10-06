@@ -23,9 +23,9 @@ import (
 
 // reconcileApp is a running sprint with amy beating, n cards whose briefs say WHO: only
 // friend amy, dealt to her row and delivered into her inbox, and the root her directory
-// is under. The hard pin is what keeps a returned card ready while her beat has lapsed:
-// a preference would overflow to the fleet, and this test deals it to her again only
-// once she beats.
+// is under. The hard pin is what keeps a returned card hers: a preference would overflow
+// to the fleet, and this test deals it to her again once she is up on her session's
+// evidence.
 func reconcileApp(t *testing.T, n int) (*testApp, string) {
 	t.Helper()
 	ta, _ := friendApp(t, "amy")
@@ -85,17 +85,16 @@ func TestFriendReconcileSettlesEachCardOnTheTwin(t *testing.T) {
 	for _, id := range []string{"s1-3", "s1-4"} {
 		assert.Equal(t, 1, strings.Count(ta.ok("log --card "+id), "returned by friend reconcile"), id)
 	}
-	ta.ok("tick")
 	card := func(id string) cardView {
 		var c cardView
 		ta.json("card "+id, &c)
 		return c
 	}
+	// her session answered a wake ping a minute ago and the collect finished a card of hers:
+	// she is up on that evidence, so the returned card is dealt to her again
+	ta.ok("tick")
 	assert.Equal(t, sprint.Review, card("s1-1").Primary.Col, "the collected card goes to review")
 	assert.Equal(t, sprint.Working, card("s1-2").Primary.Col, "the kept card is hers still")
-	assert.Equal(t, sprint.Ready, card("s1-3").Primary.Col, "the returned card is ready")
-	ta.beatUp("amy") // a minute passed: her session answers to be up for the deal
-	ta.ok("tick")
 	c := card("s1-3")
 	assert.Equal(t, sprint.Working, c.Primary.Col, "the returned card is dealt again by the tick")
 	assert.Equal(t, "s1-3.w2", c.Primary.F("work"), "at its next attempt")
