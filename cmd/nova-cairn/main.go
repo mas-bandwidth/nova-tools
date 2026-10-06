@@ -257,9 +257,16 @@ func refusal(err error) *tool.Out {
 
 func open(c *tool.Call) *tool.Out {
 	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
+	// Read DryRun before any return: a verb that skips it is failed as a tool
+	// bug (Call.DryRun). A re-open prints the opened time the record already
+	// stores, not this call's clock (docs/SPEC-CAIRN.md, the open verb).
+	dry := c.DryRun()
+	before, err := cairn.ReadOpen(store, session)
+	if err != nil {
+		return refusal(err)
+	}
 	var rec cairn.OpenRecord
-	var err error
-	if c.DryRun() {
+	if dry {
 		rec, err = cairn.PlanOpen(store, session, c.Str("source"), stamp, publish)
 	} else if err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil {
 		rec, err = cairn.ReadOpen(store, session)
@@ -267,8 +274,16 @@ func open(c *tool.Call) *tool.Out {
 	if err != nil {
 		return refusal(err)
 	}
-	return tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
-		Fact("publish", publish).Fact("stamp", stampOf(stamp))
+	shown := stamp
+	o := tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
+		Fact("publish", publish)
+	if before.Found {
+		if !before.Opened.IsZero() {
+			shown = before.Opened
+		}
+		o = o.Fact("reopened", true)
+	}
+	return o.Fact("stamp", stampOf(shown))
 }
 
 func appendEntry(c *tool.Call) *tool.Out {
