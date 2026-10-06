@@ -317,13 +317,13 @@ func rtFromUsage(line string) rtUsage {
 	return out
 }
 
+// rtAttempt is a finished work card's primary and attempt (ParseWorkCard); a card that
+// names no work card is its own primary, at attempt 0.
 func rtAttempt(card string) (string, int) {
-	i := strings.LastIndex(card, ".w")
-	if i < 0 {
-		return card, 0
+	if p, n, ok := ParseWorkCard(card); ok {
+		return p, n
 	}
-	n, _ := strconv.Atoi(card[i+2:])
-	return card[:i], n
+	return card, 0
 }
 
 func rtReadAttempt(card string) (string, int) {

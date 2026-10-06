@@ -124,8 +124,8 @@ type Daemon struct {
 	// read every step so a change takes effect without a restart; nil, or
 	// empty answers, deliver in batch at Width.
 	Row func() (mode string, width int)
-	// Pacing is the row's pacing as the daemon last read it (ParsePacing off its
-	// beat): the fraction of each subscription window the lanes may spend, read
+	// Pacing is the row's pacing as the daemon last read it (off its beat):
+	// the fraction of each subscription window the lanes may spend, read
 	// every step; nil, or out of (0, 1], is DefaultPacing (pacing.go).
 	Pacing func() float64
 	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,

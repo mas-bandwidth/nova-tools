@@ -309,17 +309,6 @@ func NewTestFile(c *Card, exists func(glob string) bool) {
 	}
 }
 
-// Creates says a PATHS glob is answered by a file of the card's NEW: line: the entry
-// names nothing at the base because the card creates it.
-func (c Card) Creates(glob string) bool {
-	for _, n := range c.New {
-		if ok, _ := path.Match(glob, n); ok {
-			return true
-		}
-	}
-	return false
-}
-
 // MergePaths drops duplicates and an entry a sibling glob already covers, then, past
 // MaxPaths, folds files into their directory's glob until the list fits.
 func MergePaths(paths []string) []string {

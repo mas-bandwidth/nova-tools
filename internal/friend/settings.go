@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
-	"slices"
 	"strings"
-	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -38,7 +35,7 @@ type Entry struct {
 }
 
 // SettingsFS is the filesystem the settings are read and written through:
-// OSFS for install and check, MemFS (the in-memory twin) for a test.
+// OSFS for install and check, friendtest.MemFS (the in-memory twin) for a test.
 type SettingsFS interface {
 	Lstat(path string) (Entry, error)
 	ReadFile(path string) ([]byte, error)
@@ -71,89 +68,6 @@ func (OSFS) WriteFile(p string, data []byte, perm fs.FileMode) error {
 }
 func (OSFS) MkdirAll(p string, perm fs.FileMode) error { return os.MkdirAll(p, perm) }
 
-// MemFS is the in-memory twin of OSFS: directories, files and symlinks by
-// clean absolute path. A write wants its parent a directory; MkdirAll
-// refuses a component that is a file or a symlink.
-type MemFS struct {
-	mu    sync.Mutex
-	nodes map[string]memNode
-}
-
-type memNode struct {
-	kind   string
-	data   []byte
-	target string
-}
-
-// NewMemFS is an empty twin holding only the root.
-func NewMemFS() *MemFS { return &MemFS{nodes: map[string]memNode{"/": {kind: KindDir}}} }
-
-// Symlink makes p a symlink to target, its parent created.
-func (m *MemFS) Symlink(target, p string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	// ignored: a test fixture; mkdirAll fails only on a non-directory parent the test itself planted
-	_ = m.mkdirAll(path.Dir(path.Clean(p)))
-	m.nodes[path.Clean(p)] = memNode{kind: KindSymlink, target: target}
-}
-
-func (m *MemFS) Lstat(p string) (Entry, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.nodes[path.Clean(p)]
-	if !ok {
-		return Entry{Kind: KindMissing}, nil
-	}
-	return Entry{Kind: n.kind, Target: n.target}, nil
-}
-
-func (m *MemFS) ReadFile(p string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.nodes[path.Clean(p)]
-	if !ok {
-		return nil, &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
-	}
-	if n.kind != KindFile {
-		return nil, &fs.PathError{Op: "read", Path: p, Err: fmt.Errorf("is a %s", n.kind)}
-	}
-	return slices.Clone(n.data), nil
-}
-
-func (m *MemFS) WriteFile(p string, data []byte, _ fs.FileMode) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	p = path.Clean(p)
-	if parent := m.nodes[path.Dir(p)]; parent.kind != KindDir {
-		return &fs.PathError{Op: "write", Path: p, Err: fs.ErrNotExist}
-	}
-	if n, ok := m.nodes[p]; ok && n.kind == KindDir {
-		return &fs.PathError{Op: "write", Path: p, Err: errors.New("is a directory")}
-	}
-	m.nodes[p] = memNode{kind: KindFile, data: slices.Clone(data)}
-	return nil
-}
-
-func (m *MemFS) MkdirAll(p string, _ fs.FileMode) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.mkdirAll(path.Clean(p))
-}
-
-func (m *MemFS) mkdirAll(p string) error {
-	if n, ok := m.nodes[p]; ok {
-		if n.kind != KindDir {
-			return &fs.PathError{Op: "mkdir", Path: p, Err: fmt.Errorf("is a %s", n.kind)}
-		}
-		return nil
-	}
-	if err := m.mkdirAll(path.Dir(p)); err != nil {
-		return err
-	}
-	m.nodes[p] = memNode{kind: KindDir}
-	return nil
-}
-
 // Setting is one setting a harness needs: the file (or directory) it lives
 // in, its name, the value install writes and the value there now. A setting
 // whose Have is not its Want has drifted.
@@ -163,11 +77,6 @@ type Setting struct {
 
 // Drifted says whether what is there is not what install would write.
 func (s Setting) Drifted() bool { return s.Want != s.Have }
-
-// Line is the setting as check and install say it.
-func (s Setting) Line() string {
-	return fmt.Sprintf("harness=%s file=%s name=%s want=%q have=%q", s.Harness, s.File, s.Name, s.Want, s.Have)
-}
 
 // ErrNotRealDir is the refusal when a path a harness setting names is a
 // symlink or not a directory: a harness that resolves it works elsewhere or
@@ -208,16 +117,6 @@ var writers = map[string]func(h HarnessSettings) ([]setting, error){
 	"grok":     grokSettings,
 	"claude":   claudeSettings,
 	"opencode": openCodeSettings,
-}
-
-// SettingsHarnesses are the harnesses install writes settings for.
-func SettingsHarnesses() []string {
-	var hs []string
-	for h := range writers {
-		hs = append(hs, h)
-	}
-	slices.Sort(hs)
-	return hs
 }
 
 func (h HarnessSettings) fs() SettingsFS {

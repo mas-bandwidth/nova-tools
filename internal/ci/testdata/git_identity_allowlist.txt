@@ -9,7 +9,7 @@
 # Shrink-only: a file not listed, or a count that rises, is red; fixing a site means
 # lowering its row in the same change. NOVA_CI_UPDATE=1 lowers counts and drops rows
 # at zero; it never adds a row or raises a count.
-# ceiling: 55
+# ceiling: 53
 cmd/nova-card/generate_functional_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-card/generate_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/cli_examples_test.go 3 predates the rule; route its commits through testgit.Environ
@@ -62,6 +62,4 @@ internal/secrets/gate_test.go 2 predates the rule; route its commits through tes
 internal/secrets/model_invariants_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/secrets/seal_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/secrets/store_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/sprint/land_cure_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/sprint/store/branch_redeal_push_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/sprint/sync_twin_test.go 3 predates the rule; route its commits through testgit.Environ

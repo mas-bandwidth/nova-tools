@@ -1097,7 +1097,7 @@ whatever its end (`Pacer.Observe`).
 The pacing is the row's setting: the fraction of each window the sprint may
 spend, `DefaultPacing` (80 percent) when the row names none or one outside
 (0, 100] percent. The daemon reads it every step (`Daemon.Pacing`; off the
-beat's answer, `row_pacing=<percent>`, `ParsePacing`). The lanes' effective
+beat's answer, `row_pacing=<percent>`). The lanes' effective
 width is the row's width scaled by the share of the paced budget left in the
 tightest live window, rounded up (`Pacer.Width`): at 80 percent and a row of
 4, a 5-hour window at 20 percent gives 3, at 40 percent 2, at 60 percent 1,
@@ -1137,7 +1137,8 @@ beats on. `Limits.WindowUse` is the windows as last reported.
 
 Not here, outside the card's paths: the `pacing` field on nova-config's
 friend row and `friend beat` printing it as `row_pacing=`; `nova-friend`
-setting `Daemon.Pacing` from the beat and sending `paced` and `window` on the
+reading it off the beat (the parser landed in 9894e8c81 with no caller and was
+deleted as dead code; restore it with its caller) and setting `Daemon.Pacing` from the beat and sending `paced` and `window` on the
 beat (`sprint.FriendReport` carries them); a Claude lane harness (the
 `claude` deliverer is still a stub; the OpenCode lanes report no window), so
 in a live daemon no lane is paced yet; `nova-friend` setting
