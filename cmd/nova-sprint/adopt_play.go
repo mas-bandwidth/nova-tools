@@ -17,33 +17,37 @@ import (
 )
 
 // The adopt verb is the seat's adoption (docs/SPEC-SPRINT.md, "Adopting a
-// build"): it runs the fleet's tools play (fleet/tools.yml) for the seat, so
-// the build is installed on fresh inodes, the store's function library is the
-// build's (nova-redis fn load), the build's shadow tick passes (nova-sprint
-// server switch --dry-run), every stale nova agent is booted out and
-// bootstrapped, the dashboard links name the installed binary and each stale
-// friend daemon is reinstalled, each step checked by the manifest
-// (nova-sprint live) before the next. It prints the play's ADOPT line of each
-// step, and refuses a half move: a play that stops, or ends without the line
-// of every step, is a refusal naming the step, and running it again finishes
-// it (the play is idempotent). The verb has no flag that runs a step alone.
+// build"): it runs the fleet's tools play (fleet/tools.yml) for the seat. The
+// new build's checks come first and change nothing (its own nova-sprint live,
+// its shadow tick on the store, its nova-friend install --dry-run with every
+// friend daemon's flags); then the build is installed on fresh inodes, the
+// store's function library is the build's (nova-redis fn load), every stale
+// nova agent is booted out and bootstrapped, the dashboard links name the
+// installed binary and each stale friend daemon is reinstalled, each step
+// checked by the manifest (nova-sprint live) before the next, and the
+// configuration store is migrated last. It prints the play's ADOPT line of
+// each step, and refuses a half move: a play that stops, or ends without the
+// line of every step, is a refusal naming the step, and running it again
+// finishes it (the play is idempotent). The verb has no flag that runs a step
+// alone.
 //
 // The adoption pipeline of adopt.go (cmdAdopt) is not this verb and is not in
 // the verb table.
 func init() {
 	verbClasses["adopt"] = classMachine
 	verbExit["adopt"] = "exit codes: 0 every step of the seat adopted the build (or, with --dry-run, said what it would change), 1 the play stopped or left a step without its line (ADOPT REFUSED step=<step>: the steps before it are done and the play runs again to finish), 2 usage"
-	verbEffect["adopt"] = "local and remote writes through ansible-playbook: the tools play builds the version if missing, installs it on the seat's machines, migrates the configuration store and loads the function library, then the seat play restarts every stale nova launchd agent (bootout and bootstrap), points the dashboard links at the installed nova-sprint and reinstalls each stale friend daemon with nova-friend install; --dry-run runs the play with --check and writes nothing"
+	verbEffect["adopt"] = "local and remote writes through ansible-playbook: the tools play builds the version if missing, runs the new build's checks on the seat (shadow tick, nova-friend install --dry-run) before anything changes, installs it, loads the function library, then the seat play restarts every stale nova launchd agent (bootout and bootstrap), points the dashboard links at the installed nova-sprint and reinstalls each stale friend daemon with nova-friend install, a refusal reloading the old library; the configuration store is migrated last; --dry-run runs the play with --check and writes nothing"
 }
 
 // adoptPlaySteps are the steps of the seat play, in order: one ADOPT line each.
 var adoptPlaySteps = []string{"store", "server", "dashboard", "friends"}
 
 var (
-	adoptLine    = regexp.MustCompile(`"(ADOPT [^"]*)"`)
+	// a JSON string holding an ADOPT line, escaped quotes and all
+	adoptLine    = regexp.MustCompile(`"ADOPT (?:[^"\\]|\\.)*"`)
 	adoptStepRe  = regexp.MustCompile(`\bstep=(\S+)`)
 	adoptHostRe  = regexp.MustCompile(`\bhost=(\S+)`)
-	adoptTaskRe  = regexp.MustCompile(`(?m)^TASK \[([^\]]*)\]`)
+	adoptTaskRe  = regexp.MustCompile(`(?m)^(?:TASK|RUNNING HANDLER) \[([^\]]*)\]`)
 	adoptFatalRe = regexp.MustCompile(`(?m)^(?:fatal|failed): .*$`)
 )
 
@@ -60,8 +64,12 @@ type adoptReport struct {
 
 func readAdopt(output string) adoptReport {
 	r := adoptReport{steps: map[string]map[string]bool{}}
-	for _, m := range adoptLine.FindAllStringSubmatch(output, -1) {
-		l := strings.Join(strings.Fields(m[1]), " ")
+	for _, q := range adoptLine.FindAllString(output, -1) {
+		var text string
+		if json.Unmarshal([]byte(q), &text) != nil {
+			text = strings.Trim(q, `"`)
+		}
+		l := strings.Join(strings.Fields(text), " ")
 		if len(r.lines) > 0 && r.lines[len(r.lines)-1] == l {
 			continue
 		}
@@ -84,8 +92,8 @@ func readAdopt(output string) adoptReport {
 	return r
 }
 
-// failedTask is the play task that failed: the last TASK header before the
-// first fatal line, its step the word before its colon.
+// failedTask is the play task that failed: the last TASK or RUNNING HANDLER
+// header before the first fatal line, its step the word before its colon.
 func failedTask(output string) string {
 	fatal := adoptFatalRe.FindStringIndex(output)
 	if fatal == nil {

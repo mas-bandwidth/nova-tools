@@ -5214,37 +5214,54 @@ because `launchctl kickstart -k` keeps the arguments launchd loaded. So every st
 `nova-sprint live` is the manifest of this host, read-only: the installed nova-sprint (path,
 inode, version, revision), the store's function library against the installed build's
 (`nova-redis fn check`: `match` when the loaded digest is the build's), each `--dashboard` link
-and whether it names the installed nova-sprint, and every `com.nova.*` launchd agent of the
-login: its plist's program arguments, its pid (`launchctl print`), its running arguments
-(`ps`) and its executable's inode (`lsof`). An agent is `fresh` when its process runs the bytes
-now at the binary its plist names, `installed` when that binary is the bin directory's own tool
-(not a copy), `args_took` when the running arguments are the plist's from the tool on, and
-`stale` when it is loaded and not all three. A friend daemon (`nova-friend run`) also carries
-its last beat (`nova-friend status`) and the `nova-friend install` arguments that write the
+and whether it names the installed nova-sprint, and every `com.nova.*` launchd agent in
+`--agents-dir` (else `NOVA_LAUNCH_AGENTS`, else `~/Library/LaunchAgents`): its plist's program
+arguments, whether launchd holds it (`launchctl print`, `--launchctl` names the binary), its pid,
+its running arguments (`ps`) and its executable's inode (`lsof`). An agent is `fresh` when its
+process runs the bytes now at the binary its plist names (a loaded agent with no process, an
+interval agent between runs, is fresh: launchd execs the path again at its next run),
+`installed` when that binary is the bin directory's own tool (not a copy), `args_took` when the
+arguments launchd runs (the process's, else the loaded job's) are the plist's from the tool on,
+and `stale`, with `why`, when it is not disabled and launchd does not hold it, or it is loaded
+and not all three. A friend daemon (`nova-friend run`) also carries its last beat and its lanes
+with a card in hand (`nova-friend status`) and the `nova-friend install` arguments that write the
 same agent from the installed nova-friend; a server (`nova-sprint run`) its `--listen`
 addresses. `--json` prints the manifest as one object.
 
-The seat play of `fleet/tools.yml` runs on the inventory's `coordinator` group after the tools
-are installed on fresh inodes (`nova-update release install` renames, never writes over a
-running binary) and the store play loaded the library with `nova-redis fn load`. It reads the
-manifest, then, each step checked before the next and a step that does not hold stopping the
-play with `ADOPT REFUSED step=<step>`:
+The order is the rule: the candidate's checks come first, and nothing on disk or in the store
+changes until every one passes. On the coordinator machine, in the install play before the
+install, the new build itself reads the host (its own `nova-sprint live`, which records the old
+library's digest and every agent), plans a tick on the store read-only (its own `nova-sprint
+server switch --dry-run`) and plans each friend daemon's reinstall (its own `nova-friend install
+--dry-run` with the flags that daemon's plist records). A refusal there leaves the host as it
+was. Then the tools are installed on fresh inodes (`nova-update release install` renames, never
+writes over a running binary), the store play loads the library (`nova-redis fn load`), and the
+seat play adopts the build, each step checked by the manifest after before the next begins, a
+step that does not hold stopping the play with `ADOPT REFUSED step=<step>`:
 
-- store: the library on the store is the build's (refused on a digest mismatch);
-- server: the build's shadow tick on the store passes (`nova-sprint server switch --dry-run`),
-  then every stale nova agent whose plist names the installed tool (the server, its loops) is
-  applied by the handler, `launchctl bootout` then `bootstrap` from its plist (never
-  kickstart), and the manifest after proves it: each runs the installed binary with its plist's
-  arguments, and the server answers on each `--listen` address (and `nova_seat_server_ports`);
+- store: the library on the store is the build's;
+- server: every stale nova agent (one launchd does not hold, one whose process runs a replaced
+  binary or other arguments than its plist, one whose plist names a copy, which is pointed at
+  the bin directory's tool first) is booted out, waited for (a member drains, up to
+  `nova_member_stop_timeout` and 30 s more) and bootstrapped from its plist, never kickstarted;
+  on any failure each is bootstrapped again from its plist and the step is refused naming it.
+  Then each runs the installed binary with its plist's arguments, and the server answers on
+  each `--listen` address (and `nova_seat_server_ports`);
 - dashboard: each link of `nova_seat_dashboard_links` names the installed nova-sprint, and
   `nova_seat_dashboard_url` returns a summary;
-- friends: each stale friend daemon is reinstalled with `nova-friend install` and the flags its
-  plist records (install boots out and bootstraps), and beats within `nova_seat_beat_within`
-  seconds.
+- friends: each stale friend daemon, once its lanes have no card in hand (up to its plist's
+  `ExitTimeOut`, else `nova_seat_friend_drain` seconds; a daemon still busy then is reinstalled
+  and its lanes finish each card on restart), is reinstalled with the installed `nova-friend
+  install` and the flags its plist records, and beats after its reinstall within
+  `nova_seat_beat_within` seconds.
 
-One `ADOPT step=<step> host=<host> before=<build> after=<build> ...` line per step says what
-changed. A second run finds nothing stale and changes nothing, so running the play again is how
-a stopped adoption finishes. The server's own launchd agent is its loop record's
+A refusal in the seat play reloads the store's library of the build installed before (its
+release directory's `nova-redis fn load`), so the store is as it was; the installed binaries stay
+the new build's, and running the play again finishes the adoption. The configuration store's
+migration (`nova-config migrate`) is the one forward-only step: it runs last, in its own play,
+only on a run where every other play passed, and it is never undone. One `ADOPT step=<step>
+host=<host> before=<revision> after=<revision> ...` line per step says what changed. A second run
+finds nothing stale and changes nothing. The server's own launchd agent is its loop record's
 (`fleet/loops.yml`): every flag, `--tick-deadline` among them, is the record's argv in
 nova-config, applied by loops.yml with bootout and bootstrap.
 
@@ -5253,12 +5270,15 @@ nova-config, applied by loops.yml with bootout and bootstrap.
 `coordinator` group, else the one `--limit` machine, with `localhost` for the build and
 `store_deployer` for the library), `<path>` being a built release directory
 (`<release-out>/<version>`). It prints each step's ADOPT line and `ADOPT ADOPTED` (`ADOPT
-WOULD-ADOPT` under `--dry-run`, the play's `--check`); a play that stops, or ends without the
-line of every step, is refused at exit 1 naming the step: a half move is never reported as an
-adoption. No flag runs a step alone; `nova-sprint server switch` and `nova-redis fn load` stay
-the steps the play calls. Tested with fakes (`TestLiveShowsWhatIsInstalled`,
-`TestAdoptRunsThePlayAndRefusesAHalfMove`) and the play with `--syntax-check` and `--check`
-on the fixtures (`internal/ci`, `fleetplays_functional_test.go`).
+WOULD-ADOPT` under `--dry-run`, the play's `--check`, where a machine with no candidate staged or
+built says `ADOPT step=seat ... WOULD-ADOPT`); a play that stops, or ends without the line of
+every step, is refused at exit 1 naming the step, the refusal said verbatim: a half move is
+never reported as an adoption. No flag runs a step alone; `nova-sprint server switch` and
+`nova-redis fn load` stay the steps the play calls. Tested with fakes
+(`TestLiveShowsWhatIsInstalled`, `TestAdoptRunsThePlayAndRefusesAHalfMove`), the play with
+`--syntax-check` and `--check` on the fixtures, and the seat play run for real on a coordinator
+fixture with its own home and launchctl
+(`TestSeatPlayRestartsWhatIsStaleAndRefusesAFailedRestart`).
 
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 

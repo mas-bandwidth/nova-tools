@@ -109,6 +109,16 @@ fatal: [seat-a]: FAILED! => {"assertion": "x", "changed": false, "evaluated_to":
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, `adopt REFUSED step=server task="server: bootstrap each from its plist"`)
 
+	// a refusal is said verbatim, an escaped quote and all; a failed handler names its step
+	quoted := &fakePlay{out: "TASK [store: the library is the build's] ***\nfatal: [seat-a]: FAILED! => {\"msg\": \"ADOPT REFUSED step=store host=seat-a: the library {\\\"loaded\\\": \\\"aaa\\\"} is not this build's\"}\n", err: errors.New("exit status 2")}
+	code, _, errs = run(quoted, append([]string{"v1.2.0-dev.abc1234"}, base...)...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, `adopt REFUSED step=store host=seat-a: the library {"loaded": "aaa"} is not this build's; the steps before it are done`)
+	handler := &fakePlay{out: "RUNNING HANDLER [server: bootstrap each from its plist] ***\nfatal: [seat-a]: FAILED! => {\"rc\": 5}\n", err: errors.New("exit status 2")}
+	code, _, errs = run(handler, append([]string{"v1.2.0-dev.abc1234"}, base...)...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, `adopt REFUSED step=server task="server: bootstrap each from its plist"`)
+
 	// a play that ends without the friends line is a half move, refused
 	half := &fakePlay{out: strings.Split(playOK, "ok: [seat-a] => (item=y)")[0]}
 	code, _, errs = run(half, append([]string{"v1.2.0-dev.abc1234"}, base...)...)

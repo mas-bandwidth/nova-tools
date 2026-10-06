@@ -20,15 +20,19 @@
 # The build and the install each remove, last, the old version directories of
 # their own root (the build's out, the machine's release directory), keeping
 # the version just made, the one installed before it and the 3 newest besides;
-# a removal that fails never fails the play (internal/release/prune.go). The configuration store is
-# migrated to the build's schema (`nova-config migrate`) before the library
-# is loaded by the store_deployer machine (the fleet's coordinator) with
-# `nova-redis fn load`, under the seat that holds the deploy user's password;
-# --check runs `nova-redis fn check` there and builds and installs nothing.
+# a removal that fails never fails the play (internal/release/prune.go). The
+# library is loaded by the store_deployer machine (the fleet's coordinator)
+# with `nova-redis fn load`, under the seat that holds the deploy user's
+# password; --check runs `nova-redis fn check` there and builds and installs
+# nothing. On the coordinator the new build's checks run before the install
+# and the seat play adopts it after the load (below). The configuration store
+# is migrated to the build's schema (`nova-config migrate`) last, after every
+# other play passed: it is the one step that cannot be undone.
 - name: the platform of every machine
   hosts: all
   gather_facts: true
   gather_subset: [min]
+  tags: [seat]
   tasks:
     - name: the platform, measured (the beat's os and arch, else the gathered facts)
       ansible.builtin.set_fact:
@@ -154,6 +158,125 @@
       loop: "{{ tools_send | default([]) }}"
       when: not ansible_check_mode
 
+    # The seat's candidate checks (the seat play below): on the coordinator
+    # machine, before anything on disk or in the store changes, the new
+    # build itself reads the host (its nova-sprint live: the old library's
+    # digest, every agent, every friend daemon's plist flags), plans a tick on
+    # the store read-only (its nova-sprint server switch --dry-run) and plans
+    # each friend daemon's reinstall (its nova-friend install --dry-run with
+    # the flags that daemon's plist records). A refusal here leaves the host
+    # as it was. The candidate is the stage, else, on the machine that built
+    # it, the build's own directory.
+    - name: "seat: the candidate checks, before the install"
+      when: inventory_hostname in groups['coordinator'] | default([])
+      tags: [seat]
+      vars:
+        seat_built: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}"
+        seat_wrap: >-
+          {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+              '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops | default(''),
+              '--only', nova_redis_deploy_password_key, '--require=' ~ nova_redis_deploy_password_key, '--'] }}
+        seat_env:
+          NOVA_SPRINT_REDIS: "{{ nova_redis_addr | default('') }}"
+          NOVA_SPRINT_REDIS_USER: "{{ nova_redis_deploy_user }}"
+          NOVA_SPRINT_REDIS_PASSWORD_ENV: "{{ nova_redis_deploy_password_key }}"
+      block:
+        - name: "seat: the candidate in the stage"
+          ansible.builtin.stat: { path: "{{ tools_stage }}/nova-sprint", get_checksum: false }
+          register: seat_staged
+
+        - name: "seat: the candidate in the build's own directory"
+          ansible.builtin.stat: { path: "{{ seat_built }}/nova-sprint", get_checksum: false }
+          register: seat_unstaged
+
+        - name: "seat: the candidate's directory"
+          ansible.builtin.set_fact:
+            seat_cand: >-
+              {{ tools_stage if seat_staged.stat.exists else (seat_built if seat_unstaged.stat.exists
+                 and (ansible_connection | default('')) == 'local' else '') }}
+
+        - name: "seat: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)"
+          ansible.builtin.stat: { path: "{{ item }}" }
+          loop: "{{ nova_sops_candidates }}"
+          register: seat_sops
+          when: nova_sops is not defined and seat_cand != ''
+
+        - name: "seat: the sops the seat is opened with"
+          ansible.builtin.set_fact:
+            nova_sops: >-
+              {{ nova_sops if nova_sops is defined else (seat_sops.results | default([]) | selectattr('stat', 'defined')
+                 | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
+
+        - name: "seat: the host read by the candidate (its nova-sprint live)"
+          ansible.builtin.command:
+            argv: >-
+              {{ seat_wrap + [seat_cand ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
+                 '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl]
+                 + (nova_seat_dashboard_links | map('regex_replace', '^', '--dashboard=') | list) }}
+          environment: "{{ seat_env }}"
+          register: seat_before
+          changed_when: false
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          check_mode: false
+          when: seat_cand != ''
+
+        - name: "seat: the candidate read the host"
+          ansible.builtin.assert:
+            that: seat_before.rc == 0 and seat_before.stdout is match('[{]')
+            fail_msg: >-
+              ADOPT REFUSED step=live host={{ inventory_hostname }}: the candidate's nova-sprint live printed no manifest
+              ({{ (seat_before.stderr or seat_before.stdout) | default('') | truncate(200) }}); nothing was installed or loaded
+            quiet: true
+          when: seat_cand != ''
+
+        - name: "seat: what the host runs, before"
+          ansible.builtin.set_fact:
+            seat_was: "{{ seat_before.stdout | from_json }}"
+          when: seat_cand != ''
+
+        - name: "server: the candidate's shadow tick on the store, read-only (its nova-sprint server switch --dry-run)"
+          ansible.builtin.command:
+            argv: >-
+              {{ seat_wrap + [seat_cand ~ '/nova-sprint', 'server', 'switch', seat_cand ~ '/nova-sprint',
+                 '--target', nova_bin_dir ~ '/nova-sprint', '--dry-run', '--tick-deadline', nova_seat_tick_deadline] }}
+          environment: "{{ seat_env }}"
+          register: seat_canary
+          changed_when: false
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          check_mode: false
+          when: seat_cand != ''
+
+        - name: "server: the candidate's shadow tick passed"
+          ansible.builtin.assert:
+            that: seat_canary.rc == 0
+            fail_msg: >-
+              ADOPT REFUSED step=server host={{ inventory_hostname }}: the candidate's shadow tick failed; nothing was installed or loaded:
+              {{ ((seat_canary.stderr | default('')) or (seat_canary.stdout | default(''))) | truncate(300) }}
+            quiet: true
+          when: seat_cand != ''
+
+        - name: "friends: the candidate's nova-friend install --dry-run with each friend daemon's plist flags"
+          ansible.builtin.command:
+            argv: "{{ [seat_cand ~ '/nova-friend'] + item.install + ['--dry-run'] }}"
+          loop: "{{ seat_was.agents | selectattr('role', 'equalto', 'friend') | list if seat_cand != '' else [] }}"
+          loop_control: { label: "{{ item.friend }}" }
+          register: seat_planned
+          changed_when: false
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          check_mode: false
+
+        - name: "friends: the candidate takes every friend daemon's flags"
+          ansible.builtin.assert:
+            that: seat_planned.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+            fail_msg: >-
+              ADOPT REFUSED step=friends host={{ inventory_hostname }}: the candidate's nova-friend install --dry-run refuses the flags of
+              {{ seat_planned.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.friend') | join(', ') }}
+              ({{ (seat_planned.results | rejectattr('rc', 'equalto', 0) | first).stderr | default('') | truncate(300) }}); nothing was installed or loaded
+            quiet: true
+
     - name: install them into the bin directory (verified whole, a tool at the version skipped)
       ansible.builtin.command:
         argv: [ "{{ tools_stage }}/nova-update", release, install, --from, "{{ nova_release_dir }}", --version, "{{ nova_version }}",
@@ -197,7 +320,7 @@
           {{ (('UP-TO-DATE' if nova_version in (tools_now.stdout | default('')).split() or tools_was_version == nova_version else 'WOULD-INSTALL') if ansible_check_mode
               else (('UP-TO-DATE ' if tools_install.stdout is search('RELEASE INSTALLED .*tools=0 ') else 'INSTALLED ') ~ tools_install.stdout)) }}
 
-- name: the build's schema and function library on the store
+- name: the build's function library on the store
   hosts: store_deployer
   gather_facts: false
   vars:
@@ -237,18 +360,6 @@
         fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
         quiet: true
 
-    - name: nova-config migrate (the schema the build's kinds need)
-      ansible.builtin.command:
-        argv: "{{ tools_seat + ['--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
-                                nova_bin_dir ~ '/nova-config', 'migrate', '--pg', nova_pg_dsn] }}"
-      environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
-      register: tools_migrate
-      changed_when: tools_migrate.stdout is search('applied=[1-9]|MIGRATE APPLIED')
-
-    - name: what --check would migrate
-      ansible.builtin.debug: { msg: "WOULD-MIGRATE {{ nova_pg_dsn }} with {{ nova_bin_dir }}/nova-config {{ nova_version }}" }
-      when: ansible_check_mode
-
     - name: fn check (--check) or fn load at the declared Redis port, under the deploy user's seat
       ansible.builtin.command:
         argv: "{{ tools_seat + ['--only', nova_redis_deploy_password_key, '--require=' ~ nova_redis_deploy_password_key, '--',
@@ -264,32 +375,45 @@
 
 # The seat play (docs/SPEC-SPRINT.md, "Adopting a build"): the coordinator
 # machine, which runs the sprint server, its dashboard and the friend daemons,
-# runs the build this play just installed and loaded, as a whole or not at
-# all. `nova-sprint live --json` is its manifest, read before and after: the
-# store's function library against the build's (store), every loaded
-# com.nova.* launchd agent whose process runs a replaced binary or other
-# arguments than its plist (server: the sprint server, its loops and every
-# other nova agent of the login), each dashboard binary link
-# (nova_seat_dashboard_links) and the dashboard's summary
-# (nova_seat_dashboard_url), and each friend daemon. A stale agent is applied
-# by the handler, launchctl bootout then bootstrap from its plist (a
-# kickstart keeps the arguments launchd loaded, so it is never used), after
-# the build's shadow tick (`nova-sprint server switch --dry-run`) passed; a
-# stale friend daemon is reinstalled with `nova-friend install` and the flags
-# its plist records. The manifest after proves each step (the running inode
-# is the installed binary's, ps's arguments are the plist's, each reinstalled
-# daemon beats within nova_seat_beat_within seconds, the server answers on its
-# --listen addresses); a step that does not hold stops the play with
-# ADOPT REFUSED step=<step>. One ADOPT line per step says the build before and
-# after. A second run finds nothing stale and changes nothing, so running the
-# play again is how a stopped adoption finishes. The server's own launchd
-# agent is its loop record's (loops.yml): its flags, --tick-deadline among
-# them, are the record's argv in nova-config, applied by loops.yml with
-# bootout and bootstrap. --check reads the manifest and says WOULD.
+# runs the build this run installed and loaded, as a whole or not at all.
+# The candidate checks ran in the install play, before anything changed; the
+# manifest they read (the candidate's nova-sprint live) is the before. Then,
+# each step checked by the manifest after (nova-sprint live) before the next
+# begins, a step that does not hold stopping the play with ADOPT REFUSED
+# step=<step>:
+#   store: the store's function library is the build's (the store play's
+#   nova-redis fn load);
+#   server: every stale nova agent (one launchd does not hold, one whose
+#   process runs a replaced binary or other arguments than its plist, one
+#   whose plist names a copy, which is pointed at the bin directory's tool
+#   first) is booted out, waited for (a member drains, up to
+#   nova_member_stop_timeout and 30 s more) and bootstrapped from its plist,
+#   never kickstarted (a kickstart keeps the arguments launchd loaded); on a
+#   failure each is bootstrapped again from its plist and the step is
+#   refused naming it; then each runs the installed binary with its plist's
+#   arguments, and the server answers on its --listen addresses;
+#   dashboard: each nova_seat_dashboard_links link names the installed
+#   nova-sprint, and nova_seat_dashboard_url returns a summary;
+#   friends: each stale friend daemon, once its lanes have no card in hand
+#   (up to its plist's ExitTimeOut, else nova_seat_friend_drain seconds), is
+#   reinstalled with the installed nova-friend install and the flags its
+#   plist records, and beats after the reinstall within nova_seat_beat_within
+#   seconds.
+# A refusal reloads the store's library of the build that was installed
+# before (its nova-redis fn load, from its release directory), so the store
+# is as it was; the installed binaries stay the new build's and a run of the
+# play again finishes the adoption. One ADOPT line per step says the revision
+# before and after. A second run finds nothing stale and changes nothing.
+# The server's own launchd agent is its loop record's (loops.yml): its flags,
+# --tick-deadline among them, are the record's argv in nova-config. The
+# configuration store's migration, the one step that cannot be undone, runs
+# last, in the play after this one, and only on a run where this play passed.
+# --check reads the manifest and says WOULD.
 - name: the seat adopts the build
   hosts: coordinator
   gather_facts: true
   gather_subset: [min]
+  tags: [seat]
   vars:
     seat_wrap: >-
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
@@ -300,268 +424,338 @@
       NOVA_SPRINT_REDIS_USER: "{{ nova_redis_deploy_user }}"
       NOVA_SPRINT_REDIS_PASSWORD_ENV: "{{ nova_redis_deploy_password_key }}"
     seat_live: >-
-      {{ seat_wrap + [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir]
+      {{ seat_wrap + [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
+         '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl]
          + (nova_seat_dashboard_links | map('regex_replace', '^', '--dashboard=') | list) }}
-    seat_was_build: "{{ (tools_was.content | default('') | b64decode | trim) or 'none' }}"
-  handlers:
-    - name: "server: boot out each stale agent"
-      ansible.builtin.command: { argv: [launchctl, bootout, "{{ item.target }}"] }
-      loop: "{{ seat_restart }}"
-      loop_control: { label: "{{ item.label }}" }
-      register: seat_bootout
-      changed_when: seat_bootout.rc == 0
-      # 3 and 113: launchd already holds no such service
-      failed_when: seat_bootout.rc not in [0, 3, 113]
-      listen: seat restart
-      when: not ansible_check_mode
-
-    # A member drains on the bootout's SIGTERM: launchd holds it until it has
-    # reported its last card, and its plist loads again only after.
-    - name: "server: launchd no longer holds it"
-      ansible.builtin.command: { argv: [launchctl, print, "{{ item.target }}"] }
-      loop: "{{ seat_restart }}"
-      loop_control: { label: "{{ item.label }}" }
-      register: seat_gone
-      until: seat_gone.rc != 0
-      retries: "{{ (nova_member_stop_timeout | int / 5) | round(0, 'ceil') | int }}"
-      delay: 5
-      changed_when: false
-      # the non-zero exit is the answer it waits for, never a failure
-      failed_when: seat_gone.rc == 0
-      listen: seat restart
-      when: not ansible_check_mode
-
-    - name: "server: bootstrap each from its plist"
-      ansible.builtin.command: { argv: [launchctl, bootstrap, "{{ item.target | regex_replace('/[^/]*$', '') }}", "{{ item.plist }}"] }
-      loop: "{{ seat_restart }}"
-      loop_control: { label: "{{ item.label }}" }
-      changed_when: true
-      listen: seat restart
-      when: not ansible_check_mode
+    seat_restart: >-
+      {{ (seat_was | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('tool', 'defined')
+         | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold) | list }}
+    seat_friends: >-
+      {{ (seat_was | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
+         | rejectattr('label', 'in', nova_seat_hold) | list }}
+    seat_restart_labels: "{{ seat_restart | map(attribute='label') | list }}"
+    seat_friend_labels: "{{ seat_friends | map(attribute='label') | list }}"
   tasks:
-    - name: "seat: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)"
-      ansible.builtin.stat: { path: "{{ item }}" }
-      loop: "{{ nova_sops_candidates }}"
-      register: seat_sops
-      when: nova_sops is not defined
-
-    - name: "seat: the sops the seat is opened with"
-      ansible.builtin.set_fact:
-        nova_sops: >-
-          {{ nova_sops if nova_sops is defined else (seat_sops.results | selectattr('stat', 'defined')
-             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
-
-    - name: "seat: the manifest before (nova-sprint live)"
-      ansible.builtin.command: { argv: "{{ seat_live }}" }
-      environment: "{{ seat_env }}"
-      register: seat_before
-      changed_when: false
-      # ignored: read below; --check before the first adoption runs a build with no live verb
-      failed_when: false
-      check_mode: false
-
-    - name: "seat: what --check says when the installed build prints no manifest"
+    - name: "seat: what --check says with no candidate on this machine"
       ansible.builtin.debug:
         msg: >-
-          ADOPT step=seat host={{ inventory_hostname }} before={{ seat_was_build }} after={{ nova_version }} WOULD-ADOPT:
-          the installed nova-sprint printed no manifest ({{ (seat_before.stderr or seat_before.stdout) | default('') | truncate(160) }});
-          the run installs a build that has one before this play
-      when: ansible_check_mode and not (seat_before.stdout | default('') is match('[{]'))
+          ADOPT step=seat host={{ inventory_hostname }} after={{ nova_version }} WOULD-ADOPT:
+          the candidate is neither staged nor built on this machine, so its checks wait for the run
+      when: ansible_check_mode and seat_was is not defined
 
     - name: "seat: --check ends here for such a host"
       ansible.builtin.meta: end_host
-      when: ansible_check_mode and not (seat_before.stdout | default('') is match('[{]'))
+      when: ansible_check_mode and seat_was is not defined
 
-    - name: "seat: the manifest is read"
+    - name: "seat: the candidate's checks ran"
       ansible.builtin.assert:
-        that: seat_before.rc == 0 and seat_before.stdout is match('[{]')
+        that: seat_was is defined
         fail_msg: >-
-          ADOPT REFUSED step=live host={{ inventory_hostname }}: nova-sprint live printed no manifest
-          ({{ (seat_before.stderr or seat_before.stdout) | default('') | truncate(200) }}); nothing was restarted
+          ADOPT REFUSED step=live host={{ inventory_hostname }}: the candidate's checks did not run (no {{ nova_version }} staged
+          on this machine, or a --limit without it); run the whole play
         quiet: true
 
-    - name: "seat: what is stale"
-      ansible.builtin.set_fact:
-        seat_was: "{{ seat_before.stdout | from_json }}"
-        seat_restart: >-
-          {{ (seat_before.stdout | from_json).agents | selectattr('stale') | rejectattr('role', 'equalto', 'friend')
-             | selectattr('installed') | rejectattr('label', 'in', nova_seat_hold) | list }}
-        seat_friends: >-
-          {{ (seat_before.stdout | from_json).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
-             | rejectattr('label', 'in', nova_seat_hold) | list }}
+    - name: "seat: the adoption, step by step"
+      block:
+        - name: "store: the store's function library is this build's (fn check, by the installed nova-redis)"
+          ansible.builtin.command: { argv: "{{ seat_live }}" }
+          environment: "{{ seat_env }}"
+          register: seat_store
+          changed_when: false
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          check_mode: false
 
-    # store: tools.yml's store play loaded the library with nova-redis fn load
-    # on the store_deployer machine; this is its check.
-    - name: "store: the store's function library is this build's (fn check, by the installed nova-redis)"
-      ansible.builtin.assert:
-        that: seat_was.library.match or ansible_check_mode
-        fail_msg: >-
-          ADOPT REFUSED step=store host={{ inventory_hostname }} loaded={{ seat_was.library.loaded or 'none' }}
-          want={{ seat_was.library.want or 'none' }}: the store's function library is not this build's
-          ({{ seat_was.library.state }} {{ seat_was.library.why | default('') }}); nothing was restarted; the store play
-          loads it with nova-redis fn load: run the play again
-        quiet: true
+        - name: "store: the library is the build's"
+          ansible.builtin.assert:
+            that: ansible_check_mode or (seat_store.stdout is match('[{]') and (seat_store.stdout | from_json).library.match)
+            fail_msg: >-
+              ADOPT REFUSED step=store host={{ inventory_hostname }}: the store's function library is not this build's
+              ({{ (seat_store.stdout | from_json).library if seat_store.stdout is match('[{]') else seat_store.stderr | default('') }})
+            quiet: true
 
-    - name: "store: the receipt"
-      ansible.builtin.debug:
-        msg: >-
-          ADOPT step=store host={{ inventory_hostname }}
-          before={{ (tools_fn | default({})).stdout | default('') | regex_findall('was=([0-9a-f]+)') | first | default(seat_was.library.loaded or 'none', true) }}
-          after={{ seat_was.library.loaded or 'none' }} want={{ seat_was.library.want or 'none' }}
-          {{ ('UNCHANGED' if seat_was.library.match else 'WOULD-CHANGE') if ansible_check_mode
-             else ('CHANGED' if (tools_fn | default({})).changed | default(false) else 'UNCHANGED') }}
+        - name: "store: the receipt"
+          ansible.builtin.debug:
+            msg: >-
+              ADOPT step=store host={{ inventory_hostname }} before={{ seat_was.library.loaded or 'none' }}
+              after={{ ((seat_store.stdout | from_json).library.loaded if seat_store.stdout is match('[{]') else '') or 'none' }}
+              want={{ seat_was.library.want or 'none' }}
+              {{ ('WOULD-CHANGE' if not seat_was.library.match else 'UNCHANGED') if ansible_check_mode
+                 else ('UNCHANGED' if seat_was.library.match else 'CHANGED') }}
 
-    - name: "server: the build's shadow tick on the store, read-only (nova-sprint server switch --dry-run), before any restart"
+        - name: "server: each stale agent and why"
+          ansible.builtin.debug:
+            msg: "{{ 'WOULD-RESTART' if ansible_check_mode else 'RESTART' }} {{ item.label }} on {{ inventory_hostname }}: {{ item.why }}"
+          loop: "{{ seat_restart }}"
+          loop_control: { label: "{{ item.label }}" }
+
+        - name: "server: a plist that names a copy names the bin directory's tool"
+          ansible.builtin.replace:
+            path: "{{ item.plist }}"
+            regexp: "<string>{{ item.binary | regex_escape }}</string>"
+            replace: "<string>{{ nova_bin_dir }}/{{ item.tool }}</string>"
+          loop: "{{ seat_restart | rejectattr('installed') | list }}"
+          loop_control: { label: "{{ item.label }}" }
+
+        - name: "server: bootout, wait, bootstrap (never kickstart)"
+          when: seat_restart | length > 0 and not ansible_check_mode
+          block:
+            - name: "server: boot out each stale agent"
+              ansible.builtin.command: { argv: ["{{ nova_launchctl }}", bootout, "{{ item.target }}"] }
+              loop: "{{ seat_restart }}"
+              loop_control: { label: "{{ item.label }}" }
+              register: seat_bootout
+              changed_when: seat_bootout.rc == 0
+              # 3 and 113: launchd already holds no such service
+              failed_when: seat_bootout.rc not in [0, 3, 113]
+
+            # A member drains on the bootout's SIGTERM: launchd holds it until
+            # it has reported its last card (ExitTimeOut, nova_member_stop_timeout);
+            # the wait is 30 s longer, so a drain is never cut short by it.
+            - name: "server: launchd no longer holds it"
+              ansible.builtin.command: { argv: ["{{ nova_launchctl }}", print, "{{ item.target }}"] }
+              loop: "{{ seat_restart }}"
+              loop_control: { label: "{{ item.label }}" }
+              register: seat_gone
+              until: seat_gone.rc != 0
+              retries: "{{ ((nova_member_stop_timeout | int + 30) / 5) | round(0, 'ceil') | int }}"
+              delay: 5
+              changed_when: false
+              # the non-zero exit is the answer it waits for, never a failure
+              failed_when: seat_gone.rc == 0
+
+            - name: "server: bootstrap each from its plist"
+              ansible.builtin.command:
+                argv: ["{{ nova_launchctl }}", bootstrap, "{{ item.target | regex_replace('/[^/]*$', '') }}", "{{ item.plist }}"]
+              loop: "{{ seat_restart }}"
+              loop_control: { label: "{{ item.label }}" }
+              changed_when: true
+          rescue:
+            - name: "server: a restart failed, so each agent is bootstrapped again from its plist"
+              ansible.builtin.command:
+                argv: ["{{ nova_launchctl }}", bootstrap, "{{ item.target | regex_replace('/[^/]*$', '') }}", "{{ item.plist }}"]
+              loop: "{{ seat_restart }}"
+              loop_control: { label: "{{ item.label }}" }
+              register: seat_again
+              changed_when: seat_again.rc == 0
+              # ignored: an agent launchd still holds refuses a second bootstrap; the manifest after says which run
+              failed_when: false
+
+            - name: "server: the restart is refused, naming it"
+              ansible.builtin.fail:
+                msg: >-
+                  ADOPT REFUSED step=server host={{ inventory_hostname }}: {{ ansible_failed_task.name | default('a restart') }} failed for
+                  {{ ansible_failed_result.results | default([]) | selectattr('failed', 'defined') | selectattr('failed')
+                     | map(attribute='item.label') | join(', ') or seat_restart_labels | join(', ') }};
+                  each was bootstrapped again from its plist (rc {{ seat_again.results | map(attribute='rc') | join(',') }})
+
+        - name: "server: the manifest after, until each restarted agent runs the installed binary with its plist's arguments"
+          ansible.builtin.command: { argv: "{{ seat_live }}" }
+          environment: "{{ seat_env }}"
+          register: seat_after
+          until: >-
+            seat_after.rc == 0 and seat_after.stdout is match('[{]') and
+            ((seat_after.stdout | from_json).agents | selectattr('label', 'in', seat_restart_labels) | selectattr('stale') | list | length == 0)
+          retries: "{{ (nova_seat_beat_within | int / 5) | round(0, 'ceil') | int }}"
+          delay: 5
+          changed_when: false
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          when: not ansible_check_mode and seat_restart | length > 0
+
+        - name: "server: each restarted agent runs the installed binary with its plist's arguments (lsof and ps, through live)"
+          ansible.builtin.assert:
+            that: seat_late | length == 0
+            fail_msg: >-
+              ADOPT REFUSED step=server host={{ inventory_hostname }}: after the restart these are still stale:
+              {{ seat_late | join(', ') }}; nova-sprint live says why
+            quiet: true
+          vars:
+            seat_late: >-
+              {{ (((seat_after.stdout | from_json).agents | selectattr('label', 'in', seat_restart_labels) | selectattr('stale')
+                   | map(attribute='label') | list) if seat_after.stdout is match('[{]') else seat_restart_labels) }}
+          when: not ansible_check_mode and seat_restart | length > 0
+
+        - name: "server: it answers on each address it listens on"
+          ansible.builtin.wait_for:
+            host: "{{ item | regex_replace(':[0-9]+$', '') }}"
+            port: "{{ item | regex_replace('^.*:', '') | int }}"
+            timeout: "{{ nova_seat_beat_within | int }}"
+          loop: >-
+            {{ (seat_was.agents | selectattr('role', 'equalto', 'server') | map(attribute='listen') | flatten | list
+                + nova_seat_server_ports) | unique | list }}
+          when: not ansible_check_mode
+
+        - name: "server: the receipt"
+          vars:
+            seat_after_rev: "{{ (seat_after.stdout | from_json).server.revision if (seat_after.stdout | default('')) is match('[{]') else seat_was.server.revision }}"
+          ansible.builtin.debug:
+            msg: >-
+              ADOPT step=server host={{ inventory_hostname }} before={{ seat_was.server.revision or 'none' }}
+              after={{ seat_after_rev or 'none' }}
+              restarted={{ seat_restart_labels | join(',') or 'none' }}
+              {{ ('WOULD-CHANGE' if seat_restart else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_restart else 'UNCHANGED') }}
+
+        - name: "dashboard: each dashboard binary link names the installed nova-sprint"
+          ansible.builtin.file: { src: "{{ nova_bin_dir }}/nova-sprint", dest: "{{ item }}", state: link, force: true }
+          loop: "{{ nova_seat_dashboard_links }}"
+          register: seat_links
+
+        - name: "dashboard: the dashboard returns a summary"
+          ansible.builtin.uri: { url: "{{ nova_seat_dashboard_url }}", return_content: true, timeout: 60 }
+          register: seat_dash
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          when: not ansible_check_mode and nova_seat_dashboard_url != ''
+
+        - name: "dashboard: a summary"
+          ansible.builtin.assert:
+            that: seat_dash is skipped or (seat_dash.status | default(0) == 200 and (seat_dash.json | default({})) | length > 0)
+            fail_msg: >-
+              ADOPT REFUSED step=dashboard host={{ inventory_hostname }}: {{ nova_seat_dashboard_url }} answered
+              {{ seat_dash.status | default('nothing') }} with no summary
+            quiet: true
+
+        - name: "dashboard: the receipt"
+          ansible.builtin.debug:
+            msg: >-
+              ADOPT step=dashboard host={{ inventory_hostname }} before={{ seat_was.dashboard | map(attribute='target') | join(',') or 'none' }}
+              after={{ nova_bin_dir }}/nova-sprint links={{ nova_seat_dashboard_links | length }}
+              {{ 'WOULD-CHANGE' if ansible_check_mode and seat_links is changed else ('CHANGED' if seat_links is changed else 'UNCHANGED') }}
+
+        - name: "friends: the reinstall begins now (a beat after it is the proof)"
+          ansible.builtin.set_fact:
+            seat_reinstall_at: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+
+        - name: "friends: each stale daemon's lanes have no card in hand (up to its ExitTimeOut, else nova_seat_friend_drain)"
+          ansible.builtin.command: { argv: "{{ seat_live }}" }
+          environment: "{{ seat_env }}"
+          loop: "{{ seat_friends }}"
+          loop_control: { label: "{{ item.friend }}" }
+          register: seat_drained
+          until: >-
+            seat_drained.stdout is match('[{]') and
+            ((seat_drained.stdout | from_json).agents | selectattr('label', 'equalto', item.label) | map(attribute='lanes') | sum) == 0
+          retries: "{{ (((item.exit_timeout_s or nova_seat_friend_drain) | int) / 5) | round(0, 'ceil') | int }}"
+          delay: 5
+          changed_when: false
+          # ignored: the wait is bounded; a daemon still busy then is reinstalled, its lanes.json finishes each card on restart
+          failed_when: false
+          when: not ansible_check_mode
+
+        - name: "friends: each stale daemon is reinstalled with the flags its plist records (nova-friend install boots out and bootstraps)"
+          ansible.builtin.command:
+            argv: "{{ [nova_bin_dir ~ '/nova-friend'] + item.install + (['--dry-run'] if ansible_check_mode else []) }}"
+          loop: "{{ seat_friends }}"
+          loop_control: { label: "{{ item.friend }}" }
+          register: seat_installed
+          changed_when: not ansible_check_mode
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          check_mode: false
+
+        - name: "friends: each reinstall ran"
+          ansible.builtin.assert:
+            that: seat_installed.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+            fail_msg: >-
+              ADOPT REFUSED step=friends host={{ inventory_hostname }}: nova-friend install failed for
+              {{ seat_installed.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.friend') | join(', ') }}
+              ({{ (seat_installed.results | rejectattr('rc', 'equalto', 0) | first).stderr | default('') | truncate(300) }})
+            quiet: true
+
+        - name: "friends: the manifest after, until each reinstalled daemon runs the installed binary and has beaten since"
+          ansible.builtin.command: { argv: "{{ seat_live }}" }
+          environment: "{{ seat_env }}"
+          register: seat_beaten
+          until: >-
+            seat_beaten.rc == 0 and seat_beaten.stdout is match('[{]') and
+            ((seat_beaten.stdout | from_json).agents | selectattr('label', 'in', seat_friend_labels) | selectattr('stale') | list | length == 0) and
+            ((seat_beaten.stdout | from_json).agents | selectattr('label', 'in', seat_friend_labels)
+              | map(attribute='beat') | map('default', '') | select('le', seat_reinstall_at) | list | length == 0)
+          retries: "{{ (nova_seat_beat_within | int / 5) | round(0, 'ceil') | int }}"
+          delay: 5
+          changed_when: false
+          # ignored: read by the assert below, which names the step
+          failed_when: false
+          when: not ansible_check_mode and seat_friends | length > 0
+
+        - name: "friends: each reinstalled daemon runs the installed binary and beat after its reinstall"
+          ansible.builtin.assert:
+            that: seat_late | length == 0
+            fail_msg: >-
+              ADOPT REFUSED step=friends host={{ inventory_hostname }}: no beat after the reinstall within {{ nova_seat_beat_within }} s,
+              or still stale: {{ seat_late | join(', ') }}; nova-friend status --as <friend> says why
+            quiet: true
+          vars:
+            seat_mine: >-
+              {{ ((seat_beaten.stdout | from_json).agents if seat_beaten.stdout is match('[{]') else seat_friends)
+                 | selectattr('label', 'in', seat_friend_labels) | list }}
+            seat_late: >-
+              {{ ((seat_mine | selectattr('stale') | list) + (seat_mine | rejectattr('beat', 'gt', seat_reinstall_at) | list))
+                 | map(attribute='friend') | unique | list }}
+          when: not ansible_check_mode and seat_friends | length > 0
+
+        - name: "friends: the receipt"
+          vars:
+            seat_after_rev: "{{ (seat_beaten.stdout | from_json).server.revision if (seat_beaten.stdout | default('')) is match('[{]') else seat_was.server.revision }}"
+          ansible.builtin.debug:
+            msg: >-
+              ADOPT step=friends host={{ inventory_hostname }} before={{ seat_was.server.revision or 'none' }} after={{ seat_after_rev or 'none' }}
+              reinstalled={{ seat_friends | map(attribute='friend') | join(',') or 'none' }}
+              {{ ('WOULD-CHANGE' if seat_friends else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_friends else 'UNCHANGED') }}
+      rescue:
+        - name: "seat: the library of the build installed before (its release directory's nova-redis)"
+          ansible.builtin.stat:
+            path: "{{ nova_release_dir }}/{{ seat_was.server.version }}/{{ nova_platform }}/nova-redis"
+            get_checksum: false
+          register: seat_old_redis
+          when: not ansible_check_mode and seat_was.library.loaded not in ['', seat_was.library.want]
+
+        - name: "seat: a refusal reloads the store's library of the build installed before"
+          ansible.builtin.command:
+            argv: >-
+              {{ seat_wrap + [nova_release_dir ~ '/' ~ seat_was.server.version ~ '/' ~ nova_platform ~ '/nova-redis', 'fn', 'load',
+                 '--addr', nova_redis_addr, '--user', nova_redis_deploy_user, '--password-env', nova_redis_deploy_password_key] }}
+          register: seat_reloaded
+          changed_when: seat_reloaded.rc == 0
+          # ignored: the refusal below says whether the reload ran
+          failed_when: false
+          when: seat_old_redis is not skipped and seat_old_redis.stat.exists
+
+        - name: "seat: the refusal, as the failed step said it"
+          ansible.builtin.fail:
+            msg: >-
+              {{ ansible_failed_result.msg if (ansible_failed_result.msg | default('')) is match('ADOPT REFUSED ')
+                 else ('ADOPT REFUSED step=' ~ ((ansible_failed_task.name | default('seat: x')).split(':') | first)
+                       ~ ' host=' ~ inventory_hostname ~ ': ' ~ (ansible_failed_result.msg | default('the task failed'))) }};
+              {{ ('the store library ' ~ seat_was.library.loaded ~ ' of ' ~ seat_was.server.version ~ ' was reloaded') if seat_reloaded is changed
+                 else ('the store library was not reloaded: ' ~ ((seat_reloaded.stderr | default('')) or 'no release directory of '
+                       ~ seat_was.server.version ~ ' on this machine')) if seat_old_redis is not skipped
+                 else 'the store library was not changed by this run' }}
+
+# The configuration store's schema, last (docs/SPEC-SPRINT.md, "Adopting a
+# build"): nova-config migrate is the one step that cannot be undone, so it
+# runs after every other play passed on the store_deployer machine (a host a
+# play refused is out of the run, and so out of this play).
+- name: the build's schema on the configuration store, last
+  hosts: store_deployer
+  gather_facts: false
+  vars:
+    tools_seat: >-
+      {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+          '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops] }}
+  tasks:
+    - name: nova-config migrate (the schema the build's kinds need)
       ansible.builtin.command:
-        argv: >-
-          {{ seat_wrap + [nova_bin_dir ~ '/nova-sprint', 'server', 'switch', nova_bin_dir ~ '/nova-sprint',
-             '--target', nova_bin_dir ~ '/nova-sprint', '--dry-run', '--tick-deadline', nova_seat_tick_deadline] }}
-      environment: "{{ seat_env }}"
-      register: seat_canary
-      changed_when: false
-      # ignored: read by the assert below, which names the step
-      failed_when: false
-      check_mode: false
-      when: seat_restart | length > 0
+        argv: "{{ tools_seat + ['--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
+                                nova_bin_dir ~ '/nova-config', 'migrate', '--pg', nova_pg_dsn] }}"
+      environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
+      register: tools_migrate
+      changed_when: tools_migrate.stdout is search('applied=[1-9]|MIGRATE APPLIED')
 
-    - name: "server: the shadow tick passed"
-      ansible.builtin.assert:
-        that: seat_canary is skipped or seat_canary.rc == 0
-        fail_msg: >-
-          ADOPT REFUSED step=server host={{ inventory_hostname }}: the build's shadow tick failed and nothing was restarted:
-          {{ ((seat_canary.stderr | default('')) or (seat_canary.stdout | default(''))) | truncate(300) }}
-        quiet: true
-
-    - name: "server: each stale agent restarts (bootout then bootstrap)"
-      ansible.builtin.debug:
-        msg: >-
-          {{ 'WOULD-RESTART' if ansible_check_mode else 'RESTART' }} {{ item.label }} on {{ inventory_hostname }}:
-          {{ 'it runs a binary the install replaced' if not item.fresh else 'its running arguments differ from its plist' }}
-      loop: "{{ seat_restart }}"
-      loop_control: { label: "{{ item.label }}" }
-      changed_when: true
-      notify: seat restart
-
-    - name: "server: a stale agent whose plist names a binary outside the bin directory is its owner's to point at the installed tool"
-      ansible.builtin.debug:
-        msg: "NOTE {{ inventory_hostname }} {{ item.label }} runs {{ item.binary }}, not {{ nova_bin_dir }}/{{ item.tool }}; left as it is"
-      loop: "{{ seat_was.agents | selectattr('stale') | rejectattr('installed') | rejectattr('role', 'equalto', 'friend') | list }}"
-      loop_control: { label: "{{ item.label }}" }
-
-    - name: "dashboard: each dashboard binary link names the installed nova-sprint"
-      ansible.builtin.file: { src: "{{ nova_bin_dir }}/nova-sprint", dest: "{{ item }}", state: link, force: true }
-      loop: "{{ nova_seat_dashboard_links }}"
-      register: seat_links
-
-    - name: "friends: each stale friend daemon is reinstalled with the flags its plist records (nova-friend install boots out and bootstraps)"
-      ansible.builtin.command:
-        argv: "{{ [nova_bin_dir ~ '/nova-friend'] + item.install + (['--dry-run'] if ansible_check_mode else []) }}"
-      loop: "{{ seat_friends }}"
-      loop_control: { label: "{{ item.friend }}" }
-      register: seat_installed
-      changed_when: not ansible_check_mode
-      # --check runs install --dry-run, which writes nothing
-      check_mode: false
-
-    - name: "seat: the restarts run now"
-      ansible.builtin.meta: flush_handlers
-
-    - name: "seat: the manifest after, until each restarted agent runs the installed binary and each reinstalled daemon has beaten"
-      ansible.builtin.command: { argv: "{{ seat_live }}" }
-      environment: "{{ seat_env }}"
-      register: seat_after
-      until: >-
-        seat_after.rc == 0 and seat_after.stdout is match('[{]') and
-        ((seat_after.stdout | from_json).agents | selectattr('label', 'in', seat_touched)
-          | rejectattr('fresh') | list | length == 0) and
-        ((seat_after.stdout | from_json).agents | selectattr('label', 'in', seat_friends | map(attribute='label') | list)
-          | rejectattr('beat_age_s', 'ge', 0) | list | length == 0) and
-        ((seat_after.stdout | from_json).agents | selectattr('label', 'in', seat_friends | map(attribute='label') | list)
-          | selectattr('beat_age_s', 'gt', nova_seat_beat_within | int) | list | length == 0)
-      retries: "{{ (nova_seat_beat_within | int / 5) | round(0, 'ceil') | int }}"
-      delay: 5
-      changed_when: false
-      # ignored: read by the asserts below, which name the step
-      failed_when: false
-      vars:
-        seat_touched: "{{ (seat_restart + seat_friends) | map(attribute='label') | list }}"
-      when: not ansible_check_mode
-
-    - name: "seat: what runs now"
-      ansible.builtin.set_fact:
-        seat_now: "{{ seat_after.stdout | from_json }}"
-      when: not ansible_check_mode and seat_after.stdout is match('[{]')
-
-    - name: "server: each restarted agent runs the installed binary with its plist's arguments (lsof and ps, through live)"
-      ansible.builtin.assert:
-        that: seat_now is defined and seat_late | length == 0
-        fail_msg: >-
-          ADOPT REFUSED step=server host={{ inventory_hostname }}: after the restart these do not run the installed binary
-          with their plist's arguments: {{ seat_late | join(', ') or 'the manifest after was not read' }}; run the play again
-        quiet: true
-      vars:
-        seat_mine: "{{ (seat_now | default(dict(agents=[]))).agents | selectattr('label', 'in', seat_restart | map(attribute='label') | list) | list }}"
-        seat_late: "{{ ((seat_mine | rejectattr('fresh') | list) + (seat_mine | rejectattr('args_took') | list)) | map(attribute='label') | unique | list }}"
-      when: not ansible_check_mode
-
-    - name: "server: it answers on each address it listens on"
-      ansible.builtin.wait_for:
-        host: "{{ item | regex_replace(':[0-9]+$', '') }}"
-        port: "{{ item | regex_replace('^.*:', '') | int }}"
-        timeout: "{{ nova_seat_beat_within | int }}"
-      loop: >-
-        {{ ((seat_now | default(dict(agents=[]))).agents | selectattr('role', 'equalto', 'server') | map(attribute='listen') | flatten | list
-            + nova_seat_server_ports) | unique | list }}
-      when: not ansible_check_mode
-
-    - name: "dashboard: the dashboard returns a summary"
-      ansible.builtin.uri: { url: "{{ nova_seat_dashboard_url }}", return_content: true, timeout: 60 }
-      register: seat_dash
-      # ignored: read by the assert below, which names the step
-      failed_when: false
-      when: not ansible_check_mode and nova_seat_dashboard_url != ''
-
-    - name: "dashboard: a summary, and each link names the installed nova-sprint"
-      ansible.builtin.assert:
-        that:
-          - seat_dash is skipped or (seat_dash.status | default(0) == 200 and (seat_dash.json | default({})) | length > 0)
-          - ansible_check_mode or ((seat_now | default(dict(dashboard=[]))).dashboard | rejectattr('current') | list | length == 0)
-        fail_msg: >-
-          ADOPT REFUSED step=dashboard host={{ inventory_hostname }}: {{ nova_seat_dashboard_url }} answered
-          {{ seat_dash.status | default('nothing') }} with {{ 'no summary' if seat_dash is not skipped else 'a link not naming the installed nova-sprint' }}
-        quiet: true
-
-    - name: "friends: each reinstalled daemon runs the installed binary and beat within nova_seat_beat_within seconds"
-      ansible.builtin.assert:
-        that: seat_late | length == 0
-        fail_msg: >-
-          ADOPT REFUSED step=friends host={{ inventory_hostname }}: no fresh beat within {{ nova_seat_beat_within }} s, or a stale binary,
-          after the reinstall: {{ seat_late | join(', ') }}; nova-friend status --as <friend> says why
-        quiet: true
-      vars:
-        seat_mine: "{{ (seat_now | default(dict(agents=[]))).agents | selectattr('label', 'in', seat_friends | map(attribute='label') | list) | list }}"
-        seat_late: >-
-          {{ ((seat_mine | rejectattr('fresh') | list) + (seat_mine | rejectattr('beat_age_s', 'ge', 0) | list)
-              + (seat_mine | selectattr('beat_age_s', 'gt', nova_seat_beat_within | int) | list)) | map(attribute='friend') | unique | list }}
-      when: not ansible_check_mode
-
-    - name: "seat: the receipt, one ADOPT line per step"
-      ansible.builtin.debug:
-        msg: "{{ item }}"
-      loop:
-        - >-
-          ADOPT step=server host={{ inventory_hostname }} before={{ seat_was_build }} after={{ nova_version }}
-          revision={{ (seat_now | default(seat_was)).server.revision or 'none' }} restarted={{ seat_restart | map(attribute='label') | join(',') or 'none' }}
-          {{ ('WOULD-CHANGE' if seat_restart else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_restart else 'UNCHANGED') }}
-        - >-
-          ADOPT step=dashboard host={{ inventory_hostname }} before={{ seat_was.dashboard | map(attribute='target') | join(',') or 'none' }}
-          after={{ nova_bin_dir }}/nova-sprint links={{ nova_seat_dashboard_links | length }}
-          {{ ('WOULD-CHANGE' if seat_was.dashboard | rejectattr('current') | list else 'UNCHANGED') if ansible_check_mode
-             else ('CHANGED' if seat_links is changed else 'UNCHANGED') }}
-        - >-
-          ADOPT step=friends host={{ inventory_hostname }} before={{ seat_was_build }} after={{ nova_version }}
-          reinstalled={{ seat_friends | map(attribute='friend') | join(',') or 'none' }}
-          {{ ('WOULD-CHANGE' if seat_friends else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_friends else 'UNCHANGED') }}
+    - name: what --check would migrate
+      ansible.builtin.debug: { msg: "WOULD-MIGRATE {{ nova_pg_dsn }} with {{ nova_bin_dir }}/nova-config {{ nova_version }}" }
+      when: ansible_check_mode
 
 # The tla play: on every TLC record machine (the inventory's tla group, the
 # machine rows with tla=true), the pinned TLC jar at nova_tla_jar, owned by the

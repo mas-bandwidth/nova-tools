@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net"
@@ -89,32 +90,50 @@ type liveAgent struct {
 	Running     string   `json:"running,omitempty"` // ps's arguments of the pid
 	BinaryInode uint64   `json:"binary_inode,omitempty"`
 	RunInode    uint64   `json:"running_inode,omitempty"`
-	// Fresh: the pid runs the bytes now at Binary (the inodes agree).
+	// Loaded: launchd holds the agent (launchctl print answers). Disabled:
+	// its plist says Disabled, so launchd is meant not to hold it. Interval:
+	// it runs on a schedule (StartInterval or StartCalendarInterval).
+	// ExitTimeout is its plist's ExitTimeOut in seconds, 0 for none.
+	Loaded      bool `json:"loaded"`
+	Disabled    bool `json:"disabled"`
+	Interval    bool `json:"interval"`
+	ExitTimeout int  `json:"exit_timeout_s"`
+	// Fresh: the pid runs the bytes now at Binary (the inodes agree); a loaded
+	// agent with no process (an interval agent between runs) is fresh, since
+	// launchd execs the path again at its next run.
 	// Installed: Binary is the bin directory's own tool, not a copy.
-	// ArgsTook: the running arguments are the plist's, from the tool on.
-	// Stale: a loaded nova agent that is not all three.
-	Fresh     bool `json:"fresh"`
-	Installed bool `json:"installed"`
-	ArgsTook  bool `json:"args_took"`
-	Stale     bool `json:"stale"`
+	// ArgsTook: the arguments launchd runs (ps's of the pid, else the loaded
+	// job's) are the plist's, from the tool on.
+	// Stale: a nova agent that is not disabled and is not loaded, or is
+	// loaded and not all three; Why says which.
+	Fresh     bool   `json:"fresh"`
+	Installed bool   `json:"installed"`
+	ArgsTook  bool   `json:"args_took"`
+	Stale     bool   `json:"stale"`
+	Why       string `json:"why,omitempty"`
 	// Friend daemons only: the friend, its last beat and its age in seconds
 	// (-1: none read), and the nova-friend install arguments that reinstall it
 	// with the flags its plist records.
 	Friend  string   `json:"friend,omitempty"`
-	Beat    string   `json:"beat,omitempty"`
+	Beat    string   `json:"beat"`
 	BeatAge int      `json:"beat_age_s"`
 	Install []string `json:"install,omitempty"`
+	// Lanes is a friend daemon's lanes with a card in hand (nova-friend
+	// status's lanes, n:session:card), the work a reinstall would cut.
+	Lanes int `json:"lanes"`
 }
 
 // liveProbe reads the host; run is exec in production, a fake in a test.
 type liveProbe struct {
-	home, binDir string
-	uid          int
-	redis        string // the store fn check reads, "" for none
-	user, pwEnv  string // its login
-	dashboards   []string
-	run          adoptRunner
-	now          func() time.Time
+	agentsDir   string // the launchd agents directory, ~/Library/LaunchAgents by default
+	launchctl   string // the launchctl the agents are read with
+	binDir      string
+	uid         int
+	redis       string // the store fn check reads, "" for none
+	user, pwEnv string // its login
+	dashboards  []string
+	run         adoptRunner
+	now         func() time.Time
 }
 
 var (
@@ -122,6 +141,7 @@ var (
 	liveRevision = regexp.MustCompile(`[-.]([0-9a-f]{7,40})(?:\+dirty)?$`)
 	liveBeat     = regexp.MustCompile(`\blast_beat=(\S+)`)
 	liveTool     = regexp.MustCompile(`^nova-[a-z0-9-]+$`)
+	liveLanes    = regexp.MustCompile(`\blanes=(?:"([^"]*)"|(\S+))`)
 )
 
 func inodeOf(path string) uint64 {
@@ -161,7 +181,7 @@ func (p liveProbe) read(ctx context.Context) (liveManifest, error) {
 		}
 		m.Dashboard = append(m.Dashboard, liveDashboard{Link: link, Target: target, Current: target == server})
 	}
-	plists, err := filepath.Glob(filepath.Join(p.home, "Library", "LaunchAgents", "com.nova.*.plist"))
+	plists, err := filepath.Glob(filepath.Join(p.agentsDir, "com.nova.*.plist"))
 	if err != nil {
 		return m, err
 	}
@@ -256,6 +276,12 @@ func (p liveProbe) agent(ctx context.Context, plist string) liveAgent {
 	a := liveAgent{Label: label, Plist: plist, Target: fmt.Sprintf("gui/%d/%s", p.uid, label), Role: "agent", BeatAge: -1, Listen: []string{}}
 	if b, err := os.ReadFile(plist); err == nil {
 		a.Program = friend.PlistArgs(string(b))
+		facts := plistFacts(string(b))
+		a.Disabled = facts["Disabled"] == "true"
+		_, interval := facts["StartInterval"]
+		_, calendar := facts["StartCalendarInterval"]
+		a.Interval = interval || calendar
+		a.ExitTimeout, _ = strconv.Atoi(facts["ExitTimeOut"]) // ignored: no ExitTimeOut, or not a number, is 0: none
 	}
 	at := toolAt(a.Program)
 	if at >= 0 {
@@ -275,10 +301,13 @@ func (p liveProbe) agent(ctx context.Context, plist string) liveAgent {
 			a.Role = "friend"
 		}
 	}
-	if out, err := p.run(ctx, "launchctl", "print", a.Target); err == nil {
+	var loadedArgs []string
+	if out, err := p.run(ctx, p.launchctl, "print", a.Target); err == nil {
+		a.Loaded = true
 		if m := livePID.FindStringSubmatch(out); m != nil {
 			a.PID, _ = strconv.Atoi(m[1]) // ignored: the pattern holds digits only
 		}
+		loadedArgs = launchdArguments(out)
 	}
 	if a.PID > 0 {
 		if out, err := p.run(ctx, "ps", "-o", "args=", "-p", strconv.Itoa(a.PID)); err == nil {
@@ -294,14 +323,105 @@ func (p liveProbe) agent(ctx context.Context, plist string) liveAgent {
 		}
 	}
 	if at >= 0 {
-		a.Fresh = a.RunInode != 0 && a.RunInode == a.BinaryInode
-		a.ArgsTook = a.Running != "" && strings.HasSuffix(a.Running, strings.Join(a.Program[at:], " "))
-		a.Stale = a.PID > 0 && !(a.Fresh && a.Installed && a.ArgsTook)
+		p.judge(&a, at, loadedArgs)
 	}
 	if a.Role == "friend" {
 		p.friendOf(ctx, &a, at)
 	}
 	return a
+}
+
+// judge says whether a nova agent runs what is installed, and why not.
+func (p liveProbe) judge(a *liveAgent, at int, loadedArgs []string) {
+	want := strings.Join(a.Program[at:], " ")
+	switch {
+	case a.PID > 0:
+		a.Fresh = a.RunInode != 0 && a.RunInode == a.BinaryInode
+		a.ArgsTook = a.Running != "" && strings.HasSuffix(a.Running, want)
+	case a.Loaded:
+		// between runs: the next run execs the path, with the loaded job's arguments
+		a.Fresh = true
+		a.ArgsTook = len(loadedArgs) >= len(a.Program)-at && strings.Join(loadedArgs[len(loadedArgs)-(len(a.Program)-at):], " ") == want
+	}
+	var why []string
+	switch {
+	case a.Disabled:
+		return
+	case !a.Loaded:
+		why = append(why, "not loaded")
+	default:
+		if !a.Fresh {
+			why = append(why, "runs a binary the install replaced")
+		}
+		if !a.ArgsTook {
+			why = append(why, "runs other arguments than its plist")
+		}
+	}
+	if !a.Installed {
+		why = append(why, "names a copy, not "+filepath.Join(p.binDir, a.Tool))
+	}
+	a.Stale = len(why) > 0
+	a.Why = strings.Join(why, "; ")
+}
+
+// launchdArguments is the arguments block of launchctl print: the job's
+// program arguments as launchd loaded them.
+func launchdArguments(out string) []string {
+	var args []string
+	in := false
+	for _, l := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case !in && t == "arguments = {":
+			in = true
+		case in && t == "}":
+			return args
+		case in:
+			args = append(args, t)
+		}
+	}
+	return nil
+}
+
+// plistFacts is a plist's keys and their scalar values (true, false, an
+// integer or a string; a dict or an array is present with no value).
+func plistFacts(plist string) map[string]string {
+	dec := xml.NewDecoder(strings.NewReader(plist))
+	dec.Strict = false
+	facts := map[string]string{}
+	key := ""
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return facts
+		}
+		el, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch name := el.Name.Local; name {
+		case "key":
+			var k string
+			if dec.DecodeElement(&k, &el) == nil {
+				key = strings.TrimSpace(k)
+			}
+			continue
+		case "true", "false":
+			if key != "" {
+				facts[key] = name
+			}
+		case "integer", "string":
+			var v string
+			if dec.DecodeElement(&v, &el) == nil && key != "" {
+				facts[key] = strings.TrimSpace(v)
+			}
+		case "dict", "array":
+			if key != "" {
+				facts[key] = ""
+			}
+		}
+		key = ""
+	}
 }
 
 // friendOf reads a friend daemon's run flags from its plist: the install
@@ -332,6 +452,13 @@ func (p liveProbe) friendOf(ctx context.Context, a *liveAgent, at int) {
 		}
 	}
 	out, _ := p.run(ctx, filepath.Join(p.binDir, "nova-friend"), status...) // ignored: status exits 1 for a daemon it finds down; its line still says the beat
+	if m := liveLanes.FindStringSubmatch(out); m != nil {
+		for _, lane := range strings.Fields(m[1] + m[2]) {
+			if parts := strings.Split(lane, ":"); len(parts) >= 3 && parts[2] != "-" {
+				a.Lanes++
+			}
+		}
+	}
 	if m := liveBeat.FindStringSubmatch(out); m != nil {
 		a.Beat = m[1]
 		if t, err := time.Parse(time.RFC3339, m[1]); err == nil {
@@ -359,10 +486,13 @@ func (m liveManifest) lines() []string {
 		}
 		line := fmt.Sprintf("%s label=%s pid=%d", head, a.Label, a.PID)
 		if a.Tool != "" {
-			line += fmt.Sprintf(" stale=%t fresh=%t installed=%t args_took=%t binary=%s", a.Stale, a.Fresh, a.Installed, a.ArgsTook, a.Binary)
+			line += fmt.Sprintf(" loaded=%t stale=%t fresh=%t installed=%t args_took=%t binary=%s", a.Loaded, a.Stale, a.Fresh, a.Installed, a.ArgsTook, a.Binary)
+			if a.Why != "" {
+				line += " why=" + strconv.Quote(a.Why)
+			}
 		}
 		if a.Role == "friend" {
-			line += fmt.Sprintf(" friend=%s beat=%s beat_age_s=%d", a.Friend, dashed(a.Beat), a.BeatAge)
+			line += fmt.Sprintf(" friend=%s beat=%s beat_age_s=%d lanes=%d", a.Friend, dashed(a.Beat), a.BeatAge, a.Lanes)
 		}
 		line += " program=" + strconv.Quote(strings.Join(a.Program, " "))
 		out = append(out, line)
@@ -375,13 +505,18 @@ func (a *app) cmdLive(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	home := a.getenv("HOME")
 	binDir := fs.String("bin-dir", filepath.Join(home, ".local", "bin"), "the bin directory the build is installed in")
+	agentsDir := fs.String("agents-dir", a.getenv("NOVA_LAUNCH_AGENTS"), "the launchd agents directory read (else NOVA_LAUNCH_AGENTS, else ~/Library/LaunchAgents)")
+	launchctl := fs.String("launchctl", "launchctl", "the launchctl the agents are read with")
 	var dash stringList
 	fs.Var(&dash, "dashboard", "a dashboard binary link that should name the installed nova-sprint (repeatable)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
 	}
-	p := liveProbe{home: home, binDir: *binDir, uid: os.Getuid(), redis: c.redis, user: a.getenv("NOVA_SPRINT_REDIS_USER"),
+	if *agentsDir == "" {
+		*agentsDir = filepath.Join(home, "Library", "LaunchAgents")
+	}
+	p := liveProbe{agentsDir: *agentsDir, launchctl: *launchctl, binDir: *binDir, uid: os.Getuid(), redis: c.redis, user: a.getenv("NOVA_SPRINT_REDIS_USER"),
 		pwEnv: a.getenv("NOVA_SPRINT_REDIS_PASSWORD_ENV"), dashboards: dash, run: execAdoptRunner, now: a.now}
 	if fake, ok := liveRunnerOf.Load(a); ok {
 		p.run = fake.(adoptRunner)

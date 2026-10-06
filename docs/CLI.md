@@ -1399,25 +1399,33 @@ at `<target>.shadow.json`, beside the switch record. The contract is
 
 ### Adopting a build: nova-sprint live and nova-sprint adopt
 
-`nova-sprint live [--bin-dir <dir>] [--dashboard <link>]... [--json]` prints the manifest of
-this host and changes nothing: `LIVE SERVER binary= inode= version= revision=`, `LIVE LIBRARY
-state= loaded= want= match=` (the installed nova-redis's `fn check` against `--redis`, logged in
-as `NOVA_SPRINT_REDIS_USER`), one `LIVE DASHBOARD link= target= current=` per `--dashboard`,
-and one line per `com.nova.*` launchd agent of the login (`LIVE SERVER` for `nova-sprint run`,
-`LIVE FRIEND` for `nova-friend run` with its last beat, else `LIVE AGENT`): its pid and, for a
-nova tool, `stale= fresh= installed= args_took= binary=`. Exit 0 whatever it finds, 1 when the
-installed nova-sprint or the agents directory cannot be read.
+`nova-sprint live [--bin-dir <dir>] [--agents-dir <dir>] [--launchctl <path>] [--dashboard <link>]... [--json]`
+prints the manifest of this host and changes nothing: `LIVE SERVER binary= inode= version=
+revision=`, `LIVE LIBRARY state= loaded= want= match=` (the installed nova-redis's `fn check`
+against `--redis`, logged in as `NOVA_SPRINT_REDIS_USER`), one `LIVE DASHBOARD link= target=
+current=` per `--dashboard`, and one line per `com.nova.*` launchd agent of `--agents-dir` (else
+`NOVA_LAUNCH_AGENTS`, else `~/Library/LaunchAgents`): `LIVE SERVER` for `nova-sprint run`,
+`LIVE FRIEND` for `nova-friend run` with its last beat and its lanes with a card in hand, else
+`LIVE AGENT`, each with its pid and, for a nova tool, `loaded= stale= fresh= installed=
+args_took= binary=` and the `why=` of a stale one. Exit 0 whatever it finds, 1 when the
+installed nova-sprint or the agents directory cannot be read, 2 usage.
 
 `nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text>
 [--limit <host>] [--receipts <dir>] [--dry-run]` runs `<checkout>/fleet/tools.yml` for the
-seat: the build installed, the library loaded, every stale nova agent booted out and
-bootstrapped after the build's shadow tick, the dashboard links pointed at the installed
-nova-sprint and each stale friend daemon reinstalled, each step checked by `live` before the
-next. It prints one `ADOPT step=<store|server|dashboard|friends> host= before= after=` line per
-step and `ADOPT ADOPTED` (`WOULD-ADOPT` with `--dry-run`, the play's `--check`); exit 1, `ADOPT
-REFUSED step=<step>`, when the play stops or ends without a step's line, and the same command
-again finishes it. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "Adopting a
-build".
+seat: the new build's checks first (its shadow tick on the store, its `nova-friend install
+--dry-run` against every friend daemon's flags), then the install, the library, every stale
+nova agent booted out and bootstrapped, the dashboard links pointed at the installed
+nova-sprint and each stale friend daemon reinstalled after its lanes put their cards down, each
+step checked by `live` before the next, and the configuration store's migration last. It prints
+one `ADOPT step=<store|server|dashboard|friends> host= before= after=` line per step and `ADOPT
+ADOPTED version= hosts= steps=`; with `--dry-run` (the play's `--check`) `ADOPT WOULD-ADOPT`, and
+a machine with neither the candidate staged nor built prints `ADOPT step=seat host=<h>
+after=<version> WOULD-ADOPT` in place of the steps. Exit 0 adopted (or, with `--dry-run`, said
+what it would change); 1 refused, `ADOPT REFUSED step=<step>` said verbatim, when the play stops
+or ends without a step's line (the steps before it are done, a refusal in the seat play reloads
+the old library, and the same command again finishes it), or when `--source` holds no
+`fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14,
+"Adopting a build".
 
 The adoption pipeline (`(*app).cmdAdopt`, `cmd/nova-sprint/adopt.go`; the runbook is
 [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline") is in no
