@@ -8,8 +8,8 @@ import (
 
 // AlarmJudgment represents an alarm judgment.
 type AlarmJudgment struct {
-	Median  time.Duration
-	Reason  string
+	Median time.Duration
+	Reason string
 }
 
 // Pinger interface for RTT measurement.
