@@ -741,3 +741,44 @@ func TestLinksReportsATargetReachedThroughADirectorySymlinkOutOfTheTreeWhenRootI
 		assert.Equal(t, expectedReason, b.Reason)
 	}
 }
+
+// TestExtractLinkTargetsPreservesBracketSemantics pins nested badges, open
+// brackets, and the scanner's existing treatment of backslash escapes.
+func TestExtractLinkTargetsPreservesBracketSemantics(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		line string
+		want []string
+	}{
+		{
+			name: "nested badge checks both destinations",
+			line: "[![build](img.png)](target.md)",
+			want: []string{"target.md", "img.png"},
+		},
+		{
+			name: "unclosed outer text leaves inner link visible",
+			line: "[open [inner](inner.md)",
+			want: []string{"inner.md"},
+		},
+		{
+			name: "escaped opener keeps existing scanner behavior",
+			line: `\[label](target.md)`,
+			want: []string{"target.md"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractLinkTargets(tt.line))
+		})
+	}
+}
+
+// TestExtractLinkTargetsIsLinearOnALineOfOpenBrackets pins one pass over an
+// unclosed bracket run; the input is the security#77 CPU-stall witness.
+func TestExtractLinkTargetsIsLinearOnALineOfOpenBrackets(t *testing.T) {
+	t.Parallel()
+
+	assert.Empty(t, extractLinkTargets(strings.Repeat("[", 4_000_000)))
+}

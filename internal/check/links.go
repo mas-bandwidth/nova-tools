@@ -292,12 +292,13 @@ func extractLinkTargets(line string) []string {
 	if strings.IndexByte(line, '[') < 0 {
 		return nil
 	}
+	bracketMatches := matchingBracketCloses(line)
 	var targets []string
 	for i := 0; i < len(line); i++ {
 		if line[i] != '[' {
 			continue
 		}
-		textEnd := matchBrackets(line, i)
+		textEnd := bracketMatches[i] - 1
 		if textEnd < 0 || textEnd+1 >= len(line) || line[textEnd+1] != '(' {
 			continue
 		}
@@ -310,22 +311,26 @@ func extractLinkTargets(line string) []string {
 	return targets
 }
 
-// matchBrackets returns the index of the ']' closing the '[' at open,
-// tracking nesting, or -1 if it never closes on this line.
-func matchBrackets(line string, open int) int {
-	depth := 0
-	for i := open; i < len(line); i++ {
+// matchingBracketCloses records each '[' match in one pass, as links specifies
+// for its nested inline-link text (docs/SPEC.md:422-484). A stored index is
+// one-based so zero means that the '[' is unclosed; backslashes do not change
+// the scanner's existing bracket behavior.
+func matchingBracketCloses(line string) []int {
+	matches := make([]int, len(line))
+	stack := make([]int, 0)
+	for i := 0; i < len(line); i++ {
 		switch line[i] {
 		case '[':
-			depth++
+			stack = append(stack, i)
 		case ']':
-			depth--
-			if depth == 0 {
-				return i
+			if n := len(stack); n > 0 {
+				open := stack[n-1]
+				stack = stack[:n-1]
+				matches[open] = i + 1
 			}
 		}
 	}
-	return -1
+	return matches
 }
 
 // parseDestination parses a parenthesized link destination at the start of
