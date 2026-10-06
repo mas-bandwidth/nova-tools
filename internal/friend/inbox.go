@@ -339,6 +339,7 @@ func (l *loop) inboxStep(now time.Time) {
 		ids = append(ids, h.Card)
 	}
 	d.heldIDs, d.heldCards = ids, row.Cards // in the server's order
+	l.outboxStep(now)                       // every report in her outbox against the row just read
 }
 
 // nextCard is the next card a free lane is handed: while the server has said what is on

@@ -37,6 +37,9 @@ type Agent struct {
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
+	// Command, when set, is what the agent runs in place of the daemon: this tool's
+	// own verb and flags, after Binary (the wake ping loop, nova-friend ping-install).
+	Command []string
 }
 
 // Label is the agent's launchd label.
@@ -51,6 +54,9 @@ func (a Agent) PlistPath() string {
 // exactly those names for the daemon (--only) and refuses to start it without
 // every one (--require), then the daemon itself after the --.
 func (a Agent) Args() []string {
+	if len(a.Command) > 0 {
+		return append([]string{a.Binary}, a.Command...)
+	}
 	var args []string
 	if len(a.Secrets) > 0 {
 		args = []string{a.SecretsTool, "exec", "--store", filepath.Join(a.Home, "nova-bench", "secrets"), "--as", a.Seat,

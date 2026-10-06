@@ -891,6 +891,76 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### subscription-pacing-is-a-setting.w1 — a subscription friend is paced by measurement (internal/friend/pacing.go)
+
+The owner, 2026-10-05 ~10:45 PM: "Please try to go easy on <friend> (<machine>)
+and this session until 11PM, or you will run out of credits. Reserve for
+essential work only." The coordinator cut a width by hand, paused a reader,
+parked jobs and restored them at eleven. Pacing by measurement is a setting
+on the row, not a hand on the wheel.
+
+A subscription has a 5-hour and a 7-day window, and a Claude Code headless
+run (`--output-format stream-json --verbose`) prints a `rate_limit_event`
+with each window's utilization (0 to 1) and reset: the older shape names one
+window (`rateLimitType`, `utilization`, `resetsAt`), the newer every window
+(`unifiedWindows`). `ReadRateLimitEvents` reads a turn's output for them, the
+last word of each window; a line with no utilization is under the harness's
+warning threshold, and keeps the use last read for the same reset (use does
+not fall within a window); a `rejected` event marks the window it spent (at
+1), or every window it names when none is. A lane harness returns them on the
+turn (`LaneTurn.Windows`), and the daemon takes them after every lane turn,
+whatever its end (`Pacer.Observe`).
+
+The pacing is the row's setting: the fraction of each window the sprint may
+spend, `DefaultPacing` (80 percent) when the row names none or one outside
+(0, 100] percent. The daemon reads it every step (`Daemon.Pacing`; off the
+beat's answer, `row_pacing=<percent>`, `ParsePacing`). The lanes' effective
+width is the row's width scaled by the share of the paced budget left in the
+tightest live window, rounded up (`Pacer.Width`): at 80 percent and a row of
+4, a 5-hour window at 20 percent gives 3, at 40 percent 2, at 60 percent 1,
+and at 80 percent none. A window at or past the pacing, or rejected by the
+harness, allows no new turn or open until it resets, so no run meets the hard
+limit: only the turns already in flight spend past the pacing. A window is
+live until its reset, or, with none said, for one span (5 hours, 7 days)
+after the report; when it resets the width is the row's again with no word
+from anyone. The paced width sits under the rate-limit governor's cap (the
+lower of the two holds), never above the row; a lane beyond it takes nothing
+new and hands back a card it holds between turns, as beyond the cap.
+
+Each change of the paced width is one line on the record (`pacing: width
+<a> -> <b> of <w>, five_hour at <u>% of 80%, resets <t>`, and back up, `no
+window over the pacing (80%)`). The status says `paced`, `window` (`5h 62%
+7d 31%`) and `pacing` (`80%`), and its lanes `:paced` beyond the paced width.
+When the paced width falls below half the row, the coordinator is told once,
+as a judgment (a blocker), `friend <name>: paced to <p> of <w> lanes by the
+subscription windows (<use>; pacing <pct>)`; it is told again only after the
+width has been back at half or more. A friend whose harness reports no
+window (a metered provider) is never paced.
+`TestPacingLowersWidthAsTheWindowFills` (a fake harness printing the
+`rate_limit_event`), `TestPacerWidthFollowsTheTightestWindow`,
+`TestReadRateLimitEventsTakesEachWindowsLastWord`,
+`TestReadRateLimitEventsReadsTheUnifiedWindows`, `TestPacingIsTheRowsSetting`.
+
+The batch turn is paced by the limit gate (subscription-pacing-is-a-setting.w2,
+limit.go): `Limits.Watch` already reads every command's output under the
+harness, and it feeds each `rate_limit_event` to the gate's own pacer; a
+batch turn is one lane, so while a window is at or past the pacing
+(`Limits.Pacing`, `DefaultPacing` when nil) the gate answers `Deferred`
+(`paced: the subscription window five_hour at 82% of 80%; held until it
+resets <t>`) without running the harness, the message kept in hand, until
+the window resets. Pacing is not a limit: the friend is not sent down and
+beats on. `Limits.WindowUse` is the windows as last reported.
+`TestTheGatePacesTheBatchTurnByTheWindows`.
+
+Not here, outside the card's paths: the `pacing` field on nova-config's
+friend row and `friend beat` printing it as `row_pacing=`; `nova-friend`
+setting `Daemon.Pacing` from the beat and sending `paced` and `window` on the
+beat (`sprint.FriendReport` carries them); a Claude lane harness (the
+`claude` deliverer is still a stub; the OpenCode lanes report no window), so
+in a live daemon no lane is paced yet; `nova-friend` setting
+`Limits.Pacing` from the row (the gate paces the batch turn at the default
+until it does); and no TLA+ module models the pacer.
+
 ### lane-end-finishes-the-card.w1 — a lane's end is a finish
 
 The owner, 2026-10-05: "Now let's look at friends. Are they actually doing
@@ -947,6 +1017,97 @@ repository, and `take back`'s refusal of a card with a push is in
 internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
+
+### the-daemon-reads-every-outbox-job.w1 — the daemon finishes every report on her row (internal/friend/outbox.go)
+
+The night of 2026-10-05, a friend held eight working cards whose
+`outbox/<job>/REPORT.md` said `Verdict: LAND` with a `Head:`, unread from
+21:09 for two hours: the daemon finished only the cards its own lanes ran,
+and the coordinator's delivery stopgap had written those briefs; the tick
+raised "a friend holds working cards and finishes none". Now each reconcile
+the server answered (the inbox above) is followed by a pass over her outbox,
+whoever wrote the brief:
+
+- Every job in `outbox/` named `<work>~<epoch>[.g<gen>]` (`ParseJob`) with a
+  `REPORT.md` (a regular file, never followed through a symlink, at most
+  `ReportCap`, 64 KiB, friend sync's cap) is matched to her row by its job, or
+  by its card, epoch and generation. A job a lane is running is left to the
+  lane's end.
+- Its card working on her row, a work card: the report's verdict and head are
+  read as friend sync reads them (the first `Verdict:` and `Head:` lines,
+  markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
+  full sha head is `finish --as friend.<name> <card>@<gen> --epoch <n> --head
+  <sha> --branch <b> --report "friend <name> LAND: <first paragraph>"`; `HOLD`,
+  `FAIL` and any other verdict, and a `LAND` with no full sha head, are
+  `--failed`, a full sha head kept, the report `friend <name> <verdict>: ` and
+  the report's first 600 characters on one line. The branch is the row's, else
+  the brief's STATUS line. One line on the record per finish (`outbox: finished
+  card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row):
+  finish=ok|failed head=<sha> sent=server`).
+- A finish is sent once: a job finished is never sent again, nor noted when its
+  card leaves her row. One the server did not answer or refused is said once
+  and sent again after `OutboxRetry` (a minute); friend sync may finish it
+  first, and the server refuses the second.
+- A report with no `Verdict:` line, a report that cannot be read, a card not
+  on her row, ready and not working, or a read, is said once while it stands
+  (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
+  it again, so a verdict she writes later is finished then.
+
+The model is `internal/friend/tla/OutboxFinish.tla` (TLC on a Linux bench, two
+cards, one of them staged by another hand: 324 distinct states,
+`FinishOnlyWorking`, `FinishOnlyVerdict` and `Finished` hold); its reversed
+witness `MCOutboxFinishBrokenOwnOnly.cfg`, a daemon that finishes only the cards
+it staged, breaks `Finished` in 5 states: the other hand's card is dealt, she
+writes a verdict, the daemon asks, and nothing finishes it. The test is
+`TestTheDaemonFinishesAReportItDidNotStage`.
+
+### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
+
+The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
+be happening continually, not in bursts", and "Reads are in extra slots per-friend! Read slots
+are different from worker cards." A one-shot daemon with a sprint server also serves the
+friend's reader row, `reader-<friend>`, the work the hand-written `reader.zsh` loops did:
+
+- **Beat and queue.** Once a `ReadAskEvery` (10 s) it asks `queue --as reader-<friend> --json`;
+  that ask is the reader's beat. Its asked cards (`col` asked, each with a packet: tier, head,
+  work_branch, attempt, brief, report) are the reads.
+- **Read slots.** `row_read_slots=<n>` on her beat's answer (`nova-config friend set <f>
+  --read-slots <n>`, default `DefaultReadSlots` = 2) is how many reads run at once. Read slots
+  are their own number beside `width`: width card lanes AND read-slots reads run at once, a read
+  never takes a card lane and a card never takes a read slot, so a dealt card never waits for a
+  read and an asked read never waits for a card. A read begins the step it is asked while a slot
+  is free, and the next as soon as one records.
+- **A read.** `read --as reader-<f> --begin <card> --epoch <n>` (refused: said in the record, not
+  begun); then READ.md, BRIEF.md and WORKER-REPORT.txt are written under `<dir>/reads/<card>/`
+  (the clone at the head, the merge-base diff alone, the touched packages' vet and tests on a
+  Linux bench, the bench rule, RESULT.md in the shape `head/branch/verdict/gate/report/## Body`),
+  and the read runs as a one-shot of her harness inside the lane wall (`ReadHarness.RunRead`: a
+  new session whose only turn is the read prompt, on the model of the read's tier; opencode's is
+  `opencode run --dir <d> [--model <m>] <prompt>` with no session listing, so reads never queue
+  behind lane opens; a harness without it opens the prompt as a lane session). A claude
+  account's model per tier is `ReadModels` (frontier claude-fable-5-1, heavy claude-opus-5-5,
+  pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001).
+- **The record.** RESULT.md saying `verdict: ok|broken` is `read --ok|--broken <card> --epoch <n>
+  --finding <report line and body, 3500 bytes> --usage "model=<m> wall=<s>s harness=<h>
+  account=<friend>"`; any other end (no RESULT.md, another verdict) is `read --return <card>
+  --reason <why> --epoch <n> --usage ...`.
+- **Limits.** A rate limit or out of funds met by a read goes to the lanes' governor as a card
+  turn's does (`providerLimit`): the read is returned with `usage limit on <friend>: <reason>`,
+  the lanes back off or are held, and no read begins while they are. A daemon stopping leaves
+  its reads begun.
+
+Tests: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict (begun, run with its tier's model,
+recorded ok with usage; a run with no RESULT.md is returned), TestAReadSlotIsNeverACardLane
+AndNeverWaitsForOne (a dealt card is worked by its lane while a read holds the read slot),
+TestAReadThatMeetsAUsageLimitIsReturnedAndTheLanesBackOff.
+
+Not done here: the judgment when an asked read waits past a bound (the sprint tick's, in
+internal/sprint, outside this card's paths); `nova-config friend set --read-slots` and the
+beat's `row_read_slots=` (card read-slots-delivered-like-cards-w, on its own branch, not in this
+base: until it lands the daemon runs `DefaultReadSlots`); a claude one-shot harness's `RunRead`
+(card claude-oneshot-lanes-cb, likewise unlanded: a claude daemon cannot run a read until it
+lands); a read begun by a daemon that then died is not returned by the next one; the loops are
+retired by simp-retire-bud-runners-r and simp-retire-opencode-runners-r.
 
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
 
@@ -1146,6 +1307,50 @@ and transport, the way `wait-pong`'s `daemon=` does, and the session's own
 answer is still the session check's (Presence, above). Each `PING` reopens the
 daemon's challenge, so the challenge's `deaf` is not reached while this loop
 runs (Chaos, below); presence is what says a silent session.
+
+## The wake ping loop (cmd/nova-friend ping --wake --to-friends; internal/friend/wakeping.go)
+
+The owner, 2026-10-05: "there is no value in things that are answered just by
+the daemon", and "We need to get away from these one shot shell scripts." The
+ping that matters is the one only the session answers, the wake ping (`ping
+--wake`, the `wake=1` line): the daemon answers at once and pushes the pong line
+in as the session's own turn, and only the session's pong ends it. The loop that
+sent one to a typed list of friends is a verb: `nova-friend ping --as
+<coordinator> --wake --to-friends --every <d> [--within <d>] [--never-wake
+<f,...>] [--server <addr>]`.
+
+Each pass reads the friends table from the sprint server's coordinator view
+(`GET /api/view/coordinator?all=1`: the rows `f:<friend>` with status up, down
+or held, and the seat's holder), so no list of friends is kept anywhere else
+(`WakeTargets`). A friend whose status is not up (held by the coordinator, or
+down), a friend in `--never-wake`, and the coordinator itself are not pinged.
+Each target gets a wake PING with a fresh nonce; the pass then reads the bus log
+until every session's own pong for its nonce is there or `--within` (default
+`Window`) is out. A `daemon-pong` never counts: a friend whose daemon answered
+and whose session did not is deaf. The coordinator, the seat's holder (else
+`--as`), is sent one blocker note `wake: deaf: <f,...>` naming every deaf friend
+once per change of that set (`DeafChange`): the same set on the next pass says
+nothing, a friend added or dropped is a change, and a friend deaf again after
+the set emptied is a change. It prints `WAKE OK every= within= never_wake=`
+once, `WAKE PASS n= pinged= answered= deaf= at=` each pass, `WAKE DEAF friends=
+at=` at each change, `WAKE NOTE` for a table, store or send that failed (the
+pass goes again next time), and `WAKE STOP` at a signal. Without `--every` it is
+one pass. A pass cut by a signal calls no one deaf.
+
+`ping-install --as <coordinator> --every <d>` installs it as the launchd agent
+`com.nova.friend-wake-ping-<as>` (RunAtLoad, KeepAlive, the way `install` runs
+the daemon), and `ping-uninstall` boots it out and removes the plist.
+
+The two shell while-loops this replaces (a routine `ping --to <f>` every 600 s over a typed
+list, and a `ping --wake` loop over a typed list) live on the coordinator's machine, not in this
+repository: the wake loop is this verb; the routine loop has no verb, because nothing it
+proves is wanted, and it is stopped there, not here.
+
+Not done, and why: `serve` (above) is a different loop, the connection's own,
+each second and answered by the daemon; the daemon's "coordinator silent" window
+(`Window`) counts its pings, so deleting it is the owner's decision and is not
+made here. The friends table has no never-wake column yet, so `--never-wake`
+names the friends; a row field is the sprint store's and nova-config's change.
 
 ## Identity
 

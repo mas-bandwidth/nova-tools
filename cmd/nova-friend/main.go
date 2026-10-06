@@ -71,6 +71,7 @@ type world struct {
 	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
 	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
 	launchctl friend.Launchctl
 	now       func() time.Time
@@ -195,6 +196,7 @@ func realWorld() world {
 		finish:   sprintVerb,
 		cards:    sprintAsk,
 		view:     sprintView,
+		friends:  coordinatorFriends,
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
 		settings: friend.OSFS{},
@@ -355,7 +357,9 @@ next only when the turn ends; a card with no RESULT.md after two turns is set as
 turn the provider rate-limits (429, "rate limit reached", "too many requests", "input token limit
 exceeded") keeps its card and pauses new lanes for a backoff (30s doubling to 10m), lowers the live lane
 cap by a quarter and raises it one lane per clean 10m, no hold; three lowerings in an hour are one
-blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. Every
+blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. With a sprint server the daemon also serves the friend's reader row (reader-<friend>): every 10s it asks queue --as reader-<friend> --json,
+begins each asked read up to the row's read slots (row_read_slots=, 2 until the beat says; read slots are in addition to width, never taken by cards and never lent to them), writes <dir>/reads/<card>/{READ.md,BRIEF.md,WORKER-REPORT.txt},
+runs it as a one-shot of the harness (a claude account's model by the read's tier) inside the lane wall, and records read --ok|--broken --finding --usage from the RESULT.md, or read --return --reason --usage when it names no verdict or the provider's usage limit stops it. Every
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
 (row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to
 --dir, --wall-jobs and --config-dir, never to the coordinator's self (--deny-self; a lane wall that
@@ -577,7 +581,7 @@ command, no prompt pattern for the harness, tmux missing or failing).`,
 			},
 			{
 				Name:    "ping",
-				Usage:   "ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--wake] [--redis <addr>] [--dry-run]",
+				Usage:   "ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]",
 				Example: "ping --as ada --to bob --nonce abc123",
 				Effect:  tool.Delivery + ": one PING on the friend's stream, as the coordinator",
 				DryRun:  true,
@@ -586,16 +590,62 @@ session runs; the nonce is six random characters unless --nonce names one. Print
 nonce= id= to=. The daemon answers daemon-pong at once and acks it; the session answers pong at the head of its next turn.
 --wake makes it a wake check (a wake=1 line in the body): the daemon still answers at once, and, the session being free,
 pushes the pong line in as its own turn, so an idle session is asked too; only the session's pong ends it (wait-pong).
---dry-run checks the PING as send checks it and sends nothing.`,
+--dry-run checks the PING as send checks it and sends nothing.
+
+--wake --to-friends is the wake loop (docs/SPEC-FRIEND.md, "The wake ping loop"): it reads the friends table from the sprint
+server (--server) and sends a wake PING to every friend whose status is up, never one held or down, never --as, never one in
+--never-wake; waits up to --within for each session's pong (a daemon-pong never counts); and sends the coordinator (the seat's
+holder, else --as) one blocker note naming the friends whose session did not answer, "wake: deaf: <f,...>", once per change
+of that set. With --every <d> it does this each d until interrupted, one line per pass (WAKE OK pass= pinged= answered=
+deaf=) and one WAKE DEAF friends= at= per change; without it, one pass. ping-install runs that loop as a launchd agent.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the coordinator")
-					f.Required("to", "the friend to ping")
+					f.String("to", "", "the friend to ping (required without --to-friends)")
+					f.Bool("to-friends", false, "ping every friend the friends table holds up: wake pings, with --wake")
+					f.Duration("every", 0, "with --to-friends: pass again each d until interrupted (default: one pass)")
+					f.Duration("within", friend.Window, "with --to-friends: how long each pass waits for the sessions' pongs")
+					f.String("never-wake", "", "with --to-friends: friends never wake-pinged, comma-separated")
+					f.String("server", w.server(), "with --to-friends: the sprint server, host:port, whose coordinator view holds the friends table (default: "+ServerEnv+", else "+DefaultServer+")")
+					f.Check(func(c *tool.Call) { wakeFlagProblems(c) })
 					f.String("nonce", "", "the nonce to carry (default: six random characters)")
 					f.String("since", "", "since when you hold the seat, RFC3339 (default: now)")
 					f.Bool("wake", false, "a wake check: the session is pushed the pong line as its own turn when it is free")
 					redis(f)
 				},
 				Run: w.ping,
+			},
+			{
+				Name:    "ping-install",
+				Usage:   "ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]",
+				Example: "", // writes a launchd agent: the example block has no line a test may run for real
+				Effect:  tool.Delivery + ": a launchd agent that runs ping --wake --to-friends --every, started at login and restarted when it dies",
+				DryRun:  true,
+				Detail: `Writes the agent com.nova.friend-wake-ping-<as> under ~/Library/LaunchAgents and loads it, so running it again replaces
+the agent with the same result; the agent runs: nova-friend ping --as <as> --wake --to-friends --every <d> --within <d> with
+the other flags as given. --dry-run prints the plist path and the commands and writes nothing. ping-uninstall boots it out and
+removes its plist.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator")
+					f.Duration("every", 10*time.Minute, "how often a pass runs")
+					f.Duration("within", friend.Window, "how long each pass waits for the sessions' pongs")
+					f.String("never-wake", "", "friends never wake-pinged, comma-separated")
+					f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+					f.String("launchd-log", "", "launchd's own log (default: ~/Library/Logs/nova-friend-wake-ping-<as>.log)")
+					redis(f)
+				},
+				Run: w.pingInstall,
+			},
+			{
+				Name:    "ping-uninstall",
+				Usage:   "ping-uninstall --as <coordinator> [--dry-run]",
+				Example: "", // removes a launchd agent: no example line
+				Effect:  tool.Delivery + ": boots the wake ping agent out and removes its plist",
+				DryRun:  true,
+				Detail:  `Removes what ping-install wrote; an agent that is not there is fine.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator")
+				},
+				Run: w.pingUninstall,
 			},
 			{
 				Name:    "pong",
@@ -796,6 +846,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width)
 	rowMode, rowWidth := "", 0
+	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
+	rowReadSlots.Store(friend.DefaultReadSlots)
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
@@ -912,6 +964,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 				}
+				if n, ok := friend.ParseReadSlots(answer); err == nil && ok {
+					rowReadSlots.Store(int64(n))
+				}
 				if p, ok := friend.ParseProfile(answer); err == nil && ok {
 					rowProfile.Store(&p)
 				}
@@ -925,6 +980,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return rowMode, rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		Sprint:    w.sprintAsk(server),
+		ReadSlots: func() int { return int(rowReadSlots.Load()) },
+		ReadModel: func(tier string) string {
+			if c.Str("harness") == "claude" {
+				return friend.ReadModels[tier] // a tier with none is the account's own model
+			}
+			return ""
+		},
 		Progress: func(ctx context.Context, cards []friend.Card) error {
 			if w.progress == nil {
 				return nil // a world that sends none (a test's)
@@ -979,6 +1042,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
+}
+
+// sprintAsk is the daemon's Sprint: one verb to the sprint server, what it printed; nil in a
+// world that asks none (a test's), which runs no reads.
+func (w world) sprintAsk(server string) func(context.Context, []string) (string, error) {
+	if w.cards == nil {
+		return nil
+	}
+	return func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }
 }
 
 // held is the daemon's Held: the cards on her row, asked of the sprint server each loop, its
@@ -1440,6 +1512,9 @@ func (w world) pong(c *tool.Call) *tool.Out {
 }
 
 func (w world) ping(c *tool.Call) *tool.Out {
+	if c.Bool("to-friends") {
+		return w.wakeFriends(c)
+	}
 	nonce := c.Str("nonce")
 	if nonce == "" {
 		nonce = w.random()

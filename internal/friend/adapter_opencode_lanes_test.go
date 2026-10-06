@@ -103,3 +103,22 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 	var refused ProviderRefused
 	assert.ErrorAs(t, err, &refused, "a provider refusing the seed is said as such")
 }
+
+// A read is one run in its own session with the model of its tier, no listing read.
+func TestOpenCodeRunsAReadAsOneShotWithTheTiersModel(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var calls [][]string
+	run := func(_ context.Context, d, name string, args []string, _ string) (string, int, error) {
+		calls = append(calls, append([]string{d, name}, args...))
+		return "done\n", 0, nil
+	}
+	o := &OpenCode{Dir: dir, Run: run}
+	lt, err := o.RunRead(context.Background(), "prov/m", "do the read")
+	require.NoError(t, err)
+	assert.Zero(t, lt.Exit)
+	assert.Equal(t, [][]string{{dir, "opencode", "run", "--dir", dir, "--model", "prov/m", "do the read"}}, calls)
+	_, err = o.RunRead(context.Background(), "", "again")
+	require.NoError(t, err)
+	assert.Equal(t, []string{dir, "opencode", "run", "--dir", dir, "again"}, calls[1])
+}
