@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	nfriend "github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -83,8 +84,8 @@ func TestAFriendsDirectoryComesFromHerRowNotASymlink(t *testing.T) {
 	_, errs := sync()
 	note := "NOTE friend=bob has no dir on her nova-config row, so her working directory is " + bobDir + "; run: nova-config friend set bob --dir <her real working directory>\n"
 	assert.Equal(t, note, errs, "bob's fallback is said, amy's dir is not")
-	ta.ok("friend beat amy")
-	ta.ok("friend beat bob")
+	ta.beatUp("amy")
+	ta.beatUp("bob")
 
 	briefs := t.TempDir()
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
@@ -113,6 +114,13 @@ func TestAFriendsDirectoryComesFromHerRowNotASymlink(t *testing.T) {
 	require.NotEmpty(t, wv.Cards)
 	assert.Equal(t, filepath.Join(dir, "inbox", "s1-1.w1", "BRIEF.md"), wv.Cards[0].Brief)
 	assert.Contains(t, wv.Next, dir+"/outbox/s1-1.w1/REPORT.md")
+
+	// friend cards, the brief her daemon writes, names her dir as friend sync's does
+	held, err := nfriend.ParseHeld("amy", ta.ok("friend cards amy --json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, held)
+	assert.Contains(t, held[0].Brief, "Work in "+dir+"/jobs/"+held[0].Job+"/", "the daemon's brief names her real directory")
+	assert.NotContains(t, held[0].Brief, "amy-working", "and never the symlink")
 
 	// sync collects a report from her dir's outbox
 	report := func(job string) {

@@ -105,7 +105,7 @@ var friendCols = []string{"name", "slots", "tiers", "roles", "width", "mode", "c
 
 func friendRow(name string) []driver.Value {
 	at := time.Unix(0, 0).UTC()
-	return []driver.Value{name, int64(2), "flash", "", int64(8), "batch", nil, at, at}
+	return []driver.Value{name, int64(2), "flash", "", int64(8), "batch", nil, nil, at, at}
 }
 
 // TestPgCoverRedact: Redact names the user, host, port and database, and
