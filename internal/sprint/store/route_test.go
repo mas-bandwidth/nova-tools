@@ -153,7 +153,7 @@ func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	h.addReady("s4", 1, briefOf("frontier", "model: anthropic/claude-frontier\ntokens: unmetered\ndeadline: 3600"))
 	res := h.run(DealStep(sprint.DealReq{}))
 	refused := fmt.Sprint(res.Refused)
-	assert.Contains(t, refused, "no enabled route serves tier pro")
+	assert.Contains(t, refused, "no enabled route and no up friend serves tier pro")
 	assert.Contains(t, refused, "a frontier card waits for the coordinator")
 	cards := h.workCards()
 	assert.Contains(t, cards, "s2-1.w1", "the flash card is dealt")

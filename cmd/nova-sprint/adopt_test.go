@@ -69,7 +69,7 @@ func TestAdoptVerbAsksOneJudgmentAndActsOnTheAnswer(t *testing.T) {
 	a := newApp(func(string) string { return "" })
 	adoptStepsOf.Store(a, sprint.AdoptSteps(f))
 	t.Cleanup(func() { adoptStepsOf.Delete(a) })
-	// cmdAdopt, not a.run: the verb table does not name adopt (verbs.go).
+	// cmdAdopt, not a.run: the verb table's adopt is the play (adopt_play.go).
 	run := func(args ...string) (int, string, string) {
 		var out, errs bytes.Buffer
 		code := a.cmdAdopt(append([]string{"--state", state}, args...), &out, &errs)

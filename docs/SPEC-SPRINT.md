@@ -2155,7 +2155,7 @@ and it is the coordinator's decision, receipted.
   a card put on the table makes a new cell, never once a card dealt: the deal
   costs the cards it deals, not those times the member's history
   (`TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut`; the tick gate under
-  load, `TestTheTickGateHoldsUnderLoad`). A card no route serves stays ready: the deal refuses it naming the
+  load, `TestTheTickGateHoldsUnderLoad`). A tier is served by an enabled fleet route or by a friend up (not held, not down) whose row lists it, one check for every verb that validates a tier (`tierServed`; a tier friends alone serve is the friends' deal's, and a rework at it waits ready for them, `TestReworkAcceptsATierAFriendServes`). A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
   (its subject `stream:tier:<tier>`, the primaries listed), never one per
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
@@ -3591,10 +3591,19 @@ maps are a second generated-ledger family, owned by
 `GOFLAGS=-mod=readonly`. A merge whose unmerged paths are only those maps, or
 only those maps plus `internal/docs/catalog.go` where both sides only add
 rows, resolves: the union of the rows, the tip's first, then the map family
-until a run writes nothing, committed as the generality family is. The
+until a run writes nothing, committed as the generality family is. The union
+names a directory once: a card's row for a directory the base or the tip
+already names is dropped, the tip's row kept. The
 resolution is told as a shrink-only union is: one land log line and the card's
 note. A conflicting `catalog.go` line that is not an added row is refused as
-any conflict is.
+any conflict is. A merge git makes without a conflict, where both sides changed
+the catalog or a map since their merge base (each card ran the generator at its
+own base), is regenerated too: a row the card repeats for a directory the tip's
+catalog names is dropped, the map family runs once, and what it wrote is
+amended into the merge commit, told on a land log line and the card's note as
+`map regenerated`; a run that fails or writes outside the family and the
+catalog is undone, and the tree gate judges the merge as git made it
+(`TestTheLanderRegeneratesTheMapWhenStale`, cmd/nova-sprint/land_catalog_test.go).
 
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
@@ -3727,6 +3736,16 @@ paths=<a,b,...>` (`--json`: the batch item's `cleaned`); a clone it cannot resto
 the batch with the step that failed. A clone the caller gives with `--repo-dir` is the
 caller's: it is never cleaned, and a dirty one is refused as before
 (`TestLanderRestoresItsOwnDirtyCacheClone`, cmd/nova-sprint/land_clean_clone_test.go).
+
+One land at a time works in a clone, kept or given. Land takes the clone's land lock
+(`nova-sprint-land.lock` in its git directory, `internal/filelock`) the first time it uses
+the clone and holds it until land ends; a clone another land holds is refused before any
+git changes it, `the clone <dir> is in use by another land (<holder>)`, and its cards stay
+queued for the next land (found 2026-10-06: the server's lander and a second land shared the
+kept clone, and the server's merge found the other's MERGE_HEAD and failed in git). Every
+outcome of a merge leaves the clone with no merge in progress: a merge that stops is
+aborted, a resolution that fails is reset, and a card the checks or the gate refuse is
+reset off the batch branch (`TestTheLandCloneIsCleanAfterAFailedMerge`).
 
 #### protected-bases-pb-b.w2
 
@@ -4715,6 +4734,8 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | selftest land | lands a canned card on a scratch clone with this binary; green on a good binary, red on a broken lander |
+| live | the manifest of this host, read-only: the installed build, the store's function library against it, the dashboard links and every nova launchd agent, stale or not (section 14, "Adopting a build"); `--json` |
+| adopt | `<version\|path> --source <checkout> --inventory <file> --reason <text>`: the seat adopts the build through the tools play, one ADOPT line per step, a half move refused naming the step (section 14, "Adopting a build"); `--limit`, `--dry-run` |
 | server switch | `<binary> [--rollback]`: switches the server binary on disk, keeping the previous binary; with `--rollback`, rolls back if a land fails within the window; `--rollback` alone restores the previous binary |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
 | teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
@@ -5669,6 +5690,110 @@ candidates that error, panic, hang past the deadline and print no plan
 (`TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary`), the store byte for byte unchanged
 by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
 store refused (`TestShadowTickStoreRefusesEveryWrite`).
+
+#### Adopting a build
+
+The seat adopts a build the way the fleet does, through the tools play (`fleet/tools.yml`) and
+nothing else, as a whole or not at all. A build goes live on the coordinator machine in steps
+(the function library on the store, the server's binary, the dashboard's binary, each friend
+daemon), and a step forgotten by hand is an outage that looks like a mystery: the dashboard
+blanked three times, a friend daemon ran a stale copy for a day, and a plist edit did not take
+because `launchctl kickstart -k` keeps the arguments launchd loaded. So every step is the play's.
+
+`nova-sprint live` is the manifest of this host, read-only: the installed nova-sprint (path,
+inode, version, revision), the store's function library against the installed build's
+(`nova-redis fn check`: `match` when the loaded digest is the build's), each `--dashboard` link
+and whether it names the installed nova-sprint, and every `com.nova.*` launchd agent in
+`--agents-dir` (else `NOVA_LAUNCH_AGENTS`, else `~/Library/LaunchAgents`): its plist's program
+arguments, whether launchd holds it (`launchctl print`, `--launchctl` names the binary), its pid,
+its running arguments (`ps`) and its executable's inode (`lsof`). An agent is `fresh` when its
+process runs the bytes now at the binary its plist names (a loaded agent with no process, an
+interval agent between runs, is fresh: launchd execs the path again at its next run),
+`installed` when that binary is the bin directory's own tool (not a copy), `args_took` when the
+arguments launchd runs (the process's, else the loaded job's) are the plist's from the tool on,
+and `stale`, with `why`, when it is not disabled and launchd does not hold it, or it is loaded
+and not all three. A friend daemon (`nova-friend run`) also carries its last beat and its lanes
+with a card in hand (`nova-friend status`) and the `nova-friend install` arguments that write the
+same agent from the installed nova-friend; a server (`nova-sprint run`) its `--listen`
+addresses. Its `processes` are every process of the host that runs a nova tool, each marked
+`holds` when it runs the bin directory's nova-sprint or its nova-swarm as a member (a bare name
+found on PATH, a link followed), and an agent whose process does so `holds` too. `--json` prints
+the manifest as one object.
+
+The seat's adoption is a window, and no old server or member code ever meets the new schema or
+the new library. In order:
+
+1. The candidate's checks pass, before anything changes: on the coordinator machine, in the
+   install play, the new build itself reads the host (its own `nova-sprint live`), plans a tick
+   on the store read-only (its own `nova-sprint server switch --dry-run`) and plans each friend
+   daemon's reinstall (its own `nova-friend install --dry-run` with the flags that daemon's
+   plist records). A refusal here leaves the host as it was. Then what a refusal restores is
+   kept: the store's library digest, and the bin directory's copy of every tool the stage
+   replaces (`nova_seat_rollback_dir/bin`; the nova-redis only when its library is the one on
+   the store).
+2. The window opens only when the install replaces a tool (a stage file whose bytes the bin
+   directory lacks) or the library on the store is not the installed build's. Every loaded nova
+   agent but the friend daemons, and every agent whose process is this bin directory's
+   nova-sprint or a nova-swarm member whatever its plist runs first, is booted out (a member
+   drains on the SIGTERM) and launchd is waited on to hold none of them
+   (`nova_member_stop_timeout` and 30 s more).
+3. ps (through `live`'s `processes`) shows no nova-sprint and no nova-swarm member of the bin
+   directory left, waited on for `nova_seat_quiet` seconds: nothing migrates while one runs (a
+   person's `nova-sprint` command counts; the window refuses with their pids and arguments).
+4. The configuration store is migrated (the candidate's `nova-config migrate`), the library
+   loaded (its `nova-redis fn load`), and the tools installed (its `nova-update release
+   install`, fresh inodes); the build fact is written. Every other machine installs in the
+   install play as before; a store_deployer machine that is not the coordinator migrates and
+   loads in the store play.
+5. The installed `nova-sprint live` says what to start: every agent the window stopped, and
+   every other stale nova agent (one launchd does not hold, one that runs a replaced binary or
+   other arguments than its plist, one whose plist names a copy, which is pointed at the bin
+   directory's tool first). Each is bootstrapped from its plist, never kickstarted; on a failure
+   each is bootstrapped again and the step is refused naming it. Every one of them is then
+   loaded, fresh and in the manifest exactly once (a missing plist, or an agents directory that
+   does not read, is a refusal), and the server answers on each `--listen` address.
+6. The dashboard: each `nova_seat_dashboard_links` link names the installed nova-sprint, and
+   `nova_seat_dashboard_url` returns a summary.
+7. The friends, one at a time (`fleet/seat-friend.yml`): once the stale daemon's lanes have no
+   card in hand (up to its plist's `ExitTimeOut`, else `nova_seat_friend_drain` seconds), it is
+   reinstalled with the installed `nova-friend install` and the flags its plist records; the
+   host's clock read after that reinstall is its cutoff, and it must be in the manifest exactly
+   once, not stale, with a beat strictly newer than its cutoff within `nova_seat_beat_within`
+   seconds.
+
+Each step is checked before the next, a step that does not hold stopping the play with `ADOPT
+REFUSED step=<step>`. A refusal once the window opened, before anything else: stops whatever
+runs again, puts the kept tools of before back (fresh inodes), loads the library of before with
+the kept nova-redis and reads its digest back through `live`, compared with the one recorded
+before the window, and bootstraps the agents the window stopped on those binaries; its refusal
+says each. The migration is the one step never undone: the migrations are not all additions
+(0008, 0011, 0017, 0019 and 0028 drop a column or delete rows), which is why nothing old runs
+while it does, and the old build restarted by a rollback runs on the migrated schema. Friend
+daemons reinstalled before a refusal keep running the new nova-friend until the next run.
+
+One `ADOPT step=<step> host=<host> before=<revision> after=<revision> ...` line per step says
+what changed. A second run of the whole sequence finds nothing to replace and nothing stale,
+opens no window and changes nothing. `--tags seat` runs exactly the seat's part (the candidate
+checks and the seat play). The server's own launchd agent is its loop record's
+(`fleet/loops.yml`): every flag, `--tick-deadline` among them, is the record's argv in
+nova-config, applied by loops.yml with bootout and bootstrap.
+
+`nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text>
+[--limit <host>] [--receipts <dir>] [--dry-run]` runs the tools play for the seat (the
+`coordinator` group, else the one `--limit` machine, with `localhost` for the build and
+`store_deployer` for the library), `<path>` being a built release directory
+(`<release-out>/<version>`). It prints each step's ADOPT line and `ADOPT ADOPTED` (`ADOPT
+WOULD-ADOPT` under `--dry-run`, the play's `--check`, where a machine with no candidate staged or
+built says `ADOPT step=seat ... WOULD-ADOPT`); a play that stops, or ends without the line of
+every step, is refused at exit 1 naming the step, the refusal said verbatim: a half move is
+never reported as an adoption. No flag runs a step alone; `nova-sprint server switch` and
+`nova-redis fn load` stay the steps the play calls. Tested with fakes
+(`TestLiveShowsWhatIsInstalled`, `TestAdoptRunsThePlayAndRefusesAHalfMove`), the play with
+`--syntax-check` and `--check` on the fixtures, and the seat's part of the play run for real, in
+the order an adoption meets it, on a coordinator fixture with its own home, launchctl, store,
+server, member and friend (`TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove`: the old server and
+member stopped before the migration, a refusal after it restarting the old server on the old
+binaries and library).
 
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 

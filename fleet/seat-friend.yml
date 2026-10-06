@@ -1,0 +1,79 @@
+# The seat play's friends step for one friend daemon (fleet/tools.yml, the
+# seat play; docs/SPEC-SPRINT.md, "Adopting a build"), included once per
+# stale friend with seat_friend its manifest entry: its lanes put their cards
+# down (up to its plist's ExitTimeOut, else nova_seat_friend_drain seconds;
+# a daemon still busy then is reinstalled and its lanes finish each card on
+# restart), it is reinstalled with the installed nova-friend install and the
+# flags its plist records, the host's clock after that install is its
+# cutoff, and it must be in the manifest exactly once, not stale, with a
+# beat strictly newer than its cutoff, within nova_seat_beat_within seconds.
+# A beat of the old daemon, during the drain or before the bootout, is never
+# newer than the cutoff.
+- name: "friends: {{ seat_friend.friend }}'s lanes have no card in hand"
+  ansible.builtin.command: { argv: "{{ seat_live }}" }
+  environment: "{{ seat_env }}"
+  register: seat_drained
+  until: >-
+    seat_drained.stdout is match('[{]') and
+    ((seat_drained.stdout | from_json).agents | selectattr('label', 'equalto', seat_friend.label) | map(attribute='lanes') | sum) == 0
+  retries: "{{ (((seat_friend.exit_timeout_s or nova_seat_friend_drain) | int) / 5) | round(0, 'ceil') | int }}"
+  delay: 5
+  changed_when: false
+  # ignored: the wait is bounded; a daemon still busy then is reinstalled, its lanes finish each card on restart
+  failed_when: false
+
+- name: "friends: {{ seat_friend.friend }} is reinstalled with the flags its plist records"
+  ansible.builtin.command:
+    argv: "{{ [nova_bin_dir ~ '/nova-friend'] + seat_friend.install }}"
+  register: seat_reinstalled
+  changed_when: true
+  # ignored: read by the assert below, which names the step
+  failed_when: false
+
+- name: "friends: the reinstall of {{ seat_friend.friend }} ran"
+  ansible.builtin.assert:
+    that: seat_reinstalled.rc == 0
+    fail_msg: >-
+      ADOPT REFUSED step=friends host={{ inventory_hostname }}: nova-friend install failed for {{ seat_friend.friend }}
+      ({{ (seat_reinstalled.stderr or seat_reinstalled.stdout) | default('') | truncate(300) }})
+    quiet: true
+
+- name: "friends: the host's clock after {{ seat_friend.friend }}'s reinstall (its cutoff)"
+  ansible.builtin.command: { argv: "{{ seat_live }}" }
+  environment: "{{ seat_env }}"
+  register: seat_cutoff_read
+  changed_when: false
+
+- name: "friends: {{ seat_friend.friend }}'s cutoff"
+  ansible.builtin.set_fact:
+    seat_cutoff: "{{ (seat_cutoff_read.stdout | from_json).now_unix }}"
+
+- name: "friends: the manifest, until {{ seat_friend.friend }} is there once, not stale, with a beat after its cutoff"
+  ansible.builtin.command: { argv: "{{ seat_live }}" }
+  environment: "{{ seat_env }}"
+  register: seat_beaten
+  until: >-
+    seat_beaten.rc == 0 and seat_beaten.stdout is match('[{]') and
+    ((seat_beaten.stdout | from_json).agents | selectattr('label', 'equalto', seat_friend.label) | rejectattr('stale')
+      | selectattr('beat_unix', 'gt', seat_cutoff | int) | list | length) == 1
+  retries: "{{ (nova_seat_beat_within | int / 5) | round(0, 'ceil') | int }}"
+  delay: 5
+  changed_when: false
+  # ignored: read by the assert below, which names the step
+  failed_when: false
+
+- name: "friends: {{ seat_friend.friend }} is there exactly once, not stale, and beat after its own reinstall"
+  ansible.builtin.assert:
+    that: seat_mine | length == 1 and not seat_mine[0].stale and seat_mine[0].beat_unix > seat_cutoff | int
+    fail_msg: >-
+      ADOPT REFUSED step=friends host={{ inventory_hostname }}: {{ seat_friend.friend }}
+      {{ ('has no plist in ' ~ nova_seat_agents_dir ~ ' after its reinstall') if seat_mine | length == 0
+         else ('is in the manifest ' ~ seat_mine | length ~ ' times') if seat_mine | length > 1
+         else ('is still stale: ' ~ seat_mine[0].why) if seat_mine[0].stale
+         else ('has not beaten since its reinstall within ' ~ nova_seat_beat_within ~ ' s (last beat '
+               ~ (seat_mine[0].beat or 'none') ~ ')') }}; nova-friend status --as {{ seat_friend.friend }} says why
+    quiet: true
+  vars:
+    seat_mine: >-
+      {{ ((seat_beaten.stdout | from_json).agents if (seat_beaten.stdout | default('')) is match('[{]') else [])
+         | selectattr('label', 'equalto', seat_friend.label) | list }}

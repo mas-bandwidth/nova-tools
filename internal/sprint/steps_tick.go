@@ -581,6 +581,11 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// route_rest.go): no card of this tick is drawn on one, and the new rests are written
 	// in its plan
 	s, rests := s.withRests()
+	if s.Friends == nil && len(r.Friends) > 0 {
+		n := *s
+		n.Friends = r.Friends // the friends a tier is served by (tierServed)
+		s = &n
+	}
 	var p Plan
 	due := 0
 	var ready []*Card
@@ -645,7 +650,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		if IsSentinel(c) {
 			continue
 		}
-		if tier, why := s.noRoute(escalating(s, c)); why != "" {
+		if _, tier, why, byFriend := s.routeOf(escalating(s, c), nil, nil); byFriend {
+			continue // no route serves its tier and a friend up does: the friends' deal's, never a machine's (tierServed)
+		} else if why != "" {
 			// no route serves its tier (the tier it escalates to, at its bound below its
 			// ceiling), or its model lines cannot be read (a card admitted before the
 			// lint): one judgment per tier either way

@@ -47,6 +47,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -299,8 +300,10 @@ type lander struct {
 	baseWhy   string
 	// baseNotes is what the pass's re-check of the bases that stopped streams did (baseRecheck)
 	baseNotes []string
-	now       func() time.Time
-	rulesOff  []string
+	// held is each clone's land lock this land holds (hold), released as it ends
+	held     map[string]*filelock.FileLock
+	now      func() time.Time
+	rulesOff []string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -353,6 +356,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	defer l.release()
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -610,6 +614,9 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	b.Dir = dir
 	if l.dry {
 		return l.dryBatch(b, cards)
+	}
+	if why := l.hold(ctx, dir); why != "" {
+		return refuse(why)
 	}
 	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" || l.repoDir == "" && l.merging(ctx, dir) {
 		if err != nil || l.repoDir != "" {
@@ -913,6 +920,9 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 // why it could not.
 func (l *lander) baseTip(ctx context.Context, repo, base string) (sha, why string) {
 	dir, why := l.clone(ctx, repo)
+	if why == "" {
+		why = l.hold(ctx, dir)
+	}
 	if why != "" {
 		return "", why
 	}
@@ -1206,6 +1216,14 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		var card, env string
 		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
+		if card == "" && env == "" && c.resolved == "" {
+			// a plain merge of two sides that each regenerated the map (remap)
+			var remapped string
+			if remapped, env = l.remap(ctx, dir, *c); remapped != "" {
+				c.resolved = remapped
+				l.ledgerLog = append(l.ledgerLog, c.id+": "+remapped)
+			}
+		}
 		if card == "" && env == "" {
 			var repaired string
 			if card, env, repaired = l.checkCard(ctx, dir, stream, *c, before); repaired != "" {
@@ -1496,6 +1514,48 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	}
 	return dir, ""
 }
+
+// hold takes the clone's land lock (landLockName in its git directory) for the rest of
+// this land, once per clone, before a batch or a base check changes its checkout (add's
+// brief lint only fetches into its own refs and reads, and takes none): one land at a time
+// works in a clone, so no merge, reset or
+// branch of another land's lands in the middle of this one's batch (two landers sharing a
+// clone left the server's merge to find the other's MERGE_HEAD, 2026-10-06). A clone
+// another land holds is refused before any git changes it, naming the holder; its cards
+// stay queued for the next land. release lets every lock go as land ends.
+func (l *lander) hold(ctx context.Context, dir string) string {
+	if l.held[dir] != nil {
+		return ""
+	}
+	gitDir, err := l.git(ctx, dir, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "the clone " + dir + " has no git directory: " + firstLine("", err)
+	}
+	lock, err := filelock.TryLock(filepath.Join(gitDir, landLockName), "nova-sprint land")
+	if h, ok := filelock.AsHeldError(err); ok {
+		return "the clone " + dir + " is in use by another land (" + h.Holder.String() + "); nothing was merged, pushed or reported, and its cards stay queued for the next land"
+	}
+	if err != nil {
+		return "the land lock of the clone " + dir + " could not be taken: " + oneline.Err(err)
+	}
+	if l.held == nil {
+		l.held = map[string]*filelock.FileLock{}
+	}
+	l.held[dir] = lock
+	return ""
+}
+
+// release lets go of every clone's land lock this land took (hold).
+func (l *lander) release() {
+	for dir, lock := range l.held {
+		// ignored: an unlock that fails leaves nothing held, the kernel lets go as the process ends
+		_ = lock.Unlock()
+		delete(l.held, dir)
+	}
+}
+
+// landLockName is the land lock's file in a clone's git directory (holdClone).
+const landLockName = "nova-sprint-land.lock"
 
 // merging says a merge is in progress in the clone: a pass cut short between a merge and
 // its commit or abort.
