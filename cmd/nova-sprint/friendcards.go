@@ -561,8 +561,9 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 
 // friendReadText is the BRIEF.md of a friend's frontier read, as friend sync and friend cards
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
-// else the card's), and a deadline two hours on the sprint clock.
-func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
+// else the card's), and a deadline friend_read_deadline (policy.go; two hours by default)
+// on the sprint clock.
+func friendReadText(ctx context.Context, st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
 	branch, head, start := p.WorkBranch, p.Head, ""
 	if c != nil {
 		branch, head = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head"))
@@ -570,7 +571,9 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 	}
 	var deadline time.Time
 	if st.Now != nil {
-		deadline = st.Now().Add(sprint.FriendReadDeadline)
+		// friend_read_deadline, nova-config's (policy.go); a policy that does not read is the default
+		policy, _ := st.Policy(ctx)
+		deadline = st.Now().Add((&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyFriendReadDeadline))
 	}
 	return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
 }
@@ -597,7 +600,7 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		if err := os.MkdirAll(in, 0o755); err != nil {
 			return 0, 0, err
 		}
-		text := friendReadText(st, name, p, c)
+		text := friendReadText(ctx, st, name, p, c)
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			delivered++

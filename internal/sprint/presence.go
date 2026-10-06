@@ -190,8 +190,8 @@ func PresenceStatus(held bool, b Beat, now time.Time) string {
 // never up); else up only on evidence from her own session within its window
 // (FriendEvidence): a wake ping her session answered
 // (the coordinator's friend health --state up, under the current seat
-// generation) under FriendPongWindow old, or a card of hers finished under
-// FriendFinishWindow old; else down. Her beat, whoever sends it, is never
+// generation) under friend_pong_window (FriendPongWindow by default) old, or a card of
+// hers finished under friend_finish_window (FriendFinishWindow) old; else down. Her beat, whoever sends it, is never
 // evidence: a daemon or a loop beating for her says an app is open, not that
 // her session can work. Releasing a hold (friend up) is no evidence either.
 func FriendStatus(f FriendPresence, now time.Time) string {
@@ -213,17 +213,17 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 		return Down, beatSaysDownWhy(f.Beat)
 	}
 	pong := !f.Health.Seen.IsZero() && f.Health.State == Up && f.Health.Generation == f.Generation
-	if age := now.Sub(f.Health.Seen); pong && age >= 0 && age < FriendPongWindow {
+	if age := now.Sub(f.Health.Seen); pong && age >= 0 && age < f.Windows.pong() {
 		return Up, "session pong " + ago(age)
 	}
-	if age := now.Sub(f.Finished); !f.Finished.IsZero() && age >= 0 && age < FriendFinishWindow {
+	if age := now.Sub(f.Finished); !f.Finished.IsZero() && age >= 0 && age < f.Windows.finish() {
 		return Up, "finish " + ago(age)
 	}
-	why := "no session evidence: no wake ping answered by her session within " + FriendPongWindow.String()
+	why := "no session evidence: no wake ping answered by her session within " + f.Windows.pong().String()
 	if pong {
 		why += " (last " + ago(now.Sub(f.Health.Seen)) + ")"
 	}
-	why += ", no card finished within " + FriendFinishWindow.String()
+	why += ", no card finished within " + f.Windows.finish().String()
 	if !f.Finished.IsZero() {
 		why += " (last " + ago(now.Sub(f.Finished)) + ")"
 	}

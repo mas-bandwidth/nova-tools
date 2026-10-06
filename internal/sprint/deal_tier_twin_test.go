@@ -58,7 +58,7 @@ func TestADealtPacketAlwaysNamesItsTier(t *testing.T) {
 	for i, p := range packets {
 		assert.NotEmpty(t, p.Tier, "the packet of %s names a tier", p.Card)
 		tiers[p.Primary], rows[p.Primary] = p.Tier, dealt[i].Row
-		now, _ := sprint.CardTiers(s.Primary(p.Primary))
+		now, _ := sprint.CardTiers(nil, s.Primary(p.Primary))
 		assert.Equal(t, now, p.Tier, "the packet of %s names the tier its card is on", p.Card)
 	}
 	assert.Equal(t, map[string]string{

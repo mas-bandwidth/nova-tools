@@ -105,7 +105,7 @@ func DevBehind(s *Snapshot) (DevLag, bool) {
 			oldest = t
 		}
 	}
-	if len(cards) < PromoteCards && s.Now.Sub(oldest) < PromoteAge {
+	if len(cards) < s.PolicyCount(PolicyPromoteCards) && s.Now.Sub(oldest) < s.PolicyDuration(PolicyPromoteAge) {
 		return DevLag{}, false
 	}
 	d := DevLag{Count: len(cards), Branch: branch}

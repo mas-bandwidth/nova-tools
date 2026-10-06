@@ -51,7 +51,7 @@ func friendCardsOf(ctx context.Context, st *store.Store, name string) ([]friend.
 		h.Tier = cmp.Or(p.Tier, m.Tier, cardhdr.RouteFlash)
 		if p.Kind == "read" {
 			// a read's job is its card id, the path friend sync writes (friendReadOf)
-			h.Job, h.Branch, h.Brief = p.Card, cmp.Or(p.WorkBranch, cards[i].F("branch")), friendReadText(st, name, p, cards[i])
+			h.Job, h.Branch, h.Brief = p.Card, cmp.Or(p.WorkBranch, cards[i].F("branch")), friendReadText(ctx, st, name, p, cards[i])
 		} else {
 			h.Job, h.Brief = friendJobOf(p), friendBrief(name, p)
 		}

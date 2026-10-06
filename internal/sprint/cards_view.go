@@ -28,9 +28,9 @@ type CardRow struct {
 
 // CardTier is the tier the dealer reads on the primary c: the tier its last deal drew
 // (FieldTierNow), a pinned tier or model, else its brief's line 1 (flash when it names none).
-func CardTier(c *Card) string {
+func CardTier(s *Snapshot, c *Card) string {
 	m, _ := cardhdr.ReadModel(c.F("brief"))
-	return cmp.Or(cardTier(c, m), cardhdr.RouteFlash)
+	return cmp.Or(cardTier(s, c, m), cardhdr.RouteFlash)
 }
 
 // CardHolder is the member, or the friend, whose fleet row holds the primary c's working card;
@@ -64,7 +64,7 @@ func CardRows(s *Snapshot, f CardsFilter) []CardRow {
 				if IsSentinel(c) {
 					continue
 				}
-				r := CardRow{ID: c.ID, Stream: stream, Col: string(col), Tier: CardTier(c), Holder: CardHolder(s, c)}
+				r := CardRow{ID: c.ID, Stream: stream, Col: string(col), Tier: CardTier(s, c), Holder: CardHolder(s, c)}
 				if f.Holder == "" || r.Holder == f.Holder {
 					out = append(out, r)
 				}

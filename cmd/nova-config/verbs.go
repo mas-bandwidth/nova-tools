@@ -72,12 +72,13 @@ var kindExamples = []struct{ kind, verb, line string }{
 
 // toolExamples is the worked example of each verb that is not a kind's.
 var toolExamples = map[string]string{
-	"kinds":     "nova-config kinds",
-	"migrate":   "nova-config migrate --file try.json",
-	"status":    "nova-config status --file try.json",
-	"apply":     "nova-config apply --dry-run --redis 127.0.0.1:6379 --file try.json",
-	"inventory": "nova-config inventory --fixture fleet/testdata/inventory-fixture.yml",
-	"version":   "nova-config version",
+	"kinds":       "nova-config kinds",
+	"migrate":     "nova-config migrate --file try.json",
+	"status":      "nova-config status --file try.json",
+	"apply":       "nova-config apply --dry-run --redis 127.0.0.1:6379 --file try.json",
+	"inventory":   "nova-config inventory --fixture fleet/testdata/inventory-fixture.yml",
+	"version":     "nova-config version",
+	"setting set": "nova-config setting set sprint.deal_ahead 3 --as a1 --file try.json",
 }
 
 // verbExtra is the lines a verb's -h prints above its flags: its effect and

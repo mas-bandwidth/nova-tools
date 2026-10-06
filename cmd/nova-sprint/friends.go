@@ -408,7 +408,7 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 		reason = fs.String("reason", "", "why she is held, shown on her row (her model allowance ran out)")
 		until = fs.String("until", "", "when you expect her back, RFC3339, shown on her row")
 	} else {
-		width = fs.String("width", "", fmt.Sprintf("her width: the jobs she works at once; the deal holds her at %d times that, ready and working; 1 to %d (default: as it is; friend sync sets it to her nova-config row's again)", sprint.DealAhead, sprint.MaxWidth))
+		width = fs.String("width", "", fmt.Sprintf("her width: the jobs she works at once; the deal holds her at deal_ahead (%d by default) times that, ready and working; 1 to %d (default: as it is; friend sync sets it to her nova-config row's again)", sprint.DealAhead, sprint.MaxWidth))
 	}
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {

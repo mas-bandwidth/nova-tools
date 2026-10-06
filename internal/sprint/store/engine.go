@@ -454,7 +454,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 	}()
 	var routes RouteSet
-	if step.Routes {
+	// every part of a tick plans with the policy numbers (sprint.Snapshot.Policy), which
+	// ride the tick's one routes read: a part that draws no route takes them alone
+	if step.Routes || step.RouteCache != nil {
 		if routes, err = st.cached(ctx, step.RouteCache); err != nil {
 			return res, err
 		}
@@ -565,6 +567,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		if step.Routes {
 			routes.into(snap)
+		} else {
+			snap.Policy = routes.Bars.Policy
 		}
 		if step.Prices {
 			snap.Routes = priced
@@ -578,7 +582,14 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		if step.Friends {
-			seats, err := st.FriendSeats(ctx, snap.Now)
+			// friend_pong_window and friend_finish_window ride the routes read when the step made one
+			seatsOf := st.FriendSeats
+			if step.Routes || step.RouteCache != nil {
+				seatsOf = func(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
+					return st.seatsOf(ctx, snap, now)
+				}
+			}
+			seats, err := seatsOf(ctx, snap.Now)
 			if err != nil {
 				return res, err
 			}

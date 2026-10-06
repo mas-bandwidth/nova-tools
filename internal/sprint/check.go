@@ -165,7 +165,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 				readers[rc.F("reader")] = true
 			}
 		}
-		if len(readers) < ReadsNeeded(c) {
+		if len(readers) < ReadsNeeded(s, c) {
 			out = append(out, Violation{6, fmt.Sprintf("%s is %s with ok reads at head %s from %d reader(s)", c.ID, c.Col, orDash(c.F("head")), len(readers))})
 		}
 	}
