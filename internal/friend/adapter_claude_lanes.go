@@ -95,7 +95,7 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 	if err != nil {
 		return LaneTurn{}, fmt.Errorf("the card's brief: %w", err)
 	}
-	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", string(brief), "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
+	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", LanePrompt(card, string(brief)), "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
 	out, exit, err := c.Run(ctx, c.Dir, "env", args, "")
 	if c.Out != nil && out != "" {
 		fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))

@@ -990,6 +990,49 @@ Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
 
+## A rework starts in the last worktree (internal/friend/stage.go)
+
+On the night of 2026-10-05 a rework started a fresh lane in a fresh clone: the model re-read the
+repository from nothing and re-derived what the last attempt knew, so one-line fixes (a
+citation, a help line, two doc sentences) took 10 to 20 minute lanes each, and three cards
+needed four or five such lanes. The daemon keeps every job's worktree under `jobs/<job>/repo`
+until a later attempt takes it, so the last worktree of a card is there until it lands, and a
+rework starts in it when it may (`Stager.keep`):
+
+- The packet (`PacketOf`) reads a rework's fix from its brief's `The coordinator asks: <fix>`
+  line, the files the fix names outside the card's PATHS (`sprint.FilesOutsidePaths`, the rule
+  `twin`'s reader), and the head the last attempt pushed (friend sync's start line `Carry the
+  work of attempt <n> onto it yourself: its head, <sha>,`, else a `CARRY:` line).
+- A later attempt with a fix that names no new files keeps the worktree of the attempt before
+  on this friend: the newest job of `<primary>.w<n-1>` under `jobs/` (`PreviousCard`,
+  `lastJob`) whose attempt ended (its `outbox/<job>/REPORT.md` is there), whose origin is the
+  card's repository, with no uncommitted change to a tracked file (an untracked build output
+  is kept with it), and which holds the carried head. The tree is put on the card's new branch
+  at its own HEAD, then moved whole (never copied) to `jobs/<job>/repo`; `JOB.md` says so
+  (`KeptJobText`: the title, `The fix: <fix>`, `The kept checkout: <path> (...)`, the push and
+  the finish), and the stage says `stage: kept the last worktree as jobs/<job>/repo (...)`.
+- The lane is handed the fix first: `nextCard` reads it back from `JOB.md` (`KeptFix`, into
+  `Card.Fix`), a session lane's turn begins `The fix, first: <fix> (...)` (`CardText`, after a
+  pong line), and a one-shot run's prompt is that line, then the brief (`LanePrompt`).
+- When the worktree is gone, the friend differs (the tree is in another friend's working
+  directory, never hers), the fix names a file outside PATHS, the attempt has not ended, or
+  the tree has an uncommitted change, nothing of the old tree is touched and the job is staged
+  afresh: at the carried head when there is one (a mirror fetched within `MirrorFreshFor` is
+  fetched once more for it), else at the base, and `JOB.md` names which (`at the head attempt
+  <n> pushed`).
+
+`TestAReworkReusesTheLastWorktree` pins it with a local repository: three cards worked to an
+end on one friend, one reworked with a fix inside PATHS (its lane opens in the moved tree, the
+build output still there, at attempt 1's head on the new branch, handed the fix first), one
+with a fix naming a file outside PATHS and one with an uncommitted change (both staged afresh
+at the carried head, the old trees left as they were), and another friend's stage (from the
+carried head; with nothing pushed, at the base). The machine is modelled in
+`internal/friend/tla/ReworkWorktree.tla` (`MCReworkWorktree*`, 57 distinct states):
+`KeptOnlyWhenSafe`, `KeptWhenItMay`, `OneJobPerTree`, `KeptLaneHasFixFirst`,
+`FreshFromTheCarriedHead` and `EveryReworkIsHanded`, with four reversed witnesses (`today`:
+every rework staged afresh; `dirty`: a tree with uncommitted changes kept; `copy`: the tree
+linked, not moved; `nofix`: the lane not told the fix first), each breaking its property.
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,

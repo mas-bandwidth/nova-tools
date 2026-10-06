@@ -355,7 +355,9 @@ rule, written here for friends under its own names because #5300 was not on
 dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
 `TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
-offer again.
+offer again. Dealt back to the friend who worked the attempt before, a rework whose fix names
+no file outside its PATHS starts in that attempt's kept worktree, the fix the first line its
+lane is handed (docs/SPEC-FRIEND.md, a rework starts in the last worktree).
 
 **A friend takes her own ready cards** (2026-10-05, 11:20 PM: a friend held
 fourteen cards, six of them ready, and could not take one: `take --as
