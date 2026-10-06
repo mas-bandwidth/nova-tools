@@ -20,7 +20,6 @@ import (
 // ---------------------------------------------------------------- rule 1: every path is a flag
 
 func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	// A complete, valid set of sources sitting under every variable a tool might reach for.
 	bait := mkdir(t, filepath.Join(dir, "bait"))
@@ -1267,7 +1266,6 @@ func TestRule15AMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
 // ---------------------------------------------------------------- rule 16 and 19: sources are read-only, one subprocess
 
 func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
@@ -1372,7 +1370,6 @@ func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
 // and it landed in 2026-09-11.tsv with day_basis=utc. A stamp this tool cannot read is
 // rule 3's business: counted and printed, never skipped silently -- it vanished.
 func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))

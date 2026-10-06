@@ -61,7 +61,6 @@ func fixtureIn(t *testing.T) string {
 var firstRunStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
 func TestTheExampleLinesRun(t *testing.T) {
-	t.Parallel()
 	fixtureIn(t)
 	var banner bytes.Buffer
 	{
@@ -138,7 +137,6 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 // names in order -- and deliberately not by value, so the transcript stays a document
 // instead of becoming a fixture.
 func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
-	t.Parallel()
 	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(doc, "nova-tokens")
 	require.NoError(t, err, err)
@@ -196,7 +194,6 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 // the test moves there rather than rewriting them -- a rewritten path is no
 // longer the line the document promised.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	require.NoError(t, err, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-tokens")
