@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -163,8 +162,7 @@ func TestTheBannerQuickstartAndKernelExamplesMatchOutput(t *testing.T) {
 	self := filepath.Join(scratch, "self")
 	require.NoError(t, os.MkdirAll(filepath.Join(self, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(self, "docs", "SEED-CORE.md"), []byte("# Kernel\n"), 0o644))
-	path, err := onboarding.Elide("the setup's directory", regexp.QuoteMeta(self), "./self")
-	require.NoError(t, err)
+	volatile := []onboarding.Field{{Name: "tmpdir", Doc: "./self", Run: self}}
 	for _, tc := range []struct {
 		command string
 		want    []string
@@ -181,6 +179,6 @@ func TestTheBannerQuickstartAndKernelExamplesMatchOutput(t *testing.T) {
 		args := strings.Fields(strings.ReplaceAll(tc.command, "./self", self))[1:]
 		exit, stdout, stderr := runCheck(t, args...)
 		step := onboarding.Step{Line: "$ " + tc.command, Args: args, Want: tc.want}
-		assert.Empty(t, onboarding.Compare(step, onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}, []onboarding.Norm{path}))
+		assert.Empty(t, onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{{Code: exit, Stdout: stdout, Stderr: stderr}}, volatile))
 	}
 }
