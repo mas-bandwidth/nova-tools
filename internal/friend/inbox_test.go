@@ -230,18 +230,19 @@ func TestHeldFallsBackToTheWorkerView(t *testing.T) {
 	asks, views := 0, 0
 	var askErr error = &Refused{Why: "friend cards refused: the server runs the workers' verbs only"}
 	answer := ""
-	held := HeldVia("ada", func(_ context.Context, argv []string) (string, error) {
+	held := HeldVia("friend-a", func(_ context.Context, argv []string) (string, error) {
 		asks++
-		assert.Equal(t, []string{"friend", "cards", "ada", "--json"}, argv)
+		assert.Equal(t, []string{"friend", "cards", "friend-a", "--json"}, argv)
 		return answer, askErr
 	}, func(context.Context) (string, error) {
 		views++
-		return viewOf("ada", workCard("taken.w2", "working"), workCard("dealt.w3", "ready")), nil
+		return viewOf("friend-a", workCard("taken.w2", "working"), workCard("dealt.w3", "ready")), nil
 	}, func() time.Time { return at })
 
 	row, err := held(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, FromView, row.From)
+	assert.Contains(t, row.Note, "does not serve friend cards (card "+ServedBy+" adds it)", "the refusal is said, naming the card that adds the verb")
 	assert.False(t, row.Reads, "the view lists no reads, so none is retired on it")
 	require.Len(t, row.Cards, 2)
 	assert.Equal(t, HeldCard{Card: "taken.w2", Job: "taken.w2~15", Col: "working", Why: ViewWhy}, row.Cards[0])
@@ -251,12 +252,13 @@ func TestHeldFallsBackToTheWorkerView(t *testing.T) {
 	_, err = held(context.Background())
 	assert.ErrorIs(t, err, ErrNotDue, "the view runs on the server's line: never every loop")
 	at = at.Add(ViewEvery)
-	_, err = held(context.Background())
+	row, err = held(context.Background())
 	require.NoError(t, err)
+	assert.Empty(t, row.Note, "said once a ServedEvery, as friend cards is asked, never once a view")
 	assert.Equal(t, [2]int{1, 2}, [2]int{asks, views}, "friend cards is not asked again inside a ServedEvery")
 
 	// the server comes to serve it: the next ask after ServedEvery is its answer, with briefs
-	askErr, answer = nil, `{"friend":"ada","cards":[{"card":"taken.w2","job":"taken.w2~15","col":"working","brief":"STATUS: nova-sprint card taken.w2\n"}]}`
+	askErr, answer = nil, `{"friend":"friend-a","cards":[{"card":"taken.w2","job":"taken.w2~15","col":"working","brief":"STATUS: nova-sprint card taken.w2\n"}]}`
 	at = t0.Add(ServedEvery)
 	row, err = held(context.Background())
 	require.NoError(t, err)
@@ -274,17 +276,17 @@ func TestHeldFallsBackToTheWorkerView(t *testing.T) {
 // ParseView reads only her own friend view, and only briefs at inbox/<job>/BRIEF.md.
 func TestParseViewRefusesAnotherView(t *testing.T) {
 	t.Parallel()
-	_, err := ParseView("bob", viewOf("ada"))
-	assert.ErrorContains(t, err, `not friend "bob"'s`)
-	_, err = ParseView("ada", strings.Replace(viewOf("ada"), `"kind":"friend"`, `"kind":"member"`, 1))
+	_, err := ParseView("friend-b", viewOf("friend-a"))
+	assert.ErrorContains(t, err, `not friend "friend-b"'s`)
+	_, err = ParseView("friend-a", strings.Replace(viewOf("friend-a"), `"kind":"friend"`, `"kind":"member"`, 1))
 	assert.ErrorContains(t, err, "(member)")
-	_, err = ParseView("ada", strings.Replace(viewOf("ada", workCard("x.w1", "working")), "/BRIEF.md", "/NOTES.md", 1))
+	_, err = ParseView("friend-a", strings.Replace(viewOf("friend-a", workCard("x.w1", "working")), "/BRIEF.md", "/NOTES.md", 1))
 	assert.ErrorContains(t, err, "no inbox/<job>/BRIEF.md")
-	cards, err := ParseView("ada", viewOf("ada"))
+	cards, err := ParseView("friend-a", viewOf("friend-a"))
 	require.NoError(t, err)
 	assert.Empty(t, cards)
 	// a job that climbs out of her inbox is no inbox/<job>/BRIEF.md
-	_, err = ParseView("ada", viewOf("ada", HeldCard{Card: "x.w1", Job: "..", Col: "working"}))
+	_, err = ParseView("friend-a", viewOf("friend-a", HeldCard{Card: "x.w1", Job: "..", Col: "working"}))
 	assert.ErrorContains(t, err, "no inbox/<job>/BRIEF.md")
 }
 
@@ -298,15 +300,15 @@ func TestAViewRowRetiresWorkKeepsReadsAndSaysMissingOnce(t *testing.T) {
 	kept, gone, missing := workCard("kept.w1", "working"), workCard("gone.w1", "working"), workCard("missing.w2", "working")
 	inboxJob(t, dir, kept.Job, kept.Brief)
 	inboxJob(t, dir, gone.Job, gone.Brief)
-	inboxJob(t, dir, "frontier.r1.bob", "WHO: friend bob\n\nread this\n")
+	inboxJob(t, dir, "frontier.r1.friend-b", "WHO: friend friend-b\n\nread this\n")
 	r.d.Held = func(context.Context) (Row, error) {
-		cards, err := ParseView("bob", viewOf("bob", kept, missing))
+		cards, err := ParseView("friend-b", viewOf("friend-b", kept, missing))
 		return Row{Cards: cards, From: FromView}, err
 	}
 	r.run(t, 3)
 	assert.NoDirExists(t, filepath.Join(dir, "inbox", gone.Job))
 	assert.FileExists(t, filepath.Join(dir, RetiredDir, gone.Job, "BRIEF.md"))
-	assert.FileExists(t, filepath.Join(dir, "inbox", "frontier.r1.bob", "BRIEF.md"), "a read is never retired on an answer that lists no reads")
+	assert.FileExists(t, filepath.Join(dir, "inbox", "frontier.r1.friend-b", "BRIEF.md"), "a read is never retired on an answer that lists no reads")
 	assert.NoDirExists(t, filepath.Join(dir, "inbox", missing.Job), "no brief is made up")
 	n := 0
 	for _, l := range r.records {
@@ -318,4 +320,36 @@ func TestAViewRowRetiresWorkKeepsReadsAndSaysMissingOnce(t *testing.T) {
 	s := r.last()
 	assert.Equal(t, [3]int{2, 1, 1}, [3]int{s.Held, s.InboxJobs, s.Missing}, "held=2 (kept, missing), inbox=1 (kept: a read is not counted against a row that lists none), missing=1")
 	assert.Equal(t, FromView, s.HeldFrom)
+}
+
+// A daemon whose server refuses friend cards, with no worker view to fall back on, says so
+// once a minute, naming the card that adds the verb, and writes and retires nothing.
+func TestANotServedServerIsSaidOnceAMinute(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := r.d.Dir
+	c := workCard("kept.w1", "working")
+	inboxJob(t, dir, c.Job, c.Brief)
+	asks := 0
+	r.d.Held = HeldVia("friend-b", func(context.Context, []string) (string, error) {
+		asks++
+		return "", &Refused{Why: "friend cards refused: the server runs the workers' verbs only"}
+	}, nil, func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now })
+	r.run(t, 200)
+	n := 0
+	for _, l := range r.records {
+		if strings.Contains(l, "inbox: the sprint server does not serve friend cards (card "+ServedBy+" adds it)") {
+			n++
+		}
+	}
+	r.mu.Lock()
+	elapsed := r.now.Sub(t0)
+	r.mu.Unlock()
+	require.Greater(t, elapsed, 2*ServedEvery, "the run spans minutes")
+	assert.Equal(t, asks, n, "said each time it is asked: %v", r.records)
+	assert.GreaterOrEqual(t, n, 2)
+	assert.LessOrEqual(t, n, 1+int(elapsed/ServedEvery), "once a minute, never once a loop")
+	assert.FileExists(t, filepath.Join(dir, "inbox", c.Job, "BRIEF.md"))
+	assert.NoDirExists(t, filepath.Join(dir, RetiredDir))
+	assert.Contains(t, r.last().InboxError, ServedBy)
 }

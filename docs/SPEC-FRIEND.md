@@ -674,9 +674,17 @@ The daemon now reconciles her inbox with her row on every loop (`InboxEvery`, th
 second), both ways:
 
 - It asks the sprint server which cards are on her row (`Held`: the worker verb `friend
-  cards <friend> --json`, answered `{"friend":..,"cards":[{"card","job","col","brief"}]}`,
-  each card ready or working on her row with its job, `sprint.StoredID` and `.g<gen>`, and
-  its brief as friend sync renders it).
+  cards <friend> --json`, also served at `GET /api/friend/<friend>/cards`, answered
+  `{"friend":..,"cards":[{"card","job","col","kind","branch","tier","attempt","gen","epoch","brief"}]}`:
+  each card working or ready on her row, whoever put it there (the deal, in batch mode
+  ahead of her width; friend take or friend level from another friend's row), with its
+  job (`friendJobOf`: `sprint.StoredID` and `.g<gen>`; a read's card id), its packet, and
+  its brief as friend sync renders it (`friendBrief`; a read's `friendReadText`). A card
+  taken back from her (withdrawn) is not listed. The server's side is
+  cmd/nova-sprint/friendcards_verb.go; `TestFriendCardsServesEveryHeldCardWithItsPacket`
+  pins it on a twin store end to end: the daemon's write from the answer alone is byte for
+  byte friend sync's file, and a card taken from her and dealt to another friend is
+  retired from her inbox and written to the other's as its `.g3` job).
 - A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
   (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
   first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md
@@ -724,11 +732,11 @@ period), never every loop, and `friend cards` is asked again once a `ServedEvery
 So with no server change, a held card with no brief is seen within 15 s, by count and by a
 log line, where on 2026-10-05 it was seen by no one for 40 minutes.
 
-Owed, outside this card's paths: the server's side, `friend cards <friend>` as a worker verb
-(cmd/nova-sprint serve.go `workerVerb`: her row's ready and working cards with `Packets`,
-each answered with `card`, `job` (`friendJobOf`), `col` and `brief` (`friendBrief`; a read's
-`sprint.FriendReadBrief`)). Until it is served, held cards are counted, retired and said
-missing from the view, and only friend sync writes their briefs.
+A server without the verb (one older than the card daemon-writes-every-taken-card3, which
+adds it) refuses it, and the daemon says so once a `ServedEvery`, each time it asks again,
+naming that card (`inbox: the sprint server does not serve friend cards (card
+daemon-writes-every-taken-card3 adds it) ...`), never once a loop; with no worker view to
+fall back on (`friend.NotServed`) it writes and retires nothing.
 
 ## One-shot lanes (internal/friend/lanes.go)
 

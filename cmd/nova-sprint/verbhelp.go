@@ -68,6 +68,7 @@ var verbEffect = map[string]string{
 	"seat":              "inspection: reads the seat (holder, epoch, generation), writes nothing",
 	"rules":             "inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing",
 	"relink":            "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
+	"friend cards":      "inspection: reads the cards held on the friend's row, their packets and briefs, writes nothing",
 	"friend take":       "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
 	"friend level":      "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",
 	"friend health":     "local write: records the coordinator's observation of the friend in the sprint's store, or removes it with --clear; --dry-run writes nothing",
@@ -209,6 +210,8 @@ func verbProse(name string) string {
 		return friendVerbWords(name)
 	case "friend take":
 		return friendTakeWords
+	case "friend cards":
+		return friendCardsWords
 	case "friend level":
 		return friendLevelWords
 	case "add", "brief":

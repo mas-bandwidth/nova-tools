@@ -31,23 +31,33 @@ import (
 // first writes it, and the other finds it there (docs/SPEC-FRIEND.md, the inbox).
 
 // HeldCard is one card on the friend's row as the server answers it: the card, the job it
-// is delivered as (inbox/<job>), its column (ready or working) and its BRIEF.md whole; Why is,
-// for a card the answer sends no brief for, why not (the worker view's, ParseView).
+// is delivered as (inbox/<job>), its column (ready or working) and its BRIEF.md whole, with
+// its packet (its kind, work or read, the branch it is pushed to, its tier, attempt,
+// generation and epoch); Why is, for a card the answer sends no brief for, why not (the
+// worker view's, ParseView).
 type HeldCard struct {
-	Card  string `json:"card"`
-	Job   string `json:"job"`
-	Col   string `json:"col"`
-	Brief string `json:"brief"`
-	Why   string `json:"-"`
+	Card    string `json:"card"`
+	Job     string `json:"job"`
+	Col     string `json:"col"`
+	Kind    string `json:"kind,omitempty"`
+	Branch  string `json:"branch,omitempty"`
+	Tier    string `json:"tier,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
+	Gen     int    `json:"gen,omitempty"`
+	Epoch   uint64 `json:"epoch"`
+	Brief   string `json:"brief"`
+	Why     string `json:"-"`
 }
 
 // Row is one answer of what is on her row: the cards, whether her reads are among them (a
 // job no card names is retired only when the answer covers its kind: the worker view lists
-// her work cards and none of her reads), and where the answer came from.
+// her work cards and none of her reads), where the answer came from, and Note, a line the
+// daemon says with it ("" for none: the server's refusal of friend cards, once a ServedEvery).
 type Row struct {
 	Cards []HeldCard
 	Reads bool
 	From  string
+	Note  string
 }
 
 // The sources of a Row.
@@ -65,6 +75,18 @@ var ErrNotDue = errors.New("not due")
 type Refused struct{ Why string }
 
 func (r *Refused) Error() string { return r.Why }
+
+// ServedBy is the card that adds friend cards to the sprint server: a daemon whose server
+// refuses the verb names it, so whoever reads the line knows which server change is missing.
+const ServedBy = "daemon-writes-every-taken-card3"
+
+// NotServed is a sprint server that refused friend cards (Refused) where the daemon has no
+// worker view to fall back on; it is said once a ServedEvery, each time the verb is asked again.
+type NotServed struct{ Why string }
+
+func (n *NotServed) Error() string {
+	return "the sprint server does not serve friend cards (card " + ServedBy + " adds it), so no held card's brief is written: " + n.Why
+}
 
 // HeldAnswer is the server's answer to friend cards <friend>: every card on her row, the
 // ready ones dealt behind her working ones and her reads among them.
@@ -266,12 +288,22 @@ func (l *loop) inboxStep(now time.Time) {
 	if errors.Is(err, ErrNotDue) {
 		return
 	}
+	var ns *NotServed
+	if errors.As(err, &ns) {
+		// asked again once a ServedEvery, so said once a minute, never once a loop
+		d.Record(fmt.Sprintf("%s inbox: %s; nothing written or retired until it does", now.UTC().Format(time.RFC3339), oneLine(ns.Error(), 400)))
+		d.status.InboxError = ns.Error()
+		return
+	}
 	if err != nil {
 		if why := err.Error(); why != d.status.InboxError {
 			d.Record(fmt.Sprintf("%s inbox: the server did not say which cards are on her row: %s; nothing written or retired until it does", now.UTC().Format(time.RFC3339), oneLine(why, 300)))
 			d.status.InboxError = why
 		}
 		return
+	}
+	if row.Note != "" {
+		d.Record(fmt.Sprintf("%s inbox: %s", now.UTC().Format(time.RFC3339), oneLine(row.Note, 400)))
 	}
 	keep := map[string]bool{}
 	for _, ln := range l.lanes.lanes {
@@ -378,11 +410,13 @@ func (d *Daemon) heldFrom() ([]string, bool) {
 // delivered as, with no brief: her inbox is counted against it and a job whose work card
 // left is retired, and a held card with no BRIEF.md is said missing and not written. The
 // view is read once a ViewEvery (ErrNotDue between), and friend cards asked again once a
-// ServedEvery; view nil, or an ask the server did not answer, is the ask's error.
+// ServedEvery, each refusal said in the Row's Note; with view nil a refusal is NotServed,
+// once a ServedEvery (ErrNotDue between); an ask the server did not answer is its error.
 func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string, error), view func(ctx context.Context) (string, error), now func() time.Time) func(context.Context) (Row, error) {
 	var refusedAt, viewAt time.Time
 	return func(ctx context.Context) (Row, error) {
 		at := now()
+		note := ""
 		if refusedAt.IsZero() || at.Sub(refusedAt) >= ServedEvery {
 			out, err := ask(ctx, FriendCardsArgv(friend))
 			var refused *Refused
@@ -391,10 +425,17 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 				refusedAt = time.Time{}
 				cards, err := ParseHeld(friend, out)
 				return Row{Cards: cards, Reads: true, From: FromCards}, err
-			case view == nil || !errors.As(err, &refused):
+			case !errors.As(err, &refused):
 				return Row{}, err
 			}
 			refusedAt, viewAt = at, time.Time{}
+			ns := &NotServed{Why: refused.Why}
+			if view == nil {
+				return Row{}, ns
+			}
+			note = ns.Error() + "; her row is read from the worker view, counted and retired"
+		} else if view == nil {
+			return Row{}, ErrNotDue
 		}
 		if !viewAt.IsZero() && at.Sub(viewAt) < ViewEvery {
 			return Row{}, ErrNotDue
@@ -402,10 +443,10 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 		viewAt = at
 		out, err := view(ctx)
 		if err != nil {
-			return Row{}, fmt.Errorf("friend cards is not served, and the worker view did not answer: %w", err)
+			return Row{}, fmt.Errorf("friend cards is not served (card %s adds it), and the worker view did not answer: %w", ServedBy, err)
 		}
 		cards, err := ParseView(friend, out)
-		return Row{Cards: cards, From: FromView}, err
+		return Row{Cards: cards, From: FromView, Note: note}, err
 	}
 }
 

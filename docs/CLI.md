@@ -1054,6 +1054,7 @@ nova-sprint friend sync uninstall [--dir <dir>] [--dry-run]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
+nova-sprint friend cards <friend> [--json]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint friend level
 nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
@@ -1156,7 +1157,10 @@ curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
 ```
 
 The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
-`/api/view/worker?as=<name>`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
+`/api/view/worker?as=<name>`. `nova-sprint friend cards <friend> --json` is every card held on
+a friend's row (working, then ready) with its packet and its `BRIEF.md` as friend sync writes
+it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
+her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
 "Role views".
 
 ### A worker's own view: the dashboard's pull routes
