@@ -765,6 +765,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			}
 		}
 		p.Units = append(p.Units, lp.Units...)
+		// a card re-tiered to a tier its holder does not serve goes back to ready, as
+		// the deal and the level leave it (friend_tier.go)
+		tp := retierTakeBacks(s, r, p.Units)
+		p.Units, p.Refused = append(p.Units, tp.Units...), append(p.Refused, tp.Refused...)
 	}
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
