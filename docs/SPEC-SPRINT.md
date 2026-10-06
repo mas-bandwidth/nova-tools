@@ -2562,10 +2562,10 @@ and it is the coordinator's decision, receipted.
   While STOPPED, beats are accepted and the fleet's cells show the derived
   status, but nothing is dealt; the first tick after `start` applies what
   changed.
-- The status cell shows held, up or down. The load cell shows the highest load
+- The status cell shows adopting, held, up or down. The load cell shows the highest load
   of the last 10 s with one decimal while the beat is fresh, and is empty
   otherwise, never a zero.
-- The fleet table's rows are ordered by status, up first, then held, then
+- The fleet table's rows are ordered by status, up first, then held (adopting with the held), then
   down, and by machine name within each (the owner, 2026-10-01: "Please sort
   the fleet table such that we sort first alphabetically by machine name (as
   is current), then stable sort by status, such that "up" is first, then
@@ -2584,6 +2584,40 @@ A take by selection (`--as` and `--max`) takes the live generation; a finish
 by selection without `--as` is refused. A finish that arrives first moves the card to
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
+
+### Back from down: adopt the latest
+
+The owner, 2026-10-05 ~10:00 AM ET: "when fleet machines come back after a long time
+down, we need to remember to bring them back up and have them adopt latest. Just like
+friends." A member that was down (not held) and beats again is not brought up by the
+presence part at once: with an adopter installed (`sprint.InstallFleetBack`; the
+binary installs the release adopt path for one machine when `NOVA_SPRINT_ADOPT_FLAGS`
+names adopt's flags and it was built with a release stamp), the tick holds it in the
+same plan that sees the beat: its control card's status is `adopting`, it is held by
+the tick (`held`, `held_by=adopt`, reason `adopting <release>: back from down`), and
+`adopt_since` (the episode) and `adopt_to` (the release the coordinator's own machine
+runs) are written. A member held is dealt nothing, and the fleet table's status
+cell shows `adopting`, its own status beside `up`, `held` and `down`
+(`sprint.FleetRowStatus`: `adopting` while the tick holds it to adopt, whatever it
+beats, through a failed adoption too, and never `up`; the table orders it with the
+held). While it is held so, each tick asks the adopter for the episode's adoption:
+
+- none: it is started for that machine alone (`nova-update release adopt` with a
+  machine list of the one machine: a dry run reads the version installed, the adopt,
+  a dry run reads it back), beside the tick. One machine has at most one adoption in
+  flight; a start while one runs, or of an episode that ran, starts nothing.
+- running: nothing.
+- done, and the version read back is `adopt_to`: the hold comes off, the member is
+  up at its row's width, and one happened note goes to the coordinator, `fleet member back`: `<m> is back: <old> -> <new>`. The next level and deal reach it.
+- failed, or the version read back is another: `adopt_failed` is written and the
+  failure is the hold's reason; the deal holds one judgment open (`a member's adoption failed`, subject `member:<m>`, decisions `fleet up <m>`, `wait`) while it
+  stays so, and the tick starts no second adoption. `fleet up <m>` releases it as it
+  is; `hold <m>` makes the hold the coordinator's.
+
+With no adopter, or one that knows no release, presence is as above: a member back
+is up at once. The part is `sprint.FleetBackPresence` (internal/sprint/fleet_back.go),
+the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
+`TestAMachineBackFromDownAdoptsTheLatestBeforeItIsDealt`.
 
 ## 6. The readers
 
@@ -4123,7 +4157,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers), the card is twinned instead (`rule twin`, as `recut --widen`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
 | `widen` | work came back failed, a card reached its bound, or its brief is wrong, where the worker's report is a HOLD that says PATHS and names files outside them; or returned to review by the `conflict` rule on an E12 refusal (files outside its PATHS) at this attempt; on a card in review at a full sha head, not a friend's, a brief defect or a pinned model's | when every file named outside PATHS (`sprint.FilesOutsidePaths`) is adjacent to the change (`sprint.WidenAdjacent`: a test file of a package PATHS name, a file under that package's `testdata/`, a ledger under `internal/ci/testdata/`, a markdown file under `docs/` or an `AGENTS.md` map, or, in a HOLD, a file named with its reason, three words or more after it), the card is twinned (`rule widen`, before `rule rework`; `recut`: `add --replaces`), its brief's `PATHS:` and `SHARED:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the finished head, the twin's `fix` naming the head to start from and the files, one card a tick, and the coordinator gets one happened note, `PATHS widened by rule`, naming each file and why it is adjacent. A HOLD naming a file that is not adjacent stays a judgment, its text prefixed `outside PATHS and not adjacent: <files> (its HOLD): ` once, and neither `failed` nor `bound` reworks it; an E12 refusal naming one is the `conflict` rule's redo, inside its PATHS. A HOLD with a `PATHS-PROPOSED:` line is `paths`'s, one naming a card that has not landed `hold-need`'s, and a reader's finding `read-broken`'s (`TestACardHeldOnlyForAdjacentPathsIsTwinnedWider`, `TestAFileOutsidePathsIsAdjacentByRule`) |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
-| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
+| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops the stream that met it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the one judgment for that base, carrying the error and naming the failing tests; every other stream that meets the base red is refused under that judgment and never stopped. Each land pass re-checks the tip of a base that stopped a stream, and a green tip (`sprint.BaseGreen`, `base_gate_passed`) resumes every stream stopped only on that base's red, the judgment answered by rule (`v11-base-red-auto-resume-now`, below); a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves), the pass re-checks nothing and a stopped stream waits for a mind |
 | `paths` | work came back failed (or at its bound or its attempt cap) and its report proposes PATHS: a `PATHS-PROPOSED:` line (docs/SPEC-CARD-CONTRACT.md section 4), read off its work card's report; checked before the judgment's own rule, so the same brief is never dealt again on the same proposal | no proposed glob SHARED (named on the `PATHS:` or `SHARED:` line of another open card, or on the card's own `SHARED:` line): the card replaced by its twin (`recut`, so dependents need the twin), its id the old one with `-t` (`-t2` to `-t9` after it), its brief every `PATHS:` line widened by the proposed globs it lacked and a `CARRY:` line naming the held attempt's pushed head; the judgment closed with `answered by rule paths: <id> attempt <n> held with PATHS-PROPOSED: <globs>: replaced by <twin>, ...`. A proposed glob SHARED: the judgment stays the one judgment, its text prefixed `paths proposed, shared: a mind's; ...` with the shared globs and the cards that name them and the complete command `nova-sprint add --stream <s> --replaces <id> --before <id> --brief-file <file> [--needs ...] [--held]`, the twin's brief written by the machine at `<jobs>/<id>/<twin>.md` (`NOVA_SPRINT_JOBS`, else `~/nova-sprint/jobs`), once (`paths_proposed` on the primary); the card is dealt nothing more. A proposal that climbs out of the repository, is no glob, or is inside its PATHS already is left, and not dealt again either |
 
 A failure many cards share is the fleet's, not the card's: when `RuleSameFailureCards` (3) or
@@ -4212,6 +4246,33 @@ that base commit. Only when no queued head cures the base is the landing refused
 and in the end stopped as above (`TestALanderLandsTheHeadThatCuresARedBase`,
 `TestARedBaseWithNoCuringHeadIsLeftAsItWas`, internal/sprint/land_cure_test.go;
 `TestTheLanderLandsTheBaseFixFirst`, cmd/nova-sprint/land_go_test.go).
+
+#### v11-base-red-auto-resume-now
+
+The base's health is one fact (the coordinator, 2026-10-04: the base went red for a few
+minutes, every stream that tried to land stopped with a judgment of its own, and once the base
+was fixed eight streams were resumed by hand). The first stream a red base stops carries the
+one judgment for that base: its text names the failing tests (`failing TestX, ...`, read from
+the gate's `--- FAIL:` lines, `sprint.FailingTests`), and the stop keeps the base on the
+stream's control card (`base_gate_base`). Every other stream that meets the same base red while
+that judgment is open is refused under it, its refusals counted, and is never stopped, so it
+raises no judgment of its own and lands at its first pass after the base is green. Both are
+the lander's refusal on a red base (`sprint.LandBaseRefused`, the merge step's count with the
+one judgment); a hand `merge --base-red` stops its stream as it always did. A stopped stream
+gets no land pass of its own, so each land pass first re-checks the tip of every base that
+stopped a stream, even when every stream is stopped (cmd/nova-sprint, land.go, `baseRecheck`:
+the base fetched, the tree gate run once a base, a red tip gated again no sooner than the
+rule's last wait) and prints what it found (`NOTE`, and `base_checks` in `--json`). A green
+tip is its own step (`sprint.BaseGreen`, verb `merge base-green`): every stream stopped on
+that base's red is marked `base_gate_passed=<commit>` for the stop it is in
+(`base_gate_passed_stop`, the stop's `since`; a mark left from an earlier stop is no mark), a
+stream stopped by a hand `merge --base-red` with no base when it is the one named. The tick's
+`base-gate` rule then resumes every marked stream (`TickRuleResume`), clearing the mark, `did`
+and the judgment's answer `answered by rule base-gate: the base <b> passes its tree gate again at <commit>`, in the log. A stream stopped on another base, or for another cause, stays
+stopped; with the rule off nothing is re-checked or resumed.
+`TestStreamsResumeWhenTheBaseGatePassesAgain` (internal/sprint/land_base_test.go, the twin
+store, rule on and off) and `TestALandPassFindsTheBaseGreenAndItsStreamResumesByRule`
+(cmd/nova-sprint/landbase_test.go, a twin repository) drive it.
 
 ## 9. What is always true
 
