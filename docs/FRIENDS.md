@@ -269,4 +269,7 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    (`com.nova.loop.friend-ping-<seat>`) is retired in favour of the friends'
    session proof of life (card fr-session-proof-of-life): `nova-friend` tracks
    presence via nonces answered by each friend's session, so no background ping
-   script is run.
+   script is run. The wake ping to the sessions is the verb `nova-friend ping
+   --wake --to-friends --every <d>` (installed with `ping-install`), which
+   pings every friend the friends table holds up and tells the coordinator
+   which sessions were deaf (docs/SPEC-FRIEND.md, "The wake ping loop").
