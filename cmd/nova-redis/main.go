@@ -44,6 +44,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/redis/go-redis/v9"
 )
@@ -89,6 +90,15 @@ type deps struct {
 	// that answers FUNCTION or ACL, which miniredis does not.
 	fnOpen  func(ctx context.Context, store login) (redis.UniversalClient, func() error, error)
 	aclOpen func(ctx context.Context, store login) (aclServer, func() error, error)
+
+	// The install seams (install.go): the OS a unit is written for, the home it
+	// goes under, this binary's path, the unit's loader, and serve's login reader;
+	// each nil or empty is the real one.
+	goos       string
+	home       func() (string, error)
+	executable func() (string, error)
+	loadUnit   func(goos, op, path string) error
+	readLogin  func(secrets.Login) (secrets.Secret, error)
 }
 
 func realDeps() deps {
@@ -120,7 +130,7 @@ The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_
 first run: the --dry-run line needs no store; spill and recall need a Redis at 127.0.0.1:6379.`,
 		ExitTable: "0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).",
 		Words:     []string{"UNCONFIRMED", "MISSING", "EXPIRED", "UNBOUNDED"},
-		Verbs: []tool.Verb{
+		Verbs: append([]tool.Verb{
 			serveVerb(d),
 			spillVerb(d),
 			recallVerb(d),
@@ -129,7 +139,7 @@ first run: the --dry-run line needs no store; spill and recall need a Redis at 1
 			aclRenderVerb(d),
 			aclCheckVerb(d),
 			aclApplyVerb(d),
-		},
+		}, installVerbs(d)...),
 	}
 }
 

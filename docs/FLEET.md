@@ -172,6 +172,40 @@ bench-a,localhost`): the build in `tools.yml` and the render in `redis.yml`
 run on the machine running the play, and without it they are skipped with "no
 hosts matched".
 
+## The coordinator machine's units, installed by verbs
+
+The plays above install the benches. The coordinator's machine runs nine more units a sprint needs,
+and each is written and loaded by a verb of the tool it runs, never by hand (card
+every-unit-installed-by-a-verb): a launchd agent on macOS and a systemd user unit on Linux, kept alive
+and started again at login, that runs the verb itself by the tool's absolute path, with no
+`nova-secrets exec`, shell or single-instance wrapper around it and no secret in it.
+
+| unit | the verb that installs it | what it runs |
+|---|---|---|
+| the sprint's store | `nova-redis install store` | `nova-redis serve` on 6380, its data in `~/nova-bench/redis/store` |
+| the friends' bus | `nova-redis install bus` | `nova-redis serve` on 6381, its data in `~/nova-bench/redis/bus` |
+| the sprint's server | `nova-sprint install server --listen <address:port>` | `nova-sprint run --listen` |
+| the machine's member | `nova-sprint install member --as <m> --server <address:port>` | `nova-swarm member` |
+| the seat's push loop | `nova-sprint install seat-push` | `nova-sprint inbox --wait --push seat` |
+| the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
+| the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
+| the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
+| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror` (owed: no mirror verb) |
+
+serve writes redis-server's configuration from its flags (binding, port, store directory under the
+bench root, persistence) and reads its password in its own process from the secret its unit names;
+the server, the push loop and the table open the store with the seat login (`nova-sprint seat login`). Two secrets are not read that way yet: the server's decision loop (`run --decide`) reads its
+API key from its environment, and the member hands its children the providers' keys `--pass` names
+from its environment; a unit carries neither, so until those verbs read a login as the store's does,
+the service's environment has to give them. `nova-sprint units --check` names each of the nine installed, missing or different, so a
+machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
+wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
+binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
+verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: nova-swarm has no mirror verb for the unit
+to run, and `units --check` says so rather than telling a stranger to run it. Until that verb
+exists, a mirror refresh is not installed from here. The play's disk-guard row above is the fleet's
+copy of the same pass.
+
 ## A fixture inventory
 
 `nova-config inventory --fixture <file>` reads the rows from a YAML or JSON
