@@ -85,7 +85,7 @@ func (r *fleetPlayRig) playResult(t *testing.T, name string, extra ...string) (s
 	return string(b), err
 }
 
-// TestFleetPlaysPassSyntaxAndCheckOnTheFixture runs the three plays with
+// TestFleetPlaysPassSyntaxAndCheckOnTheFixture runs the plays with
 // --syntax-check, then --check --diff, which renders every template and
 // changes nothing outside the test's own home. It asserts what the
 // renderings say: the build and install a run would make, the directory of
@@ -115,6 +115,15 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	for _, u := range []string{"coordinator", "bench", "ns-table", "ns-friend"} {
 		assert.Contains(t, redis, "ACL SETUSER "+u+" on ")
 	}
+
+	// the backup play on the fixture's store: neither backup loop is a record
+	// yet, so --check names the line that adds each, and writes no settings
+	backup := play("backup.yml", append(check, "-e", "nova_data_backup_dir="+filepath.Join(dir, "backups"), "-e", "nova_data_bus_addr=localhost:6381")...)
+	assert.Contains(t, backup, "BACKUP LOOP data-backup-sprint missing; run: nova-config loop add data-backup-sprint --machine localhost")
+	assert.Contains(t, backup, "BACKUP LOOP data-backup-bus missing; run: nova-config loop add data-backup-bus --machine localhost")
+	assert.Contains(t, backup, "BACKUP config OWED")
+	assert.Contains(t, backup, "loops=0/2 config=owed")
+	assert.Contains(t, backup, `"redis_memory_percent": 75`)
 
 	// Three units already in the place: one this play wrote whose record is
 	// gone (retired), one of another tool's (left, with a NOTE), and one of
