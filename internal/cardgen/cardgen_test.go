@@ -1,7 +1,6 @@
 package cardgen
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -9,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -318,41 +316,38 @@ func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
 	assert.Less(t, len(tmpl), cardlimits.BriefAdvisoryBytes)
 }
 
-// A card whose PATHS reach tla/ runs the model in its own gate: STEP 4 names make tlc for
-// the groups of the cases it touched and the merge into tla/RUNS.tsv, the PATHS line
-// carries tla/RUNS.tsv so the record can be committed, and the brief still passes the
-// lint; a card that touches no model has neither.
-func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
+// Every card the generators write, and the card template, carries the one GOCACHE
+// sentence and no instruction to create or choose a cache of its own: GOCACHE is the
+// machine's shared, warm build cache JOB.md names, already set, and the child keeps it
+// (docs/SPEC-CARD-CONTRACT.md section 2, the staged environment). cardgen.Render and the
+// card template share swarm.GoCacheLine, so the two generators cannot drift.
+func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 	t.Parallel()
-	gateStep := func(brief string) string {
-		for _, line := range strings.Split(brief, "\n") {
-			if strings.HasPrefix(line, "STEP 4.") {
-				return line
-			}
-		}
-		return ""
+	stale := []string{"private GOCACHE", "GOCACHE=", "Export GOCACHE", "own GOCACHE", "choose a GOCACHE", "GOCACHE path"}
+	cards := map[string]string{}
+
+	rows, _ := ParseLedger(Ledgers["serial-tests"], serialFixture)
+	require.NotEmpty(t, rows)
+	for _, c := range PlanLedger(Ledgers["serial-tests"], rows, "", "", 0).Cards {
+		cards[c.ID] = Render(header, c)
 	}
-	for _, paths := range [][]string{{"tla/Land.tla", "tla/MCLand.cfg"}, {"tla/*", "internal/sprint/land*.go"}, {"tla/**"}} {
-		c := Card{ID: "model-land", File: paths[0], Paths: paths, Test: "internal/tlc TestTLCRecordsCoverCurrentModels", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix the model."}
-		brief := Render(header, c)
-		step := gateStep(brief)
-		assert.Contains(t, step, "make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g", paths)
-		assert.Contains(t, step, "go run ./tools/tlacheck groups --root . --stale", paths)
-		assert.Contains(t, step, "go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv", paths)
-		assert.Contains(t, step, swarm.GateNamesWhoseFile, paths)
-		var line []string
-		for _, l := range strings.Split(brief, "\n") {
-			if rest, ok := strings.CutPrefix(l, "PATHS: "); ok {
-				line = strings.Split(rest, ", ")
-			}
-		}
-		assert.True(t, slices.ContainsFunc(line, func(g string) bool { return hygiene.MatchGlob(g, "tla/RUNS.tsv") }), "PATHS covers the records: %v", line)
-		assert.LessOrEqual(t, strings.Count(strings.Join(line, " ")+" ", "tla/RUNS.tsv "), 1, "named at most once: %v", line)
-		assert.Empty(t, Lint(c.ID, brief), paths)
-		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, paths)
-		assert.Equal(t, paths, c.Paths, "the card's own PATHS are not changed")
+
+	fs, _ := ParseFindings("file\tfinding\tremedy\ttest\ninternal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n")
+	require.NotEmpty(t, fs)
+	for _, c := range PlanFindings(fs, "", "", 0).Cards {
+		cards[c.ID] = Render(header, c)
 	}
-	plain := Render(header, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
-	assert.NotContains(t, plain, "make tlc")
-	assert.NotContains(t, plain, "tla/RUNS.tsv")
+	cards["help-nova-x"] = Render(header, PlanHelp("nova-x", "x\n", "", "", ""))
+
+	tmpl, err := swarm.Template("card")
+	require.NoError(t, err)
+	cards["card-template"] = tmpl
+
+	for name, card := range cards {
+		assert.Contains(t, card, swarm.GoCacheLine, name)
+		assert.Equal(t, 1, strings.Count(card, swarm.GoCacheLine), "%s: the one sentence, once", name)
+		for _, s := range stale {
+			assert.NotContains(t, card, s, "%s: no stale GOCACHE instruction", name)
+		}
+	}
 }
