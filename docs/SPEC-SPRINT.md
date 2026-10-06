@@ -224,6 +224,33 @@ built yet, outside this card's paths: `friend beat` taking `--paced` and `--wind
 record and `where --json` carrying them onto her row, and the row's `pacing` setting in
 nova-config printed on the beat's answer as `row_pacing=<percent>`.
 
+**A friend back up** (the owner, 2026-10-05 ~9:35 AM ET: "Just like you notice that
+friends are down, you should notice they are back up automatically."; a friend held
+`out of credit` stayed held after her plan had credit again, and friends read down after
+a usage limit whose reset was known). A hold or a beat's down word carries its cause and,
+when known, when it ends (`sprint.HoldCause`): `out of credit` (a reason naming credit or
+funds), `usage limit` (a reason naming a limit), `deaf`, or any hold with `--until` (its
+reason, else `the hold until <time>`); a hold by hand, with no `--until` and no such
+reason (`stalled`, `idle`, none), has no cause, and the machine never releases it. The
+tick's read of the friends (`store.bringBack`, before its deal and level read them; a
+shadow tick's read-only store skips it) probes each friend in an episode with a cause
+(`sprint.FriendHold`): a wake to her session (the store's `WakeFriend`, rung 0, best
+effort) at the known end, else `FriendBackFirst` (5 minutes) after the hold, then each
+wait double the last to `FriendBackMax` (an hour), the count and the last wake on her
+roster entry. The probe passes on her session's own evidence after the last wake, so
+after the hold began and after its end (a wake ping her session answered, `friend health --state up` under the
+seat's generation, or a card of hers finished; her daemon's pong and her beat are
+none), in its window by the friends' rule, while no beat of hers says down until a time
+not yet reached (her runs still refusing: for out of credit, her next run not refusing
+for funds). A probe that passes is her return: one happened note to the coordinator,
+`<friend> is back up: <cause> ended` (`NFriendBack`, a step whose operation id names
+the episode, so a retry after a lost roster write tells no one twice), then the hold
+released at her row's width (the roster's, nova-config's by friend sync), so the same
+tick deals and levels her queue. A beat's down word whose end has passed stands until
+her session gives evidence after it; then it no longer keeps her down
+(`sprint.FriendBackPresence`, read by every status of hers), and that return is told
+once too. `TestAFriendHeldForACauseThatEndedIsBroughtBackUp`.
+
 **A friend's health** (2026-10-04, with the author of the coordinator's
 daemon, nova-friend: "the coordinate daemon is the keepalive SERVER. The
 existing sprint server is the authority/table service"). The coordinator's
@@ -286,7 +313,8 @@ a new seat, and no fallback to her beat once observed), and for every finer
 word the row keeps (`asleep` is the daemon's, shown as `down`). The first
 valid observation makes her `up` at once. Her own `friend beat` stays what it
 is, the friend's own beat, and it decides nothing, observed or not. No observation holds a friend: `held` is `friend
-down` by the seat alone, lifted by `friend up`. The model is
+down` by the seat alone, lifted by `friend up` (or by the machine, for a cause that
+ended: A friend back up, above). The model is
 `tla/SeatHealth.tla` (six reversed witnesses); the tests
 `TestAProofDatedAfterTheServersClockIsRefused`,
 `TestHealthIsFencedBySeatHolderAndGeneration`,
