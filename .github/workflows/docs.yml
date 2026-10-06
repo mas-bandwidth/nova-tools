@@ -1,0 +1,74 @@
+# Docs CI: the documentation gates, on every change that touches the docs.
+#
+# Why this exists: docs break quietly. The guards that read them live in
+# internal/docs — the specs, the maps, the transcripts, the glossaries, the command
+# reference — and the sharded test job in ci.yml runs a package's tests when a Go
+# package changed. A pull request that edits only markdown, a tool's README or a
+# verb's help text selects no package that reads it, so a broken relative link, a
+# reference line that no longer names a flag the tool has, and a retired word in a
+# living page can all land green. This workflow is the door that runs instead: the
+# same `make docs-check` a worker runs by hand, on every change that touches docs.
+#
+# THE GATE IS THE MAKEFILE TARGET, not a line written here: the Makefile is the one
+# entry for build, test and lint (docs/STANDARD.md rule 6), so a flag tightened
+# there is tightened in this leg too, and this file holds no test command of its
+# own. internal/ci's TestDocsWorkflowRunsTheDocsGatesOnEveryDocsChange reads both
+# sides of that contract — the workflow must run the target, and the target must run
+# the internal/docs tests, the generated-CLI check, the terminology lint and the
+# link check over the tree.
+#
+# ONE COMMAND PER STEP, NO SHELL: every step below is either an action or a single
+# `make` command. The owner's rule of 2026-10-04 is that nothing that ships carries
+# bash (docs/SPEC-CI.md, `no-shell-ships`), and a docs gate is the last place a
+# loop, a pipe or an `if` should hide: the logic of a gate lives in a Go tool or a
+# test, and a step only names it.
+#
+# THE BUDGET, MEASURED: `make docs-check` is 16.6 s cold on a Linux bench with an
+# empty build cache (nice 10, GOMAXPROCS=4) and 1.7 s warm, against a job cap of the
+# two minutes ci.yml's legs get (internal/ci: TestEveryCIJobIsCappedAtTwoMinutes).
+#
+# WHY A HOSTED RUNNER: the four gates read markdown and run tests that need no
+# store, no server and no bench, so this leg costs a throwaway VM and none of the
+# self-hosted minutes the test fan-out waits for. It also means a pull request from
+# a fork runs its own docs on a machine that is not ours, with no head-repo guard:
+# the self-hosted jobs in ci.yml skip a fork because untrusted code must not run on
+# the fleet's machines, and here there is no reason it ever would. Go setup and
+# caching follow ci.yml's hosted legs: setup-go reads the toolchain from go.mod and
+# caches the build and module caches, which a persistent self-hosted runner keeps on
+# disk anyway.
+
+name: docs
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+  push:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  # A pull request's newest head supersedes its older runs; a push keys on its ref.
+  group: docs-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: the docs gates
+        run: make docs-check

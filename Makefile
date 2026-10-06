@@ -400,6 +400,41 @@ compile-lisp:
 	@if [ -e lisp ]; then echo "compile-lisp: lisp/ exists and no compile step names it; write one" >&2; exit 1; fi
 	@echo "compile-lisp: nothing to compile: lisp/ holds no system (the old nova-work kernel lives in the nova-work-old repository)"
 
+# tdocs-docs-ci — THE DOCUMENTATION GATES.
+#
+# Docs break quietly. The guards that read them live in internal/docs, and the
+# sharded test job runs a package's tests only when a Go package changed, so an edit
+# to a markdown file or to a verb's help text can leave a broken link, a stale
+# command reference or a retired word in the tree with nothing saying NO.
+# .github/workflows/docs.yml runs this target on every pull request and every push
+# that touches docs/**, **/README.md, cmd/*/verbhelp.go or tools/clidoc/**.
+#
+# Four gates, one command of a Go tool each, no shell: the internal/docs tests, the
+# command reference checked against what the tools print, the terminology lint, and
+# nova-check links over the tree. internal/ci's
+# TestDocsWorkflowRunsTheDocsGatesOnEveryDocsChange reads this target and that
+# workflow and refuses a gate dropped from either, or a step carrying shell control
+# flow (the owner's rule of 2026-10-04, no bash in anything that ships;
+# docs/SPEC-CI.md, `no-shell-ships`).
+#
+# DOCS_TIMEOUT is this target's `go test -timeout`, under the two-minute CL cap
+# (internal/ci: TestEveryMakeTimeoutIsUnderTheJobCap). The four commands measure
+# 16.6 s cold on a Linux bench with an empty build cache (nice 10, GOMAXPROCS=4) and
+# 1.7 s warm, so the ceiling is a hang detector and never the budget.
+#
+# The link check takes the tree root absolute. nova-check links resolves --dir
+# through filepath.EvalSymlinks and compares it to each resolved target
+# (internal/check/links.go, resolveRoot): a relative root comes back unresolved, so
+# every relative link in the tree reads as an escape from it, and a gate that always
+# says NO is a gate nobody runs.
+DOCS_TIMEOUT ?= 110s
+.PHONY: docs-check
+docs-check:
+	$(GO) test -count=1 -timeout $(DOCS_TIMEOUT) ./internal/docs
+	$(GO) test -count=1 -timeout $(DOCS_TIMEOUT) -run 'TestCLIReference|TestTheCLIReference' ./internal/docs
+	$(GO) test -count=1 -timeout $(DOCS_TIMEOUT) -run 'TestRetiredWordsAppearOnlyInRecords|TestGlossariesDefineEveryTermWithItsSection' ./internal/docs
+	$(GO) run ./cmd/nova-check links --dir "$(CURDIR)"
+
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
 # job, the friend sequences and the lisp tier (test-lisp; nothing to test while
 # nova-work is parked).
