@@ -184,7 +184,8 @@ func (b *Bus) Heard(ctx context.Context, names ...string) error {
 // Hearing is st with the push gate in front of it: what nova-bus opens, so
 // send and recv refuse a name nothing proven can hear (SPEC-BUS.md,
 // bus-requires-inbox-push-proof). A message (AddAll with streams) is refused
-// unless its sender and every recipient are heard at its at, the store's
+// (AddOnce too, but a retry whose token has a record answers it, writing
+// nothing) unless its sender and every recipient are heard at its at, the store's
 // time Send stamped it with, after Send has named the message's own
 // problems; a recv (EnsureGroup, the recipient's group) is refused unless
 // the recipient is heard at the store's time of the roster it was checked
@@ -223,22 +224,45 @@ func (h *hearing) Members(ctx context.Context) ([]string, []string, time.Time, e
 }
 
 func (h *hearing) AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error {
-	if len(streams) > 0 {
-		at, err := time.Parse(time.RFC3339, fields["at"])
-		if err != nil {
-			h.mu.Lock()
-			at = h.now // a message with no at is judged at the last time the store gave
-			h.mu.Unlock()
-		}
-		problems, err := deaf(ctx, h.Store, at, slices.Concat([]string{fields["from"]}, list(fields["to"]), list(fields["cc"]))...)
-		if err != nil {
-			return err
-		}
-		if len(problems) > 0 {
-			return &Refusal{problems}
-		}
+	if err := h.gate(ctx, streams, fields); err != nil {
+		return err
 	}
 	return h.Store.AddAll(ctx, streams, fields, marks...)
+}
+
+// AddOnce is gated as AddAll, but for a retry: a token whose record is there
+// writes nothing, so its answer is the original whoever is deaf now (one GET
+// more, only when the gate refuses).
+func (h *hearing) AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (string, bool, error) {
+	if err := h.gate(ctx, streams, fields); err != nil {
+		if prior, found, gerr := h.Store.Sent(ctx, key); gerr == nil && found {
+			return prior, true, nil
+		}
+		return "", false, err
+	}
+	return h.Store.AddOnce(ctx, key, record, keep, streams, fields, marks...)
+}
+
+// gate refuses a message (a write with streams) whose sender or a recipient
+// is not heard at its at.
+func (h *hearing) gate(ctx context.Context, streams []string, fields map[string]string) error {
+	if len(streams) == 0 {
+		return nil
+	}
+	at, err := time.Parse(time.RFC3339, fields["at"])
+	if err != nil {
+		h.mu.Lock()
+		at = h.now // a message with no at is judged at the last time the store gave
+		h.mu.Unlock()
+	}
+	problems, err := deaf(ctx, h.Store, at, slices.Concat([]string{fields["from"]}, list(fields["to"]), list(fields["cc"]))...)
+	if err != nil {
+		return err
+	}
+	if len(problems) > 0 {
+		return &Refusal{problems}
+	}
+	return nil
 }
 
 func (h *hearing) EnsureGroup(ctx context.Context, stream, group string) error {
