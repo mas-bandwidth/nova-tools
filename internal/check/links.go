@@ -293,11 +293,12 @@ func extractLinkTargets(line string) []string {
 		return nil
 	}
 	var targets []string
+	match := matchAllBrackets(line)
 	for i := 0; i < len(line); i++ {
 		if line[i] != '[' {
 			continue
 		}
-		textEnd := matchBrackets(line, i)
+		textEnd := match[i]
 		if textEnd < 0 || textEnd+1 >= len(line) || line[textEnd+1] != '(' {
 			continue
 		}
@@ -310,22 +311,27 @@ func extractLinkTargets(line string) []string {
 	return targets
 }
 
-// matchBrackets returns the index of the ']' closing the '[' at open,
-// tracking nesting, or -1 if it never closes on this line.
-func matchBrackets(line string, open int) int {
-	depth := 0
-	for i := open; i < len(line); i++ {
+// matchAllBrackets returns, for every '[' in line, the index of the ']'
+// closing it (tracking nesting), or -1 if it never closes on this line; the
+// entries at other indexes are unused. One pass with a stack of open
+// indexes, so a line of N unclosed '[' costs O(N) rather than a scan to the
+// end of the line per bracket (security#77 finding 5).
+func matchAllBrackets(line string) []int {
+	match := make([]int, len(line))
+	var open []int
+	for i := 0; i < len(line); i++ {
 		switch line[i] {
 		case '[':
-			depth++
+			match[i] = -1
+			open = append(open, i)
 		case ']':
-			depth--
-			if depth == 0 {
-				return i
+			if n := len(open); n > 0 {
+				match[open[n-1]] = i
+				open = open[:n-1]
 			}
 		}
 	}
-	return -1
+	return match
 }
 
 // parseDestination parses a parenthesized link destination at the start of

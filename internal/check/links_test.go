@@ -741,3 +741,41 @@ func TestLinksReportsATargetReachedThroughADirectorySymlinkOutOfTheTreeWhenRootI
 		assert.Equal(t, expectedReason, b.Reason)
 	}
 }
+
+// TestExtractLinkTargetsIsLinearOnALineOfOpenBrackets pins security#77
+// finding 5: a line of unclosed '[' must cost one pass, not one scan to the
+// end of the line per bracket. No clock: the quadratic scan runs for tens of
+// minutes and hits the test timeout.
+func TestExtractLinkTargetsIsLinearOnALineOfOpenBrackets(t *testing.T) {
+	t.Parallel()
+
+	assert.Empty(t, extractLinkTargets(strings.Repeat("[", 4_000_000)))
+}
+
+// TestExtractLinkTargetsBracketNesting pins that the one-pass bracket match
+// finds the same targets the per-bracket scan did.
+func TestExtractLinkTargetsBracketNesting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		line string
+		want []string
+	}{
+		{"plain", "[a](a.md)", []string{"a.md"}},
+		{"badge, outer and inner", "[![b](img.png)](t.md)", []string{"t.md", "img.png"}},
+		{"unclosed before link", "[[a](a.md)", []string{"a.md"}},
+		{"unclosed after link", "[a](a.md) [", []string{"a.md"}},
+		{"stray close before link", "] [a](a.md)", []string{"a.md"}},
+		{"nested unclosed outer", "[x [y](y.md)", []string{"y.md"}},
+		{"nested closed, no paren", "[[a]] (a.md)", nil},
+		{"only open brackets", "[[[[", nil},
+		{"only close brackets", "]]]]", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, extractLinkTargets(tt.line))
+		})
+	}
+}
