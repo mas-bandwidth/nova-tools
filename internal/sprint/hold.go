@@ -11,7 +11,8 @@ import (
 // stream. A hold takes no new cards; what is dealt and not begun is handed back now
 // (a member's ready cards dealt round the fleet, a reader's reads asked and not begun
 // asked of another, a stream's ready work cards withdrawn); what is begun finishes, or
-// with --return is handed back now too. The status reads held, the reason beside it,
+// with --return is handed back now too. A held friend keeps no card, begun or not
+// (FriendTake with Hold: her started ones carry their pushed head to the next taker). The status reads held, the reason beside it,
 // and the hold is a line of the log. The member's and the stream's hold live on their
 // control cards; the reader's and the friend's, as their presence does, in their
 // records outside the tables (store/readers.go, store/friends.go), which the store
@@ -54,6 +55,11 @@ type HoldReq struct {
 	Friends []string `json:",omitempty"`
 	// Alive, with Release, is the members whose beat is alive now: one comes up at once.
 	Alive []string `json:",omitempty"`
+	// Started is the work cards the friends held have started, as friend down reads them
+	// (a push on the branch at its tip, her beat naming it running), each with its why: the
+	// hold takes them too, and a push's head is carried (FriendTake). It is read state, so
+	// no part of the step's arguments.
+	Started map[string]string `json:"-"`
 }
 
 // HoldTarget is a name of a hold and what it names.
@@ -164,9 +170,9 @@ func HoldNames(s *Snapshot, r HoldReq) Plan {
 			var rp Plan
 			rp, line = returnReads(s, t.Name, r.Who)
 			add(rp)
-		case t.Kind == HoldFriend && r.Return && !r.Release:
+		case t.Kind == HoldFriend && !r.Release:
 			var fp Plan
-			fp, line = returnFriendCards(s, t.Name, r.Who)
+			fp, line = holdFriendCards(s, t.Name, r)
 			add(fp)
 		}
 		p.Notes = append(p.Notes, holdNote(s, t, r, line))
@@ -329,21 +335,27 @@ func readTakerUp(s *Snapshot, c *Card, reader string) bool {
 	return false
 }
 
-// returnFriendCards is a friend's hold with --return: the cards she holds, working on
-// her row, withdrawn, each primary ready again for the tick to deal to a friend up
-// (docs/SPEC-SPRINT.md section 11, hold).
-func returnFriendCards(s *Snapshot, friend, who string) (Plan, string) {
-	var p Plan
-	row := FriendRow(friend)
-	var back []string
-	for _, col := range []string{Ready, Working} {
-		for _, c := range s.Fleet.Cell(row, col) {
-			p.Units = append(p.Units, withdrawCard(s, c, col == Working, NWithdrawn, who, "friend "+friend+" is held"))
-			back = append(back, c.ID)
+// holdFriendCards is a friend's hold, with --return or without: held means no cards
+// (the owner, 2026-10-04, on a held friend still showing two working cards: "nonono"),
+// so every card on her row, ready or working, started or not, is taken back as friend
+// down takes it (FriendTake with Hold), each primary ready again for the tick to deal to
+// a friend up, a started one with its pushed head carried (docs/SPEC-SPRINT.md sections 1
+// and 11, hold).
+func holdFriendCards(s *Snapshot, friend string, r HoldReq) (Plan, string) {
+	p := FriendTake(s, FriendTakeReq{Friend: friend, All: true, Hold: true, Started: r.Started, Who: r.Who})
+	var back, carried []string
+	for _, u := range p.Units {
+		back = append(back, u.Key)
+		if PushedTip(r.Started[u.Key]) != "" {
+			carried = append(carried, u.Key)
 		}
 	}
 	if len(back) == 0 {
 		return p, ""
 	}
-	return p, fmt.Sprintf("withdrew %d: %s", len(back), Preview(back, ","))
+	line := fmt.Sprintf("withdrew %d: %s", len(back), Preview(back, ","))
+	if len(carried) > 0 {
+		line += fmt.Sprintf("; carried the pushed head of %d: %s", len(carried), Preview(carried, ","))
+	}
+	return p, line
 }

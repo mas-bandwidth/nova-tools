@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -19,8 +21,10 @@ a name held takes no new cards; what is dealt and not begun is handed back now
 (a member's ready cards dealt round the fleet, a reader's reads asked and not
 begun asked of another, a stream's ready work cards withdrawn); what is begun
 finishes, or with --return is handed back now too (a member's working cards
-dealt round the fleet, a reader's reads begun asked of another, a friend's and
-a stream's working cards withdrawn to ready). Its status reads held, the reason
+dealt round the fleet, a reader's reads begun asked of another, a stream's
+working cards withdrawn to ready). A held friend keeps no card, with --return
+or without: every card of hers, started or not, goes back to ready, and a
+started one with a push carries its pushed head to the next taker. Its status reads held, the reason
 beside it (where --json --cards: holds; handover), and the hold is a line
 of the log.
 unhold <name>... [--reason <text>] releases it: a member that beats is up at
@@ -39,7 +43,7 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	reason := fs.String("reason", "", "why, in words: shown beside the held status and kept in the log; a hold wants one")
 	ret := false
 	if !release {
-		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a friend's and a stream's working cards withdrawn to ready (default: what is begun finishes)")
+		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a stream's working cards withdrawn to ready (default: what is begun finishes; a held friend keeps no card either way)")
 	}
 	dry := fs.Bool("dry-run", false, "check the names and the reason, print what would be held or released, and write nothing")
 	pos, err := parse(fs, args)
@@ -82,6 +86,23 @@ func (a *app) runHold(verbName, stepVerb string, c common, st *store.Store, r sp
 	r, err := st.HoldReqOf(ctx, r)
 	if err != nil {
 		return a.readFailed(verbName, err, stderr)
+	}
+	// a held friend keeps no card: her started ones are read as friend down reads them, so
+	// the hold takes them too and carries each push's head to the next taker
+	if !r.Release {
+		for _, n := range r.Names {
+			if !slices.Contains(r.Friends, n) || (r.Kind != "" && r.Kind != sprint.HoldFriend) {
+				continue
+			}
+			started, err := a.friendStarted(ctx, st, n)
+			if err != nil {
+				return a.readFailed(verbName, err, stderr)
+			}
+			if r.Started == nil {
+				r.Started = map[string]string{}
+			}
+			maps.Copy(r.Started, started)
+		}
 	}
 	step := store.HoldStep(r)
 	if stepVerb != "" {

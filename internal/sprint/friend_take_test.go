@@ -97,7 +97,7 @@ func TestTheHoldOfAFriendWithdrawsEveryCardStartedOrNot(t *testing.T) {
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
 		wc := w.s.Fleet.Card(id)
 		assert.Equal(t, Withdrawn, wc.Col, "%s: a held friend keeps no card, started or not", id)
-		assert.Equal(t, "taken back by the hold of friend amy (friend down)", wc.F(FieldTakenBack))
+		assert.Equal(t, "taken back by the hold of friend amy", wc.F(FieldTakenBack))
 		assert.Empty(t, wc.F(FieldTakenFrom), "the hold does not keep her from it")
 	}
 	// held: nothing is dealt to her
