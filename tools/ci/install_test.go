@@ -265,7 +265,7 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	polls := 0
-	h.installHost.sleep = func(time.Duration) {
+	h.sleep = func(time.Duration) {
 		polls++
 		if polls == 3 {
 			h.runner.mu.Lock()
@@ -403,7 +403,7 @@ func TestInstallPostgresWhenOnPathPublishesAndNamesTheVersion(t *testing.T) {
 func TestInstallPostgresFindsAVersionedInstallOffPathAndPutsItOnPath(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	h.installHost.isExec = func(p string) bool { return strings.HasPrefix(p, "/usr/lib/postgresql/15/bin/") }
+	h.isExec = func(p string) bool { return strings.HasPrefix(p, "/usr/lib/postgresql/15/bin/") }
 	if code := installPostgres(h.installHost); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, h.errb)
 	}
@@ -421,15 +421,15 @@ func TestInstallPostgresFindsAVersionedInstallOffPathAndPutsItOnPath(t *testing.
 func TestInstallPostgresPrefersSixteenThenTheGlob(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	h.installHost.isExec = func(p string) bool {
+	h.isExec = func(p string) bool {
 		return strings.HasPrefix(p, "/usr/lib/postgresql/16/bin/") || strings.HasPrefix(p, "/usr/lib/postgresql/13/bin/")
 	}
 	if code := installPostgres(h.installHost); code != 0 || h.published(t) != "/usr/lib/postgresql/16/bin\n" {
 		t.Fatalf("exit %d published %q, want sixteen first", code, h.published(t))
 	}
 	h = newTestInstallHost(t)
-	h.installHost.isExec = func(p string) bool { return strings.HasPrefix(p, "/usr/lib/postgresql/13/bin/") }
-	h.installHost.glob = func(pat string) []string {
+	h.isExec = func(p string) bool { return strings.HasPrefix(p, "/usr/lib/postgresql/13/bin/") }
+	h.glob = func(pat string) []string {
 		if pat != "/usr/lib/postgresql/*/bin" {
 			t.Errorf("glob %q", pat)
 		}
@@ -443,7 +443,7 @@ func TestInstallPostgresPrefersSixteenThenTheGlob(t *testing.T) {
 func TestInstallPostgresAnIncompleteInstallDoesNotCount(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
-	h.installHost.isExec = func(p string) bool { return strings.HasSuffix(p, "/pg_ctl") } // initdb and postgres missing
+	h.isExec = func(p string) bool { return strings.HasSuffix(p, "/pg_ctl") } // initdb and postgres missing
 	if code := installPostgres(h.installHost); code != 1 {
 		t.Fatalf("exit %d, want 1: no apt-get and no brew", code)
 	}
@@ -477,7 +477,7 @@ func TestInstallPostgresAptPicksSixteenWhenTheArchiveHasIt(t *testing.T) {
 				}
 				return "", 0, nil
 			}
-			h.installHost.isExec = func(p string) bool {
+			h.isExec = func(p string) bool {
 				return installed && strings.HasPrefix(p, "/usr/lib/postgresql/16/bin/")
 			}
 			if code := installPostgres(h.installHost); code != 0 {
@@ -505,7 +505,7 @@ func TestInstallPostgresWithHomebrewInstallsSixteen(t *testing.T) {
 		}
 		return "", 0, nil
 	}
-	h.installHost.isExec = func(p string) bool { return installed && strings.HasPrefix(p, "/opt/homebrew/opt/postgresql@16/bin/") }
+	h.isExec = func(p string) bool { return installed && strings.HasPrefix(p, "/opt/homebrew/opt/postgresql@16/bin/") }
 	if code := installPostgres(h.installHost); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, h.errb)
 	}
@@ -549,7 +549,7 @@ func TestEnsureSbclPutsTheUsersOwnBinOnPathAndPublishesIt(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
 	want := filepath.Join(h.home, ".local", "bin")
-	h.installHost.isExec = func(p string) bool { return p == filepath.Join(want, "sbcl") }
+	h.isExec = func(p string) bool { return p == filepath.Join(want, "sbcl") }
 	h.runner.onPath["sbcl"] = filepath.Join(want, "sbcl")
 	if code := ensureSbcl(h.installHost); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, h.errb)
@@ -624,7 +624,7 @@ func TestInstallLockWhoseHolderPidIsGoneIsTakenOverAtOnce(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
 	writeHolder(t, h, 99999, fixedNow) // fresh: the age rule says held
-	h.installHost.alive = func(pid int) bool { return pid != 99999 }
+	h.alive = func(pid int) bool { return pid != 99999 }
 	ran := false
 	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
 	assert.Equal(t, 0, code, h.errb.String())
@@ -637,7 +637,7 @@ func TestInstallLockWhoseHolderPidIsAliveIsHeldUntilTheTimeout(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
 	writeHolder(t, h, 99999, fixedNow)
-	h.installHost.alive = func(int) bool { return true }
+	h.alive = func(int) bool { return true }
 	ran := false
 	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
 	assert.Equal(t, 1, code)
@@ -653,8 +653,8 @@ func TestInstallLockWaiterTakesOverWhenTheHolderDiesWhilePolling(t *testing.T) {
 	h := newTestInstallHost(t)
 	writeHolder(t, h, 99999, fixedNow)
 	dead := false
-	h.installHost.alive = func(pid int) bool { return !dead }
-	h.installHost.sleep = func(time.Duration) { *h.sleeps++; dead = *h.sleeps == 2 }
+	h.alive = func(pid int) bool { return !dead }
+	h.sleep = func(time.Duration) { *h.sleeps++; dead = *h.sleeps == 2 }
 	ran := false
 	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
 	assert.Equal(t, 0, code)
@@ -669,10 +669,10 @@ func TestInstallLockIsReleasedWhenTheHolderIsSignalled(t *testing.T) {
 	t.Parallel()
 	h := newTestInstallHost(t)
 	sig, raise := context.WithCancel(t.Context())
-	h.installHost.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
+	h.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
 	exited := make(chan int, 1)
 	lockAtExit := make(chan bool, 1)
-	h.installHost.exit = func(code int) {
+	h.exit = func(code int) {
 		_, err := os.Stat(h.lock)
 		lockAtExit <- err == nil
 		exited <- code
@@ -696,8 +696,8 @@ func TestInstallLockWaiterGivesUpWhenSignalled(t *testing.T) {
 	h := newTestInstallHost(t)
 	writeHolder(t, h, 99999, fixedNow)
 	sig, raise := context.WithCancel(t.Context())
-	h.installHost.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
-	h.installHost.sleep = func(time.Duration) { *h.sleeps++; raise() }
+	h.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
+	h.sleep = func(time.Duration) { *h.sleeps++; raise() }
 	ran := false
 	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
 	assert.Equal(t, 1, code)

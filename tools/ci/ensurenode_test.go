@@ -15,8 +15,8 @@ func nodeTestHost(t *testing.T) (testInstallHost, string) {
 	t.Helper()
 	h := newTestInstallHost(t)
 	tmp := filepath.Join(t.TempDir(), "runner-temp")
-	inner := h.installHost.getenv
-	h.installHost.getenv = func(k string) string {
+	inner := h.getenv
+	h.getenv = func(k string) string {
 		if k == "RUNNER_TEMP" {
 			return tmp
 		}
@@ -56,7 +56,7 @@ func TestEnsureNodeFindsOrInstallsNodeAndPublishesItsDirectory(t *testing.T) {
 		t.Parallel()
 		h, _ := nodeTestHost(t)
 		bin := filepath.Join(h.home, "sdk", "bin", "node")
-		h.installHost.isExec = func(p string) bool { return p == bin }
+		h.isExec = func(p string) bool { return p == bin }
 		require.Equal(t, 0, ensureNode(h.installHost, goos, goarch), h.errb.String())
 		dir := filepath.Dir(bin)
 		assert.Equal(t, "CI ENSURE-NODE OK node="+bin+" version="+nodeVersion+"\n", h.out.String())
@@ -72,7 +72,7 @@ func TestEnsureNodeFindsOrInstallsNodeAndPublishesItsDirectory(t *testing.T) {
 		require.True(t, ok)
 		bin := filepath.Join(tmp, name, "bin", "node")
 		unpacked := false
-		h.installHost.isExec = func(p string) bool { return unpacked && p == bin }
+		h.isExec = func(p string) bool { return unpacked && p == bin }
 		inner := h.runner.answer
 		h.runner.answer = func(c cmdSpec) (string, int, error) {
 			if c.Name == "tar" {
