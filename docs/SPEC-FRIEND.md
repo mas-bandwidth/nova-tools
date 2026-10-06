@@ -860,6 +860,37 @@ her session was there are retired with no replacement (docs/FRIENDS.md, "The
 beat loops are retired, with no replacement"). The beat proves the daemon and
 nothing more: it is recorded and shown, and it never makes her up (below).
 
+### daemon-supervised-r-b.w4 — the installed agent is pinned and says which binary it runs (internal/friend/launchd.go)
+
+Every friend daemon runs under launchd by `nova-friend install`, and `install`
+refuses a plist that would not keep it alive (`CheckPlist`): RunAtLoad true,
+KeepAlive true, ThrottleInterval 5, and the program and the binary before its
+verb `run` by absolute path, every problem named at once, nothing written and
+no launchctl run. The daemon writes its build stamp (the tool's Stamp,
+`buildinfo.Version`) and the path of its binary into `status.json`
+(`daemon_version`, `binary`). `nova-friend status` prints `last_beat_age=`,
+`daemon_version=` and `binary=` after `last_beat=`. `nova-friend status --all`
+lists every friend daemon agent installed for this login
+(`~/Library/LaunchAgents/com.nova.friend-<name>.plist` whose program runs the
+daemon; the wake ping's agent is not a daemon), one `AGENT` line each:
+`name= daemon=<up|down|none> daemon_version= last_beat= last_beat_age=`, up
+while its status file is under DaemonStale old, none when it has no status
+file.
+
+The daemon's beat sends `nova-sprint friend beat <friend> --daemon-version <stamp>`.
+The sprint keeps that stamp on the beat record (`friend-beat:<friend>`, the key
+`daemon_version`) and `nova-sprint seat` reads it (docs/SPEC-SPRINT.md,
+daemon-supervised-r-b.w4). `where --json`'s friends do not yet carry it beside
+`load`: that copy is `store.FriendRow`, and `FriendReport` has no field for it.
+`report.window` is the subscription window use and is not this stamp
+(subscription-pacing-is-a-setting.w1). A later card whose paths include
+`internal/sprint/presence.go` and `internal/sprint/store/friends.go` should put
+`daemon_version` on the friend row the way `load` is copied.
+
+Check: `TestInstalledAgentKeepsAliveAndStatusSaysVersion` (internal/friend),
+`TestStatusSaysTheDaemonVersionAndStatusAllListsEveryAgent` (cmd/nova-friend),
+`TestSeatSaysEachDaemonsVersionAndAlarmsOnDriftAndADeadDaemon` (cmd/nova-sprint).
+
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things

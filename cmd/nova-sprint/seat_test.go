@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -286,4 +288,55 @@ func TestThePushFollowsTheSeat(t *testing.T) {
 	code, _, errs := ta.do("inbox --wait --push seat --timeout 200ms")
 	assert.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, filepath.Join(home, "nobody-working", "inbox"), errs)
+}
+
+// nova-sprint seat names each friend's daemon stamp and last beat age, and one
+// ALARM for a stamp that is not the newest any friend beats and one for a beat
+// older than the down bound, on the twin store (docs/SPEC-SPRINT.md,
+// daemon-supervised-r-b.w4). The stamp is kept on the beat record. where
+// --json's friends do not carry it beside load: FriendRow is outside this card.
+func TestSeatSaysEachDaemonsVersionAndAlarmsOnDriftAndADeadDaemon(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy", "bob", "cat")
+	ta.ok("friend sync")
+	pongAt := ta.now.UTC().Format(time.RFC3339)
+	ta.ok("friend beat amy --daemon-version v1.2.0 --pong " + pongAt + " --load 12.5")
+	ta.ok("friend beat bob --daemon-version v1.1.0")
+	raw, found, err := ta.m.GetKey(context.Background(), "friend-beat:amy")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Contains(t, raw, `"daemon_version":"v1.2.0"`)
+	assert.Contains(t, raw, `"pong":"`+pongAt+`"`)
+	assert.Contains(t, raw, `"load":12.5`)
+	amy := whereFriends(ta)["amy"]
+	assert.Equal(t, 12.5, amy.Load)
+	assert.Nil(t, amy.Report, "the stamp is not stuffed into report.window")
+	assert.False(t, amy.Proof.IsZero(), "the pong on the beat record is kept")
+
+	out := ta.ok("seat")
+	assert.Contains(t, out, "SEAT holder=coordinator epoch=0 generation=1\n")
+	assert.Contains(t, out, "FRIEND friend=amy daemon_version=v1.2.0 last_beat_age=0s\n")
+	assert.Contains(t, out, "FRIEND friend=bob daemon_version=v1.1.0 last_beat_age=0s\n")
+	assert.Contains(t, out, "FRIEND friend=cat daemon_version=- last_beat_age=-\n")
+	assert.Contains(t, out, "ALARM friend=bob version drift: daemon_version=v1.1.0 newest=v1.2.0\n")
+	assert.Contains(t, out, "ALARM friend=cat daemon down: no beat\n")
+	assert.NotContains(t, out, "ALARM friend=amy")
+	assert.Equal(t, 2, strings.Count(out, "\nALARM "), "one drift and one dead daemon")
+
+	ta.now = ta.now.Add(sprint.MissedBeatsDown*sprint.BeatDeadline + time.Second)
+	out = ta.ok("seat")
+	assert.Contains(t, out, "ALARM friend=amy daemon down: last beat older than 45s\n")
+	assert.Contains(t, out, "ALARM friend=bob daemon down: last beat older than 45s\n")
+	assert.Contains(t, out, "ALARM friend=bob version drift: daemon_version=v1.1.0 newest=v1.2.0\n")
+	assert.Contains(t, out, "ALARM friend=cat daemon down: no beat\n")
+
+	ta.ok("friend beat amy --working 2")
+	raw, found, err = ta.m.GetKey(context.Background(), "friend-beat:amy")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.NotContains(t, raw, "daemon_version", "a beat without the flag replaces the record")
+	f := whereFriends(ta)["amy"]
+	require.NotNil(t, f.Report)
+	assert.Equal(t, 2, *f.Report.Working)
+	assert.Empty(t, f.Report.Window)
 }

@@ -4691,6 +4691,30 @@ Each line has the format `MACHINERY <thing> OK|DOWN <facts> [remedy="<command>"]
 A summary line `MACHINERY OK n=<total>` or `MACHINERY DOWN n=<down> of=<total>` concludes the output.
 `--json` prints one JSON object with `at`, `lines`, `down`, `exit_code`, and `measures`.
 
+#### daemon-supervised-r-b.w4 — each friend daemon's version and last beat
+
+`nova-sprint seat` (cmd/nova-sprint/seat.go, the read the daemons call, not
+`seat check`) prints one `FRIEND` line per friend of the roster:
+`friend=<name> daemon_version=<stamp|-> last_beat_age=<age|->`. The stamp is
+the one her last `friend beat --daemon-version` kept on the beat record
+(`daemon_version` on `friend-beat:<name>`); `-` when that beat carried none.
+The age is the beat's, `-` when she has never beaten.
+
+One `ALARM` line per condition, and a friend who meets both gets two. Version
+drift: her non-empty stamp differs from the newest stamp any friend beats (the
+stamp on the latest beat, and the greater stamp when those beats share a time).
+A dead daemon: her last beat is older than the beat's down bound
+(`Beat.Alive`: fewer than `MissedBeatsDown` windows of `BeatDeadline`, 45s),
+or she has never beaten. The alarms do not change the seat's exit code; a
+seat-key drift still exits 1. With no friend on the roster the line is the
+seat's alone.
+
+`where --json`'s friends do not yet carry `daemon_version` beside `load`. The
+record keeps it, and copying it onto the row needs `internal/sprint/store/friends.go`
+(`FriendRow`, and the line in `friendRows` that copies `Load`). `FriendReport.window`
+stays the subscription window use. Check:
+`TestSeatSaysEachDaemonsVersionAndAlarmsOnDriftAndADeadDaemon`.
+
 ### The seat's store login
 
 (the owner, 2026-10-05: "We need to get away from these one shot shell scripts"; card
