@@ -26,7 +26,7 @@ import (
 // argv the check runs. A wrapper (nova-loop, a shell) is never run to ask it.
 var NovaTools = []string{
 	"nova-bus", "nova-cairn", "nova-card", "nova-check", "nova-ci", "nova-config", "nova-decide",
-	"nova-friend", "nova-fuse", "nova-memory", "nova-redis", "nova-sandbox", "nova-secrets",
+	"nova-friend", "nova-fuse", "nova-local", "nova-memory", "nova-redis", "nova-sandbox", "nova-secrets",
 	"nova-self-talk", "nova-sprint", "nova-swarm", "nova-table", "nova-tokens", "nova-update",
 	"nova-version", "nova-work",
 }
