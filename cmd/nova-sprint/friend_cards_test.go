@@ -373,7 +373,9 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	text := friendBrief("amy", p)
 	assert.Contains(t, text, "This attempt starts from the current tip of sprint/s1 on origin, never from an older base: fetch it and start your branch there. "+
 		"Carry the work of attempt 2 onto it yourself: its head, "+landHead+", is the last pushed by any attempt before this one (`git diff origin/sprint/s1..."+landHead+"` shows that work); where it does not apply cleanly, redo it. "+
-		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\nThe coordinator asks: assert the bound\n")
+		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
+	assert.Equal(t, "THE ONE THING LEFT: assert the bound", strings.Split(text, "\n")[1], "a reworked attempt's fix is its first line after STATUS")
+	assert.Contains(t, text, "\nThe carried work: attempt 2's head "+landHead+", carried onto sprint/s1-1.w3.g1.e0 from the tip of its base;")
 	assert.NotContains(t, text, "start from it.", "never the old head")
 
 	p.BaseHead, p.BaseAttempt = "", 0

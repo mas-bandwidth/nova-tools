@@ -1558,16 +1558,34 @@ whose own STOP is the whole card's; the next lane read the card and never reache
   name: ...` and the report after it; the record line says `(Verdict LAND, held by the daemon:
   ...)`. Her REPORT.md stays as she wrote it. So a lane that never reached the first line is
   sent back by the daemon, not round the readers to find the same thing again.
-- Not here: friend sync (cmd/nova-sprint) still writes the server's form when it writes a
-  brief first; the outbox check reads that form too.
+- Friend sync (cmd/nova-sprint) is the other writer of her BRIEF.md and the other finisher of
+  her reports (docs/FRIENDS.md, the inbox/outbox standard), and it runs the same code
+  (the-fix-is-the-first-line-of-the-next-brief.w2): `friendBrief` is `ReworkedBrief` of the
+  server's form, so whichever of the two writes a reworked card's brief first (each writes
+  only when none is there), it opens with the fix; and `friendFinish`, the one finish of
+  friend sync, friend reconcile and collect, reads a LAND by the daemon's check
+  (`UnaddressedLand`, the fix of `friendBrief`, the same brief the inbox holds): one that does
+  not address the fix is finished as a HOLD, `--failed` with a head that is origin's tip of
+  her branch kept, the report `friend <name> HOLD: held by friend sync: the report says LAND
+  and does not address THE ONE THING LEFT (<fix>); ...`. So the hold is a rule, not a race
+  the daemon has to win.
 
 The model is `internal/friend/tla/OutboxFinish.tla`, extended: a reworked card's report
 addresses its fix or not, and `NoUnaddressedLand` (a reworked card lands only from a report
-that addresses its fix) holds with `Finished` (TLC on a Linux bench, two cards, one reworked: 900
-distinct states, no error). Its reversed witness `MCOutboxFinishBrokenUnaddressedLand.cfg`, the
-daemon before this change, breaks `NoUnaddressedLand` (she writes a LAND that does not address
-the fix, the daemon asks and lands it). The tests are `TestAReworkedBriefOpensWithTheFix` and
-`TestFixAddressedReadsTheKeyWords`.
+that addresses its fix) holds with `Finished`. Friend sync is in it as a second writer of the
+brief (`Deliver`, whichever hand comes first, never over one there) and a second finisher
+(`SyncFinish`, the server taking the first finish), and `FixFirst` (a reworked card's brief
+opens with its fix, whoever wrote it) holds too (TLC on a Linux bench, vision, two cards, one
+reworked: 1764 distinct states, no error). The reversed witnesses:
+`MCOutboxFinishBrokenUnaddressedLand.cfg`, the daemon before w1, breaks `NoUnaddressedLand` (she
+writes a LAND that does not address the fix, the daemon asks and lands it);
+`MCOutboxFinishBrokenSyncLands.cfg`, friend sync before w2, breaks it the other way (friend
+sync finishes the same LAND before the daemon's pass); `MCOutboxFinishBrokenSyncBrief.cfg`,
+friend sync before w2, breaks `FixFirst` (it writes the server's form before the daemon). The
+tests are `TestAReworkedBriefOpensWithTheFix`, `TestFixAddressedReadsTheKeyWords`,
+`TestFriendSyncWritesTheReworkedBriefAndHoldsAnUnaddressedLand` (friend sync against a reworked
+card: the brief's form and the HOLD) and
+`TestFriendFinishHoldsAnUnaddressedLandAndLandsAnAddressedOne`.
 
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 

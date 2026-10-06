@@ -228,10 +228,36 @@ func FixAddressed(report, fix string) (missing []string, ok bool) {
 	return missing, len(words)-len(missing) >= keyWordsNeeded(len(words))
 }
 
-// UnaddressedText is the first words of the finish the daemon sends for a LAND whose report
-// does not address THE ONE THING LEFT.
-func UnaddressedText(fix string, missing []string) string {
-	return fmt.Sprintf("held by the daemon: the report says LAND and does not address THE ONE THING LEFT (%s); the key words it does not name: %s.", oneLine(fix, 300), strings.Join(missing, ", "))
+// UnaddressedText is the first words of the finish the holder by (the daemon, or friend sync)
+// sends for a LAND whose report does not address THE ONE THING LEFT.
+func UnaddressedText(by, fix string, missing []string) string {
+	return fmt.Sprintf("held by %s: the report says LAND and does not address THE ONE THING LEFT (%s); the key words it does not name: %s.", by, oneLine(fix, 300), strings.Join(missing, ", "))
+}
+
+// The holders of an unaddressed LAND, as UnaddressedText names them.
+const (
+	HeldByDaemon     = "the daemon"
+	HeldByFriendSync = "friend sync"
+)
+
+// UnaddressedLand is the one fix check of a LAND, the daemon's outbox pass's and friend
+// sync's (cmd/nova-sprint, friendFinish, the finish of friend sync, friend reconcile and
+// collect): held is UnaddressedText when report does not address the fix brief asks (BriefFix,
+// in either form), "" when it does or when brief asks none. A held LAND is finished as a
+// HOLD, its head kept.
+func UnaddressedLand(by, report, brief string) (held string) {
+	return unaddressed(by, report, BriefFix(brief))
+}
+
+// unaddressed is UnaddressedLand of a fix already read.
+func unaddressed(by, report, fix string) string {
+	if fix == "" {
+		return ""
+	}
+	if missing, ok := FixAddressed(report, fix); !ok {
+		return UnaddressedText(by, fix, missing)
+	}
+	return ""
 }
 
 // jobFix is the fix a job's brief asks: the BRIEF.md in her inbox, the brief the lane read,
