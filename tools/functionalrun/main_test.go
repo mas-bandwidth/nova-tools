@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1108,4 +1109,38 @@ func TestEveryRunIDMatchesTheReapersPattern(t *testing.T) {
 	if foreign != 0 || len(vs) != 1 || !vs[0].remove {
 		t.Errorf("the reaper does not take an overdue container with the labels a run writes: %+v foreign=%d", vs, foreign)
 	}
+}
+
+func TestChooseRuntimePrefersPodmanThenDocker(t *testing.T) {
+	has := func(names ...string) func(string) (string, error) {
+		return func(n string) (string, error) {
+			for _, h := range names {
+				if h == n {
+					return "/bin/" + n, nil
+				}
+			}
+			return "", errors.New("not found")
+		}
+	}
+	for _, c := range []struct {
+		name, explicit string
+		look           func(string) (string, error)
+		bin, want      string
+		fail           bool
+	}{
+		{"both", "", has("docker", "podman"), "/bin/podman", "podman", false},
+		{"docker only", "", has("docker"), "/bin/docker", "docker", false},
+		{"neither", "", has(), "", "", true},
+		{"explicit is not looked up", "/opt/x/podman", has(), "/opt/x/podman", "podman", false},
+	} {
+		bin, name, err := chooseRuntime(c.explicit, c.look)
+		assert.Equal(t, c.fail, err != nil, c.name)
+		assert.Equal(t, c.bin, bin, c.name)
+		assert.Equal(t, c.want, name, c.name)
+	}
+	var stderr bytes.Buffer
+	bin, ok := useRuntime("", has("docker"), &stderr)
+	assert.True(t, ok)
+	assert.Equal(t, "/bin/docker", bin)
+	assert.Contains(t, stderr.String(), "container runtime: docker (/bin/docker)")
 }
