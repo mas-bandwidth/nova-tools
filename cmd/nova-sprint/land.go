@@ -249,6 +249,9 @@ type landCard struct {
 	// protected is why the lander may not land the card on its base, a protected branch in
 	// a stream not marked for its repository (sprint.ProtectedLandWhy), "" when it may
 	protected string
+	// closes is the issues the card's landed commits close (owner/name#N, "Closes #N"),
+	// read by each build (commitCloses) and written on the card as it lands
+	closes []string
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -299,6 +302,9 @@ type lander struct {
 	baseWhy   string
 	now       func() time.Time
 	rulesOff  []string
+	// landedIDs is the cards this run landed, and issues what the closer did for them as the
+	// run ended (land_issues.go): its lines in the report
+	landedIDs, issues []string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -388,6 +394,16 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			failed = true
 		}
 	}
+	// the issues the landed cards reference, closed on the forge as the pass ends; a forge
+	// that refuses leaves them pending for the server's loop, and the landing stands
+	// (land_issues.go)
+	if !l.dry && len(l.landedIDs) > 0 {
+		said, err := a.closeIssues(ctx, st, l.twin, l.landedIDs)
+		l.issues = said
+		if err != nil {
+			l.issues = append(l.issues, "the closer did not finish: "+oneline.Err(err)+"; the server's loop tries what is pending again")
+		}
+	}
 	// the cleanup, after every stream and outside every batch: the land loop's own
 	// (landRound) when the loop runs this land, else once here, as the command ends
 	var pruned []pruneResult
@@ -436,7 +452,7 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		}
 		// ignored: a map of strings, numbers and plain structs of strings always encodes
 		b, _ := json.Marshal(map[string]any{"verb": "land", "status": status, "exit": code, "batches": batches, "cards": cards,
-			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned})
+			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned, "issues": l.issues})
 		fmt.Fprintln(stdout, string(b))
 		return code
 	}
@@ -475,6 +491,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 	}
 	for _, p := range pruned {
 		fmt.Fprintln(stdout, p.line(true))
+	}
+	for _, x := range l.issues {
+		fmt.Fprintf(stdout, "LAND ISSUES %s\n", oneline.Escape(x))
 	}
 	dry := ""
 	if l.dry {
@@ -834,7 +853,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	}
 	b.Cards, b.IDs = len(ids), ids
 	start := time.Now()
-	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor, Commit: b.Tip}, pins)
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}
@@ -845,6 +864,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		return false
 	}
 	b.Status = "ok"
+	l.landedIDs = append(l.landedIDs, ids...)
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
@@ -899,6 +919,12 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 	r.Cards = make([]string, len(pins))
 	for i, c := range pins {
 		r.Cards[i] = c.id
+		if len(c.closes) > 0 {
+			if r.Closes == nil {
+				r.Closes = map[string][]string{}
+			}
+			r.Closes[c.id] = c.closes
+		}
 		if c.resolved != "" {
 			if r.Resolved == nil {
 				r.Resolved = map[string]string{}
@@ -1086,6 +1112,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		case card != "":
 			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}, ""
 		}
+		c.closes = l.commitCloses(ctx, dir, before, *c)
 		merged = append(merged, c.id)
 	}
 	return merged, failed, ""

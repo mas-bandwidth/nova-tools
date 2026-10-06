@@ -2840,6 +2840,44 @@ names every card not scored and why. The batch's line carries `scored=<n>`, and
 `judged=yes` when the judgment was raised. `nova-decide findings` over the record
 clusters the classes into the material for new finder rules.
 
+**A landing closes the card's issues** (the owner, 2026-10-05: "Ideally, you would close
+the issues as soon as the card is landed."). The landing is the moment the work is real, so
+the forge learns it then, from the machine, never from a person remembering. A card
+references an issue explicitly, never by a number met in prose (a brief's "#4327 deleted it"
+names a pull request): each reference on an `ISSUES:` (or `ISSUE:`) line of its brief, and
+each reference after a closing keyword (`close`, `closes`, `closed`, `fix`, `fixes`,
+`fixed`, `resolve`, `resolves`, `resolved`) in its brief or in a message of the commits its
+merge brought (`git log <batch tip before it>..<head>`), as GitHub reads one
+(internal/forge, `forge.Refs`). A reference is an issue's full URL
+(`https://github.com/<owner>/<repo>/issues/<n>`), `<owner>/<repo>#<n>` naming the card's
+`REPO:`, or `#<n>`, read against the card's `REPO:`. `add` (and `brief`) refuse, as a card
+lint finding `issue-repo` naming the line, exit 2, nothing written, a short reference naming
+another repository, whose remedy is its full URL, and a `#<n>` in a brief that names no
+repository on GitHub. The merge step writes on each card it lands the issues it references
+(`issues`, `owner/name#N` comma separated: the brief's first, then its commits') and the
+landing commit the lander pushed (`land_commit`); a card landed before this was written
+carries none, and nothing is closed for it here (the stream archive closes that backlog). The
+closer (`sprint.CloseLandedIssues`) closes each issue of a landed card not yet closed through
+gh (`gh issue view` for its state, then `gh issue close --comment`), with one comment naming
+the card, its stream, the landing commit and the release it ships in (the stream's
+`release`, else "the next release"); an issue the forge has closed already, or another landed
+card closed (a twin's), is left alone with no comment and noted. Each pass is recorded on the
+card in one step (`sprint.IssuesClosed`: `issues_closed`, and `issues_why` and
+`issues_tried` while one is pending). `land` runs the closer on the cards it landed as its
+pass ends (a `LAND ISSUES <card> issues: closed ...; left alone (closed already) ...;
+pending (<why>)` line, `issues` in `--json`), and the server's loop runs it every 10 s
+between ticks, which closes what a landing left pending, each pass bounded to 30 s of forge
+calls. The forge's answer never changes a landing: a forge that refuses or does not answer
+leaves the card landed and the close pending, its why on the card; the pass stops at that
+card, and the loop tries it again once `sprint.IssuesRetry` (a minute) has passed. `where`
+shows what is pending on one line from the work table's `issues_pending` property, which
+each pass writes (`ISSUES PENDING <n> issues of <k> landed cards: <card> <issues> (<why>);
+...`, `issues_pending` in `--json`), so where reads no card. A twin asks no forge
+(`TestALandingClosesTheIssuesTheCardReferences`,
+`TestLandClosesTheIssuesOfTheBriefAndTheLandedCommits`,
+`TestWhereShowsThePendingClosesUntilTheForgeTakesThem`,
+`TestAddRefusesAnIssueOfAnotherRepositoryUnlessByFullURL`).
+
 **The lander's gate.** A batch whose `--check` is red on go test failures has each
 failure classified by the gate decision (docs/SPEC-NOVA-DECIDE.md section 12; section 5,
 the gate verdict) at the sprint row's bars, read once a land run, over its lines, the
