@@ -74,7 +74,10 @@ rows), each with a proven inbox push on `bus2:push` (what each one's friend
 daemon writes when its session answers the SESSION CHECK; without it every send
 and recv is refused as deaf), its address in `NOVA_BUS_REDIS`, so the lines
 read as a reader types them.
-The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
+The sitting is the loop: bob first waits on his own empty stream and, nothing
+coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait
+took nothing; the arm on an empty stream is the cursor `0-0`); ada sends bob one
+message; bob peeks (new, not yet
 delivered), receives it through `--exec` (the header line and the body go to the
 command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
 log, and lists the names. The run-owned values are the message's `id=` (a ULID
@@ -85,6 +88,10 @@ write says `login=none`: on the fleet's store the identity is the login user and
 ### First run
 
 ```text
+$ nova-bus wait --as bob --timeout 1s
+WAIT ARMED after=0-0
+! WAIT NONE after=0-0 waited=1s
+
 $ nova-bus send --as ada --to bob --subject hello --body "are you there?"
 SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z bytes=14 sha256=cf97adc337983a14daab1089bf14c6ab50e658f0136517e0048407e786b6e745 login=none
 
