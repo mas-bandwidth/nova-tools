@@ -146,7 +146,7 @@ func (o *OpenCode) allow() {
 var opening sync.Mutex
 
 // OpenSession runs the seed as the first turn of a new session in Dir
-// (`opencode run --dir <dir> <seed>`, no --session) and answers the session
+// (`opencode run <seed>` in Dir, no --session) and answers the session
 // that appeared in the listing of Dir, the newest the listing before it did
 // not hold. The lanes' directories are allowed in the project config first.
 func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error) {
@@ -157,7 +157,7 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--dir", o.Dir, seed}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", seed}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
@@ -166,7 +166,9 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 			return "", limit // a limit or out of funds: the lanes' governor answers it, not the open's retry alone
 		}
 	}
-	if exit, err = refused("(new)", out, exit, err); err != nil {
+	exit, err = refused("(new)", out, exit, err)
+	o.turns.saw("(new)", exit, err)
+	if err != nil {
 		return "", err
 	}
 	if exit != 0 {
@@ -204,31 +206,33 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 }
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
-// <id> --dir <dir> <text>`, its output read for a refused permission, and its
+// <id> <text>` in Dir, its output read for a refused permission, and its
 // tail for a rate limit or out of funds (ProviderLimit, whatever the exit:
 // the lanes heed it only when the card has no RESULT.md) before a provider's
 // refusal of the session.
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	if err == nil {
 		if limit := laneLimit(id, out); limit != nil {
+			o.turns.saw(id, exit, limit)
 			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
 		}
 	}
 	exit, err = refused(id, out, exit, err)
+	o.turns.saw(id, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
 }
 
-// RunRead is one read as a one-shot of the friend's opencode: `opencode run --dir <dir>
-// [--model <model>] <prompt>`, a session of its own that no listing is read for, so reads
+// RunRead is one read as a one-shot of the friend's opencode: `opencode run
+// [--model <model>] <prompt>` in Dir, a session of its own that no listing is read for, so reads
 // never queue behind the lanes' session opens. Its output is read as a lane turn's is.
 func (o *OpenCode) RunRead(ctx context.Context, model, prompt string) (LaneTurn, error) {
 	o.allow()
-	args := []string{"run", "--dir", o.Dir}
+	args := []string{"run"}
 	if model != "" {
 		args = append(args, "--model", model)
 	}

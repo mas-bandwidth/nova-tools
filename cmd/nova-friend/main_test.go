@@ -734,6 +734,9 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
+			if args[0] == "--version" || len(args) > 1 && args[1] == "--help" {
+				return "", 0, nil // the daemon's read of the installed opencode (OpenCode.CheckRun): it cannot tell
+			}
 			if checks < 2 { // the push proof, then the daemon's check, go into her newest session first; her answers bring her up, and the beat with the row
 				if args[0] == "session" {
 					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
@@ -770,9 +773,9 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, out.String())
-		assert.True(t, strings.HasPrefix(runs[0], "run --dir "+dir+" You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
+		assert.True(t, strings.HasPrefix(runs[0], "run You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
-		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 --dir "+dir+" nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
+		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
 		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
 		lanes, err := friend.ReadLanes(friend.StateDirIn(dir))
 		require.NoError(t, err)

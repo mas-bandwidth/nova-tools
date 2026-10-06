@@ -41,6 +41,8 @@ type DSH struct {
 	Program      string    // DSHProgram when empty
 	Sessions     string    // the sessions root; DSH_HOME/sessions, else ~/.dsh/sessions, when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+
+	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
 
 // DSHArgs is the argument list of one delivery; the text travels on stdin
@@ -104,13 +106,16 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	out, exit, err := d.Run(ctx, d.Dir, program, DSHArgs(id), text)
 	if err == nil {
 		if r, ok := DSHRefusal(id, d.Dir, out); ok {
+			d.turns.saw(id, 0, r)
 			return 0, r // the output is not kept: a credential's name and its lookup stay off the record
 		}
 	}
 	if d.Out != nil && out != "" {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return refused(id, out, exit, err)
+	exit, err = refused(id, out, exit, err)
+	d.turns.saw(id, exit, err)
+	return exit, err
 }
 
 // Route is what status says: always defer. No live push into the open

@@ -110,34 +110,51 @@ func TestEveryAdapterAnswersTheHarnessCheck(t *testing.T) {
 
 func TestAnAppIsRunningWhenItsMainExecutableIsInTheTableForThatUser(t *testing.T) {
 	t.Parallel()
+	dsh := App{Bundle: "/Applications/DeepSeek Harness.app", Name: "DeepSeek Harness"}
+	chat := App{Bundle: "/Applications/ChatGPT.app", Name: "ChatGPT"}
 	table := strings.Join([]string{
 		"glenn 501 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --flag",
 		"glenn 502 /Applications/ChatGPT.app/Contents/Frameworks/ChatGPT Helper.app/Contents/MacOS/ChatGPT Helper",
 		"rowan 503 /Applications/Antigravity.app/Contents/MacOS/Antigravity",
 		"glenn 504 /Applications/ChatGPT.app/Contents/MacOS/ChatGPTX",
 	}, "\n")
-	assert.True(t, AppRunning(table, "glenn", DSHApp), "a path with spaces, then its arguments")
-	assert.False(t, AppRunning(table, "glenn", CodexApp), "a helper, or a longer name, is not the app")
+	assert.True(t, AppRunning(table, "glenn", dsh), "a path with spaces, then its arguments")
+	assert.False(t, AppRunning(table, "glenn", chat), "a helper, or a longer name, is not the app")
 	assert.False(t, AppRunning(table, "glenn", AntigravityApp), "another user's app is not this friend's")
 	assert.True(t, AppRunning(table, "rowan", AntigravityApp))
 }
 
+// The finding of 2026-10-06: the app ran as Contents/Resources/../MacOS/<name>
+// and the literal path read it as not running for a morning. The app is its
+// bundle and its name, the path cleaned; a process outside the bundle with
+// the same name is not it.
+func TestAnAppLaunchedThroughAnotherSpellingOfItsPathIsRunning(t *testing.T) {
+	t.Parallel()
+	dsh := App{Bundle: "/Applications/DeepSeek Harness.app", Name: "DeepSeek Harness"}
+	assert.True(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/../MacOS/DeepSeek Harness", "zhi", dsh))
+	assert.True(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/../MacOS/DeepSeek Harness --hidden", "zhi", dsh))
+	assert.True(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "zhi", dsh))
+	assert.False(t, AppRunning("zhi 9 /tmp/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "zhi", dsh), "outside the bundle")
+	assert.False(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh headless --session-id s -", "zhi", dsh), "the CLI inside the bundle is not the app")
+	assert.False(t, AppRunning("zhi 9 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek HarnessX", "zhi", dsh), "a longer name is not the app")
+}
+
 func TestAnAppCheckReadsTheProcessTableOnMacOSAndCannotTellElsewhere(t *testing.T) {
 	t.Parallel()
-	ps := &processTable{listing: "glenn 77 " + CodexApp + "\n"}
-	l := appAlive(context.Background(), ps.run, "/d", "darwin", "glenn", "ChatGPT", CodexApp)
-	assert.Equal(t, Liveness{Known: true, Running: true, Why: "the ChatGPT app runs (" + CodexApp + ")"}, l)
+	ps := &processTable{listing: "glenn 77 /Applications/Antigravity.app/Contents/MacOS/Antigravity\n"}
+	l := appAlive(context.Background(), ps.run, "/d", "darwin", "glenn", AntigravityApp)
+	assert.Equal(t, Liveness{Known: true, Running: true, Why: "the Antigravity app runs (/Applications/Antigravity.app)", Rule: RuleApp}, l)
 	ps.set("")
-	l = appAlive(context.Background(), ps.run, "/d", "darwin", "glenn", "ChatGPT", CodexApp)
+	l = appAlive(context.Background(), ps.run, "/d", "darwin", "glenn", AntigravityApp)
 	assert.True(t, l.Known)
 	assert.False(t, l.Running)
-	assert.Contains(t, l.Why, "the ChatGPT app is not running")
-	l = appAlive(context.Background(), ps.run, "/d", "linux", "glenn", "ChatGPT", CodexApp)
+	assert.Contains(t, l.Why, "the Antigravity app is not running")
+	l = appAlive(context.Background(), ps.run, "/d", "linux", "glenn", AntigravityApp)
 	assert.False(t, l.Known, "no app process to read off macOS: the session check alone")
 	failing := func(context.Context, string, string, []string, string) (string, int, error) {
 		return "", 1, errors.New("no ps")
 	}
-	l = appAlive(context.Background(), failing, "/d", "darwin", "glenn", "ChatGPT", CodexApp)
+	l = appAlive(context.Background(), failing, "/d", "darwin", "glenn", AntigravityApp)
 	assert.False(t, l.Known, "a listing that cannot be read is no evidence the app closed")
 }
 
@@ -170,4 +187,94 @@ func TestGrokIsRunningWhileAWindowIsOpenInItsDirectory(t *testing.T) {
 	assert.False(t, g.Alive(context.Background()).Running, "a stale record whose pid is gone is no window")
 	require.NoError(t, os.WriteFile(filepath.Join(home, "active_sessions.json"), []byte(`not json`), 0o644))
 	assert.False(t, g.Alive(context.Background()).Known, "a session file that cannot be read cannot tell")
+}
+
+// TestAHeadlessFriendIsAliveWithNoAppProcess: the finding of 2026-10-06. Zhi's
+// deliveries through dsh headless into her named session answered (a fresh
+// session in 4 s) while the DeepSeek Harness app was closed, and the harness
+// check, reading the app, said "harness not running". A harness with a
+// headless program is alive on its session's word: the last delivery or
+// session check into the named session ended exit 0 within AliveWithin. No
+// process table is read, and the record and the status say alive=session.
+func TestAHeadlessFriendIsAliveWithNoAppProcess(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	var mu sync.Mutex
+	now, exit := t0, 0
+	var ps, turns int
+	var records []string
+	run := func(_ context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if name == "ps" {
+			ps++
+			return "", 0, nil // no app at all in the table
+		}
+		turns++
+		assert.Equal(t, []string{"/w/zhi", "dsh", "headless", "--session-id", "session-1", "-"}, append([]string{dir, name}, args...))
+		return "pong sent\n", exit, nil
+	}
+	dsh := &DSH{Dir: "/w/zhi", Session: "session-1", Program: "dsh", Run: run}
+	d := &Daemon{Friend: "zhi", Harness: "dsh", Dir: "/w/zhi",
+		Now:    func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
+		Record: func(l string) { mu.Lock(); records = append(records, l); mu.Unlock() },
+		Beat:   func(context.Context, time.Time) error { return nil }}
+	w := WatchHarness(d, dsh)
+	step := func(by time.Duration) {
+		mu.Lock()
+		now = now.Add(by)
+		mu.Unlock()
+		require.NoError(t, d.Beat(ctx, time.Time{}))
+	}
+
+	step(0)
+	assert.Equal(t, HarnessUnknown, w.Seen(), "no turn yet: the session check alone")
+
+	got, err := dsh.Deliver(ctx, SessionCheckPrefix+"z1")
+	require.NoError(t, err)
+	require.Zero(t, got)
+	step(AliveEvery)
+	assert.Equal(t, HarnessRunning, w.Seen(), "the session check ended exit 0 with no app running: alive")
+	assert.Equal(t, RuleSession, d.status.HarnessAlive)
+	step(AliveWithin - AliveEvery)
+	assert.Equal(t, HarnessRunning, w.Seen(), "still within the window")
+	step(AliveEvery)
+	assert.Equal(t, HarnessNotSeen, w.Seen(), "no turn ended exit 0 within the window")
+
+	_, err = dsh.Deliver(ctx, "a card")
+	require.NoError(t, err)
+	step(AliveEvery)
+	assert.Equal(t, HarnessRunning, w.Seen(), "a delivery counts as the check does")
+
+	mu.Lock()
+	exit = 1
+	mu.Unlock()
+	_, _ = dsh.Deliver(ctx, "a card the session cannot take") // ignored: the exit is what is read
+	step(AliveEvery)
+	assert.Equal(t, HarnessNotSeen, w.Seen(), "the last turn failed")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Zero(t, ps, "no process table is read for a headless harness")
+	assert.Equal(t, 3, turns)
+	all := strings.Join(records, "\n")
+	assert.Contains(t, all, "harness: running: alive=session the last turn into the dsh session session-1 ended exit 0")
+	assert.Contains(t, all, "harness: not seen: alive=session the last turn into the dsh session session-1 ended exit=1")
+	assert.NotContains(t, all, "app is not running")
+}
+
+// A deferred turn ran nothing and moves no liveness; a session that refused
+// the turn is a failed one.
+func TestADeferredTurnIsNoTurnAndARefusedOneIsAFailure(t *testing.T) {
+	t.Parallel()
+	var s SessionTurns
+	s.clock(func() time.Time { return t0 })
+	s.saw("s1", 0, nil)
+	s.saw("s1", 0, Deferred{Reason: "the chat is busy"})
+	assert.True(t, s.alive("codex").Running, "a deferral is no turn")
+	s.saw("s1", 0, SessionRefused{Session: "s1", Reason: "an agent preset"})
+	l := s.alive("dsh")
+	assert.True(t, l.Known)
+	assert.False(t, l.Running)
+	assert.Contains(t, l.Why, "an agent preset")
 }

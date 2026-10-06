@@ -23,6 +23,8 @@ type Codex struct {
 	Held         func(lock string) bool // whether the thread's writer lock is held; FlockHeld when nil
 	Env          func(string) string    // getenv; os.Getenv when nil
 	Out          io.Writer              // where the turn's output goes, when set: the daemon's record
+
+	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
 
 func (c *Codex) program() string {
@@ -110,9 +112,11 @@ func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
 				fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 			}
 		}
+		c.turns.saw(session, 0, nil)
 		return 0, nil
 	}
 	if refusal != nil {
+		c.turns.saw(session, 1, refusal)
 		return 1, refusal
 	}
 	return 0, Deferred{Reason: fmt.Sprintf("thread %s: neither delivery route accepted the message (%s); keep it pending and retry when Codex is available", session, strings.Join(failures, "; "))}

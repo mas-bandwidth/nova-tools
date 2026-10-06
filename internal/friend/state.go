@@ -56,12 +56,16 @@ type Status struct {
 	Beats          int       `json:"beats"`
 	LastBeat       time.Time `json:"last_beat"`
 	BeatError      string    `json:"beat_error,omitempty"`
-	// HarnessSeen is what the harness check last read of the process table
-	// (HarnessRunning, HarnessNotSeen, or empty: cannot tell). Advisory: it
+	// HarnessSeen is what the harness check last read (HarnessRunning,
+	// HarnessNotSeen, or empty: cannot tell). Advisory: it
 	// never makes the friend down (alive.go, HarnessWatch).
 	HarnessSeen string `json:"harness_seen,omitempty"`
-	StoreError  string `json:"store_error,omitempty"`
-	Width       int    `json:"width"`
+	// HarnessAlive is the rule the harness check read it by: RuleSession (the
+	// session's last turn) or RuleApp (the app in the process table); empty
+	// for another signal, or before a check.
+	HarnessAlive string `json:"alive,omitempty"`
+	StoreError   string `json:"store_error,omitempty"`
+	Width        int    `json:"width"`
 	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
 	// turns in a row the same way; empty for a passive harness.
 	Session       string    `json:"session,omitempty"`

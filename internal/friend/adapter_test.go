@@ -39,7 +39,7 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	assert.Equal(t, 0, exit)
 	require.Len(t, fe.calls, 2)
 	assert.Equal(t, []string{"/w/bob", "opencode", "session", "list", "--format", "json"}, fe.calls[0])
-	assert.Equal(t, []string{"/w/bob", "opencode", "run", "--session", "new", "--dir", "/w/bob", "hello"}, fe.calls[1], "the text is an argument, never a shell line")
+	assert.Equal(t, []string{"/w/bob", "opencode", "run", "--session", "new", "hello"}, fe.calls[1], "the text is an argument, never a shell line")
 	assert.Equal(t, "I ran the pong line.\n", turn.String(), "the turn's output goes to the daemon's record")
 	assert.Equal(t, "ab\n[... 3 more bytes]", Head("abcde", 2))
 
@@ -49,7 +49,7 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	exit, err = d.Deliver(context.Background(), "x")
 	require.NoError(t, err)
 	assert.Equal(t, 7, exit, "the exit code is the harness's")
-	assert.Equal(t, []string{"/w/bob", "opencode", "run", "--session", "named", "--dir", "/w/bob", "x"}, fe.calls[0], "a named session is not looked up")
+	assert.Equal(t, []string{"/w/bob", "opencode", "run", "--session", "named", "x"}, fe.calls[0], "a named session is not looked up")
 
 	_, err = NewestSession(`[{"id":"a","directory":"/w/ada","updated":1}]`, "/w/bob")
 	assert.ErrorContains(t, err, "no opencode session for /w/bob")
@@ -128,4 +128,69 @@ func TestTheClaudeDelivererAppendsOneLineToTheWakeFile(t *testing.T) {
 	_, err = d4.Deliver(context.Background(), "x")
 	assert.ErrorContains(t, err, "no state directory "+missing)
 	assert.NoDirExists(t, missing, "a refusal makes nothing")
+}
+
+// The finding of 2026-10-06: opencode v2.0.20's run has no --dir, and every
+// delivery for the two OpenCode friends exited 1 ("Unrecognized flag: --dir in
+// command opencode run"). The friend's directory is the process's working
+// directory, never a flag, on every run the adapter makes: a batch turn, a
+// lane's open and its turns, a read.
+func TestOpenCodeDeliverRunsInTheDirWithoutADirFlag(t *testing.T) {
+	t.Parallel()
+	type call struct {
+		dir  string
+		args []string
+	}
+	var calls []call
+	run := func(_ context.Context, dir, name string, args []string, _ string) (string, int, error) {
+		calls = append(calls, call{dir, append([]string(nil), args...)})
+		if args[0] == "session" {
+			return `[{"id":"ses_1","directory":"/w/bob","updated":1},{"id":"ses_2","directory":"/w/bob","updated":2}]`, 0, nil
+		}
+		for _, a := range args {
+			if a == "--dir" || strings.HasPrefix(a, "--dir=") {
+				return "Unrecognized flag: --dir in command opencode run\n", 1, nil
+			}
+		}
+		return "done\n", 0, nil
+	}
+	o := &OpenCode{Dir: "/w/bob", Run: run}
+	exit, err := o.Deliver(context.Background(), "hello")
+	require.NoError(t, err)
+	assert.Zero(t, exit, "the batch turn runs")
+	turn, err := o.DeliverTo(context.Background(), "ses_1", "a card")
+	require.NoError(t, err)
+	assert.Zero(t, turn.Exit, "a lane's turn runs")
+	turn, err = o.RunRead(context.Background(), "prov/m", "a read")
+	require.NoError(t, err)
+	assert.Zero(t, turn.Exit, "a read runs")
+	_, _ = o.OpenSession(context.Background(), "You are bob.") // ignored: the listing gains no session in this fake; the run's words are what is read
+	require.NotEmpty(t, calls)
+	for _, c := range calls {
+		assert.Equal(t, "/w/bob", c.dir, "every run is in the friend's directory: %v", c.args)
+		assert.NotContains(t, c.args, "--dir", "no run passes --dir: %v", c.args)
+	}
+	assert.Equal(t, []string{"run", "--session", "ses_2", "hello"}, calls[1].args)
+}
+
+// The adapter reads the installed opencode once at the daemon's start: a run
+// verb whose help lacks a flag the adapter passes is one line naming the
+// version; a help that lists none cannot tell and refuses nothing.
+func TestOpenCodeCheckRunRefusesARunLackingAFlagItPasses(t *testing.T) {
+	t.Parallel()
+	help := "opencode run [message..]\n  --standalone --server --continue --session --fork --model --agent --format --file --title --thinking --auto\n"
+	runner := func(help string) Exec {
+		return func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			if args[0] == "--version" {
+				return "2.0.20\n", 0, nil
+			}
+			return help, 0, nil
+		}
+	}
+	assert.NoError(t, (&OpenCode{Dir: "/w/bob", Run: runner(help)}).CheckRun(context.Background()), "v2.0.20 takes every flag the adapter passes")
+	err := (&OpenCode{Dir: "/w/bob", Run: runner(strings.Replace(help, "--session ", "", 1))}).CheckRun(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "opencode 2.0.20: its run verb has no --session (opencode run --help), which the adapter passes; no delivery can run until opencode takes it", err.Error())
+	assert.NotContains(t, err.Error(), "\n", "one line")
+	assert.NoError(t, (&OpenCode{Dir: "/w/bob", Run: runner("")}).CheckRun(context.Background()), "a help that lists no flag cannot tell")
 }
