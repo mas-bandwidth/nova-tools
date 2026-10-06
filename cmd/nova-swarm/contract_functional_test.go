@@ -161,7 +161,7 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 	dir := t.TempDir()
 	origin := filepath.Join(dir, "origin.git")
 	seed := filepath.Join(dir, "seed")
-	runGit(t, "", "init", "-q", "-b", "main", "--", seed)
+	runGit(t, "", "init", "-q", "-b", driveBase, "--", seed)
 	write(t, filepath.Join(seed, "f"), "base\n")
 	gitAs(t, seed, "add", "f")
 	gitAs(t, seed, "commit", "-q", "-m", "base")
@@ -172,9 +172,9 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 	require.NoError(t, testbin.WriteExecutable(gh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+dir+"/gh.args'\ncat > '"+dir+"/gh.body'\necho https://example.com/o/n/pull/42\n"), 0o755))
 
 	first, rest, _ := strings.Cut(memberCard, "\n")
-	brief := first + "\nbase-repo: " + origin + "\nBASE: main\n" + rest
+	brief := first + "\nbase-repo: " + origin + "\nBASE: " + driveBase + "\n" + rest
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(dir, "sprint.twin"), bin: bin}
-	d.must("init", "--members", "m1:1")
+	d.init("--members", "m1:1")
 	d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", brief)
 	d.must("start")
 
@@ -263,7 +263,7 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		return
 	}
 	require.NoError(t, err, "the member opened the pull request")
-	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.g1.e0", "--title", "The change", "--body-file", "-", "--base", "main"},
+	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.g1.e0", "--title", "The change", "--body-file", "-", "--base", driveBase},
 		strings.Split(strings.TrimSpace(string(args)), "\n"))
 	body, err := os.ReadFile(filepath.Join(dir, "gh.body"))
 	require.NoError(t, err)
