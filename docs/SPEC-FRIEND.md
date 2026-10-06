@@ -1529,6 +1529,46 @@ friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at
 Head unread, breaks `LandOnTip` in 6 states. The test is
 `TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
 
+### the-fix-is-the-first-line-of-the-next-brief.w1 — a reworked brief opens with the fix (internal/friend/rework.go)
+
+The night of 2026-10-05, lint-pkg-tlc-tbb came back five times, sec-rocketnet-server-dos-zhi
+four and presence-from-session-only five, each with the same finding. A rework puts its fix on
+the packet (`rework --fix`, or the broken reads' finding: internal/sprint/steps_review.go), and
+the server's brief says it as a `The coordinator asks:` line under the start, over a long card
+whose own STOP is the whole card's; the next lane read the card and never reached the fix.
+
+- The daemon writes a reworked card's BRIEF.md (`ReworkedBrief`, in `SyncInbox`) with the fix
+  first. The lines after STATUS are, in order: `THE ONE THING LEFT: <the fix>`; `The reader
+  found: <finding>` (with no reader's finding, `no reader's finding; <why the attempt exists>`);
+  `The carried work: attempt <n>'s head <sha>, carried onto <branch> ...` (off the start line;
+  `nothing carried: ...` when no attempt pushed); `How it is checked: ...`, which names the key
+  words its report is grepped for. Then the rest of the server's prelude (the working
+  directory, the start, why), and the card with its STOP the fix alone, before RULES and the
+  task. The fix and the finding are said once. A brief with no fix, and one already reworked,
+  are written as the server sent them; the STATUS line, REPO and BASE are unchanged, so the
+  packet staging reads (`PacketOf`) is the same.
+- The key words of a fix (`FixKeyWords`) are its distinct words of four or more letters, digits
+  or underscores, lower case, the empty ones left out, the first eight. A report addresses the
+  fix (`FixAddressed`) when it names at least half of them, rounded up, anywhere, in any case; a
+  fix with none is addressed.
+- The outbox pass reads the fix of the job's BRIEF.md (the brief the lane read; else the
+  server's), in either form. A `LAND` whose report does not address it is finished as a HOLD:
+  `--failed`, a full sha head kept, the report `friend <name> HOLD: held by the daemon: the
+  report says LAND and does not address THE ONE THING LEFT (<fix>); the key words it does not
+  name: ...` and the report after it; the record line says `(Verdict LAND, held by the daemon:
+  ...)`. Her REPORT.md stays as she wrote it. So a lane that never reached the first line is
+  sent back by the daemon, not round the readers to find the same thing again.
+- Not here: friend sync (cmd/nova-sprint) still writes the server's form when it writes a
+  brief first; the outbox check reads that form too.
+
+The model is `internal/friend/tla/OutboxFinish.tla`, extended: a reworked card's report
+addresses its fix or not, and `NoUnaddressedLand` (a reworked card lands only from a report
+that addresses its fix) holds with `Finished` (TLC on a Linux bench, two cards, one reworked: 900
+distinct states, no error). Its reversed witness `MCOutboxFinishBrokenUnaddressedLand.cfg`, the
+daemon before this change, breaks `NoUnaddressedLand` (she writes a LAND that does not address
+the fix, the daemon asks and lands it). The tests are `TestAReworkedBriefOpensWithTheFix` and
+`TestFixAddressedReadsTheKeyWords`.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
