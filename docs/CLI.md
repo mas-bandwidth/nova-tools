@@ -4,26 +4,110 @@
 
 Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. `-h` or `--help` after any verb prints that verb's help (its usage lines and every flag it takes) on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question; `<tool> help` is the whole banner. nova-fuse alone refuses `-h` after a verb, because its exit 0 means CLEAR. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
 
+### tdocs-cli-generated-rb-r3c.w1
+
+The reference blocks between `clidoc` markers come from the built tools' help.
+Run `make clidoc` after changing help; prose and worked examples outside those markers remain handwritten.
+
 ## nova-check
 
+<!-- clidoc:begin nova-check -->
 ```
-nova-check quickstart --dir <dir> [--max <n>] # the first run: links, then nocode, both run even if the first says NO
-nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
-nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]   # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree; --exclude (repeatable) keeps a path prefix out of the scan and out of the check
-nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
-nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
-nova-check nocode --dir <dir>                      # no code, executables, scripts or build machinery in a self repo (the self/machinery separation)
-nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
-nova-check nocode --staged --dir <repo>            # advisory over the git index: what is about to be committed, by the same rules
-nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
-nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
-nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
-nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--max <n>] [--dry-run]   # append one receipt, refusing a verb the list does not declare
-nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
-nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]   # are we converging: one line per stream, now against --since, with the ratio and the trend
-nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
+nova-check version [--json] print this build identity (--version also accepted)
+nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes
+nova-check quickstart --dir <dir> [--max <n>] the two checks a first run can make
+                                                   with nothing but a directory: links,
+                                                   then nocode. Both run even if the
+                                                   first says NO.
+nova-check attest --home <dir> --manifest <file>   did the full self load
+nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]
+                                                   every relative md link resolves;
+                                                   --file (repeatable) checks just those
+                                                   files, not the whole tree; --exclude
+                                                   leaves a subtree unscanned and skips
+                                                   links into it
+nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
+nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
+                                                   kernel size budget, in tokens
+nova-check nocode --dir <dir>                      no code files in a self repo
+      [--allow <prefix>]     where machinery may live (repeatable, empty by default)
+      [--deny-ext <l|@f>]    replace the floor EXTENSION list wholesale
+      [--deny-ext-add <l|@f>] extend the floor EXTENSION list
+      [--print-deny-list]    print both floors in force, exit 0
+  two floors: an EXTENSION list, and a NAME list for build machinery named
+  or located rather than extensioned (Makefile, .github/workflows/). The
+  --deny-ext flags govern the EXTENSION list only; --allow is the escape
+  for the name floor, and names where machinery may live.
+nova-check nocode --staged --dir <repo>            advisory over the index: classify what
+                                                    is about to be committed, by the same
+                                                    rules the audit walks the tree with;
+                                                    --dir is the repository root, required
+nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
+                                                   the door's floor set matches the seed's
+nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
+                                                   protected material is still where the
+                                                   ledger says it is
+nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"
+      [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+                                                   the four mechanical checks the accept
+                                                   gate runs, on a branch, before you ask
+                                                   a friend for a read: identity,
+                                                   out-of-path, stray-file, secret.
+                                                   --paths is the card's bound; with none
+                                                   the line says paths=- and out-of-path
+                                                   is skipped, never silently passed.
+nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
+                                                   one row per verb the command reference
+                                                   declares: who has run it, when, and
+                                                   whether it did what they needed
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
+                          --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
+                          [--tools-timeout <s>] [--max <n>] [--dry-run]
+                                                   append one receipt: I ran this verb,
+                                                   on real work, and here is how it went
+nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
+                                                   exit 1 with the verbs no non-author has
+                                                   run and the edges nobody has cleared.
+                                                   An edge is what the run found; a
+                                                   receipt records it: --not-ok, or an
+                                                   Edge: or Edges: in the notes. The
+                                                   remedy is one nova-check dogfood record
+                                                   --ok per verb named, and per edge
+                                                   --closes <id> or the finder
+                                                   running it again. The line the release
+                                                   lane calls.
+nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
+                       --retired <file> --since <RFC3339|24h>
+      [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
+      [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
+                                                   LANDING and PRS read the forge through
+                                                   gh; CLASSES reads the optional checkout
+                                                   through git. SCRIPTS, EDGES, FLEET and
+                                                   LEDGER read the named paths. --state
+                                                   stores the two-tick streak. Each stream
+                                                   shows now, --since, ratio and trend;
+                                                   an unnamed optional source is ABSENT,
+                                                   not zero. Exit 1 after two consecutive
+                                                   widening ticks. A widening tick is a tick whose
+                                                   <stream> moved the wrong way against
+                                                   its before: --state's last for LEDGER
+                                                   and FLEET, --since's for the rest.
+                                                   The exit-1 line prints
+                                                   trend=widening on the CONVERGENCE line,
+                                                   and the next run is
+                                                   nova-check convergence --state <file>
+                                                   again once the source moves, or
+                                                   nova-check dogfood record the finding
+                                                   the stream names.
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
+                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
+                    [--max <n>] [--dry-run]
+                                                   check markdown or prose for misspellings;
+                                                   fenced code blocks and inline code spans
+                                                   are blanked so code is not prose;
+                                                   --write fixes misspellings in place
 ```
+<!-- clidoc:end nova-check -->
 
 Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `nova-check[ <verb>] REFUSED: <why>; run: nova-check help`; `<verb> -h` ends in the verb's `effect:` line.
 
@@ -245,14 +329,17 @@ are in [SPEC-CHECK.md](SPEC-CHECK.md).
 
 ## nova-self-talk
 
+<!-- clidoc:begin nova-self-talk -->
 ```
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
 nova-self-talk scan [flags] <file>...        the same scan, named as a verb
-nova-self-talk shapes [--json]               every shape and licence the scan uses
+nova-self-talk shapes [--json]               every shape and licence the scan uses, with a
+                                             sentence each finds and a near miss each passes
 nova-self-talk example [--dry-run] [--json] <dir>   write the two example pages into <dir>
-nova-self-talk version
-nova-self-talk help [<verb>]
+nova-self-talk version                       print this build identity (--version also accepted)
+nova-self-talk help [<verb>]                 this text, or one verb's help
 ```
+<!-- clidoc:end nova-self-talk -->
 
 ### First run
 
@@ -289,19 +376,23 @@ SELFTALK FAIL ./pages/RULES.md:8: VERDICT-IDIOM match="dead as a practice": A ru
 
 ## nova-fuse
 
+<!-- clidoc:begin nova-fuse -->
 ```
 nova-fuse version    print this build identity (--version also accepted)
-nova-fuse init --box <path> [--dry-run]                  make an empty box where none is; never replaces one
-nova-fuse status --box <path> [--max <n>]                what is blown, and since when (reports; never gate on it)
-nova-fuse check --box <path> [surface]                   may I read? -- act only on exit 0
+nova-fuse init --box <path> [--dry-run]                  create an empty box where none is; never replaces one
+nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
+nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
 nova-fuse lockdown --box <path> [--dry-run] "<reason>"   blow the one hard fuse: all untrusted reads stop
 nova-fuse quarantine --box <path> [--dry-run] <surface> "<reason>"
                                                          stop reading one surface (soft)
 nova-fuse lift quarantine --box <path> [--dry-run] <surface>
-                                                         rescind your own quarantine -- announced, verified
-nova-fuse lift lockdown                                  REFUSED forever, by design
+                                                         rescind your own quarantine (soft, both directions)
+nova-fuse lift lockdown                                  REFUSED by design: the box is replaced: nova-fuse
+                                                         init --box <a new path>, and the harness pointed at
+                                                         it, by the person, never by this tool
 nova-fuse path --box <path>                              echo the box path this invocation would use
 ```
+<!-- clidoc:end nova-fuse -->
 
 ### First run
 
@@ -338,22 +429,21 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 
 ## nova-memory
 
+<!-- clidoc:begin nova-memory -->
 ```
+nova-memory version    print this build identity (--version also accepted)
 nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]... [--json]
-                                                                        the first run: stats, one search, one check, each with the line that ran it
 nova-memory stats  --root <dir>... [--exclude <glob>]... [--json]
-                                                                        measure m: files, chunks, bytes, vocab, build time, classes
 nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
-                                                                        one query, k receipted hits (for work retrieval)
 nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
-                                                                        do I already know this? k receipts per candidate paragraph
-nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--fail-max <n>] [--exclude <glob>]... [--json]
-                                                                        coverage, backlinks, wikilinks, frontmatter — it finds, you decide
-nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] [--json] <gold.tsv>
-                                                                        known-answer harness: recall@k and MRR, fails below the floor
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
+                   [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
+                   [--fail-max <n>] [--json]
+nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
+                   [--fail-max <n>] [--json] <gold.tsv>
 nova-memory boot   --root <dir> --pin <file> [--json]
-                                                                        the session loads exactly the pinned memories, never walks the directory
 ```
+<!-- clidoc:end nova-memory -->
 
 ### First run
 
@@ -426,6 +516,20 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 **Why it exists.** A mind that keeps its memory as markdown answers "do I already know this?" by re-reading everything it is: n new learnings against m existing ones is O(n·m), m grows every day, and the failure is silent. This makes membership a lookup: a BM25 index, optionally with character trigrams, rebuilt in memory from your tree on every run, so the judgment budget per new learning is k receipts, a constant. No database, no cache, nothing to sync; the tree is the store and the index stops existing when the process exits. It never writes your corpus and never replaces the linear read: query for work, traverse for self. `eval` is the point of shipping it: the tool is run-proven on one line and value-unproven in general, so build a gold set from your own record (`cmd/nova-memory/testdata/example-gold.tsv` is the form), run it before and after any change, and measure instead of believing.
 
 ## nova-bus
+
+<!-- clidoc:begin nova-bus -->
+```
+nova-bus wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>]
+nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--redis <addr>] [--dry-run]
+nova-bus peek [--as <me>] [--kind <k>[,<k>]] [--redis <addr>]
+nova-bus recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]
+nova-bus ack [--as <me>] --id <id,...> [--redis <addr>] [--dry-run]
+nova-bus log [--bodies] [--max <n>] [--redis <addr>]
+nova-bus names [--redis <addr>]
+nova-bus version
+nova-bus help [<verb>]
+```
+<!-- clidoc:end nova-bus -->
 
 Messages between AIs over Redis streams: sent once, delivered until acked. One
 stream per recipient under a consumer group, one log of everything; a message is
@@ -537,6 +641,27 @@ in as `NOVA_SPRINT_REDIS_USER` with the password in the variable
 done; 1 the verb ran and said no; 2 could not run.
 
 ## nova-friend
+
+<!-- clidoc:begin nova-friend -->
+```
+nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+nova-friend uninstall --as <me> [--dry-run]
+nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
+nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
+nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
+nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
+nova-friend ping-uninstall --as <coordinator> [--dry-run]
+nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
+nova-friend status --as <me> --dir <d> [--state-dir <d>]
+nova-friend refuse-go --name go|gofmt
+nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
+nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
+nova-friend version
+nova-friend help [<verb>]
+```
+<!-- clidoc:end nova-friend -->
 
 What a friend runs to be part of the team: the wake loop, the beat and the
 proof of life, as one daemon. One launchd agent per friend parks on the
@@ -817,109 +942,57 @@ MIT, see [LICENSE](../LICENSE).
 
 ## nova-swarm
 
+<!-- clidoc:begin nova-swarm -->
 ```
-nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
-
-how it works: a card is a task in Markdown with a header and rules.
-native runs one card through a harness; a worker description (JSON) can name
-its model, credentials and readable directories. member runs a sprint's cards
-as native children and sends every sprint verb to the sprint server.
-Launches and results live under --root unless their directories are named separately.
-first run: the examples print two templates and the lint rules; no setup is needed.
-To run a card, supply a harness, model, directories, deadline, token budget and any needed credentials.
-
-usage:
-  nova-swarm version    print this build identity (--version also accepted)
-  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
-                       (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
-                       (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-                       (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
-                       (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
-                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2)
-                       (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
-                       (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
-  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
-                       (runs the card's own programs: a card whose every work step is a script step, walked in the checkout with no model, each program, POST command and git in its own wall (network denied, no credential, the checkout and a private temp the only writes); one STEP OK|FAILED line per step, stopping at the first failed; refused with no wall unless --no-wall, which runs them unconfined; --remainder prints the card a failed step leaves)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
-  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
-                       (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
-                        Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
-                        A reader uses its machine's width; --width overrides it. This machine opens no store.
-                        Each card runs as one native child with its frame and an allowlist environment.
-                        Its packet supplies the model, budget and deadline; the flags fill missing route values.
-                        --reader runs reads from the readers table; its flags override the read's route.
-                        A flash card's first read is a decide read, asked by native with JEV_API_KEY
-                        from the reader's environment; children do not receive that key (docs/SPEC-SPRINT.md section 6).
-                        A work member with JEV_API_KEY asks the attempt decision in its own process
-                        when a take ends and carries it in its finish (docs/SPEC-SPRINT.md section 2).
-                        Native classifies a work card's red gate with the gate decision and the same key
-                        before reporting the take; failing tests run once at the base, within a bound.
-                        Decisions are recorded and routed on the sprint row's gate bars, empty by default.
-                        Flaky failures rerun once; pre-existing failures are not charged to the card
-                        (docs/SPEC-SPRINT.md section 5, the gate verdict).
-                        The member pushes the child's commit and opens its requested PR outside the wall, never force-pushing.
-                        Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
-                        --pass names environment secrets to hand to children; a harness that needs one must receive it.
-                        --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
-                        Completed launches leave no checkout; each pool keeps its newest five failed launches.
-                        No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
-                        A staging refusal reports why so the sprint can deal the card to another member.)
-  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
-                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
-  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
-  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
-                       (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
-                        --force frees it anyway and can oversubscribe the bench: an operator's act,
-                        never a card's and never a manager's default)
-  nova-swarm slots list --store <dir>
-  nova-swarm worker    check <description.json> [--env] [--max <n>]
-
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
-a missing flag, an unreadable worker description, a key file that is
-absent or empty, a bad invocation; 3 member: its binary was replaced on disk
-(MEMBER STOP: its supervisor starts the new one; with children running it first
-takes no new card and stops when the last is reported).
-
-Inputs: native requires a card, harness, model, slot, root, deadline and token budget.
-Use --tokens <n> for a positive budget, or --tokens unmetered to state that the
-provider has no live accounting. The runner does not infer this from the provider.
-member uses each packet's route and fills missing model, budget or deadline
-values from its flags; a reader's flags override its route. Width comes from
-the fleet row unless --width overrides it. Other defaults are listed in each verb's -h.
-lint takes --card, --fleet or --rules; verify reads --card only when supplied.
-
-Credentials: a worker description names either key_file or secret.
-key_file is read as data, never sourced: one line, a bare key or NAME=<key>,
-mode 0600. secret names an environment variable. The generated harness config
-carries the variable's name, never its value. The legacy --auth option copies
-the provider's auth entry into the data home, mode 0600, and removes it when
-the run ends. A worker naming secret refuses --auth and writes no auth file.
-
-Sandbox: native uses nova-sandbox unless --no-wall is explicit
-(docs/SPEC-SANDBOX.md). A card cannot request this opt-out; the NATIVE line
-names it as sandbox=none-by-flag. The job directory, data home, temporary directory and
-default shared cache are writable. The slot, harness and toolchain directories,
-worker read_roots and any borrowed Git objects are readable.
-The worker's key file is kept outside its readable roots. If a command runs
-outside the wall but fails inside it, check its dependencies and read_roots.
-
-Prepare a card: save nova-swarm template --name card to a file, fill its <...>
-lines, then run nova-swarm lint --card <file> --child-rules. REPO: names the
-repository; BASE: names the branch the work starts from and lands on.
-Lint names unfilled lines in NOTE output. Hand the completed card to native,
-or to nova-sprint add as a brief. template -h lists the required card lines.
-nova-swarm help <verb> (or <verb> -h) prints its usage, flags, example and exit codes.
-
-example:
-  nova-swarm template --name read-pr
-  nova-swarm template --name worker
-  nova-swarm lint --rules
+nova-swarm version    print this build identity (--version also accepted)
+nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
+nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                     (a bare --card holds the card to nova-swarm's own card contract, the shape native
+                      runs; --rules lists every check; --fleet lints a launcher script against the
+                      coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
+                      --decide asks the brief decision nova-sprint add asks; an adopter's own rules go
+                      in --child-rules-file. --member-injects lints the card as the member stages it.
+                      nova-swarm lint -h has the rest.)
+nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+                     (runs the card's own programs: a card whose every work step is a script step,
+                      walked in the checkout with no model, each program, POST command and git in its
+                      own wall (network denied, no credential, the checkout and a private temp the only
+                      writes). --sandbox <binary> names the wall binary each program, POST command and
+                      git runs in, default nova-sandbox on PATH; --no-wall runs them unconfined. One STEP
+                      OK|FAILED line per step; --remainder prints the card a failed step leaves.)
+nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
+nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
+nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+                      (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                       Each tick beats, reads the queue, reports ended children and takes cards to the
+                       fleet row's width; --width overrides it, and --pass names environment secrets to
+                       hand to children. A reader runs the reads of the readers table; this machine opens
+                       no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
+nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
+                     (one pass over this machine, run every few minutes by the disk-guard loop row
+                      fleet/loops.yml adds to every machine: it trims every Go build cache over
+                      --cache-max-gb, empties a module cache over --modcache-max-gb, rotates loop logs
+                      over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
+                      removes anything with uncommitted work or a live process, and prints one REMOVED,
+                      TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
+nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
+                     (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
+                      flags ride on the unit. mirror-refresh is refused until a mirror verb exists.)
+nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
+                     (unloads that unit and removes its file; a dry run removes nothing.)
+nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+                     (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+                      --force frees it anyway and can oversubscribe the bench: an operator's act,
+                      never a card's and never a manager's default)
+nova-swarm slots list --store <dir>
+nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
+nova-swarm worker    check <description.json> [--env] [--max <n>]
 ```
+<!-- clidoc:end nova-swarm -->
 
 ### First run
 
@@ -1095,102 +1168,125 @@ refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 
 ### Verbs
 
+<!-- clidoc:begin nova-sprint -->
 ```
-nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]
-nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]]
+nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]
+nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]
 nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
-nova-sprint release <sentinel>... --reason <text> [--answers <note>]
+nova-sprint preflight --brief-dir <dir> [--repo-dir <dir>]
 nova-sprint release check [--json] [--streams <glob>] [--check <name>]...
-nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
+nova-sprint release <sentinel or held card>... --reason <text> [--answers <note>]
+nova-sprint resolve [<id>...] [--stream <s>] [--max <n>]
 nova-sprint start
-nova-sprint stop
-nova-sprint run [--answer-rules=false] [--idle-alarm=false]
-nova-sprint tick [--answer-rules] [--idle-alarm]
+nova-sprint stop --reason <text> --until <time or duration>
+nova-sprint run [--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]
+nova-sprint tick [--answer-rules] [--idle-alarm] [--shadow]
+nova-sprint selftest land [--binary <path>] [--scratch-dir <dir>]
 nova-sprint selftest [--dir <d>] [--keep]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
-nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]
+nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]
 nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
 nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
-nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
+nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]
 nova-sprint queue --as <reader|member> | --stream <s>
-nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
-nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
-nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]
+nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
+nova-sprint accept (<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
-nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
-nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+nova-sprint redo <card>... [--stream <s>] [--answers <note>]
+nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>] [--one]
+nova-sprint unpin (<id>... | --stream <s>) --reason <text> [--dry-run]
+nova-sprint rank <id>... (--score <n> | --first | --before <id>) [--answers <note>]
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
-nova-sprint sentinel set <id> --needs <a,b>
-nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
+nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>]
+nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | --dir <dir> [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
-nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
-nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+nova-sprint snapshot (--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)
 nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
 nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
 nova-sprint demo stop [--dir <dir>]
+nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+nova-sprint hold <member|reader|friend|stream>... --reason <text> [--return] [--dry-run]
+nova-sprint unhold <member|reader|friend|stream>... [--reason <text>] [--dry-run]
 nova-sprint fleet beat <member> [--load <percent>]
-nova-sprint fleet up <member> [--width <n>]
+nova-sprint fleet up <member> [--width <n> | --width 0]
 nova-sprint fleet down <member>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
-nova-sprint friend sync [--pg <dsn>] [--root <dir>] [--every <duration>]
-nova-sprint friend sync install --every <duration> [--redis <addr>] [--pg <dsn>] [--root <dir>] [--dir <dir>] [--log <file>] [--dry-run]
-nova-sprint friend sync uninstall [--dir <dir>] [--dry-run]
+nova-sprint friend sync [--pg <dsn>] [--root <dir>]
 nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]
-nova-sprint install server --listen <address:port> [--redis <addr>] [--land] [--decide <dir>] [--dir <dir>] [--log <file>] [--dry-run]
-nova-sprint install member --as <member> --server <address:port> [--harness <path>] [--root <dir>] [--pass <NAME,...>] [--swarm <path>] [--dir <dir>] [--log <file>] [--dry-run]
-nova-sprint install seat-push|friend-sync (seat install's and friend sync install's flags)
-nova-sprint install table --out <file> [--every <duration>] [--redis <addr>] [--dir <dir>] [--log <file>] [--dry-run]
-nova-sprint uninstall server|member|seat-push|friend-sync|table [--dir <dir>] [--dry-run]
-nova-sprint units --check [--dir <dir>]
-nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
+nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--pong <RFC3339>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend cards <friend> [--json]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint friend level
 nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
+nova-sprint friend clean [--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]
+nova-sprint friend reconcile <friend> [--root <dir>] [--dry-run]
+nova-sprint lane take <kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]
+nova-sprint lane give <kind> --machine <m> --as <worker> [--dry-run]
+nova-sprint lane list
 nova-sprint reader add <reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]
 nova-sprint reader set <reader>... --tiers <flash[,pro,heavy,frontier]|all|default>
 nova-sprint reader away <reader>...
 nova-sprint reader up <reader>...
 nova-sprint reader remove <reader>...
+nova-sprint reader retire <reader>...
 nova-sprint stream remove <stream>...
 nova-sprint stream archive <stream>...
 nova-sprint stream unarchive <stream>...
+nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
+nova-sprint set [--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>]
+nova-sprint promoted --sha <merge sha> [--answers <note>]
+nova-sprint merge-window open --for <duration> --reason <text>
+nova-sprint funded <provider> --reason <text>
+nova-sprint cost reconcile [--dry-run] [--json]
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
-nova-sprint ack <note>... --reason <text>
+nova-sprint ack <note>[,<note>]... --reason <text>
 nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
-nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
-nova-sprint card <id>
+nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]
+nova-sprint card <id> [--brief | --fields] [--at-epoch <n>]
+nova-sprint needs [--stream <s>] [--roots]
+nova-sprint held [--stream <s>]
+nova-sprint sentinels [--stream <s>]
+nova-sprint sentinel set <id> --needs <a,b>
+nova-sprint bases
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
-nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived]]
+nova-sprint watch --wake [--every <duration>] [--state <file>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]
+nova-sprint seat check
+nova-sprint machinery
+nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows]] [--release [<name>]]
+nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]
+nova-sprint handover
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
-nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
-nova-sprint seat
-nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
-nova-sprint seat login --check
-nova-sprint seat logout
-nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--json]
-nova-sprint seat pong <nonce>
+nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--dry-run]
+nova-sprint seat uninstall [--dir <dir>]
+nova-sprint seat [--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>
+nova-sprint fsck seat [--pg <host:port or postgres:// URI>]
 nova-sprint routes
 nova-sprint rules
-nova-sprint funded <provider> --reason <text>
-nova-sprint cost reconcile [--dry-run] [--json]
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
 nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
+nova-sprint server switch [<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]
+nova-sprint install <server|member|seat-push|friend-sync|table> [--dir <dir>] [--log <file>] [--dry-run] (each kind's own flags are listed by install <kind> -h)
+nova-sprint uninstall <server|member|seat-push|friend-sync|table> [--dir <dir>] [--dry-run]
+nova-sprint units --check [--dir <dir>]
+nova-sprint coordinator <name> --reason <text> | <name> --take --approved-by <owner> --reason <text>
 ```
+<!-- clidoc:end nova-sprint -->
 
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
@@ -1436,6 +1532,32 @@ card's actual cost where one was priced, else its predicted one, `-` when
 none was — so a total is a ledger of recorded spend, not a proof of it.
 
 ## nova-sandbox
+
+<!-- clidoc:begin nova-sandbox -->
+```
+nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
+             [--net-listen] [--net-allow <host:port>] [--cwd <dir>]
+             [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
+nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
+             [-- <command> <args...>]
+nova-sandbox check
+nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
+             [--container <disk>] -- <command> <args...>          (darwin)
+nova-sandbox run --help
+nova-sandbox reap [--dry-run]                                   (darwin)
+nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+nova-sandbox egress plan  --run <id> --policy <file> --model-host <host>
+             --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>]
+             --out <file>
+nova-sandbox egress apply --plan <file> --run <id>                    (linux)
+nova-sandbox egress check --plan <file>
+nova-sandbox egress drop  --run <id>                                  (linux)
+nova-sandbox version
+nova-sandbox help
+```
+<!-- clidoc:end nova-sandbox -->
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS
 or Landlock on supported Linux kernels. Windows has no implemented backend and
@@ -1750,6 +1872,32 @@ WORKTREE OK removed=0 kept=1
 
 ## nova-tokens
 
+<!-- clidoc:begin nova-tokens -->
+```
+nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                    [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
+nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
+                    mode: local note body, printed as the tokens note artifact
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
+                    [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
+nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+                    mode: Redis month summary
+                    [--user <name>] [--password-env <NAME>]
+the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
+nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+                    [--user <name>] [--password-env <NAME>] [--dry-run]
+nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
+nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
+nova-tokens profiles --swarm-root <dir>
+                    one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
+nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+                    [--role <name>] [--weights <in,cw,cr,out>]
+nova-tokens version
+```
+<!-- clidoc:end nova-tokens -->
+
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
 The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all nine verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum --out <dir> --month <YYYY-MM>` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
@@ -1798,6 +1946,26 @@ variable `--password-env` names, else for a user `NOVA_SPRINT_REDIS_PASSWORD_ENV
 no user, no variable is read unless `--password-env` names it.
 
 ## nova-update
+
+<!-- clidoc:begin nova-update -->
+```
+nova-update example [--out <path>]
+nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
+nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
+  <who,who> | --send --as <friend> --to <who,who>]
+  [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --store <host:port> [--timeout <d>]
+nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
+  [--timeout <d>] [--budget <d>]
+nova-update adoption --file <path> [--as <friend>] [--max <n>]
+nova-update release <cut|build|install|adopt|pull> ...
+  nova-tools' own release pipeline: nova-update help release prints its usage lines
+nova-update help
+nova-update version (or --version)
+```
+<!-- clidoc:end nova-update -->
 
 `nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
@@ -1986,6 +2154,20 @@ the wrapper and the `nova-secrets exec` line).
 
 ## nova-version
 
+<!-- clidoc:begin nova-version -->
+```
+nova-version example [--out <path>]
+nova-version moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]
+nova-version snapshot --file <manifest>
+nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>] [--max <n>] [--dry-run]
+nova-version diff --from <a.tsv> --to <b.tsv>
+nova-version report --file <manifest> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-version send --file <manifest> --as <friend> --to <who,who> [--snapshot <path>] [--host <label>]
+nova-version version
+nova-version help [<verb>]
+```
+<!-- clidoc:end nova-version -->
+
 `nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional delivery through `nova-bus send`. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ### First run
@@ -2077,6 +2259,30 @@ remove a lock file to break a live lock.
 
 
 ## nova-secrets
+
+<!-- clidoc:begin nova-secrets -->
+```
+nova-secrets version  print this build identity (--version also accepted)
+nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+                    --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+                    --machine <name> --secret <name> [--path <remote path>]
+                    [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+nova-secrets placed --machine <name> [--receipts <dir>]
+nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+                    --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+                    --from <source seat> --only <NAME,...> --key <path> --sops <path>
+nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+                    --only <NAME,...> --key <path> --sops <path> [--no-pr]
+                    [--dry-run] [--gh <path>] [--git <path>]
+nova-secrets help
+```
+<!-- clidoc:end nova-secrets -->
 
 Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
@@ -2201,6 +2407,86 @@ saying what to do with it, then `SECRETS KEYGEN OK` **last**. A run that ends on
 OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 
 ## nova-ci
+
+<!-- clidoc:begin nova-ci -->
+```
+nova-ci help        print this banner and the verbs below (inspection)
+nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
+nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
+                  [--allowlist <file>] [--sleeps <file>] [--enforce]
+                  [--load <n> --cpus <n>] [--example] [--allow-empty] [--json] [--max <n>]
+                    (inspection) read newline-delimited `go test -json`
+                    TestEvents on stdin (or the built-in example stream with
+                    --example) and print one CI-SLOW line per package whose
+                    total elapsed time is over its budget (--budget, whole
+                    seconds, default 60; --package-budget replaces it) and
+                    per top-level test over --test-budget, then one CI-LOAD
+                    line. The allowlist (row shape:
+                    internal/pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>,
+                    where is run<id> or a bench, - in the test column for a
+                    package's own row; bound: budget sits between its
+                    measurement and three times it, the 3x headroom ceiling)
+                    raises one package's or test's budget. One row,
+                    tab-separated:
+                    internal/ci/slowtests	TestA	4.5	3s@run1
+                    The host's load average (the
+                    larger of its 1- and 5-minute figures, over its CPUs;
+                    --load and --cpus give them by hand) is printed and never
+                    read by the verdict. The times are a measurement: a
+                    CI-SLOW line fails the run only with --enforce (the
+                    nightly reference leg). A test skipped with the marker "SLEEPS:"
+                    and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
+                    CI-SLEEPS line and fails the run on every leg. A package
+                    go test served from its test cache reports a package
+                    elapsed near zero, so a cached run never trips a package
+                    budget; its tests replay the cached times, which
+                    --test-budget still reads (measure with -count=1). A run
+                    with more finding lines than --max prints the first --max
+                    and one CI-SLOW MORE shown=<n> total=<n> line naming the
+                    flag that prints the rest; --max 0 prints every finding.
+                    --json prints the same verdict as one JSON object.
+                    --max prints at most that many finding lines, then one
+                    CI-SLOW MORE shown=<n> total=<n> line naming the flag
+                    that prints the rest; --max 0 prints every finding.
+nova-ci functional <package-dir>...
+                    (inspection) print the packages among these that hold
+                    functional tests (a _test.go built only under the
+                    functional build tag) on one line and a go test -run
+                    pattern naming exactly those tests on the next; when
+                    there are none, one line
+                    CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
+                    pattern matching no package, are refused.
+nova-ci local [--base origin/dev] [--functional] [--dry-run]
+                    (runs tests, writes only a temp dir; needs a nova-tools
+                    checkout) the unit tier CI runs for this diff, on this
+                    machine: the packages CI's selection picks against the
+                    merge base of --base and HEAD, run through the Makefile's
+                    test target (its go test flags and its slowtests budgets)
+                    under nice -n 15 at -p 2, GOMAXPROCS=2 and -count=1; one
+                    PKG line per package with its seconds, one RED line per
+                    failing test with its output. --functional adds the
+                    functional build tag (GOTEST_TAGS=functional); CI runs
+                    those tests in its functional job as a stream merges.
+                    --dry-run prints the packages and the make line, and
+                    runs nothing.
+nova-ci new-rule [--root <checkout>] [--dry-run] <rule-name>
+                    (local write; needs a nova-tools checkout) scaffold a new
+                    class rule: class test, fixture and make target;
+                    --dry-run lists the files and writes nothing
+nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>
+                    (local write; needs a nova-tools checkout) scaffold a new
+                    verb of an existing tool: command, test, fixture and make
+                    target; --dry-run lists the files and writes nothing
+nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>] [--cache <dir>] [--with-git] -- <go command>
+                    (delivery: writes only its own run directory on the bench)
+                    copy the tree, .git left out unless --with-git, to a fresh
+                    run directory on the Linux bench --host (--fallback when it
+                    does not answer), run the command in it under nice -n 19
+                    with GOCACHE, GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1,
+                    stream its output, then remove that directory and nothing
+                    else. One CI BENCH line on stderr ends the run.
+```
+<!-- clidoc:end nova-ci -->
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
 a budget. `slowtests` and `functional` work in any Go module; `local`,
@@ -2341,35 +2627,39 @@ nova-ci github receipt REFUSED: --conclusion wants success, failure or cancelled
 
 ## nova-config
 
+<!-- clidoc:begin nova-config -->
 ```
-nova-config kinds [--json]                                               # every kind: its table, its fields, the fields add requires
-nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]   # create or upgrade schema config (or make the --file); --print lists the migrations and connects to nothing; --dry-run reads the ledger and prints each migration applied, pending or missing and each table of schema config the role does not own, applying none, and exits 1 when migrate would refuse (ready=no); the role that runs migrate must own every table in schema config, else migrate refuses before applying any and prints the ALTER TABLE ... OWNER TO lines
-nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]         # the store, the schema version, rows and revision per kind, and what Redis has applied
-nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run] [--json]   # write the rows into Redis per kind through the runtime's own functions, compare-and-set on the revision; --dry-run (or --check) prints the plan and writes nothing
-nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>] # print an Ansible dynamic JSON inventory of the applied state (Redis, never Postgres); --list is the default, --host prints one machine
-nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # insert a row; a duplicate name is refused with the set to run; --dry-run prints CONFIG DRY-RUN and writes nothing
-nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # update the fields named
-nova-config <kind> remove <name> --as <name> [--dry-run] [--json]        # delete the row
-nova-config <kind> list [--json]                                         # one typed line per row
-nova-config <kind> show <name> [--json]                                  # one line with every field and the stamps
-nova-config <kind> history <name> [--json]                               # every change to the row: who, when, what changed
-nova-config <kind> <verb> -h                                             # the verb's flags (required ones marked), its effect and a worked example
-nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
-nova-config machine width <name> [--pg <dsn> | --file <path>] [--json]  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member, 0 is none, unset (--width default) is the default, half the machine's cores as fleet sync resolves them from its beat; no Redis
-nova-config machine self [--check] [--json]                              # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
-nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --friend <actor> [--sops <path>]  # record the Postgres login (never the password); a bare verb then connects with it
-nova-config login --check                                                # print the recorded login and whether the secret resolves; the password is never shown
-nova-config logout                                                       # remove the recorded login
-nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --bus <host:port> --as <name>  # the one fleet row: no name, no add, remove or list
-nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
-nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
-nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-swarm member argv spells no --width, its width is its machine row's
-nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; the argv is the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
-nova-config route add <name> --tier flash|pro|heavy --provider <p> --model <m> [--harness opencode|claude|codex|grok] --deadline <seconds> [--tokens <n>] [--usd <dollars>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>, (a headless --harness claude, codex or grok takes --provider subscription-<harness>) stopped at its token budget or its dollar budget (the harness's reported cost), whichever comes first; frontier cards escalate to the coordinator and are never dealt from routes
-nova-config route set <name> --price_input <usd> --price_cache_read <usd> --price_cache_write <usd> --price_output <usd> [--reasoning_as_output false] [--long_context <tokens> --price_input_long <usd> --price_output_long <usd>] [--price_request <usd>] [--billing metered|plan] [--gateway_percent <pct>] [--price_source <text>] [--price_as_of YYYY-MM-DD] --as <friend>   # the route's price sheet, optional: USD per million tokens of each class, each a decimal kept exactly; a route with none prices no card
-nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
-nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
+nova-config help [<verb>]
+nova-config version
+nova-config kinds [--json]
+nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
+nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
+nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>]
+                  [--kind <kind>] [--dry-run] [--json]
+nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
+                      [--timeout <duration>]
+nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
+nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
+nova-config <kind> remove <name> --as <name> [--dry-run] [--json]
+nova-config <kind> list [--json]
+nova-config <kind> show <name> [--json]
+nova-config <kind> history <name> [--json]
+nova-config machine width <name> [--json]
+nova-config machine self [--check] [--json]
+nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
+                  --dsn <dsn> --friend <actor> [--sops <path>]
+                  records the DSN and where the password is; never the password
+nova-config login --check
+                  prints that login and whether the secret resolves
+nova-config logout
+                  removes the recorded login
+nova-config fleet set|show|history        one row each, no name:
+                                          fleet and sprint have no add, remove or list
+nova-config sprint set|show|history
+nova-config <kind> <verb> -h              the verb's flags (required ones marked),
+                                          its effect and a worked example
 ```
+<!-- clidoc:end nova-config -->
 
 `nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (slots, tiers, roles, width: the jobs she works at once, 8 by default, mode: batch or one-shot, how her daemon hands her work), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash, pro or heavy tier: tier, provider, model, harness, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash, pro and heavy, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
@@ -2433,20 +2723,24 @@ Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova
 
 ## nova-redis
 
+<!-- clidoc:begin nova-redis -->
 ```
-nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <u>[,<u>...]] [<secret login>] # run redis-server in the foreground, loopback and tailnet only, AOF on, ACL users kept in <store-dir>/users.acl
-nova-redis install store|bus <secret login> [--bind <addr>] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run] # serve as a service of this machine
-nova-redis uninstall store|bus [--units <dir>] [--dry-run]                    # unload and remove that unit; the store directory is kept
-nova-redis spill  <login> --owner <o> --name <n> --ttl <d> --value <v> [--dry-run] # write scratch under <o>:<n> with a required TTL; --dry-run dials nothing
-nova-redis recall <login> --owner <o> --name <n>                              # read it back; exit 1 on a missing or expired key
-nova-redis fn load  <login>                                                   # put this binary's function library on the store unless it holds exactly that code
-nova-redis fn check <login>                                                   # compare the store's library with this binary's; changes nothing
-nova-redis acl render                                                         # the store's ACL users this build renders, one ACL SETUSER line each; opens no store
-nova-redis acl check <login>                                                  # compare the store's live ACL with them; changes nothing
-nova-redis acl apply <login> [--password-env-for <user>=<NAME>]... [--dry-run] # set the users that differ, and save the ACL file
-# <login> is --addr <host:port> [--user <name>] [--password-env <NAME>]
-# <secret login> is --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>
+nova-redis serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <name>[,<name>...]] [--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>] [--dry-run]
+nova-redis spill --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]
+nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+nova-redis fn load --addr <host:port> [--user <name>] [--password-env <NAME>]
+nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
+nova-redis acl render
+nova-redis acl check --addr <host:port> [--user <name>] [--password-env <NAME>]
+nova-redis acl apply --addr <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]
+nova-redis install store --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+nova-redis install bus --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+nova-redis uninstall store [--units <dir>] [--dry-run]
+nova-redis uninstall bus [--units <dir>] [--dry-run]
+nova-redis version
+nova-redis help [<verb>]
 ```
+<!-- clidoc:end nova-redis -->
 
 **The store and the bus as services.** `install store` and `install bus` write a unit (a launchd agent on macOS, a systemd user unit on Linux, kept alive and started again at login) that runs `nova-redis serve` itself, and load it with `launchctl` or `systemctl --user`. serve writes redis-server's whole configuration from its flags and hands it over stdin, so no configuration file is written by hand: the binding (default `127.0.0.1`, loopback and tailnet only), the port (default 6380 for the store, 6381 for the bus) and the store directory under the bench root (default `~/nova-bench/redis/store` or `~/nova-bench/redis/bus`). The unit carries no password and no `nova-secrets exec`: with `<secret login>`, serve reads the password in its own process from that name in that seat (the path `nova-secrets exec` takes), and hands it to redis-server on stdin only; install refuses a login missing a field. `--dry-run` prints the unit and writes and loads nothing; `uninstall` unloads it and removes its file. `nova-sprint units --check` names both units installed, missing or different.
 
@@ -2501,6 +2795,18 @@ The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION
 `fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620): nova-table does so on its first `Function not found` (see [nova-table](#nova-table)). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
 
 ## nova-cairn
+
+<!-- clidoc:begin nova-cairn -->
+```
+nova-cairn open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]
+nova-cairn NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish records the entry's own word, and one that differs from the session's is recorded as given, not a conflict (exit 0).
+nova-cairn append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>] [--now <rfc3339-utc>] [--dry-run]
+nova-cairn index --store <dir> [--session <id>] [--max <n>]
+nova-cairn receipt --store <dir> --session <id> --entry <id> [--text]
+nova-cairn version
+nova-cairn help [<verb>]
+```
+<!-- clidoc:end nova-cairn -->
 
 Keeps a session's words as local checkpoints: the exact words, their source
 pointers and a bounded index. Publication intent is recorded, not carried out:
@@ -2566,6 +2872,25 @@ the whole remedy verb: `open first: nova-cairn open --store <dir> --session <id>
 
 
 ## nova-decide
+
+<!-- clidoc:begin nova-decide -->
+```
+nova-decide ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+nova-decide read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+nova-decide score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+nova-decide attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+nova-decide grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+nova-decide gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+nova-decide brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]
+nova-decide outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]
+nova-decide calibrate --record <file> --decision <name> --question <name[=option]> --positive <label,...> --negative <label,...> [--bars <p,...>]
+nova-decide import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>] [--dry-run]
+nova-decide score-grades --record <file> --log <file> [--day <date>]
+nova-decide findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>] [--read-shadow <file> [--heavy <file>]]
+nova-decide version
+nova-decide help [<verb>]
+```
+<!-- clidoc:end nova-decide -->
 
 Typed decisions with probabilities, recorded so each one can be calibrated
 against its outcome. The decide side asks a schema (named, typed questions)
@@ -2647,6 +2972,17 @@ wrong:
 
 ## nova-local
 
+<!-- clidoc:begin nova-local -->
+```
+nova-local status [--engine <name>] [--base <url>] [--list] [--max <n>] [--timeout <d>]
+nova-local serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
+nova-local serve --stop --engine <name> --model <tag> [--base <url>]
+nova-local worker --engine <name> --model <tag> --out <file> --name <text> --harness <cmd> --harness-args <a,b,{model},...> --worker-dir <abs dir> --key-file <file> --env-var <NAME> --usage <opencode|none> --deadline <d> [--base <url>] [--board <owner/repo#n>] [--dry-run]
+nova-local version
+nova-local help [<verb>]
+```
+<!-- clidoc:end nova-local -->
+
 Run local models: what an engine has, one model served at a chosen context,
 and a worker description nova-swarm accepts. It runs no inference, fetches no
 weights and judges no model.
@@ -2693,6 +3029,51 @@ wrong:
 
 
 ## nova-table
+
+<!-- clidoc:begin nova-table -->
+```
+nova-table help [<verb> [<subverb>]]
+nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>]
+    [--width <col=n,...>]
+nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]
+    [--hide <cols>] [--show <cols>] [--hidden | --visible]
+nova-table drop <table> [--definition]
+nova-table list
+nova-table row add <table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+nova-table row set <table> <row> <col>=<value>...
+nova-table row hide <table> <row>...
+nova-table row show <table> <row>...
+nova-table row del <table> <row>
+nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+nova-table row order <table> <row>...
+nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep] | --manual
+nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+nova-table col del <table> <col>
+nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
+nova-table cell add <table> <row> <col> <member>... [--score <n>]
+nova-table cell remove <table> <row> <col> <member>...
+nova-table cell move <table> <row> <from-col> <to-col> <member>...
+nova-table cell members <table> <row> <col>
+nova-table member create <table> <id>
+nova-table member find <table> <id>
+nova-table member read <table> <id>... | <table> --cell <row:col>
+nova-table batch (<manifest-file> | - | '<json>')
+nova-table check <table>
+nova-table clear <table>
+nova-table show <table> [--at-epoch <n>]
+nova-table render <table> | --view <name> [--at-epoch <n>]
+    [--width <col=n,...>] [--label-width <n>]
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>]
+    [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view state <name> (<text> | --clear)
+nova-table view show <name>
+nova-table view list
+nova-table view del <name>
+nova-table shell [--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]
+nova-table version
+```
+<!-- clidoc:end nova-table -->
 
 Work tables over Redis: ordered-set cells, text notes, percentage formulas,
 batch writes and stored live views. Every table mutation checks its observed
@@ -3038,15 +3419,18 @@ the last good frame and one `store unreachable since <time>` line until recovery
 
 nova-card is pre-alpha: not ready for production use.
 
+<!-- clidoc:begin nova-card -->
 ```
 nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
+nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 nova-card template
 nova-card version
 nova-card help [<verb>]
 ```
+<!-- clidoc:end nova-card -->
 
 A card a model writes by hand takes it half an hour and comes back with guessed
 PATHS; one wrong PATHS line was rejected 262 times in one night. nova-card
@@ -3131,6 +3515,16 @@ plans and lints, prints the manifest and the `CARDS OK` line with
 
 nova-work is pre-alpha: not ready for production use.
 
+<!-- clidoc:begin nova-work -->
+```
+nova-work import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
+nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
+nova-work verify --tree <tree.lisp> --against <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-bytes <n>]
+nova-work version
+nova-work help [<verb>]
+```
+<!-- clidoc:end nova-work -->
+
 Every issue of every repository of a GitHub organization in one tree file, with
 each issue's full contents, and a check that the file holds exactly what GitHub
 holds. The design is [SPEC-WORK-V1.md](SPEC-WORK-V1.md); this section is how to
@@ -3171,3 +3565,28 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+
+## nova-up
+
+Sets up nova on one machine. `--dry-run` prints the planned steps before applying them.
+
+<!-- clidoc:begin nova-up -->
+```
+nova-up --local [--root <dir>] [--dry-run] [--json]
+nova-up version
+nova-up help [<verb>]
+```
+<!-- clidoc:end nova-up -->
+
+## nova-doctor
+
+Checks the dependencies the nova tools need and names the command that repairs each missing dependency.
+
+<!-- clidoc:begin nova-doctor -->
+```
+nova-doctor [run] [--check <name>]... [--local] [--strict] [--json]
+nova-doctor version
+nova-doctor help [<verb>]
+```
+<!-- clidoc:end nova-doctor -->
