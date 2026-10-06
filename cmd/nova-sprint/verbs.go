@@ -158,6 +158,9 @@ func init() {
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
 		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
+	// install, uninstall and units stay before coordinator, whose example moves the seat.
+	verbs = slices.Insert(verbs, len(verbs)-1, installVerbs...)
+	installVerbMeta()
 }
 
 func verbNames() []string {

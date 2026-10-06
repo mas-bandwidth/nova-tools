@@ -1141,6 +1141,12 @@ nova-sprint friend sync [--pg <dsn>] [--root <dir>] [--every <duration>]
 nova-sprint friend sync install --every <duration> [--redis <addr>] [--pg <dsn>] [--root <dir>] [--dir <dir>] [--log <file>] [--dry-run]
 nova-sprint friend sync uninstall [--dir <dir>] [--dry-run]
 nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]
+nova-sprint install server --listen <address:port> [--redis <addr>] [--land] [--decide <dir>] [--dir <dir>] [--log <file>] [--dry-run]
+nova-sprint install member --as <member> --server <address:port> [--harness <path>] [--root <dir>] [--pass <NAME,...>] [--swarm <path>] [--dir <dir>] [--log <file>] [--dry-run]
+nova-sprint install seat-push|friend-sync (seat install's and friend sync install's flags)
+nova-sprint install table --out <file> [--every <duration>] [--redis <addr>] [--dir <dir>] [--log <file>] [--dry-run]
+nova-sprint uninstall server|member|seat-push|friend-sync|table [--dir <dir>] [--dry-run]
+nova-sprint units --check [--dir <dir>]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
@@ -1212,6 +1218,10 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 `nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
 
 The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness whose adapter is still the Stub (Claude Code, until fg-claude-open-chatb-r lands) is refused at install.
+
+### Every unit a sprint needs, installed by a verb
+
+A running sprint needs nine units on its coordinator's machine: the store and the bus (`nova-redis install store|bus`), the server, the machine's member, the seat's push loop, the friend sync loop and the live table (`nova-sprint install server|member|seat-push|friend-sync|table`), and the disk guard (`nova-swarm install disk-guard`) and the mirrors' refresh (`nova-swarm install mirror-refresh`, owed: nova-swarm has no mirror verb for the unit to run). Each verb writes its unit (a launchd agent on macOS, a systemd user unit on Linux, kept alive and started again at login) into `--dir` (default `~/Library/LaunchAgents` or `~/.config/systemd/user`) and loads it; `--dry-run` prints it and writes nothing, and `uninstall <kind>` unloads and removes it. A unit runs the verb itself by the tool's absolute path, never under `nova-secrets exec`, a shell or a wrapper, and carries no secret: the server, the push loop and the table open the store with the seat login recorded by `seat login` (above), read in their own process, and install refuses a store this shell reaches as a user with no login recorded for it. Not yet in process: the server's decision loop reads its API key and the member the providers' keys `--pass` names from the service's environment, which the unit does not set. `install seat-push` and `install friend-sync` are `seat install` and `friend sync install`. `install table` runs `where --watch --every <d>` with its lines to `--out`. `nova-sprint units --check` reads the unit files and prints `UNIT <kind> installed|missing|different unit=<path>` for each of the nine, a different one with `why=` (the file runs a wrapper, another verb, or is no unit) and each not installed with `; run: <the verb that installs it>` (or `; owed: <the verb> (<what it waits on>)`), then `UNITS CHECK OK|DIFFERENT installed=<n> missing=<n> different=<n>`; exit 1 when one is not installed. `--json` prints the same as one object.
 
 ### The sprint backup
 
@@ -2424,7 +2434,9 @@ Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova
 ## nova-redis
 
 ```
-nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <u>[,<u>...]] # run redis-server in the foreground, loopback and tailnet only, AOF on, ACL users kept in <store-dir>/users.acl
+nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <u>[,<u>...]] [<secret login>] # run redis-server in the foreground, loopback and tailnet only, AOF on, ACL users kept in <store-dir>/users.acl
+nova-redis install store|bus <secret login> [--bind <addr>] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run] # serve as a service of this machine
+nova-redis uninstall store|bus [--units <dir>] [--dry-run]                    # unload and remove that unit; the store directory is kept
 nova-redis spill  <login> --owner <o> --name <n> --ttl <d> --value <v> [--dry-run] # write scratch under <o>:<n> with a required TTL; --dry-run dials nothing
 nova-redis recall <login> --owner <o> --name <n>                              # read it back; exit 1 on a missing or expired key
 nova-redis fn load  <login>                                                   # put this binary's function library on the store unless it holds exactly that code
@@ -2433,7 +2445,10 @@ nova-redis acl render                                                         # 
 nova-redis acl check <login>                                                  # compare the store's live ACL with them; changes nothing
 nova-redis acl apply <login> [--password-env-for <user>=<NAME>]... [--dry-run] # set the users that differ, and save the ACL file
 # <login> is --addr <host:port> [--user <name>] [--password-env <NAME>]
+# <secret login> is --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>
 ```
+
+**The store and the bus as services.** `install store` and `install bus` write a unit (a launchd agent on macOS, a systemd user unit on Linux, kept alive and started again at login) that runs `nova-redis serve` itself, and load it with `launchctl` or `systemctl --user`. serve writes redis-server's whole configuration from its flags and hands it over stdin, so no configuration file is written by hand: the binding (default `127.0.0.1`, loopback and tailnet only), the port (default 6380 for the store, 6381 for the bus) and the store directory under the bench root (default `~/nova-bench/redis/store` or `~/nova-bench/redis/bus`). The unit carries no password and no `nova-secrets exec`: with `<secret login>`, serve reads the password in its own process from that name in that seat (the path `nova-secrets exec` takes), and hands it to redis-server on stdin only; install refuses a login missing a field. `--dry-run` prints the unit and writes and loads nothing; `uninstall` unloads it and removes its file. `nova-sprint units --check` names both units installed, missing or different.
 
 `nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Every verb that talks to a store opens it one way, through `internal/redisconn`: one dial, the handshake and the login bounded, no retry.
 - `--addr` is the store's `host:port`.
