@@ -97,8 +97,8 @@ takes `--json`; `log` takes `--max`.
   state= id= from= at= subject=` line per message. Writes nothing, makes no
   group.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
-- `names` prints `NAMES OK count=<n> proven=<n>` and one `NAMES NAME name=
-  push=<proven|stale|down|none> age=<age|never> harness=<h>` line per known name.
+- `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
+  `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>`.
 - `version`, `help`, `help <verb>`.
 
 Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
