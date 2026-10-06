@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -62,5 +63,20 @@ func TestAbstractCoverJudgmentType(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, JudgmentType(tc.in), "JudgmentType(%q)", tc.in)
 		})
+	}
+}
+
+// TestAbstractCoverParseWorkCard covers ParseWorkCard (abstract.go): a work card's
+// identity reads back to its primary and attempt, and an identity with no attempt, a
+// zero or unnumbered one, or no primary is refused.
+func TestAbstractCoverParseWorkCard(t *testing.T) {
+	t.Parallel()
+	p, n, ok := ParseWorkCard(sprint.WorkCardID("s1-7", 3))
+	require.True(t, ok, "work card: %s %d %v", p, n, ok)
+	assert.Equal(t, "s1-7", p, "work card: %s %d %v", p, n, ok)
+	assert.Equal(t, 3, n, "work card: %s %d %v", p, n, ok)
+	for _, id := range []string{"p", "p.w", "p.w0", "p.wx", ".w1"} {
+		_, _, ok := ParseWorkCard(id)
+		assert.False(t, ok, "ParseWorkCard(%q)", id)
 	}
 }

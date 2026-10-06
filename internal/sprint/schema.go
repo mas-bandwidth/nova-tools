@@ -303,19 +303,6 @@ func ReadCardID(primary string, attempt int, reader string) string {
 // CtlID is the identity of a stream's or a member's control card.
 func CtlID(name string) string { return "ctl-" + name }
 
-// ParseWorkCard splits a work card identity into its primary and attempt.
-func ParseWorkCard(id string) (primary string, attempt int, ok bool) {
-	i := strings.LastIndex(id, ".w")
-	if i <= 0 {
-		return "", 0, false
-	}
-	n, err := strconv.Atoi(id[i+2:])
-	if err != nil || n < 1 {
-		return "", 0, false
-	}
-	return id[:i], n, true
-}
-
 // ParseReadCard splits a read card identity into its primary, attempt and reader.
 func ParseReadCard(id string) (primary string, attempt int, reader string, ok bool) {
 	parts := strings.Split(id, ".")

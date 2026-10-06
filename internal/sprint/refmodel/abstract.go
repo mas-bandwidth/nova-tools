@@ -2,6 +2,7 @@ package refmodel
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -155,10 +156,24 @@ func headAttempt(h string) int {
 	if h == "" {
 		return 0
 	}
-	if _, n, ok := sprint.ParseWorkCard(h); ok {
+	if _, n, ok := ParseWorkCard(h); ok {
 		return n
 	}
 	return -1
+}
+
+// ParseWorkCard splits a work card identity (sprint.WorkCardID) into its primary and
+// attempt. The engine never parses one back, so the reading is the model's and its tests'.
+func ParseWorkCard(id string) (primary string, attempt int, ok bool) {
+	i := strings.LastIndex(id, ".w")
+	if i <= 0 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(id[i+2:])
+	if err != nil || n < 1 {
+		return "", 0, false
+	}
+	return id[:i], n, true
 }
 
 // judgment is one open key as the model's judgment: its type, and its
