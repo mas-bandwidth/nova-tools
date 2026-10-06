@@ -266,7 +266,9 @@ func ReadsNeeded(pr *Card) int {
 // ask may ask it (TickAsk); else it waits, judged NFewReaders. A friend is asked
 // before this (friendReadAsk), and a read she holds is not one this counts.
 func enoughReadersUp(s *Snapshot, pr *Card) bool {
-	if s.ReaderStates == nil && !s.readersCarryTiers() && s.tierRouted(s.readTierOf(pr)) {
+	// the fast path: no states, no tiers cell, the tier routed, and no fleet reader held to
+	// flash by its empty cell for a read above flash (fleetReadsFlashOnly)
+	if t := s.readTierOf(pr); s.ReaderStates == nil && !s.readersCarryTiers() && s.tierRouted(t) && (len(s.Routes) == 0 || t == cardhdr.RouteFlash) {
 		return true
 	}
 	tier, n := s.readTierOf(pr), 0

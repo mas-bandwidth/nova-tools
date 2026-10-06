@@ -33,6 +33,11 @@ func newHeavyRig(t *testing.T) *conflictRig {
 		Sleep: func(time.Duration) {}}
 	require.NoError(t, r.st.Init(r.ctx))
 	require.NoError(t, r.m.RowsAdd(r.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
+	// the rows read pro: a fleet row that names no tier reads flash alone while routes are held
+	require.NoError(t, r.st.EnsureReaderTiers(r.ctx))
+	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
+		require.NoError(t, r.m.RowSet(r.ctx, "t-readers", rd, map[string]string{sprint.ReaderTiers: "flash,pro"}))
+	}
 	require.NoError(t, r.m.SetCoordinator(r.ctx, "coordinator"))
 	r.m.SetRoutes([]sprint.Route{
 		{Name: "flash-a", Tier: "flash", Provider: "prov-flash-a", Model: "model-flash-a", Tokens: 1000, Deadline: conflictRouteSeconds, Enabled: true},

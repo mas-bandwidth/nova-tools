@@ -344,6 +344,15 @@ func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits [
 	if s == nil || s.Work == nil || s.Fleet == nil {
 		return p, nil, nil
 	}
+	return friendReadAskOf(s, seats, dir, readOrder(readsWaitingCards(s)))
+}
+
+// friendReadAskOf is friendReadAsk over the primaries given, in their order: the deal asks
+// the reads level by level (friendDealByLadder).
+func friendReadAskOf(s *Snapshot, seats []FriendSeat, dir string, cards []*Card) (p Plan, waits []*Card, err error) {
+	if s == nil || s.Work == nil || s.Fleet == nil {
+		return p, nil, nil
+	}
 	free, lanes := map[string]int{}, map[string]int{}
 	var up []FriendSeat
 	for _, f := range seats {
@@ -356,23 +365,18 @@ func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits [
 		up = append(up, f)
 	}
 	declared := map[string]bool{}
-	for _, pr := range s.Work.Column(Review) {
-		if IsSentinel(pr) || pr.F("result") == "failed" || ReadsWanted(s, pr) == 0 {
-			continue
-		}
-		attempt := pr.Int("attempt")
-		if attempt == 0 {
-			attempt = 1
-		}
+	// by the read's level (readOrder, priority.go), work order within one
+	for _, pr := range cards {
+		attempt := readAttempt(pr)
 		tier := friendReadTier(s, pr)
 		worker := attemptWorker(s, pr.ID, attempt)
 		// a friend is asked an attempt once: her read card at it, taken back,
 		// keeps its id, so she is not one who may read it again. A friend who
-		// worked on this attempt does not read her own work.
+		// worked on this attempt does not read her own work (friendMayRead).
 		var withRoom []string
 		eligible := false
 		for _, f := range up {
-			if f.Name == worker || !friendAtOrAbove(f, tier) || s.Fleet.Card(ReadCardID(pr.ID, attempt, f.Name)) != nil {
+			if !friendMayRead(s, f, pr, attempt, tier, worker) {
 				continue
 			}
 			eligible = true
@@ -432,6 +436,7 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 		"attempt": itoa(attempt), "head": head, "branch": branch, "start": start,
 		"asked": stamp(s.Now), "gen": "1",
 	}
+	priorityOnRead(fields, pr) // its primary's level when above reader (priority.go)
 	p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, createEntry(id, row, col, pr.Score, fields)),
 	}, Moved: pr.ID + " asked of friend " + name})

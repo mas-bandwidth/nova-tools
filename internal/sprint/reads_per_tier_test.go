@@ -45,6 +45,7 @@ func tierWorld(t *testing.T) *world {
 		rt.Deadline = 600 // seconds, as the route row holds it
 		w.s.Routes = append(w.s.Routes, rt)
 	}
+	readersReadEveryTier(w) // a fleet row reads flash unless it says more (fleetReadsFlashOnly)
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}}))
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-2"}, Brief: proBrief}))
 	// on pro, as the machine's escalation leaves it: every card's first deal is on flash

@@ -41,6 +41,7 @@ func TestStreamArchiveTakesALandedStreamOffTheTable(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1:8")
 	ta.m.SetRoutes(costRoutes())
+	ta.readersReadPro() // a fleet row reads flash unless it says more (sprint fleetReadsFlashOnly)
 	ta.ok("add --stream s1 --count 2 --brief-file " + proBriefFile(t))
 	ta.ok("add --one --stream s2 --count 1 --brief-file " + writeBrief(t, "a flash card, tier: flash"))
 	for _, id := range []string{"s1-1", "s1-2"} {

@@ -440,6 +440,11 @@ func Add(s *Snapshot, r AddReq) Plan {
 				gateSaid = said
 			}
 		}
+		if kind == "primary" {
+			if lvl := seedPriority(ctl, a.brief); lvl != "" {
+				fields[FieldPriority] = lvl // its brief's PRIORITY line, else its stream's default (priority.go)
+			}
+		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
 		}
@@ -982,6 +987,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if fix != "" {
 		fields["fix"] = fix
 	}
+	priorityOnWork(fields, c)
 	// the attempt decision's bars, which its failed finish is routed by (decide.go)
 	bars, _ := s.attemptBars()
 	maps.Copy(fields, bars)

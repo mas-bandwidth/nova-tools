@@ -137,6 +137,10 @@ type FriendSeat struct {
 	// Answered is when her session last answered the coordinator's wake ping (her
 	// FriendHealth observation, up), zero when it has not.
 	Answered time.Time
+	// ReadsFirst is the room her reads take before any work card in this deal (reads are a
+	// card priority, reads_priority.go friendReadsFirst): set by the tick's deal on the
+	// seats it deals work to, never read from her row; zero leaves her room as it is.
+	ReadsFirst int
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -261,12 +265,13 @@ func laneRunsIt(s *Snapshot, seats []FriendSeat, c, wc *Card) string {
 }
 
 // friendRoom is the friend's room and her lanes: DealAhead times her width and her width
-// in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card").
+// in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
+// the room less what her reads take first in this deal (FriendSeat.ReadsFirst).
 func friendRoom(f FriendSeat) (room, width int) {
 	if f.Mode == config.FriendModeOneShot {
-		return 1, 1
+		return 1 - f.ReadsFirst, 1
 	}
-	return DealAhead * f.Width, f.Width
+	return DealAhead*f.Width - f.ReadsFirst, f.Width
 }
 
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
@@ -709,6 +714,7 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, _ string, set map[string]st
 			fields[k] = v
 		}
 	}
+	priorityOnWork(fields, c)
 	prim := map[string]string{"attempt": itoa(attempt), "work": card}
 	for k, v := range set {
 		prim[k] = v

@@ -80,6 +80,7 @@ func TestTheFinderIsNotPreferredWhenAwayOrWithoutRoom(t *testing.T) {
 		// reader-m1 reads at m1's width, 1: holding one read, it has no room for the check
 		h := routeHarness(t, route("flash-a", "flash"), route("pro-a", "pro"))
 		require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-m1"}))
+		h.readersRead("flash,pro,heavy,frontier") // the added row reads every tier, as the harness's do
 		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 1}))
 		h.beat()
 		h.addReady("s1", 2, briefOf("pro", ""))
@@ -126,6 +127,7 @@ func TestTheFinderIsTheFirstBrokenReadInReaderRowOrder(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"), route("pro-a", "pro"))
 	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-0"}))
+	h.readersRead("flash,pro,heavy,frontier") // the added row reads every tier, as the harness's do
 	require.Equal(t, []string{"reader-a", "reader-b", "reader-c", "reader-0"}, h.snap().Readers.Rows(), "rows not in name order")
 	for _, r := range []string{"reader-a", "reader-b"} {
 		require.NoError(t, h.st.SetReaderAway(h.ctx, r, true, "tester"))

@@ -1121,6 +1121,7 @@ nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--ans
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
 nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint sentinel set <id> --needs <a,b>
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
@@ -1213,6 +1214,19 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
+
+### A card's priority
+
+Every card carries a level of the ladder blocker, critical, high, reader, normal, low; a
+read card is reader or its primary's higher level, a primary normal unless its brief's `PRIORITY: <level>` line, its
+stream's default or `priority` sets it. `priority s1-4 --high --reason '<why>'` sets one card,
+`priority --stream s2 --low --reason '<why>'` sets, in one call, every card now in the stream
+(its own level overwritten) and the stream's default for cards added later, and `priority s1-4` prints the level and where it comes from;
+each change is on the card's timeline (`log --card`) with the actor and the reason. Every
+deal places the cards above reader first, then the reads, then normal and low work in the
+room the reads leave; `where` prints the levels beside the critical list and the backup
+state (`backup: reads (review ... > working ...)`) while there is one
+(docs/SPEC-SPRINT.md section 1, "Priority").
 
 ### The seat's store login
 

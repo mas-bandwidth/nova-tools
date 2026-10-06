@@ -48,6 +48,13 @@ type WhereRecord struct {
 	// DealtFleet is each friend's count of the fleet's cards on her row
 	// (sprint.FriendsDealtFleet), where --json's dealt_fleet.
 	DealtFleet map[string]int `json:"dealt_fleet,omitempty"`
+	// ReadsWaiting is the reads wanted now and not asked over the primaries in review
+	// (sprint.ReadsWaiting), Priorities every open primary whose level is not normal, by
+	// level (sprint.PriorityCounts), and StreamPriorities each stream's default level that
+	// is not normal (sprint.StreamPriorities), as of the count.
+	ReadsWaiting     int                 `json:"reads_waiting,omitempty"`
+	Priorities       map[string][]string `json:"priorities,omitempty"`
+	StreamPriorities map[string]string   `json:"stream_priorities,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -60,7 +67,8 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 		}
 	}
 	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
-		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s)}
+		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s),
+		ReadsWaiting: sprint.ReadsWaiting(s), Priorities: sprint.PriorityCounts(s), StreamPriorities: sprint.StreamPriorities(s)}
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -261,6 +269,11 @@ type WhereFacts struct {
 	// DealtFleet is the record's count of the fleet's cards on each friend's row
 	// (sprint.FriendsDealtFleet); nil without the record.
 	DealtFleet map[string]int
+	// ReadsWaiting, Priorities and StreamPriorities are the record's (WhereRecord); zero
+	// without the record.
+	ReadsWaiting     int
+	Priorities       map[string][]string
+	StreamPriorities map[string]string
 	// HasStoreRTT is set when the server's store round trip record has a sample
 	// within StoreRTTWindow; StoreRTTP50MS and StoreRTTP99MS are its p50 and p99.
 	HasStoreRTT   bool
@@ -310,6 +323,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
+			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

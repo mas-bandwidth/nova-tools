@@ -49,6 +49,7 @@ func costCard(t *testing.T) *testApp {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.m.SetRoutes(costRoutes())
+	ta.readersReadPro() // a fleet row reads flash unless it says more (sprint fleetReadsFlashOnly)
 	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.a.sleep(2 * time.Second)
@@ -168,6 +169,7 @@ func TestAProviderFailedTakeCountsOnceAfterARedeal(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.m.SetRoutes(costRoutes())
+	ta.readersReadPro() // a fleet row reads flash unless it says more (sprint fleetReadsFlashOnly)
 	ta.ok("add --stream s1 --count 1 --one")
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
@@ -194,6 +196,7 @@ func TestAReturnedReadKeepsItsRunInTheTotal(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
 	ta.m.SetRoutes(costRoutes())
+	ta.readersReadPro() // a fleet row reads flash unless it says more (sprint fleetReadsFlashOnly)
 	ta.ok("add --stream s1 --count 1 --one --brief-file " + proBriefFile(t))
 	ta.tierNow("s1-1", "pro") // read by two readers: a pro card on pro
 	ta.deal(1)

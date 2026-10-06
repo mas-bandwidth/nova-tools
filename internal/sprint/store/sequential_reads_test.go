@@ -121,3 +121,14 @@ func TestTheFirstReadTakenBackIsAskedAgainAlone(t *testing.T) {
 	assert.NotEqual(t, reads[0].Row, again[0].Row)
 	h.clean("the first read asked again")
 }
+
+// readersRead names the tiers on every reader row, as reader set --tiers does.
+func (h *harness) readersRead(tiers string) {
+	h.t.Helper()
+	require.NoError(h.t, h.st.EnsureReaderTiers(h.ctx))
+	rows, err := h.st.ReaderRows(h.ctx)
+	require.NoError(h.t, err)
+	for _, rd := range rows {
+		require.NoError(h.t, h.m.RowSet(h.ctx, h.st.Names.Table(sprint.Readers), rd, map[string]string{sprint.ReaderTiers: tiers}))
+	}
+}

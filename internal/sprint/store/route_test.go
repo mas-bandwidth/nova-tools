@@ -35,6 +35,10 @@ func routeHarness(t *testing.T, routes ...sprint.Route) *harness {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: sprint.MaxWidth}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: sprint.MaxWidth}))
 	h.m.SetRoutes(routes)
+	// the readers' rows name every tier, as reader set --tiers all writes them: a fleet row
+	// that names no tier reads flash alone while the store holds routes (sprint
+	// fleetReadsFlashOnly), and these tests read every tier their routes serve
+	h.readersRead("flash,pro,heavy,frontier")
 	return h
 }
 
