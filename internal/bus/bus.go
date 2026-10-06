@@ -238,9 +238,19 @@ type Waiter interface {
 	BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]Entry, error)
 }
 
+// Unwrap is the store the push gate stands in front of. A wait reads and
+// takes nothing, so its reads reach past the gate (SPEC-BUS.md, the verbs:
+// wait).
+func (h *hearing) Unwrap() Store { return h.Store }
+
 // Waiter is the Store's wait reads, or the refusal of a Store that has none.
+// The push gate is looked through: a wait is not a send or a recv.
 func (b *Bus) Waiter() (Waiter, error) {
-	w, ok := b.Store.(Waiter)
+	st := b.Store
+	if h, ok := st.(*hearing); ok {
+		st = h.Unwrap()
+	}
+	w, ok := st.(Waiter)
 	if !ok {
 		return nil, errors.New("this store cannot wait")
 	}
