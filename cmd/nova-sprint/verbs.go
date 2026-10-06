@@ -1577,6 +1577,8 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 	for _, f := range cardtree.Lint(brief) {
 		findings = append(findings, swarm.CardHeaderFinding{Check: f.Check, Line: f.Line, Excerpt: f.Excerpt})
 	}
+	// an issue reference its landing could not close as written (add_issues.go)
+	findings = append(findings, briefIssueFindings(brief)...)
 	return "", findings
 }
 
