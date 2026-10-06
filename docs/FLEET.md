@@ -358,6 +358,15 @@ rewrite Postgres: remove that old assignment from the loop row with
 kind. The endpoint remains effective from the unit environment during that
 cleanup.
 
+A sprint unit reads the API keys it needs in its own process. `nova-sprint run --keys <NAME,...>`
+(recorded as `keys.json` beside the seat login) names the decision key and each provider key the
+run loop reads; `nova-swarm member --pass <NAME,...>` names the keys a child may be handed, read
+from the seat (`NOVA_SEAT`, or the file `NOVA_SWARM_KEYS` names) when the environment does not
+already hold them. The child is handed the decision key, when pass names it, and the one provider
+key its route needs, never the whole set. A named secret that cannot be read refuses at start,
+naming the name and the remedy. The unit's environment does not carry the values, so those loops
+need no `nova-secrets exec` wrapper for `JEV_API_KEY` or a provider key.
+
 - darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
   `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,
   `UserName` the login), with `StandardOutPath` and `StandardErrorPath` logging
