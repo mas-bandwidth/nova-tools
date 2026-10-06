@@ -413,7 +413,7 @@ cannot be read refuses naming its path: an I/O error is not a tool outside the r
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
 `--source` for `build`). `--receipts` names the receipts directory and defaults to
-`~/rowan-working/dogfood` **when that directory exists** — the single exception to no path being guessed,
+`DefaultReceiptsDir` (in `internal/release`, under the home directory) **when that directory exists** — the single exception to no path being guessed,
 taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
 run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
 
