@@ -1558,7 +1558,7 @@ func (w world) whoami(c *tool.Call) *tool.Out {
 	if !found {
 		return tool.Fail("the queue file in " + dir + " carries no row yet; friend sync writes it with your next card").As("NONE")
 	}
-	s, _, _ := friend.ReadStatus(w.stateDir(c))
+	s, _, _ := friend.ReadStatus(w.stateDir(c, dir))
 	for _, l := range friend.WhoAmILines(name, dir, s.SessionID, row, s.Harness) {
 		fmt.Fprintln(c.Stdout, l)
 	}

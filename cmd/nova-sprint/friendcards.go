@@ -68,13 +68,12 @@ func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
-	if p.Tier != "" {
+	if p.Tier != "" && p.Model != "" {
 		// the tier line: the tier she was dealt the card on and her row's model for it
-		// (docs/SPEC-FRIEND.md, a friend's models)
+		// (docs/SPEC-FRIEND.md, a friend's models); a tier with no model has none, as the
+		// packet's tier is filled from the primary for every work card
 		b.WriteString(sprint.FriendTierLine(p.Tier, p.Model) + "\n")
-		if p.Model != "" {
-			fmt.Fprintf(&b, "Run this card on %[1]s: in a child agent on %[1]s when your harness can choose a child's model, else in a session on %[1]s; your REPORT.md names it in a line Model: %[1]s, which the finish checks against this line.\n", p.Model)
-		}
+		fmt.Fprintf(&b, "Run this card on %[1]s: in a child agent on %[1]s when your harness can choose a child's model, else in a session on %[1]s; your REPORT.md names it in a line Model: %[1]s, which the finish checks against this line.\n", p.Model)
 	}
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	if c, ok := member.CarryOf(p.Brief); ok && p.BaseHead == "" {
@@ -789,7 +788,11 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 func writeQueueFileRow(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error), packets []sprint.Packet, row *friendQueueRow, probes ...friendTask) error {
 	jobs := map[string]friendTask{}
 	for _, p := range packets {
-		jobs[p.Card] = friendTask{ID: p.Card, Gen: max(1, p.Gen), Job: friendJobOf(p), Tier: p.Tier, Model: p.Model}
+		t := friendTask{ID: p.Card, Gen: max(1, p.Gen), Job: friendJobOf(p)}
+		if p.Model != "" { // a tier with no model is run as before, on her session's model
+			t.Tier, t.Model = p.Tier, p.Model
+		}
+		jobs[p.Card] = t
 	}
 	path := filepath.Join(dir, filepath.FromSlash(queueFile))
 	var q friendQueue

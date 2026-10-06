@@ -67,9 +67,9 @@ func (r QueueRow) ModelsWord() string {
 }
 
 // ModelFlags is the flag each harness takes a model by, on the command a one-shot lane runs
-// (`opencode run --model <provider/model>`). A harness not here cannot be given a model per
-// card from outside its session.
-var ModelFlags = map[string]string{"opencode": "--model"}
+// (`opencode run --model <provider/model>`, `claude --model <m> -p <brief>`). A harness not
+// here cannot be given a model per card from outside its session.
+var ModelFlags = map[string]string{"opencode": "--model", "claude": "--model"}
 
 // ModelProblem is one thing her row asks of her harness that it cannot do, or leaves
 // unfilled: Refuse is true for a row her harness cannot run as written (the check fails),

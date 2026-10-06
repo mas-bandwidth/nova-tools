@@ -1049,7 +1049,7 @@ follows from the row (`config.FriendHow`):
 
 | row | how | width |
 |---|---|---|
-| mode one-shot | `lane`: each card a headless process, launched with the harness's model flag (`opencode run --model <m>`) | `width` lanes |
+| mode one-shot | `lane`: each card a headless process, launched with the harness's model flag (`opencode run --model <m>`, `claude --model <m> -p`) | `width` lanes |
 | batch, children yes, child_model yes | `child`: each card in a child agent on the tier's model | `width` |
 | batch, children of one model, or none | `session`: every card on her session's model; her row may name only one model | `width`, or 1 with `children no` |
 
@@ -1065,7 +1065,10 @@ answers it. The machine makes sure she knows:
    `tier: heavy model: claude-opus-5-5`, with the sentence to run it on that model; the bus
    message that wakes her daemon starts with `Run this card in a child on <model>`, so a
    session friend's turn begins with it; a lane's turn says `This card runs on <model>` and is
-   launched on it. Her queue file carries each card's `tier` and `model` and her row (`row`:
+   launched on it (`opencode run --model <m>`; a claude lane, which runs the brief alone, is
+   `claude --model <m> -p <brief>`, the brief's tier line saying the same). A packet's tier is
+   filled from the card's primary for every work card, so a card with no model carries no
+   tier line and no `tier` in her queue file, as before. Her queue file carries each card's `tier` and `model` and her row (`row`:
    tiers, models, mode, width, children, child_model).
 2. **Told on change.** When her row differs from the row her queue file carries, friend sync
    pushes her a bus note (`FRIEND-ROW CHANGED`), "your row changed: tiers=... models=...".

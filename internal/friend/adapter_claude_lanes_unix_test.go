@@ -39,15 +39,18 @@ func fakeClaude(t *testing.T, outbox string, write bool) (run Exec, rec string) 
 // config_dir as CLAUDE_CONFIG_DIR, stdin empty and the brief as the prompt,
 // and reads the result from the card's outbox: written, the card ran; not
 // written, the run is a failed attempt whatever the model printed; a row
-// without config_dir runs nothing and names the remedy.
+// without config_dir runs nothing and names the remedy; a card carrying her
+// row's model for its tier is run with --model <m>.
 func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, configDir string
+		model           string
 		write           bool
 		wantErr         string
 	}{
 		{name: "the outbox written", configDir: "/accounts/heavy-a", write: true},
+		{name: "the tier's model", configDir: "/accounts/heavy-a", model: "claude-opus-5-5", write: true},
 		{name: "no outbox result", configDir: "/accounts/heavy-a", wantErr: "holds no REPORT.md and no RESULT.md"},
 		{name: "no config_dir", wantErr: "friend bob is a claude friend in one-shot mode with no config_dir, and a lane runs only as her own account (CLAUDE_CONFIG_DIR); run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>"},
 	} {
@@ -55,7 +58,7 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 			t.Parallel()
 			dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
 			brief := "STATUS: nova-sprint card c1, epoch 15\n\nTHE TASK. Write 'both' files; a line that starts -p is still the prompt.\n"
-			c := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c1~15")}
+			c := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c1~15"), Model: tc.model}
 			require.NoError(t, os.WriteFile(c.Brief, []byte(brief), 0o644))
 			run, rec := fakeClaude(t, c.Outbox, tc.write)
 			var out strings.Builder
@@ -86,7 +89,11 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 			assert.Empty(t, got, "stdin is /dev/null")
 			got, err = os.ReadFile(filepath.Join(rec, "args"))
 			require.NoError(t, err)
-			assert.Equal(t, append([]string{"-p", brief, "--output-format", "stream-json", "--verbose"}, ClaudeTrim...), strings.Split(strings.TrimSuffix(string(got), "\x00"), "\x00"), "the prompt is the brief")
+			want := append([]string{"-p", brief, "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
+			if tc.model != "" {
+				want = append([]string{"--model", tc.model}, want...) // the card's model rides as the flag
+			}
+			assert.Equal(t, want, strings.Split(strings.TrimSuffix(string(got), "\x00"), "\x00"), "the prompt is the brief")
 			assert.Contains(t, out.String(), "nothing here is read", "the output goes to the record, and only there")
 		})
 	}

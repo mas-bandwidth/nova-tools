@@ -42,8 +42,8 @@ func NewClaude(friend, dir string, run Exec, out io.Writer) *Claude {
 
 // Claude is the claude harness: no deliver command in batch (Stub, passive:
 // the daemon reads nothing for it), and in one-shot mode each card run as
-// `env CLAUDE_CONFIG_DIR=<dir> claude -p <brief> --output-format stream-json
-// --verbose` and the trim (ClaudeTrim) in Dir with stdin from /dev/null,
+// `env CLAUDE_CONFIG_DIR=<dir> claude [--model <m>] -p <brief> --output-format
+// stream-json --verbose` (the model her row maps the card's tier to) and the trim (ClaudeTrim) in Dir with stdin from /dev/null,
 // priced and its limit read from its stream-json (adapter_claude.go). The config directory is the
 // friend row's config_dir, so each friend is its own account's login and
 // settings (its permission mode among them); stream-json prints as the run
@@ -95,7 +95,11 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 	if err != nil {
 		return LaneTurn{}, fmt.Errorf("the card's brief: %w", err)
 	}
-	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", string(brief), "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
+	args := []string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program()}
+	if card.Model != "" { // her row's model for the card's tier (docs/SPEC-FRIEND.md, a friend's models)
+		args = append(args, ModelFlags["claude"], card.Model)
+	}
+	args = append(append(args, "-p", string(brief), "--output-format", "stream-json", "--verbose"), ClaudeTrim...)
 	out, exit, err := c.Run(ctx, c.Dir, "env", args, "")
 	if c.Out != nil && out != "" {
 		fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
