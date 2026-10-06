@@ -247,13 +247,13 @@ because `docs/dogfood` already has its `internal/docs/catalog.go` row.
 ## Gate
 
     go test -count=1 -timeout 600s ./internal/docs ./internal/ci
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	2.7s
-    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	19.7s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	2.235s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	16.119s
 
     go test -count=1 -timeout 600s ./internal/docs -run TestDocsTreeIsConsistent
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.3s [no tests to run]
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.012s [no tests to run]
 
-Both packages pass; the named test does not exist at this tip.
+Both packages pass at exit 0; the named test does not exist at this tip.
 
 READ 6/10 — the verb helps, the flag list and the refusal grammar are complete
 and honest enough to find every verb cold, and the docs page's gate recipe runs
