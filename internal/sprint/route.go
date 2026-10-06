@@ -411,23 +411,17 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 }
 
 // readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
-// no read card of it can be drawn a route of that tier: "" when the store holds
-// no route at all (reads run on the reader's own model) or an enabled route of
-// the tier is in its array. The deal's tick raises the tier's judgment for the
-// reads waiting (TickDeal, NNoRoute), as it does for work cards.
+// no reader can read it: "" when the store holds no route at all (reads run on the
+// reader's own model), an enabled route of the tier is in its array, or a reader up
+// that brings its own model (a friend's or a bud's, read_route.go) reads the tier:
+// a read needs a reader, not a route. The deal's tick raises the tier's judgment for
+// the reads waiting (TickDeal, NNoRoute) only when neither serves it.
 func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
 	tier = s.readTierOf(pr)
-	if len(s.Routes) == 0 {
+	if s.tierRouted(tier) || s.ownModelReaderUp(tier) {
 		return tier, ""
 	}
-	for _, name := range s.tierArray(tier) {
-		for _, r := range s.Routes {
-			if r.Name == name && r.Tier == tier && r.Enabled {
-				return tier, ""
-			}
-		}
-	}
-	return tier, "no enabled route serves tier " + tier + ", the tier of the work its reads read, so its reads have no route: run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply"
+	return tier, "no enabled route serves tier " + tier + ", the tier of the work its reads read, and no reader up that brings its own model reads it, so its reads have no reader: start a friend's or a bud's reader of tier " + tier + ", or run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply"
 }
 
 // tokensWord is a route's budget as native's --tokens takes it.
