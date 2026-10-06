@@ -216,7 +216,7 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 		ExitTable: "0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage",
 		Verbs: []tool.Verb{{
 			Name:    "run",
-			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json]\n[run] --job <local-notes|messaging|friend|worker|coordinator> [--as <name>] [--dir <d>] [--harness <h>] [--redis <host:port>] [--strict] [--json]",
+			Usage:   "[run] [--check <name>]... [--local] [--strict] [--json]\n[run] --job <local-notes|messaging|friend|worker|coordinator> [--as <name>] [--dir <d>] [--harness <h>] [--config-dir <d>] [--redis <host:port>] [--since <d>] [--strict] [--json]",
 			Example: "--local",
 			Effect:  tool.Inspection,
 			Detail:  "checks: " + strings.Join(reg.Names(), ", ") + "\njobs: " + jobsDetail() + "\nexample: nova-doctor --local\nexample: nova-doctor --job friend --as bob --dir ~/bob",
@@ -230,7 +230,9 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 				f.String("as", "", "with --job friend, the friend's `name`; with --job coordinator, the coordinator whose friends are checked")
 				f.String("dir", "", "with --job friend, the friend's working `directory`, for the fix lines")
 				f.String("harness", "", "with --job friend, the friend's `harness`, for the fix lines when its check cannot say")
-				f.String("redis", "", "with --job, the Redis `host:port` (default NOVA_REDIS_ADDR, then NOVA_SPRINT_REDIS)")
+				f.String("config-dir", "", "with --job friend and a claude harness, the friend's own Claude config `directory`, for the install line (default CLAUDE_CONFIG_DIR)")
+				f.String("redis", "", "with --job, the Redis `host:port` (default NOVA_REDIS_ADDR, then NOVA_SPRINT_REDIS, then NOVA_BUS_REDIS)")
+				f.Duration("since", 0, "with --job friend or coordinator, the `window` nova-friend check judges its verdict over (default "+DefaultSince.String()+")")
 				f.Check(func(c *tool.Call) {
 					if job := c.Str("job"); job != "" {
 						if JobSteps(job) == nil {
@@ -240,8 +242,8 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 							c.Problem("--job runs the job's own steps; --check and --local select checks, not steps")
 						}
 					} else {
-						for _, n := range []string{"as", "dir", "harness", "redis"} {
-							if c.Str(n) != "" {
+						for _, n := range []string{"as", "dir", "harness", "config-dir", "redis", "since"} {
+							if c.Given(n) {
 								c.Problem("--" + n + " is read only with --job")
 							}
 						}
@@ -281,7 +283,7 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 
 // runJob is run --job: the job's steps, one line each and the summary, or one JSON object.
 func runJob(c *tool.Call, env Env) *tool.Out {
-	in := JobInput{Job: c.Str("job"), As: c.Str("as"), Dir: c.Str("dir"), Harness: c.Str("harness"), Redis: c.Str("redis")}
+	in := JobInput{Job: c.Str("job"), As: c.Str("as"), Dir: c.Str("dir"), Harness: c.Str("harness"), Redis: c.Str("redis"), Since: c.Dur("since"), ConfigDir: c.Str("config-dir")}
 	rep, err := RunJob(c.Ctx, env, in, c.Bool("strict"))
 	if err != nil {
 		return tool.Refuse(err.Error())

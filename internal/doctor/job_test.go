@@ -21,16 +21,21 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 )
 
-const testRedis = "127.0.0.1:6390"
+const (
+	testRedis = "127.0.0.1:6390"
+	testHome  = "/home/ada"
+)
 
 // testNow is the fake clock every world reads: no test reads real time.
 var testNow = time.Date(2026, 10, 6, 8, 10, 0, 0, time.UTC)
 
 // world is a machine as the job steps see it through the tools: each field one
 // dependency, true when it is there. The fake tools answer from it, and the fake shell
-// (world.run) changes it only by the exact fix commands nova-doctor prints. The session's
-// evidence is nova-friend check's: the age of the last session pong ever recorded ("-"
-// none), the age of the newest card finished, and the messages back.
+// (world.run) changes it only by the exact fix commands nova-doctor prints. Both read
+// every nova command through parseArgv (argv_test.go) first, so neither accepts a line
+// the real tool refuses. The session's evidence is nova-friend check's: the age of the
+// last session pong ever recorded ("-" none), the age of the newest card finished, and
+// the messages back; its verdict is judged over the --since the doctor passed.
 type world struct {
 	t                                                    *testing.T
 	root                                                 string
@@ -86,7 +91,7 @@ func (e exitErr) ExitCode() int { return e.code }
 
 func (w *world) env() fakeEnv {
 	return fakeEnv{
-		env:   map[string]string{"PATH": "bin", "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": "ada"},
+		env:   map[string]string{"PATH": "bin", "HOME": testHome, "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": "ada"},
 		root:  w.root,
 		clock: testNow,
 		dial: func(addr string) error {
@@ -110,8 +115,21 @@ func (w *world) exec(name string, args ...string) (string, error) {
 	}
 	w.calls++
 	cmd := tool + " " + strings.Join(args, " ")
-	switch cmd {
-	case "nova-redis acl check --addr " + testRedis:
+	a, refused := parseArgv(cmd)
+	if refused != "" {
+		w.t.Fatalf("the doctor ran a command the real tool refuses: %q: %s", cmd, refused)
+	}
+	switch a.verb {
+	case "nova-redis acl check", "nova-redis fn check":
+		if a.flags["addr"] != testRedis {
+			break
+		}
+		if a.verb == "nova-redis fn check" {
+			if !w.fnLoaded {
+				return "", exitErr{1, "FN CHECK MISSING library=nova"}
+			}
+			return "FN CHECK OK library=nova\n", nil
+		}
 		switch {
 		case !w.redisUp:
 			return "", exitErr{2, "ACL CHECK FAILED store=" + testRedis + " err=\"connection refused\""}
@@ -123,12 +141,7 @@ func (w *world) exec(name string, args ...string) (string, error) {
 				" remedy=\"nova-redis acl apply --addr " + testRedis + " sets the users that differ\"\n", exitErr{1, ""}
 		}
 		return "NOTE ACL DEFAULT on=false nopass=false\nACL CHECK OK users=4 library=abc store=" + testRedis + "\n", nil
-	case "nova-redis fn check --addr " + testRedis:
-		if !w.fnLoaded {
-			return "", exitErr{1, "FN CHECK MISSING library=nova"}
-		}
-		return "FN CHECK OK library=nova\n", nil
-	case "nova-config login --check":
+	case "nova-config login":
 		if !w.storeLogin {
 			return "", exitErr{2, "nova-config login REFUSED: no login is recorded at /x; run: nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --friend <actor>"}
 		}
@@ -138,7 +151,10 @@ func (w *world) exec(name string, args ...string) (string, error) {
 			return "CONFIG STATUS pg=h schema=0 redis=-\n", exitErr{1, "nova-config status REFUSED: schema config is not there yet; run: nova-config migrate"}
 		}
 		return "CONFIG STATUS pg=h schema=3\n", nil
-	case "nova-config apply --check":
+	case "nova-config apply":
+		if !a.has("check") || a.flags["redis"] != testRedis {
+			break
+		}
 		rev := "7"
 		if !w.applied {
 			rev = "6"
@@ -149,10 +165,20 @@ func (w *world) exec(name string, args ...string) (string, error) {
 			return "", exitErr{2, "DOCTOR DRIFT path=/usr/bin/nova-swarm\nDOCTOR REFUSED /usr/bin/nova-swarm shadows ~/.local/bin/nova-swarm"}
 		}
 		return "DOCTOR OK stamp=v1.0.0\n", nil
-	case "nova-friend check bob --json", "nova-friend check --as ada --json":
-		b, err := json.Marshal(w.friendReport())
+	case "nova-friend check":
+		// The health check: never the delivery check, which the doctor only prints.
+		if a.has("harness") || !a.has("json") || a.flags["redis"] != testRedis {
+			break
+		}
+		since, err := time.ParseDuration(a.flags["since"])
+		require.NoError(w.t, err, "the doctor passes the window: %q", cmd)
+		if !slices.Equal(a.args, []string{"bob"}) && !(len(a.args) == 0 && a.flags["as"] == "ada") {
+			break
+		}
+		rep := w.friendReport(since)
+		b, err := json.Marshal(rep)
 		require.NoError(w.t, err)
-		if w.friendReport().Friends[0].Verdict.Verdict != "ok" {
+		if rep.Friends[0].Verdict.Verdict != "ok" {
 			return string(b), exitErr{1, ""}
 		}
 		return string(b), nil
@@ -161,7 +187,7 @@ func (w *world) exec(name string, args ...string) (string, error) {
 	return "", nil
 }
 
-func (w *world) friendReport() friend.CheckReport {
+func (w *world) friendReport(since time.Duration) friend.CheckReport {
 	f := friend.FriendCheck{Friend: "bob"}
 	f.Daemon = friend.DaemonFacts{Friend: "bob", Agent: "loaded", PID: "42", Status: "ok", PongAge: w.pongAge, Presence: "up"}
 	if !w.daemon {
@@ -182,54 +208,103 @@ func (w *world) friendReport() friend.CheckReport {
 	if w.outbox > 0 {
 		f.Work.NewestOutbox, f.Work.NewestAt = "card-7", testNow.Add(-w.finishAge).Format(time.RFC3339)
 	}
-	// The verdict as nova-friend decides it, over its default 24h window: a pong of
-	// any age inside it, or a message back, is "came back".
+	// The verdict as nova-friend decides it over --since (docs/SPEC-FRIEND.md, "The
+	// verdicts"): a delivery that succeeded with no session pong aged within the window
+	// and no real message back is deaf.
 	pong, err := time.ParseDuration(w.pongAge)
 	verdict := "ok"
 	switch {
-	case !w.daemon || w.broken:
-		verdict = "down"
-	case w.back == 0 && (err != nil || pong > 24*time.Hour):
+	case w.broken:
+		verdict = "broken"
+	case w.delivered && w.back == 0 && (err != nil || pong > since):
 		verdict = "deaf"
+	case !w.delivered && w.back == 0:
+		verdict = "silent"
+	case !w.daemon:
+		verdict = "down"
 	}
 	f.Verdict = friend.VerdictFacts{Friend: "bob", Verdict: verdict, Shown: "-", Why: verdict}
 	s := friend.CheckSummary{Friends: 1}
-	if verdict == "ok" {
+	switch verdict {
+	case "ok":
 		s.OK = 1
-	} else {
+	case "broken":
+		s.Broken = 1
+	case "deaf":
+		s.Deaf = 1
+	case "silent":
+		s.Silent = 1
+	default:
 		s.Down = 1
 	}
 	return friend.CheckReport{Friends: []friend.FriendCheck{f}, Summary: s}
 }
 
-// installLine is a nova tool's install, from the module (or a checkout) the doctor was built from.
-var installLine = regexp.MustCompile(`^go install (?:\S+/cmd/(nova-[a-z]+)@latest|\./cmd/(nova-[a-z]+) \(in a checkout of the nova-tools repository\))$`)
+// installLine is a nova tool's install, from the module the doctor was built from.
+var installLine = regexp.MustCompile(`^go install \S+/cmd/(nova-[a-z]+)@latest$`)
 
 // run is the cold reader's shell: it runs a command exactly as printed, and knows only
-// the commands a machine's owner has. Anything else is a fix a stranger could not run.
+// the commands a machine's owner has. A nova command goes through parseArgv first, so a
+// line the real tool refuses (a flag after an argument, a required flag missing) fails
+// here as it would there; a placeholder is a fix a stranger could not run.
 func (w *world) run(cmd string) {
-	install := installLine.FindStringSubmatch(cmd)
+	if strings.Contains(cmd, "<") {
+		w.t.Fatalf("the fix has a placeholder the cold reader cannot fill: %q", cmd)
+	}
+	if m := installLine.FindStringSubmatch(cmd); m != nil {
+		w.install(m[1])
+		return
+	}
+	if cmd == "install -m 0755 "+testHome+"/.local/bin/nova-swarm bin/nova-swarm" {
+		w.swarmAgrees = true
+		return
+	}
+	a, refused := parseArgv(cmd)
+	if refused != "" {
+		w.t.Fatalf("the fix is a command the real tool refuses: %q: %s", cmd, refused)
+	}
+	f := a.flags
 	switch {
-	case cmd == "nova-redis serve --bind 127.0.0.1 --port 6390 --dir ~/nova/stores/redis":
+	case a.verb == "nova-redis serve" && f["bind"] == "127.0.0.1" && f["port"] == "6390" && f["dir"] == testHome+"/nova/stores/redis":
 		w.redisUp = true
-	case cmd == "nova-redis fn load --addr "+testRedis:
+	case a.verb == "nova-redis fn load" && f["addr"] == testRedis:
 		w.fnLoaded = true
-	case cmd == "nova-redis acl apply --addr "+testRedis:
+	case a.verb == "nova-redis acl apply" && f["addr"] == testRedis:
 		w.aclOK = true
-	case cmd == "nova-config migrate":
+	case a.verb == "nova-config migrate":
 		w.schema = true
-	case cmd == "nova-config apply":
+	case a.verb == "nova-config apply" && !a.has("check") && f["redis"] == testRedis:
 		w.applied = true
-	case install != nil:
-		w.install(install[1] + install[2])
-	case cmd == "nova-friend install --as bob --harness claude --dir /home/bob":
+	case a.verb == "nova-friend install" && f["as"] == "bob" && f["harness"] == "claude" && f["dir"] == "/home/bob" && f["redis"] == testRedis &&
+		f["config-dir"] == "/home/bob/.claude":
 		w.daemon, w.broken = true, false
-	case cmd == "nova-friend ping --as ada --to bob":
+	case a.verb == "nova-friend ping" && f["as"] == "ada" && f["to"] == "bob" && f["redis"] == testRedis:
 		w.delivered = true
-	case cmd == "nova-friend check --as bob --harness claude --dir /home/bob": // the delivery check: --as is the friend itself
+	case a.verb == "nova-friend check" && a.has("harness"):
+		// The delivery check: --as is the friend itself, its pong goes to the coordinator.
+		if f["as"] != "bob" || f["harness"] != "claude" || f["dir"] != "/home/bob" || f["redis"] != testRedis || f["to"] != "ada" || len(a.args) > 0 {
+			w.t.Fatalf("the delivery check is not bob's own, to ada: %q", cmd)
+		}
 		w.pongAge = "5s"
 	default:
 		w.t.Fatalf("the fix is not a command the cold reader can run as printed: %q", cmd)
+	}
+}
+
+// fixesParse is every fix line in a doctor's output that names a nova tool, each read
+// as its tool would: none may be a line the real tool refuses.
+func fixesParse(t *testing.T, lines []string) {
+	t.Helper()
+	for _, l := range lines {
+		fix, ok := "", false
+		if _, fix, ok = strings.Cut(l, " fix: "); !ok {
+			_, fix, ok = strings.Cut(l, " next: ")
+		}
+		if !ok || !strings.HasPrefix(fix, "nova-") {
+			continue
+		}
+		_, refused := parseArgv(fix)
+		assert.Empty(t, refused, "a fix the real tool refuses: %q", fix)
 	}
 }
 
@@ -238,14 +313,16 @@ func (w *world) doctor(args ...string) (int, []string) {
 	var out, errb bytes.Buffer
 	code := Main(NewRegistry(), w.env(), "", args, strings.NewReader(""), &out, &errb)
 	require.Empty(w.t, errb.String())
-	return code, strings.Split(strings.TrimSpace(out.String()), "\n")
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	fixesParse(w.t, lines)
+	return code, lines
 }
 
 // jobArgs are the flags each job runs with in these tests.
 var jobArgs = map[string][]string{
 	"local-notes": {"--job", "local-notes"},
 	"messaging":   {"--job", "messaging"},
-	"friend":      {"--job", "friend", "--as", "bob", "--dir", "/home/bob"},
+	"friend":      {"--job", "friend", "--as", "bob", "--dir", "/home/bob", "--config-dir", "/home/bob/.claude"},
 	"worker":      {"--job", "worker"},
 	"coordinator": {"--job", "coordinator", "--as", "ada"},
 }
@@ -260,23 +337,25 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 	cases := []struct {
 		job, step, why string
 		breakIt        func(w *world)
+		extra          []string // flags after the job's own
 	}{
-		{"local-notes", "redis-reachable", "", func(w *world) { w.redisUp = false }},
-		{"local-notes", "binaries", "", func(w *world) { w.uninstall("nova-redis"); w.redisUp = true }},
-		{"messaging", "binaries", "", func(w *world) { w.uninstall("nova-bus") }},
-		{"worker", "redis-functions", "", func(w *world) { w.fnLoaded = false }},
-		{"coordinator", "config-schema", "", func(w *world) { w.schema = false }},
-		{"coordinator", "config-applied", "", func(w *world) { w.applied = false }},
-		{"coordinator", "redis-acl", "", func(w *world) { w.aclOK = false }},
-		{"friend", "daemon-running", "", func(w *world) { w.daemon = false }},
-		{"friend", "harness-responsive", "", func(w *world) { w.broken = true }},
-		{"friend", "message-delivered", "", func(w *world) { w.delivered = false }},
-		{"friend", "session-receipt", "", func(w *world) { w.deaf("-") }},
-		// nova-friend check reports the age of the last pong ever recorded: one 11 minutes
-		// old is past the session pong window, and with no card finished within its window
-		// the session is deaf, whatever else is on record.
-		{"friend", "session-receipt", "the only pong 11 minutes old", func(w *world) { w.deaf("11m0s") }},
-		{"friend", "session-receipt", "a pong 72 hours old that nova-friend calls deaf", func(w *world) { w.deaf("72h0m0s") }},
+		{"local-notes", "redis-reachable", "", func(w *world) { w.redisUp = false }, nil},
+		{"local-notes", "binaries", "", func(w *world) { w.uninstall("nova-redis"); w.redisUp = true }, nil},
+		{"messaging", "binaries", "", func(w *world) { w.uninstall("nova-bus") }, nil},
+		{"worker", "redis-functions", "", func(w *world) { w.fnLoaded = false }, nil},
+		{"worker", "swarm-binary", "", func(w *world) { w.swarmAgrees = false }, nil},
+		{"coordinator", "config-schema", "", func(w *world) { w.schema = false }, nil},
+		{"coordinator", "config-applied", "", func(w *world) { w.applied = false }, nil},
+		{"coordinator", "redis-acl", "", func(w *world) { w.aclOK = false }, nil},
+		{"friend", "daemon-running", "", func(w *world) { w.daemon = false }, nil},
+		{"friend", "harness-responsive", "", func(w *world) { w.broken = true }, nil},
+		{"friend", "message-delivered", "", func(w *world) { w.delivered = false }, nil},
+		{"friend", "session-receipt", "", func(w *world) { w.deaf("-") }, nil},
+		// The receipt is nova-friend's verdict over --since, never a pong of any age: a pong
+		// 72 hours old is outside the default 24h window, and one 11 minutes old is outside
+		// a 10m window the doctor is given and passes on.
+		{"friend", "session-receipt", "a pong 72 hours old that nova-friend calls deaf", func(w *world) { w.deaf("72h0m0s") }, nil},
+		{"friend", "session-receipt", "a pong 11 minutes old over --since 10m", func(w *world) { w.deaf("11m0s") }, []string{"--since", "10m"}},
 	}
 	for _, tc := range cases {
 		name := tc.job + "/" + tc.step
@@ -292,7 +371,8 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 				// named there, by the same install line.
 				tc.step = "redis-login"
 			}
-			code, lines := w.doctor(jobArgs[tc.job]...)
+			args := append(slices.Clone(jobArgs[tc.job]), tc.extra...)
+			code, lines := w.doctor(args...)
 			assert.Equal(t, 2, code, lines)
 			names := stepNames(tc.job)
 			at := slices.Index(names, tc.step)
@@ -316,7 +396,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 				require.Less(t, repairs, 3, "the doctor did not converge: %q", lines)
 				w.run(next)
 				repairs++
-				code, lines = w.doctor(jobArgs[tc.job]...)
+				code, lines = w.doctor(args...)
 				doctorRuns++
 				_, next, _ = strings.Cut(lines[len(lines)-1], " next: ")
 			}
@@ -383,37 +463,34 @@ func TestDoctorFriendJobKeepsTheFiveFactsApart(t *testing.T) {
 		code, lines := w.doctor(jobArgs["friend"]...)
 		assert.Equal(t, 2, code)
 		assert.Contains(t, strings.Join(lines, "\n"), "DOCTOR daemon-running ok ")
-		assert.Contains(t, strings.Join(lines, "\n"), "DOCTOR session-receipt fail deaf: no session pong within 10m0s, no card finished within 30m0s (last 2h0m0s ago)")
+		assert.Contains(t, strings.Join(lines, "\n"), "DOCTOR session-receipt fail deaf: nova-friend verdict=deaf over 24h0m0s")
 	})
-	// The session's evidence is nova-friend status's (docs/SPEC-FRIEND.md, "Presence is her
-	// session's evidence"): a session pong under ten minutes old or a card finished under
-	// thirty, at the fake clock. A pong past its window is deaf with its age; messages back
-	// are shown and decide nothing.
+	// The session's receipt is nova-friend's own verdict over the --since window
+	// (docs/SPEC-FRIEND.md, "The verdicts"), never a pong of any age judged here: a pong
+	// inside the window or a real message back is a receipt, and past both it is deaf,
+	// with the delivery check as the fix.
 	for _, tc := range []struct {
 		name, pongAge string
-		finishAge     time.Duration
 		back          int
+		extra         []string
 		want          string
 	}{
-		{"a pong 9m59s old is a receipt", "9m59s", 2 * time.Hour, 0, "ok the session answered: session pong 9m59s ago; messages_back=0"},
-		{"the only pong 11 minutes old is deaf", "11m0s", 2 * time.Hour, 0,
-			"fail deaf: no session pong within 10m0s (last 11m0s ago), no card finished within 30m0s (last 2h0m0s ago); messages_back=0"},
-		{"a pong 72 hours old is deaf though messages came back", "72h0m0s", 2 * time.Hour, 2,
-			"fail deaf: no session pong within 10m0s (last 72h0m0s ago)"},
-		{"a card finished 29 minutes ago is a receipt", "72h0m0s", 29 * time.Minute, 0, "ok the session answered: finished card-7 29m0s ago"},
-		{"a card finished 31 minutes ago is not", "-", 31 * time.Minute, 0,
-			"fail deaf: no session pong within 10m0s, no card finished within 30m0s (last 31m0s ago)"},
+		{"a pong 11 minutes old inside the default 24h", "11m0s", 0, nil, "ok the session answered: nova-friend verdict=ok over 24h0m0s"},
+		{"a pong 11 minutes old outside --since 10m", "11m0s", 0, []string{"--since", "10m"}, "fail deaf: nova-friend verdict=deaf over 10m0s"},
+		{"a pong 72 hours old and nothing back", "72h0m0s", 0, nil, "fail deaf: nova-friend verdict=deaf over 24h0m0s"},
+		{"a pong 72 hours old with messages back", "72h0m0s", 2, nil, "ok the session answered: nova-friend verdict=ok"},
+		{"no pong ever and nothing back", "-", 0, nil, "fail deaf: nova-friend verdict=deaf"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			w := healthyWorld(t)
-			w.pongAge, w.finishAge, w.back = tc.pongAge, tc.finishAge, tc.back
-			code, lines := w.doctor(jobArgs["friend"]...)
+			w.pongAge, w.back = tc.pongAge, tc.back
+			code, lines := w.doctor(append(slices.Clone(jobArgs["friend"]), tc.extra...)...)
 			out := strings.Join(lines, "\n")
 			assert.Contains(t, out, "DOCTOR session-receipt "+tc.want, out)
 			if strings.HasPrefix(tc.want, "fail") {
 				assert.Equal(t, 2, code, out)
-				assert.Contains(t, out, "fix: nova-friend check --as bob --harness claude --dir /home/bob", out)
+				assert.Contains(t, out, "fix: nova-friend check --as bob --harness claude --dir /home/bob --redis "+testRedis+" --to ada", out)
 			} else {
 				assert.Equal(t, 0, code, out)
 			}
@@ -453,12 +530,12 @@ func TestDoctorJobShapeAndRefusals(t *testing.T) {
 	var rep JobReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &rep), out.String())
 	assert.Equal(t, "redis-reachable", rep.FirstMissing)
-	assert.Equal(t, "nova-redis serve --bind 127.0.0.1 --port 6390 --dir ~/nova/stores/redis", rep.Next)
+	assert.Equal(t, "nova-redis serve --bind 127.0.0.1 --port 6390 --dir "+testHome+"/nova/stores/redis", rep.Next)
 	assert.False(t, rep.Ready)
 	assert.Len(t, rep.Steps, len(JobSteps("coordinator")))
 	assert.Equal(t, Blocked, rep.Steps[1].Status)
 
-	for _, args := range [][]string{{"--job", "nope"}, {"--as", "bob"}, {"--job", "friend", "--local"}} {
+	for _, args := range [][]string{{"--job", "nope"}, {"--as", "bob"}, {"--since", "1h"}, {"--job", "friend", "--local"}} {
 		out.Reset()
 		errb.Reset()
 		code := Main(NewRegistry(), w.env(), "", args, strings.NewReader(""), &out, &errb)

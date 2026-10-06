@@ -7,15 +7,14 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"reflect"
 	"regexp"
-	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // A job is one thing a machine is set up to do (keep local notes, message, be a friend,
@@ -57,11 +56,19 @@ func (s Stage) String() string { return stageNames[s] }
 // Redis address falling back to the environment the tools themselves read.
 type JobInput struct {
 	Job     string
-	Redis   string // host:port
-	As      string // the friend (friend job) or the coordinator (coordinator job)
-	Dir     string // the friend's working directory, for the fix lines that need it
-	Harness string // the friend's harness, when the friend's own check cannot say
+	Redis   string        // host:port
+	As      string        // the friend (friend job) or the coordinator (coordinator job)
+	Dir     string        // the friend's working directory, for the fix lines that need it
+	Harness string        // the friend's harness, when the friend's own check cannot say
+	Since   time.Duration // the window nova-friend check judges over; 0 is DefaultSince
+	// ConfigDir is a claude friend's own config directory, which install requires
+	// (--config-dir, else CLAUDE_CONFIG_DIR; internal/friend/settings_claude.go).
+	ConfigDir string
 }
+
+// DefaultSince is nova-friend check's own default window, passed explicitly so the window
+// the verdict was judged over is on the run line.
+const DefaultSince = 24 * time.Hour
 
 // Step is one dependency of a job, checked by calling an existing tool through run.
 type Step struct {
@@ -253,13 +260,14 @@ func notRun(tool string, c call) Result {
 	return Result{Status: Fail, Evidence: fmt.Sprintf("%s did not run: %s", tool, c.said), Fix: installFix(tool)}
 }
 
-// installFix is the one command that installs a nova tool: from the module this binary
-// was built from, as nova-up's binaries step names it.
+// module is the module the nova tools are installed from: this package's own, read off its
+// import path, so the doctor names the module it was built from in a test too.
+var module = strings.TrimSuffix(reflect.TypeOf(Result{}).PkgPath(), "/internal/doctor")
+
+// installFix is the one command that installs a nova tool, as nova-up's binaries step
+// names it. It is one command and nothing after it.
 func installFix(tool string) string {
-	if bi, ok := debug.ReadBuildInfo(); ok && strings.Contains(bi.Main.Path, ".") {
-		return fmt.Sprintf("go install %s/cmd/%s@latest", bi.Main.Path, tool)
-	}
-	return "go install ./cmd/" + tool + " (in a checkout of the nova-tools repository)"
+	return fmt.Sprintf("go install %s/cmd/%s@latest", module, tool)
 }
 
 func firstLine(s string) string {
@@ -299,12 +307,29 @@ func (r *jobRun) redisAddr() string {
 	if r.in.Redis != "" {
 		return r.in.Redis
 	}
-	for _, k := range []string{"NOVA_REDIS_ADDR", "NOVA_SPRINT_REDIS"} {
+	for _, k := range []string{"NOVA_REDIS_ADDR", "NOVA_SPRINT_REDIS", "NOVA_BUS_REDIS"} {
 		if v := r.env.Getenv(k); v != "" {
 			return v
 		}
 	}
 	return ""
+}
+
+// home is a path under the home directory, absolute: nova-redis serve refuses a --dir
+// that is not, and a line run without a shell expands no "~".
+func (r *jobRun) home(rel string) string {
+	if h := r.env.Getenv("HOME"); h != "" {
+		return h + "/" + rel
+	}
+	return "<home>/" + rel
+}
+
+// since is the window nova-friend check judges over, as its flag value.
+func (r *jobRun) since() string {
+	if r.in.Since > 0 {
+		return r.in.Since.String()
+	}
+	return DefaultSince.String()
 }
 
 // again is this job's own command, for a fix that is to run the doctor with more to go on.
@@ -316,13 +341,22 @@ func (r *jobRun) again(extra string) string {
 	if r.in.Dir != "" {
 		s += " --dir " + r.in.Dir
 	}
+	if r.in.Harness != "" {
+		s += " --harness " + r.in.Harness
+	}
+	if r.in.ConfigDir != "" {
+		s += " --config-dir " + r.in.ConfigDir
+	}
+	if r.in.Since > 0 {
+		s += " --since " + r.in.Since.String()
+	}
 	return s + extra
 }
 
 func stepRedisReachable(ctx context.Context, r *jobRun) Result {
 	addr := r.redisAddr()
 	if addr == "" {
-		return Result{Status: Fail, Evidence: "no Redis address: --redis, NOVA_REDIS_ADDR and NOVA_SPRINT_REDIS are unset",
+		return Result{Status: Fail, Evidence: "no Redis address: --redis, NOVA_REDIS_ADDR, NOVA_SPRINT_REDIS and NOVA_BUS_REDIS are unset",
 			Fix: r.again(" --redis 127.0.0.1:6390")}
 	}
 	host, port, err := net.SplitHostPort(addr)
@@ -335,7 +369,7 @@ func stepRedisReachable(ctx context.Context, r *jobRun) Result {
 	if err := r.env.Dial(dctx, "tcp", addr); err != nil {
 		fix := "tailscale ping " + host
 		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
-			fix = fmt.Sprintf("nova-redis serve --bind %s --port %s --dir ~/nova/stores/redis", host, port)
+			fix = fmt.Sprintf("nova-redis serve --bind %s --port %s --dir %s", host, port, r.home("nova/stores/redis"))
 		}
 		return Result{Status: Fail, Evidence: fmt.Sprintf("Redis at %s did not answer: %v", addr, err), Fix: fix}
 	}
@@ -357,7 +391,7 @@ func stepRedisLogin(ctx context.Context, r *jobRun) Result {
 		return Result{Status: OK, Evidence: "the store at " + r.redisAddr() + " accepted the login"}
 	}
 	return Result{Status: Fail, Evidence: "nova-redis acl check: " + c.said,
-		Fix: "export NOVA_REDIS_USER=<user> NOVA_REDIS_PASSWORD_ENV=<variable holding its password>, then " + r.again("")}
+		Fix: "export NOVA_REDIS_USER=<user> NOVA_REDIS_PASSWORD_ENV=<NAME>"}
 }
 
 func stepRedisACL(ctx context.Context, r *jobRun) Result {
@@ -428,13 +462,13 @@ var configCheckLine = regexp.MustCompile(`^CONFIG CHECK kind=(\S+) add=(\d+) set
 // stepConfigApplied reads `nova-config apply --check`: every kind with nothing to add, set
 // or remove, and its applied revision the store's, is applied.
 func stepConfigApplied(ctx context.Context, r *jobRun) Result {
-	c := r.exec(ctx, "nova-config", "apply", "--check")
+	c := r.exec(ctx, "nova-config", "apply", "--check", "--redis", r.redisAddr())
 	switch c.code {
 	case -1:
 		return notRun("nova-config", c)
 	case 0:
 	default:
-		return Result{Status: Fail, Evidence: "nova-config apply --check: " + c.said, Fix: remedy(c.said, "nova-config apply")}
+		return Result{Status: Fail, Evidence: "nova-config apply --check: " + c.said, Fix: remedy(c.said, r.applyFix())}
 	}
 	var behind []string
 	kinds := 0
@@ -450,12 +484,22 @@ func stepConfigApplied(ctx context.Context, r *jobRun) Result {
 	}
 	if kinds == 0 {
 		return Result{Status: Fail, Evidence: "nova-config apply --check printed no CONFIG CHECK line: " + firstLine(c.out),
-			Fix: "nova-config apply --check"}
+			Fix: "nova-config apply --check --redis " + r.redisAddr()}
 	}
 	if len(behind) > 0 {
-		return Result{Status: Fail, Evidence: "Redis is behind the config: " + strings.Join(behind, " "), Fix: "nova-config apply"}
+		return Result{Status: Fail, Evidence: "Redis is behind the config: " + strings.Join(behind, " "), Fix: r.applyFix()}
 	}
 	return Result{Status: OK, Evidence: strconv.Itoa(kinds) + " kinds applied at the store's revision"}
+}
+
+// applyFix is nova-config apply to the Redis the doctor checked, recorded under --as when
+// the job names who is applying (else apply reads NOVA_FRIEND or the seat, or refuses).
+func (r *jobRun) applyFix() string {
+	s := "nova-config apply --redis " + r.redisAddr()
+	if r.in.As != "" {
+		s += " --as " + r.in.As
+	}
+	return s
 }
 
 func stepBinaries(_ context.Context, r *jobRun) Result {
@@ -488,14 +532,26 @@ func stepSwarmBinary(ctx context.Context, r *jobRun) Result {
 			said = l
 		}
 	}
+	onPath := toolsOnPath(r.env)["nova-swarm"]
+	if onPath == "" {
+		onPath = "<nova-swarm-on-PATH>"
+	}
 	return Result{Status: Fail, Evidence: "nova-swarm doctor: " + said,
-		Fix: "install -m 0755 ~/.local/bin/nova-swarm \"$(command -v nova-swarm)\""}
+		Fix: "install -m 0755 " + r.home(".local/bin/nova-swarm") + " " + onPath}
 }
 
-// friendCheck is `nova-friend check <friend> --json`, read once for the five friend steps.
-func (r *jobRun) friendCheck(ctx context.Context, who ...string) (friend.CheckReport, call, error) {
-	args := append([]string{"check"}, who...)
-	c := r.exec(ctx, "nova-friend", append(args, "--json")...)
+// friendCheckArgs is the health check's argv: every flag before the first positional,
+// because the tool frame stops reading flags there (internal/tool/tool.go, call), and a
+// "--json" after a friend's name is read as a second friend's name.
+func (r *jobRun) friendCheckArgs(lead []string, who ...string) []string {
+	args := append([]string{"check", "--json", "--since", r.since(), "--redis", r.redisAddr()}, lead...)
+	return append(args, who...)
+}
+
+// friendCheck is `nova-friend check --json --since <d> --redis <addr> ...`, read once for
+// the five friend steps.
+func (r *jobRun) friendCheck(ctx context.Context, lead []string, who ...string) (friend.CheckReport, call, error) {
+	c := r.exec(ctx, "nova-friend", r.friendCheckArgs(lead, who...)...)
 	var rep friend.CheckReport
 	if c.code == -1 || c.code == 2 {
 		return rep, c, errors.New(c.said)
@@ -511,14 +567,14 @@ func (r *jobRun) theFriend(ctx context.Context) (friend.FriendCheck, *Result) {
 	if r.in.As == "" {
 		return friend.FriendCheck{}, &Result{Status: Fail, Evidence: "the friend job needs the friend's name", Fix: r.again(" --as <friend>")}
 	}
-	rep, c, err := r.friendCheck(ctx, r.in.As)
+	rep, c, err := r.friendCheck(ctx, nil, r.in.As)
 	if c.code == -1 {
 		res := notRun("nova-friend", c)
 		return friend.FriendCheck{}, &res
 	}
 	if err != nil {
 		return friend.FriendCheck{}, &Result{Status: Fail, Evidence: "nova-friend check: " + err.Error(),
-			Fix: "nova-friend check " + r.in.As}
+			Fix: "nova-friend " + strings.Join(r.friendCheckArgs(nil, r.in.As), " ")}
 	}
 	for _, f := range rep.Friends {
 		if f.Friend == r.in.As {
@@ -530,16 +586,23 @@ func (r *jobRun) theFriend(ctx context.Context) (friend.FriendCheck, *Result) {
 }
 
 // installFix is the friend's install line: install again starts the daemon and clears a
-// broken session (docs/SPEC-FRIEND.md).
+// broken session (docs/SPEC-FRIEND.md). --as, --harness and --dir are the verb's required
+// flags; --redis is the bus the daemon reads; a claude friend's install also requires its
+// config directory, which no check reports, so it is --config-dir, else CLAUDE_CONFIG_DIR.
 func (r *jobRun) installFix(f friend.FriendCheck) string {
-	h := r.in.Harness
-	if h == "" && f.Harness.Harness != "" && f.Harness.Harness != "-" {
-		h = f.Harness.Harness
+	h := r.harnessOf(f)
+	s := fmt.Sprintf("nova-friend install --as %s --harness %s --dir %s --redis %s", r.in.As, h, r.dirOf(), r.redisAddr())
+	if h == "claude" {
+		cd := r.in.ConfigDir
+		if cd == "" {
+			cd = r.env.Getenv("CLAUDE_CONFIG_DIR")
+		}
+		if cd == "" {
+			cd = "<config-dir>"
+		}
+		s += " --config-dir " + cd
 	}
-	if h == "" {
-		h = "<harness>"
-	}
-	return fmt.Sprintf("nova-friend install --as %s --harness %s --dir %s", r.in.As, h, r.dirOf())
+	return s
 }
 
 // dirOf is the friend's working directory for a fix line, or a placeholder naming it.
@@ -547,7 +610,17 @@ func (r *jobRun) dirOf() string {
 	if r.in.Dir != "" {
 		return r.in.Dir
 	}
-	return "<the friend's working directory>"
+	return "<dir>"
+}
+
+func (r *jobRun) harnessOf(f friend.FriendCheck) string {
+	if r.in.Harness != "" {
+		return r.in.Harness
+	}
+	if f.Harness.Harness != "" && f.Harness.Harness != "-" {
+		return f.Harness.Harness
+	}
+	return "<harness>"
 }
 
 func stepDaemonRunning(ctx context.Context, r *jobRun) Result {
@@ -579,7 +652,7 @@ func stepHarnessResponsive(ctx context.Context, r *jobRun) Result {
 	return Result{Status: OK, Evidence: fmt.Sprintf("the %s harness takes turns: route=%s last_exit=%s failed_of_last20=%d", h.Harness, h.Route, h.LastExit, h.FailedOfLast20)}
 }
 
-// coordinator is who pings the friend in a fix line.
+// coordinator is who pings the friend, and who the delivery check's pong goes to.
 func (r *jobRun) coordinator() string {
 	for _, k := range []string{"NOVA_SPRINT_ACTOR", "NOVA_FRIEND"} {
 		if v := r.env.Getenv(k); v != "" && v != r.in.As {
@@ -596,53 +669,37 @@ func stepMessageDelivered(ctx context.Context, r *jobRun) Result {
 	}
 	h := f.Harness
 	if h.Delivered == 0 {
-		return Result{Status: Fail, Evidence: "no message was delivered into the session in the window",
-			Fix: fmt.Sprintf("nova-friend ping --as %s --to %s", r.coordinator(), r.in.As)}
+		return Result{Status: Fail, Evidence: "no message was delivered into the session within " + r.since(),
+			Fix: fmt.Sprintf("nova-friend ping --as %s --to %s --redis %s", r.coordinator(), r.in.As, r.redisAddr())}
 	}
 	return Result{Status: OK, Evidence: fmt.Sprintf("%d messages delivered, %d failed, last %s", h.Delivered, h.Failed, h.Last)}
 }
 
-// stepSessionReceipt is nova-friend status's evidence rule (docs/SPEC-FRIEND.md, "Presence
-// is her session's evidence"): a session pong under sprint.FriendPongWindow old, or a card
-// of hers finished under sprint.FriendFinishWindow old, at the Env's clock. nova-friend
-// check's pong_age is the age of the last pong ever recorded, so a pong on record is no
-// receipt by itself; past both windows the session is deaf. Messages back are shown, and
-// her daemon's beat is never read.
+// stepSessionReceipt is nova-friend's own verdict over the --since window
+// (docs/SPEC-FRIEND.md, "The verdicts"): deaf is a delivery that succeeded with no session
+// pong aged within the window and no real message back. The doctor judges no pong itself:
+// nova-friend check's pong_age is the last pong ever recorded, so a pong of any age is
+// never a receipt here. The fix is the delivery check, which puts one session check into
+// the live session and waits for its pong: --as is the friend itself, --dir its directory,
+// --redis the bus the pong is read from (cmd/nova-friend/main.go, check), --to the
+// coordinator the pong goes to.
 func stepSessionReceipt(ctx context.Context, r *jobRun) Result {
 	f, bad := r.theFriend(ctx)
 	if bad != nil {
 		return *bad
 	}
-	shown := fmt.Sprintf("messages_back=%d last_back=%s", f.Bus.RealSince, f.Bus.LastReal)
-	pongAge, pongErr := time.ParseDuration(f.Daemon.PongAge)
-	if pongErr == nil && pongAge >= 0 && pongAge < sprint.FriendPongWindow {
-		return Result{Status: OK, Evidence: fmt.Sprintf("the session answered: session pong %s ago; %s", f.Daemon.PongAge, shown)}
+	v := f.Verdict
+	ev := fmt.Sprintf("nova-friend verdict=%s over %s: %s; pong_age=%s messages_back=%d last_back=%s",
+		v.Verdict, r.since(), v.Why, f.Daemon.PongAge, f.Bus.RealSince, f.Bus.LastReal)
+	switch v.Verdict {
+	case "ok":
+		return Result{Status: OK, Evidence: "the session answered: " + ev}
+	case "deaf":
+		return Result{Status: Fail, Evidence: "deaf: " + ev,
+			Fix: fmt.Sprintf("nova-friend check --as %s --harness %s --dir %s --redis %s --to %s",
+				r.in.As, r.harnessOf(f), r.dirOf(), r.redisAddr(), r.coordinator())}
 	}
-	finished, finErr := time.Parse(time.RFC3339, f.Work.NewestAt)
-	finishAge := r.env.Now().Sub(finished)
-	if finErr == nil && finishAge >= 0 && finishAge < sprint.FriendFinishWindow {
-		return Result{Status: OK, Evidence: fmt.Sprintf("the session answered: finished %s %s ago; %s", f.Work.NewestOutbox, friend.AgeString(finishAge), shown)}
-	}
-	ev := "deaf: no session pong within " + sprint.FriendPongWindow.String()
-	if pongErr == nil {
-		ev += " (last " + f.Daemon.PongAge + " ago)"
-	}
-	ev += ", no card finished within " + sprint.FriendFinishWindow.String()
-	if finErr == nil {
-		ev += " (last " + friend.AgeString(finishAge) + " ago)"
-	}
-	return Result{Status: Fail, Evidence: ev + "; " + shown + " (nova-friend verdict " + f.Verdict.Verdict + ")",
-		Fix: fmt.Sprintf("nova-friend check --as %s --harness %s --dir %s", r.in.As, r.harnessOf(f), r.dirOf())}
-}
-
-func (r *jobRun) harnessOf(f friend.FriendCheck) string {
-	if r.in.Harness != "" {
-		return r.in.Harness
-	}
-	if f.Harness.Harness != "" && f.Harness.Harness != "-" {
-		return f.Harness.Harness
-	}
-	return "<harness>"
+	return Result{Status: Fail, Evidence: "no receipt: " + ev, Fix: r.installFix(f)}
 }
 
 // stepCardCompletion reports the friend's outbox: a completed card is a fact about the
@@ -662,23 +719,24 @@ func stepCardCompletion(ctx context.Context, r *jobRun) Result {
 // stepFriends is the coordinator's view of every friend: a friend that is not ok is a
 // warn naming the friend job to run for it, never a fail of the coordinator's own setup.
 func stepFriends(ctx context.Context, r *jobRun) Result {
-	var who []string
+	var lead []string
 	if r.in.As != "" {
-		who = []string{"--as", r.in.As}
+		lead = []string{"--as", r.in.As}
 	}
-	rep, c, err := r.friendCheck(ctx, who...)
+	rep, c, err := r.friendCheck(ctx, lead)
 	if c.code == -1 {
 		return notRun("nova-friend", c)
 	}
 	if err != nil {
-		return Result{Status: Fail, Evidence: "nova-friend check: " + err.Error(), Fix: "nova-friend check"}
+		return Result{Status: Fail, Evidence: "nova-friend check: " + err.Error(),
+			Fix: "nova-friend " + strings.Join(r.friendCheckArgs(lead), " ")}
 	}
 	s := rep.Summary
 	ev := fmt.Sprintf("friends=%d ok=%d broken=%d deaf=%d silent=%d down=%d untrue=%d", s.Friends, s.OK, s.Broken, s.Deaf, s.Silent, s.Down, s.Untrue)
 	for _, f := range rep.Friends {
 		if f.Verdict.Verdict != "ok" {
 			return Result{Status: Warn, Evidence: ev + "; first not ok: " + f.Friend + " " + f.Verdict.Verdict + ": " + f.Verdict.Why,
-				Fix: "nova-doctor --job friend --as " + f.Friend}
+				Fix: "nova-doctor --job friend --as " + f.Friend + " --redis " + r.redisAddr()}
 		}
 	}
 	return Result{Status: OK, Evidence: ev}

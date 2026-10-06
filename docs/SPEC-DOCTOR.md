@@ -65,7 +65,7 @@ tools report, and the fix is `nova-update apply --file <manifest> <tool> --versi
 
 ```
 nova-doctor [run] --job <local-notes|messaging|friend|worker|coordinator> [--as <name>] [--dir <d>]
-            [--harness <h>] [--redis <host:port>] [--strict] [--json]
+            [--harness <h>] [--config-dir <d>] [--redis <host:port>] [--since <d>] [--strict] [--json]
 ```
 
 `--job` asks a different question from the checks: is this machine ready for one job, and if
@@ -90,24 +90,33 @@ call two steps read (the login and the users are both `nova-redis acl check`) ru
 doctor run. A tool that is not on PATH at all fails the step that called it, with
 `go install <module>/cmd/<tool>@latest` as the fix, the module the doctor was built from (as nova-up's binaries step names it).
 
+**Every command the doctor runs or prints is one the real tool accepts.** The tools read flags
+until the first argument that is not a flag (Go's flag package, internal/tool/tool.go:530-558),
+so every flag comes before the first argument: `nova-friend check --json <f>`, never
+`nova-friend check <f> --json`, which the tool reads as two friends. Each line carries every
+flag its verb requires, and the address the doctor checked is passed explicitly (`--redis`,
+`--addr`) rather than left to an environment variable the next tool may read differently.
+Paths are absolute: `nova-redis serve` refuses a `--dir` that is not, and a line run without a
+shell expands no `~`. A value the doctor cannot know is a `<placeholder>` with no spaces in it.
+
 | step | stage | calls | fails when | fix |
 | --- | --- | --- | --- | --- |
-| redis-reachable | connectivity | a dial of `--redis`, else `NOVA_REDIS_ADDR`, else `NOVA_SPRINT_REDIS` | no address, or no answer | loopback: `nova-redis serve --bind <host> --port <port> --dir ~/nova/stores/redis`; else `tailscale ping <host>` |
-| redis-login | authentication | `nova-redis acl check --addr <a>` | exit 2 (the login was refused) | set `NOVA_REDIS_USER` and `NOVA_REDIS_PASSWORD_ENV`, then the doctor again |
+| redis-reachable | connectivity | a dial of `--redis`, else `NOVA_REDIS_ADDR`, else `NOVA_SPRINT_REDIS`, else `NOVA_BUS_REDIS` | no address, or no answer | loopback: `nova-redis serve --bind <host> --port <port> --dir $HOME/nova/stores/redis` (the home directory written out); else `tailscale ping <host>` |
+| redis-login | authentication | `nova-redis acl check --addr <a>` | exit 2 (the login was refused) | `export NOVA_REDIS_USER=<user> NOVA_REDIS_PASSWORD_ENV=<NAME>`, then the doctor again |
 | store-login | authentication | `nova-config login --check` | exit not 0 | the tool's own `run:` line |
 | config-schema | schema and config revision | `nova-config status` | exit not 0 | the tool's `run:` line, else `nova-config migrate` |
-| config-applied | applied Redis state | `nova-config apply --check` | a kind with add, set or remove, or `applied` behind `rev` | `nova-config apply` |
+| config-applied | applied Redis state | `nova-config apply --check --redis <a>` | a kind with add, set or remove, or `applied` behind `rev` | `nova-config apply --redis <a> [--as <c>]` (a write wants an actor: `--as`, else `NOVA_FRIEND` or the seat) |
 | redis-acl | applied Redis state | `nova-redis acl check --addr <a>` | exit 1 (the `ACL CHECK DRIFT` line) | `nova-redis acl apply --addr <a>` (the tool's `remedy=` carries prose after the command); a user the store lacks makes apply name its password step |
 | redis-functions | installed binaries and functions | `nova-redis fn check --addr <a>` | exit not 0 | `nova-redis fn load --addr <a>` |
 | binaries | installed binaries and functions | PATH | a tool the job needs is not on it | `go install .../cmd/<tool>@latest` |
 | self | installed binaries and functions | the `self` check | as `self` | as `self` |
-| swarm-binary | installed binaries and functions | `nova-swarm doctor` | exit not 0 (a shadowing binary) | copy `~/.local/bin/nova-swarm` over the PATH one |
-| daemon-running | supervisor | `nova-friend check <f> --json` | the daemon's status is not ok | `nova-friend install --as <f> --harness <h> --dir <d>` |
+| swarm-binary | installed binaries and functions | `nova-swarm doctor` | exit not 0 (a shadowing binary) | `install -m 0755 $HOME/.local/bin/nova-swarm <the PATH one>`, both paths written out |
+| daemon-running | supervisor | `nova-friend check --json --since <d> --redis <a> <f>` | the daemon's status is not ok | `nova-friend install --as <f> --harness <h> --dir <d> --redis <a>`, and for claude `--config-dir` (`--config-dir`, else `CLAUDE_CONFIG_DIR`), which install requires |
 | harness-responsive | session response | the same report | the session is marked broken, or every delivery failed | `nova-friend install ...` (install again clears a broken session) |
-| message-delivered | session response | the same report | no delivery in the window | `nova-friend ping --as <coordinator> --to <f>` |
-| session-receipt | session response | the same report | `deaf`: no session pong under ten minutes old (`sprint.FriendPongWindow`) and no card finished under thirty (`sprint.FriendFinishWindow`), at the doctor's clock; the line prints the last of each and its age | `nova-friend check --as <f> --harness <h> --dir <d>` (the delivery check, where `--as` is the friend itself) |
+| message-delivered | session response | the same report | no delivery in the window | `nova-friend ping --as <coordinator> --to <f> --redis <a>` |
+| session-receipt | session response | the same report | nova-friend's verdict is `deaf` over `--since` (any other verdict not ok fails with the install line) | `nova-friend check --as <f> --harness <h> --dir <d> --redis <a> --to <coordinator>` (the delivery check: `--as` is the friend itself) |
 | card-completion | session response | the same report | never: none completed yet is `ok` and says so | - |
-| friends | session response | `nova-friend check [--as <c>] --json` | a friend not ok is a `warn` | `nova-doctor --job friend --as <f>` |
+| friends | session response | `nova-friend check --json --since <d> --redis <a> [--as <c>]` | a friend not ok is a `warn` | `nova-doctor --job friend --as <f> --redis <a>` |
 
 A fix taken from a tool's own words is used only when it is a nova command and not a help
 page; otherwise the step's own fix is printed. The coordinator in a fix is
@@ -128,12 +137,14 @@ while the next does not: the **daemon running** (a beat process is not a session
 **harness responsive** (the session is not broken), a **message delivered** into the session,
 the **session's receipt**, and **card completion** (the outbox).
 
-The session's receipt is nova-friend status's evidence rule (docs/SPEC-FRIEND.md, "Presence is
-her session's evidence"), not a rule of the doctor's own: a session pong within ten minutes or
-a card finished within thirty. `nova-friend check` reports the age of the last pong ever
-recorded, so a pong on record is no receipt by itself: one 11 minutes old, or 72 hours, is
-`deaf` with its age and the fix. Messages back are printed beside it and decide nothing; the
-daemon's beat is never read.
+The session's receipt is nova-friend's own verdict (docs/SPEC-FRIEND.md, "The verdicts"), not
+a rule of the doctor's own: `deaf` is a delivery in the `--since` window that succeeded with no
+session pong aged within the window and no real message back. The doctor passes the window
+explicitly (`--since`, default 24h, nova-friend's own default) and judges no pong itself:
+`pong_age` is the last pong ever recorded, so a pong of any age is never a receipt here. A
+pong 72 hours old with nothing back is `deaf` over 24h; one 11 minutes old is `deaf` over
+`--since 10m`. The line prints the verdict, its window, its why, the pong's age and the
+messages back.
 
 The output is one line per step, the frame's `DOCTOR <step> ok|warn|fail|blocked <evidence>
 [fix: <line>]`, then one summary line:
@@ -147,10 +158,15 @@ DOCTOR job=<job> not-ready first_missing=<step> calls=<n> next: <the fix of that
 `{"job","exit","ready","first_missing","next","calls","steps":[{check,dependency,status,evidence,fix}]}`.
 It is bounded: a step's evidence and fix are cut to 240 bytes (ending `...`), and a job has at
 most ten steps. `--check` and `--local` select checks, not steps, and are refused with `--job`;
-`--as`, `--dir`, `--harness` and `--redis` are refused without it.
+`--as`, `--dir`, `--harness`, `--config-dir`, `--redis` and `--since` are refused without it.
 
 The acceptance is `TestDoctorNamesTheFirstMissingDependencyAndItsFix`
 (`internal/doctor/job_test.go`): for each job, a world with one dependency deliberately
 missing; the doctor names it as `first_missing`, every step before it ok and every one after
 it blocked; a cold reader that runs only the printed `next:` command, exactly as printed,
 makes the job ready in one repair and two doctor runs, and the test logs the call counts.
+The test's fake tools and fake shell read every nova command through a table of the real
+verbs' argv rules (`internal/doctor/argv_test.go`, each rule citing its source): a flag after
+an argument, a flag the verb does not define, or a required flag missing fails the test, as
+the real tool would refuse it. `TestDoctorFakeShellRefusesWhatTheRealToolRefuses` pins the
+table, including the three lines earlier attempts printed.
