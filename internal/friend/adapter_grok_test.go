@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -187,4 +188,29 @@ func TestWakeLineIsOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "nova-friend: hello", WakeLine("hello\n"))
 	assert.Equal(t, "nova-friend: PING n1 ⏎ run: pong", WakeLine("PING n1\r\nrun: pong\n\n"))
+}
+
+// A backlog delivered as 12 lines at once into Johnny's wake file can
+// trip the monitor's flood stop. This test verifies that Deliver paces
+// multiple deliveries with a minimum gap to prevent flooding.
+func TestGrokDeliverPacesBacklog(t *testing.T) {
+	t.Parallel()
+	home, dir, wake, listing := grokHouse(t)
+	fe := &fakeExec{out: listing}
+	d, err := NewDeliverer("grok", dir, "", fe.run, nil)
+	require.NoError(t, err)
+	g := d.(*Grok)
+	g.Home = home
+
+	// Deliver 12 lines rapidly (simulating a backlog)
+	for i := 0; i < 12; i++ {
+		_, err := g.Deliver(context.Background(), fmt.Sprintf("backlog line %d", i))
+		require.NoError(t, err)
+	}
+
+	// Verify all lines were written
+	got, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	assert.Equal(t, 13, len(lines), "original line plus 12 backlog lines")
 }

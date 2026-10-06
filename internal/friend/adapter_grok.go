@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Grok delivers into the Grok Build TUI (xAI's `grok`), which has no deliver
@@ -32,11 +33,12 @@ import (
 // and the reason carries the one line the session runs. A wake path that
 // is not absolute is a refusal and nothing is written.
 type Grok struct {
-	Dir  string    // the friend's directory: the session's cwd
-	Wake string    // the wake file, when named; else the one the session's monitor tails
-	Run  Exec      // runs ps
-	Out  io.Writer // the daemon's record, when set
-	Home string    // the grok home, ~/.grok when empty
+	Dir        string    // the friend's directory: the session's cwd
+	Wake       string    // the wake file, when named; else the one the session's monitor tails
+	Run        Exec      // runs ps
+	Out        io.Writer // the daemon's record, when set
+	Home       string    // the grok home, ~/.grok when empty
+	lastDeliver time.Time // time of last delivery for pacing
 }
 
 func (g *Grok) home() (string, error) {
@@ -58,6 +60,20 @@ func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 	if deferred != nil {
 		return 0, Deferred{Reason: deferred.Error()}
 	}
+	// Pace deliveries to avoid flooding the monitor's flood stop.
+	// A backlog delivered as 12 lines at once can trip the monitor.
+	const gap = 100 * time.Millisecond
+	if !g.lastDeliver.IsZero() {
+		elapsed := time.Since(g.lastDeliver)
+		if elapsed < gap {
+			select {
+			case <-time.After(gap - elapsed):
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		}
+	}
+	g.lastDeliver = time.Now()
 	f, err := os.OpenFile(wake, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		return 0, err
