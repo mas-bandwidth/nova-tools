@@ -162,10 +162,6 @@
   when: container_runtime_delegation is changed and not ansible_check_mode
 
 # Everything below runs podman as the runner user.
-# The version the bench has is recorded (record.yml).
-- name: the podman version recorded on the bench
-  ansible.builtin.include_tasks: record.yml
-
 - name: rootless podman answers
   become: "{{ container_runtime_user != ansible_facts['user_id'] }}"
   become_user: "{{ container_runtime_user }}"

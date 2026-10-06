@@ -28,6 +28,11 @@
   gather_facts: false
   roles:
     - container-runtime
+  post_tasks:
+    - name: the podman version recorded on the bench
+      ansible.builtin.include_role:
+        name: container-runtime
+        tasks_from: record.yml
 
 - name: podman and a podman machine (macOS)
   hosts: container_runtime_darwin
@@ -37,3 +42,9 @@
       ansible.builtin.include_role:
         name: container-runtime
         tasks_from: darwin.yml
+    - name: the podman version recorded on the bench
+      ansible.builtin.include_role:
+        name: container-runtime
+        tasks_from: record.yml
+      vars:
+        container_runtime_podman_bin: "{{ container_runtime_brew | dirname }}/podman"

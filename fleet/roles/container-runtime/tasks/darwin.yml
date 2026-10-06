@@ -78,8 +78,3 @@
   changed_when: "'already running' not in container_runtime_machine_start.stderr"
   failed_when: container_runtime_machine_start.rc != 0 and 'already running' not in container_runtime_machine_start.stderr
   when: container_runtime_machines.rc == 0 and container_runtime_machines.stdout | trim | length > 0
-
-- name: the podman version recorded on the bench
-  ansible.builtin.include_tasks: record.yml
-  vars:
-    container_runtime_podman_bin: "{{ container_runtime_brew | dirname }}/podman"
