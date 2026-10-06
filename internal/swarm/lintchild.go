@@ -137,6 +137,8 @@ const DefaultRulesSource = "the built-in default rules"
 // childScan is one direct check: the check name, the command it looks for, and what to do
 // instead. A scan with Needs set runs only where the rule set carries a rule of that name
 // (a Go project's `go clean` and `go test` scans); every other scan runs over every card.
+// A remedy that names the build cache says the machine's shared one, the child's GOCACHE
+// (docs/SPEC-CARD-CONTRACT.md section 2, the staged environment).
 type childScan struct {
 	Check  string
 	Needs  string
@@ -163,7 +165,7 @@ var childScans = []childScan{
 		Remedy: "no line starts a redis-server: a server a child starts belongs to nobody who will stop it, and the machine's own servers belong to whoever runs them; a test that needs one runs where the card says, never by starting it here"},
 	{Check: "step-go-clean", Needs: "no-go-clean",
 		RE:     childCmd(`go[ \t]+clean\b`),
-		Remedy: "no line runs `go clean`: a cache clean breaks every build that shares the cache; give the child a private GOCACHE (a path of its own) and let it be"},
+		Remedy: "no line runs `go clean`: a cache clean breaks every build that shares the cache; the child's GOCACHE is already the machine's shared build cache (JOB.md names it): keep it"},
 	{Check: "step-kill",
 		RE:     childCmd(`(?:kill|pkill|killall)(?:[ \t]|$)`),
 		Remedy: "no line kills a process: a child stops only a process it started itself, and says so as `kill $!` or `kill %<n>`; `pkill` and `killall` name processes by pattern and reach another child's",
