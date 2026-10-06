@@ -213,3 +213,31 @@ func TestAReadCostsHalfASlot(t *testing.T) {
 		require.Equal(t, 2, w.s.Fleet.Count("m2", Ready))
 	})
 }
+
+// TestTurningReadCardsOnNeverReadsAPrimaryTwice pins the switch on a live store: a primary
+// whose reads were asked the old way keeps a read begun on the readers table (it finishes
+// there and stands), has its read asked and not begun taken back (retired by read cards),
+// and is dealt read cards only for the reads it still needs, never to the machine whose
+// reader holds its read nor to its worker.
+func TestTurningReadCardsOnNeverReadsAPrimaryTwice(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4, "m1", "m2", "m3", "m4")
+	putReviewBy(w, "s1-1", "s1-1: work (s1) tier: pro\n", "m1", 1)
+	old := func(reader, col string) string {
+		id := ReadCardID("s1-1", 1, reader)
+		w.s.Readers.Put(&Card{ID: id, Row: reader, Col: col, Score: 1, Rev: 1, Fields: map[string]string{
+			"kind": "read", "primary": "s1-1", "stream": "s1", "reader": reader, "attempt": "1", "head": "head-s1-1"}})
+		return id
+	}
+	begun := old("reader-m2", Reading)
+	asked := old("reader-m3", Asked)
+	dealReads(t, w, nil)
+	require.True(t, w.s.Readers.Card(begun).Placed(), "a read begun the old way finishes there")
+	require.False(t, w.s.Readers.Card(asked).Placed(), "a read asked and not begun is taken back")
+	require.Equal(t, RetiredByCards, w.s.Readers.Card(asked).F("retired_by"))
+	reads := readCardsOf(w, "s1-1")
+	require.Len(t, reads, 1, "one read card: the read begun stands for the other")
+	require.NotContains(t, []string{"m1", "m2"}, reads[0].Row, "never its worker, never the machine reading it the old way")
+	dealReads(t, w, nil)
+	require.Len(t, readCardsOf(w, "s1-1"), 1)
+}

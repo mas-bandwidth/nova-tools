@@ -504,7 +504,7 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 }
 
 // friendReadCloseUnit is the one close of a friend's read card on her fleet row,
-// whether her outbox report (FriendReadClose) or the read verb (friendReadVerb)
+// whether her outbox report (FriendReadClose) or the read verb (readCardVerb)
 // carried the verdict: the card retired with its verdict, a broken verdict's
 // judgment, and the primary's review judgment after it. usage is what the read spent, as
 // the read verb's --usage carried it ("" from her outbox report): kept on the card, timed
@@ -547,19 +547,9 @@ func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, findin
 
 // FriendReadOutboxLine is how a read on a friend's row is returned: her
 // outbox report, which friend sync reads (FriendReadClose), or the read verb
-// her packet prints, which writes the same close (friendReadVerb).
+// her packet prints, which writes the same close (readCardVerb).
 func FriendReadOutboxLine(row, id string, epoch uint64) string {
 	return fmt.Sprintf("write outbox/%s/REPORT.md in your working directory with 'Verdict: LAND', or 'Verdict: HOLD' and a line naming the file:line or rule and what to change (friend sync reads it); or run: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<file:line, and what to change>'", id, row, id, epoch)
-}
-
-// friendReadVerb is the read verb on a friend's row (docs/SPEC-SPRINT.md
-// section 5): her read cards are on her fleet row, not the readers table, and
-// a verdict there is the close her outbox report makes (friendReadCloseUnit).
-// A read named at any generation, 0 included (the reads asked before the ask
-// wrote one), is hers to report. A read on her row has no begin and is handed
-// back by friend take, not by --return.
-func friendReadVerb(s *Snapshot, r ReadReq, name string) Plan {
-	return readCardVerb(s, r, FriendRow(name), name)
 }
 
 // readCardVerb is the read verb on a fleet row, a friend's or a member's (read_cards.go):

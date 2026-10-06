@@ -9,24 +9,19 @@ import (
 )
 
 // A read is a consumer card (docs/SPEC-SPRINT.md section 6, "A read is a consumer card";
-// the owner, 2026-10-06: "reads need to become a type of card"; "These are all good reasons
-// why read should have been going through consumer cards the whole time"). While the
-// sprint's read_cards setting is on (set --read-cards on), a primary that wants reads is
-// asked them as read cards on the fleet table, the table its work cards are dealt on: the
-// ask cuts every read the attempt still needs AT ONCE ("send out multiple consumer cards in
-// ||"), each dealt to a different unit in the step that cuts it, as the deal cuts and deals
-// a work card in one step. A unit is a friend up whose tiers reach the read's tier, or a
-// fleet member up whose reader row (reader-<m>, `reader add`) is neither held nor retired
-// and serves the read's tier (`reader set --tiers`); never the attempt's own worker, and
-// never a unit that holds a read card of the attempt already, placed or retired, so two
-// reads of one primary go to two readers and a read taken back goes to another. A read
-// costs half a slot of its unit's one width (the owner: "Go wide with reads, 2X regular
-// width"): a row's load is its work cards and half its reads, so a row at width 8 holds 8
-// work cards working or 16 reads or any mix. A read's tier is its primary's (the owner:
-// "start with tier"); its level is inherited (ReadPriority). The review is unchanged: a
-// read card's verdict closes the read on the primary as `read --ok|--broken` does
-// (fleetReadCloseUnit), and the primary leaves review only by the existing rules. With the
-// setting off, the readers table's ask and the friends' read packet ask, as before.
+// the owner, 2026-10-06: "reads need to become a type of card"; "send out multiple consumer
+// cards in ||"; "Just remove the complexity. just deal it."). While the sprint's read_cards
+// setting is on (set --read-cards on), the tick's deal deals every read a primary in review
+// still needs AT ONCE, before its work cards, each a read card on the fleet table cut and
+// dealt in one step to a different reader: a friend whose roles name reader and whose tiers
+// hold the read's tier, or a member up whose reader row (reader-<m>) is neither held nor
+// retired and serves the tier; never the attempt's own worker, never a reader that holds or
+// closed a read of the attempt (a read the machine took back spends nothing). A read holds
+// half a slot of its unit's one width (halfLoad). Its tier is its primary's, its level
+// inherited (ReadPriority). The review is unchanged: a read card's verdict closes the read on
+// the primary as read --ok|--broken does (friendReadCloseUnit, readCardVerb), and the primary
+// leaves review only by the existing rules. The model is tla/ReadCards.tla. With the setting
+// off, the readers table's ask and the friends' read ask, as before; they retire next release.
 
 // PropReadCards is the work table's property that turns read cards on: ReadCardsOnWord.
 const PropReadCards = "read_cards"
@@ -62,6 +57,9 @@ const (
 	// or off a resting route (RetiredByRest): it spends nothing of the reader's.
 	RetiredByAway = "away"
 	RetiredByRest = "rest"
+	// RetiredByCards is a readers-table read asked and not begun, taken back when read cards
+	// came on: dealt again as a read card.
+	RetiredByCards = "read cards"
 )
 
 // isRead says the card is a read card.
@@ -274,7 +272,15 @@ func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, 
 	if u.friend {
 		return friendTakes(u.seat, friendReadTier(s, pr))
 	}
-	return s.readerServesTier(ReaderPrefix+u.name, s.readTierOf(pr))
+	// a machine whose reader row holds a read of the attempt on the readers table (asked
+	// the old way, before read cards were on) reads it there, never twice
+	rd := ReaderPrefix + u.name
+	for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
+		if c := s.Readers.Card(id); c.Placed() || c != nil && c.F("verdict") != "" {
+			return false
+		}
+	}
+	return s.readerServesTier(rd, s.readTierOf(pr))
 }
 
 // readCardsStanding is the primary's reads that stand at its attempt, both tables: the
@@ -299,13 +305,10 @@ func readCardsStanding(s *Snapshot, pr *Card, idx map[string][]*Card) (standing 
 	return standing, broken
 }
 
-// ReadCardsWanted is how many read cards the ask cuts for the primary now: every read its
+// readCardsWanted is how many read cards the deal cuts for the primary now: every read its
 // attempt still needs (ReadsNeeded less the reads that stand), at once; none once a read
-// found it broken (its judgment and the rework follow), none for failed work.
-func ReadCardsWanted(s *Snapshot, pr *Card) int { return readCardsWanted(s, pr, nil) }
-
-// readCardsWanted is ReadCardsWanted over a fleet read index (fleetReadIndex), nil to read
-// the table.
+// found it broken (its judgment and the rework follow), none for failed work; over a fleet
+// read index (fleetReadIndex), nil to read the table.
 func readCardsWanted(s *Snapshot, pr *Card, idx map[string][]*Card) int {
 	if pr == nil || pr.Col != Review || IsSentinel(pr) || pr.F("result") == "failed" {
 		return 0
@@ -332,8 +335,18 @@ func readCardsWaiting(s *Snapshot, idx map[string][]*Card) []*Card {
 // readCardsTakeBack is the read cards the ask retires before it asks: each placed read card
 // past its deadline (RetiredByLate), and each whose primary is no longer in review at the
 // card's attempt (RetiredByPrimary), by primary.
+//
+// The readers table's reads asked the old way and not begun (asked, or handed back) are
+// taken back too, once read cards are on: they are dealt again as read cards, and a read
+// begun there finishes there and stands (readCardsStanding), so turning read cards on reads
+// no primary twice.
 func readCardsTakeBack(s *Snapshot) map[string][]Change {
 	out := map[string][]Change{}
+	if s.Readers != nil {
+		for _, c := range s.Readers.Column(Asked) {
+			out[c.F("primary")] = append(out[c.F("primary")], change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByCards})))
+		}
+	}
 	for _, c := range s.Fleet.Column(Ready, Working) {
 		if !isRead(c) {
 			continue
@@ -367,21 +380,18 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		return p, waits
 	}
 	back := readCardsTakeBack(s)
-	retired := map[string]bool{}
-	for _, chs := range back {
-		for _, ch := range chs {
-			retired[ch.Entry.ID] = true
-		}
-	}
 	// the cards taken back stand no more: the wants are counted without them
 	view := s
-	if len(retired) > 0 {
+	if len(back) > 0 {
 		v := *s
-		v.Fleet = s.Fleet.Frozen()
-		for id := range retired {
-			c := *v.Fleet.Card(id)
-			c.Row, c.Col = "", ""
-			v.Fleet.Put(&c)
+		v.Fleet, v.Readers = s.Fleet.Frozen(), s.Readers.Frozen()
+		for _, chs := range back {
+			for _, ch := range chs {
+				tb := v.T(ch.Table)
+				c := *tb.Card(ch.Entry.ID)
+				c.Row, c.Col = "", ""
+				tb.Put(&c)
+			}
 		}
 		view = &v
 	}
@@ -537,7 +547,7 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 }
 
 // readCardsWaitingCount is the reads waiting while read cards are on (ReadsWaiting): the
-// reads wanted and not yet dealt (ReadCardsWanted), and the read cards dealt and not
+// reads wanted and not yet dealt (readCardsWanted), and the read cards dealt and not
 // started (ready on a row).
 func readCardsWaitingCount(s *Snapshot) int {
 	if s == nil || s.Work == nil || s.Fleet == nil {
