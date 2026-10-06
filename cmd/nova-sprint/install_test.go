@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // install writes each of nova-sprint's units for macOS and Linux into a fake home,
@@ -54,12 +57,17 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			require.Equal(t, 0, code, errs)
 			assert.Contains(t, out, "INSTALL SERVER DRY-RUN unit="+file("server"))
 			assert.NoFileExists(t, file("server"), "a dry run writes nothing")
-			assert.Empty(t, calls)
+			session := t.TempDir()
+			m := store.NewMem()
+			a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return m, nil }
+			a.forward = func(_ context.Context, _ string, verbs ...[]string) ([]sprintwire.Result, error) {
+				return []sprintwire.Result{{}}, nil
+			}
 
 			for _, line := range [][]string{
 				{"server", "--listen", "127.0.0.1:6390", "--land", "--decide", "/srv/decide"},
 				{"member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"},
-				{"seat-push"},
+				{"seat-push", "--harness", "opencode", "--target", session},
 				{"friend-sync", "--every", "15s"},
 				{"table", "--out", "/srv/table.txt"},
 			} {
