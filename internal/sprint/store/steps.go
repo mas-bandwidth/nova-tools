@@ -1,6 +1,10 @@
 package store
 
-import "github.com/mas-bandwidth/nova-tools/internal/sprint"
+import (
+	"slices"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+)
 
 // The steps of the verbs: each names the tables its plan reads and whether
 // the display cells change. The command line and the tests run these.
@@ -59,7 +63,10 @@ func ResolveStep(r sprint.ResolveReq) Step {
 
 // TakeStep is a worker taking work cards.
 func TakeStep(r sprint.TakeReq) Step {
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
+	// a friend's row takes as a member does, within her lanes: her seat is read with it
+	// (sprint.Take); a machine's take reads no friend
+	friends := slices.ContainsFunc(sprint.Split(r.As), sprint.IsFriendRow)
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Friends: friends,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Take(s, r) }}
 }
 
