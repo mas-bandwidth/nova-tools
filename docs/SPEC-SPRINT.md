@@ -556,6 +556,31 @@ marks it `taken` (a queued record of a card now dealt to another row). The tick
 does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 `TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow`).
 
+**One tier for every friend decision** (friend-deal-one-tier-b.w4; the owner,
+2026-10-05: "You should automatically rebalance queues", "it should just happen
+mechanically"). A card has one tier at a time, `sprint.DealTier(primary)`: the
+tier it is on now (`FieldTierNow`, the tier pinned by `rework --tier` or `brief
+--tier`, or its brief's line 1), the dealer's default, flash, when none. The
+friend deal, the friend level, the take back below, the lane filters and the
+packet's `tier` (`sprint.DealtTier`, never empty) all read it; none parses the
+brief, and a friend's lane reads the tier from the dealt packet. A friend takes
+a card when the tier is one of her tiers (`friendTakes`), never her class as a
+whole: friend level is per card, among the friends up whose tiers hold the
+card's tier, so a friend serving flash, frontier, heavy and pro levels with one
+serving flash and pro for a flash card, and this replaces "within each class"
+above. A WHO friend (`WHO: friend <name>`) is a preference among the friends
+that serve the tier: when she does not, it is skipped and the card goes to
+another friend that does (`pin ignored`), never a pin past the tier. A card
+re-tiered after it was dealt to a friend whose tiers do not hold the new tier,
+ready or working and not started (no push, not named running by her beat), is
+taken back by the next tick's friend level (and by `friend level`) as `friend
+take` takes it (`taken_back` says "re-tiered"), its primary ready, and dealt
+again by the tick after to a friend that serves the tier (`retierTakeBacks`,
+friend_tier.go, called at the end of `friendLevel`); a started card stays and
+finishes. A card the attempt cap's default answer pinned to its holder
+(`AttemptCapDeal`) is the one placement outside her tiers and stays
+(`TestEveryFriendDecisionReadsTheOneTierOfTheCard`).
+
 A card whose read tier, before a frontier card is collapsed onto the tier a
 route serves (`readTierOf`), is frontier — a frontier card, or a heavy card
 whose read tier is the one above — is asked of a friend of frontier class,
@@ -1071,7 +1096,7 @@ unstarted cards taken back from three full friends for two idle ones were dealt
 back to the full friends by the next tick; on 2026-10-05 at 9:40 AM a friend
 came up at width 2 with both lanes idle while three friends held 15 ready cards
 at full width, `friend level` moved nothing (it levelled within a class, and
-hers differed), and two cards taken back were dealt to a friend working 8 of 8
+hers differed; now per card by tier, "One tier for every friend decision"), and two cards taken back were dealt to a friend working 8 of 8
 (room 2 x 8 - 11 = 5) over her (room 2 x 2 - 0 = 4). This replaces "the friend
 up with the most room free" and "within each class" above, and "the tick does
 not level the friends":
