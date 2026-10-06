@@ -268,8 +268,10 @@ func (r *sexpReader) read() (sexp, error) {
 	return sexp{sym: strings.ToLower(r.text[start:r.at])}, nil
 }
 
-// plist is a keyword list's values by keyword, refused for a key twice or a key with no value.
-func (d sexp) plist(what string) (map[string]sexp, error) {
+// plist is a keyword list's values by keyword, refused for a key twice, a key with no value,
+// or a key not among known: a form of another shape is refused, never rewritten without the
+// keys it does not know.
+func (d sexp) plist(what string, known ...string) (map[string]sexp, error) {
 	if !d.isList || len(d.list)%2 != 0 {
 		return nil, fmt.Errorf("%s is not a keyword list", what)
 	}
@@ -281,6 +283,9 @@ func (d sexp) plist(what string) (map[string]sexp, error) {
 		}
 		if _, ok := out[k]; ok {
 			return nil, fmt.Errorf("%s: %s twice", what, k)
+		}
+		if !contains(known, k) {
+			return nil, fmt.Errorf("%s: %s is no key of a roadmap's (%s)", what, k, strings.Join(known, " "))
 		}
 		out[k] = d.list[i+1]
 	}
@@ -351,7 +356,7 @@ func ParseRoadmap(text []byte) (Roadmap, error) {
 	if !d.isList || len(d.list) == 0 || d.list[0].sym != ":roadmap" {
 		return rm, errors.New("not a :roadmap form")
 	}
-	top, err := sexp{isList: true, list: d.list[1:]}.plist(":roadmap")
+	top, err := sexp{isList: true, list: d.list[1:]}.plist(":roadmap", ":product", ":releases", ":streams")
 	if err != nil {
 		return rm, err
 	}
@@ -371,7 +376,7 @@ func ParseRoadmap(text []byte) (Roadmap, error) {
 		return rm, err
 	}
 	for _, sd := range streams {
-		sm, err := sd.plist("a stream")
+		sm, err := sd.plist("a stream", ":name", ":cards")
 		if err != nil {
 			return rm, err
 		}
@@ -387,7 +392,7 @@ func ParseRoadmap(text []byte) (Roadmap, error) {
 			return rm, err
 		}
 		for _, cd := range cards {
-			cm, err := cd.plist("a card of stream " + s.Name)
+			cm, err := cd.plist("a card of stream "+s.Name, ":id", ":stream", ":tier", ":needs", ":who", ":repo", ":replaces", ":rules", ":brief")
 			if err != nil {
 				return rm, err
 			}
