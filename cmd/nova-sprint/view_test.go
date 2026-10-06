@@ -189,7 +189,7 @@ func TestTheWorkerViewOfAMember(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
 	for _, id := range []string{"s1-1", "s1-2"} {
-		brief := passingBrief(id + ": a card\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nPATHS: cmd/nova-sprint/" + id + ".go")
+		brief := passingBrief(id + ": a card tier: flash\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nPATHS: cmd/nova-sprint/" + id + ".go")
 		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(brief), 0o644))
 	}
 	ta.ok("add --stream s1 --brief-dir " + dir)
