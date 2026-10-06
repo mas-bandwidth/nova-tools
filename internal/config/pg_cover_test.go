@@ -101,7 +101,7 @@ func unexpected(q string) ([]string, [][]driver.Value, error) {
 
 // friendCols and friendRow are the columns(k), created_at, updated_at scanRow
 // reads for the friend kind.
-var friendCols = []string{"name", "slots", "tiers", "roles", "width", "mode", "config_dir", "created_at", "updated_at"}
+var friendCols = []string{"name", "slots", "tiers", "roles", "width", "mode", "config_dir", "dir", "created_at", "updated_at"}
 
 func friendRow(name string) []driver.Value {
 	at := time.Unix(0, 0).UTC()
@@ -179,9 +179,11 @@ func TestPgCoverValues(t *testing.T) {
 	k, ok := Lookup(KindFriend)
 	require.True(t, ok)
 	row := Row{Name: "f1", Fields: map[string]string{"slots": "2", "tiers": "flash", "roles": "", "width": "8", "mode": "one-shot"}}
-	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", nil}, values(k, row), "an unset config_dir is NULL")
+	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", nil, nil}, values(k, row), "an unset config_dir and dir are NULL")
 	row.Fields["config_dir"] = "/accounts/heavy-a"
-	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", "/accounts/heavy-a"}, values(k, row))
+	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", nil}, values(k, row))
+	row.Fields["dir"] = "/accounts/heavy-a/working"
+	assert.Equal(t, []any{"f1", int64(2), "flash", "", int64(8), "one-shot", "/accounts/heavy-a", "/accounts/heavy-a/working"}, values(k, row))
 }
 
 // TestPgCoverKindOf: a known kind is returned, an unknown one refused.
