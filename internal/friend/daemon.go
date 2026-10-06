@@ -205,6 +205,7 @@ type Daemon struct {
 	inboxSaid   map[string]bool      // the inbox lines the last reconcile said that are said once while they stand
 	turnEnded   func()               // a test's hook: a turn's result is on its channel (nil: none)
 	outbox      outboxState          // the outbox jobs finished, tried and noted (outbox.go)
+	own         map[string]bool      // the ids of the messages the daemon sent as the friend: none is the session's proof of life
 	staging     map[string]bool      // the jobs a stage is under way for
 	stageRetry  map[string]time.Time // when a job whose stage failed is staged again
 	stageSaid   map[string]bool      // the stage failures said, once while they stand
@@ -224,7 +225,7 @@ const IdleWalkEvery = time.Minute
 type turn struct {
 	entries  []string // the stream entries to ack
 	msgs     []bus.Message
-	notice   *Push
+	notice   *Notice
 	text     string
 	started  time.Time
 	running  bool // a Deliver is under way (false while a deferral waits)
@@ -336,9 +337,12 @@ type loop struct {
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
+	pingAt       time.Time       // the store's time on the newest ping read: a session line after it is its proof of life
+	proofFrom    string          // where the next read of the log for that proof starts
 	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
-	notice       *Push           // the latest word about the coordinator the session is owed
-	noticeTaken  *Push           // the word the last head() put in a turn
+	notice       *Notice         // the latest word about the coordinator the session is owed
+	noticeTaken  *Notice         // the word the last head() put in a turn
+	notices      int             // how many notices the daemon has said: each one's id (say)
 	saidSilent   bool            // what the session last heard: the coordinator silent
 	busy         *turn           // the batch turn under way, or deferred in hand
 	retry        time.Time       // when the deferred turn in hand is tried again; zero while none is
@@ -399,7 +403,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		now := d.Now()
 		for _, p := range d.m.Tick(now) {
-			l.say(p)
+			l.say(p, now)
 		}
 		if l.passive && l.notice != nil {
 			// nothing can be pushed in: the session hears of it from its own read
@@ -411,6 +415,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		storeOK := l.read(now)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if storeOK {
+			l.proof()
 		}
 		for _, t := range l.turns() {
 			l.watch(t, now)
@@ -595,12 +602,46 @@ func (l *loop) turns() []*turn {
 	return out
 }
 
-func (l *loop) say(p Push) {
+// say takes the daemon's newest word about the coordinator: it supersedes
+// the one still owed (SupersededNotices, the drop on the record), and a
+// "coordinator back" the session would not need, never having heard it was
+// silent, is itself nothing to say.
+func (l *loop) say(p Push, now time.Time) {
+	l.notices++
+	n := &Notice{Push: p, ID: fmt.Sprintf("notice-%d-%d", now.UnixMilli(), l.notices), seq: l.notices}
+	l.owe(n, now)
 	if p.Subject == "coordinator back" && !l.saidSilent {
 		l.notice = nil // the session never heard otherwise: nothing to say
-		return
 	}
-	l.notice = &p
+}
+
+// owedAgain hands back the notice a failed turn carried: owed again unless a
+// newer one is owed, which supersedes it (owe).
+func (l *loop) owedAgain(n *Notice, now time.Time) {
+	if l.notice == nil {
+		l.saidSilent = n.Subject != "coordinator silent"
+	}
+	l.owe(n, now)
+}
+
+// owe makes n the notice the session is owed, dropping the one owed before
+// it, of which n is newer, on the record with superseded=<n's id>
+// (docs/SPEC-FRIEND.md, the loop). A notice a failed turn hands back while a
+// newer one is owed is itself the dropped one.
+func (l *loop) owe(n *Notice, now time.Time) {
+	owed := []Notice{*n}
+	if l.notice != nil {
+		owed = []Notice{*l.notice, *n}
+		if l.notice.seq > n.seq {
+			owed = []Notice{*n, *l.notice}
+		}
+	}
+	for id, newer := range SupersededNotices(owed) {
+		subject := owed[0].Subject
+		l.d.Record(fmt.Sprintf("%s notice=%s subject=%q superseded=%s dropped=true", now.UTC().Format(time.RFC3339), id, subject, newer))
+	}
+	newest := owed[len(owed)-1]
+	l.notice = &newest
 }
 
 // head is what heads the next turn: the word about the coordinator, taken
@@ -663,7 +704,7 @@ func (l *loop) tellKind(kind, subject, body string, now time.Time) {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " no coordinator to tell: " + subject)
 		return
 	}
-	if _, err := l.b.Send(l.ctx, bus.Message{From: l.d.Friend, To: []string{to}, Kind: kind, Subject: subject, Body: subject + "\n" + body}); err != nil {
+	if _, err := l.d.send(l.ctx, l.b, bus.Message{From: l.d.Friend, To: []string{to}, Kind: kind, Subject: subject, Body: subject + "\n" + body}); err != nil {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " telling " + to + " failed: " + err.Error() + ": " + subject)
 	}
 }
@@ -677,8 +718,11 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 	}
 	l.d.daemonPong(l.ctx, l.b, msg, nonce, now)
 	l.answered[e.Entry] = true
+	if msg.At.After(l.pingAt) {
+		l.pingAt, l.proofFrom = msg.At, bus.IDAt(msg.At)
+	}
 	for _, p := range l.d.m.Ping(now, seatOf(seat, msg), since, nonce) {
-		l.say(p)
+		l.say(p, now)
 	}
 	if IsWake(msg.Body) && !l.passive {
 		l.wake = true
@@ -764,6 +808,47 @@ func (l *loop) take() (entries []string, msgs []bus.Message) {
 	return entries, msgs
 }
 
+// proof is the session's proof of life by any bus line it sends
+// (docs/SPEC-FRIEND.md, the loop): while a challenge is open, a message on the
+// log from the friend written after the newest ping, that the daemon did not
+// send (its own ids, or a daemon-pong or session check by name), ends the
+// challenge as its pong would (tla/Friend.tla, Pong). A log that cannot be
+// read is read again the next step.
+func (l *loop) proof() {
+	m := l.d.m
+	if m.Challenge == Quiet || l.proofFrom == "" {
+		return
+	}
+	es, err := l.b.Log(l.ctx, l.proofFrom)
+	if err != nil {
+		l.d.status.StoreError = "reading the log for the session's proof of life: " + err.Error() // read again the next step
+		return
+	}
+	for _, e := range es {
+		l.proofFrom = "(" + e.Entry
+		msg := e.Message()
+		if msg.From != l.d.Friend || l.d.own[msg.ID] || !msg.At.After(l.pingAt) ||
+			msg.Subject == DaemonPongSubject || strings.HasPrefix(msg.Subject, SessionCheckPrefix) {
+			continue
+		}
+		m.Pong(l.d.Now(), m.Nonce)
+		return
+	}
+}
+
+// send is a message the daemon sends as the friend, its id kept so that
+// proof never takes it for the session's.
+func (d *Daemon) send(ctx context.Context, b *bus.Bus, m bus.Message) (bus.Message, error) {
+	sent, err := b.Send(ctx, m)
+	if err == nil {
+		if d.own == nil {
+			d.own = map[string]bool{}
+		}
+		d.own[sent.ID] = true
+	}
+	return sent, err
+}
+
 // seat is the seat holder for a delivery at now: read from the sprint server
 // at most every SeatCacheFor on the daemon's clock, and empty (unknown) when
 // Seat is nil, errors or answers nothing (docs/SPEC-FRIEND.md, bus-authority-labels.w3).
@@ -813,17 +898,33 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	}
 }
 
+// startBatch is the one turn for every message in hand (docs/SPEC-FRIEND.md,
+// the loop): one Envelope, with the daemon's newest word about the
+// coordinator (head), cut at the deliverer's TextLimit; the messages that did
+// not fit go back to the head of the hand, pending, named by id in the text,
+// and are the next turn. A function over the pending list and the clock; the
+// model is tla/Delivery.tla: a turn takes the whole pending set and no
+// younger message goes in a later turn than an older one.
 func (l *loop) startBatch(now time.Time) {
 	t := &turn{}
-	t.entries, t.msgs = l.take()
+	var msgs []bus.Message
+	for _, e := range l.hand {
+		msgs = append(msgs, e.Message())
+	}
+	notice, pong := l.head()
+	t.notice = l.noticeTaken
+	text, shown := Envelope(l.seat(now), msgs, now, l.d.Friend, TextLimit(l.d.Deliver), notice, pong)
+	for _, e := range l.hand[:shown] {
+		t.entries = append(t.entries, e.Entry)
+	}
+	t.msgs, t.text = msgs[:shown], text
+	l.d.status.Envelope, l.d.status.EnvelopeBytes = shown, len(text)
+	l.hand = l.hand[shown:]
 	var subjects []string
 	for _, m := range t.msgs {
 		subjects = append(subjects, m.Subject)
 	}
 	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
-	notice, pong := l.head()
-	t.notice = l.noticeTaken
-	t.text = BatchFor(l.seat(now), t.msgs, notice, pong)
 	l.busy = t
 	l.startTurn(t, now, l.deliverBatch(t))
 }
@@ -940,9 +1041,8 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 			}
 		}
 	}
-	if !ok && t.notice != nil && l.notice == nil { // the word was not heard: it is owed again
-		l.notice = t.notice
-		l.saidSilent = t.notice.Subject != "coordinator silent"
+	if !ok && t.notice != nil { // the word was not heard: owed again, unless a newer one supersedes it
+		l.owedAgain(t.notice, now)
 	}
 	if l.broken && !l.told {
 		line += fmt.Sprintf("\n%s session %s broken: %s (%d turns in a row); delivering nothing into it until the daemon restarts, every message stays pending",
@@ -1033,7 +1133,7 @@ func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, why string) bool {
 	}
 	subject := fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, s.SessionID, s.SessionReason)
 	body := subject + "\n" + why + "\n"
-	if _, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
+	if _, err := d.send(ctx, b, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
 		d.status.StoreError = "telling " + to + " the session is broken: " + err.Error()
 		return false
 	}
@@ -1056,7 +1156,7 @@ func seatOf(seat string, m bus.Message) string {
 // "Presence is her session's evidence"). A send that fails is the store's
 // error on the status.
 func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string, now time.Time) {
-	_, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
+	_, err := d.send(ctx, b, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
 	if err != nil {
 		d.status.StoreError = "daemon pong: " + err.Error()
 		return

@@ -44,7 +44,7 @@ func TestAllPendingMessagesGoInAsOneTurnAndAreAckedTogether(t *testing.T) {
 	i1, i2, i3 := strings.Index(text, Text(m1)), strings.Index(text, Text(m2)), strings.Index(text, Text(m3))
 	assert.True(t, i1 >= 0 && i1 < i2 && i2 < i3, "each message whole, oldest first: %q", text)
 	for i, m := range []bus.Message{m1, m2, m3} {
-		assert.Contains(t, text, "=== message "+string(rune('1'+i))+" of 3: id="+m.ID+" from=ada subject=\""+m.Subject+"\" ===")
+		assert.Contains(t, text, "["+string(rune('1'+i))+"/3] "+m.ID+" from=ada at="+m.At.Format(time.RFC3339)+" age=0m subject="+m.Subject+"\n")
 	}
 	pending, fresh := r.pending(t)
 	assert.Empty(t, pending, "acked together at exit 0")
@@ -67,7 +67,7 @@ func TestMessagesThatLandDuringATurnGoInTogetherAsTheNextTurn(t *testing.T) {
 	}
 	r.run(t, 40)
 	require.Len(t, r.delivered, 2, "the long task, then one turn for the three that waited: %v", r.delivered)
-	assert.Equal(t, 3, strings.Count(r.delivered[1], "subject=\"later\" ===\n"), r.delivered[1])
+	assert.Equal(t, 3, strings.Count(r.delivered[1], " subject=later\n"), r.delivered[1])
 	pending, fresh := r.pending(t)
 	assert.Empty(t, pending)
 	assert.Empty(t, fresh)

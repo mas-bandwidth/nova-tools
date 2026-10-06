@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 // Window is how long either side waits before it decides the other is gone:
@@ -52,6 +54,94 @@ const DefaultIdleAfter = 10 * time.Minute
 type Push struct {
 	Subject string
 	Text    string
+}
+
+// RestLine is the envelope's line for the messages that did not fit in it:
+// how many, and the command that prints every pending message whole
+// (docs/SPEC-FRIEND.md, the loop).
+const RestLine = "and %d more: nova-bus recv --as %s --all"
+
+// ageMinutes is how long before now at was, in whole minutes, never below
+// zero (at is the store's clock, now the daemon's). A function of its
+// arguments.
+func ageMinutes(now, at time.Time) int {
+	if d := now.Sub(at); d > 0 {
+		return int(d / time.Minute)
+	}
+	return 0
+}
+
+// Envelope is the one turn that carries every pending message when the
+// session is free (docs/SPEC-FRIEND.md, the loop): the pong line first while
+// a challenge is open, the daemon's word about the coordinator, a count,
+// then each message oldest first as `[i/n] <id> from=<f> at=<RFC3339>
+// age=<m>m subject=<s>` and its text, the age taken at now. Each message's
+// text is authored: plain from the seat holder, quoted from anyone else
+// (bus-authority-labels.w3). With limit above zero the text stops before the
+// message that would pass it (the first always goes in), and the rest are
+// named by their lines under RestLine for me. It answers the text and how
+// many messages it carries, a prefix of msgs: exactly those are acked when
+// the turn is accepted. A single message with nothing else is its authored
+// text alone. A function of its arguments: the pending list, the clock and
+// the limit.
+func Envelope(seat string, msgs []bus.Message, now time.Time, me string, limit int, notice, pongCommand string) (text string, shown int) {
+	if len(msgs) == 1 && notice == "" && pongCommand == "" {
+		return authored(seat, msgs[0]), 1
+	}
+	var b strings.Builder
+	if pongCommand != "" {
+		b.WriteString("Run this now, first, exactly as written: " + pongCommand + "\nThen read on.\n\n")
+	}
+	if notice != "" {
+		b.WriteString("nova-friend: " + notice + "\n\n")
+	}
+	fmt.Fprintf(&b, "nova-friend: %d message(s) for you, oldest first, in one turn; take each in order.\n", len(msgs))
+	line := func(i int) string {
+		m := msgs[i]
+		return fmt.Sprintf("[%d/%d] %s from=%s at=%s age=%dm subject=%s\n", i+1, len(msgs), m.ID, m.From, m.At.Format(time.RFC3339), ageMinutes(now, m.At), oneLine(m.Subject, len(m.Subject)))
+	}
+	for i, m := range msgs {
+		part := "\n" + line(i) + authored(seat, m)
+		if limit > 0 && shown > 0 && b.Len()+len(part) > limit {
+			break
+		}
+		b.WriteString(part)
+		shown++
+	}
+	if shown < len(msgs) {
+		fmt.Fprintf(&b, "\n"+RestLine+"\n", len(msgs)-shown, me)
+		for i := shown; i < len(msgs); i++ {
+			b.WriteString(line(i))
+		}
+	}
+	return b.String(), shown
+}
+
+// Notice is one of the daemon's own words about the coordinator (a Push of
+// Machine's), with the id the daemon gives it when it is said: the record
+// names a dropped notice and its successor by these ids.
+type Notice struct {
+	Push
+	ID  string
+	seq int // the order the daemon said it in
+}
+
+// SupersededNotices is the supersede rule (docs/SPEC-FRIEND.md, the loop): of
+// the daemon's own notices not yet in a turn, oldest first, each of which a
+// newer one exists maps to the newest's id. Those are dropped, never
+// delivered, and each is recorded with superseded=<that id>. It reads only
+// the notices the daemon itself raised, never a message on the bus. A
+// function of its argument.
+func SupersededNotices(owed []Notice) map[string]string {
+	out := map[string]string{}
+	if len(owed) < 2 {
+		return out
+	}
+	newest := owed[len(owed)-1].ID
+	for _, n := range owed[:len(owed)-1] {
+		out[n.ID] = newest
+	}
+	return out
 }
 
 // Machine is the daemon's state. The daemon steps it with the clock it

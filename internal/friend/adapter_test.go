@@ -129,3 +129,12 @@ func TestTheClaudeDelivererAppendsOneLineToTheWakeFile(t *testing.T) {
 	assert.ErrorContains(t, err, "no state directory "+missing)
 	assert.NoDirExists(t, missing, "a refusal makes nothing")
 }
+
+// TextLimit is the deliverer's own limit when it names one above zero, else
+// the batch bound; the envelope is cut to it (Envelope).
+func TestTextLimitIsTheDeliverersOwnElseTheBatchBound(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, BatchBytes, TextLimit(Stub{Harness: "claude"}))
+	assert.Equal(t, 777, TextLimit(limited{newRig(t), 777}))
+	assert.Equal(t, BatchBytes, TextLimit(limited{newRig(t), 0}))
+}

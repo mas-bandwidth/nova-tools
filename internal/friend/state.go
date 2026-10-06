@@ -56,6 +56,11 @@ type Status struct {
 	Beats          int       `json:"beats"`
 	LastBeat       time.Time `json:"last_beat"`
 	BeatError      string    `json:"beat_error,omitempty"`
+	// Envelope is how many messages the last turn's envelope carried, and
+	// EnvelopeBytes its size: at most the deliverer's text limit, the first
+	// message always in (docs/SPEC-FRIEND.md, the loop).
+	Envelope      int `json:"envelope"`
+	EnvelopeBytes int `json:"envelope_bytes"`
 	// HarnessSeen is what the harness check last read of the process table
 	// (HarnessRunning, HarnessNotSeen, or empty: cannot tell). Advisory: it
 	// never makes the friend down (alive.go, HarnessWatch).

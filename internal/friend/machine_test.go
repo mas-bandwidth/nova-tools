@@ -1,9 +1,11 @@
 package friend
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,3 +97,22 @@ func TestPingAndPongLinesRoundTrip(t *testing.T) {
 // has answered at least once (the daemon alone never makes a friend up; tla/Friend.tla:
 // UpOnlyAfterPong).
 func (m *Machine) Up() bool { return m.Challenge == Quiet && m.Pongs > 0 }
+
+// Envelope is a pure function of the pending list, the clock and the limit:
+// oldest first, each message's age at now, and the cap leaves the rest named.
+func TestTheEnvelopeIsPureOverThePendingListAndTheClock(t *testing.T) {
+	t.Parallel()
+	msgs := []bus.Message{
+		{ID: "m1", From: "ada", At: t0, Subject: "one", Body: "a\n"},
+		{ID: "m2", From: "ada", At: t0.Add(2 * time.Minute), Subject: "two", Body: "b"},
+	}
+	text, shown := Envelope("ada", msgs, t0.Add(5*time.Minute), "bob", 0, "", "")
+	assert.Equal(t, 2, shown)
+	assert.Contains(t, text, "[1/2] m1 from=ada at="+t0.Format(time.RFC3339)+" age=5m subject=one\n"+Text(msgs[0]))
+	assert.Contains(t, text, "[2/2] m2 from=ada at="+t0.Add(2*time.Minute).Format(time.RFC3339)+" age=3m subject=two\n"+Text(msgs[1]))
+	assert.Less(t, strings.Index(text, "m1"), strings.Index(text, "m2"), "oldest first")
+
+	text, shown = Envelope("ada", msgs, t0, "bob", 0, "the coordinator is silent", "")
+	assert.Equal(t, 2, shown)
+	assert.True(t, strings.HasPrefix(text, "nova-friend: the coordinator is silent\n\n"), text)
+}

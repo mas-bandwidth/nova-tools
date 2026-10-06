@@ -292,13 +292,24 @@ in `internal/sprint` and `cmd/nova-sprint`.
 Push, not poll (docs/SPEC-SPRINT.md, section 8, "Push, not poll", audited 2026-10-06): the daemon's read blocks on the stream (`XREADGROUP BLOCK`, one `BeatEvery`) only while the session is free; while a turn runs, in one-shot mode, and for a passive harness it reads without blocking or peeks and then pauses a `BeatEvery`, which is a timer poll, and card friend-bus-read-blocks makes it block in every mode. Her cards (`InboxEvery`) and her reader row (`ReadAskEvery`, 10 s) are asked of the server on the daemon's step, timer polls too, until friend-cards-pushed-on-the-bus and friend-reads-pushed-on-the-bus put them on her stream. The beat is a beat, and a delivery is a turn in her session. The class test `TestEveryTimerLoopIsNamedInThePushTable` holds every timer loop of the tree to that table.
 
 Each second: the clock is stepped; when the session is free, every message
-waiting is read off the stream (a ping is answered by the daemon at once and
-acked, never pushed in), and one turn is started with all of them, oldest
-first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
-the next turn): one envelope listing each message's id, from and subject, with
-the message as `nova-bus recv` prints it, the pong line first while a challenge
-is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
+waiting is read off the stream, and one turn is started with all of them,
+oldest first, at most 32 messages (`MaxBatch`; the rest is the next turn): one
+envelope, each message under the line
+`[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>` and then its text as
+its sender's authority allows (plain from the seat holder, quoted from anyone
+else; `authored`), the pong line first while a challenge is open, and the
+daemon's latest word about the coordinator. The envelope is cut at the
+deliverer's text limit (`TextLimit`: its own when it names one above zero,
+else `BatchBytes`), the first message always in; the messages that did not fit
+are named by their lines after `and <n> more: nova-bus recv --as <me> --all`,
+stay pending, and are the next turn. A single message with nothing else is its
+`Text` alone. The daemon's own notices about the coordinator, of which a newer
+one exists, are never delivered: the newest goes in a turn and each older one
+is dropped with `superseded=<newer id>` on the record (`SupersededNotices`). A
+ping is answered by the daemon at once and acked, never pushed in as a turn,
+so a session's turns are spent on work; any bus line the session sends after
+the newest ping proves it alive and ends the challenge as its pong would,
+while a line the daemon itself sent proves nothing. The adapter blocks for the whole
 turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is the
 command accepting the input, not the turn ending). Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
