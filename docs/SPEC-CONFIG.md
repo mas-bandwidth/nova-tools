@@ -662,10 +662,29 @@ anywhere connects with none (a throwaway database trusts).
 `--seat <name>` (env `NOVA_SEAT`) supplies the PostgreSQL DSN and the name
 of the password environment variable from the seat's profile row in
 `seats.tsv` (`$XDG_CONFIG_HOME/nova-config/seats.tsv`, else
-`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes accept
+`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes and reads
+(`<kind> list|show`, `machine width`, `machine self --check`, `status`) accept
 `--seat <name>` so that commands like `nova-config machine set m1 --width 8 --seat <name>`
-need no explicit DSN or secrets wrapper; an unknown seat is a one-line
-refusal naming the known seats.
+or `nova-config tier list --seat <name>` need no explicit DSN or secrets
+wrapper; `machine add` and `loop add` take `NOVA_SEAT` alone, their rows'
+own `--seat` being a field. An unknown seat is a one-line refusal naming the
+known seats. `nova-sprint seat install --config-seat <name> --config-dsn <dsn>
+--config-password-env <NAME>` writes the row (in place of the seat's row,
+every other line kept, mode 0600, read back as nova-config reads it before it
+replaces the file; docs/SPEC-SPRINT.md, "Handing over the seat").
+
+When the row's password variable is not set (a coordinator typing the verb
+bare, with no `nova-secrets exec` around it), the password is read in this
+process from the nova-secrets seat the machine's store login names
+(`nova-sprint seat login`: `$XDG_CONFIG_HOME/nova-sprint/login.json`, else
+`~/.config/nova-sprint/login.json`; its store, seat, key and sops), under the
+row's variable name as the key, through the same `secrets.ReadLogin` path, and
+is never printed or put in an environment. The variable set wins. No store
+login, or a seat that does not hold the key, is a refusal naming the seat, the
+file and the remedy (`nova-sprint seat login`, or `nova-secrets seal --as
+<seat> --name <NAME>`), and no store is opened
+(`cmd/nova-config/seat_secret.go`,
+`TestSeatOnAReadVerbReadsThePasswordThroughTheStoreLogin`).
 
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the

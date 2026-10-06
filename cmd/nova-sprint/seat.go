@@ -3,15 +3,22 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -667,4 +674,276 @@ func (a *app) seatRepair(ctx context.Context, st *store.Store, c common, reason 
 func cellText(cell any) string {
 	s, _ := cell.(string)
 	return s
+}
+
+// The seat's record (coordinator-config-through-the-seat; the owner, 2026-10-05: every
+// step the coordinator did by hand is a missing instruction): what seat install learned
+// of this machine's seat that a cold coordinator's environment does not hold, beside the
+// store login (storelogin.go). It names the sprint's server, which seat check measures
+// when NOVA_SPRINT_SERVER is not set, and the nova-config seat whose row seat install
+// wrote into nova-config's seats.tsv, which nova-config --seat and seat check read. It
+// holds no secret: the row names the variable of the password, and nova-config reads
+// that password through the store login's nova-secrets seat.
+
+// seatRecordFile is the record's name, in the store login's directory.
+const seatRecordFile = "seat.json"
+
+// configTool is the tool whose seats.tsv seat install writes the config seat's row into.
+const configTool = "nova-config"
+
+type seatRecord struct {
+	Server     string `json:"server,omitempty"`
+	ConfigSeat string `json:"config_seat,omitempty"`
+}
+
+// seatRecordPath is the record's file, beside the store login's.
+func (a *app) seatRecordPath() (string, error) {
+	loginFile := a.loginFile
+	if loginFile == nil {
+		loginFile = a.defaultLoginFile
+	}
+	p, err := loginFile()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(p), seatRecordFile), nil
+}
+
+// recordedSeat is the record seat install wrote; ok false when there is none, or the app
+// has the store login off (a test's app, as recordedLogin).
+func (a *app) recordedSeat() (seatRecord, bool, error) {
+	if a.loginFile == nil {
+		return seatRecord{}, false, nil
+	}
+	path, err := a.seatRecordPath()
+	if err != nil {
+		return seatRecord{}, false, err
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return seatRecord{}, false, nil
+	}
+	if err != nil {
+		return seatRecord{}, false, fmt.Errorf("the seat record %s is unreadable: %v; run: nova-sprint seat install", path, err)
+	}
+	var r seatRecord
+	if err := json.Unmarshal(b, &r); err != nil {
+		return seatRecord{}, false, fmt.Errorf("the seat record %s is not a seat record: %v; run: nova-sprint seat install", path, err)
+	}
+	return r, true, nil
+}
+
+// seatServer is the sprint's server the seat's record names, "" when none.
+func (a *app) seatServer() string {
+	r, ok, err := a.recordedSeat()
+	if err != nil || !ok { // ignored: an unreadable record is the seat check's config line, DOWN with its remedy (withConfigSeat)
+		return ""
+	}
+	return r.Server
+}
+
+// configSeatFlags are seat install's flags for the nova-config seat profile.
+type configSeatFlags struct{ seat, dsn, passwordEnv *string }
+
+func addConfigSeatFlags(fs flagSet) configSeatFlags {
+	return configSeatFlags{
+		seat:        fs.String("config-seat", "", "the `name` of the nova-config seat profile written into "+configTool+"'s "+seatcred.ProfileFile+" (nova-config --seat <name> reads it); wants --config-dsn and --config-password-env"),
+		dsn:         fs.String("config-dsn", "", "the config store's PostgreSQL `dsn`, postgres://user@host:port/db with no password"),
+		passwordEnv: fs.String("config-password-env", "", "the `NAME` of the config store's password: the variable nova-config reads it from, else the key of the store login's nova-secrets seat (nova-sprint seat login) it is read from in process"),
+	}
+}
+
+// profile is the row the flags name, ok false when they name none; a half-named or bad
+// row is refused, quoting no password.
+func (f configSeatFlags) profile() (seatcred.ConfigProfile, bool, error) {
+	p := seatcred.ConfigProfile{Name: strings.TrimSpace(*f.seat), DSN: strings.TrimSpace(*f.dsn), PasswordEnv: strings.TrimSpace(*f.passwordEnv)}
+	if p.Name+p.DSN+p.PasswordEnv == "" {
+		return p, false, nil
+	}
+	var missing []string
+	for _, m := range []struct{ v, flag string }{{p.Name, "--config-seat <name>"}, {p.DSN, "--config-dsn <dsn>"}, {p.PasswordEnv, "--config-password-env <NAME>"}} {
+		if m.v == "" {
+			missing = append(missing, m.flag)
+		}
+	}
+	if len(missing) > 0 {
+		return p, false, errors.New("the nova-config seat profile wants " + strings.Join(missing, ", ") + "; nothing was written")
+	}
+	if !secrets.IsValidAsName(p.Name) {
+		return p, false, errors.New("--config-seat " + oneline.Field(p.Name) + " must match [A-Za-z0-9_-]+; nothing was written")
+	}
+	if !envName.MatchString(p.PasswordEnv) {
+		return p, false, errors.New("--config-password-env must name a variable, [A-Z_][A-Z0-9_]*; nothing was written")
+	}
+	if strings.ContainsAny(p.DSN, "\t\n") {
+		return p, false, errors.New("--config-dsn holds a tab or a newline; nothing was written")
+	}
+	if _, err := config.ResolveDSN(p.DSN, func(string) string { return "" }); err != nil {
+		return p, false, fmt.Errorf("--config-dsn: %v; nothing was written", err) // ResolveDSN's refusals quote no password
+	}
+	return p, true, nil
+}
+
+var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// configProfilePath is nova-config's seats.tsv, where nova-config --seat reads it.
+func (a *app) configProfilePath() (string, error) {
+	return seatcred.ProfilePath(configTool, func(k string) string {
+		if k == "HOME" {
+			if h, err := a.home(); err == nil {
+				return h
+			}
+		}
+		return a.getenv(k)
+	})
+}
+
+// writeConfigProfile writes p's row into the seats.tsv at path in place of the seat's row
+// there, keeping every other line, for its user alone and whole or not at all; the file
+// is read back as nova-config reads it before it replaces the old one.
+func writeConfigProfile(path string, p seatcred.ConfigProfile) error {
+	row := p.Name + "\t" + p.DSN + "\t" + p.PasswordEnv
+	var lines []string
+	b, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	placed := false
+	for _, l := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		name, _, _ := strings.Cut(strings.TrimSpace(l), "\t")
+		switch {
+		case l == "" && len(b) == 0:
+			continue
+		case name == p.Name && !strings.HasPrefix(strings.TrimSpace(l), "#"):
+			if !placed {
+				lines, placed = append(lines, row), true
+			}
+		default:
+			lines = append(lines, l)
+		}
+	}
+	if !placed {
+		lines = append(lines, row)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".seats-*.tsv")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }() // ignored: gone after the rename; a failed write leaves nothing behind
+	_, werr := f.WriteString(strings.Join(lines, "\n") + "\n")
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return werr
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return err
+	}
+	if got, err := seatcred.LoadConfigProfile(tmp, p.Name); err != nil || got != p {
+		return fmt.Errorf("the row written does not read back as nova-config reads it: %v", err)
+	}
+	return os.Rename(tmp, path)
+}
+
+// installSeat is seat install's part beyond the unit: the nova-config seat profile and
+// the seat's record. server is the server the unit was given, "" for none.
+func (a *app) installSeat(f configSeatFlags, server string, dry bool, stdout io.Writer) error {
+	p, named, err := f.profile()
+	if err != nil {
+		return err
+	}
+	if !named && server == "" {
+		return nil
+	}
+	recPath, err := a.seatRecordPath()
+	if err != nil {
+		return fmt.Errorf("the seat record has no place: %v", err)
+	}
+	rec, _, err := a.recordedSeat()
+	if err != nil && !dry {
+		return err
+	}
+	if server != "" {
+		rec.Server = server
+	}
+	var profPath string
+	if named {
+		if profPath, err = a.configProfilePath(); err != nil {
+			return err
+		}
+		rec.ConfigSeat = p.Name
+	}
+	said := fmt.Sprintf("seat=%s dsn=%s password-env=%s profile=%s", oneline.Field(rec.ConfigSeat), oneline.Field(p.DSN), oneline.Field(p.PasswordEnv), oneline.Field(profPath))
+	if dry {
+		if named {
+			fmt.Fprintf(stdout, "SEAT CONFIG DRY-RUN %s; nothing was written\n", said)
+		}
+		fmt.Fprintf(stdout, "SEAT RECORD DRY-RUN file=%s server=%s; nothing was written\n", oneline.Field(recPath), oneline.Field(orDashStr(rec.Server, "-")))
+		return nil
+	}
+	if named {
+		if err := writeConfigProfile(profPath, p); err != nil {
+			return fmt.Errorf("the nova-config seat profile %s was not written: %v", profPath, err)
+		}
+	}
+	b, _ := json.MarshalIndent(rec, "", "  ") // ignored: a struct of strings always encodes
+	if err := writePrivate(recPath, append(b, '\n')); err != nil {
+		return fmt.Errorf("the seat record %s was not written: %v", recPath, err)
+	}
+	if named {
+		fmt.Fprintf(stdout, "SEAT CONFIG OK %s server=%s%s\n", said, oneline.Field(orDashStr(rec.Server, "-")), a.configPasswordNote(p))
+	}
+	fmt.Fprintf(stdout, "SEAT RECORD OK file=%s server=%s config-seat=%s\n", oneline.Field(recPath), oneline.Field(orDashStr(rec.Server, "-")), oneline.Field(orDashStr(rec.ConfigSeat, "-")))
+	return nil
+}
+
+// configPasswordNote says where nova-config --seat will find the config seat's
+// password: the environment, the store login's nova-secrets seat (read here and
+// dropped), or nowhere yet, with the remedy.
+func (a *app) configPasswordNote(p seatcred.ConfigProfile) string {
+	if a.getenv(p.PasswordEnv) != "" {
+		return " password=env"
+	}
+	l, ok, err := a.recordedLogin()
+	if err != nil || !ok {
+		return " password=unresolved NOTE no store login names a nova-secrets seat to read " + p.PasswordEnv + " from; run: nova-sprint seat login"
+	}
+	sl := l.secrets()
+	sl.Name = p.PasswordEnv
+	if s, err := a.secretReader()(sl); err != nil || !s.Loaded() || s.Empty() {
+		return " password=unresolved NOTE seat " + oneline.Field(l.As) + " of " + oneline.Field(l.Store) + " holds no " + p.PasswordEnv + "; seal it with nova-secrets seal --as " + oneline.Field(l.As) + " --name " + p.PasswordEnv
+	}
+	return " password=secrets"
+}
+
+// withConfigSeat adds the config seat's line to the seat check when the seat's record
+// names one: OK with the row nova-config --seat reads, else DOWN with the remedy.
+func (a *app) withConfigSeat(r sprint.SeatCheckReport) sprint.SeatCheckReport {
+	rec, ok, err := a.recordedSeat()
+	if (!ok && err == nil) || (ok && rec.ConfigSeat == "") {
+		return r
+	}
+	l := sprint.SeatCheckLine{Thing: "config"}
+	if err != nil {
+		l.Facts, l.Remedy = []string{"why=" + strconv.Quote(err.Error())}, "nova-sprint seat install"
+	} else if path, perr := a.configProfilePath(); perr != nil {
+		l.Facts, l.Remedy = []string{"seat=" + oneline.Field(rec.ConfigSeat), "why=" + strconv.Quote(perr.Error())}, "nova-sprint seat install"
+	} else if p, perr := seatcred.LoadConfigProfile(path, rec.ConfigSeat); perr != nil {
+		l.Facts = []string{"seat=" + oneline.Field(rec.ConfigSeat), "profile=" + oneline.Field(path), "why=" + strconv.Quote(perr.Error())}
+		l.Remedy = "nova-sprint seat install --config-seat " + rec.ConfigSeat + " --config-dsn <dsn> --config-password-env <NAME>"
+	} else {
+		l.Up = true
+		l.Facts = []string{"seat=" + oneline.Field(p.Name), "dsn=" + oneline.Field(p.DSN), "password-env=" + oneline.Field(orDashStr(p.PasswordEnv, "-")), "profile=" + oneline.Field(path)}
+	}
+	r.Lines = append(r.Lines, l)
+	if !l.Up {
+		r.Down++
+		r.ExitCode = 1
+	}
+	return r
 }
