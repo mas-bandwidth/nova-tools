@@ -10,3 +10,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-table/` | nova-table guide: the design statement, the keys, the verbs, the render rules | `go test ./internal/docs` | `go test ./internal/docs` |
 | `ratings/` | cold ratings of the tools, one file per rater and tool | `go test ./internal/docs` | `go test ./internal/docs` |
 | `sprint/` | the nova-sprint 1.0.0 glossary, which moves to nova-sprint's docs/ at the split | `go test ./internal/docs` | `go test ./internal/docs -run TestRetiredWordsAppearOnlyInRecords` |
+| `stranger/` | cold stranger runs: a bud uses a tool from README and help alone, and the stumbles are recorded | `go test ./internal/docs` | `go test ./internal/docs -run TestStrangerRunFriendFakeHarnessIsRecorded` |

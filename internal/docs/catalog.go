@@ -141,6 +141,7 @@ var DefaultCatalog = []Entry{
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/sprint", "the nova-sprint 1.0.0 glossary, which moves to nova-sprint's docs/ at the split", "go test ./internal/docs", "go test ./internal/docs -run TestRetiredWordsAppearOnlyInRecords"),
+	E("docs/stranger", "cold stranger runs: a bud uses a tool from README and help alone, and the stumbles are recorded", "go test ./internal/docs", "go test ./internal/docs -run TestStrangerRunFriendFakeHarnessIsRecorded"),
 	E("docs/ratings", "cold ratings of the tools, one file per rater and tool", "go test ./internal/docs", "go test ./internal/docs"),
 
 	// tools/
