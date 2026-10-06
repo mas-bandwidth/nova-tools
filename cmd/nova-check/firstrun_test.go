@@ -221,8 +221,10 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // dropped line removes a lookup rather than an assertion.
 //
 // NOTHING IS NORMALISED. The fixture is on disk and every count on every line
-// is of it, so all of them reproduce; onboarding.Execute is handed no Norm and
-// says so under any line that disagrees.
+// is of it, so all of them reproduce; onboarding.CompareTranscript is handed no
+// volatile field and says so under any line that disagrees. It is the one
+// comparator (docs/SPEC-TOOLWORK.md rule 3), and the row this section held in
+// internal/ci/testdata/transcripts_allowlist.txt is gone with the conversion.
 //
 // The fixture is typed as written. The documented `./self` is what a reader
 // types and what the tool PRINTS BACK on `dir=`, so the fixture is copied to
@@ -249,8 +251,15 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// never moves (docs/STANDARD.md section 8: no Chdir).
 	e := newEnv()
 	e.wd = dir
-	for _, p := range onboarding.Execute(steps, runDocumentedIn(e)) {
-		assert.Fail(t, "check failed", p)
+	run := runDocumentedIn(e)
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		res, err := run(s)
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run", s.Line)
+		got = append(got, res)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+		assert.Failf(t, "documented transcript differs", "docs/TESTS.md: %s", p)
 	}
 }
 

@@ -233,10 +233,13 @@ func TestPolishLinksBannerExampleMatchesOutput(t *testing.T) {
 	output, err := setup.CombinedOutput()
 	require.NoError(t, err, string(output))
 	args := strings.Fields(command)[1:]
-	args[2] = filepath.Join(scratch, args[2])
-	exit, stdout, stderr := runCheck(t, args...)
+	e := newEnv()
+	e.wd = scratch
+	exit, stdout, stderr := runCheckIn(t, e, args...)
 	assert.Empty(t, stderr)
-	step := onboarding.Step{Line: "$ " + command, Args: args, Want: []string{"LINKS OK files=1 links=0 excluded=0"}, StderrWhole: true}
-	result := onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}
-	assert.Empty(t, onboarding.Compare(step, result, nil))
+	steps := []onboarding.Step{{Line: "$ " + command, Args: args, Want: []string{"LINKS OK files=1 links=0 excluded=0"}, StderrWhole: true}}
+	got := []onboarding.Result{{Code: exit, Stdout: stdout, Stderr: stderr}}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+		assert.Fail(t, "documented transcript differs", "%s", p)
+	}
 }

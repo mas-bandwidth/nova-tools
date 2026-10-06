@@ -402,7 +402,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	// The steps are cut here rather than with onboarding.Steps: every hygiene
 	// command carries `<email>` quoted in `--identity`, and the shared parser
 	// does not run a line holding `>` even quoted. Splitting, running and
-	// comparing stay the shared ones -- SplitShell, runDocumented, Compare --
+	// comparing stay the shared ones -- SplitShell, runDocumented, CompareTranscript --
 	// so this pins the same promise the harness keeps.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
@@ -449,14 +449,14 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, refusals, "the `### hygiene, on a branch` block holds no refusal step; this test would pass by running nothing")
+	got := make([]onboarding.Result, 0, len(refusals))
 	for _, s := range refusals {
 		res, err := runDocumented(s)
-		if !assert.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err) {
-			continue
-		}
-		for _, p := range onboarding.Compare(s, res, nil) {
-			assert.Fail(t, "check failed", p)
-		}
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run", s.Line)
+		got = append(got, res)
+	}
+	for _, p := range onboarding.CompareTranscript(refusals, got, nil) {
+		assert.Fail(t, "documented transcript differs", "docs/TESTS.md: %s", p)
 	}
 }
 

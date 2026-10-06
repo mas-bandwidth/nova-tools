@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -163,8 +162,10 @@ func TestTheBannerQuickstartAndKernelExamplesMatchOutput(t *testing.T) {
 	self := filepath.Join(scratch, "self")
 	require.NoError(t, os.MkdirAll(filepath.Join(self, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(self, "docs", "SEED-CORE.md"), []byte("# Kernel\n"), 0o644))
-	path, err := onboarding.Elide("the setup's directory", regexp.QuoteMeta(self), "./self")
-	require.NoError(t, err)
+	// The documented `./self` is typed as written: the invocation's own
+	// directory is the scratch one, so nothing is rewritten or elided.
+	e := newEnv()
+	e.wd = scratch
 	for _, tc := range []struct {
 		command string
 		want    []string
@@ -178,9 +179,12 @@ func TestTheBannerQuickstartAndKernelExamplesMatchOutput(t *testing.T) {
 		{"nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000", []string{"KERNEL OK bytes=9 budget=4000"}},
 	} {
 		require.Contains(t, help, "  "+tc.command+"\n")
-		args := strings.Fields(strings.ReplaceAll(tc.command, "./self", self))[1:]
-		exit, stdout, stderr := runCheck(t, args...)
-		step := onboarding.Step{Line: "$ " + tc.command, Args: args, Want: tc.want}
-		assert.Empty(t, onboarding.Compare(step, onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}, []onboarding.Norm{path}))
+		args := strings.Fields(tc.command)[1:]
+		exit, stdout, stderr := runCheckIn(t, e, args...)
+		steps := []onboarding.Step{{Line: "$ " + tc.command, Args: args, Want: tc.want}}
+		got := []onboarding.Result{{Code: exit, Stdout: stdout, Stderr: stderr}}
+		for _, p := range onboarding.CompareTranscript(steps, got, nil) {
+			assert.Fail(t, "documented transcript differs", "docs/TESTS.md: %s", p)
+		}
 	}
 }
