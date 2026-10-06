@@ -85,3 +85,31 @@ func TestStreamRemoveTakesStreamsOffAStoppedSprint(t *testing.T) {
 	assert.Equal(t, map[string][]string{sprint.Work: {"a", "c"}, sprint.Merge: {"a", "c"}}, ta.streamRows())
 	ta.clean()
 }
+
+// The coordinator view of 2026-10-06 00:11 held six "stream stopped" judgments of
+// streams stream remove had taken off: each next step was refused "no such stream".
+// Removing a stream retires every open judgment that names it, a NOTE line each, and
+// the view is without it.
+func TestStreamRemoveRetiresTheStreamsJudgments(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.toMerging("s1", "s2")
+	ta.ok("merge --stream s2 --red --suspect s2-1")
+	g := ta.group(sprint.NRed, "s2")
+	_, ok := item(ta.coordView(""), "j:"+g.ID)
+	require.True(t, ok, "the view shows the judgment before")
+	ta.ok("stop --reason r --until 9999h")
+	ta.ok("drop s2-1 s2-2 s2-3 --reason obsolete")
+
+	out := ta.ok("stream remove s2")
+	assert.Contains(t, out, "STREAM-REMOVE OK streams=s2")
+	assert.Contains(t, out, "NOTE judgment ")
+	assert.Contains(t, out, g.ID+" ("+sprint.NRed+") retired: stream s2 was removed")
+	v := ta.coordView("")
+	_, ok = item(v, "j:"+g.ID)
+	assert.False(t, ok, "the view without it")
+	for _, it := range v.Items {
+		assert.NotContains(t, it.Next, "--stream s2", "no item names s2: %+v", it)
+	}
+	ta.clean()
+}

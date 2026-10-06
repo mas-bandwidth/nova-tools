@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
@@ -22,6 +23,8 @@ func init() {
 // placed, counted in the folds and the summary. Refused, exit 1 and nothing
 // written, for a stream that is no row, for one holding a card not landed
 // (sprint.StreamArchive), or, unarchived, for one not archived, all or none.
+// Archived, every open judgment and held condition that names one of the
+// streams is retired, a NOTE line each (sprint.RetireStreams).
 func (a *app) cmdStreamArchive(archive bool, args []string, stdout, stderr io.Writer) int {
 	verb, word := "stream archive", "STREAM-ARCHIVE"
 	do := (*store.Store).ArchiveStreams
@@ -54,6 +57,32 @@ func (a *app) cmdStreamArchive(archive bool, args []string, stdout, stderr io.Wr
 		fmt.Fprintf(stderr, "%s %s: %s; run: nova-sprint help stream\n", prog, verb, oneline.Escape(strings.Join(whys, "; ")))
 		return 1
 	}
-	sayOK(stdout, c.json, verb, word+" OK streams="+strings.Join(names, ","), map[string]any{"streams": names})
+	var said []string
+	if archive {
+		if said, err = retireStreams(context.Background(), st, verb, names, "was archived (stream archive), so nothing can act on this"); err != nil {
+			fmt.Fprintf(stderr, "%s %s: the streams are archived, and retiring what names them failed: %s; run: nova-sprint inbox\n", prog, verb, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
+	facts := map[string]any{"streams": names}
+	if len(said) > 0 {
+		facts["retired"] = said
+	}
+	sayOK(stdout, c.json, verb, word+" OK streams="+strings.Join(names, ","), facts)
+	if !c.json {
+		for _, l := range said {
+			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
+		}
+	}
 	return 0
+}
+
+// retireStreams retires every open judgment and held condition that names one
+// of the streams, in one step of the verb's (sprint.RetireStreams): the lines
+// it says, one for each.
+func retireStreams(ctx context.Context, st *store.Store, verb string, names []string, why string) ([]string, error) {
+	res, err := st.Run(ctx, store.Step{Verb: verb, Load: []string{sprint.Work, sprint.Merge}, Plan: func(s *sprint.Snapshot) sprint.Plan {
+		return sprint.RetireStreams(s, names, why)
+	}})
+	return res.Said, err
 }

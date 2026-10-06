@@ -3060,7 +3060,8 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 // control card the merge row holds, the one card add made for it. Refused,
 // exit 1 and nothing written, on a RUNNING machine, for a stream that is no
 // row, or for one that holds a card (sprint.StreamRemove), all or none for
-// the streams named.
+// the streams named. Every open judgment and held condition that names a
+// removed stream is retired with it, a NOTE line each (sprint.RetireStreams).
 func (a *app) cmdStreamRemove(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream remove")
 	names, err := parse(fs, args)
@@ -3097,7 +3098,15 @@ func (a *app) cmdStreamRemove(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	said, err := retireStreams(ctx, st, "stream remove", names, "was removed (stream remove), so nothing can act on this")
+	if err != nil {
+		fmt.Fprintf(stderr, "%s stream remove: the streams are removed, and retiring what names them failed: %s; the next tick retires them\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
 	fmt.Fprintf(stdout, "STREAM-REMOVE OK streams=%s\n", strings.Join(names, ","))
+	for _, l := range said {
+		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
+	}
 	return 0
 }
 
