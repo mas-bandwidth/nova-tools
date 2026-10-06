@@ -1,5 +1,6 @@
 // Package cardgen is nova-card's planner: it turns a structured source (a ratchet
-// ledger, a findings TSV, a tool's rendered help) into a directory of briefs that
+// ledger, a findings TSV, a tool's rendered help, a range of commits) into a
+// directory of briefs that
 // `nova-sprint add --brief-dir` admits as they are. Everything here is a pure
 // function over text (docs/SPEC-CARD-CONTRACT.md section 6, generated cards): the row parsers, the
 // PATHS computation, the wave assignment and the rendering take bytes and return
@@ -205,6 +206,15 @@ type Card struct {
 	// New is the NEW: line, the files the card creates (none for most): a test file
 	// in a package that has none yet (NewTestFile).
 	New []string
+	// KeptPaths says Paths were computed by the planner from the source itself
+	// (a commits card: that commit's files) and must not be replaced by the
+	// packages of the START line.
+	KeptPaths bool
+	// GatePkgs, with KeptPaths, are the packages the STEP 4 gate runs, in order.
+	// The gate is those packages plus ./internal/ci/.
+	GatePkgs []string
+	// Stop, when set, is the STOP: line. Empty is the red-then-green sentence.
+	Stop string
 }
 
 // Plan is a directory's worth of cards with what the planner had to leave out.
@@ -449,6 +459,36 @@ func testPackage(test string) string {
 	return f[0]
 }
 
+// gateOf is the STEP 4 command. A commits card (KeptPaths) runs each of its
+// packages and then ./internal/ci/. Every other card runs its test package, and
+// ./internal/ci/ beside it unless that package already is internal/ci.
+func gateOf(c Card, pkg string) string {
+	if !c.KeptPaths {
+		gate := "go test -count=1 -timeout 600s ./" + pkg + "/"
+		if pkg != "internal/ci" && !strings.HasPrefix(pkg, "internal/ci") {
+			gate += " ./internal/ci/"
+		}
+		return gate
+	}
+	var parts []string
+	seen := map[string]bool{}
+	for _, p := range c.GatePkgs {
+		p = strings.Trim(strings.TrimPrefix(p, "./"), "/")
+		if p == "" || p == "." || seen[p] {
+			continue
+		}
+		seen[p] = true
+		parts = append(parts, "./"+p+"/")
+	}
+	if !seen["internal/ci"] {
+		parts = append(parts, "./internal/ci/")
+	}
+	if len(parts) == 0 {
+		parts = []string{"./internal/ci/"}
+	}
+	return "go test -count=1 -timeout 600s " + strings.Join(parts, " ")
+}
+
 // Finding is one row of a findings TSV: file:line, what was found, the remedy, and
 // the test (`pkg TestName`, or empty for none) that pins the fix.
 type Finding struct {
@@ -678,10 +718,7 @@ func Render(h Header, c Card) string {
 			pkg = "internal/ci"
 		}
 	}
-	gate := "go test -count=1 -timeout 600s ./" + pkg + "/"
-	if pkg != "internal/ci" && !strings.HasPrefix(pkg, "internal/ci") {
-		gate += " ./internal/ci/"
-	}
+	gate := gateOf(c, pkg)
 	var b strings.Builder
 	fmt.Fprintf(&b, "RESULT: %s sha=%s tier: %s\n", c.ID, sha12, c.Tier)
 	fmt.Fprintf(&b, "REPO: %s\n", h.Repo)
@@ -694,7 +731,11 @@ func Render(h Header, c Card) string {
 	}
 	fmt.Fprintf(&b, "TEST: %s\n", c.Test)
 	fmt.Fprintf(&b, "START: %s, %s\n", c.File, pkg)
-	fmt.Fprintf(&b, "STOP: the test %s is red before the change and green after it, and the STEP 4 gate passes\n", testName(c.Test))
+	stop := c.Stop
+	if stop == "" {
+		stop = fmt.Sprintf("the test %s is red before the change and green after it, and the STEP 4 gate passes", testName(c.Test))
+	}
+	fmt.Fprintf(&b, "STOP: %s\n", stop)
 	fmt.Fprintf(&b, "Deadline: finish within %d minutes.\n", minutes)
 	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.\n", h.Sha)
 	b.WriteString("Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.\n\n")

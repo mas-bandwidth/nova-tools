@@ -29,13 +29,14 @@ import (
 
 const preAlpha = "nova-card is pre-alpha: not ready for production use."
 
-const usage = `nova-card: writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help
+const usage = `nova-card: writes a directory of pre-linted briefs from a ledger, a findings file, a tool's help or a range of commits
 ` + preAlpha + `
 
 how it works: a source is read from a checkout of the target repository (a ratchet ledger of
-internal/ci, a findings TSV, a tool's rendered help); the planner cuts one card per file with
-its PATHS, TEST and tier computed from the row, puts cards that edit one ledger in alternating
-waves, and holds every brief to the lint nova-sprint add runs before the directory is written.
+internal/ci, a findings TSV, a tool's rendered help, a range of commits); the planner cuts one
+card per file, or one re-land card per commit, with its PATHS, TEST and tier computed from the
+row, puts cards that edit one ledger in alternating waves, and holds every brief to the lint
+nova-sprint add runs before the directory is written.
 State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
 
 the flow, three lines:
@@ -47,6 +48,7 @@ usage:
   nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from commits (--range <a>..<b> [--paths <glob>] | --file <list>) --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
   nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
   nova-card template
@@ -55,11 +57,17 @@ usage:
 
 generate reads the repository, the branch and the base sha from --repo-dir (its origin URL,
 its branch, its HEAD); --repo, --base and --sha each override one, and all three together
-need no checkout. A card's PATHS are computed from its START line, never typed: every directory
-a START file lives in, as its Go files and its tests (<dir>/*.go, <dir>/*_test.go), and the docs
-the card names. With a checkout every PATHS entry is checked to exist at it, so a card never
-names a path the add would reject. The ledgers: ` + "`nova-card generate -h`" + ` lists them.
-A ledger card is flash and a findings or help card is pro unless --tier says otherwise.
+need no checkout. A card's PATHS are computed, never typed. A ledger, findings or help card
+takes them from its START line: every directory a START file lives in, as its Go files and its
+tests (<dir>/*.go, <dir>/*_test.go), and the docs the card names, and with a checkout every
+such entry is checked to exist at it. The ledgers: ` + "`nova-card generate -h`" + ` lists them.
+A ledger card is flash and a findings, help or commits card is pro unless --tier says otherwise.
+--from commits writes one re-land brief per commit, oldest first, ids zero-padded so a
+directory add lands them in that order. PATHS are that commit's files. The gate is that
+commit's packages plus ./internal/ci/. --range a..b is the commits reachable from b and not
+from a; --paths limits that range to a glob. --file is a list of shas, one per line, in
+any order. A later brief that touches a file an earlier one touches names the earlier on
+DEPENDS-ON. The files need not be in the checkout's tree: a re-land is how they come back.
 Cards of one ordinary ledger alternate waves (odd rows wave 1, even rows wave 2 depending on
 their neighbours) because adjacent deletions conflict at land; a generated ledger
 (docs/SPEC-SPRINT.md section 7) gets one wave and no dependency. Wave 1 cards of one ledger
@@ -213,9 +221,11 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 
 func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("generate")
-	from := fs.String("from", "", "the source `kind`: ledger, findings or help")
+	from := fs.String("from", "", "the source `kind`: ledger, findings, help or commits")
 	ledger := fs.String("ledger", "", "with --from ledger: the ledger's `name`, one of "+strings.Join(cardgen.LedgerNames(), ", "))
-	file := fs.String("file", "", "with --from findings: the TSV `file` of file:line, finding, remedy, test (a header row is skipped)")
+	file := fs.String("file", "", "with --from findings: the TSV `file` of file:line, finding, remedy, test (a header row is skipped); with --from commits: a `file` of one commit sha per line")
+	rangeSpec := fs.String("range", "", "with --from commits: the commit `range` a..b, reachable from b and not from a, oldest first")
+	pathsGlob := fs.String("paths", "", "with --from commits --range: a path `glob`; only commits that touch a matching path")
 	var tools multi
 	fs.Var(&tools, "tool", "with --from help: a tool `name` whose help the card is about; repeat for more")
 	binDir := fs.String("bin-dir", "", "with --from help: the `dir` holding the tools' binaries (default: PATH)")
@@ -224,8 +234,8 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("base", "", "the `branch` the BASE: line carries (default: --repo-dir's branch)")
 	sha := fs.String("sha", "", "the base `sha`, 40 hex (default: --repo-dir's HEAD)")
 	out := fs.String("out", "", "the `dir` the briefs and manifest.tsv are written into; created, and refused when it already holds a brief")
-	tier := fs.String("tier", "", "flash or pro; default by source: a ledger's own (mechanical ledgers flash, decisions pro), findings and help pro")
-	prefix := fs.String("prefix", "", "the `word` every card id opens with (default: the ledger's name, finding, or help)")
+	tier := fs.String("tier", "", "flash or pro; default by source: a ledger's own (mechanical ledgers flash, decisions pro), findings, help and commits pro")
+	prefix := fs.String("prefix", "", "the `word` every card id opens with (default: the ledger's name, finding, help, or reland)")
 	minutes := fs.Int("minutes", 0, "the Deadline line's `minutes` (default: 45 flash, 60 pro)")
 	maxCards := fs.Int("max", 0, "write at most this many cards, in source order; 0 is all")
 	dryRun := fs.Bool("dry-run", false, "plan and lint, print the manifest and the CARDS line, and write nothing")
@@ -256,6 +266,9 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "generate", "no base branch: --base <branch>, or --repo-dir a checkout on a branch (a detached HEAD names none)")
 	case !shaRE.MatchString(h.Sha):
 		return refuse(stderr, "generate", fmt.Sprintf("base sha %q is not 40 hex: --sha <40hex>, or --repo-dir a checkout with a HEAD", h.Sha))
+	}
+	if (*rangeSpec != "" || *pathsGlob != "") && *from != "commits" {
+		return refuse(stderr, "generate", "--range and --paths belong to --from commits")
 	}
 	var plan cardgen.Plan
 	var notes []string
@@ -305,10 +318,36 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			}
 			plan.Cards = append(plan.Cards, cardgen.PlanHelp(tool, help, exampleTest(*repoDir, tool), *prefix, *tier))
 		}
+	case "commits":
+		if *repoDir == "" {
+			return refuse(stderr, "generate", "--from commits reads the commits from --repo-dir <dir>, a checkout that contains them")
+		}
+		if *rangeSpec != "" && *file != "" {
+			return refuse(stderr, "generate", "--from commits takes --range a..b or --file <list>, not both")
+		}
+		if *pathsGlob != "" && *rangeSpec == "" {
+			return refuse(stderr, "generate", "--paths is the filter of --range; a --file list is already the commits")
+		}
+		var commits []cardgen.Commit
+		var skipped []string
+		var err error
+		switch {
+		case *rangeSpec != "":
+			commits, skipped, err = commitsInRange(*repoDir, *rangeSpec, *pathsGlob)
+		case *file != "":
+			commits, skipped, err = commitsInFile(*repoDir, *file)
+		default:
+			return refuse(stderr, "generate", "--from commits wants --range <a>..<b> or --file <list>")
+		}
+		if err != nil {
+			return refuse(stderr, "generate", err.Error())
+		}
+		notes = append(notes, skipped...)
+		plan = cardgen.PlanCommits(commits, *prefix, *tier, *maxCards)
 	case "":
-		return refuse(stderr, "generate", "wants --from ledger|findings|help")
+		return refuse(stderr, "generate", "wants --from ledger|findings|help|commits")
 	default:
-		return refuse(stderr, "generate", fmt.Sprintf("--from %q; want ledger, findings or help", *from))
+		return refuse(stderr, "generate", fmt.Sprintf("--from %q; want ledger, findings, help or commits", *from))
 	}
 	if len(plan.Cards) == 0 {
 		return refuse(stderr, "generate", "the source yields no card; nothing to write")
@@ -322,8 +361,9 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	red := 0
 	for i := range plan.Cards {
 		c := &plan.Cards[i]
-		c.Paths = card.Paths(h, *c) // computed from the START line, never typed (docs/SPEC-CARD-CONTRACT.md section 6)
-		if *repoDir != "" {
+		// computed, never typed: the START packages, or, for a commits card, that commit's files
+		c.Paths = card.Paths(h, *c)
+		if *repoDir != "" && !c.KeptPaths {
 			cardgen.NewTestFile(c, func(glob string) bool { return existsAt(*repoDir, glob) })
 		}
 		briefs[i] = cardgen.Render(h, *c)
@@ -331,7 +371,9 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 			red++
 		}
-		if *repoDir != "" {
+		// a commits card's files are the commit's own, which the base tree may not
+		// hold yet: a re-land is how they come back, so they are not checked here
+		if *repoDir != "" && !c.KeptPaths {
 			for _, p := range c.Paths {
 				if !existsAt(*repoDir, p) && !card.Answered(*c, p) {
 					fmt.Fprintln(stdout, oneline.Escape(cardgen.LintFinding{ID: c.ID, Check: "paths-at-base", Line: 6, Excerpt: "PATHS entry " + p + " names nothing in " + *repoDir}.String()))

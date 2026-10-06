@@ -70,8 +70,12 @@ func Start(brief string) []string {
 
 // Paths is the PATHS of the brief c renders to under h, computed: PackagePaths of the
 // START line that brief carries, and the docs the planner named. No hand types the
-// PATHS of a generated brief.
+// PATHS of a generated brief. A card that already computed its paths from the source
+// (a commits card, KeptPaths) keeps those paths.
 func Paths(h cardgen.Header, c cardgen.Card) []string {
+	if c.KeptPaths {
+		return cardgen.MergePaths(c.Paths)
+	}
 	return PackagePaths(Start(cardgen.Render(h, c)), Docs(c.Paths))
 }
 

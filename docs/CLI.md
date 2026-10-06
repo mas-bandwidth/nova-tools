@@ -2960,6 +2960,7 @@ nova-card is pre-alpha: not ready for production use.
 nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from commits (--range <a>..<b> [--paths <glob>] | --file <list>) --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
 nova-card template
 nova-card version
@@ -3015,6 +3016,17 @@ skipped); one card per file, the first finding's test as TEST, a card with no
 test named given the one it must write. `--from help --tool <name>` runs
 `<name> help` and writes one card per tool: the lines over 100 characters,
 the undefined terms and the examples that do not run as printed.
+`--from commits` reads `--repo-dir` and writes one re-land brief per commit,
+oldest first, so a directory add lands them in commit order (the ids are
+zero-padded). `--range <a>..<b>` is the commits reachable from b and not from
+a, and `--paths <glob>` keeps only those that touch a matching path. `--file
+<list>` is one sha per line, in any order, with the same result. PATHS are
+that commit's files (folded into a directory glob past eight). The gate is
+that commit's packages plus `./internal/ci/`. A later brief that touches a
+file an earlier one touches names the earlier on `DEPENDS-ON`. The files need
+not be in the checkout's tree: a re-land is how they come back. The task is to
+cherry-pick the commit, keep its intent, and finish with no change when the
+code already does it. The tier is pro unless `--tier` says otherwise.
 
 ### Waves and dependencies
 

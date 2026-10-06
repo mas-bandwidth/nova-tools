@@ -172,7 +172,7 @@ func TestTheBannerNamesEveryVerbAndTheGenerateFlags(t *testing.T) {
 			assert.Contains(t, line, flag, "a generate usage line without %s", flag)
 		}
 	}
-	assert.Equal(t, 3, lines, "one usage line per source")
+	assert.Equal(t, 4, lines, "one usage line per source")
 }
 
 // generate holds every brief to the card checks nova-sprint add runs before it leaves:
