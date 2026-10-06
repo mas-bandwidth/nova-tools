@@ -405,7 +405,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.card == nil {
-			c, found, err := NextCard(d.Dir, held)
+			c, found, err := d.nextCard(held)
 			if err != nil {
 				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
 				return
