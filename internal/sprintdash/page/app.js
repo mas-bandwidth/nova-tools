@@ -208,6 +208,7 @@ function setTrack(box, value, slots, scale) {
 function frac(a, b, digits) {
   return "<span class=\"fa\" style=\"width:" + digits + "ch\">" + a + "</span><span class=\"fs\"> / </span><span class=\"fb\" style=\"width:" + digits + "ch\">" + b + "</span>";
 }
+function escHTML(s) { return String(s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
 function digitsOf(n) { return String(Math.max(0, n)).length; }
 function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
 function setPill(p, text, tone, title) { setText(p._t, text); setClass(p, "pill " + tone); setTitle(p, title || text); }
@@ -408,7 +409,8 @@ function fleetLike(box, table, withLoad) {
     setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
     setTrack(r.track, working, width, scale);
-    setHTML(r.wf, frac(working, width, digits));
+    // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)
+    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
