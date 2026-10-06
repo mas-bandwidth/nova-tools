@@ -245,7 +245,11 @@ func Relink(s *Snapshot, r RelinkReq) Plan {
 // nothing, for an add of more or less than one card or of a sentinel, an old id that is the
 // new one, is no card, landed or is a sentinel, a cycle, or any refusal of the add or the
 // drop.
-func Replace(s *Snapshot, r AddReq) Plan {
+func Replace(s *Snapshot, r AddReq) Plan { return replace(s, r, "replaced by") }
+
+// replace is Replace with the old cards dropped for the reason word and the twin's id
+// ("replaced by <new>"; twin's "twinned as <new>", twin_verb.go).
+func replace(s *Snapshot, r AddReq, word string) Plan {
 	ids := AddIDs(s, r)
 	refuseAll := func(why string) Plan {
 		var q Plan
@@ -320,7 +324,7 @@ func Replace(s *Snapshot, r AddReq) Plan {
 		for _, d := range deps {
 			after.Work.Put(withField(d, "needs", strings.Join(relinkedNeeds(Split(d.F("needs")), dependentOlds(d, r.Replaces), nw), ",")))
 		}
-		dp = Drop(&after, DropReq{Sel: Sel{Only: open}, Reason: "replaced by " + nw, Who: r.Who})
+		dp = Drop(&after, DropReq{Sel: Sel{Only: open}, Reason: word + " " + nw, Who: r.Who})
 		if len(dp.Refused) > 0 {
 			return Plan{Refused: dp.Refused}
 		}
