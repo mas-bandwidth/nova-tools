@@ -1,5 +1,16 @@
 # The coordinator's runbook
 
+Before any decision, read the sprint as it is now; never act on a model held in memory or read off a card:
+
+```
+nova-sprint view seat --json
+```
+
+It is the dashboard's own snapshot in one object (every friend's and machine's row, the live streams, the open
+judgments by kind, the ready pool and its gates, and the five things most out of place, each with the command that
+answers it), and it refuses a snapshot older than 30 seconds, naming the dashboard; then `nova-sprint seat check`.
+[SPEC-SPRINT.md](SPEC-SPRINT.md#view-seat-is-the-coordinators-modelw1) has its fields.
+
 The runbook for whoever holds the coordinator seat of a sprint: the one actor that answers the inbox, loads
 work, holds and releases waves, sets the fleet, lands, and installs. It assumes this file, the `help` of each
 tool it names (`nova-sprint`, `nova-config`, `nova-secrets`, `nova-swarm`, `nova-bus`, `nova-update`,

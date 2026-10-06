@@ -150,8 +150,8 @@ func TestEveryVerbHelpShowsAnExampleItsFlagsTake(t *testing.T) {
 	ta.ok("add --stream s1 --count 9")
 	for _, v := range verbs {
 		switch v.name {
-		case "run", "play", "dashboard", "teardown", "fleet sync", "goal set", "goal show", "brief", "fsck seat":
-			continue // run and play tick for ever; dashboard serves until interrupted (its own tests); teardown drops the sprint; fleet sync and fsck seat read a config store; a goal is set from a file; a brief is read from a file and linted
+		case "run", "play", "dashboard", "teardown", "fleet sync", "goal set", "goal show", "brief", "fsck seat", "view seat":
+			continue // run and play tick for ever; dashboard serves until interrupted (its own tests); teardown drops the sprint; fleet sync and fsck seat read a config store; a goal is set from a file; a brief is read from a file and linted; view seat reads a dashboard (its own tests serve one)
 		}
 		line := v.example
 		if v.name == "watch" {

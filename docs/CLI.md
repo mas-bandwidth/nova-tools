@@ -1076,6 +1076,7 @@ nova-sprint repair
 nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
+nova-sprint view seat [--dashboard <host:port>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
 nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
@@ -1157,7 +1158,13 @@ curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
 ```
 
 The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
-`/api/view/worker?as=<name>`. `nova-sprint friend cards <friend> --json` is every card held on
+`/api/view/worker?as=<name>`. `nova-sprint view seat --json` is the coordinator's whole model in one object, read
+before any decision from the dashboard's own snapshot (`GET /api/sprint?release=all` at
+`--dashboard`, else `NOVA_SPRINT_DASHBOARD`, else `127.0.0.1:7390`) and nothing else, so the
+seat and the page cannot disagree: `fetchedAt`, every friend's and machine's row, the live
+streams' counts, the open judgments by kind, the ready pool, the gates and the five things most
+out of place, each with the command that answers it. A snapshot older than 30s is refused
+(exit 1), naming the dashboard. `nova-sprint friend cards <friend> --json` is every card held on
 a friend's row (working, then ready) with its packet and its `BRIEF.md` as friend sync writes
 it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
 her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
