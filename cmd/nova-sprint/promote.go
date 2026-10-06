@@ -52,7 +52,10 @@ func (a *app) promoteOnTick(ctx context.Context, stdout io.Writer) {
 // the spelling TestNoGhPrMergeSpellingInTheToolsGo refuses, and that test names
 // this mutation as the one admission. A failed merge-group run raises one
 // judgment, decisions fix-and-recut and skip, with the failing check's log
-// tail. A merge records `promoted --sha`.
+// tail and the record `promoted --failed`, which keeps the failure visible. A merge records
+// `promoted --sha` with the branch, the tip, the cards the range carried and the evidence, so
+// the store verifies in dev exactly those cards (docs/SPEC-SPRINT.md section 7, delivery
+// milestones).
 //
 // The queries are one literal each, so they are not an argument list of pr and
 // merge, and neither is a strategy flag.
@@ -111,6 +114,13 @@ type promoteOutcome struct {
 	Cards    []string
 	Entry    string // the confirmed merge-queue entry, when there is one
 	Promoted string // the merge sha, when it merged
+	PR       string // the pull request number
+	// Record is the delivery record the pass owes the store (docs/SPEC-SPRINT.md section 7,
+	// delivery milestones): `promoted --sha ...` naming the branch, the tip, the target, the
+	// cards the range carried and the evidence when it merged, `promoted --failed ...` when its
+	// merge-group run failed. The verb runs where it is typed and writes no store; the
+	// coordinator records it.
+	Record   string
 	Judgment *promoteJudgment
 	Dry      bool
 	Nothing  bool
@@ -208,10 +218,6 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 		return o, p.fail(stderr, err)
 	}
 	o.Tip = tip
-	if branch, pr, ok := p.pending(ctx, tip); ok {
-		o.Branch, o.Head = branch, branch
-		return p.watch(ctx, o, pr, stdout, stderr)
-	}
 	since, err := p.since(ctx)
 	if err != nil {
 		return o, p.fail(stderr, err)
@@ -221,6 +227,10 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 		return o, p.fail(stderr, err)
 	}
 	o.Cards = landedCards(log)
+	if branch, pr, ok := p.pending(ctx, tip); ok {
+		o.Branch, o.Head = branch, branch
+		return p.watch(ctx, o, pr, stdout, stderr)
+	}
 	if len(o.Cards) == 0 {
 		o.Nothing = true
 		fmt.Fprintf(stdout, "PROMOTE NONE live=%s tip=%s\n", oneline.Field(live), tip)
@@ -303,6 +313,7 @@ func (p *promoter) due(n int) bool {
 // watch enqueues a pull request that is not merged, confirms the queue entry,
 // and either records the merge or raises the one judgment.
 func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, stdout, stderr io.Writer) (promoteOutcome, int) {
+	o.PR = number
 	view, raw, err := p.prView(ctx, number)
 	if err != nil {
 		return o, p.fail(stderr, err)
@@ -345,6 +356,8 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 			Decisions: append([]string(nil), promoteDecisions...),
 		}
 		fmt.Fprintf(stdout, "JUDGMENT merge-group failed branch=%s decisions=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","), o.Judgment.Tail)
+		o.Record = p.recordLine(o, "--failed", "the merge-group run of "+o.Branch+" failed")
+		fmt.Fprintln(stdout, o.Record)
 		return o, 1
 	}
 	// the queue may have merged it between the view and the run list
@@ -372,8 +385,24 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, sha string, std
 		return o, p.fail(stderr, err)
 	}
 	o.Promoted = sha
-	fmt.Fprintf(stdout, "promoted --sha %s\n", sha)
+	o.Record = p.recordLine(o, "--sha", sha)
+	fmt.Fprintln(stdout, o.Record)
 	return o, 0
+}
+
+// recordLine is the delivery record of a pass, as the coordinator types it: promoted with
+// flag (--sha or --failed) and its value, the live branch and the tip promoted, the target,
+// the cards the range carried and the pull request as the evidence.
+func (p *promoter) recordLine(o promoteOutcome, flag, value string) string {
+	words := []string{"promoted", flag, value, "--branch", o.Live, "--tip", o.Tip, "--target", p.base}
+	if len(o.Cards) > 0 {
+		words = append(words, "--cards", strings.Join(o.Cards, ","))
+	}
+	evidence := "pr=" + o.PR + " head=" + o.Branch
+	if o.Entry != "" {
+		evidence += " entry=" + o.Entry
+	}
+	return quoteLine(append(words, "--evidence", evidence))
 }
 
 func (p *promoter) fail(stderr io.Writer, err error) int {

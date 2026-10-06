@@ -45,6 +45,9 @@ type WhereRecord struct {
 	// StageTimes is the median and p90 of each stage over the cards landed in the last day
 	// (sprint.CycleTimes, docs/SPEC-SPRINT.md, cycle-time-breakdownb.w1), as of the count.
 	StageTimes sprint.StageTimes `json:"stage_times,omitzero"`
+	// Delivery is the three delivery milestones apart, and a failed promotion that stands
+	// (sprint.Delivery; docs/SPEC-SPRINT.md section 7, delivery milestones).
+	Delivery *sprint.DeliveryView `json:"delivery,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -58,6 +61,8 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 	}
 	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
 		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now)}
+	d := sprint.Delivery(s)
+	r.Delivery = &d
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -235,6 +240,8 @@ type WhereFacts struct {
 	Streams map[string]sprint.TierCosts
 	// StageTimes is the record's stage times (sprint.CycleTimes); empty without the record.
 	StageTimes sprint.StageTimes
+	// Delivery is the record's delivery milestones (sprint.Delivery); nil without the record.
+	Delivery *sprint.DeliveryView
 	// HasStoreRTT is set when the server's store round trip record has a sample
 	// within StoreRTTWindow; StoreRTTP50MS and StoreRTTP99MS are its p50 and p99.
 	HasStoreRTT   bool
@@ -283,7 +290,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 			f.HasStoreRTT, f.StoreRTTP50MS, f.StoreRTTP99MS = true, r.P50MS, r.P99MS
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
-			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes
+			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.Delivery = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.Delivery
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

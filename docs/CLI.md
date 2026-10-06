@@ -1144,6 +1144,8 @@ nova-sprint seat pong <nonce>
 nova-sprint routes
 nova-sprint rules
 nova-sprint funded <provider> --reason <text>
+nova-sprint promoted (--sha <merge sha> | --failed <why>) [--branch <sprint branch>] [--tip <sha>] [--target <ref>] [--repo <owner/name>] [--evidence <text>] [--cards <id,...>] [--returned <id,...>] [--answers <note>] [--dry-run]
+nova-sprint installed <target> --sha <dev commit> --receipt <text> [--dry-run]
 nova-sprint cost reconcile [--dry-run] [--json]
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
@@ -1261,6 +1263,24 @@ state) and `routes` each route's `balance=`. When every provider is out of credi
 stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
 until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
 says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+
+### Delivery milestones
+
+A card is delivered in three milestones, each its own record on the card and on its stream's
+control card (the repository, the target ref, the commit, the evidence), and counted apart:
+**staged** (`land` pushed its batch to the branch its stream lands on, the sprint branch or a
+stream branch; the work table's `landed`), **verified in dev** (`promoted --sha <merge sha>
+--branch <sprint branch> --tip <sha> --cards <ids> --evidence <pr>`: the cards the promotion
+carried, with dev's merged result as the merge names it, a squash or rebase included), and
+**installed** (`installed <target> --sha <dev commit> --receipt <text>`: every card verified
+at or before that promotion, on that target). A push to a stream branch is staged and never
+counted in dev: `promoted --branch` verifies only the cards staged on the branch it names,
+`--cards` the cards named, and a promotion naming neither verifies none. `nova-sprint promote`
+prints the whole `promoted` line on a merge, and `promoted --failed <why> ...` when its
+merge-group run failed: a failed promotion is recorded and stands, an alarm in `view
+coordinator`, until a promotion merges after it. `view coordinator` carries the three counts
+(`staged`, `dev`, `installed` in `n`, and `| staged <n> dev <n> installed <n>` on its first
+line). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 7, "Delivery milestones".
 
 ### Answered by rule
 

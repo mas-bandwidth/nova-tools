@@ -424,3 +424,6 @@ MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	
 MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
+MCPromoteDelivery.cfg	MCPromoteDelivery.tla	pass	-	ignore-terminal	promotedelivery	required	-
+MCPromoteDeliveryBrokenForgetFailure.cfg	MCPromoteDelivery.tla	invariant	FailureVisible	ignore-terminal	promotedelivery	required	-
+MCPromoteDeliveryBrokenVerifyAllLanded.cfg	MCPromoteDelivery.tla	invariant	VerifiedInDev	ignore-terminal	promotedelivery	required	-

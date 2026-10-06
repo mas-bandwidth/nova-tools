@@ -495,15 +495,19 @@ type whereView struct {
 	// cards landed in the last 24 h, overall and per stream, from the tick's where record
 	// (sprint.CycleTimes, docs/SPEC-SPRINT.md, cycle-time-breakdownb.w1); absent before
 	// the first tick of an epoch or with no landing in the window.
-	StageTimes  *sprint.StageTimes    `json:"stage_times,omitempty"`
-	Stalled     []string              `json:"stalled,omitempty"`
-	Critical    []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
-	Coordinator string                `json:"coordinator,omitempty"`
-	Pending     string                `json:"pending,omitempty"`
-	Epoch       uint64                `json:"epoch"`
-	Cleared     time.Time             `json:"cleared,omitempty"` // when the epoch began
-	Machine     string                `json:"machine,omitempty"`
-	Goals       []goalView            `json:"goals,omitempty"`
+	StageTimes *sprint.StageTimes    `json:"stage_times,omitempty"`
+	Stalled    []string              `json:"stalled,omitempty"`
+	Critical   []sprint.CriticalCard `json:"critical,omitempty"` // the five heaviest (weight.go)
+	// Delivery is the delivery milestones apart, staged, verified in dev and installed, and a
+	// failed promotion that stands, from the tick's where record (docs/SPEC-SPRINT.md section
+	// 7, delivery milestones); absent without the record.
+	Delivery    *sprint.DeliveryView `json:"delivery,omitempty"`
+	Coordinator string               `json:"coordinator,omitempty"`
+	Pending     string               `json:"pending,omitempty"`
+	Epoch       uint64               `json:"epoch"`
+	Cleared     time.Time            `json:"cleared,omitempty"` // when the epoch began
+	Machine     string               `json:"machine,omitempty"`
+	Goals       []goalView           `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -960,6 +964,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
 	v.Low = v.Ready < int64(v.Width)
 	v.Tiers = facts.Tiers
+	v.Delivery = facts.Delivery
 	if len(facts.StageTimes.All) > 0 {
 		v.StageTimes = &facts.StageTimes
 	}

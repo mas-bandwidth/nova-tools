@@ -545,6 +545,7 @@ function renderHero(d, s) {
   var landed = int(d.landed), all = int(d.all);
   setText($("landed"), landed.toLocaleString("en-US")); setText($("all"), all.toLocaleString("en-US")); setText($("all2"), all.toLocaleString("en-US"));
   setText($("pct"), all ? (landed / all * 100).toFixed(1) + "%" : "-");
+  renderDelivery(d.delivery);
   var m = String(d.summary || "").match(/ETA\s+(\S+)/), at = new Date(d.at);
   if (m) {
     setText($("eta"), etaText(m[1]));
@@ -570,6 +571,22 @@ function renderHero(d, s) {
   setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
   setMachine(d.machine);
+}
+
+// the delivery milestones apart (docs/SPEC-SPRINT.md section 7, delivery milestones): landed
+// is staged on the branch its stream lands on, and the Landed tile's subline says how many of
+// those a promotion verified in dev and how many a target installed, and a failed promotion
+// while it stands; nothing without the where record
+function renderDelivery(v) {
+  var box = $("delivery"); if (!box) return;
+  if (!v) { setText(box, ""); setTitle(box, ""); return; }
+  var dev = int(v.verified), inst = int(v.installed), staged = int(v.staged);
+  var text = " \u00b7 " + dev.toLocaleString("en-US") + " in dev \u00b7 " + inst.toLocaleString("en-US") + " installed";
+  if (v.failed) text += " \u00b7 promotion failed";
+  setText(box, text);
+  var targets = Object.keys(v.targets || {}).sort().map(function (t) { return t + " " + v.targets[t]; }).join(", ");
+  setTitle(box, "staged " + staged + " \u00b7 verified in dev " + dev + " \u00b7 installed " + inst + (targets ? " (" + targets + ")" : "") +
+    (v.failed ? "; the promotion of " + (v.failed.from || "the sprint branch") + " failed: " + v.failed.why : ""));
 }
 
 // the In flight tile's subline: one line, two parts,

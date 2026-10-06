@@ -1587,9 +1587,11 @@ and as `recut` is refused otherwise (`TestRecutWidenAppliesPathsProposed`).
 
 Six states, fixed, in one Go file (`internal/sprint/lifecycle.go`) mirrored by
 the TLA+ model (`tla/SprintTables.tla`): waiting, ready, working, review,
-merging, landed. Landed is final and means the code is on the development
-branch. A primary that stops any other way leaves the table; its record,
-outcome and reason are kept.
+merging, landed. Landed is final and means the card is staged: its batch was
+pushed to the branch its stream lands on (the sprint branch, or a stream branch),
+and nothing more. Verified in dev and installed are delivery milestones past the
+table (section 7, delivery milestones), never this state. A primary that stops any
+other way leaves the table; its record, outcome and reason are kept.
 
 | move | cause | class |
 |---|---|---|
@@ -1603,7 +1605,7 @@ outcome and reason are kept.
 | merging -> review | the stream's CI went red and the coordinator sent it back, or return | the coordinator's verb |
 | merging -> working | redo a conflicted card with the tip's rework: delegated at once to an up member | the coordinator's verb |
 | merging -> ready | redo a conflicted card when no fleet member is up: start delegates it later | the coordinator's verb |
-| merging -> landed | its batch, green on the stream branch, merged to the development branch | mechanical |
+| merging -> landed | its batch, green, pushed to the branch its stream lands on: staged (section 7, delivery milestones) | mechanical |
 | any open state -> off the table | drop, with the reason | the coordinator's verb |
 | waiting -> landed | release of a sentinel that is reached, waits for nothing, or waits only for cards under way (landed, dropped, or in flight: taken, in review, merging), and only that | the coordinator's verb |
 | ready -> waiting | add inserts a sentinel in front of it | mechanical |
@@ -2764,12 +2766,51 @@ reaches 25 (`sprint.PromoteCards`) or the oldest of them landed 30 minutes ago
 (`sprint.PromoteAge`), whichever comes first (`sprint.DevBehind`, internal/sprint/promotion.go,
 one pure decision): `dev is behind: <n> cards landed on <branch> since the last promotion at
 <time> (<sha>); promote: merge origin/dev into the sprint branch, open the PR to dev, run the
-functional tier, queue it; then: nova-sprint promoted --sha <merge sha>` (the branch is the
+functional tier, queue it; then: nova-sprint promoted --sha <merge sha> --branch <sprint
+branch> --tip <sha> --cards <ids> (nova-sprint promote prints it whole; --failed <why> when it
+did not merge)` (the branch is the
 base the most of them name; with no promotion recorded, `since no promotion recorded`),
 decisions promoted and wait 30m, updated in place while it holds and closed when `promoted`
 is recorded; `promoted --answers <note>` is held as every answer is (`answered`): an answer
 naming no open judgment refuses the whole step, nothing written
 (`TestTheTickRaisesDevBehindAtTwentyFiveLandingsOrThirtyMinutes`, `TestPromotedHoldsItsAnswers`).
+
+**Delivery milestones** (a review of nova-sprint, item 3: landed was described as delivery to
+the development branch while the lander records it at the push to its batch's base, which
+may be a stream branch, and promotion called every card landed since the last promotion
+promoted; the coordinator could not tell staged from verified in dev from installed). A card
+is delivered in three milestones, each an explicit record on the card and on its stream's
+control card, never inferred from another (internal/sprint/delivery.go,
+tla/PromoteDelivery.tla):
+
+| milestone | means | written by | card fields | stream record |
+|---|---|---|---|---|
+| staged | the lander pushed its batch to the branch its stream lands on, the sprint branch or a stream branch (merging -> landed) | the merge step of the landing (`land`, `merge --landed`) | `landed` (the stamp), `staged_repo`, `staged_ref` (the base pushed; the card's base when the caller names none), `staged_commit` (the tip pushed), `staged_evidence` (the check that ran, or that none did) | `delivery_staged`, `staged_ref`, `staged_commit` |
+| verified in dev | a promotion merged a branch holding it into dev | `promoted --sha <merge sha>` | `verified` (the stamp), `verified_repo`, `verified_ref` (the target, default dev), `verified_commit` (the merged result as the merge names it: under a squash or rebase it is not the promoted tip, and the tip is kept beside it), `verified_from` (`<branch>@<tip>`), `verified_evidence` (the pull request, the merge-queue entry) | `delivery_verified`, `verified_ref`, `verified_commit` |
+| installed | a target installed a dev commit a promotion recorded | `installed <target> --sha <dev commit> --receipt <text>` | `installed.<target>`: the commit, the stamp and the receipt | `delivery_installed`, `installed_commit` |
+
+The cards a promotion verifies are the ones it says it carried, so a push to a stream branch
+never counts as delivered to dev: `--cards <ids>` names them (the caller's fact: their `land
+<id>` commits are in the promoted range; `nova-sprint promote` prints them), each a landed
+primary, else refused naming it and nothing written; without `--cards`, `--branch <b>`
+verifies the landed primaries not yet verified whose staged ref is `b`; with neither, the
+promotion is recorded (and closes "dev is behind") and verifies none, its line saying so. A
+card is verified once; a later promotion does not move its record. `installed` is the
+coordinator's: the target one word, the commit 7 to 40 hex digits, the receipt required, and
+the commit one a promotion recorded (a card's `verified_commit`, either a prefix of the
+other), else refused, nothing written; it marks every card verified at or before that
+promotion and not yet installed on the target. Each stream's three counts are set from its
+cards at each record, never added to, so a replay writes the same.
+
+A promotion that did not merge is `promoted --failed <why> [--branch] [--tip] [--evidence]`:
+the work table's `promote_failed_at`, `promote_failed_why`, `promote_failed_from` and
+`promote_failed_evidence`, no card verified, "dev is behind" left open; it stands
+(`sprint.FailedPromotion`) until a promotion merges after it. `nova-sprint promote` prints
+that line when its merge-group run fails, beside its judgment. `view coordinator` counts the
+milestones apart (`n.staged`, `n.dev`, `n.installed`, and `| staged <n> dev <n> installed
+<n>` on its first line) and shows a standing failure as the alarm `promotion failed`, the
+staged cards not in dev behind it. `sprint.Delivery` is the one count every view reads
+(`TestAStreamBranchPushIsStagedNotDevDelivered`).
 
 **Dev sync every cycle.** On 2026-10-04 the base and the development branch drifted for an
 afternoon while hundreds of cards landed on each; folding them took 105 conflicts and an evening
@@ -3809,7 +3850,7 @@ first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json
 `also`: each head of the batch that is not a commit id, with its return), and on a twin,
 which has no git, a `NOTE` that `merge --stream <s> --batch <n>` records the landing in
 land's place; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
-| promote | the machine's promotion, on a schedule, of a frozen branch cut from the sprint tip (`promo/<YYYY-MM-DD>-<n>`, `git branch --no-track` at that commit), never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the frozen commit before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since the base, oldest first. Admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge prints `promoted --sha <sha>` and moves `refs/promoted/last`. A failed merge-group run raises one judgment, the failing check's log tail, decisions `fix-and-recut` and `skip`, and does not record the sha; a later pass of the same branch does not raise a second one. `--dry-run` prints the branch and the cards and cuts nothing. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section |
+| promote | the machine's promotion, on a schedule, of a frozen branch cut from the sprint tip (`promo/<YYYY-MM-DD>-<n>`, `git branch --no-track` at that commit), never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the frozen commit before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since the base, oldest first. Admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge prints the record `promoted --sha <sha> --branch <live> --tip <tip> --target <base> --cards <ids> --evidence 'pr=<n> head=<promo>'` (section 7, delivery milestones) and moves `refs/promoted/last`. A failed merge-group run raises one judgment, the failing check's log tail, decisions `fix-and-recut` and `skip`, prints the record `promoted --failed <why> ...`, and does not record the sha; a later pass of the same branch does not raise a second one. `--dry-run` prints the branch and the cards and cuts nothing. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); `up <member> --deadline <duration|default>` pins the deadline every card dealt to the member gets, or takes the pin off (section 5, the deadline by machine); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (her cards wait ready), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a friend keeps her cards, a stream's working cards finish. `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a friend's cards and a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back the cards she has not started (`--until` and her started cards' NOTE lines are its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold |
@@ -3883,7 +3924,7 @@ given `--epoch` is held to it like any other actor.
 
 ### Promotion
 
-`nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]` cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from the sprint tip and opens its pull request to dev (section 11, promote). The pull request head is that branch, never the live sprint branch. The tree gate runs on the frozen commit before the push, and the only ref pushed is `refs/heads/<promo>`. The body lists the card ids of `land <id> (sprint stream <s>)` commits since the last promotion. Admission to the merge queue is the `enqueuePullRequest` mutation with no strategy flag; a GraphQL query of `mergeQueueEntry` confirms the entry. The class test refuses `gh pr merge` and a flag named auto, so this verb does not spell either: the mutation is the admission that test names. When the pull request merges, the verb prints `promoted --sha <40-hex>` and records it at `refs/promoted/last`. A merge-group run that fails raises one judgment, with the failing check's log tail and the decisions `fix-and-recut` and `skip`, and does not record the sha. The verb repeats every `--every` (default 1h). `--landings <n>` also cuts once that many cards have landed since the last cut, and until the clock elapses the verb looks once a minute. `--dry-run` is one pass and changes nothing. `run --land` does not arm this step: the land loop calls it only when `promoteArmed` is set, so a server does not open a pull request from its working directory. The step is `(*promoter).step` in cmd/nova-sprint/promote.go.
+`nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]` cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from the sprint tip and opens its pull request to dev (section 11, promote). The pull request head is that branch, never the live sprint branch. The tree gate runs on the frozen commit before the push, and the only ref pushed is `refs/heads/<promo>`. The body lists the card ids of `land <id> (sprint stream <s>)` commits since the last promotion. Admission to the merge queue is the `enqueuePullRequest` mutation with no strategy flag; a GraphQL query of `mergeQueueEntry` confirms the entry. The class test refuses `gh pr merge` and a flag named auto, so this verb does not spell either: the mutation is the admission that test names. When the pull request merges, the verb prints `promoted --sha <40-hex> --branch <live> --tip <tip> --target <base> --cards <ids> --evidence <pr>`, the delivery record the coordinator types (section 7, delivery milestones), and records the sha at `refs/promoted/last`. A merge-group run that fails raises one judgment, with the failing check's log tail and the decisions `fix-and-recut` and `skip`, prints the record `promoted --failed <why> ...`, and does not record the sha. The verb repeats every `--every` (default 1h). `--landings <n>` also cuts once that many cards have landed since the last cut, and until the clock elapses the verb looks once a minute. `--dry-run` is one pass and changes nothing. `run --land` does not arm this step: the land loop calls it only when `promoteArmed` is set, so a server does not open a pull request from its working directory. The step is `(*promoter).step` in cmd/nova-sprint/promote.go.
 
 ### store-snapshot-verb
 
