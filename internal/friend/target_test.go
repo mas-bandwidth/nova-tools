@@ -284,3 +284,14 @@ func TestABoundTargetRefusesTheSessionItReplaced(t *testing.T) {
 	assert.Equal(t, []string{"new"}, again.Retired)
 	assert.Empty(t, again.Refuses("old"))
 }
+
+// liveDSHSession makes a DSH sessions root under the test's temp tree in
+// which session is a live session of dir, and answers the root.
+func liveDSHSession(t *testing.T, dir, session string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, DSHSessionKey(real), session), 0o700))
+	return root
+}

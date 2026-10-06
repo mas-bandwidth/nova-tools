@@ -60,6 +60,7 @@ internal/swarm/nativeidle.go WatchIdle samplers and watchdogs
 cmd/nova-friend/main.go realWorld waits and retries
 cmd/nova-friend/main.go world.install waits and retries
 cmd/nova-friend/main.go world.openUntil waits and retries
+cmd/nova-friend/main.go world.rebind waits and retries
 cmd/nova-friend/wakeping.go world.pingInstall waits and retries
 cmd/nova-sandbox/run.go runInVolume waits and retries
 cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries

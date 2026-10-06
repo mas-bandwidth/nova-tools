@@ -370,8 +370,8 @@ type loop struct {
 	refusal      string // the last provider refusal, and how many turns in a row said it
 	streak       int
 	broken, told bool
-	unable       string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
-	unableTries  int    // the turns refused for it since
+	unable       string         // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
+	unableTries  int            // the turns refused for it since
 	invalid      *TargetInvalid // the named session is gone: nothing is handed in again
 	invalidSent  [2]bool        // the coordinator's blocker and the friend's NOTE went out
 	recheck      bool           // the last batch turn was deferred or failed: the next reads the target first
