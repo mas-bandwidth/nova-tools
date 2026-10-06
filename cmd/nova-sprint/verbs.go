@@ -2931,8 +2931,9 @@ tables, and a clear keeps it. stream remove takes streams off both tables, on
 a STOPPED machine only (nova-sprint stop first), refused while a stream holds a
 card (a primary or a sentinel in any column of its work row, a merge card in
 its merge row: nova-sprint clear --confirm sprint, or drop) and all or none
-for the streams named. A clear does not bring a removed stream back, and its
-name is added again only after the next clear. stream archive takes streams
+for the streams named. A clear does not bring a removed stream back; an add
+under its name does, in this epoch or the next (a NOTE line says it came
+back). stream archive takes streams
 whose every card has landed off both tables, on a running machine too: their
 rows are hidden and every landed card, its cost and its landing stay, counted
 by the footers, the summary and where --json --archived; refused while a

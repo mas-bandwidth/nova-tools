@@ -156,9 +156,6 @@ func Add(s *Snapshot, r AddReq) Plan {
 	if !ValidID(r.Stream) {
 		return refuseAll(fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
 	}
-	if RemovedStream(s, r.Stream) {
-		return refuseAll(fmt.Sprintf("stream %s was removed in this epoch (stream remove), and the table layer never places its control card again; nothing was changed; add under another stream, or run: nova-sprint clear --confirm sprint, then add", r.Stream))
-	}
 	if r.Sentinel && len(ids) != 1 {
 		return refuseAll("a sentinel is admitted one at a time: add --stream <s> --sentinel <id>")
 	}
@@ -175,6 +172,14 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 	}
 	ctl := s.Merge.Card(CtlID(r.Stream))
+	if RemovedStream(s, r.Stream) {
+		// a removal is not a tombstone: the control card's record comes back
+		// on the table (ComeBack), and the changes below are planned on it
+		// as the place leaves it
+		var pl PlaceAgain
+		ctl, pl = ComeBack(ctl, r.Stream)
+		p.Places = append(p.Places, pl)
+	}
 	var head []Change
 	switch {
 	case ctl == nil:
@@ -527,6 +532,11 @@ func AddEach(s *Snapshot, rs []AddReq) Plan {
 	for _, r := range rs {
 		q := Add(s, r)
 		p.Rows = append(p.Rows, q.Rows...)
+		for _, pl := range q.Places {
+			if !slices.ContainsFunc(p.Places, func(o PlaceAgain) bool { return o.Table == pl.Table && o.ID == pl.ID }) {
+				p.Places = append(p.Places, pl)
+			}
+		}
 		p.Refused = append(p.Refused, q.Refused...)
 		p.Notes = append(p.Notes, q.Notes...)
 		p.inserting = p.inserting || q.inserting

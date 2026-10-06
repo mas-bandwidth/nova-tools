@@ -76,13 +76,30 @@ func streamRemoveWhy(s *Snapshot, running bool, st string) string {
 }
 
 // RemovedStream says the stream was removed in this epoch (stream remove):
-// its control card's record is kept unplaced, and the table layer never
-// places a removed member again, so the stream cannot open again before the
-// next clear: add refuses it then, naming the clear. The add step reads the
-// record as an extra (store.AddStep).
+// its control card's record is kept unplaced. A removal is not a tombstone:
+// a card added under the stream's name brings it back (ComeBack). The add
+// step reads the record as an extra (store.AddStep).
 func RemovedStream(s *Snapshot, stream string) bool {
 	ctl := s.Merge.Card(CtlID(stream))
 	return ctl != nil && !ctl.Placed()
+}
+
+// ComeBack is a removed stream's control card as the place that brings it
+// back leaves it (on its merge row's control cell, its revision bumped, its
+// fields as the removal left them), and that place: the add that names the
+// stream adds its rows and places the record again before its manifests
+// (Plan.Places), and says so, a NOTE line. A batch never places a removed
+// member, so the record is placed by the table layer's cell add, as a fleet
+// member's control card is when it rejoins (store.RejoinMembers). Stream
+// archive is the verb that takes landed streams off the table and keeps
+// their rows; stream remove takes off a stream that holds no card, and its
+// name is free for an add at once.
+func ComeBack(ctl *Card, stream string) (*Card, PlaceAgain) {
+	back := *ctl
+	back.Row, back.Col, back.Score = stream, Ctl, 0
+	back.Rev++
+	return &back, PlaceAgain{Table: Merge, Row: stream, Col: Ctl, ID: ctl.ID,
+		Said: "stream " + stream + " was removed in this epoch and comes back: its control card is placed again"}
 }
 
 // WhereReleasesCountCardsLeft folds cards left per release from stream clocks
