@@ -102,7 +102,7 @@ takes `--json`; `log` takes `--max`.
   between two runs. It returns on the first entries past the cursor that are
   not from the waiter and whose subject starts with none of the
   `--skip-subject` prefixes (matched without case; default `PING,PONG`): one
-  `WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n>` line each, up to
+  `WAIT MESSAGE id=<id> from=<name> bytes=<n> subject="<s>"` line each, up to
   `WaitMax` (5), then `WAIT OK after=<last id seen>` at exit 0. Skipped
   entries move the cursor and are not printed. `--wake-file <path>` also
   returns when a line is appended to the file after the start (a harness's

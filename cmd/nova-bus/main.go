@@ -181,7 +181,7 @@ first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopba
 		Verbs: []tool.Verb{
 			{
 				Name:    "wait",
-				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>]",
+				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>] [--json]",
 				Example: "wait --as bob --timeout 1s",
 				Effect:  tool.Inspection,
 				ExitTable: "0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; " +
@@ -192,7 +192,7 @@ Re-arm the next run with the id WAIT OK or WAIT NONE printed, and nothing betwee
 The wait takes nothing: it reads your stream past the cursor with XREAD, never the consumer group,
 so a later recv still delivers and acks what it saw. It ends on the first entries past the cursor
 that are not from you and whose subject starts with none of --skip-subject's prefixes (matched
-without case; default PING,PONG): one WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n> line
+without case; default PING,PONG): one WAIT MESSAGE id=<id> from=<name> bytes=<n> subject="<s>" line
 each, at most 5, then WAIT OK after=<last id seen> at exit 0. Skipped entries move the cursor and
 are not printed. --wake-file <path> also ends the wait when a line is appended to the file after the
 start (a harness's deliver adapter appends one per message): WAIT WAKE file=<path> line=<first line>
@@ -999,7 +999,7 @@ func (w world) wait(c *tool.Call) *tool.Out {
 		}
 		for _, e := range kept {
 			m := e.Message()
-			waitLine(c, tool.Done().As("MESSAGE").Fact("id", m.ID).Fact("from", m.From).Fact("subject", m.Subject).Fact("bytes", len(m.Body)))
+			waitLine(c, tool.Done().As("MESSAGE").Fact("id", m.ID).Fact("from", m.From).Fact("subject", tool.Text(m.Subject)).Fact("bytes", len(m.Body)))
 		}
 		waitLine(c, tool.Done().Fact("after", cursor))
 		return tool.Exit(0)

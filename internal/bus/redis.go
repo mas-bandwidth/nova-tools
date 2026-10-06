@@ -196,12 +196,13 @@ func (r Redis) Tail(ctx context.Context, stream string) (string, bool, error) {
 }
 
 // blockArg is the BLOCK a wait's read sends: 0 is for ever (the store holds
-// the read until an entry is there), a positive duration is that long, and
-// -1 is never sent -- that is recv's "do not block", not the wait's
-// (SPEC-BUS.md, the verbs: wait).
+// the read until an entry is there), a positive duration is that long rounded
+// up to a whole millisecond (the wire counts milliseconds, and a truncated
+// sub-millisecond block would go out as 0, for ever), and -1 is never sent --
+// that is recv's "do not block", not the wait's (SPEC-BUS.md, the verbs: wait).
 func blockArg(block time.Duration) time.Duration {
 	if block > 0 {
-		return block
+		return (block + time.Millisecond - 1) / time.Millisecond * time.Millisecond
 	}
 	return 0
 }

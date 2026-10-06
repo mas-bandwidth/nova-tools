@@ -399,6 +399,8 @@ func TestBlockArgIsForeverForZeroAndTheDurationForPositive(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, time.Duration(0), blockArg(0), "a wait with no timeout parks for ever: BLOCK 0, never -1")
 	assert.Equal(t, 5*time.Second, blockArg(5*time.Second), "a positive duration is the block")
+	assert.Equal(t, time.Millisecond, blockArg(500*time.Microsecond), "under a millisecond rounds up, never to BLOCK 0")
+	assert.Equal(t, 2*time.Millisecond, blockArg(1500*time.Microsecond), "a fraction rounds up to the next whole millisecond")
 }
 
 func TestNamesAreSortedAndUnique(t *testing.T) {
