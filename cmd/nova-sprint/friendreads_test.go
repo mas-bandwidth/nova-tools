@@ -46,6 +46,17 @@ func TestAReadAskedOfAFriendIsDeliveredToHerLikeACard(t *testing.T) {
 	ta.json("where", &w)
 	require.Equal(t, "2", cellText(w.Tables[sprint.Readers]["reader-amy"][sprint.FieldWidth]), "where draws her reader at her read slots")
 	require.Equal(t, "8", cellText(w.Tables[sprint.Friends]["amy"][sprint.FieldWidth]), "her card width stays her row's")
+	require.Equal(t, "2", cellText(w.Tables[sprint.Friends]["amy"]["read_slots"]), "her read slots sit beside her card width")
+	header, _, ok := strings.Cut(tableOf(ta.frame(), sprint.Friends), "\n")
+	require.True(t, ok, "the text where draws a friends table")
+	cols := strings.Split(header, "|")
+	beside := false
+	for i := 0; i+1 < len(cols); i++ {
+		if strings.TrimSpace(cols[i]) == "width" && strings.TrimSpace(cols[i+1]) == "read_slots" {
+			beside = true
+		}
+	}
+	require.True(t, beside, "the friends header holds width and read_slots next to each other: %s", header)
 	ta.ok("reader away reader-a")
 	ta.ok("reader away reader-b")
 	ta.ok("add --stream s1 --count 1 --one")

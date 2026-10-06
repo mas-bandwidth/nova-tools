@@ -17,7 +17,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed | cost | per landed
 readers | asked | reading | width | ok | broken
 merge | queued | merged | stuck | ci | state
-friends | ready | working | width | done | ok% | status
+friends | ready | working | width | read_slots | done | ok% | status
 fleet | ready | working | width | done | ok% | status | load
 ```
 
@@ -112,7 +112,7 @@ and the same day: "please give friends in the friends table the same ready,
 working, width, done, ok%, status that we have for machines, but no load, since
 they don't correspond to a machine (at the moment...)"; "you can even use the
 inbox/outbox standard in friend's working dirs") has one row per friend and the
-fleet table's columns but `load`: `ready`, `working`, `width`, `done`, `ok%`,
+fleet table's columns but `load`: `ready`, `working`, `width`, `read_slots`, `done`, `ok%`,
 `status`, with `ok` and `failed` hidden under `done` and `ok%` as the fleet's
 are. Its rows are nova-config's friend rows and nothing else: `friend sync`
 (`--pg`, else NOVA_PG_DSN, as nova-config takes it) copies their names into the
@@ -2943,7 +2943,9 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
   readers out, so each wait is one judgment. `where` draws `reader-<friend>`'s
   width cell (the readers table's width beside reading, and `where --json` on
   her reader's row) as her read slots, read off `friend_read_slots`
-  (`sprint.FriendReadSlotsOf`), while her friends row keeps her card width.
+  (`sprint.FriendReadSlotsOf`). Her friends row keeps her card width in `width`
+  and shows her read slots beside it in `read_slots` (`read_slots:text:sum`,
+  summed in the footer), the two side by side.
 - A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
   nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
   per pro card; readers still equal workers per machine"): a flash card needs
