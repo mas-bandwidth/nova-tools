@@ -363,6 +363,10 @@ type Snapshot struct {
 	// row, answer_rules_off), read with the routes (docs/SPEC-SPRINT.md section 8, answered by
 	// rule; rules.go).
 	RulesOff []string
+	// ReadTierByKind is the read tier of each kind of change (nova-config's sprint row,
+	// read_tier_prose, read_tier_code, read_tier_tla), read with the routes; "" is a
+	// kind's default (readers.go, ReadTierByKindDefault).
+	ReadTierByKind ReadTierByKind
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

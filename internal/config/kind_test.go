@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,heavy,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar, the brief bar and the rules turned off", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar, the brief bar, the read tier of each kind of change and the rules turned off", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 12, assertionMsg100...)
+	require.Len(t, sprint.Fields, 15, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -723,4 +723,27 @@ func TestAFriendRowsConfigDirIsAbsoluteWhenSet(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The sprint row holds the read tier of each kind of change (docs/SPEC-SPRINT.md section
+// 6, the read tier by kind): prose at pro, code at the card's own tier and tla/ at
+// frontier by default, each one word of ReadTierWords, any other refused.
+func TestTheSprintRowHoldsTheReadTierOfEachKind(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	var defaults []string
+	for _, name := range []string{FieldReadTierProse, FieldReadTierCode, FieldReadTierTLA} {
+		f, ok := sprint.Field(name)
+		require.True(t, ok, name)
+		require.Equal(t, TypeEnum, f.Type, name)
+		defaults = append(defaults, f.Default)
+		for _, w := range ReadTierWords {
+			got, err := f.Canonical(w)
+			require.NoError(t, err, name)
+			require.Equal(t, w, got)
+		}
+		_, err := f.Canonical("cheap")
+		require.Error(t, err, name)
+	}
+	assert.Equal(t, []string{"pro", "card", "frontier"}, defaults)
 }

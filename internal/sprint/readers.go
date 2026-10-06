@@ -1,14 +1,18 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"math"
+	"path"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
 // A reader's state (docs/SPEC-SPRINT.md section 6, the readers table; the
@@ -184,6 +188,113 @@ const (
 // FieldLeveled marks a read card the level moved: the level moves it no more, so a
 // read is never shuttled between readers tick after tick and the level never sticks on one card.
 const FieldLeveled = "leveled"
+
+// The read tier follows what the change touches (docs/SPEC-SPRINT.md section 6, the
+// read tier by kind; the owner, 2026-10-05: prose cards were read at heavy and frontier,
+// 5 to 15 minutes each, when a pro reader finds the same). A change is one of three
+// kinds (ChangeKind), read off the brief's PATHS, which bound what its head may touch
+// (the lander refuses a head that changes a file outside them, E12): prose when every
+// PATHS entry names Markdown or text files only, tla when an entry is under tla/, else
+// code (a directory, a glob with no extension, or no PATHS at all). Each kind's read
+// tier is nova-config's sprint row (read_tier_prose, read_tier_code, read_tier_tla),
+// pro, the card's own tier and frontier by default (ReadTierByKindDefault); a brief may
+// pin its read tier with a READ-TIER line; a stream's or the sprint's read tier still
+// raises it and never lowers it (readTierSetting). readTierChoice says the tier and why,
+// and the read card and its cost record carry both (FieldTier, FieldTierWhy).
+const (
+	ReadKindProse = "prose"
+	ReadKindCode  = "code"
+	ReadKindTLA   = "tla"
+	// ReadTierCard is the rule's word for the card's own tier (cardTier).
+	ReadTierCard = config.ReadTierCard
+	// KeyReadTier is the brief's pin of its read tier: `READ-TIER: <tier>`.
+	KeyReadTier = "READ-TIER"
+	// FieldTierWhy is a read card's field, and its cost record's word (tier_why): why
+	// its read tier is the one chosen (readTierChoice), one word with no space.
+	FieldTierWhy = "tier_why"
+)
+
+// ReadTierByKind is the read tier of each kind of change, as nova-config's sprint row
+// applied it: a tier, or ReadTierCard; "" is the kind's default (ReadTierByKindDefault).
+type ReadTierByKind struct{ Prose, Code, TLA string }
+
+// ReadTierByKindDefault is the rule with nothing set: prose at pro, code at the card's
+// tier, a tla/ change at frontier.
+var ReadTierByKindDefault = ReadTierByKind{Prose: config.ReadTierProseDefault, Code: config.ReadTierCodeDefault, TLA: config.ReadTierTLADefault}
+
+// of is the rule's word for a kind and the sprint row field it is read from.
+func (r ReadTierByKind) of(kind string) (word, field string) {
+	switch kind {
+	case ReadKindProse:
+		return cmp.Or(r.Prose, ReadTierByKindDefault.Prose), config.FieldReadTierProse
+	case ReadKindTLA:
+		return cmp.Or(r.TLA, ReadTierByKindDefault.TLA), config.FieldReadTierTLA
+	}
+	return cmp.Or(r.Code, ReadTierByKindDefault.Code), config.FieldReadTierCode
+}
+
+// readTierLadder is every tier a read may be chosen at, weakest first; frontier is a
+// friend's read (friend_read.go), and a machine's route is drawn at heavy (readTierOf).
+var readTierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy, cardhdr.RouteFrontier}
+
+// ChangeKind is the kind of change the brief's PATHS allow: tla when an entry is under
+// tla/ (or names a .tla file), prose when every entry names .md or .txt files only, else
+// code.
+func ChangeKind(brief string) string {
+	paths := decide.CardPaths(brief)
+	if len(paths) == 0 {
+		return ReadKindCode
+	}
+	prose := true
+	for _, g := range paths {
+		g = strings.TrimPrefix(g, "./")
+		if g == "tla" || strings.HasPrefix(g, "tla/") || strings.Contains(g, "/tla/") || path.Ext(g) == ".tla" {
+			return ReadKindTLA
+		}
+		prose = prose && DocFile(g) && !strings.HasSuffix(g, "/")
+	}
+	if prose {
+		return ReadKindProse
+	}
+	return ReadKindCode
+}
+
+// ReadTierPin is the read tier the brief pins (`READ-TIER: <tier>`, one of
+// readTierLadder), "" when it pins none or names no tier.
+func ReadTierPin(brief string) string {
+	for _, l := range strings.Split(brief, "\n") {
+		if k, v, ok := cardhdr.KeyValue(strings.TrimSpace(l)); ok && strings.EqualFold(k, KeyReadTier) {
+			if v = strings.ToLower(v); slices.Contains(readTierLadder, v) {
+				return v
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// readTierChoice is the tier a primary's reads are chosen at before readTierOf collapses
+// frontier onto heavy, and why, one word: the brief's pin ("pin:READ-TIER=<t>"), else its
+// kind's rule ("<kind>:<field>=<word>", the card's own tier for ReadTierCard), raised to
+// the stream's or the sprint's read tier when that is stronger (",raised:read_tier=<t>").
+func (s *Snapshot) readTierChoice(pr *Card) (tier, why string) {
+	brief := pr.F("brief")
+	if pin := ReadTierPin(brief); pin != "" {
+		tier, why = pin, "pin:"+KeyReadTier+"="+pin
+	} else {
+		m, _ := cardhdr.ReadModel(brief)
+		kind := ChangeKind(brief)
+		word, field := s.ReadTierByKind.of(kind)
+		tier, why = word, kind+":"+field+"="+word
+		if word == ReadTierCard || !slices.Contains(readTierLadder, word) {
+			tier = cardTier(pr, m)
+		}
+	}
+	if set := s.readTierSetting(pr.Row); set != "" && slices.Index(readTierLadder, set) > slices.Index(readTierLadder, tier) {
+		tier, why = set, why+",raised:read_tier="+set
+	}
+	return tier, why
+}
 
 // ReadsNeeded is how many different readers' ok reads at its head make the
 // primary acceptable, and so how many readers the ask asks at an attempt: one

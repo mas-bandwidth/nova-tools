@@ -296,6 +296,26 @@ const FieldDecideJudgment = "decide_judgment_bar"
 // which the sprint's routes read takes.
 const FieldAnswerRulesOff = "answer_rules_off"
 
+// The sprint row's read tier of each kind of change (docs/SPEC-SPRINT.md section 6, the
+// read tier by kind; internal/sprint readers.go, ChangeKind): a change whose PATHS are
+// Markdown and text only (prose), one under tla/ (tla), and every other (code), each read
+// at a tier of ReadTierWords, ReadTierCard naming the card's own tier. Apply writes each
+// to SprintKey(field), which the sprint's routes read takes; empty is the default.
+const (
+	FieldReadTierProse = "read_tier_prose"
+	FieldReadTierCode  = "read_tier_code"
+	FieldReadTierTLA   = "read_tier_tla"
+	// ReadTierCard is the word for the card's own tier, the tier its work is on.
+	ReadTierCard = "card"
+	// The defaults: prose at pro, code at the card's tier, a tla/ change at frontier.
+	ReadTierProseDefault = "pro"
+	ReadTierCodeDefault  = ReadTierCard
+	ReadTierTLADefault   = "frontier"
+)
+
+// ReadTierWords is every word a read tier of a kind may take.
+var ReadTierWords = []string{ReadTierCard, "flash", "pro", "heavy", "frontier"}
+
 // AnswerRules is every rule the sprint answers a mechanical judgment by (internal/sprint,
 // RuleNames, which a test holds equal): work came back failed, a card at its bound, a work
 // card past its deadline, a stream stopped on a conflict in a file no ledger owns, the same
@@ -442,6 +462,9 @@ var Kinds = []*Kind{
 			{Name: FieldDecideGatePreexisting, Type: TypeDecimal, Default: "", Help: "the gate decision's pre-existing bar: a work card's failing test whose p(pre-existing) is at or above it is reported `pre-existing: <test>`, the base's or the member's and never the card's; a probability; empty (the default) reclassifies nothing; 0.8 is the starting point, though at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing"},
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
+			{Name: FieldReadTierProse, Type: TypeEnum, Enum: ReadTierWords, Default: ReadTierProseDefault, Help: "the read tier of a prose change, a card whose PATHS name Markdown and text files only: one of " + strings.Join(ReadTierWords, ", ") + " (card is the card's own tier); pro (the default); a brief's READ-TIER line pins its own, and a stream's or the sprint's read tier still raises it (docs/SPEC-SPRINT.md section 6, the read tier by kind)"},
+			{Name: FieldReadTierCode, Type: TypeEnum, Enum: ReadTierWords, Default: ReadTierCodeDefault, Help: "the read tier of a code change, a card whose PATHS name anything but Markdown, text and tla/: one of " + strings.Join(ReadTierWords, ", ") + "; card (the default) reads it at the card's own tier"},
+			{Name: FieldReadTierTLA, Type: TypeEnum, Enum: ReadTierWords, Default: ReadTierTLADefault, Help: "the read tier of a change under tla/: one of " + strings.Join(ReadTierWords, ", ") + "; frontier (the default) asks it of a friend of frontier class"},
 			{Name: FieldAnswerRulesOff, Type: TypeList, Enum: AnswerRules, Help: "the rules the machine does not answer judgments by: comma list of " + strings.Join(AnswerRules, ", ") + "; empty (the default) answers by every rule: failed and no-result work redealt then raised a tier, a card at its bound raised a tier (heavy to a friend), a late card waited once or returned and redealt, a conflict in a file no ledger owns returned, redone on the tip and resumed, the same finding twice marked a brief defect, and the base tree gate retried before a stream stops (docs/SPEC-SPRINT.md section 8, answered by rule)"},
 		},
 		Check: checkSprint,

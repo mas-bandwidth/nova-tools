@@ -134,20 +134,12 @@ func ParseFriendReadReport(report string) (verdict, finding, why string) {
 }
 
 // friendReadTier is the tier a primary's read would be drawn from before
-// readTierOf collapses a frontier card onto the tier a route serves. A heavy
-// card whose read tier is set to the one above (frontier) is frontier here;
-// readTierOf's own return is left as it is.
+// readTierOf collapses a frontier card onto the tier a route serves
+// (readTierChoice): a frontier code card, a tla/ change, a heavy card whose read
+// tier is set to the one above (frontier) is frontier here; readTierOf's own
+// return is left as it is.
 func friendReadTier(s *Snapshot, pr *Card) string {
-	m, _ := cardhdr.ReadModel(pr.F("brief"))
-	t := cardTier(pr, m)
-	set := s.readTierSetting(pr.Row)
-	if set == "" {
-		return t
-	}
-	ladder := []string{cardhdr.RouteFlash, cardhdr.RoutePro, "heavy", cardhdr.RouteFrontier}
-	if slices.Index(ladder, set) > slices.Index(ladder, t) {
-		return set
-	}
+	t, _ := s.readTierChoice(pr)
 	return t
 }
 
