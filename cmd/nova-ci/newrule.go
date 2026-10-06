@@ -17,10 +17,16 @@ func cmdNewRule(args []string, stdout, stderr io.Writer) int {
 }
 
 // cmdNewVerb is `nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>`;
-// after writing it prints the dispatch case to add, and never edits the switch.
+// it refuses a verb the tool's help already lists, after writing it prints the
+// dispatch case to add, and it never edits the switch.
 func cmdNewVerb(args []string, stdout, stderr io.Writer) int {
 	return cmdScaffold("new-verb", "two arguments, the tool (its directory under cmd/) and the new verb's name", 2, args, stdout, stderr,
-		func(root string, a []string) ([]scaffold.Planned, error) { return scaffold.VerbFiles(root, a[0], a[1]) },
+		func(root string, a []string) ([]scaffold.Planned, error) {
+			if helpListsVerb(a[0], a[1]) {
+				return nil, fmt.Errorf("%q is already a verb %s help lists; new-verb wants a name help does not list", a[1], a[0])
+			}
+			return scaffold.VerbFiles(root, a[0], a[1])
+		},
 		func(a []string) { fmt.Fprint(stdout, scaffold.DispatchNote(a[0], a[1])) })
 }
 
