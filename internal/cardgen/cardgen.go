@@ -645,8 +645,9 @@ const Attribution = "ATTRIBUTION: By: your own name, the friend doing this work,
 
 // AsARead is the brief's AS A READ section, the text a reader of the work is given
 // (sprint.FriendReadBrief carries it through the next heading): a By: trailer is judged
-// only for being present and true.
-const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\n"
+// only for being present and true, and the scope of the change is its PATHS line as
+// AlwaysInPathsRule widens it.
+const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\nThe scope of this change is its PATHS line. " + AlwaysInPathsRule + "\n"
 
 // Deadline is the minutes a tier gets when the header names none.
 func Deadline(tier string) int {
@@ -677,7 +678,8 @@ func touchesModels(paths []string) bool {
 
 // Render writes one brief: the header lines nova-sprint add reads, the paragraph
 // every card of the night carried, the rules verbatim from the card template, the
-// ATTRIBUTION line, the task, the steps, and the AS A READ section a reader is given.
+// ATTRIBUTION line, the task, the steps, and the AS A READ section a reader is given
+// (AsARead, which carries AlwaysInPathsRule).
 // It is the card template's shape with the <...> filled, so it passes the add's lint
 // and nova-swarm lint --card --child-rules by construction.
 func Render(h Header, c Card) string {
@@ -730,7 +732,7 @@ func Render(h Header, c Card) string {
 	b.WriteString(swarm.ChildRulesParagraph())
 	b.WriteString("\n")
 	b.WriteString(Attribution + "\n")
-	fmt.Fprintf(&b, "THE TASK. %s The work lives in %s; the files this card may touch are its PATHS line and no other, in the staged checkout JOB.md names, on the card's own branch, from BASE %s.\n\n", c.Task, c.File, h.Base)
+	fmt.Fprintf(&b, "THE TASK. %s The work lives in %s; the files this card may touch are its PATHS line and no other, in the staged checkout JOB.md names, on the card's own branch, from BASE %s. %s\n\n", c.Task, c.File, h.Base, AlwaysInPathsRule)
 	b.WriteString("STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.\n")
 	fmt.Fprintf(&b, "STEP 2. Make it red first, as the task says, with the test %s: run %s -run %s and keep the failing line as evidence.\n", testName(c.Test), gate, testName(c.Test))
 	b.WriteString("STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.\n")

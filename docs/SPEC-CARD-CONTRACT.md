@@ -483,12 +483,18 @@ with no clock and no store). What it holds:
   package of its test, so a ledger card's PATHS are the row's file's package,
   the class test's package and the ledger; a findings card's, the file's
   package and its test's package; a help card's, `cmd/<tool>` and
-  `docs/CLI.md`. A
-  package is the unit a change lives in: a typed file list one file short holds
-  the card at land (E12). Two cards that share an entry and neither needs the
-  other set `shared-paths=yes`. With a checkout, every entry is checked to
-  exist in it; a package's `*.go` is not answered by a test file the card
-  creates.
+  `docs/CLI.md`. A package is the unit a change lives in: a typed file list
+  one file short holds the card at land (E12). Files a change must touch to
+  keep the tree green are always inside PATHS, whatever the brief names: every
+  `*_test.go`, every file under a `testdata/` directory, `tla/RUNS.tsv` and
+  `tla/CASES.tsv`, `internal/docs/catalog.go`, and every `AGENTS.md` map; any
+  other file outside PATHS is still out of scope (`cardgen.AlwaysInPathsRule`;
+  SPEC-SPRINT.md section 7, always inside PATHS): the lander's E12
+  (`sprint.LandScope`) and the readers hold every card to that sentence, and
+  every generated brief carries it in its task and its AS A READ section. Two cards that share an entry and
+  neither needs the other set `shared-paths=yes`. With a checkout, every entry
+  is checked to exist in it; a package's `*.go` is not answered by a test file
+  the card creates.
 - Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
   depending on their wave 1 neighbours), because adjacent deletions of one file
   conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
