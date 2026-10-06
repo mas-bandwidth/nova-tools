@@ -495,7 +495,13 @@ func (a *app) pushJudgments(ctx context.Context, src inboxSource, holder string,
 	if err != nil || !found {
 		return // the proof says PUSH DOWN for it at the next look
 	}
-	if inbox, _, ok := a.seatInbox(holder); ok && rec.Adapter == sprint.AdapterFolder && sameDir(rec.Target, inbox) {
+	// her row's dir, else ~/<holder>-working (frienddir.go). nil note: the seat
+	// loop's follow already says a fallback once, and a direct call says nothing.
+	rowDir := ""
+	if dirs := a.friendRowDirs(ctx); dirs != nil {
+		rowDir = dirs[holder]
+	}
+	if inbox, _, ok := a.seatInbox(holder, rowDir, nil); ok && rec.Adapter == sprint.AdapterFolder && sameDir(rec.Target, inbox) {
 		say("OK", holder, "", "")
 		return
 	}
