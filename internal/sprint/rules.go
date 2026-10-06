@@ -31,11 +31,14 @@ const (
 	RuleBriefDefect = "brief-defect" // the same finding twice: the card marked a brief defect, held
 	RuleConflict    = "conflict"     // a head the lander refused (a file conflict, its PATHS, the tree gate): returned, redone on the tip at flash, resumed; the same refusal twice a brief defect
 	RuleFailed      = "failed"       // work came back failed or with no result: redealt, then a tier up
+	RuleFriendTake  = "friend-take"  // a friend's work card past its bound that she has not started: taken back, dealt again (judgment_rules.go)
+	RuleHoldNeed    = "hold-need"    // failed work whose report HOLDs naming a card that has not landed: waits for it, reworked once it lands (judgment_rules.go)
 	RuleLate        = "late"         // a work card past its deadline: a wait once with progress; returned and redealt only once its holder stamped and went silent
+	RuleReadLate    = "read-late"    // a read past its deadline: taken back and asked of another reader, once an attempt (judgment_rules.go)
 )
 
 // RuleNames is every rule, in name order.
-var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleLate}
+var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
 
 // The fields the rules write.
 const (
@@ -135,6 +138,9 @@ const (
 	ActReturn = "return"                    // the conflict card back to review
 	ActResume = "resume"                    // the stream again, its conflict card out
 	ActMark   = "mark brief defect"         // the card marked, the judgment kept
+	ActTake   = "take back and deal again"  // the friend's card she has not started withdrawn from her row, dealt to another
+	ActAsk    = "ask another reader"        // the late read taken back, asked of another reader
+	ActNeed   = "wait for the card"         // the HOLD's card has not landed: the judgment waits on it
 	ActLeft   = "left"                      // the judgment needs a mind
 	ActOff    = "off"                       // its rule is turned off
 )
@@ -165,6 +171,7 @@ type RuleAnswer struct {
 	fix   string
 	files []string // the files outside PATHS a twin widens them by (ruleReadBroken)
 	twin  string   // the twin's id (ActTwinWider)
+	from  string   // the friend a card is taken back from (ActTake), the reader a read is taken back from (ActAsk)
 	set   map[string]string
 	until time.Time
 	open  Open
@@ -200,6 +207,8 @@ func RuleAnswers(s *Snapshot, r TickReq) []RuleAnswer {
 			ruleBrief(s, &a)
 		case NReadBroken:
 			ruleReadBroken(s, &a)
+		case NReadLate:
+			ruleReadLate(s, &a)
 		default:
 			a.Act, a.Why = ActLeft, "no rule answers it"
 		}
@@ -263,6 +272,9 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 		return
 	case mindCard(pr) != "":
 		left(a, mindCard(pr))
+		return
+	case holdsFor(s, pr) != "":
+		ruleHoldNeed(s, a, pr, holdsFor(s, pr))
 		return
 	case AtIdenticalFailure(s, pr) != nil:
 		left(a, "the second identical failure: the bound rule answers it")
@@ -355,7 +367,11 @@ func ruleLate(s *Snapshot, r TickReq, a *RuleAnswer) {
 		return
 	}
 	a.Card = wc.ID
-	if pr := s.Work.Placed(wc.F("primary")); IsFriendRow(wc.Row) || pr != nil && mindCard(pr) != "" {
+	if IsFriendRow(wc.Row) {
+		ruleFriendTake(s, r, a, wc)
+		return
+	}
+	if pr := s.Work.Placed(wc.F("primary")); pr != nil && mindCard(pr) != "" {
 		left(a, "a friend's card, or one that needs a mind: friends keep their cards")
 		return
 	}
@@ -505,8 +521,9 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 }
 
 // The tick's rule parts, in the order they run: the conflict's return, its resume, a twin
-// (read-broken, rules_read.go), every rework (failed, bound, read-broken, the conflict's
-// redo), the late cards, the brief defects. Each is
+// (read-broken, rules_read.go), every rework (failed, bound, read-broken, hold-need, the
+// conflict's redo), the late cards, the friends' cards taken back, a late read asked of
+// another reader, the HOLDs waiting on a card, the brief defects (judgment_rules.go). Each is
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
 // tick. With TickReq.AnswerRules false each is empty.
 const (
@@ -524,6 +541,9 @@ var TickRules = []TickPartDef{
 	{PartRuleTwin, TickRuleTwin},
 	{PartRuleRework, TickRuleRework},
 	{PartRuleLate, TickRuleLate},
+	{PartRuleTake, TickRuleTake},
+	{PartRuleAsk, TickRuleAsk},
+	{PartRuleNeed, TickRuleNeed},
 	{PartRuleBrief, TickRuleBrief},
 }
 
