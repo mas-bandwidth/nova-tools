@@ -292,12 +292,22 @@ in `internal/sprint` and `cmd/nova-sprint`.
 Each second: the clock is stepped; when the session is free (a turn has
 ended, or none ran), every message waiting is read off the stream, up to 32
 (`MaxBatch`), and one turn is started with all of them: a message never waits
-behind a turn per older message (the finding of 2026-10-04: one message per
-turn, with turns of 2 to 10 minutes, delivered a notice 30 minutes stale while
-newer messages queued behind it). The turn is one envelope (`Envelope`, a
-function of the pending list and a clock): the pong line first while a
-challenge is open, the daemon's latest word about the coordinator, the count,
-then each message oldest first as
+behind a turn per older message.
+
+The base, before this change: the turn was already one turn for every message
+in hand (`Batch`), oldest first, at most 32 messages or 256 KiB (`MaxBatch`,
+`BatchBytes`; the rest the next turn), each under a rule
+`=== message <i> of <n>: id=<id> from=<f> subject="<s>" ===` and then the
+message as `nova-bus recv` prints it, with no time or age; the daemon's word
+about the coordinator was one slot, a newer word replacing the older with
+nothing on the record; and only `nova-friend pong --nonce` ended a challenge.
+The finding of 2026-10-04 (one message per turn, with turns of 2 to 10
+minutes, a notice delivered 30 minutes stale while newer messages queued
+behind it) is the form this rule forbids, not the base's rule.
+
+The change. The turn is one envelope (`Envelope`, a function of the pending
+list and a clock): the pong line first while a challenge is open, the daemon's
+latest word about the coordinator, the count, then each message oldest first as
 
     [1/3] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>
     <body>
@@ -307,19 +317,31 @@ at the adapter's text limit (`TextLimit`: its own when it names one, else 256
 KiB, `BatchBytes`; the first message always goes in); the messages that do not
 fit are named under `and <n> more: nova-bus recv --as <me> --all`, one line
 each, stay pending, and are the next turn. A single message with nothing else
-is its `recv` text alone.
+is its `recv` text alone. The envelope's size is on the status:
+`envelope` (status.json, and `envelope=` on `nova-friend status`) is how many
+messages the last envelope carried and `envelope_bytes` its text's size, at
+most the text limit unless the first message alone is larger; both are 0
+before the first envelope.
 
-Two kinds of message are never a turn. A ping is the daemon's: answered at once
-with `daemon-pong` and acked, never pushed in, so the session's turns are spent
-on work; a session proves itself by any bus line it sends after the ping (a
-real message counts; `nova-friend pong --nonce` still counts when a session
-runs it), which ends the challenge and with it the pong line at the head of its
-turns, while the daemon's own sends (`daemon-pong`, its notices, a session
-check) prove nothing. And the supersede rule (`SupersededNotices`): of the
-daemon's own notices about the coordinator pending on the friend's stream
-(`coordinator silent`, `coordinator back`), only the newest is delivered;
-each older one is dropped and acked, its record line naming
-`superseded=<newer id>`.
+A ping is never a turn: it is the daemon's, answered at once with
+`daemon-pong` and acked, never pushed in, so the session's turns are spent on
+work. A session proves itself by any bus line it sends after the ping (a real
+message counts; `nova-friend pong --nonce` still counts when a session runs
+it), which ends the challenge and with it the pong line at the head of its
+turns, while the daemon's own sends (`daemon-pong`, a word to the coordinator,
+a session check) prove nothing.
+
+The supersede rule (`SupersededNotices`) acts on the daemon's own notices
+about the coordinator and nothing else: the words `coordinator silent` and
+`coordinator back` its machine says (`Machine.Tick`, `Machine.Ping`), each
+given an id (`notice-<unix ms>-<n>`) when said, which ride at the head of a
+turn (the batch envelope, or a lane's card), never a message on the stream,
+whoever sent it. Of those not yet in a turn only the newest is delivered; each
+older one is dropped, its record line
+`<RFC3339> notice=<id> subject="<s>" superseded=<newer id> dropped=true`. A
+`coordinator back` the session would not need, never having heard it was
+silent, still supersedes and is itself not said; a notice a failed turn hands
+back while a newer one is owed is the one dropped.
 
 The adapter blocks for the whole turn; exit 0 acks every message the envelope
 carried, together, and a failure acks none of them (for Codex queue, exit 0 is
