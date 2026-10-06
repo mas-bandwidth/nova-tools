@@ -12,7 +12,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1265,6 +1267,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if code := a.holdBase("add", st, *allowPersonal, stderr, *brief); code != 0 {
 		return code
 	}
+	if code := holdTlaRecords("add", stderr, briefCheck{id: strings.Join(ids, ","), brief: *brief}); code != 0 {
+		return code
+	}
 	if *sentinel == "" {
 		checks := make([]briefCheck, 0, len(ids))
 		for _, id := range ids {
@@ -1401,6 +1406,9 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	for i, cd := range cards {
 		checks[i] = briefCheck{id: cd.ID, brief: cd.Brief}
 	}
+	if code := holdTlaRecords("add", stderr, checks...); code != 0 {
+		return code
+	}
 	if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
 		return code
 	}
@@ -1536,6 +1544,99 @@ func headerPaths(brief, key string) []string {
 		}
 	}
 	return out
+}
+
+// holdTlaRecords refuses a brief that edits a TLA+ model and does not refresh the TLC
+// records (docs/SPEC-SPRINT.md section 11, add-tla-edit-refreshes-records-b.w1): its
+// PATHS: or NEW: header lines cover a tla/*.tla model, and either cover no tla/RUNS.tsv
+// or no STEP of it names tlacheck merge --keep. Such a card lands records the TLC
+// records class test (internal/ci/tlc_records_class_test.go) calls stale on the base.
+// A brief that only reads tla/ names no model there and is untouched. One such brief
+// refuses the whole call, exit 2, nothing written.
+func holdTlaRecords(verbName string, stderr io.Writer, briefs ...briefCheck) int {
+	var red []string
+	for _, b := range briefs {
+		paths := append(headerPaths(b.brief, "PATHS"), headerPaths(b.brief, "NEW")...)
+		var models []string
+		records := false
+		for _, p := range paths {
+			if namesModel(p) {
+				models = append(models, p)
+			}
+			records = records || pathCovers(p, tlaRecordsFile)
+		}
+		if len(models) == 0 {
+			continue
+		}
+		var why []string
+		if !records {
+			why = append(why, "does not cover "+tlaRecordsFile)
+		}
+		if !stepsMergeRecords(b.brief) {
+			why = append(why, "names no STEP that runs tlacheck merge --keep")
+		}
+		if len(why) == 0 {
+			continue
+		}
+		who := "the brief"
+		if b.id != "" {
+			who = "the brief of " + b.id
+		}
+		red = append(red, fmt.Sprintf("%s edits the TLA+ model %s and %s", who, strings.Join(models, ","), strings.Join(why, " and ")))
+	}
+	if len(red) == 0 {
+		return 0
+	}
+	return refuse(stderr, verbName, strings.Join(red, "; ")+"; a model edit refreshes the TLC records, or the records class test calls them stale on the base: name "+tlaRecordsFile+" in PATHS and add a STEP that runs the changed groups on a Linux bench, then tlacheck merge --keep "+tlaRecordsFile+", as tla/README.md says (\"Refreshing the records after a model edit\"); nothing was written")
+}
+
+// tlaRecordsFile is the TLC records every model's runs are measured into.
+const tlaRecordsFile = "tla/RUNS.tsv"
+
+// namesModel says a PATHS entry names a TLA+ model of tla/: a .tla file under it, a
+// glob of them (tla/*.tla), or tla/ itself or a glob over it (tla/**, tla/*).
+func namesModel(entry string) bool {
+	e := strings.TrimSuffix(strings.TrimPrefix(entry, "./"), "/")
+	return strings.HasPrefix(e, "tla/") && strings.HasSuffix(e, ".tla") || pathCovers(entry, "tla/Model.tla")
+}
+
+// pathCovers says a PATHS entry covers the file: the file itself, a directory over it
+// (tla, tla/), a tree glob over it (tla/**, tla/...) or a glob that matches it (tla/*).
+func pathCovers(entry, file string) bool {
+	e := strings.TrimSuffix(strings.TrimPrefix(entry, "./"), "/")
+	if e == file || strings.HasPrefix(file, e+"/") {
+		return true
+	}
+	for _, tree := range []string{"/**", "/..."} {
+		if dir, ok := strings.CutSuffix(e, tree); ok && strings.HasPrefix(file, dir+"/") {
+			return true
+		}
+	}
+	ok, _ := path.Match(e, file)
+	return ok
+}
+
+// tlaMergeKeepRE is a command that merges runs onto the kept records: tlacheck merge
+// with --keep (/tmp/tlacheck merge --root . --keep tla/RUNS.tsv, tla/README.md).
+var tlaMergeKeepRE = regexp.MustCompile(`\btlacheck\s+merge\b[^\n]*\s--keep\b`)
+
+// stepsMergeRecords says some STEP of the brief names tlacheck merge --keep: a STEP is
+// a line that begins STEP and the lines under it up to the next blank line.
+func stepsMergeRecords(brief string) bool {
+	in := false
+	for _, line := range strings.Split(brief, "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(t, "STEP"):
+			in = true
+		case t == "":
+			in = false
+		}
+		if in && tlaMergeKeepRE.MatchString(t) {
+			return true
+		}
+	}
+	return false
 }
 
 // uniquify keeps the first of each id, in order: a need named by a brief and
