@@ -1076,6 +1076,7 @@ nova-sprint repair
 nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
+nova-sprint view seat [--dashboard <address:port | http(s) URL>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
 nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
@@ -1162,6 +1163,19 @@ a friend's row (working, then ready) with its packet and its `BRIEF.md` as frien
 it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
 her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
 "Role views".
+
+`nova-sprint view seat [--json]` is the coordinator's whole model, read before every decision:
+one GET of the dashboard's `/api/sprint?release=all` (`--dashboard`, else
+`$NOVA_SPRINT_DASHBOARD`, else `127.0.0.1:7390`) and nothing else, so it and the page never
+disagree. It carries `fetchedAt`, every friend's and machine's row, the live streams' column
+counts, the judgments on the dealt cards by kind, the ready pool, the gates and the five
+things most out of place, each with its command (`out`, `nout`). A snapshot older than 30 s,
+or a dashboard that does not answer, is refused (exit 2) naming the dashboard:
+
+```sh
+nova-sprint view seat --json
+nova-sprint view seat --dashboard http://<tailnet address>:7390
+```
 
 ### A worker's own view: the dashboard's pull routes
 
