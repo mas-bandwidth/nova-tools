@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -19,14 +18,17 @@ import (
 // types a line into the idle pane, and the line arrives (docs/SPEC-FRIEND.md,
 // "Hosted in tmux"). Skipped, with the reason, when tmux is not installed.
 func TestTmuxHostedCatReceivesTheTypedLine(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed here: " + err.Error())
+	t.Parallel()
+	if _, exit, err := RealExec(context.Background(), t.TempDir(), "tmux", []string{"-V"}, ""); err != nil || exit != 0 {
+		t.Skipf("tmux does not run here: exit=%d err=%v", exit, err)
 	}
 	name := fmt.Sprintf("fn%d", os.Getpid())
 	dir := t.TempDir()
 	_, err := Host(context.Background(), RealExec, HostSpec{Name: name, Dir: dir, Command: []string{"sh", "-c", "printf '> '; cat"}})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", TmuxSession(name)).Run() }) // the session this test started
+	t.Cleanup(func() { // the session this test started, and no other
+		_, _, _ = RealExec(context.Background(), dir, "tmux", []string{"kill-session", "-t", TmuxSession(name)}, "")
+	})
 
 	d := &Tmux{Dir: dir, Session: TmuxSession(name), Prompt: PromptPattern(`^>\s*$`), Run: RealExec}
 	require.Eventually(t, func() bool {
