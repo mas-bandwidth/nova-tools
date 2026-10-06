@@ -203,6 +203,9 @@ type Daemon struct {
 	// error, an empty name or a nil Seat is the seat unknown, and while it is
 	// unknown no message is delivered as an instruction (BatchFor).
 	Seat func(ctx context.Context) (string, error)
+	// Version is this daemon's build stamp and Binary its path, written into
+	// every status (Status.DaemonVersion, Status.Binary).
+	Version, Binary string
 
 	m           *Machine
 	status      Status
@@ -407,7 +410,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width, DaemonVersion: d.Version, Binary: d.Binary}
 	if !l.passive {
 		d.status.Session = SessionOK
 	}

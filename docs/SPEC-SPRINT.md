@@ -4635,6 +4635,21 @@ Each line has the format `MACHINERY <thing> OK|DOWN <facts> [remedy="<command>"]
 A summary line `MACHINERY OK n=<total>` or `MACHINERY DOWN n=<down> of=<total>` concludes the output.
 `--json` prints one JSON object with `at`, `lines`, `down`, `exit_code`, and `measures`.
 
+#### daemon-supervised-r-b.w3: each friend daemon's version and last beat (owed)
+
+Each friend's daemon writes its version into its own status file and
+`nova-friend status --all` lists every agent installed on a login with its
+version and last beat (docs/SPEC-FRIEND.md, daemon-supervised-r-b.w3). Owed, and
+held for a card whose paths reach them: `nova-sprint friend beat <friend>
+--daemon-version <v>`, carried where `--json`'s friends carry `--load`, needs a
+field in `internal/sprint/presence.go`, the beat record in
+`internal/sprint/store/friends.go` and the served beat's flags in
+`cmd/nova-sprint/serve.go`; the seat check's per-friend daemon version,
+last beat age, and one ALARM line per friend whose version differs from the
+newest any friend beats or whose last beat is older than the beat's down bound
+need the friends measure in `cmd/nova-sprint/machinery.go` and
+`internal/sprint/seat_check.go`.
+
 ### The seat's store login
 
 (the owner, 2026-10-05: "We need to get away from these one shot shell scripts"; card
