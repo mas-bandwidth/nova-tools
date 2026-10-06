@@ -169,3 +169,6 @@ cmd/nova-swarm/slow_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t
 cmd/nova-swarm/slow_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
 cmd/nova-swarm/slow_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
 cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv
+cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly serial: t.Setenv
+cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
+cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv
