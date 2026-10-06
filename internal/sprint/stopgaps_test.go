@@ -155,7 +155,7 @@ func TestEveryStopgapNamesItsVerbAndProof(t *testing.T) {
 			{"no verb", func(r *stopgapRow) { r.verb = "" }, "names no verb"},
 			{"no test", func(r *stopgapRow) { r.test = "" }, "names no test"},
 			{"landed, test not in the tree", func(r *stopgapRow) { r.test = "TestNoSuchTestAnywhere" }, "is not in the tree"},
-			{"a real run of a verb not landed", func(r *stopgapRow) { r.landed, r.run = "no", "2026-10-06 studio: did it" }, "has not landed"},
+			{"a real run of a verb not landed", func(r *stopgapRow) { r.landed, r.run = "no", "2026-10-06 the seat: did it" }, "has not landed"},
 		} {
 			r := good
 			c.edit(&r)
@@ -173,7 +173,7 @@ func TestEveryStopgapNamesItsVerbAndProof(t *testing.T) {
 	})
 }
 
-// The script a process runs, read off its argv as ps prints it on the Studio
+// The script a process runs, read off its argv as ps prints it on the seat's machine
 // (2026-10-06 07:58).
 func TestStopgapScriptIsTheProgramOrTheInterpretersScript(t *testing.T) {
 	t.Parallel()
