@@ -416,6 +416,10 @@ inside the write set (the tmp and the cwd are required to be), and so is every
 other `--write` the caller named: a data home, a cache, a config directory.
 `Policy.DeletesIn` is true for a path inside any `--write` and false outside them.
 A directory that is not a `--write` still cannot be written or deleted.
+The `SANDBOX OK` line names the roots deletes are allowed in on `deletes=`, read
+off `Policy.DeleteRoots` (the `--write` roots for which `DeletesIn` is true, in the
+order given), so a log says where an unlink was allowed and not only how many roots
+were written.
 
 - **Linux.** Every `--write` gets the whole write mask, including `REMOVE_FILE`
   and `REMOVE_DIR` (`writeRuleMask`). Landlock checks a remove right on the parent
@@ -430,6 +434,11 @@ A directory that is not a `--write` still cannot be written or deleted.
   `TestASqliteCommitInTheDataHomeUnlinksItsJournal`, linux: a database opened in
   the data home commits a transaction and the rollback journal is gone.
   `TestDeletesInEveryWriteRoot` is the same answer with no wall.
+  `TestTheWallsLineNamesTheRootsDeletesAreAllowedIn`, linux: the fleet's
+  member wall (job dir as cwd, data home as HOME, tmp, cache) through the real
+  tool removes a file created in `$HOME/opencode`, and `deletes=` names all four
+  roots in order; `TestTheDeletesFieldNamesEveryWriteRoot` pins the field's
+  rendering.
   `TestTheWallRefusesDeletesOutsideTheJob`, linux: a directory that is not a
   `--write` still refuses `rm -rf`, `rm` and `mv`, and the files stay.
   `TestAStepsGitCommitInsideItsWallSucceeds`, linux: a step's wall lets `git
@@ -1184,7 +1193,7 @@ which go to stdout; under `--json` the one object is all a verb prints, on
 stdout. A wrapped command's stdout is its own and the tool writes nothing there.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
+SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal> deletes=<dir[,dir...]|->
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|no_name|no_container|no_command|bad_flag|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
@@ -1233,6 +1242,12 @@ task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
 path holds a blank reaches a reader escaped; a consumer that compares it with a
 path it holds decodes that field first.
+
+**`deletes=` names the roots a delete is allowed in**: every `--write` root the
+wall carries the remove rights on (`Policy.DeleteRoots`), in the order given, each
+rendered through `oneline.Field` and joined by `,`, with a `,` inside a path
+escaped as `\x2c` so the list splits back into its roots; `-` when there are none
+("deletes-in-every-write-root").
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
 the working directory through `oneline.Field`, for the operator;

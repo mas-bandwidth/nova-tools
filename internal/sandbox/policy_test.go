@@ -705,4 +705,6 @@ func TestDeletesInEveryWriteRoot(t *testing.T) {
 	assert.False(t, p.DeletesIn(outside), "a path outside every --write")
 	assert.False(t, p.DeletesIn(""), "an empty path")
 	assert.False(t, (&Policy{}).DeletesIn(job), "a policy with no --write")
+	assert.Equal(t, []string{job, data, cache}, p.DeleteRoots(), "the roots SANDBOX OK names on deletes=")
+	assert.Empty(t, (&Policy{}).DeleteRoots())
 }

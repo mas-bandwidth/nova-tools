@@ -430,6 +430,23 @@ func (p *Policy) DeletesIn(dir string) bool {
 	return insideAny(dir, p.Writes)
 }
 
+// DeleteRoots is the --write roots the wall lets the command delete beneath, in the order
+// they were given: the set the SANDBOX OK line names on deletes= (docs/SPEC-SANDBOX.md,
+// "deletes-in-every-write-root"). It is read off DeletesIn, so the line says what the
+// rule grants and not what a second list believes it grants.
+func (p *Policy) DeleteRoots() []string {
+	if p == nil {
+		return nil
+	}
+	roots := make([]string, 0, len(p.Writes))
+	for _, w := range p.Writes {
+		if p.DeletesIn(w) {
+			roots = append(roots, w)
+		}
+	}
+	return roots
+}
+
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
 // literals of the darwin profile put a path INTO the profile text (the -D parameters do
 // not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a

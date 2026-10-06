@@ -1363,7 +1363,7 @@ branch `main` at `/path/to/pool/jobs/j1/repo`; `! ` marks standard error:
 $ HOME=/path/to/pool/jobs/j1/home \
   nova-sandbox --read /opt/homebrew --write /path/to/pool/jobs/j1 \
                -- /opt/homebrew/bin/git -C /path/to/pool/jobs/j1/repo status
-! SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=git gpu=none
+! SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=git gpu=none deletes=/path/to/pool/jobs/j1
 On branch main
 
 No commits yet

@@ -530,9 +530,11 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		// read= and read-noexec= are TWO counts because they are two grants: a --read
 		// root carries EXECUTE and a --read-noexec root does not, so a log that folded
 		// them into one number could not say what a run was allowed to run.
-		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d read-noexec=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s\n",
+		// deletes= names the --write roots the wall lets the command delete beneath, so a
+		// log says where an unlink was allowed and not only how many roots were written.
+		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d read-noexec=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s deletes=%s\n",
 			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), used, len(p.Reads), len(p.ReadsNoExec), len(p.Writes),
-			oneline.Field(p.Net()), oneline.Field(p.Cwd), base64.RawURLEncoding.EncodeToString([]byte(p.Cwd)), p.AncestorCount(), oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
+			oneline.Field(p.Net()), oneline.Field(p.Cwd), base64.RawURLEncoding.EncodeToString([]byte(p.Cwd)), p.AncestorCount(), oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)), deletesField(p))
 		if flusher, ok := stderr.(interface{ Sync() error }); ok {
 			// ignored: a flush of stderr before the exec; a stream that cannot sync has nothing to lose that a later write would not also lose
 			_ = flusher.Sync()
