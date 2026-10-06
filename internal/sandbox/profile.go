@@ -3,6 +3,7 @@ package sandbox
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -88,6 +89,16 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		// denied — which (allow network*) would not have been.
 		writes = append(writes, fmt.Sprintf("(allow network-outbound (subpath (param %q)))", name))
 		params = append(params, name+"="+w)
+	}
+	// The caller's own spelling of a granted path, and each symlink component of it, is
+	// granted as a literal on the LINK, as the template does for /etc /tmp /var
+	// (docs/SPEC-SANDBOX.md rule 5; security#67 finding 1). A literal reads the link and
+	// lists nothing: the contents stay behind the READn/WRITEn grants.
+	for _, l := range linkLiterals(p.LinkSpellings) {
+		if bad := badPathText(l); bad != "" {
+			return "", nil, fmt.Errorf("link spelling %s %s", l, bad)
+		}
+		reads = append(reads, fmt.Sprintf("(allow file-read* (literal %q))", l))
 	}
 	// The template names (param "HOME") unconditionally, so HOME is always passed. Build
 	// has already refused a HOME outside every --write, so this grants nothing
@@ -316,4 +327,25 @@ func resolved(path string) string {
 		return got
 	}
 	return path
+}
+
+// linkLiterals is each spelling and every symlink among its proper ancestors, once and in
+// order (docs/SPEC-SANDBOX.md rule 5). A spelling that differs from its resolved path is a
+// link or goes through one, so the spelling itself is always granted.
+func linkLiterals(spellings []string) []string {
+	var out []string
+	add := func(l string) {
+		if !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	for _, s := range spellings {
+		for d := filepath.Dir(s); d != s && filepath.Dir(d) != d; d = filepath.Dir(d) {
+			if fi, err := os.Lstat(d); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+				add(d)
+			}
+		}
+		add(s)
+	}
+	return out
 }
