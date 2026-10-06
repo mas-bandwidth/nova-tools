@@ -253,10 +253,14 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	return nil, fmt.Errorf("%q is no harness; the harnesses are %s", harness, strings.Join(Harnesses, ", "))
 }
 
-// OpenCode delivers through `opencode run --session <id> --dir <dir> <text>`,
-// which blocks for the whole turn; without a session named, the newest
-// session whose directory is Dir, from `opencode session list --format json`,
-// so a friend who starts a fresh session is still reached.
+// OpenCode delivers through `opencode run --session <id> <text>` run with Dir
+// as its working directory (the process's, never a flag: opencode v2.0.20's
+// run has no --dir, and every delivery that passed one exited 1, "Unrecognized
+// flag: --dir", 2026-10-06), which blocks for the whole turn; without a
+// session named, the newest session whose directory is Dir, from `opencode
+// session list --format json`, so a friend who starts a fresh session is still
+// reached. CheckRun, at the daemon's start, refuses an opencode whose run
+// lacks a flag the adapter passes.
 type OpenCode struct {
 	Dir, Session string
 	Run          Exec
@@ -267,6 +271,8 @@ type OpenCode struct {
 	// the project config before a turn (AllowDirs), so a headless run never
 	// auto-rejects a tool call there. Nil: the config is left alone.
 	Allow []string
+
+	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
 
 func (o *OpenCode) program() string {
@@ -319,11 +325,61 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return refused(id, out, exit, err)
+	exit, err = refused(id, out, exit, err)
+	o.turns.saw(id, exit, err)
+	return exit, err
+}
+
+// OpenCodeRunFlags are the flags of `opencode run` the adapter passes: the
+// session of a turn, and the model of a read. The directory is never one: it
+// is the process's working directory.
+var OpenCodeRunFlags = []string{"--session", "--model"}
+
+// optionFlag is a flag as a help text lists it: two dashes, a letter, then
+// letters, digits and dashes.
+var optionFlag = regexp.MustCompile(`--[a-z][a-z0-9-]*`)
+
+// CheckRun reads the installed opencode once, at the daemon's start: its
+// version (`opencode --version`) and its run verb's flags (`opencode run
+// --help`), and is a one-line refusal naming the version when the help lacks
+// a flag the adapter passes (OpenCodeRunFlags), so the next change of the CLI
+// is a named refusal and not a silent exit 1 on every delivery (the finding
+// of 2026-10-06: --dir, gone from run in v2.0.20). A help that lists no flag
+// at all, or that cannot be read, cannot tell, and is nil: the deliveries say
+// what they meet.
+func (o *OpenCode) CheckRun(ctx context.Context) error {
+	if o.Run == nil {
+		return nil
+	}
+	version := "(version unknown)"
+	if out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"--version"}, ""); err == nil && exit == 0 && strings.TrimSpace(out) != "" {
+		version = strings.Fields(out)[0]
+	}
+	help, _, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--help"}, "")
+	if err != nil {
+		return nil
+	}
+	listed := map[string]bool{}
+	for _, f := range optionFlag.FindAllString(help, -1) {
+		listed[f] = true
+	}
+	if len(listed) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, f := range OpenCodeRunFlags {
+		if !listed[f] {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("opencode %s: its run verb has no %s (opencode run --help), which the adapter passes; no delivery can run until opencode takes it", version, strings.Join(missing, ", no "))
 }
 
 // Head is the first n bytes of s, with a note when it was cut.

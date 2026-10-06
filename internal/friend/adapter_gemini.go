@@ -22,6 +22,8 @@ type Gemini struct {
 	Run          Exec
 	Program      string    // "gemini" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+
+	turns SessionTurns // the session's last turns, its liveness (alive.go)
 }
 
 // GeminiArgs is the argument list of one delivery: the frame, apart from the
@@ -42,5 +44,8 @@ func (g *Gemini) Deliver(ctx context.Context, text string) (int, error) {
 	if g.Out != nil && out != "" {
 		fmt.Fprintln(g.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	return refused(GeminiArgs(g.Session, "")[2], out, exit, err)
+	session := GeminiArgs(g.Session, "")[2]
+	exit, err = refused(session, out, exit, err)
+	g.turns.saw(session, exit, err)
+	return exit, err
 }

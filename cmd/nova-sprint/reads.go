@@ -334,7 +334,12 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		if *as != "" {
 			out["reader"] = isReader // --as is a row of the readers table
 		}
-		b, _ := json.Marshal(out)
+		b, err := json.Marshal(out)
+		if err != nil {
+			// never an empty line at exit 0: a queue that cannot be written as JSON is said
+			fmt.Fprintf(stderr, "%s queue: the answer could not be written as JSON (%d cards): %s\n", prog, len(cards), oneline.Escape(err.Error()))
+			return 1
+		}
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}

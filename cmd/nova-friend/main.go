@@ -919,6 +919,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(0)
 	}
 	if oc, ok := deliver.(*friend.OpenCode); ok {
+		// the installed opencode, read once: a run verb lacking a flag the adapter passes is a
+		// refusal naming the version, never an exit 1 on every delivery (the finding of 2026-10-06)
+		// (through the wall, outside the limit watch: a read of the CLI is no turn)
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := (&friend.OpenCode{Dir: oc.Dir, Program: oc.Program, Run: walled}).CheckRun(cctx)
+		ccancel()
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
 		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {

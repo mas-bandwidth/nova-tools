@@ -14,23 +14,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// dshOnMac is the DSH adapter's own app check (appAlive, as DSH.Alive runs
-// it) read as macOS reads it, over a fake process table, so the test is the
-// same on any bench.
+// dshOnMac is an app check of the DeepSeek Harness app (appAlive, as DSH.Alive
+// ran it before 2026-10-06; it now reads the session's turns) read as macOS
+// reads it, over a fake process table, so the test is the same on any bench:
+// what an app check says is advisory either way.
 type dshOnMac struct {
 	ps  *processTable
 	dir string
 }
 
 func (a dshOnMac) Alive(ctx context.Context) Liveness {
-	return appAlive(ctx, a.ps.run, a.dir, "darwin", "zhi", "DeepSeek Harness", DSHApp)
+	return appAlive(ctx, a.ps.run, a.dir, "darwin", "zhi", dshDesktop)
 }
+
+// dshDesktop is the DeepSeek Harness desktop app.
+var dshDesktop = App{Bundle: "/Applications/DeepSeek Harness.app", Name: "DeepSeek Harness"}
 
 // The process tables of the finding of 2026-10-05: zhi's session run from the
 // dsh command line with no app, and the app open with nothing answering.
 const (
 	headlessDSH = "zhi 4242 /usr/local/bin/dsh --headless --dir /w/zhi\n"
-	dshAppOpen  = "zhi 777 " + DSHApp + "\n"
+	dshAppOpen  = "zhi 777 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness\n"
 )
 
 // livenessRig is zhi's daemon as nova-friend run wires it: the harness watch
@@ -136,7 +140,7 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 		r.mu.Lock()
 		records := strings.Join(r.records, "\n")
 		r.mu.Unlock()
-		assert.Contains(t, records, "harness: not seen: the DeepSeek Harness app is not running", "said once, on the record")
+		assert.Contains(t, records, "harness: not seen: alive=app the DeepSeek Harness app is not running", "said once, on the record")
 		assert.Equal(t, 1, strings.Count(records, "harness: not seen"), "said when it changes, not every check")
 		assert.NotContains(t, records, "down: harness not running")
 	})

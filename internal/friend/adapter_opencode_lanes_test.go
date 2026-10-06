@@ -80,7 +80,7 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 	id, err := o.OpenSession(context.Background(), "You are bob.")
 	require.NoError(t, err)
 	assert.Equal(t, "new", id, "the session the listing gained, not the newest")
-	assert.Equal(t, []string{dir, "opencode", "run", "--dir", dir, "You are bob."}, calls[1], "a run with no --session opens one")
+	assert.Equal(t, []string{dir, "opencode", "run", "You are bob."}, calls[1], "a run with no --session opens one")
 	raw, err := os.ReadFile(filepath.Join(dir, OpenCodeConfig))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"/Users/x/bob-working/**": "allow"`)
@@ -88,7 +88,7 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 
 	lt, err := o.DeliverTo(context.Background(), "new", "one card this turn, card c1")
 	require.NoError(t, err)
-	assert.Equal(t, []string{dir, "opencode", "run", "--session", "new", "--dir", dir, "one card this turn, card c1"}, calls[len(calls)-1])
+	assert.Equal(t, []string{dir, "opencode", "run", "--session", "new", "one card this turn, card c1"}, calls[len(calls)-1])
 	assert.Equal(t, "**Blocked:** Permission to read `/Users/x/bob-working/jobs` was rejected", lt.Rejected)
 	lt, err = o.DeliverTo(context.Background(), "new", "another")
 	require.NoError(t, err)
@@ -118,10 +118,10 @@ func TestOpenCodeRunsAReadAsOneShotWithTheTiersModel(t *testing.T) {
 	lt, err := o.RunRead(context.Background(), "prov/m", "do the read")
 	require.NoError(t, err)
 	assert.Zero(t, lt.Exit)
-	assert.Equal(t, [][]string{{dir, "opencode", "run", "--dir", dir, "--model", "prov/m", "do the read"}}, calls)
+	assert.Equal(t, [][]string{{dir, "opencode", "run", "--model", "prov/m", "do the read"}}, calls)
 	_, err = o.RunRead(context.Background(), "", "again")
 	require.NoError(t, err)
-	assert.Equal(t, []string{dir, "opencode", "run", "--dir", dir, "again"}, calls[1])
+	assert.Equal(t, []string{dir, "opencode", "run", "again"}, calls[1])
 }
 
 // An OpenCode API friend's lanes are priced from opencode's own session record

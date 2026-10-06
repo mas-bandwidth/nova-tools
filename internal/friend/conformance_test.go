@@ -93,8 +93,8 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 			if args[0] == "session" {
 				return fmt.Sprintf(`[{"id":"ses_1","directory":%q,"updated":5}]`, dir), 0, nil
 			}
-			require.Equal(t, []string{"run", "--session", "ses_1", "--dir", dir}, args[:5])
-			s.act(args[5])
+			require.Equal(t, []string{"run", "--session", "ses_1"}, args[:3])
+			s.act(args[3])
 			return "done\n", 0, nil
 		})}
 	},

@@ -166,7 +166,11 @@ Presence is therefore the session's, never the daemon's:
   latest nonce, late or not, brings the friend back up, and so does any other
   message the session writes on the bus (`presence: up: the session wrote on
   the bus`): a session that speaks is alive, whatever process is or is not
-  running (the finding of 2026-10-05).
+  running (the finding of 2026-10-05). A headless friend needs no window: a
+  session run from its command line (`dsh headless`, `codex exec`, `opencode
+  run`, `gemini --resume`) is present on its answers as one in an app is, and
+  the harness check reads it by its own turns, never by an app (The harness
+  check, below).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
   once: coming up proves nothing about the session.
 - While down, no beat goes to the sprint server: her beat never makes her up
@@ -514,21 +518,44 @@ report and in why she is down.
 
 ### The harness check (internal/friend/alive.go)
 
-Presence is the session's check (above); this one says what the process
-table shows, for a person reading the status, and decides nothing. Every
-adapter answers `Alive`,
-from the cheapest true signal it has, the process table (`ps -axww -o
-user=,pid=,args=`, through the adapter's own runner, no shell): Codex, the
-ChatGPT app (`/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`);
-Antigravity, its app; DSH, the DeepSeek Harness app; each its main
-executable, matched whole, of the daemon's user, never a helper. Grok, a
-window (the TUI process) open in the friend's directory: a pid of
-`active_sessions.json` with that cwd, alive in `ps -axww -o pid=,ppid=,args=`.
-OpenCode, batch and lanes, and Gemini run no standing process (every turn
-starts the runner afresh), so a runner that cannot be found is not running
-and a runner that is found cannot tell. An adapter that cannot tell says so
-(a stub; a desktop app off macOS; a listing that cannot be read), the record
-says it once, and its friend relies on the session check alone.
+Presence is the session's check (above); this one says whether the harness
+is alive, for a person reading the status, and decides nothing. Every
+adapter answers `Alive`, from the cheapest true signal it has, and says the
+rule it read it by (`alive=session|app`):
+
+- A harness with a headless program is alive on its session's word
+  (`alive=session`): the last delivery or session check into the named
+  session ended exit 0 within `AliveWithin` (`SessionQuiet` plus
+  `SessionBound`, fifteen minutes: a quiet session is sent a check every
+  quiet spell). The adapter keeps its own last turn (`SessionTurns`: when it
+  ended, into which session, its exit), on the daemon's clock; a turn that
+  failed, or a session that refused it, is not alive; a deferred turn ran
+  nothing and moves nothing; before the first turn it cannot tell. DSH
+  (`dsh headless --session-id`), Codex (`codex exec resume`, `codex queue`),
+  OpenCode (a batch turn, a lane's open and its turns) and Gemini
+  (`gemini --resume`) read so, and no desktop app is read for them: a
+  headless friend needs no window. OpenCode and Gemini, before their first
+  turn, are not running when the runner cannot be found on the path. The
+  finding of 2026-10-06: zhi's deliveries through `dsh headless` into her
+  session answered (a fresh session in 4 s) while the DeepSeek Harness app
+  was closed, and the app check said "harness not running".
+  `TestAHeadlessFriendIsAliveWithNoAppProcess`.
+- A harness with no headless route, Antigravity today, is read by its app in
+  the process table (`alive=app`; `ps -axww -o user=,pid=,args=`, through the
+  adapter's own runner, no shell), of the daemon's user: a process whose
+  command line starts inside the app's bundle and names an executable called
+  the app's name whose path, cleaned, is the bundle's
+  `Contents/MacOS/<name>`. So a launch through another spelling of the path
+  (`Contents/Resources/../MacOS/<name>`, which the literal match read as not
+  running for a whole morning on 2026-10-06) is the app, and a helper or a
+  longer name is not (`TestAnAppLaunchedThroughAnotherSpellingOfItsPathIsRunning`).
+- Grok, a window (the TUI process) open in the friend's directory: a pid of
+  `active_sessions.json` with that cwd, alive in `ps -axww -o pid=,ppid=,args=`.
+  Tmux, the hosted tmux session. Claude, passive, cannot tell.
+
+An adapter that cannot tell says so (a stub; a desktop app off macOS; a
+listing that cannot be read; no turn yet), the record says it once, and its
+friend relies on the session check alone.
 
 `Alive` is its own interface, `Aliver`, beside the deliver adapter's, so it is
 optional by assertion: every adapter implements it
@@ -540,12 +567,14 @@ it (`SessionCheck.Gate`, `Limits.Gate`) answer no `Alive`
 wires it just before `d.Run`: `friend.WatchHarness(d, deliver)`
 (`TestRunKeepsTheHarnessWatchAdvisory`).
 
-`WatchHarness` puts the check beside the daemon's beat, advisory. Every
-thirty seconds (`AliveEvery`) it asks, keeps the answer on the daemon's
-status (`harness_seen`: `running`, `not-seen`, or empty when the adapter
-cannot tell), and says each change on the record once (`harness: running:`,
-`harness: not seen: ...; advisory: presence is the session's answer`,
-`harness check: cannot tell:`). It never holds the beat back and never makes
+`WatchHarness` puts the check beside the daemon's beat, advisory, and sets
+a headless adapter's `SessionTurns` on the daemon's clock. Every thirty
+seconds (`AliveEvery`) it asks, keeps the answer on the daemon's status
+(`harness_seen`: `running`, `not-seen`, or empty when the adapter cannot
+tell; `alive`: `session`, `app`, or empty for another signal), and says each
+change on the record once, with the rule (`harness: running: alive=session
+...`, `harness: not seen: alive=app ...; advisory: presence is the session's
+answer`, `harness check: cannot tell:`). It never holds the beat back and never makes
 the friend down: presence is the session's (Presence, above). A harness run
 from its command line (`dsh` headless, `codex exec`, `claude -p`) is a session
 like one in an app, and shows no app in the process table; an app that runs
@@ -553,7 +582,8 @@ answers no check. The finding of 2026-10-05: zhi ran from the `dsh` command
 line, answered every session check with a pong for three hours, and read
 down, because the check looked for the DeepSeek Harness app and "harness not
 running" held her beat back; the coordinator started the app hidden to get
-her up. Tested on a twin store, `TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess`
+her up. Since 2026-10-06 the check for `dsh` reads her session's turns, not
+the app. Tested on a twin store, `TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess`
 (no app, the session pongs: up, every beat out, for three hours; the app
 open, the session silent: down) and over a fake process table,
 `TestAClosedHarnessIsSaidAndNeverHoldsTheBeat`.
@@ -571,8 +601,16 @@ own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
 2026-10-04); a stopped turn's whole process group is signalled, SIGTERM then
 SIGKILL, so a harness that forks leaves no orphan.
-Six adapters are real: OpenCode, `opencode run --session <id> --dir <dir>
-<text>`, the newest session of the directory when none is named; Codex,
+Six adapters are real: OpenCode, `opencode run --session <id> <text>` with
+the friend's directory as the process's working directory, the newest session
+of the directory when none is named (the directory is never a flag: opencode
+v2.0.20's run has no `--dir`, and from 2026-10-06 02:02Z every delivery that
+passed one exited 1, "Unrecognized flag: --dir"; the daemon reads `opencode
+--version` and `opencode run --help` once at start and refuses, one line naming
+the version, when the run verb lacks a flag the adapter passes, `--session` or
+`--model`, `OpenCode.CheckRun`; a help that lists no flag cannot tell and
+refuses nothing; `TestOpenCodeDeliverRunsInTheDirWithoutADirFlag`,
+`TestOpenCodeCheckRunRefusesARunLackingAFlagItPasses`); Codex,
 Antigravity and Grok, each below; and DSH and Gemini, from the harness survey
 at the end. A turn while a challenge is open carries, at its head, the exact `pong` line for
 this friend (the binary by path, the name, the directory, the store, the
@@ -1155,8 +1193,8 @@ every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
 late), so the late rule never returns a printing card for want of a stamp.
 
 Only a harness that can open a session and deliver into a named one has
-lanes (`LaneHarness`; OpenCode today: `opencode run --dir <dir> <seed>` with no
-`--session` opens one, found as the session the listing of the directory
+lanes (`LaneHarness`; OpenCode today: `opencode run <seed>`, run in the
+friend's directory, with no `--session` opens one, found as the session the listing of the directory
 gained, and `opencode run --session <id>` takes each card), or a harness
 that runs each card as a process of its own (`CardRunner`; Claude). On any
 other harness a one-shot row is delivered in batch, said once in the record.
@@ -1686,7 +1724,7 @@ friend's reader row, `reader-<friend>`, the work the hand-written `reader.zsh` l
   Linux bench, the bench rule, RESULT.md in the shape `head/branch/verdict/gate/report/## Body`),
   and the read runs as a one-shot of her harness inside the lane wall (`ReadHarness.RunRead`: a
   new session whose only turn is the read prompt, on the model of the read's tier; opencode's is
-  `opencode run --dir <d> [--model <m>] <prompt>` with no session listing, so reads never queue
+  `opencode run [--model <m>] <prompt>` in her directory with no session listing, so reads never queue
   behind lane opens; a harness without it opens the prompt as a lane session). A claude
   account's model per tier is `ReadModels` (frontier claude-fable-5-1, heavy claude-opus-5-5,
   pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001).
