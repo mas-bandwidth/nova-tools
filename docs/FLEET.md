@@ -127,6 +127,15 @@ nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPR
 It exits 3 when a new build is installed under it, and its unit starts the new one;
 `curl -s 127.0.0.1:7390/healthz` prints `ok`.
 
+The public page is served from files on one fleet machine: Caddy's `file_server`
+serves `/var/www/sprint/site` with no reverse proxy, and one puller refreshes those files
+from the dashboard server about once a second, so the number of viewers never reaches that
+server. Whether the page holds a front-page load (2,000 requests per second for ten minutes
+from a distant bench machine, p99 under 200 ms, zero errors, the dashboard server seeing
+only the puller) is v1.0.0's acceptance record
+[acceptance/v1.0.0/public-dashboard-load.md](acceptance/v1.0.0/public-dashboard-load.md),
+with the raw numbers.
+
 A friend's working directory, how her jobs arrive and are reported, and how
 their clones are removed once done, is docs/FRIENDS.md. The friends are
 nova-config's friend rows: `nova-sprint friend sync --actor ada`
