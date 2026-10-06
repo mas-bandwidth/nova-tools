@@ -370,6 +370,10 @@ type Snapshot struct {
 	// Friends is each friend the deal may give a friend's card to, or whose delivery
 	// mode is consulted by friendNext (FriendSeat); nil is none.
 	Friends []FriendSeat
+	// Disks is each machine's and friend's fresh volume reading, by name, from the beats
+	// the binding read with the snapshot (DisksOf; disk.go): the watermark's judgment and
+	// the hold of new lanes read it. nil is none read, and no volume is full.
+	Disks map[string]Disk
 	// Running says the machine was RUNNING as the step read the sprint: its
 	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").

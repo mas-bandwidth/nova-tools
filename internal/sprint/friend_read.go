@@ -347,7 +347,7 @@ func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits [
 	free, lanes := map[string]int{}, map[string]int{}
 	var up []FriendSeat
 	for _, f := range seats {
-		if f.Status != Up {
+		if f.Status != Up || s.DiskFull(f.Name) != "" { // no new read on a full volume (disk.go)
 			continue
 		}
 		room, width := friendRoom(f)

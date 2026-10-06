@@ -335,6 +335,15 @@ harness exposes the session's own turn events, they would be a second source; no
 yet, so a session that works without writing a file (a long read, a long think) looks idle
 after the setting, and the alarm says "written nothing", not "stuck".
 
+Every beat also carries the volume her working directory lives on, `friend beat <friend>
+--disk <json>` (`sprint.Disk`; docs/SPEC-SPRINT.md section 8, "Disk watermark"): the daemon
+keeps a `sprint.DiskMeter` on her directory, reads the volume's size, free bytes and inodes
+with one statfs a beat, and walks the AI root (`NOVA_AI_ROOT`, else her directory) for its
+largest directories at most every 10 minutes, at most 200000 entries a walk. A volume whose
+figures cannot be read sends no `--disk`. Above the sprint's `disk_alarm` the tick raises one
+judgment of the volume; above its `disk_hold` she is dealt and asked no new card until it
+clears.
+
 No clock bounds a batch turn: a turn that prints keeps running however long it
 takes (a one-shot lane's card is bounded by its tier's wall cap, below:
 a-lane-is-capped-by-its-tier.w1). A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
@@ -1334,7 +1343,7 @@ and the daemon's wiring in
 
 Not here, owed: (1) cost and utilization on her beat and row: the sprint
 server's `friend beat` accepts only `--running --working --queue --width
---load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+--load --active --pong --until --reason --disk` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
 refuses any other flag, so a cost or a utilization flag sent from here would
 fail every beat; until the server takes them they are on the daemon's record
 only. (2) No live `claude` or `opencode` run checks these shapes: the tests use

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -128,6 +129,7 @@ type beatReport struct {
 	How    string          `json:"how"`
 	Cores  int             `json:"cores"`
 	Files  *hostload.Files `json:"files,omitempty"`
+	Disk   *sprint.Disk    `json:"disk,omitempty"`
 }
 
 // fdBound is one of fleet beat's open-files bounds: the flag's count when given, else the
@@ -155,6 +157,8 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	load := fs.String("load", "", "the load as a percent of all the machine's cores, instead of measuring it (a test's, or another meter's)")
 	cores := fs.Int("cores", 0, "the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half")
 	fdWarn := fs.Int("fd-warn", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else %d)", hostload.FilesWarnDefault))
+	disk := fs.String("disk", "", "the volume the member's working directory lives on, as its member measured it (JSON, as friend beat --disk takes it), instead of measuring this machine's: above the disk alarm the tick raises a judgment of the volume, above the hold no new lane starts on the member")
+	diskDir := fs.String("disk-dir", "", "the directory whose volume the beat measures (default: this process's working directory); its AI root, scanned for the largest directories, is "+sprint.EnvAIRoot+" or else this directory")
 	fdAlarm := fs.Int("fd-alarm", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else %d)", hostload.FilesAlarmDefault))
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -205,12 +209,23 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		v := *given
 		src.Given = func() (float64, bool) { return v, true }
 	}
+	var vol *sprint.Disk
+	switch {
+	case *disk != "":
+		if vol, err = sprint.ParseDisk(*disk); err != nil {
+			return refuse(stderr, "fleet beat", err.Error())
+		}
+	case !a.serving:
+		// this machine's volume (a served beat names a remote member, whose own member
+		// measures it and names it with --disk)
+		vol = a.measureDisk(*diskDir)
+	}
 	c.orActor(pos[0])
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
 	}
-	b, err := st.Beat(context.Background(), pos[0], nil, src)
+	b, err := st.BeatDisk(context.Background(), pos[0], nil, src, vol)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -221,7 +236,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	}
 	files := b.Meter.Files
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, Disk: b.Disk})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
@@ -239,4 +254,41 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// measureDisk is this machine's volume under dir (the working directory when empty) for one
+// fleet beat, nil when it cannot be read. One beat is one process, so the AI root's largest
+// directories are scanned only while the volume is above the default alarm, and within a
+// tenth of the scan's bound: a member keeps a meter across its beats and names its reading
+// with --disk (member.Config.Disk).
+func (a *app) measureDisk(dir string) *sprint.Disk {
+	if dir == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil
+		}
+		dir = wd
+	}
+	stat := a.diskStat
+	if stat == nil {
+		stat = sprint.StatVolume
+	}
+	st, err := stat(dir)
+	if err != nil {
+		return nil
+	}
+	root := strings.TrimSpace(a.getenv(sprint.EnvAIRoot))
+	if root == "" {
+		root = dir
+	}
+	m := &sprint.DiskMeter{Dir: dir, Root: root, Bound: sprint.DiskScanBound / 10,
+		Stat: func(string) (sprint.DiskStat, error) { return st, nil }}
+	if (sprint.Disk{Size: st.Size, Free: st.Free, Inodes: st.Inodes, InodesFree: st.InodesFree}).Used() <= sprint.DiskAlarmDefault {
+		m.NoScan = true // under the alarm the figures are enough: no walk
+	}
+	d, err := m.Measure(a.now())
+	if err != nil {
+		return nil
+	}
+	return d
 }

@@ -162,9 +162,13 @@ func friendTiers(f FriendSeat) []string {
 // her (her fleet control card) says neither down nor held, and the stall ladder has not
 // marked her down (PropFriendStallDown: released only by her activity). On 2026-10-06 a
 // friend whose row read down, her lanes paused and her daemon beating, was dealt 18 cards
-// twice; a row that cannot work is filled by no deal.
+// twice; a row that cannot work is filled by no deal. A friend whose volume is above the
+// disk hold starts no new lane either (DiskFull, disk.go).
 func friendDealable(s *Snapshot, f FriendSeat) bool {
 	if f.Status != Up {
+		return false
+	}
+	if s != nil && s.DiskFull(f.Name) != "" {
 		return false
 	}
 	if s == nil || s.Fleet == nil {

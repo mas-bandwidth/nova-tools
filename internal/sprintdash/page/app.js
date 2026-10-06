@@ -381,7 +381,7 @@ function renderWall(d) {
   setText(quiet($("wall-sub")), "median per stage, cards landed in the last 24 h · " + wallSpan(total) + " in all");
 }
 
-function fleetLike(box, table, withLoad) {
+function fleetLike(box, table, withLoad, disks) {
   var names = Object.keys(table || {});
   var rank = { up: 0, held: 1, down: 2 };
   function rk(n) { var r = rank[table[n].status]; return r == null ? 3 : r; }
@@ -416,7 +416,10 @@ function fleetLike(box, table, withLoad) {
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
     setTrack(r.track, working, width, scale);
     // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)
-    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
+    // and the volume its working directory lives on, as its beat carries it (docs/SPEC-SPRINT.md, Disk watermark)
+    var disk = disks && typeof disks[k] === "string" ? disks[k] : "";
+    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : "") +
+      (disk ? "<span class=\"win disk\"> · disk " + escHTML(disk) + "</span>" : ""));
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
@@ -429,7 +432,7 @@ function fleetLike(box, table, withLoad) {
 }
 
 function renderFleet(d) {
-  var r = fleetLike($("fleet"), d.tables.fleet || {}, true);
+  var r = fleetLike($("fleet"), d.tables.fleet || {}, true, d.disks);
   setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down");
 }
 
@@ -446,7 +449,7 @@ function renderFriends(d) {
     return;
   }
   if (box._empty) { box.textContent = ""; box._empty = false; }
-  var r = fleetLike(box, table, false);
+  var r = fleetLike(box, table, false, d.disks);
   setText($("friends-sub"), r.n + " friends");
 }
 

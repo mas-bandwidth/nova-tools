@@ -525,6 +525,10 @@ type whereView struct {
 	// holder or a queue (lane list; docs/SPEC-SPRINT.md section 18); absent when none is, and
 	// without --cards. The text frame does not draw it.
 	Lanes []sprint.LaneRow `json:"lanes,omitempty"`
+	// Disks is where --json --cards's, read for the dashboard: each fleet member's and
+	// friend's volume as its beat carries it ("81% used, 120G free, 3.1M inodes free"), by
+	// name (docs/SPEC-SPRINT.md section 8, "Disk watermark"); absent when none carries one.
+	Disks map[string]string `json:"disks,omitempty"`
 	// Cards and Judgments are where --json --cards's, read for the dashboard's pull routes
 	// (store.Dealt): every work card dealt to a fleet row and not finished, and the open
 	// judgments naming one of their primaries; absent without --cards.
@@ -910,6 +914,9 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", a.readFailed("where", err, stderr), false
 			}
 			if v.Lanes, err = st.LaneRows(ctx); err != nil {
+				return "", a.readFailed("where", err, stderr), false
+			}
+			if v.Disks, err = st.DiskCells(ctx); err != nil {
 				return "", a.readFailed("where", err, stderr), false
 			}
 		}

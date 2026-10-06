@@ -379,7 +379,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -421,7 +421,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 				return ctx, cancel
 			}
 			beats := 0
-			w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+			w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
 				beats++
 				if beats == 3 {
 					cancel()
@@ -454,7 +454,7 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -524,7 +524,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 					}
 				}
 				beats := 0
-				w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+				w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
 					beats++
 					if beats == 12 {
 						cancel()
@@ -570,7 +570,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -766,7 +766,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()
@@ -834,7 +834,10 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 		return "", 0, nil
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
+		beats++
+		return "", nil
+	}
 	stopAfter(&w, &cancel, 8*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -886,7 +889,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		}
 	}
 	var beats []time.Time
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
@@ -1012,7 +1015,10 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) {
+		beats++
+		return "", nil
+	}
 	stopAfter(&w, &cancel, 5*time.Minute)
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -1047,7 +1053,7 @@ func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			return ctx, cancel
 		}
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) { return "", nil }
 		stopAfter(&w, &cancel, 3*time.Minute)
 		var out, errb strings.Builder
 		code := run(append([]string{"run", "--as", "bob", "--harness", "opencode", "--coordinator", "ada"}, args...), strings.NewReader(""), &out, &errb, w)
@@ -1115,7 +1121,7 @@ func TestADaemonWhosePlistChangedSaysSoOnStart(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			return ctx, cancel
 		}
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, time.Time, ...string) (string, error) { return "", nil }
 		stopAfter(&w, &cancel, time.Minute)
 		var out, errb strings.Builder
 		require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, w), errb.String())

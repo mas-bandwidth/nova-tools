@@ -1241,6 +1241,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			if s.Friends == nil {
 				s.Friends = r.Friends
 			}
+			if s.Disks == nil {
+				// each volume's reading from the beats the tick read (sprint.DisksOf): the
+				// watermark's judgment and the hold of new lanes (disk.go)
+				s.Disks = sprint.DisksOf(r.Beats, s.Now)
+			}
 			if r.WakeFriend != nil {
 				r.WakeFriend = func(friend string, rung int, d time.Duration) error {
 					wakes = append(wakes, stallWake{friend, rung, d})

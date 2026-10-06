@@ -455,6 +455,23 @@ func (c *held) judgment(pr *Card) string {
 			return "no route serves tier " + tier + "; open: " + strings.Join(c.judged[StreamSubject(TierSubject(tier))], ", ")
 		}
 	}
+	if pr.Col == Ready && !IsSentinel(pr) {
+		// every member up is on a volume above the hold, and its judgment is open (disk.go)
+		if up := c.s.UpMembers(); len(up) > 0 && len(c.s.withRoomOnDisk(up)) == 0 {
+			var open []string
+			for _, m := range up {
+				d := c.s.Disks[m]
+				for _, j := range c.judged[StreamSubject(VolumeSubject(d.Host, d.Volume))] {
+					if !slices.Contains(open, j) {
+						open = append(open, j)
+					}
+				}
+			}
+			if len(open) > 0 {
+				return "no new lane on a full volume: " + strings.Join(c.s.fullOf(up), "; ") + "; open: " + strings.Join(open, ", ")
+			}
+		}
+	}
 	if pr.Col == Ready && !IsSentinel(pr) && len(c.s.UpMembers()) == 0 {
 		for _, j := range c.judged[StreamSubject("")] {
 			if strings.HasPrefix(j, NNoMember) {
@@ -544,6 +561,12 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			return "waits for only friend " + name, "", true
 		}
 		up := s.UpMembers()
+		if full := s.fullOf(up); len(full) > 0 && len(up) == len(full) {
+			// every member up is on a volume above the hold: no new lane starts there until
+			// the watermark clears, which that volume's judgment says (disk.go)
+			return "no new lane on a full volume: " + strings.Join(full, "; "), "", true
+		}
+		up = s.withRoomOnDisk(up)
 		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {
 			// a bench card waits for a member of its bench up (bench_deal.go): no placement
 			// deals it to another member, so what holds it is its bench's beat and hold
