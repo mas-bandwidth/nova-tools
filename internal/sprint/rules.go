@@ -16,10 +16,10 @@ import (
 // 3h39m old, each a mechanical answer nobody gave: work came back failed, a card reached its
 // bound, a work card past its deadline, a stream stopped on a conflict. The tick answers the
 // mechanical judgments by rule, without the coordinator: each answer is one verb the
-// judgment's own decisions name (rework, rework on a tier up, wait, return, resume), applied
-// by the machine, recorded on the log and on the card as "answered by rule <name>". A
-// judgment that needs a mind stays one: a reader's finding, a sentinel, a brief that is
-// wrong. Every rule can be turned off: run --answer-rules=false turns them all off, and
+// judgment's own decisions name (rework, rework on a tier up, wait, return, resume, twin),
+// applied by the machine, recorded on the log and on the card as "answered by rule <name>". A
+// judgment that needs a mind stays one: a reader's finding at its brief's bound, a sentinel,
+// a brief that is wrong. Every rule can be turned off: run --answer-rules=false turns them all off, and
 // nova-config's sprint row answer_rules_off names the ones off (RulesOff). One pure function
 // decides (RuleAnswers); the tick's parts apply it (TickRules), and `rules` prints it. The
 // model is tla/SprintRules.tla (RuleAnswersBounded, LadderClimbs, WaitOnce).
@@ -163,6 +163,8 @@ type RuleAnswer struct {
 	Waited string `json:"waited"`
 
 	fix   string
+	files []string // the files outside PATHS a twin widens them by (ruleReadBroken)
+	twin  string   // the twin's id (ActTwinWider)
 	set   map[string]string
 	until time.Time
 	open  Open
@@ -197,7 +199,7 @@ func RuleAnswers(s *Snapshot, r TickReq) []RuleAnswer {
 		case NBriefWrong:
 			ruleBrief(s, &a)
 		case NReadBroken:
-			a.Act, a.Why = ActLeft, "a reader's finding needs a mind (the same finding twice is a brief defect)"
+			ruleReadBroken(s, &a)
 		default:
 			a.Act, a.Why = ActLeft, "no rule answers it"
 		}
@@ -502,8 +504,9 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 	}
 }
 
-// The tick's rule parts, in the order they run: the conflict's return, its resume, every
-// rework (failed, bound, the conflict's redo), the late cards, the brief defects. Each is
+// The tick's rule parts, in the order they run: the conflict's return, its resume, a twin
+// (read-broken, rules_read.go), every rework (failed, bound, read-broken, the conflict's
+// redo), the late cards, the brief defects. Each is
 // a step of its own on a fresh read, so the conflict's three moves can all be made in one
 // tick. With TickReq.AnswerRules false each is empty.
 const (
@@ -518,6 +521,7 @@ const (
 var TickRules = []TickPartDef{
 	{PartRuleReturn, TickRuleReturn},
 	{PartRuleResume, TickRuleResume},
+	{PartRuleTwin, TickRuleTwin},
 	{PartRuleRework, TickRuleRework},
 	{PartRuleLate, TickRuleLate},
 	{PartRuleBrief, TickRuleBrief},
