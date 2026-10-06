@@ -51,6 +51,12 @@ const (
 	// StatusDwell is how long a row must hold a status other than its recorded one, in running
 	// time, before the change counts as a transition.
 	StatusDwell = 2 * time.Minute
+	// StatusFlapsRaise is how many flaps (a departure back inside the dwell) raise the row's
+	// "flapping" judgment when none is open: once, until a transition counts.
+	StatusFlapsRaise = 3
+	// StatusFlapWindow is how long, in running time, the flaps that raise it may take: a count
+	// short of StatusFlapsRaise that began longer ago starts again at the next flap.
+	StatusFlapWindow = 10 * time.Minute
 	// StatusRuleAfter is how long after a status judgment's last push the rule may answer it.
 	StatusRuleAfter = 60 * time.Second
 	// NStatusChanged is the push of a status judgment whose text a further transition
@@ -229,20 +235,32 @@ func StatusTransitions(s *Snapshot, r TickReq) Plan {
 		judgment := openJudgment(onRow[row.row])
 		if !changed && !generation {
 			if !rec.Away.IsZero() {
-				// back inside the dwell: a flap, counted, nothing raised
-				if rec.FlapSince.IsZero() {
-					rec.FlapSince = rec.Away
+				// back inside the dwell: a flap, counted. Flaps short of StatusFlapsRaise that
+				// began more than StatusFlapWindow ago start the count again from this one.
+				if d, ok := r.running(s.Now, stamp(rec.FlapSince)); rec.FlapSince.IsZero() || rec.Flaps < StatusFlapsRaise && ok && d > StatusFlapWindow {
+					rec.FlapSince, rec.Flaps = rec.Away, 0
 				}
 				rec.Flaps++
 				rec.Away = time.Time{}
-				if judgment != nil {
+				switch {
+				case judgment != nil:
 					n := judgment.Note
 					n.What = withFlaps(n.What, rec)
 					p.Updates = append(p.Updates, n) // the count shown, no push
+				case rec.Flaps == StatusFlapsRaise:
+					// a row that keeps leaving its status and coming back inside the dwell never
+					// makes a transition: its third flap inside the window is the one judgment
+					// "flapping", raised once until a transition counts (the flaps start again)
+					p.Closes = append(p.Closes, onRow[row.row]...)
+					p.Notes = append(p.Notes, Note{Kind: Judgment, Type: NStatus, Primaries: []string{row.row}, Count: 1, What: flappingText(s, row, rec), Who: r.who(), At: s.Now,
+						Marked: true, Decisions: append([]string(nil), TickDecisions[NStatus]...)})
+					moved = append(moved, fmt.Sprintf("%s flapping (%d flaps)", row.row, rec.Flaps))
 				}
 			}
 			next[row.row] = rec
-			ruleAnswer(&p, s, r, row, judgment, rule)
+			if rec.Flaps < StatusFlapsRaise {
+				ruleAnswer(&p, s, r, row, judgment, rule) // a row still flapping is never answered by rule
+			}
 			continue
 		}
 		if rec.Away.IsZero() {
@@ -447,6 +465,27 @@ func friendSteps(s *Snapshot, r TickReq, row statusRow) (string, bool) {
 	}
 	step(text, !held && took)
 	return strings.Join(parts, "; "), all
+}
+
+// flappingText is the judgment of a row that left its status StatusFlapsRaise times inside
+// StatusFlapWindow and came back inside the dwell each time: no transition counted, so
+// nothing else would tell the seat. It ends with the flaps (withFlaps), which its later flaps
+// rewrite in place.
+func flappingText(s *Snapshot, row statusRow, rec statusSeen) string {
+	at := stamp(s.Now)
+	var what string
+	if row.friend == nil {
+		m := row.name
+		what = fmt.Sprintf("fleet member %s is flapping at %s: it is %s and keeps leaving it for less than %s, so no transition counts; %s, width %d; "+
+			"its beat on %s (nova-sprint fleet beat %s) is unsteady; or hold it: nova-sprint hold %s --reason <text>",
+			m, at, row.word, StatusDwell, lastBeat(row.beat, s.Now), s.Width(m), m, m, m)
+	} else {
+		f := row.name
+		what = fmt.Sprintf("friend %s is flapping at %s: she is %s and keeps leaving it for less than %s, so no transition counts; on %s; %s; "+
+			"wake her: nova-friend ping --as %s --to %s --wake; or hold her: nova-sprint hold %s --reason <text>",
+			f, at, row.word, StatusDwell, orDash(row.friend.Evidence), lastBeat(row.beat, s.Now), coordinatorName(s), f, f)
+	}
+	return withFlaps(what, rec)
 }
 
 // memberText is a fleet member's judgment: its last beat and its width, and the verbs.

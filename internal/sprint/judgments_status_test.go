@@ -399,3 +399,59 @@ func TestAStatusJudgmentWhoseStepsAreDoneIsAnsweredByRule(t *testing.T) {
 	}
 	assert.Len(t, r2.statusNotes(row), 1, "a friend come up waits on the coordinator's check")
 }
+
+// A friend down for 1m59s at a time with a blip up between never makes a transition, and
+// with no judgment open nothing else tells the seat: her third flap inside StatusFlapWindow
+// raises the one judgment "flapping", once; her later flaps rewrite its count in place, and
+// a change that outlasts the dwell replaces it as any transition does.
+func TestAFriendFlappingWithNoJudgmentOpenRaisesFlappingOnce(t *testing.T) {
+	t.Parallel()
+	r := newTransitionRig(t)
+	row := sprint.FriendRow("amy")
+	r.tick(time.Second)
+	r.up("", r.st.Now())
+	notes := r.statusNotes(row)
+	require.Len(t, notes, 1)
+	_, err := r.st.Run(r.ctx, store.AckStep(sprint.AckReq{Notes: []string{notes[0].ID}, Reason: "her steps are run", Who: "coordinator"}))
+	require.NoError(t, err)
+	before, _ := r.pushes(row)
+
+	down := func() { // her daemon answers the wake ping and her session does not: down
+		_, _, _, err := r.st.FriendHealth(r.ctx, "amy", "coordinator", sprint.FriendHealth{State: sprint.DaemonPong, Seen: r.st.Now(), Generation: sprint.FirstSeatGeneration}, "")
+		require.NoError(t, err)
+	}
+	blip := r.answered
+	flapsFrom := ""
+	for k := range 6 {
+		r.advance(time.Second)
+		down()
+		r.tick(0)
+		if k == 0 {
+			flapsFrom = r.st.Now().UTC().Format(time.RFC3339)
+		}
+		r.advance(sprint.StatusDwell - 2*time.Second)
+		down()
+		r.tick(0) // 1m58s down: inside the dwell
+		r.advance(time.Second)
+		blip()
+		r.tick(0) // back up for a tick: a flap
+		judgments, _ := r.pushes(row)
+		if k < sprint.StatusFlapsRaise-1 {
+			assert.Equal(t, before, judgments, "flap %d: nothing raised yet", k+1)
+		} else {
+			assert.Equal(t, before+1, judgments, "flap %d: the one flapping judgment", k+1)
+		}
+	}
+	open := r.statusNotes(row)
+	var flapping []sprint.Note
+	for _, n := range open {
+		if n.Kind == sprint.Judgment {
+			flapping = append(flapping, n)
+		}
+	}
+	require.Len(t, flapping, 1)
+	assert.True(t, strings.HasPrefix(flapping[0].What, "friend amy is flapping at "), flapping[0].What)
+	assert.Contains(t, flapping[0].What, "; flapped 6 times since "+flapsFrom+" (each back inside 2m0s)")
+	_, changes := r.pushes(row)
+	assert.Zero(t, changes, "the count rewritten in place, no push")
+}

@@ -4248,7 +4248,17 @@ for `StatusDwell`, 2 minutes of running time. A row that leaves its status and c
 inside the dwell raises nothing: the flap is counted on the record, and the row's open
 judgment, if it has one, says so at the end of its text, `; flapped <n> times since <time>
 (each back inside 2m0s)` (written in place, no push). The count is said on the next
-judgment of the row and starts again after it.
+judgment of the row and starts again after it, and a count short of three that began more
+than `StatusFlapWindow`, 10 minutes of running time, ago starts again at the next flap. A row
+that keeps flapping with no judgment open would otherwise never tell the seat (a friend down
+for 1m59s at a time with a one-tick blip up): its third flap inside the window
+(`StatusFlapsRaise`) raises the row's one judgment, `<friend <f>|fleet member <m>> is
+flapping at <time>: <she|it> is <word> and keeps leaving it for less than 2m0s, so no
+transition counts; ...` with its last beat and the wake or hold verbs, ending with the
+flaps; once, until a transition counts. Its later flaps rewrite the count in place, a change
+that outlasts the dwell replaces it as any transition does, and the rule never answers a
+row's judgment while the row is flapping (pinned by
+`TestAFriendFlappingWithNoJudgmentOpenRaisesFlappingOnce`).
 
 **Replace, never append.** A row has at most one open status judgment. A further transition
 replaces its text in place (the same id and alias, its time the transition's) and tells the
