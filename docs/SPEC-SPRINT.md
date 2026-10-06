@@ -1720,6 +1720,46 @@ other end of the old card's reason `replaced by <new>`: the card's lineage, whic
 A blocked judgment that names a need not replaced stays open, and its ack waives what it
 names, as before.
 
+**One selector, one step** (the owner, 2026-10-04, after the coordinator changed hundreds
+of cards one process at a time and a recut of 195 pinned cards did not finish: "BATCH
+EVERYTHING"). `brief`, `recut`, `rework`, `return`, `release`, `rank` and `drop` take one
+selector grammar, combinable, every flag given holding of a card it selects:
+
+- `--stream <s>`: the cards of the stream;
+- `--who <friend.<name>|friend|none>`: the cards whose WHO line names that friend (a hard
+  pin, `only friend <name>`, is hers too; the name alone is read as `friend.<name>`), any
+  friend (`friend`), or no friend (`none`);
+- `--state <ready|waiting|held|merging>`: the cards in that state, `waiting` not held;
+- `--ids-file <path>`: the cards the file names, one id a line, blank and `#` lines
+  skipped; an id that is no card on the table, or that the rest of the selector does not
+  hold of, refuses the whole call.
+
+A selector selects placed primaries, never a landed card; `release` takes a stream's
+sentinels too. The selection is made on the state the verb's one store step reads
+(`sprint.Selected`, internal/sprint/select_batch.go), so a step planned again on a fresh
+read selects again; the step names its cards and applies to every one or none; it prints
+one `NOTE <verb> <id>: selected` line per card, a `NOTE <verb> selected=<n> by <selector>`
+total, and the verb's MOVED lines. A selector that selects nothing is refused, nothing
+written. `--dry-run` plans the same step on one read and prints `<VERB> OK DRY-RUN
+selected=<n> changes=<n> refused=<n>` and its lines, writing nothing (it plans without
+the model tiers' routes, which a `rework` reads when it runs). A selector call gives no
+id. `rework`, `return` and `drop` keep their `--stream` (a stream's cards, one step before
+this) unless `--who`, `--state` or `--ids-file` comes with it (cmd/nova-sprint/select.go).
+
+`brief` and `recut` by selector take a transform of each card's own brief instead of a
+whole file, made on its header block (`sprint.BriefEdit`): `--set-base <branch>` (every
+BASE line names the branch, or one is put under line 1), `--drop-who` (every WHO line is
+taken out: the card names no friend), and `--tier <t>`. `brief` replaces each brief (as
+`brief <id>` does, refused for a card dealt) and re-tiers; `recut` re-cuts each card as its
+twin with the brief transformed (`sprint.RecutSel`). The recuts are planned in work order,
+each on the state the ones before it leave (`sprint.Batch`), so the twins of a chain need
+each other and a card that needed several re-cut cards needs every twin; their changes are
+folded into one entry per card, guarded on what the step read, and a card the transform
+leaves as it was with no tier named is refused, since its twin would change nothing
+(`TestOneCallRecutsEveryCardTheSelectorNames`, `TestEveryBatchVerbTakesTheSelector`,
+`TestABatchFoldsOneEntryPerCard`). A transformed brief is not held to the card lint again:
+the transform edits only header lines of a brief that was held when it was admitted.
+
 **The attempt decision** (nova-decide's layer 2; the owner, 2026-10-02, the agreed
 plan: "result classification after each attempt (done / nothing to do / wrong scope /
 no result / needs pro)"; 2026-10-03: "Please push Jev wide."; docs/SPEC-NOVA-DECIDE.md
