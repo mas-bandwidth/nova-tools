@@ -392,6 +392,8 @@ MCFriendStage.cfg	MCFriendStage.tla	pass	-	ignore-terminal	friendstage	required	
 MCFriendStageBrokenHandUnstaged.cfg	MCFriendStage.tla	invariant	HandedOnlyStaged	ignore-terminal	friendstage	required	-
 MCFriendStageBrokenSayEach.cfg	MCFriendStage.tla	invariant	OneJudgmentWhileItStands	ignore-terminal	friendstage	required	-
 MCFriendStageBrokenNoRetry.cfg	MCFriendStage.tla	temporal	EveryCardIsHanded	ignore-terminal	friendstage	required	-
+MCReach.cfg	MCReach.tla	pass	-	ignore-terminal	reach	required	-
+MCReachBrokenStepAfterProof.cfg	MCReach.tla	invariant	NoStepAfterProof	ignore-terminal	reach	required	-
 MCReadsByRoom.cfg	MCReadsByRoom.tla	pass	-	ignore-terminal	readsbyroom	required	-
 MCReadsByRoomBrokenPair.cfg	MCReadsByRoom.tla	invariant	OneAtATime	ignore-terminal	readsbyroom	required	-
 MCReadsByRoomBrokenPairCost.cfg	MCReadsByRoom.tla	invariant	ReadsPerLanding	ignore-terminal	readsbyroom	required	-
