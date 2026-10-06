@@ -101,9 +101,11 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")).Col)
 		require.Equal(t, Ready, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")).Col)
 		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-3", 1, "amy")))
-		ns := w.notesOf(NFewReaders)
+		// she is up at her room: the third waits for it, noted, with no judgment
+		require.Empty(t, w.notesOf(NFewReaders))
+		ns := w.notesOf(NWaitingForReader)
 		require.Len(t, ns, 1)
-		require.Equal(t, fewReaders(w.s), ns[0].What)
+		require.Equal(t, []string{"s1-3"}, ns[0].Primaries)
 	})
 
 	t.Run("one-shot mode", func(t *testing.T) {

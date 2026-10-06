@@ -472,9 +472,14 @@ or a rule in `outbox/<read>/REPORT.md` retires that read on her fleet row
 `a reader found it broken`). The read card is `<primary>.r<attempt>.<friend>`,
 placed on her fleet row `friend.<name>` in working while she has a lane,
 ready behind her working cards otherwise. The readers table gains no friend
-row. With no such friend up with room the read is not asked and the ask
+row. A friend is asked an attempt once: a read taken back from her with no
+verdict is not a read, and the attempt is asked of another friend. With no
+such friend up who may read the attempt the read is not asked and the ask
 raises the one judgment a read with no reader up already raises
-(`fewer than two readers up`), not one note per primary.
+(`fewer than two readers up`), not one note per primary; the machine's ask,
+whose readers are up, neither closes it nor writes it twice while that holds.
+With such a friend up at her room the read waits for her room as a machine
+read waits for a reader's: due, noted `waiting for a reader`, no judgment.
 
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
@@ -2335,7 +2340,17 @@ id (`--op`) returns the original result, with no second counter or notification.
   readers from the readers' `ask_index`; the reads one ask places come off the
   room as it goes. A reader at width is given nothing, and a primary whose
   reads wanted now find too few DIFFERENT readers with room waits for the
-  next tick, due, with no judgment; the ask's `cannot ask` judgment is for a
+  next tick, due, with no judgment. **A card in review is never silent: it is
+  asked a read in the tick it reaches review when a reader it may be asked of
+  has room, and when none has the tick records `waiting for a reader` on it**
+  (a happened note naming it and its attempt, written once an attempt, the
+  primary's `waiting_reader` field its mark) and asks it the tick one frees;
+  the ask that asks it clears the mark. The no-stall rule holds a card that
+  waits (the tick's due), so `stalled` and `stranded in review` (never asked)
+  are left for an ask refused for a reason the coordinator decides (the night
+  of 2026-10-05: three cards sat in review with no read asked and no note until
+  the coordinator ran `ask` by hand, each after a stall judgment;
+  `TestAReviewCardIsAskedAReadTheSameTick`). The ask's `cannot ask` judgment is for a
   primary that no readers could read to the count it needs, whatever their
   room (so not even its first read is asked when no second reader could ever
   read it). One read card per reader. The two rules meet in one pin,

@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -113,6 +114,21 @@ func cannotAskWhy(s *Snapshot, pr *Card, attempt, want, free, full int) string {
 	return fmt.Sprintf("needs %d different readers and %d is free with no read card at attempt %d of %s (%d free but at width); a reader is asked an attempt once, whether it read it or its read was taken back, and a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, nova-sprint reader up <name>, or nova-sprint rework %s --fix <text> for a new attempt every reader may read", want, free, attempt, pr.ID, full, readersText(s), pr.ID)
 }
 
+// NWaitingForReader is the tick's note on a primary in review whose read it
+// could not ask for want of a reader with room (a machine reader of its tier
+// at its width, or a friend of frontier class at her room): a happened note,
+// no decision, written once an attempt (FieldWaitingReader), and the read is
+// asked the tick a reader frees. Review never holds a card with no read asked
+// and no note: an ask refused for a reason the coordinator decides is a
+// judgment (cannot ask, fewer than two readers up), and the rest wait with
+// this note (docs/SPEC-SPRINT.md section 6, a card waiting for a reader).
+const NWaitingForReader = "waiting for a reader"
+
+// FieldWaitingReader is the primary's mark of the note: "<attempt> <since>",
+// the attempt it waits at and when the tick first found it waiting. The ask
+// that asks it clears it.
+const FieldWaitingReader = "waiting_reader"
+
 // NoEligibleReader opens the tick's one judgment for every primary of a tick
 // the ask refused for want of readers (TickAsk): "no eligible reader for <ids>".
 const NoEligibleReader = "no eligible reader for "
@@ -192,8 +208,17 @@ func ReadsNeeded(pr *Card) int {
 // (ReadsNeeded). A reader counts only when it reads that tier (readerReadsTier;
 // an empty tiers cell reads every tier). A snapshot with no reader states and
 // no tiers cell set holds every reader up, as it did before the column: the
-// ask may ask it (TickAsk); else it waits, judged NFewReaders.
+// ask may ask it (TickAsk); else it waits, judged NFewReaders. A frontier
+// read not asked of a machine reader at its attempt is a friend's
+// (friendReadAsk): its reader is a friend of frontier class up with no read
+// card of the attempt (the snapshot's seats, Friends), and with none it waits,
+// judged NFewReaders.
 func enoughReadersUp(s *Snapshot, pr *Card) bool {
+	if attempt := pr.Int("attempt"); s.Fleet != nil && friendReadCard(s, pr) && len(readsAt(s, pr, attempt)) == 0 {
+		return slices.ContainsFunc(s.Friends, func(f FriendSeat) bool {
+			return f.Status == Up && slices.Contains(f.Tiers, cardhdr.RouteFrontier) && s.Fleet.Card(ReadCardID(pr.ID, max(attempt, 1), f.Name)) == nil
+		})
+	}
 	if s.ReaderStates == nil && !s.readersCarryTiers() {
 		return true
 	}
