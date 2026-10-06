@@ -135,7 +135,7 @@ func CheckPath(flag, p string) error {
 	case !pathRe.MatchString(p):
 		return fmt.Errorf("--%s %q: a bench path is letters, digits, '.', '_', '-' and '/', relative to the login's home or absolute (no ~)", flag, p)
 	case strings.Contains("/"+p+"/", "/../"):
-		return fmt.Errorf("--%s %q climbs with ..", flag, p)
+		return fmt.Errorf("--%s %q climbs with a .. element", flag, p)
 	}
 	return nil
 }

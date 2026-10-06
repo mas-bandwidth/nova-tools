@@ -7,9 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -277,50 +275,4 @@ func TestAPipeIntoTheShimReachesTheCommand(t *testing.T) {
 	require.NoError(t, err, "the shim did not run the command: %q", out)
 	require.Equal(t, "into the shim, through the wrapper, to the command\n", string(out),
 		"what was piped into the shim did not reach the command: the backgrounded shell lost its stdin")
-}
-
-// shQuote single-quotes s for safe inclusion in a /bin/sh script.
-func shQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-// readPID reads a pid from a file, returning 0 on error or parse failure.
-func readPID(path string) int {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	return n
-}
-
-// alive reports whether pid exists and is not a zombie. A bare kill(pid,0) succeeds
-// for a zombie, so the process state is read instead.
-func alive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "state=").Output()
-	if err != nil {
-		return false
-	}
-	state := strings.TrimSpace(string(out))
-	if len(state) == 0 {
-		return false
-	}
-	// Z = zombie: the process has exited and has not been reaped; it is not alive.
-	return state[0] != 'Z'
-}
-
-// signalGroup sends KILL to the process group of a pid this test started, ignoring
-// "no such process".
-func signalGroup(pid int) {
-	if pid <= 0 {
-		return
-	}
-	pgid, err := syscall.Getpgid(pid)
-	if err != nil {
-		return
-	}
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
